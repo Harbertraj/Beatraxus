@@ -1,0 +1,19 @@
+{
+    "logs": [
+        {
+            "outputFile": "com.beatflowy.app-mergeDebugResources-69:/values-v18/values-v18.xml",
+            "map": [
+                {
+                    "source": "C:\\Users\\gmudh\\.gradle\\caches\\8.13\\transforms\\e428cb959bf48ca9d221ea7a75f2a222\\transformed\\appcompat-1.6.1\\res\\values-v18\\values-v18.xml",
+                    "from": {
+                        "startLines": "2",
+                        "startColumns": "4",
+                        "startOffsets": "55",
+                        "endColumns": "48",
+                        "endOffsets": "99"
+                    }
+                }
+            ]
+        }
+    ]
+}

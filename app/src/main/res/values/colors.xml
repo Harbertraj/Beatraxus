@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- res/values/colors.xml
+     Only a minimal set is needed here — Compose theme owns all runtime colors.
+     These are referenced by the XML theme for the launch window background.    -->
+<resources>
+    <color name="bg_deep">#07070D</color>
+    <color name="accent_blue">#0A84FF</color>
+    <color name="accent_red">#FF2D55</color>
+</resources>

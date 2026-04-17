@@ -1,0 +1,25 @@
+R_DEF: Internal format may change without notice
+local
+color accent_blue
+color accent_red
+color bg_deep
+drawable ic_launcher_background
+drawable ic_launcher_foreground
+mipmap ic_launcher
+mipmap ic_launcher_round
+string app_name
+string cd_album_art
+string cd_equalizer
+string cd_next
+string cd_pause
+string cd_play
+string cd_previous
+string channel_description
+string channel_name
+string empty_library_body
+string empty_library_title
+string permission_denied
+string select_track_hint
+style Theme.Beatflowy
+xml backup_rules
+xml data_extraction_rules

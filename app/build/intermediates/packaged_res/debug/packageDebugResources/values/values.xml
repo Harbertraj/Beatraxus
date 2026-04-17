@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="accent_blue">#0A84FF</color>
+    <color name="accent_red">#FF2D55</color>
+    <color name="bg_deep">#07070D</color>
+    <string name="app_name">Beatflowy</string>
+    <string name="cd_album_art">Album artwork</string>
+    <string name="cd_equalizer">Open Equalizer</string>
+    <string name="cd_next">Next track</string>
+    <string name="cd_pause">Pause</string>
+    <string name="cd_play">Play</string>
+    <string name="cd_previous">Previous track</string>
+    <string name="channel_description">Music playback controls</string>
+    <string name="channel_name">Beatflowy Playback</string>
+    <string name="empty_library_body">Add audio files to your device to start playing</string>
+    <string name="empty_library_title">No music found</string>
+    <string name="permission_denied">Storage permission is required to read your music library</string>
+    <string name="select_track_hint">Select a track to begin</string>
+    <style name="Theme.Beatflowy" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="android:statusBarColor">@color/bg_deep</item>
+        <item name="android:navigationBarColor">@color/bg_deep</item>
+        <item name="android:windowBackground">@color/bg_deep</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>
