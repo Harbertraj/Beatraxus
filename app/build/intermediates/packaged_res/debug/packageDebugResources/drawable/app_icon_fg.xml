@@ -1,0 +1,81 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- SPEED LINES (The 4 horizontal bars on the left) -->
+    <path
+        android:pathData="M38,34 L54,34"
+        android:strokeWidth="5"
+        android:strokeLineCap="round">
+        <aapt:attr name="android:strokeColor">
+            <gradient android:startX="38" android:startY="34" android:endX="54" android:endY="34" android:type="linear">
+                <item android:offset="0.0" android:color="#96FF66"/> <!-- Green -->
+                <item android:offset="1.0" android:color="#70FF99"/>
+            </gradient>
+        </aapt:attr>
+    </path>
+    <path
+        android:pathData="M35,42 L48,42"
+        android:strokeWidth="5"
+        android:strokeLineCap="round">
+        <aapt:attr name="android:strokeColor">
+            <gradient android:startX="35" android:startY="42" android:endX="48" android:endY="42" android:type="linear">
+                <item android:offset="0.0" android:color="#82FFAA"/> <!-- Mint -->
+                <item android:offset="1.0" android:color="#66FFCC"/>
+            </gradient>
+        </aapt:attr>
+    </path>
+    <path
+        android:pathData="M28,50 L48,50"
+        android:strokeWidth="6.5"
+        android:strokeLineCap="round">
+        <aapt:attr name="android:strokeColor">
+            <gradient android:startX="28" android:startY="50" android:endX="48" android:endY="50" android:type="linear">
+                <item android:offset="0.0" android:color="#66FFCC"/> <!-- Cyan-Mint -->
+                <item android:offset="1.0" android:color="#52F3F3"/>
+            </gradient>
+        </aapt:attr>
+    </path>
+    <path
+        android:pathData="M35,58 L48,58"
+        android:strokeWidth="5"
+        android:strokeLineCap="round">
+        <aapt:attr name="android:strokeColor">
+            <gradient android:startX="35" android:startY="58" android:endX="48" android:endY="58" android:type="linear">
+                <item android:offset="0.0" android:color="#58C5FF"/> <!-- Blue-ish -->
+                <item android:offset="1.0" android:color="#6A96FF"/>
+            </gradient>
+        </aapt:attr>
+    </path>
+    <path
+        android:pathData="M38,66 L48,66"
+        android:strokeWidth="5"
+        android:strokeLineCap="round">
+        <aapt:attr name="android:strokeColor">
+            <gradient android:startX="38" android:startY="66" android:endX="48" android:endY="66" android:type="linear">
+                <item android:offset="0.0" android:color="#8A66FF"/> <!-- Purple-ish -->
+                <item android:offset="1.0" android:color="#AF52DE"/>
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- MAIN B LOGO (The large glyph on the right) -->
+    <path
+        android:pathData="M50,75 L38,75 L42,68 M50,30 L65,30 C75,30 82,38 82,46 C82,54 75,62 65,62 L50,62 L50,80 L70,80"
+        android:strokeWidth="5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000">
+        <aapt:attr name="android:strokeColor">
+            <gradient android:startX="50" android:startY="30" android:endX="50" android:endY="80" android:type="linear">
+                <item android:offset="0.0" android:color="#96FF66"/> <!-- Top Green -->
+                <item android:offset="0.5" android:color="#6A96FF"/> <!-- Mid Blue -->
+                <item android:offset="1.0" android:color="#AF52DE"/> <!-- Bottom Purple -->
+            </gradient>
+        </aapt:attr>
+    </path>
+
+</vector>

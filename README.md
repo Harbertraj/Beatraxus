@@ -1,22 +1,24 @@
-# Beatflowy
+# Beatraxus
 
-Beatflowy is a high-performance Android music player designed for audiophiles. It features a custom audio engine built on Media3 ExoPlayer with integrated resampling and equalization capabilities.
+Beatraxus is a high-performance Android music player designed for audiophiles. It features a custom audio engine built on Media3 ExoPlayer with integrated resampling and equalization capabilities.
 
 ## Features
 
-- **High-Resolution Audio Support**: Custom audio pipeline using `DefaultAudioSink` with float output.
-- **Real-time Resampling**: Adjustable resampling to match your output device's capabilities.
-- **10-Band Equalizer**: Fine-tune your listening experience.
+- **High-Resolution Audio Support**: Custom audio pipeline using `DefaultAudioSink` with float output via a custom `RenderersFactory`.
+- **Real-time Resampling**: Adjustable resampling to match your output device's capabilities (Native vs Hi-Res).
+- **10-Band Equalizer**: Fine-tune your listening experience with precise gain control.
 - **Modern UI**: Built entirely with Jetpack Compose following Material 3 guidelines.
-- **Dynamic Theme**: Dark-centric aesthetic with vibrant accents (Red & Blue).
-- **Audio Info Bar**: Real-time display of input/output sample rates and device info.
+- **Compact Playback Controls**: A refined, space-efficient Now Playing section with rotating album art and smooth animations.
+- **Dynamic Theme**: Dark-centric aesthetic with vibrant accents (Accent Red & Accent Blue).
+- **Audio Info Bar**: Real-time display of input/output sample rates, bit depth, and active output device.
 
 ## Technical Details
 
 - **Language**: Kotlin
-- **UI Framework**: Jetpack Compose
+- **UI Framework**: Jetpack Compose (Material 3)
 - **Audio Engine**: AndroidX Media3 (ExoPlayer)
-- **Architecture**: MVVM with StateFlow and Coroutines
+- **Audio Processing**: Custom `AudioProcessor` implementation for real-time effects.
+- **Architecture**: MVVM with StateFlow, Coroutines, and Opt-in for Unstable Media3 APIs.
 - **Min SDK**: 26 (Android 8.0)
 - **Target SDK**: 34 (Android 14)
 
@@ -32,7 +34,7 @@ Beatflowy is a high-performance Android music player designed for audiophiles. I
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/yourusername/Beatflowy.git
+   git clone https://github.com/yourusername/Beatraxus.git
    ```
 2. Open the project in Android Studio.
 3. Wait for Gradle sync to complete.
@@ -41,9 +43,11 @@ Beatflowy is a high-performance Android music player designed for audiophiles. I
 ## Project Structure
 
 - `:app`: Main application module.
-  - `com.beatflowy.app.engine`: Core audio processing logic (Resampler, Equalizer, AudioEngine).
-  - `com.beatflowy.app.ui`: Compose screens, components, and theme.
-  - `com.beatflowy.app.viewmodel`: State management for UI and Audio Engine.
+  - `com.beatflowy.app.engine`: Core audio processing logic (`Resampler`, `Equalizer`, `AudioEngine`, `OutputManager`).
+  - `com.beatflowy.app.ui.screens`: Main application screens (`MainScreen`, `EqualizerScreen`).
+  - `com.beatflowy.app.ui.components`: Reusable UI components (`NowPlayingSection`, `AudioInfoBar`, `SongListItem`).
+  - `com.beatflowy.app.ui.theme`: Design system (Colors, Type, Theme).
+  - `com.beatflowy.app.viewmodel`: State management and business logic.
 
 ## License
 

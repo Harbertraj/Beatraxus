@@ -6,7 +6,7 @@ import kotlin.math.*
  * ════════════════════════════════════════════════════════════════════════════
  * Resampler.kt
  *
- * Intelligent DSP upsampler implementing the Beatflowy resampling policy:
+ * Intelligent DSP upsampler implementing the Beatraxus resampling policy:
  *
  *   44.1 kHz  →  48 kHz      (factor ≈ 1.0884)
  *   48 kHz    →  96 kHz      (factor = 2.0, integer ratio — clean)
@@ -53,9 +53,9 @@ class Resampler {
     private var tapsPerPhase = 0
 
     // ── Delay history (circular buffer for each channel) ─────────────────────
-    private var historyL: FloatArray = FloatArray(0)
-    private var historyR: FloatArray = FloatArray(0)
+    private var history: Array<FloatArray> = emptyArray()
     private var historyPos = 0          // write pointer into history ring
+    private var numChannels = 2
 
     // Input sample accumulator (for 44.1→48 rational resampling)
     private var inputPhase = 0          // tracks which polyphase to use next
@@ -68,10 +68,12 @@ class Resampler {
      *
      * @param inHz   Input sample rate  (e.g. 44100, 48000, 96000)
      * @param outHz  Target output rate (e.g. 48000, 96000)
+     * @param channels Number of audio channels
      */
-    fun configure(inHz: Int, outHz: Int) {
+    fun configure(inHz: Int, outHz: Int, channels: Int = 2) {
         inputSampleRate  = inHz
         outputSampleRate = outHz
+        numChannels      = channels
 
         if (!isEnabled || inHz == outHz || outHz < inHz) {
             // Pass-through: identity filter
@@ -89,69 +91,63 @@ class Resampler {
         buildPolyphaseBank(L, M, inHz, outHz)
 
         // Allocate history buffer (length = tapsPerPhase, initialised to silence)
-        historyL = FloatArray(tapsPerPhase)
-        historyR = FloatArray(tapsPerPhase)
+        history = Array(numChannels) { FloatArray(tapsPerPhase) }
         historyPos = 0
         inputPhase = 0
     }
 
     /** Reset history (call on seek / track change). */
     fun reset() {
-        historyL.fill(0f)
-        historyR.fill(0f)
+        for (h in history) h.fill(0f)
         historyPos = 0
         inputPhase = 0
     }
 
     /**
-     * Resample a stereo interleaved input buffer into output.
+     * Resample an interleaved input buffer into output.
      *
-     * @param input       Interleaved stereo PCM: [L0,R0, L1,R1, …]
-     * @param inputFrames Number of stereo frames in input
-     * @return            New interleaved stereo buffer at target sample rate.
-     *                    Returns the same [input] reference if pass-through.
+     * @param input       Interleaved PCM: [C0, C1, ..., C0, C1, ...]
+     * @param inputFrames Number of frames in input
+     * @return            New interleaved buffer at target sample rate.
      */
     fun process(input: FloatArray, inputFrames: Int): Pair<FloatArray, Int> {
         if (!isEnabled || phases.isEmpty() || (upFactor == 1 && downFactor == 1)) {
             return Pair(input, inputFrames)
         }
 
-        // Worst-case output frame count (add margin for rational fractions)
+        // Worst-case output frame count
         val maxOutputFrames = (inputFrames.toLong() * upFactor / downFactor + 2).toInt()
-        val outputL = FloatArray(maxOutputFrames)
-        val outputR = FloatArray(maxOutputFrames)
+        val outputs = Array(numChannels) { FloatArray(maxOutputFrames) }
         var outIdx  = 0
 
         for (f in 0 until inputFrames) {
-            val inL = input[f * 2]
-            val inR = input[f * 2 + 1]
+            // Write new samples into circular history for all channels
+            for (c in 0 until numChannels) {
+                history[c][historyPos] = input[f * numChannels + c]
+            }
 
-            // Write new sample into circular history
-            historyL[historyPos] = inL
-            historyR[historyPos] = inR
+            historyPos = (historyPos + 1) % tapsPerPhase
 
             // Compute all polyphase outputs that fall within this input step
             while (inputPhase < upFactor) {
-                if (inputPhase % downFactor == 0) {
-                    if (outIdx < maxOutputFrames) {
-                        outputL[outIdx] = applyPhase(inputPhase, historyL)
-                        outputR[outIdx] = applyPhase(inputPhase, historyR)
-                        outIdx++
+                if (outIdx < maxOutputFrames) {
+                    for (c in 0 until numChannels) {
+                        outputs[c][outIdx] = applyPhase(inputPhase, history[c])
                     }
+                    outIdx++
                 }
-                inputPhase++
+                inputPhase += downFactor
             }
-            inputPhase -= upFactor      // advance by one input sample
-
-            historyPos = (historyPos + 1) % tapsPerPhase
+            inputPhase -= upFactor
         }
 
-        // Interleave L+R into output
+        // Interleave channels into output
         val outputFrames = outIdx
-        val output = FloatArray(outputFrames * 2)
+        val output = FloatArray(outputFrames * numChannels)
         for (i in 0 until outputFrames) {
-            output[i * 2]     = outputL[i]
-            output[i * 2 + 1] = outputR[i]
+            for (c in 0 until numChannels) {
+                output[i * numChannels + c] = outputs[c][i]
+            }
         }
         return Pair(output, outputFrames)
     }
@@ -274,19 +270,15 @@ class Resampler {
     // ── Companion: policy ─────────────────────────────────────────────────────
     companion object {
         /**
-         * Beatflowy resampling policy.
+         * Beatraxus resampling policy.
          * Returns the target output sample rate for a given input.
          *
          * @param inputHz     Detected input sample rate
          * @param enabled     Whether the resampling engine is ON
          */
         fun targetSampleRate(inputHz: Int, enabled: Boolean): Int {
-            if (!enabled) return inputHz
-            return when {
-                inputHz <= 44_100 -> 48_000
-                inputHz <= 48_000 -> 96_000
-                else              -> inputHz   // 96 kHz+ — no further upsampling
-            }
+            // Feature removed. Always return input rate.
+            return inputHz
         }
     }
 }

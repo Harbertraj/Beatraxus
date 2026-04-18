@@ -13,5 +13,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "Beatflowy"
+rootProject.name = "Beatraxus"
 include(":app")

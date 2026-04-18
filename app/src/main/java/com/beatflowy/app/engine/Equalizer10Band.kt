@@ -69,9 +69,33 @@ class Equalizer10Band {
     private var needsUpdate = true          // flag: recalculate coefficients before next buffer
 
     // Preamp: automatically reduces gain to avoid clipping from multiple boosts
-    private var preampLinear = 1f
+    private var preampAutoLinear = 1f
+    private var preampManualDb = 0f
+
+    // Tone controls
+    private var bassDb = 0f
+    private var trebleDb = 0f
+
+    // Filters for tone controls (Bass & Treble)
+    private val bassFilter = BiquadFilter()
+    private val trebleFilter = BiquadFilter()
 
     // ── Public API ───────────────────────────────────────────────────────────
+
+    fun setPreampManual(db: Float) {
+        preampManualDb = db.coerceIn(-12f, 12f)
+    }
+
+    fun getPreampManual() = preampManualDb
+
+    fun setTone(bass: Float, treble: Float) {
+        bassDb = bass.coerceIn(-12f, 12f)
+        trebleDb = treble.coerceIn(-12f, 12f)
+        needsUpdate = true
+    }
+
+    fun getBassDb() = bassDb
+    fun getTrebleDb() = trebleDb
 
     /**
      * Set gain for a single EQ band.
@@ -109,6 +133,8 @@ class Equalizer10Band {
     /** Reset all filter delay lines (call on track change / seek). */
     fun reset() {
         filters.forEach { it.reset() }
+        bassFilter.reset()
+        trebleFilter.reset()
     }
 
     // ── Processing ───────────────────────────────────────────────────────────
@@ -130,12 +156,17 @@ class Equalizer10Band {
             needsUpdate = false
         }
 
-        // Apply preamp
-        if (preampLinear != 1f) {
+        // Apply preamps (Manual + Auto)
+        val totalPreamp = preampAutoLinear * dbToLinear(preampManualDb)
+        if (totalPreamp != 1f) {
             for (i in 0 until frames * 2) {
-                buffer[i] *= preampLinear
+                buffer[i] *= totalPreamp
             }
         }
+
+        // Apply Tone Controls (Shelving filters)
+        bassFilter.processStereoInterleaved(buffer, frames)
+        trebleFilter.processStereoInterleaved(buffer, frames)
 
         // Run all 10 biquad filters in series
         for (filter in filters) {
@@ -154,15 +185,31 @@ class Equalizer10Band {
      */
     private fun recalculateCoefficients() {
         // Compute total positive energy to estimate headroom reduction needed
-        val totalBoostDb = gainsDb.filter { it > 0f }.sum()
+        val totalBoostDb = gainsDb.filter { it > 0f }.sum() + max(0f, bassDb) + max(0f, trebleDb)
         // Preamp reduction: 0 dB boost → factor 1.0; 12 dB boost → ~0.25
-        preampLinear = if (totalBoostDb > 0f) {
-            // Reduce output by half the total boost, capped at -6dB preamp
-            val reductionDb = (totalBoostDb * 0.5f).coerceAtMost(6f)
+        preampAutoLinear = if (totalBoostDb > 0f) {
+            // Reduce output by half the total boost, capped at -12dB auto preamp
+            val reductionDb = (totalBoostDb * 0.5f).coerceAtMost(12f)
             dbToLinear(-reductionDb)
         } else {
             1f
         }
+
+        // Tone Controls
+        bassFilter.setCoefficients(
+            type = BiquadFilter.Type.LOW_SHELF,
+            freqHz = 100.0,
+            gainDb = bassDb.toDouble(),
+            qFactor = Q_SHELF.toDouble(),
+            sampleRate = sampleRate
+        )
+        trebleFilter.setCoefficients(
+            type = BiquadFilter.Type.HIGH_SHELF,
+            freqHz = 10000.0,
+            gainDb = trebleDb.toDouble(),
+            qFactor = Q_SHELF.toDouble(),
+            sampleRate = sampleRate
+        )
 
         // Band 0: low-shelf (31 Hz)
         filters[0].setCoefficients(

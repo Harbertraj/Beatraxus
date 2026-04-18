@@ -28,7 +28,7 @@
     <uses-permission android:name="com.beatflowy.app.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION" />
 
     <application
-        android:name="com.beatflowy.app.BeatflowyApplication"
+        android:name="com.beatflowy.app.BeatraxusApplication"
         android:allowBackup="true"
         android:appComponentFactory="androidx.core.app.CoreComponentFactory"
         android:dataExtractionRules="@xml/data_extraction_rules"
@@ -38,10 +38,10 @@
         android:hardwareAccelerated="true"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
+        android:requestLegacyExternalStorage="true"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:testOnly="true"
-        android:theme="@style/Theme.Beatflowy" >
+        android:theme="@style/Theme.Beatraxus" >
         <activity
             android:name="com.beatflowy.app.MainActivity"
             android:exported="true"

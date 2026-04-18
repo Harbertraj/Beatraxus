@@ -1,6 +1,6 @@
-# ─── Beatflowy ProGuard Rules ────────────────────────────────────────────────
+# ─── Beatraxus ProGuard Rules ────────────────────────────────────────────────
 
-# Keep all Beatflowy engine classes (DSP math must not be renamed/removed)
+# Keep all Beatraxus engine classes (DSP math must not be renamed/removed)
 -keep class com.beatflowy.app.engine.** { *; }
 -keep class com.beatflowy.app.model.** { *; }
 -keep class com.beatflowy.app.service.** { *; }

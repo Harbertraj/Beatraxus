@@ -11,7 +11,7 @@
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" tools:targetApi="31" />
 
     <application
-        android:name=".BeatflowyApplication"
+        android:name=".BeatraxusApplication"
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
@@ -19,8 +19,9 @@
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:theme="@style/Theme.Beatflowy"
+        android:theme="@style/Theme.Beatraxus"
         android:hardwareAccelerated="true"
+        android:requestLegacyExternalStorage="true"
         tools:targetApi="31">
 
         <activity

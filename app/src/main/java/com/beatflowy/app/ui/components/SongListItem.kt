@@ -5,7 +5,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Text
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Badge
+import androidx.compose.material.icons.rounded.MusicNote
+import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -22,15 +25,81 @@ import com.beatflowy.app.ui.theme.*
 import java.util.concurrent.TimeUnit
 
 @Composable
+fun ListCardItem(
+    title: String,
+    subtitle: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    onClick: () -> Unit
+) {
+    Surface(
+        onClick = onClick,
+        color = BgDeep.copy(0.4f),
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp)
+    ) {
+        Row(
+            modifier = Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                Modifier
+                    .size(48.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(AccentBlue.copy(0.1f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(icon, null, tint = AccentBlue, modifier = Modifier.size(24.dp))
+            }
+            Spacer(Modifier.width(16.dp))
+            Column {
+                Text(title, color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                Text(subtitle, color = TextMuted, fontSize = 14.sp)
+            }
+        }
+    }
+}
+
+@Composable
+fun EmptyLibraryView() {
+    Column(
+        Modifier
+            .fillMaxSize()
+            .padding(32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Icon(
+            Icons.Rounded.MusicNote, null,
+            tint = TextMuted, modifier = Modifier.size(64.dp)
+        )
+        Spacer(Modifier.height(16.dp))
+        Text(
+            "No music found", style = MaterialTheme.typography.titleMedium,
+            color = TextSecondary
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "Try changing your library view or adding audio files",
+            style = MaterialTheme.typography.bodyMedium,
+            color = TextMuted, textAlign = androidx.compose.ui.text.style.TextAlign.Center
+        )
+    }
+}
+
+@Composable
 fun SongListItem(
     song: Song,
     isPlaying: Boolean,
     trackNumber: Int,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    isMultiSelectMode: Boolean = false,
+    isSelected: Boolean = false
 ) {
     val bgAlpha by animateFloatAsState(
-        targetValue   = if (isPlaying) 1f else 0f,
+        targetValue   = if (isPlaying || isSelected) 1f else 0f,
         animationSpec = tween(300),
         label         = "rowBgAlpha"
     )
@@ -40,37 +109,70 @@ fun SongListItem(
             .clip(RoundedCornerShape(10.dp))
             .drawBehind {
                 if (bgAlpha > 0f) {
+                    val color = if (isSelected) AccentBlue.copy(alpha = 0.3f * bgAlpha) else AccentBlue.copy(alpha = 0.18f * bgAlpha)
                     drawRect(Brush.horizontalGradient(listOf(
-                        AccentBlue.copy(alpha = 0.18f * bgAlpha), Color.Transparent
+                        color, Color.Transparent
                     )))
                 }
             }
             .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 10.dp)
+            .padding(horizontal = 12.dp, vertical = 10.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            Box(Modifier.width(28.dp), contentAlignment = Alignment.Center) {
-                if (isPlaying) MiniEqBars()
-                else Text(trackNumber.toString(), fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium, color = TextMuted)
+            if (isMultiSelectMode) {
+                Checkbox(
+                    checked = isSelected,
+                    onCheckedChange = { onClick() },
+                    colors = CheckboxDefaults.colors(
+                        checkedColor = AccentBlue,
+                        uncheckedColor = TextMuted,
+                        checkmarkColor = Color.Black
+                    )
+                )
+                Spacer(Modifier.width(8.dp))
+            } else if (isPlaying) {
+                Box(Modifier.width(24.dp), contentAlignment = Alignment.Center) {
+                    MiniEqBars()
+                }
+                Spacer(Modifier.width(12.dp))
             }
-            Spacer(Modifier.width(12.dp))
-            AlbumArtPlaceholder(size = 44, seed = song.id.hashCode())
-            Spacer(Modifier.width(12.dp))
+            AlbumArtImage(song = song, size = 52.dp)
+            Spacer(Modifier.width(16.dp))
             Column(Modifier.weight(1f)) {
-                Text(song.title, fontSize = 14.sp,
-                    fontWeight = if (isPlaying) FontWeight.SemiBold else FontWeight.Medium,
+                Text(song.title, fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
                     color = TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Spacer(Modifier.height(2.dp))
-                Text(song.artist, fontSize = 12.sp, color = TextSecondary,
+                
+                Text("${song.artist}-${song.album}", fontSize = 12.sp, color = TextSecondary,
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-            Spacer(Modifier.width(8.dp))
-            Column(horizontalAlignment = Alignment.End) {
-                Text(formatDuration(song.durationMs), fontSize = 12.sp,
-                    color = TextMuted, fontWeight = FontWeight.Medium)
-                Spacer(Modifier.height(3.dp))
-                FormatBadge(format = song.format)
+                
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Rounded.Badge, 
+                        null, 
+                        tint = TextMuted, 
+                        modifier = Modifier.size(11.dp).padding(top = 1.dp)
+                    )
+                    Spacer(Modifier.width(3.dp))
+                    Text(
+                        text = buildString {
+                            append(formatDuration(song.durationMs))
+                            append(" | ${song.format.lowercase()}")
+                            append(" | ${"%.1f".format(song.sampleRateHz / 1000.0)}kHz")
+                            if (song.bitrate > 0) {
+                                append(" | ${song.bitrate / 1000}kbps")
+                            }
+                            if (song.bitDepth > 0) {
+                                append(" | ${song.bitDepth}bit")
+                            }
+                        },
+                        fontSize = 11.sp,
+                        color = TextMuted,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
         }
     }
@@ -88,28 +190,6 @@ private fun MiniEqBars() {
             Box(Modifier.width(3.dp).height(h.dp).clip(RoundedCornerShape(1.5.dp))
                 .background(AccentBlue))
         }
-    }
-}
-
-@Composable
-fun AlbumArtPlaceholder(size: Int, seed: Int) {
-    val hue    = (seed.and(0xFF) / 255f) * 360f
-    val color1 = Color.hsv(hue, 0.7f, 0.5f)
-    val color2 = Color.hsv((hue + 40f) % 360f, 0.6f, 0.7f)
-    Box(Modifier.size(size.dp).clip(RoundedCornerShape(8.dp))
-        .background(Brush.linearGradient(listOf(color1, color2))))
-}
-
-@Composable
-private fun FormatBadge(format: String) {
-    val (bg, fg) = when (format.uppercase()) {
-        "FLAC" -> AccentBlue.copy(alpha = 0.18f) to AccentBlueSoft
-        "WAV"  -> AccentRed.copy(alpha = 0.15f)  to AccentRedSoft
-        else   -> BgHighlight to TextSecondary
-    }
-    Box(Modifier.clip(RoundedCornerShape(4.dp)).background(bg).padding(horizontal = 5.dp, vertical = 2.dp)) {
-        Text(format.uppercase(), fontSize = 9.sp, fontWeight = FontWeight.Bold,
-            color = fg, letterSpacing = 0.5.sp)
     }
 }
 

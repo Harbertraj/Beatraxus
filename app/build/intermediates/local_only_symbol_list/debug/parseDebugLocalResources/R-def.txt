@@ -3,8 +3,8 @@ local
 color accent_blue
 color accent_red
 color bg_deep
-drawable ic_launcher_background
-drawable ic_launcher_foreground
+drawable app_icon_bg
+drawable app_icon_fg
 mipmap ic_launcher
 mipmap ic_launcher_round
 string app_name
@@ -20,6 +20,6 @@ string empty_library_body
 string empty_library_title
 string permission_denied
 string select_track_hint
-style Theme.Beatflowy
+style Theme.Beatraxus
 xml backup_rules
 xml data_extraction_rules

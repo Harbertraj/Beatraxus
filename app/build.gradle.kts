@@ -108,6 +108,9 @@ dependencies {
     // Media (for MediaSessionCompat / NotificationCompat.MediaStyle)
     implementation("androidx.media:media:1.7.0")
 
+    // Coil for Image Loading
+    implementation("io.coil-kt:coil-compose:2.5.0")
+
     // Debug
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")

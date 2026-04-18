@@ -9,7 +9,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 
-private val BeatflowyDarkColorScheme = darkColorScheme(
+private val BeatraxusDarkColorScheme = darkColorScheme(
     primary             = AccentBlue,
     onPrimary           = TextOnAccent,
     primaryContainer    = BgElevated,
@@ -30,7 +30,7 @@ private val BeatflowyDarkColorScheme = darkColorScheme(
 )
 
 @Composable
-fun BeatflowyTheme(content: @Composable () -> Unit) {
+fun BeatraxusTheme(content: @Composable () -> Unit) {
     val view = LocalView.current
     if (!view.isInEditMode) {
         SideEffect {
@@ -44,8 +44,8 @@ fun BeatflowyTheme(content: @Composable () -> Unit) {
         }
     }
     MaterialTheme(
-        colorScheme = BeatflowyDarkColorScheme,
-        typography  = BeatflowyTypography,
+        colorScheme = BeatraxusDarkColorScheme,
+        typography  = BeatraxusTypography,
         content     = content
     )
 }

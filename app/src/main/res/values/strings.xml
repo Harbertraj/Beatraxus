@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- res/values/strings.xml -->
 <resources>
-    <string name="app_name">Beatflowy</string>
-    <string name="channel_name">Beatflowy Playback</string>
+    <string name="app_name">Beatraxus</string>
+    <string name="channel_name">Beatraxus Playback</string>
     <string name="channel_description">Music playback controls</string>
 
     <!-- Accessibility -->

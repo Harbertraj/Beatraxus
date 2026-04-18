@@ -28,11 +28,12 @@ import kotlinx.coroutines.launch
 class AudioPlaybackService : Service() {
 
     companion object {
-        private const val CHANNEL_ID = "beatflowy_playback"
+        private const val CHANNEL_ID = "beatraxus_playback"
         private const val NOTIFICATION_ID = 1001
-        private const val ACTION_PLAY_PAUSE = "com.beatflowy.PLAY_PAUSE"
-        private const val ACTION_NEXT = "com.beatflowy.NEXT"
-        private const val ACTION_PREVIOUS = "com.beatflowy.PREVIOUS"
+        private const val ACTION_PLAY_PAUSE = "com.beatraxus.PLAY_PAUSE"
+        private const val ACTION_NEXT = "com.beatraxus.NEXT"
+        private const val ACTION_PREVIOUS = "com.beatraxus.PREVIOUS"
+        private const val NOTIFICATION_SCAN_ID = 1002
     }
 
     private lateinit var engine: AudioEngine
@@ -66,6 +67,8 @@ class AudioPlaybackService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_PLAY_PAUSE -> engine.togglePlayPause()
+            ACTION_NEXT       -> engine.next()
+            ACTION_PREVIOUS   -> engine.previous()
         }
         return START_STICKY
     }
@@ -85,9 +88,47 @@ class AudioPlaybackService : Service() {
     fun setResamplingEnabled(enabled: Boolean) = engine.setResamplingEnabled(enabled)
     fun setEqualizerEnabled(enabled: Boolean) = engine.setEqualizerEnabled(enabled)
     fun setEqBandGain(band: Int, gain: Float) = engine.setEqGain(band, gain)
+    
+    fun setPreamp(db: Float) = engine.setPreamp(db)
+    fun setTone(bass: Float, treble: Float) = engine.setTone(bass, treble)
+    fun setBalance(balance: Float) = engine.setBalance(balance)
+    fun setStereoExpand(expand: Float) = engine.setStereoExpand(expand)
+    fun setTempo(tempo: Float) = engine.setTempo(tempo)
+    fun setMono(mono: Boolean) = engine.setMono(mono)
+    fun setReverbParams(mix: Float, size: Float, damp: Float, filter: Float, fade: Float, preDelay: Float, preDelayMix: Float) = 
+        engine.setReverbParams(mix, size, damp, filter, fade, preDelay, preDelayMix)
+    fun toggleReverb(enabled: Boolean) = engine.setReverbEnabled(enabled)
+
+    fun playList(songs: List<Song>, startIndex: Int) = engine.playList(songs, startIndex)
+    fun next() = engine.next()
+    fun previous() = engine.previous()
+    fun toggleShuffle() = engine.toggleShuffle()
+    fun toggleRepeat() = engine.toggleRepeat()
+    fun setShuffleMode(enabled: Boolean) = engine.setShuffleMode(enabled)
+    fun getNextSong(): Song? = engine.getNextSong()
+
+    fun updateScanningProgress(progress: Float, count: Int, isComplete: Boolean) {
+        val notificationManager = getSystemService(NotificationManager::class.java)
+        if (isComplete) {
+            notificationManager.cancel(NOTIFICATION_SCAN_ID)
+            return
+        }
+
+        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.stat_notify_sync)
+            .setContentTitle("Scanning Library")
+            .setContentText("Found $count songs...")
+            .setProgress(100, (progress * 100).toInt(), false)
+            .setOngoing(true)
+            .setSilent(true)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .build()
+        
+        notificationManager.notify(NOTIFICATION_SCAN_ID, notification)
+    }
 
     private fun setupMediaSession() {
-        mediaSession = MediaSessionCompat(this, "BeatflowySession").apply {
+        mediaSession = MediaSessionCompat(this, "BeatraxusSession").apply {
             setFlags(
                 MediaSessionCompat.FLAG_HANDLES_MEDIA_BUTTONS or
                 MediaSessionCompat.FLAG_HANDLES_TRANSPORT_CONTROLS
@@ -130,7 +171,7 @@ class AudioPlaybackService : Service() {
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
-                CHANNEL_ID, "Beatflowy Playback", NotificationManager.IMPORTANCE_LOW
+                CHANNEL_ID, "Beatraxus Playback", NotificationManager.IMPORTANCE_LOW
             ).apply {
                 description = "Music playback controls"
                 setShowBadge(false)
@@ -150,30 +191,51 @@ class AudioPlaybackService : Service() {
             this, 0, Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        val playPauseIntent = PendingIntent.getService(
+        
+        val prevIntent = PendingIntent.getService(
             this, 1,
+            Intent(this, AudioPlaybackService::class.java).apply { action = ACTION_PREVIOUS },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val playPauseIntent = PendingIntent.getService(
+            this, 2,
             Intent(this, AudioPlaybackService::class.java).apply { action = ACTION_PLAY_PAUSE },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val nextIntent = PendingIntent.getService(
+            this, 3,
+            Intent(this, AudioPlaybackService::class.java).apply { action = ACTION_NEXT },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val prevAction = NotificationCompat.Action(
+            android.R.drawable.ic_media_previous, "Previous", prevIntent
         )
         val playPauseAction = NotificationCompat.Action(
             if (isPlaying) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play,
             if (isPlaying) "Pause" else "Play",
             playPauseIntent
         )
+        val nextAction = NotificationCompat.Action(
+            android.R.drawable.ic_media_next, "Next", nextIntent
+        )
+
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_media_play)
-            .setContentTitle(song?.title ?: "Beatflowy")
+            .setContentTitle(song?.title ?: "Beatraxus")
             .setContentText(if (song != null) "${song.artist} — ${song.album}" else "Ready to play")
             .setContentIntent(contentIntent)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setOngoing(isPlaying)
             .setShowWhen(false)
+            .addAction(prevAction)
             .addAction(playPauseAction)
+            .addAction(nextAction)
             .setStyle(
                 androidx.media.app.NotificationCompat.MediaStyle()
                     .setMediaSession(mediaSession.sessionToken)
-                    .setShowActionsInCompactView(0)
+                    .setShowActionsInCompactView(0, 1, 2)
             )
             .build()
     }

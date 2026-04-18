@@ -44,13 +44,20 @@ fun EqualizerScreen(viewModel: PlayerViewModel, onBack: () -> Unit) {
     val gains    = uiState.eqGains
     var preset by remember { mutableStateOf("Flat") }
 
+    val navigateBack = {
+        viewModel.setShowFullPlayer(true)
+        onBack()
+    }
+
+    androidx.activity.compose.BackHandler(onBack = navigateBack)
+
     Scaffold(
         containerColor = BgBase,
         topBar = {
             TopAppBar(
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = BgDeep),
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    IconButton(onClick = navigateBack) {
                         Icon(Icons.Rounded.ArrowBackIosNew, "Back", tint = TextPrimary)
                     }
                 },
