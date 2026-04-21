@@ -1,8 +1,9 @@
 package com.beatflowy.app.ui.components
 
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -25,8 +26,13 @@ fun WaveformSeekBar(
     inactiveColor: Color = Color.White.copy(alpha = 0.3f),
     barWidth: Float = 4f,
     gap: Float = 4f,
-    seed: Int = 0
+    seed: Int = 0,
+    /** Changes while playing so pointer handling stays aligned after seeks without resetting mid-drag unnecessarily. */
+    progressPollKey: Long = 0L
 ) {
+    var draggingProgress by remember { mutableStateOf<Float?>(null) }
+    val displayProgress = draggingProgress ?: progress
+
     // Generate unique heights for this song based on the seed (song ID hash)
     val barHeights = remember(seed) {
         val random = Random(seed)
@@ -37,14 +43,22 @@ fun WaveformSeekBar(
         modifier = modifier
             .fillMaxWidth()
             .height(60.dp)
-            .pointerInput(Unit) {
-                detectTapGestures { offset ->
-                    onProgressChange((offset.x / size.width).coerceIn(0f, 1f))
-                }
-            }
-            .pointerInput(Unit) {
-                detectDragGestures { change, _ ->
-                    onProgressChange((change.position.x / size.width).coerceIn(0f, 1f))
+            .pointerInput(seed, progressPollKey) {
+                awaitEachGesture {
+                    val down = awaitFirstDown()
+                    val width = size.width
+                    draggingProgress = (down.position.x / width).coerceIn(0f, 1f)
+                    
+                    var lastPos = down.position.x
+                    val dragSuccess = drag(down.id) { change ->
+                        lastPos = change.position.x
+                        draggingProgress = (lastPos / width).coerceIn(0f, 1f)
+                        change.consume()
+                    }
+                    
+                    val finalPos = if (dragSuccess) lastPos else down.position.x
+                    onProgressChange((finalPos / width).coerceIn(0f, 1f))
+                    draggingProgress = null
                 }
             }
     ) {
@@ -58,7 +72,7 @@ fun WaveformSeekBar(
             for (i in 0 until totalBars) {
                 val x = i * (barWidth + gap)
                 val barProgress = x / width
-                val color = if (barProgress <= progress) activeColor else inactiveColor
+                val color = if (barProgress <= displayProgress) activeColor else inactiveColor
                 
                 // Use the pre-generated heights, cycling through them
                 val hFactor = barHeights[i % barHeights.size]

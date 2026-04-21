@@ -1,7 +1,7 @@
 {
     "logs": [
         {
-            "outputFile": "com.beatflowy.app-mergeDebugResources-70:/values-sk/values-sk.xml",
+            "outputFile": "com.beatflowy.app-mergeDebugResources-74:/values-sk/values-sk.xml",
             "map": [
                 {
                     "source": "C:\\Users\\gmudh\\.gradle\\caches\\8.13\\transforms\\1c6b79a6f425d30ab82d941933ad0cea\\transformed\\media3-ui-1.2.1\\res\\values-sk\\values-sk.xml",
@@ -91,23 +91,6 @@
                     }
                 },
                 {
-                    "source": "C:\\Users\\gmudh\\.gradle\\caches\\8.13\\transforms\\37b8ecbdc281150179fa242a8cfffb4e\\transformed\\foundation-release\\res\\values-sk\\values-sk.xml",
-                    "from": {
-                        "startLines": "2,3",
-                        "startColumns": "4,4",
-                        "startOffsets": "55,139",
-                        "endColumns": "83,86",
-                        "endOffsets": "134,221"
-                    },
-                    "to": {
-                        "startLines": "265,266",
-                        "startColumns": "4,4",
-                        "startOffsets": "22467,22551",
-                        "endColumns": "83,86",
-                        "endOffsets": "22546,22633"
-                    }
-                },
-                {
                     "source": "C:\\Users\\gmudh\\.gradle\\caches\\8.13\\transforms\\13e91570c4f135a19f35ea77acea3243\\transformed\\media3-exoplayer-1.2.1\\res\\values-sk\\values-sk.xml",
                     "from": {
                         "startLines": "2,3,4,5,6,7,8,9,10",
@@ -144,7 +127,7 @@
                     }
                 },
                 {
-                    "source": "C:\\Users\\gmudh\\.gradle\\caches\\8.13\\transforms\\31ac0b89db8b145dd357634bee80593e\\transformed\\ui-release\\res\\values-sk\\values-sk.xml",
+                    "source": "C:\\Users\\gmudh\\.gradle\\caches\\8.13\\transforms\\22c23360bb3b1abbfd589895456c3d83\\transformed\\ui-release\\res\\values-sk\\values-sk.xml",
                     "from": {
                         "startLines": "2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18",
                         "startColumns": "4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4",
@@ -158,6 +141,23 @@
                         "startOffsets": "5537,5632,5716,5885,5988,10193,10272,21393,21483,21564,21633,21781,21864,22034,22207,22285,22353",
                         "endColumns": "94,83,94,102,91,78,93,89,80,68,68,82,86,71,77,67,113",
                         "endOffsets": "5627,5711,5806,5983,6075,10267,10361,21478,21559,21628,21697,21859,21946,22101,22280,22348,22462"
+                    }
+                },
+                {
+                    "source": "C:\\Users\\gmudh\\.gradle\\caches\\8.13\\transforms\\269f6d0bd9e20be8beff1f707ac101c2\\transformed\\foundation-release\\res\\values-sk\\values-sk.xml",
+                    "from": {
+                        "startLines": "2,3",
+                        "startColumns": "4,4",
+                        "startOffsets": "55,139",
+                        "endColumns": "83,86",
+                        "endOffsets": "134,221"
+                    },
+                    "to": {
+                        "startLines": "265,266",
+                        "startColumns": "4,4",
+                        "startOffsets": "22467,22551",
+                        "endColumns": "83,86",
+                        "endOffsets": "22546,22633"
                     }
                 }
             ]

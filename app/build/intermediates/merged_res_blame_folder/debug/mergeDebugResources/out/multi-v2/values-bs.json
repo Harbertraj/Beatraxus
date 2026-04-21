@@ -1,7 +1,7 @@
 {
     "logs": [
         {
-            "outputFile": "com.beatflowy.app-mergeDebugResources-70:/values-bs/values-bs.xml",
+            "outputFile": "com.beatflowy.app-mergeDebugResources-74:/values-bs/values-bs.xml",
             "map": [
                 {
                     "source": "C:\\Users\\gmudh\\.gradle\\caches\\8.13\\transforms\\9b6d5dd8e51a124ca3753a50847ed588\\transformed\\material-1.11.0\\res\\values-bs\\values-bs.xml",
@@ -54,23 +54,6 @@
                         "startOffsets": "10340,10459,10579,10700,10820,10919,11017,11132,11277,11397,11535,11620,11720,11813,11911,12028,12155,12260,12395,12529,12670,12840,12975,13098,13225,13353,13447,13545,13666,13794,13891,13994,14103,14242,14387,14496,14596,14681,14774,14869,14963,15054,15163,15251,15334,15431,15535,15628,15725,15813,15921,16018,16120,16258,16348,16456",
                         "endColumns": "118,119,120,119,98,97,114,144,119,137,84,99,92,97,116,126,104,134,133,140,169,134,122,126,127,93,97,120,127,96,102,108,138,144,108,99,84,92,94,93,90,108,87,82,96,103,92,96,87,107,96,101,137,89,107,98",
                         "endOffsets": "10454,10574,10695,10815,10914,11012,11127,11272,11392,11530,11615,11715,11808,11906,12023,12150,12255,12390,12524,12665,12835,12970,13093,13220,13348,13442,13540,13661,13789,13886,13989,14098,14237,14382,14491,14591,14676,14769,14864,14958,15049,15158,15246,15329,15426,15530,15623,15720,15808,15916,16013,16115,16253,16343,16451,16550"
-                    }
-                },
-                {
-                    "source": "C:\\Users\\gmudh\\.gradle\\caches\\8.13\\transforms\\37b8ecbdc281150179fa242a8cfffb4e\\transformed\\foundation-release\\res\\values-bs\\values-bs.xml",
-                    "from": {
-                        "startLines": "2,3",
-                        "startColumns": "4,4",
-                        "startOffsets": "55,145",
-                        "endColumns": "89,91",
-                        "endOffsets": "140,232"
-                    },
-                    "to": {
-                        "startLines": "262,263",
-                        "startColumns": "4,4",
-                        "startOffsets": "22585,22675",
-                        "endColumns": "89,91",
-                        "endOffsets": "22670,22762"
                     }
                 },
                 {
@@ -127,7 +110,7 @@
                     }
                 },
                 {
-                    "source": "C:\\Users\\gmudh\\.gradle\\caches\\8.13\\transforms\\31ac0b89db8b145dd357634bee80593e\\transformed\\ui-release\\res\\values-bs\\values-bs.xml",
+                    "source": "C:\\Users\\gmudh\\.gradle\\caches\\8.13\\transforms\\22c23360bb3b1abbfd589895456c3d83\\transformed\\ui-release\\res\\values-bs\\values-bs.xml",
                     "from": {
                         "startLines": "2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18",
                         "startColumns": "4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4",
@@ -158,6 +141,23 @@
                         "startOffsets": "8104,8179,8240,8305,8378,8457,8530,8630,8711",
                         "endColumns": "74,60,64,72,78,72,99,80,72",
                         "endOffsets": "8174,8235,8300,8373,8452,8525,8625,8706,8779"
+                    }
+                },
+                {
+                    "source": "C:\\Users\\gmudh\\.gradle\\caches\\8.13\\transforms\\269f6d0bd9e20be8beff1f707ac101c2\\transformed\\foundation-release\\res\\values-bs\\values-bs.xml",
+                    "from": {
+                        "startLines": "2,3",
+                        "startColumns": "4,4",
+                        "startOffsets": "55,145",
+                        "endColumns": "89,91",
+                        "endOffsets": "140,232"
+                    },
+                    "to": {
+                        "startLines": "262,263",
+                        "startColumns": "4,4",
+                        "startOffsets": "22585,22675",
+                        "endColumns": "89,91",
+                        "endOffsets": "22670,22762"
                     }
                 }
             ]

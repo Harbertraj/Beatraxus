@@ -1,25 +1,8 @@
 {
     "logs": [
         {
-            "outputFile": "com.beatflowy.app-mergeDebugResources-70:/values-zu/values-zu.xml",
+            "outputFile": "com.beatflowy.app-mergeDebugResources-74:/values-zu/values-zu.xml",
             "map": [
-                {
-                    "source": "C:\\Users\\gmudh\\.gradle\\caches\\8.13\\transforms\\31ac0b89db8b145dd357634bee80593e\\transformed\\ui-release\\res\\values-zu\\values-zu.xml",
-                    "from": {
-                        "startLines": "2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18",
-                        "startColumns": "4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4",
-                        "startOffsets": "105,200,282,387,492,582,664,753,846,929,997,1065,1153,1241,1317,1396,1466",
-                        "endColumns": "94,81,104,104,89,81,88,92,82,67,67,87,87,75,78,69,123",
-                        "endOffsets": "195,277,382,487,577,659,748,841,924,992,1060,1148,1236,1312,1391,1461,1585"
-                    },
-                    "to": {
-                        "startLines": "66,67,68,70,71,126,127,246,247,248,249,251,252,254,256,257,258",
-                        "startColumns": "4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4",
-                        "startOffsets": "5227,5322,5404,5586,5691,9911,9993,21375,21468,21551,21619,21769,21857,22027,22204,22283,22353",
-                        "endColumns": "94,81,104,104,89,81,88,92,82,67,67,87,87,75,78,69,123",
-                        "endOffsets": "5317,5399,5504,5686,5776,9988,10077,21463,21546,21614,21682,21852,21940,22098,22278,22348,22472"
-                    }
-                },
                 {
                     "source": "C:\\Users\\gmudh\\.gradle\\caches\\8.13\\transforms\\78ca715cdc0f694638e69f805d9dbe34\\transformed\\material3-release\\res\\values-zu\\values-zu.xml",
                     "from": {
@@ -72,7 +55,24 @@
                     }
                 },
                 {
-                    "source": "C:\\Users\\gmudh\\.gradle\\caches\\8.13\\transforms\\37b8ecbdc281150179fa242a8cfffb4e\\transformed\\foundation-release\\res\\values-zu\\values-zu.xml",
+                    "source": "C:\\Users\\gmudh\\.gradle\\caches\\8.13\\transforms\\22c23360bb3b1abbfd589895456c3d83\\transformed\\ui-release\\res\\values-zu\\values-zu.xml",
+                    "from": {
+                        "startLines": "2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18",
+                        "startColumns": "4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4",
+                        "startOffsets": "105,200,282,387,492,582,664,753,846,929,997,1065,1153,1241,1317,1396,1466",
+                        "endColumns": "94,81,104,104,89,81,88,92,82,67,67,87,87,75,78,69,123",
+                        "endOffsets": "195,277,382,487,577,659,748,841,924,992,1060,1148,1236,1312,1391,1461,1585"
+                    },
+                    "to": {
+                        "startLines": "66,67,68,70,71,126,127,246,247,248,249,251,252,254,256,257,258",
+                        "startColumns": "4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4",
+                        "startOffsets": "5227,5322,5404,5586,5691,9911,9993,21375,21468,21551,21619,21769,21857,22027,22204,22283,22353",
+                        "endColumns": "94,81,104,104,89,81,88,92,82,67,67,87,87,75,78,69,123",
+                        "endOffsets": "5317,5399,5504,5686,5776,9988,10077,21463,21546,21614,21682,21852,21940,22098,22278,22348,22472"
+                    }
+                },
+                {
+                    "source": "C:\\Users\\gmudh\\.gradle\\caches\\8.13\\transforms\\269f6d0bd9e20be8beff1f707ac101c2\\transformed\\foundation-release\\res\\values-zu\\values-zu.xml",
                     "from": {
                         "startLines": "2,3",
                         "startColumns": "4,4",

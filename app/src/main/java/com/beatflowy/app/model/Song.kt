@@ -22,6 +22,12 @@ data class Song(
     val isFavorite: Boolean = false
 )
 
+data class Playlist(
+    val id: String,
+    val name: String,
+    val songIds: List<String> = emptyList()
+)
+
 enum class AudioOutputDevice(val displayName: String) {
     SPEAKER("Speaker"),
     WIRED("Headphones"),
@@ -32,7 +38,7 @@ enum class AudioOutputDevice(val displayName: String) {
 
 enum class LibraryView {
     ALL_SONGS, ALBUMS, ARTISTS, FOLDERS, YEARS, GENRES, FAVORITES, RECENTLY_PLAYED, RECENTLY_ADDED,
-    ALBUM_DETAIL, ARTIST_DETAIL, FOLDER_DETAIL, YEAR_DETAIL, GENRE_DETAIL
+    ALBUM_DETAIL, ARTIST_DETAIL, FOLDER_DETAIL, YEAR_DETAIL, GENRE_DETAIL, PLAYLISTS, PLAYLIST_DETAIL
 }
 
 enum class SortType {
@@ -52,6 +58,7 @@ data class PlayerUiState(
     val inputSampleRate: Int = 44_100,
     val outputSampleRate: Int = 44_100,
     val outputDevice: String = AudioOutputDevice.SPEAKER.displayName,
+    val outputMode: String = "AAUDIO",
     val eqGains: FloatArray = FloatArray(10) { 0f },
     val isLoadingLibrary: Boolean = false,
     val isScanning: Boolean = false,
@@ -67,13 +74,20 @@ data class PlayerUiState(
     val selectedItemName: String? = null, // For Album name, Artist name etc.
     val showFullPlayer: Boolean = false,
     val showLyrics: Boolean = false,
+    val showQueue: Boolean = false,
+    val upcomingSongs: List<Song> = emptyList(),
     val searchQuery: String = "",
     val isMultiSelectMode: Boolean = false,
     val selectedSongIds: Set<String> = emptySet(),
     val sortType: SortType = SortType.NAME,
     val isAscending: Boolean = true,
     val viewMode: ViewMode = ViewMode.LIST,
-    val isSearchActive: Boolean = false
+    val isSearchActive: Boolean = false,
+    val bitDepth: Int = 16,
+    val bitrate: Int = 0,
+    val format: String = "",
+    val resamplingEnabled: Boolean = true,
+    val currentFolderPath: String? = null
 ) {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
@@ -85,6 +99,7 @@ data class PlayerUiState(
                 inputSampleRate == other.inputSampleRate &&
                 outputSampleRate == other.outputSampleRate &&
                 outputDevice == other.outputDevice &&
+                outputMode == other.outputMode &&
                 eqGains.contentEquals(other.eqGains) &&
                 isLoadingLibrary == other.isLoadingLibrary &&
                 isScanning == other.isScanning &&
@@ -96,6 +111,8 @@ data class PlayerUiState(
                 selectedItemName == other.selectedItemName &&
                 showFullPlayer == other.showFullPlayer &&
                 showLyrics == other.showLyrics &&
+                showQueue == other.showQueue &&
+                upcomingSongs == other.upcomingSongs &&
                 searchQuery == other.searchQuery &&
                 isMultiSelectMode == other.isMultiSelectMode &&
                 selectedSongIds == other.selectedSongIds
@@ -113,6 +130,8 @@ data class PlayerUiState(
         result = 31 * result + (selectedItemName?.hashCode() ?: 0)
         result = 31 * result + showFullPlayer.hashCode()
         result = 31 * result + showLyrics.hashCode()
+        result = 31 * result + showQueue.hashCode()
+        result = 31 * result + upcomingSongs.hashCode()
         result = 31 * result + searchQuery.hashCode()
         result = 31 * result + isMultiSelectMode.hashCode()
         result = 31 * result + selectedSongIds.hashCode()

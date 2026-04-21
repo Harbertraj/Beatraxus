@@ -1,8 +1,25 @@
 {
     "logs": [
         {
-            "outputFile": "com.beatflowy.app-mergeDebugResources-70:/values-sq/values-sq.xml",
+            "outputFile": "com.beatflowy.app-mergeDebugResources-74:/values-sq/values-sq.xml",
             "map": [
+                {
+                    "source": "C:\\Users\\gmudh\\.gradle\\caches\\8.13\\transforms\\269f6d0bd9e20be8beff1f707ac101c2\\transformed\\foundation-release\\res\\values-sq\\values-sq.xml",
+                    "from": {
+                        "startLines": "2,3",
+                        "startColumns": "4,4",
+                        "startOffsets": "55,153",
+                        "endColumns": "97,98",
+                        "endOffsets": "148,247"
+                    },
+                    "to": {
+                        "startLines": "259,260",
+                        "startColumns": "4,4",
+                        "startOffsets": "22364,22462",
+                        "endColumns": "97,98",
+                        "endOffsets": "22457,22556"
+                    }
+                },
                 {
                     "source": "C:\\Users\\gmudh\\.gradle\\caches\\8.13\\transforms\\e428cb959bf48ca9d221ea7a75f2a222\\transformed\\appcompat-1.6.1\\res\\values-sq\\values-sq.xml",
                     "from": {
@@ -21,23 +38,6 @@
                     }
                 },
                 {
-                    "source": "C:\\Users\\gmudh\\.gradle\\caches\\8.13\\transforms\\37b8ecbdc281150179fa242a8cfffb4e\\transformed\\foundation-release\\res\\values-sq\\values-sq.xml",
-                    "from": {
-                        "startLines": "2,3",
-                        "startColumns": "4,4",
-                        "startOffsets": "55,153",
-                        "endColumns": "97,98",
-                        "endOffsets": "148,247"
-                    },
-                    "to": {
-                        "startLines": "259,260",
-                        "startColumns": "4,4",
-                        "startOffsets": "22364,22462",
-                        "endColumns": "97,98",
-                        "endOffsets": "22457,22556"
-                    }
-                },
-                {
                     "source": "C:\\Users\\gmudh\\.gradle\\caches\\8.13\\transforms\\13e91570c4f135a19f35ea77acea3243\\transformed\\media3-exoplayer-1.2.1\\res\\values-sq\\values-sq.xml",
                     "from": {
                         "startLines": "2,3,4,5,6,7,8,9,10",
@@ -52,6 +52,23 @@
                         "startOffsets": "7886,7957,8018,8085,8151,8229,8308,8400,8486",
                         "endColumns": "70,60,66,65,77,78,91,85,69",
                         "endOffsets": "7952,8013,8080,8146,8224,8303,8395,8481,8551"
+                    }
+                },
+                {
+                    "source": "C:\\Users\\gmudh\\.gradle\\caches\\8.13\\transforms\\22c23360bb3b1abbfd589895456c3d83\\transformed\\ui-release\\res\\values-sq\\values-sq.xml",
+                    "from": {
+                        "startLines": "2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18",
+                        "startColumns": "4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4",
+                        "startOffsets": "105,200,283,382,484,580,661,754,846,936,1005,1072,1159,1250,1323,1400,1466",
+                        "endColumns": "94,82,98,101,95,80,92,91,89,68,66,86,90,72,76,65,120",
+                        "endOffsets": "195,278,377,479,575,656,749,841,931,1000,1067,1154,1245,1318,1395,1461,1582"
+                    },
+                    "to": {
+                        "startLines": "66,67,68,70,71,126,127,246,247,248,249,251,252,254,256,257,258",
+                        "startColumns": "4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4",
+                        "startOffsets": "5182,5277,5360,5533,5635,9857,9938,21265,21357,21447,21516,21666,21753,21926,22100,22177,22243",
+                        "endColumns": "94,82,98,101,95,80,92,91,89,68,66,86,90,72,76,65,120",
+                        "endOffsets": "5272,5355,5454,5630,5726,9933,10026,21352,21442,21511,21578,21748,21839,21994,22172,22238,22359"
                     }
                 },
                 {
@@ -105,23 +122,6 @@
                         "endLines": "10,14,18,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,106,107,108,109,110,111,112,113,114,115,116,117,118,119,120,121,122,123",
                         "endColumns": "17,12,12,80,80,85,103,91,72,62,89,89,64,62,66,67,148,148,142,66,81,71,72,98,98,63,69,52,57,47,60,64,65,61,67,63,58,65,64,65,51,64,77,77,56",
                         "endOffsets": "376,575,761,5872,5953,6039,6143,6235,6308,6371,6461,6551,6616,6679,6746,6814,6963,7112,7255,7322,7404,7476,7549,7648,7747,7811,7881,8604,8662,8710,8771,8836,8902,8964,9032,9096,9155,9221,9286,9352,9404,9469,9547,9625,9682"
-                    }
-                },
-                {
-                    "source": "C:\\Users\\gmudh\\.gradle\\caches\\8.13\\transforms\\31ac0b89db8b145dd357634bee80593e\\transformed\\ui-release\\res\\values-sq\\values-sq.xml",
-                    "from": {
-                        "startLines": "2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18",
-                        "startColumns": "4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4",
-                        "startOffsets": "105,200,283,382,484,580,661,754,846,936,1005,1072,1159,1250,1323,1400,1466",
-                        "endColumns": "94,82,98,101,95,80,92,91,89,68,66,86,90,72,76,65,120",
-                        "endOffsets": "195,278,377,479,575,656,749,841,931,1000,1067,1154,1245,1318,1395,1461,1582"
-                    },
-                    "to": {
-                        "startLines": "66,67,68,70,71,126,127,246,247,248,249,251,252,254,256,257,258",
-                        "startColumns": "4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4",
-                        "startOffsets": "5182,5277,5360,5533,5635,9857,9938,21265,21357,21447,21516,21666,21753,21926,22100,22177,22243",
-                        "endColumns": "94,82,98,101,95,80,92,91,89,68,66,86,90,72,76,65,120",
-                        "endOffsets": "5272,5355,5454,5630,5726,9933,10026,21352,21442,21511,21578,21748,21839,21994,22172,22238,22359"
                     }
                 },
                 {

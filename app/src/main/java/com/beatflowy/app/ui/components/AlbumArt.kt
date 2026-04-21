@@ -6,12 +6,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.painter.ColorPainter
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import com.beatflowy.app.R
 import com.beatflowy.app.model.Song
 import com.beatflowy.app.ui.theme.BgHighlight
 
@@ -22,6 +22,7 @@ fun AlbumArtImage(
     modifier: Modifier = Modifier,
     cornerRadius: Dp = 8.dp
 ) {
+    val placeholder = painterResource(R.drawable.ic_album_placeholder)
     AsyncImage(
         model = song.albumArtUri,
         contentDescription = "Album Art",
@@ -30,15 +31,8 @@ fun AlbumArtImage(
             .clip(RoundedCornerShape(cornerRadius))
             .background(BgHighlight),
         contentScale = ContentScale.Crop,
-        error = ColorPainter(getPlaceholderColor(song.id.hashCode())),
-        fallback = ColorPainter(getPlaceholderColor(song.id.hashCode())),
-        onLoading = { /* Potential logging */ },
-        onSuccess = { /* Potential logging */ },
-        onError = { /* Potential logging */ }
+        placeholder = placeholder,
+        error = placeholder,
+        fallback = placeholder
     )
-}
-
-private fun getPlaceholderColor(seed: Int): Color {
-    val hue = (seed.and(0xFF) / 255f) * 360f
-    return Color.hsv(hue, 0.6f, 0.5f)
 }

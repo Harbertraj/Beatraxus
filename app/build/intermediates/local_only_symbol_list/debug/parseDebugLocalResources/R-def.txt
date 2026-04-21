@@ -5,6 +5,7 @@ color accent_red
 color bg_deep
 drawable app_icon_bg
 drawable app_icon_fg
+drawable ic_album_placeholder
 mipmap ic_launcher
 mipmap ic_launcher_round
 string app_name

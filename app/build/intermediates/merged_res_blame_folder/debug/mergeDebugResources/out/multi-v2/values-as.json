@@ -1,7 +1,7 @@
 {
     "logs": [
         {
-            "outputFile": "com.beatflowy.app-mergeDebugResources-70:/values-as/values-as.xml",
+            "outputFile": "com.beatflowy.app-mergeDebugResources-74:/values-as/values-as.xml",
             "map": [
                 {
                     "source": "C:\\Users\\gmudh\\.gradle\\caches\\8.13\\transforms\\9b6d5dd8e51a124ca3753a50847ed588\\transformed\\material-1.11.0\\res\\values-as\\values-as.xml",
@@ -57,23 +57,6 @@
                     }
                 },
                 {
-                    "source": "C:\\Users\\gmudh\\.gradle\\caches\\8.13\\transforms\\37b8ecbdc281150179fa242a8cfffb4e\\transformed\\foundation-release\\res\\values-as\\values-as.xml",
-                    "from": {
-                        "startLines": "2,3",
-                        "startColumns": "4,4",
-                        "startOffsets": "55,140",
-                        "endColumns": "84,87",
-                        "endOffsets": "135,223"
-                    },
-                    "to": {
-                        "startLines": "183,184",
-                        "startColumns": "4,4",
-                        "startOffsets": "16949,17034",
-                        "endColumns": "84,87",
-                        "endOffsets": "17029,17117"
-                    }
-                },
-                {
                     "source": "C:\\Users\\gmudh\\.gradle\\caches\\8.13\\transforms\\f86da19b544f31d0aed787ce23c126f1\\transformed\\core-1.12.0\\res\\values-as\\values-as.xml",
                     "from": {
                         "startLines": "2,3,4,5,6,7,8,9",
@@ -91,7 +74,7 @@
                     }
                 },
                 {
-                    "source": "C:\\Users\\gmudh\\.gradle\\caches\\8.13\\transforms\\31ac0b89db8b145dd357634bee80593e\\transformed\\ui-release\\res\\values-as\\values-as.xml",
+                    "source": "C:\\Users\\gmudh\\.gradle\\caches\\8.13\\transforms\\22c23360bb3b1abbfd589895456c3d83\\transformed\\ui-release\\res\\values-as\\values-as.xml",
                     "from": {
                         "startLines": "2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18",
                         "startColumns": "4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4",
@@ -105,6 +88,23 @@
                         "startOffsets": "4526,4621,4706,4799,4897,5203,5300,15859,15948,16038,16106,16259,16342,16510,16690,16765,16831",
                         "endColumns": "94,84,92,97,86,96,98,88,89,67,71,82,84,78,74,65,117",
                         "endOffsets": "4616,4701,4794,4892,4979,5295,5394,15943,16033,16101,16173,16337,16422,16584,16760,16826,16944"
+                    }
+                },
+                {
+                    "source": "C:\\Users\\gmudh\\.gradle\\caches\\8.13\\transforms\\269f6d0bd9e20be8beff1f707ac101c2\\transformed\\foundation-release\\res\\values-as\\values-as.xml",
+                    "from": {
+                        "startLines": "2,3",
+                        "startColumns": "4,4",
+                        "startOffsets": "55,140",
+                        "endColumns": "84,87",
+                        "endOffsets": "135,223"
+                    },
+                    "to": {
+                        "startLines": "183,184",
+                        "startColumns": "4,4",
+                        "startOffsets": "16949,17034",
+                        "endColumns": "84,87",
+                        "endOffsets": "17029,17117"
                     }
                 }
             ]

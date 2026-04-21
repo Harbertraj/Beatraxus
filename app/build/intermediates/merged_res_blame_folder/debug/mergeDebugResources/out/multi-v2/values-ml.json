@@ -1,8 +1,25 @@
 {
     "logs": [
         {
-            "outputFile": "com.beatflowy.app-mergeDebugResources-70:/values-ml/values-ml.xml",
+            "outputFile": "com.beatflowy.app-mergeDebugResources-74:/values-ml/values-ml.xml",
             "map": [
+                {
+                    "source": "C:\\Users\\gmudh\\.gradle\\caches\\8.13\\transforms\\269f6d0bd9e20be8beff1f707ac101c2\\transformed\\foundation-release\\res\\values-ml\\values-ml.xml",
+                    "from": {
+                        "startLines": "2,3",
+                        "startColumns": "4,4",
+                        "startOffsets": "55,143",
+                        "endColumns": "87,91",
+                        "endOffsets": "138,230"
+                    },
+                    "to": {
+                        "startLines": "259,260",
+                        "startColumns": "4,4",
+                        "startOffsets": "22876,22964",
+                        "endColumns": "87,91",
+                        "endOffsets": "22959,23051"
+                    }
+                },
                 {
                     "source": "C:\\Users\\gmudh\\.gradle\\caches\\8.13\\transforms\\9b6d5dd8e51a124ca3753a50847ed588\\transformed\\material-1.11.0\\res\\values-ml\\values-ml.xml",
                     "from": {
@@ -76,7 +93,7 @@
                     }
                 },
                 {
-                    "source": "C:\\Users\\gmudh\\.gradle\\caches\\8.13\\transforms\\31ac0b89db8b145dd357634bee80593e\\transformed\\ui-release\\res\\values-ml\\values-ml.xml",
+                    "source": "C:\\Users\\gmudh\\.gradle\\caches\\8.13\\transforms\\22c23360bb3b1abbfd589895456c3d83\\transformed\\ui-release\\res\\values-ml\\values-ml.xml",
                     "from": {
                         "startLines": "2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18",
                         "startColumns": "4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4",
@@ -141,23 +158,6 @@
                         "startOffsets": "10292,10412,10538,10664,10787,10887,10981,11092,11244,11362,11519,11604,11709,11809,11911,12034,12167,12277,12413,12555,12686,12890,13024,13148,13278,13412,13513,13611,13729,13860,13959,14061,14174,14312,14458,14572,14681,14757,14855,14955,15042,15139,15247,15327,15415,15513,15626,15721,15832,15922,16037,16139,16252,16384,16464,16571",
                         "endColumns": "119,125,125,122,99,93,110,151,117,156,84,104,99,101,122,132,109,135,141,130,203,133,123,129,133,100,97,117,130,98,101,112,137,145,113,108,75,97,99,86,96,107,79,87,97,112,94,110,89,114,101,112,131,79,106,96",
                         "endOffsets": "10407,10533,10659,10782,10882,10976,11087,11239,11357,11514,11599,11704,11804,11906,12029,12162,12272,12408,12550,12681,12885,13019,13143,13273,13407,13508,13606,13724,13855,13954,14056,14169,14307,14453,14567,14676,14752,14850,14950,15037,15134,15242,15322,15410,15508,15621,15716,15827,15917,16032,16134,16247,16379,16459,16566,16663"
-                    }
-                },
-                {
-                    "source": "C:\\Users\\gmudh\\.gradle\\caches\\8.13\\transforms\\37b8ecbdc281150179fa242a8cfffb4e\\transformed\\foundation-release\\res\\values-ml\\values-ml.xml",
-                    "from": {
-                        "startLines": "2,3",
-                        "startColumns": "4,4",
-                        "startOffsets": "55,143",
-                        "endColumns": "87,91",
-                        "endOffsets": "138,230"
-                    },
-                    "to": {
-                        "startLines": "259,260",
-                        "startColumns": "4,4",
-                        "startOffsets": "22876,22964",
-                        "endColumns": "87,91",
-                        "endOffsets": "22959,23051"
                     }
                 }
             ]

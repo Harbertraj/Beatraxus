@@ -1,5 +1,6 @@
 package com.beatflowy.app.ui.screens
 
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -14,15 +15,18 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import coil.compose.AsyncImage
 import com.beatflowy.app.ui.theme.*
 import com.beatflowy.app.viewmodel.PlayerViewModel
 import kotlin.math.abs
@@ -44,118 +48,154 @@ fun EqualizerScreen(viewModel: PlayerViewModel, onBack: () -> Unit) {
     val gains    = uiState.eqGains
     var preset by remember { mutableStateOf("Flat") }
 
-    val navigateBack = {
-        viewModel.setShowFullPlayer(true)
-        onBack()
-    }
-
-    androidx.activity.compose.BackHandler(onBack = navigateBack)
-
     Scaffold(
-        containerColor = BgBase,
         topBar = {
             TopAppBar(
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = BgDeep),
+                title = { Text("Equalizer", fontWeight = FontWeight.Bold) },
                 navigationIcon = {
-                    IconButton(onClick = navigateBack) {
-                        Icon(Icons.Rounded.ArrowBackIosNew, "Back", tint = TextPrimary)
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.Rounded.ArrowBack, null)
                     }
                 },
-                title = { Text("Equalizer", fontWeight = FontWeight.Bold, fontSize = 18.sp, color = TextPrimary) },
                 actions = {
-                    Row(Modifier.padding(end = 12.dp), verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text(if (uiState.equalizerEnabled) "ON" else "OFF",
-                            fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp,
-                            color = if (uiState.equalizerEnabled) AccentBlue else TextMuted)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(if (uiState.equalizerEnabled) "Enabled" else "Disabled", 
+                            fontSize = 12.sp, color = if (uiState.equalizerEnabled) AccentBlue else TextMuted)
+                        Spacer(Modifier.width(8.dp))
                         Switch(
                             checked = uiState.equalizerEnabled,
                             onCheckedChange = { viewModel.toggleEqualizer() },
-                            modifier = Modifier.height(24.dp),
                             colors = SwitchDefaults.colors(
-                                checkedTrackColor = AccentBlue, uncheckedTrackColor = ToggleOff)
+                                checkedTrackColor = AccentBlue, uncheckedTrackColor = Color.White.copy(0.1f))
                         )
                     }
                 }
             )
         }
     ) { pv ->
-        Column(Modifier.fillMaxSize().padding(pv).verticalScroll(rememberScrollState())) {
-
-            // EQ Curve
-            EqCurve(gains = gains, enabled = uiState.equalizerEnabled,
-                modifier = Modifier.fillMaxWidth().height(140.dp).padding(horizontal = 16.dp, vertical = 12.dp))
-
-            // Presets
-            LazyRow(
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                items(EQ_PRESETS.size) { idx ->
-                    val name = EQ_PRESETS.keys.toList()[idx]
-                    FilterChip(
-                        selected = name == preset,
-                        onClick = {
-                            preset = name
-                            EQ_PRESETS[name]?.forEachIndexed { b, g -> viewModel.setEqBandGain(b, g) }
-                        },
-                        label = { Text(name, fontSize = 12.sp) },
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = AccentBlue.copy(alpha = 0.25f),
-                            selectedLabelColor = AccentBlueSoft,
-                            containerColor = BgElevated, labelColor = TextSecondary
+        Box(Modifier.fillMaxSize()) {
+            if (uiState.currentSong != null) {
+                AsyncImage(
+                    model = uiState.currentSong?.albumArtUri,
+                    contentDescription = null,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .blur(70.dp)
+                        .graphicsLayer(alpha = 0.55f),
+                    contentScale = ContentScale.Crop,
+                )
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(
+                                    Color.Black.copy(0.3f),
+                                    Color.Transparent,
+                                    Color.Black.copy(0.7f)
+                                )
+                            )
                         )
-                    )
-                }
+                )
             }
 
-            Spacer(Modifier.height(8.dp))
-            HorizontalDivider(color = Divider, thickness = 0.5.dp)
-            Spacer(Modifier.height(16.dp))
-
-            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("+12dB", fontSize = 9.sp, color = EqPositive, fontWeight = FontWeight.Bold)
-                Text("0dB",   fontSize = 9.sp, color = TextMuted)
-                Text("-12dB", fontSize = 9.sp, color = EqNegative, fontWeight = FontWeight.Bold)
-            }
-            Spacer(Modifier.height(8.dp))
-
-            // Sliders
-            Row(Modifier.fillMaxWidth().height(260.dp).padding(horizontal = 8.dp),
-                horizontalArrangement = Arrangement.SpaceEvenly) {
-                gains.forEachIndexed { band, gain ->
-                    BandSlider(
-                        label = BAND_LABELS[band], gainDb = gain,
-                        enabled = uiState.equalizerEnabled,
-                        onGainChange = { g ->
-                            preset = "Custom"
-                            viewModel.setEqBandGain(band, g)
-                        },
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-            }
-
-            Spacer(Modifier.height(16.dp))
-            OutlinedButton(
-                onClick = {
-                    preset = "Flat"
-                    repeat(10) { viewModel.setEqBandGain(it, 0f) }
-                },
-                modifier = Modifier.align(Alignment.CenterHorizontally).padding(bottom = 24.dp),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = TextSecondary)
+            Column(
+                Modifier
+                    .padding(pv)
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Icon(Icons.Rounded.Refresh, null, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(6.dp))
-                Text("Reset to Flat", fontSize = 13.sp)
+                // Visualizer/Curve Area
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(180.dp),
+                    shape = RoundedCornerShape(24.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White.copy(0.05f)),
+                    border = CardDefaults.outlinedCardBorder().copy(brush = SolidColor(Color.White.copy(0.1f)))
+                ) {
+                    EqCurve(gains, uiState.equalizerEnabled, Modifier.fillMaxSize().padding(16.dp))
+                }
+
+                Spacer(Modifier.height(24.dp))
+
+                // Presets Row
+                Text("Presets", modifier = Modifier.fillMaxWidth(), 
+                    fontSize = 14.sp, fontWeight = FontWeight.Bold, color = TextSecondary)
+                Spacer(Modifier.height(12.dp))
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    contentPadding = PaddingValues(bottom = 16.dp)
+                ) {
+                    EQ_PRESETS.forEach { (name, pGains) ->
+                        item {
+                            FilterChip(
+                                selected = preset == name,
+                                onClick = {
+                                    preset = name
+                                    pGains.forEachIndexed { i, g -> viewModel.setEqBandGain(i, g) }
+                                },
+                                label = { Text(name) },
+                                shape = RoundedCornerShape(12.dp),
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = AccentBlue.copy(0.2f),
+                                    selectedLabelColor = AccentBlue
+                                )
+                            )
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(8.dp))
+
+                // Band Sliders
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(24.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White.copy(0.05f))
+                ) {
+                    Row(
+                        Modifier
+                            .padding(vertical = 20.dp, horizontal = 10.dp)
+                            .height(240.dp),
+                        horizontalArrangement = Arrangement.SpaceEvenly
+                    ) {
+                        BAND_LABELS.forEachIndexed { i, label ->
+                            BandSlider(
+                                label = label,
+                                gainDb = gains[i],
+                                enabled = uiState.equalizerEnabled,
+                                onGainChange = { viewModel.setEqBandGain(i, it) },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(24.dp))
+
+                Button(
+                    onClick = {
+                        preset = "Flat"
+                        FloatArray(10) { 0f }.forEachIndexed { i, g -> viewModel.setEqBandGain(i, g) }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(0.1f)),
+                    shape = RoundedCornerShape(16.dp)
+                ) {
+                    Icon(Icons.Rounded.Refresh, null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Reset to Flat", fontSize = 13.sp)
+                }
             }
         }
     }
 }
 
 @Composable
-private fun EqCurve(gains: FloatArray, enabled: Boolean, modifier: Modifier) {
+fun EqCurve(gains: FloatArray, enabled: Boolean, modifier: Modifier) {
     val animGains = gains.map { g ->
         animateFloatAsState(
             targetValue   = if (enabled) g else 0f,
@@ -189,7 +229,7 @@ private fun EqCurve(gains: FloatArray, enabled: Boolean, modifier: Modifier) {
 }
 
 @Composable
-private fun BandSlider(label: String, gainDb: Float, enabled: Boolean,
+fun BandSlider(label: String, gainDb: Float, enabled: Boolean,
                        onGainChange: (Float) -> Unit, modifier: Modifier) {
     val sliderVal = (gainDb + 12f) / 24f
     val gainColor = when {
@@ -224,9 +264,9 @@ private fun BandSlider(label: String, gainDb: Float, enabled: Boolean,
     }
 }
 
-private fun gainLabel(g: Float) = if (abs(g) < 0.1f) "0" else "${if (g>0) "+" else ""}${"%.1f".format(g)}"
+fun gainLabel(g: Float) = if (abs(g) < 0.1f) "0" else "${if (g>0) "+" else ""}${"%.1f".format(g)}"
 
-private fun lerpColor(a: Color, b: Color, t: Float): Color {
+fun lerpColor(a: Color, b: Color, t: Float): Color {
     val tc = t.coerceIn(0f,1f)
     return Color(a.red+(b.red-a.red)*tc, a.green+(b.green-a.green)*tc,
         a.blue+(b.blue-a.blue)*tc, a.alpha+(b.alpha-a.alpha)*tc)

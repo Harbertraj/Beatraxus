@@ -26,6 +26,7 @@ import androidx.navigation.compose.rememberNavController
 import com.beatflowy.app.service.AudioPlaybackService
 import com.beatflowy.app.ui.screens.EqualizerScreen
 import com.beatflowy.app.ui.screens.MainScreen
+import com.beatflowy.app.ui.screens.SettingsScreen
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.graphics.Color
@@ -136,6 +137,7 @@ class MainActivity : ComponentActivity() {
 sealed class Screen(val route: String) {
     object Main      : Screen("main")
     object Equalizer : Screen("equalizer")
+    object Settings  : Screen("settings")
 }
 
 @Composable
@@ -192,11 +194,17 @@ fun BeatraxusApp(viewModel: PlayerViewModel) {
         composable(Screen.Main.route) {
             MainScreen(
                 viewModel            = viewModel,
-                onNavigateToEqualizer = { navController.navigate(Screen.Equalizer.route) }
+                onNavigateToSettings  = { navController.navigate(Screen.Settings.route) }
             )
         }
         composable(Screen.Equalizer.route) {
             EqualizerScreen(
+                viewModel = viewModel,
+                onBack    = { navController.popBackStack() }
+            )
+        }
+        composable(Screen.Settings.route) {
+            SettingsScreen(
                 viewModel = viewModel,
                 onBack    = { navController.popBackStack() }
             )

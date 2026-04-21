@@ -7,6 +7,9 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Badge
+import androidx.compose.material.icons.rounded.Favorite
+import androidx.compose.material.icons.rounded.FavoriteBorder
+import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -96,7 +99,8 @@ fun SongListItem(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     isMultiSelectMode: Boolean = false,
-    isSelected: Boolean = false
+    isSelected: Boolean = false,
+    onMoreClick: (() -> Unit)? = null
 ) {
     val bgAlpha by animateFloatAsState(
         targetValue   = if (isPlaying || isSelected) 1f else 0f,
@@ -131,26 +135,36 @@ fun SongListItem(
                 )
                 Spacer(Modifier.width(8.dp))
             } else if (isPlaying) {
-                Box(Modifier.width(24.dp), contentAlignment = Alignment.Center) {
+                Box(Modifier.width(28.dp), contentAlignment = Alignment.Center) {
                     MiniEqBars()
                 }
-                Spacer(Modifier.width(12.dp))
+                Spacer(Modifier.width(10.dp))
+            } else {
+                Text(
+                    text = if (trackNumber < 10) "0$trackNumber" else trackNumber.toString(),
+                    color = Color.White.copy(0.4f),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.width(28.dp),
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                )
+                Spacer(Modifier.width(10.dp))
             }
             AlbumArtImage(song = song, size = 52.dp)
             Spacer(Modifier.width(16.dp))
             Column(Modifier.weight(1f)) {
-                Text(song.title, fontSize = 16.sp,
+                Text(song.title + "...", fontSize = 16.sp,
                     fontWeight = FontWeight.Bold,
-                    color = TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 
-                Text("${song.artist}-${song.album}", fontSize = 12.sp, color = TextSecondary,
+                Text("${song.artist}-${song.album}", fontSize = 12.sp, color = Color.LightGray,
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
                 
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
                         Icons.Rounded.Badge, 
                         null, 
-                        tint = TextMuted, 
+                        tint = Color.Gray, 
                         modifier = Modifier.size(11.dp).padding(top = 1.dp)
                     )
                     Spacer(Modifier.width(3.dp))
@@ -162,21 +176,32 @@ fun SongListItem(
                             if (song.bitrate > 0) {
                                 append(" | ${song.bitrate / 1000}kbps")
                             }
-                            if (song.bitDepth > 0) {
-                                append(" | ${song.bitDepth}bit")
-                            }
                         },
                         fontSize = 11.sp,
-                        color = TextMuted,
+                        color = Color.Gray,
                         fontWeight = FontWeight.Medium,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
             }
+            if (onMoreClick != null && !isMultiSelectMode) {
+                IconButton(
+                    onClick = onMoreClick,
+                    modifier = Modifier.padding(start = 0.dp).offset(x = 8.dp)
+                ) {
+                    Icon(
+                        Icons.Rounded.MoreVert,
+                        contentDescription = "More",
+                        tint = Color.White,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
         }
     }
 }
+
 
 @Composable
 private fun MiniEqBars() {

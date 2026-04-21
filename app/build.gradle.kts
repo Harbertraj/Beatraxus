@@ -1,6 +1,7 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("kotlin-kapt")
 }
 
 android {
@@ -22,7 +23,7 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -30,6 +31,15 @@ android {
         }
         debug {
             isDebuggable = true
+        }
+    }
+
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("armeabi-v7a", "arm64-v8a")
+            isUniversalApk = true
         }
     }
 
@@ -110,6 +120,19 @@ dependencies {
 
     // Coil for Image Loading
     implementation("io.coil-kt:coil-compose:2.5.0")
+
+    // Reorderable
+    implementation("sh.calvin.reorderable:reorderable:2.3.2")
+
+    // Room
+    val roomVersion = "2.6.1"
+    implementation("androidx.room:room-runtime:$roomVersion")
+    implementation("androidx.room:room-ktx:$roomVersion")
+    kapt("androidx.room:room-compiler:$roomVersion")
+    // For Kotlin use kapt or ksp. Let's see if ksp is available.
+    // If not, I'll use kapt. But first I need to check plugins.
+    // Actually, I'll just use the runtime for now if I can't add plugins easily.
+    // Wait, I can add plugins.
 
     // Debug
     debugImplementation("androidx.compose.ui:ui-tooling")

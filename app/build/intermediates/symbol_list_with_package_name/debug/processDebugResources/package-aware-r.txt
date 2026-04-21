@@ -3086,6 +3086,7 @@ drawable exo_styled_controls_speed
 drawable exo_styled_controls_subtitle_off
 drawable exo_styled_controls_subtitle_on
 drawable exo_styled_controls_vr
+drawable ic_album_placeholder
 drawable ic_arrow_back_black_24
 drawable ic_call_answer
 drawable ic_call_answer_low

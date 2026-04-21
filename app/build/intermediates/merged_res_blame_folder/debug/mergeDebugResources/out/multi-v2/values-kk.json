@@ -1,7 +1,7 @@
 {
     "logs": [
         {
-            "outputFile": "com.beatflowy.app-mergeDebugResources-70:/values-kk/values-kk.xml",
+            "outputFile": "com.beatflowy.app-mergeDebugResources-74:/values-kk/values-kk.xml",
             "map": [
                 {
                     "source": "C:\\Users\\gmudh\\.gradle\\caches\\8.13\\transforms\\1c6b79a6f425d30ab82d941933ad0cea\\transformed\\media3-ui-1.2.1\\res\\values-kk\\values-kk.xml",
@@ -54,23 +54,6 @@
                         "startOffsets": "10046,10164,10282,10397,10513,10615,10716,10834,10972,11097,11222,11306,11409,11499,11596,11712,11836,11944,12086,12226,12358,12517,12640,12755,12874,12989,13080,13178,13301,13436,13540,13651,13757,13896,14041,14149,14249,14335,14428,14521,14607,14691,14795,14884,14969,15070,15174,15271,15367,15454,15558,15657,15755,15892,15982,16093",
                         "endColumns": "117,117,114,115,101,100,117,137,124,124,83,102,89,96,115,123,107,141,139,131,158,122,114,118,114,90,97,122,134,103,110,105,138,144,107,99,85,92,92,85,83,103,88,84,100,103,96,95,86,103,98,97,136,89,110,100",
                         "endOffsets": "10159,10277,10392,10508,10610,10711,10829,10967,11092,11217,11301,11404,11494,11591,11707,11831,11939,12081,12221,12353,12512,12635,12750,12869,12984,13075,13173,13296,13431,13535,13646,13752,13891,14036,14144,14244,14330,14423,14516,14602,14686,14790,14879,14964,15065,15169,15266,15362,15449,15553,15652,15750,15887,15977,16088,16189"
-                    }
-                },
-                {
-                    "source": "C:\\Users\\gmudh\\.gradle\\caches\\8.13\\transforms\\37b8ecbdc281150179fa242a8cfffb4e\\transformed\\foundation-release\\res\\values-kk\\values-kk.xml",
-                    "from": {
-                        "startLines": "2,3",
-                        "startColumns": "4,4",
-                        "startOffsets": "55,147",
-                        "endColumns": "91,95",
-                        "endOffsets": "142,238"
-                    },
-                    "to": {
-                        "startLines": "259,260",
-                        "startColumns": "4,4",
-                        "startOffsets": "22135,22227",
-                        "endColumns": "91,95",
-                        "endOffsets": "22222,22318"
                     }
                 },
                 {
@@ -127,7 +110,24 @@
                     }
                 },
                 {
-                    "source": "C:\\Users\\gmudh\\.gradle\\caches\\8.13\\transforms\\31ac0b89db8b145dd357634bee80593e\\transformed\\ui-release\\res\\values-kk\\values-kk.xml",
+                    "source": "C:\\Users\\gmudh\\.gradle\\caches\\8.13\\transforms\\269f6d0bd9e20be8beff1f707ac101c2\\transformed\\foundation-release\\res\\values-kk\\values-kk.xml",
+                    "from": {
+                        "startLines": "2,3",
+                        "startColumns": "4,4",
+                        "startOffsets": "55,147",
+                        "endColumns": "91,95",
+                        "endOffsets": "142,238"
+                    },
+                    "to": {
+                        "startLines": "259,260",
+                        "startColumns": "4,4",
+                        "startOffsets": "22135,22227",
+                        "endColumns": "91,95",
+                        "endOffsets": "22222,22318"
+                    }
+                },
+                {
+                    "source": "C:\\Users\\gmudh\\.gradle\\caches\\8.13\\transforms\\22c23360bb3b1abbfd589895456c3d83\\transformed\\ui-release\\res\\values-kk\\values-kk.xml",
                     "from": {
                         "startLines": "2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18",
                         "startColumns": "4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4",

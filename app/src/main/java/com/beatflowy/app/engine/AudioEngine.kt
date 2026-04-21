@@ -1,503 +1,297 @@
 package com.beatflowy.app.engine
 
 import android.content.Context
+import android.media.*
+import android.media.MediaCodecList
+import android.net.Uri
 import android.util.Log
-import androidx.annotation.OptIn
-import androidx.media3.common.C
-import androidx.media3.common.MediaItem
-import androidx.media3.common.PlaybackException
-import androidx.media3.common.Player
-import androidx.media3.common.audio.AudioProcessor
-import androidx.media3.common.util.UnstableApi
-import androidx.media3.exoplayer.DefaultRenderersFactory
-import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.audio.AudioSink
-import androidx.media3.exoplayer.audio.DefaultAudioSink
 import com.beatflowy.app.model.Song
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.update
 import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
-@OptIn(UnstableApi::class)
-class AudioEngine(private val context: Context) {
+class AudioEngine(private val context: Context, private val output: AudioOutput) {
+    private val TAG = "AudioEngine"
+    private var job: Job? = null
+    private val isPlaying = AtomicBoolean(false)
+    private val seekPositionMs = java.util.concurrent.atomic.AtomicLong(-1)
+    /** Thread-safe playback position for UI polling (extractor time base). */
+    private val positionMsAtomic = AtomicLong(0L)
+    
+    private val _audioStateFlow = MutableStateFlow(AudioState())
+    val audioStateFlow = _audioStateFlow.asStateFlow()
 
-    companion object {
-        private const val TAG = "AudioEngine"
-    }
-
-    private val resampler  = Resampler()
-    private val equalizer  = Equalizer10Band()
-    private val outputMgr  = OutputManager(context)
-
-    private lateinit var exoPlayer: ExoPlayer
-    private val processor  = BeatraxusAudioProcessor()
-    private val scope      = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-
-    private val _audioState    = MutableStateFlow(AudioState())
-    val audioStateFlow: StateFlow<AudioState> = _audioState.asStateFlow()
-
-    private val _playbackState = MutableStateFlow(PlaybackState())
-    val playbackStateFlow: StateFlow<PlaybackState> = _playbackState.asStateFlow()
+    private val _playbackStateFlow = MutableStateFlow(PlaybackState())
+    val playbackStateFlow = _playbackStateFlow.asStateFlow()
 
     private var currentSong: Song? = null
 
-    private var songQueue: List<Song> = emptyList()
+    fun currentPositionMs(): Long = positionMsAtomic.get()
 
-    fun prepare() {
-        val audioSink = DefaultAudioSink.Builder(context)
-            .setAudioProcessors(arrayOf(processor))
-            .setEnableFloatOutput(true)
-            .build()
-
-        val renderersFactory = object : DefaultRenderersFactory(context) {
-            override fun buildAudioSink(
-                context: Context,
-                enableFloatOutput: Boolean,
-                enableAudioTrackPlaybackParams: Boolean
-            ): AudioSink {
-                return audioSink
-            }
-        }
-
-        exoPlayer = ExoPlayer.Builder(context, renderersFactory)
-            .build()
-
-        exoPlayer.addListener(object : Player.Listener {
-            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-                val index = exoPlayer.currentMediaItemIndex
-                if (index >= 0 && index < songQueue.size) {
-                    val song = songQueue[index]
-                    currentSong = song
-                    reconfigurePipeline(song)
-                    _playbackState.value = _playbackState.value.copy(
-                        currentSong = song,
-                        positionMs = 0L
-                    )
-                }
-            }
-            override fun onIsPlayingChanged(isPlaying: Boolean) {
-                _playbackState.value = _playbackState.value.copy(isPlaying = isPlaying)
-            }
-            override fun onPlaybackStateChanged(state: Int) {
-                _playbackState.value = _playbackState.value.copy(
-                    isBuffering = state == Player.STATE_BUFFERING
-                )
-            }
-            override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) {
-                _playbackState.value = _playbackState.value.copy(shuffleMode = shuffleModeEnabled)
-            }
-            override fun onRepeatModeChanged(repeatMode: Int) {
-                val mode = when(repeatMode) {
-                    Player.REPEAT_MODE_OFF -> 0
-                    Player.REPEAT_MODE_ONE -> 1
-                    Player.REPEAT_MODE_ALL -> 2
-                    else -> 0
-                }
-                _playbackState.value = _playbackState.value.copy(repeatMode = mode)
-            }
-            override fun onPlayerError(error: PlaybackException) {
-                Log.e(TAG, "Player error: ${error.message}")
-                _playbackState.value = _playbackState.value.copy(error = error.message)
-            }
-        })
-
-        outputMgr.register()
-        scope.launch {
-            outputMgr.deviceFlow.collect { device ->
-                _audioState.value = _audioState.value.copy(outputDevice = device.displayName)
-                currentSong?.let { reconfigurePipeline(it) }
-            }
-        }
-    }
-
-    fun release() {
-        scope.cancel()
-        outputMgr.unregister()
-        if (::exoPlayer.isInitialized) exoPlayer.release()
-    }
+    private val _onCompletion = kotlinx.coroutines.flow.MutableSharedFlow<Unit>()
+    val onCompletion = _onCompletion.asSharedFlow()
 
     fun play(song: Song) {
-        songQueue = listOf(song)
+        cancelDecodeJob()
+        positionMsAtomic.set(0L)
         currentSong = song
-        reconfigurePipeline(song)
-        exoPlayer.setMediaItem(MediaItem.fromUri(song.uri))
-        exoPlayer.prepare()
-        exoPlayer.playWhenReady = true
-        _playbackState.value = _playbackState.value.copy(
-            currentSong = song, 
-            positionMs = 0L,
-            shuffleMode = exoPlayer.shuffleModeEnabled,
-            repeatMode = when(exoPlayer.repeatMode) {
-                Player.REPEAT_MODE_OFF -> 0
-                Player.REPEAT_MODE_ONE -> 1
-                Player.REPEAT_MODE_ALL -> 2
-                else -> 0
+        _playbackStateFlow.update { it.copy(currentSong = song, isPlaying = true) }
+        job = CoroutineScope(Dispatchers.IO).launch {
+            val reachedEnd = decodeAndPlay(song.uri, song.id, startPositionMs = 0L)
+            if (reachedEnd) {
+                _onCompletion.emit(Unit)
             }
-        )
-    }
-
-    fun playList(songs: List<Song>, startIndex: Int) {
-        if (songs.isEmpty()) return
-        songQueue = songs
-        exoPlayer.stop()
-        exoPlayer.clearMediaItems()
-        
-        val items = songs.map { MediaItem.fromUri(it.uri) }
-        exoPlayer.addMediaItems(items)
-        
-        currentSong = songs[startIndex]
-        reconfigurePipeline(currentSong!!)
-        
-        exoPlayer.seekTo(startIndex, 0L)
-        exoPlayer.prepare()
-        exoPlayer.playWhenReady = true
-        
-        _playbackState.value = _playbackState.value.copy(
-            currentSong = currentSong,
-            positionMs = 0L,
-            shuffleMode = exoPlayer.shuffleModeEnabled,
-            repeatMode = when(exoPlayer.repeatMode) {
-                Player.REPEAT_MODE_OFF -> 0
-                Player.REPEAT_MODE_ONE -> 1
-                Player.REPEAT_MODE_ALL -> 2
-                else -> 0
-            }
-        )
-    }
-
-    fun togglePlayPause() {
-        if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
-    }
-
-    fun pause()  { exoPlayer.pause() }
-    fun resume() { exoPlayer.play() }
-
-    fun next() {
-        if (exoPlayer.hasNextMediaItem()) {
-            exoPlayer.seekToNextMediaItem()
         }
     }
 
-    fun getNextSong(): Song? {
-        val nextIndex = exoPlayer.nextMediaItemIndex
-        return if (nextIndex != C.INDEX_UNSET && nextIndex < songQueue.size) {
-            songQueue[nextIndex]
-        } else null
-    }
-
-    fun previous() {
-        if (exoPlayer.currentPosition > 3000) {
-            exoPlayer.seekTo(0)
-        } else if (exoPlayer.hasPreviousMediaItem()) {
-            exoPlayer.seekToPreviousMediaItem()
+    fun resume() {
+        if (isPlaying.get()) return
+        val song = currentSong ?: return
+        val resumeFrom = positionMsAtomic.get()
+        _playbackStateFlow.update { it.copy(isPlaying = true) }
+        job = CoroutineScope(Dispatchers.IO).launch {
+            decodeAndPlay(song.uri, song.id, startPositionMs = resumeFrom)
         }
-    }
-
-    fun toggleShuffle() {
-        exoPlayer.shuffleModeEnabled = !exoPlayer.shuffleModeEnabled
     }
 
     fun setShuffleMode(enabled: Boolean) {
-        exoPlayer.shuffleModeEnabled = enabled
+        _playbackStateFlow.update { it.copy(shuffleMode = enabled) }
     }
 
-    fun toggleRepeat() {
-        exoPlayer.repeatMode = when(exoPlayer.repeatMode) {
-            Player.REPEAT_MODE_OFF -> Player.REPEAT_MODE_ALL
-            Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_ONE
-            else -> Player.REPEAT_MODE_OFF
-        }
+    fun setRepeatMode(mode: RepeatMode) {
+        _playbackStateFlow.update { it.copy(repeatMode = mode) }
+    }
+
+    /**
+     * Stops decoding immediately and publishes [PlaybackState.isPlaying] = false so UI never
+     * stays out of sync while the decode coroutine unwinds.
+     */
+    fun stop() {
+        cancelDecodeJob()
+        _playbackStateFlow.update { it.copy(isPlaying = false) }
+    }
+
+    private fun cancelDecodeJob() {
+        isPlaying.set(false)
+        job?.cancel()
+        job = null
+        output.stop()
     }
 
     fun seekTo(positionMs: Long) {
-        exoPlayer.seekTo(positionMs)
-        resampler.reset()
-        equalizer.reset()
-        _playbackState.value = _playbackState.value.copy(positionMs = positionMs)
+        seekPositionMs.set(positionMs)
     }
 
-    val currentPositionMs: Long
-        get() = if (::exoPlayer.isInitialized) exoPlayer.currentPosition else 0L
-
-    fun setResamplingEnabled(enabled: Boolean) {
-        resampler.isEnabled = false
-        _audioState.value = _audioState.value.copy(resamplingActive = false)
-    }
-
-    fun setEqualizerEnabled(enabled: Boolean) {
-        equalizer.isEnabled = enabled
-        _audioState.value = _audioState.value.copy(equalizerActive = enabled)
-    }
-
-    fun setEqGain(band: Int, gainDb: Float) {
-        equalizer.setGain(band, gainDb)
-        updateAudioState()
-    }
-
-    fun setPreamp(db: Float) {
-        equalizer.setPreampManual(db)
-        updateAudioState()
-    }
-
-    fun setTone(bass: Float, treble: Float) {
-        // Simple bass/treble shelf implementation inside Equalizer10Band
-        // or a separate Tone class. For now, let's assume Equalizer10Band handles it.
-        equalizer.setTone(bass, treble)
-        updateAudioState()
-    }
-
-    fun setBalance(balance: Float) {
-        processor.setBalance(balance)
-        updateAudioState()
-    }
-
-    fun setStereoExpand(expand: Float) {
-        processor.setStereoExpand(expand)
-        updateAudioState()
-    }
-
-    fun setTempo(tempo: Float) {
-        exoPlayer.setPlaybackSpeed(tempo)
-        updateAudioState()
-    }
-
-    fun setMono(mono: Boolean) {
-        processor.setMono(mono)
-        updateAudioState()
-    }
-
-    fun setReverbEnabled(enabled: Boolean) {
-        processor.setReverbEnabled(enabled)
-        updateAudioState()
-    }
-
-    fun setReverbParams(mix: Float, size: Float, damp: Float, filter: Float, fade: Float, preDelay: Float, preDelayMix: Float) {
-        processor.setReverbParams(mix, size, damp, filter, fade, preDelay, preDelayMix)
-        updateAudioState()
-    }
-
-    private fun updateAudioState() {
-        val song = currentSong ?: return
-        _audioState.value = AudioState(
-            inputSampleRateHz  = song.sampleRateHz,
-            outputSampleRateHz = Resampler.targetSampleRate(song.sampleRateHz, resampler.isEnabled),
-            outputDevice       = outputMgr.currentDevice.displayName,
-            resamplingActive   = resampler.isEnabled,
-            equalizerActive    = equalizer.isEnabled,
-            bitDepth           = song.bitDepth,
-            preampDb           = equalizer.getPreampManual(),
-            bassDb             = equalizer.getBassDb(),
-            trebleDb           = equalizer.getTrebleDb(),
-            balance            = processor.getBalance(),
-            stereoExpand       = processor.getStereoExpand(),
-            tempo              = exoPlayer.playbackParameters.speed,
-            isMono             = processor.getMono(),
-            reverbMix          = processor.getReverbMix(),
-            reverbSize         = processor.getReverbSize(),
-            reverbDamp         = processor.getReverbDamp(),
-            reverbFilter       = processor.getReverbFilter(),
-            reverbFade         = processor.getReverbFade(),
-            reverbPreDelay     = processor.getReverbPreDelay(),
-            reverbPreDelayMix  = processor.getReverbPreDelayMix()
-        )
-    }
-
-    private fun reconfigurePipeline(song: Song) {
-        updateAudioState()
-    }
-
-    inner class BeatraxusAudioProcessor : AudioProcessor {
-
-        private var inputFormat  = AudioProcessor.AudioFormat.NOT_SET
-        private var outputFormat = AudioProcessor.AudioFormat.NOT_SET
-        private var buffer       = AudioProcessor.EMPTY_BUFFER
-        private var outputBuffer = AudioProcessor.EMPTY_BUFFER
-        private val ended        = AtomicBoolean(false)
-        private var active       = false
-
-        // DSP Params
-        private var balance = 0f
-        private var stereoExpand = 0f
-        private var isMono = false
-        private var reverbEnabled = false
-        private var reverbMix = 0f
-        private var reverbSize = 0.5f
-        private var reverbDamp = 0.5f
-        private var reverbFilter = 1.0f
-        private var reverbFade = 1.0f
-        private var reverbPreDelay = 0f
-        private var reverbPreDelayMix = 0f
-
-        fun setBalance(v: Float) { balance = v }
-        fun getBalance() = balance
-        fun setStereoExpand(v: Float) { stereoExpand = v }
-        fun getStereoExpand() = stereoExpand
-        fun setMono(v: Boolean) { isMono = v }
-        fun getMono() = isMono
-        fun setReverbEnabled(v: Boolean) { reverbEnabled = v }
-        fun setReverbParams(mix: Float, size: Float, damp: Float, filter: Float, fade: Float, preDelay: Float, preDelayMix: Float) {
-            reverbMix = mix
-            reverbSize = size
-            reverbDamp = damp
-            reverbFilter = filter
-            reverbFade = fade
-            reverbPreDelay = preDelay
-            reverbPreDelayMix = preDelayMix
-        }
-        fun getReverbMix() = reverbMix
-        fun getReverbSize() = reverbSize
-        fun getReverbDamp() = reverbDamp
-        fun getReverbFilter() = reverbFilter
-        fun getReverbFade() = reverbFade
-        fun getReverbPreDelay() = reverbPreDelay
-        fun getReverbPreDelayMix() = reverbPreDelayMix
-
-        override fun configure(inputAudioFormat: AudioProcessor.AudioFormat): AudioProcessor.AudioFormat {
-            inputFormat = inputAudioFormat
-            
-            // Allow both FLOAT and 16-bit PCM for broader compatibility.
-            // Some decoders might not output float directly.
-            val supportedEncoding = inputAudioFormat.encoding == C.ENCODING_PCM_FLOAT || 
-                                   inputAudioFormat.encoding == C.ENCODING_PCM_16BIT
-
-            if (!supportedEncoding) {
-                Log.w(TAG, "Processor inactive: input encoding is ${inputAudioFormat.encoding}")
-                active = false
-                return AudioProcessor.AudioFormat.NOT_SET
+    private suspend fun decodeAndPlay(uri: Uri, sessionSongId: String, startPositionMs: Long): Boolean {
+        val extractor = MediaExtractor()
+        var codec: MediaCodec? = null
+        var reachedEnd = false
+        try {
+            context.contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
+                extractor.setDataSource(pfd.fileDescriptor)
             }
 
-            // Real-time configuration based on actual decoded stream
-            val inHz = inputAudioFormat.sampleRate
-            val outHz = Resampler.targetSampleRate(inHz, resampler.isEnabled)
-            
-            Log.d(TAG, "Configuring Resampler: $inHz -> $outHz (Channels: ${inputAudioFormat.channelCount}, Encoding: ${inputAudioFormat.encoding})")
-            resampler.configure(inHz, outHz, inputAudioFormat.channelCount)
-            equalizer.setSampleRate(outHz)
-            
-            outputFormat = AudioProcessor.AudioFormat(
-                outHz,
-                inputAudioFormat.channelCount,
-                C.ENCODING_PCM_FLOAT
+            val candidates = mutableListOf<Pair<Int, MediaFormat>>()
+            for (i in 0 until extractor.trackCount) {
+                val format = extractor.getTrackFormat(i)
+                val mime = format.getString(MediaFormat.KEY_MIME) ?: continue
+                if (!mime.startsWith("audio/")) continue
+                candidates.add(i to format)
+            }
+            if (candidates.isEmpty()) throw Exception("No audio track found")
+
+            val ordered = candidates.sortedWith(
+                compareByDescending<Pair<Int, MediaFormat>> { (_, f) ->
+                    audioMimePriority(f.getString(MediaFormat.KEY_MIME) ?: "")
+                }.thenBy { it.first }
             )
-            active = true
-            return outputFormat
-        }
 
-        override fun isActive(): Boolean = active
-
-        override fun queueInput(inputBuffer: ByteBuffer) {
-            if (!inputBuffer.hasRemaining()) return
-            
-            val channels = inputFormat.channelCount
-            val floats: FloatArray
-            val frameCount: Int
-
-            if (inputFormat.encoding == C.ENCODING_PCM_FLOAT) {
-                val floatCount = inputBuffer.remaining() / 4
-                frameCount = floatCount / channels
-                floats = FloatArray(floatCount)
-                inputBuffer.asFloatBuffer().get(floats)
-            } else {
-                // Convert 16-bit PCM to Float [-1.0, 1.0]
-                val shortCount = inputBuffer.remaining() / 2
-                frameCount = shortCount / channels
-                floats = FloatArray(shortCount)
-                for (i in 0 until shortCount) {
-                    val s = inputBuffer.short
-                    floats[i] = s.toFloat() / 32768.0f
+            var selectedFormat: MediaFormat? = null
+            var selectedMime: String? = null
+            var lastFailure: Exception? = null
+            pickCodec@ for (requireListedDecoder in listOf(true, false)) {
+                for ((idx, format) in ordered) {
+                    val mime = format.getString(MediaFormat.KEY_MIME) ?: continue
+                    if (requireListedDecoder && !isDecoderLikelyAvailable(mime)) {
+                        Log.w(TAG, "Skipping mime (no decoder listed, strict pass): $mime")
+                        continue
+                    }
+                    try {
+                        extractor.selectTrack(idx)
+                        val dec = MediaCodec.createDecoderByType(mime)
+                        dec.configure(format, null, null, 0)
+                        dec.start()
+                        codec = dec
+                        selectedFormat = format
+                        selectedMime = mime
+                        break@pickCodec
+                    } catch (e: Exception) {
+                        lastFailure = e
+                        Log.w(TAG, "Decoder init failed for track=$idx mime=$mime: ${e.message}")
+                        try {
+                            codec?.release()
+                        } catch (_: Exception) {
+                        }
+                        codec = null
+                        try {
+                            extractor.unselectTrack(idx)
+                        } catch (_: Exception) {
+                        }
+                    }
                 }
             }
-            inputBuffer.position(inputBuffer.limit())
 
-            // Resample and Equalize
-            val (processed, frames) = resampler.process(floats, frameCount)
-            
-            // Apply Mono / Balance / Stereo Expand
-            applyDsp(processed, frames, channels)
-
-            if (equalizer.isEnabled) {
-                equalizer.process(processed, frames)
+            if (codec == null) {
+                throw lastFailure ?: IllegalStateException("No working audio decoder for this file")
             }
 
-            // TODO: Reverb processing (Simple Schroeder Reverb could be added)
+            val format = selectedFormat!!
+            val mime = selectedMime!!
+            Log.d(TAG, "Playing mime=$mime format=$format")
 
-            val outBytes = frames * channels * 4
-            if (buffer.capacity() < outBytes) {
-                buffer = ByteBuffer.allocateDirect(outBytes).order(java.nio.ByteOrder.nativeOrder())
-            } else {
-                buffer.clear()
-            }
+            val sampleRate = format.getInteger(MediaFormat.KEY_SAMPLE_RATE)
+            val channels = format.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
+
+            // Re-fetch format after start, some codecs update it
+            val outputFormat = codec.outputFormat
+            val actualSampleRate = if (outputFormat.containsKey(MediaFormat.KEY_SAMPLE_RATE)) 
+                outputFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE) else sampleRate
+            val actualChannels = if (outputFormat.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) 
+                outputFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT) else channels
+
+            if (!output.init(actualSampleRate, actualChannels)) return false
+            output.start()
+
+            val info = MediaCodec.BufferInfo()
+            _audioStateFlow.update { it.copy(sampleRate = actualSampleRate) }
             
-            buffer.asFloatBuffer().put(processed, 0, frames * channels)
-            buffer.limit(outBytes)
-            this.outputBuffer = buffer
-        }
-
-        override fun queueEndOfStream() { 
-            ended.set(true) 
-        }
-
-        override fun getOutput(): ByteBuffer {
-            val out = outputBuffer
-            outputBuffer = AudioProcessor.EMPTY_BUFFER
-            return out
-        }
-
-        override fun isEnded(): Boolean = ended.get() && !outputBuffer.hasRemaining()
-
-        override fun flush() {
-            outputBuffer = AudioProcessor.EMPTY_BUFFER
-            ended.set(false)
-        }
-
-        override fun reset() {
-            flush()
-            buffer = AudioProcessor.EMPTY_BUFFER
-            inputFormat = AudioProcessor.AudioFormat.NOT_SET
-            outputFormat = AudioProcessor.AudioFormat.NOT_SET
-            active = false
-        }
-
-        private fun applyDsp(buffer: FloatArray, frames: Int, channels: Int) {
-            if (channels < 2) return
-            
-            for (i in 0 until frames) {
-                var l = buffer[i * 2]
-                var r = buffer[i * 2 + 1]
-
-                // Mono
-                if (isMono) {
-                    val m = (l + r) * 0.5f
-                    l = m
-                    r = m
-                }
-
-                // Stereo Expand (Mid-Side processing)
-                if (stereoExpand > 0 && !isMono) {
-                    val mid = (l + r) * 0.5f
-                    var side = (l - r) * 0.5f
-                    side *= (1.0f + stereoExpand)
-                    l = mid + side
-                    r = mid - side
-                }
-
-                // Balance
-                if (balance < 0) {
-                    r *= (1.0f + balance)
-                } else if (balance > 0) {
-                    l *= (1.0f - balance)
-                }
-
-                buffer[i * 2] = l
-                buffer[i * 2 + 1] = r
+            if (startPositionMs > 0) {
+                extractor.seekTo(startPositionMs * 1000, MediaExtractor.SEEK_TO_CLOSEST_SYNC)
             }
+
+            isPlaying.set(true)
+
+            while (isPlaying.get()) {
+                val seekPos = seekPositionMs.getAndSet(-1)
+                if (seekPos != -1L) {
+                    extractor.seekTo(seekPos * 1000, MediaExtractor.SEEK_TO_CLOSEST_SYNC)
+                    codec.flush()
+                    positionMsAtomic.set(seekPos.coerceAtLeast(0L))
+                }
+
+                val sampleUs = extractor.sampleTime
+                if (sampleUs >= 0) {
+                    positionMsAtomic.set(sampleUs / 1000)
+                }
+                val inIdx = codec.dequeueInputBuffer(10000)
+                if (inIdx >= 0) {
+                    val buf = codec.getInputBuffer(inIdx)!!
+                    val size = extractor.readSampleData(buf, 0)
+                    if (size < 0) {
+                        codec.queueInputBuffer(inIdx, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                    } else {
+                        codec.queueInputBuffer(inIdx, 0, size, extractor.sampleTime, 0)
+                        extractor.advance()
+                    }
+                }
+
+                val outIdx = codec.dequeueOutputBuffer(info, 10000)
+                if (outIdx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                    val newFormat = codec.outputFormat
+                    val newSampleRate = newFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE)
+                    val newChannels = newFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
+                    output.stop()
+                    output.init(newSampleRate, newChannels)
+                    output.start()
+                    _audioStateFlow.update { it.copy(sampleRate = newSampleRate) }
+                } else if (outIdx >= 0) {
+                    val buf = codec.getOutputBuffer(outIdx)!!
+                    buf.position(info.offset)
+                    buf.limit(info.offset + info.size)
+
+                    if (info.size > 0) {
+                        // Support different PCM encodings if possible, but default to 16-bit to Float
+                        val pcmEncoding = if (codec.outputFormat.containsKey(MediaFormat.KEY_PCM_ENCODING))
+                            codec.outputFormat.getInteger(MediaFormat.KEY_PCM_ENCODING)
+                            else AudioFormat.ENCODING_PCM_16BIT
+
+                        val floatData = when (pcmEncoding) {
+                            AudioFormat.ENCODING_PCM_FLOAT -> {
+                                val floats = FloatArray(info.size / 4)
+                                buf.order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer().get(floats)
+                                floats
+                            }
+                            else -> {
+                                // Default to 16-bit
+                                val shorts = ShortArray(info.size / 2)
+                                buf.order(ByteOrder.LITTLE_ENDIAN).asShortBuffer().get(shorts)
+                                FloatArray(shorts.size) { shorts[it] / 32768f }
+                            }
+                        }
+                        
+                        val currentChannels = codec.outputFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
+                        if (floatData.isNotEmpty() && currentChannels > 0) {
+                            output.write(floatData, floatData.size / currentChannels)
+                        }
+                    }
+                    
+                    codec.releaseOutputBuffer(outIdx, false)
+                    if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) {
+                        reachedEnd = true
+                        break
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Playback error: ${e.message}")
+        } finally {
+            // Avoid racing a newer session: only clear playing if this decode still owns the song.
+            if (currentSong?.id == sessionSongId) {
+                _playbackStateFlow.update { it.copy(isPlaying = false) }
+            }
+            try {
+                codec?.stop()
+                codec?.release()
+            } catch (e: Exception) {}
+            extractor.release()
+            output.stop()
+        }
+        return reachedEnd
+    }
+
+    fun release() {
+        stop()
+        output.release()
+    }
+
+    private fun audioMimePriority(mime: String): Int {
+        val m = mime.lowercase()
+        return when {
+            m.contains("alac") -> 120
+            m.contains("flac") -> 110
+            m.contains("opus") -> 105
+            m.contains("vorbis") -> 100
+            m.contains("mpeg") || m.contains("mp3") -> 95
+            m.contains("mp4a") || m.contains("aac") || m.contains("latm") -> 90
+            m.contains("amr") -> 50
+            else -> 10
+        }
+    }
+
+    private fun isDecoderLikelyAvailable(mime: String): Boolean {
+        return try {
+            MediaCodecList(MediaCodecList.ALL_CODECS).codecInfos.any { info ->
+                !info.isEncoder && info.supportedTypes.any { it.equals(mime, ignoreCase = true) }
+            }
+        } catch (_: Exception) {
+            true
         }
     }
 }
