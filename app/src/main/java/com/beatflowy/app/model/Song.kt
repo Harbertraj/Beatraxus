@@ -87,7 +87,8 @@ data class PlayerUiState(
     val bitrate: Int = 0,
     val format: String = "",
     val resamplingEnabled: Boolean = true,
-    val currentFolderPath: String? = null
+    val currentFolderPath: String? = null,
+    val isFirstRun: Boolean = true
 ) {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true

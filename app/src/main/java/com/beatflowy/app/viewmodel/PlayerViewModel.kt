@@ -35,6 +35,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private val _uiState = MutableStateFlow(PlayerUiState())
     val uiState: StateFlow<PlayerUiState> = _uiState.asStateFlow()
 
+    init {
+        val prefs = application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE)
+        val isFirstRun = prefs.getBoolean("first_run", true)
+        _uiState.update { it.copy(isFirstRun = isFirstRun) }
+    }
+
     val playlists: StateFlow<List<Playlist>> = playlistDao.getAllPlaylists()
         .map { entities ->
             entities.map { entity ->
@@ -314,6 +320,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 }
                 
                 if (isFirstRun) {
+                    _uiState.update { it.copy(scanProgress = 1.0f) }
                     service?.updateScanningProgress(1.0f, results.size, true)
                 }
             } catch (e: Exception) {
@@ -611,6 +618,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private fun stopProgressPolling() {
         progressJob?.cancel()
         progressJob = null
+    }
+
+    fun setFirstRunComplete() {
+        val prefs = getApplication<Application>().getSharedPreferences("beatraxus", Application.MODE_PRIVATE)
+        prefs.edit().putBoolean("first_run", false).apply()
+        _uiState.update { it.copy(isFirstRun = false) }
     }
 
     override fun onCleared() {

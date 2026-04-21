@@ -1,30 +1,34 @@
 [
     {
-        "merged": "com.beatflowy.app-debug-76:/drawable_app_icon_bg.xml.flat",
-        "source": "com.beatflowy.app-main-78:/drawable/app_icon_bg.xml"
+        "merged": "com.beatflowy.app-debug-77:/drawable_app_icon_fg.xml.flat",
+        "source": "com.beatflowy.app-main-79:/drawable/app_icon_fg.xml"
     },
     {
-        "merged": "com.beatflowy.app-debug-76:/drawable_ic_album_placeholder.xml.flat",
-        "source": "com.beatflowy.app-main-78:/drawable/ic_album_placeholder.xml"
+        "merged": "com.beatflowy.app-debug-77:/xml_backup_rules.xml.flat",
+        "source": "com.beatflowy.app-main-79:/xml/backup_rules.xml"
     },
     {
-        "merged": "com.beatflowy.app-debug-76:/mipmap-anydpi-v26_ic_launcher.xml.flat",
-        "source": "com.beatflowy.app-main-78:/mipmap-anydpi-v26/ic_launcher.xml"
+        "merged": "com.beatflowy.app-debug-77:/drawable_app_icon_bg.xml.flat",
+        "source": "com.beatflowy.app-main-79:/drawable/app_icon_bg.xml"
     },
     {
-        "merged": "com.beatflowy.app-debug-76:/mipmap-anydpi-v26_ic_launcher_round.xml.flat",
-        "source": "com.beatflowy.app-main-78:/mipmap-anydpi-v26/ic_launcher_round.xml"
+        "merged": "com.beatflowy.app-debug-77:/mipmap-anydpi-v26_ic_launcher.xml.flat",
+        "source": "com.beatflowy.app-main-79:/mipmap-anydpi-v26/ic_launcher.xml"
     },
     {
-        "merged": "com.beatflowy.app-debug-76:/xml_backup_rules.xml.flat",
-        "source": "com.beatflowy.app-main-78:/xml/backup_rules.xml"
+        "merged": "com.beatflowy.app-debug-77:/raw_music_wave.json.flat",
+        "source": "com.beatflowy.app-main-79:/raw/music_wave.json"
     },
     {
-        "merged": "com.beatflowy.app-debug-76:/xml_data_extraction_rules.xml.flat",
-        "source": "com.beatflowy.app-main-78:/xml/data_extraction_rules.xml"
+        "merged": "com.beatflowy.app-debug-77:/drawable_ic_album_placeholder.xml.flat",
+        "source": "com.beatflowy.app-main-79:/drawable/ic_album_placeholder.xml"
     },
     {
-        "merged": "com.beatflowy.app-debug-76:/drawable_app_icon_fg.xml.flat",
-        "source": "com.beatflowy.app-main-78:/drawable/app_icon_fg.xml"
+        "merged": "com.beatflowy.app-debug-77:/xml_data_extraction_rules.xml.flat",
+        "source": "com.beatflowy.app-main-79:/xml/data_extraction_rules.xml"
+    },
+    {
+        "merged": "com.beatflowy.app-debug-77:/mipmap-anydpi-v26_ic_launcher_round.xml.flat",
+        "source": "com.beatflowy.app-main-79:/mipmap-anydpi-v26/ic_launcher_round.xml"
     }
 ]

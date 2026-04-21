@@ -4,6 +4,7 @@ ADDED from D:\Beatflowy_Complete\Beatraxus\app\src\main\AndroidManifest.xml:2:1-
 INJECTED from D:\Beatflowy_Complete\Beatraxus\app\src\main\AndroidManifest.xml:2:1-49:12
 INJECTED from D:\Beatflowy_Complete\Beatraxus\app\src\main\AndroidManifest.xml:2:1-49:12
 INJECTED from D:\Beatflowy_Complete\Beatraxus\app\src\main\AndroidManifest.xml:2:1-49:12
+MERGED from [com.airbnb.android:lottie-compose:6.3.0] C:\Users\gmudh\.gradle\caches\8.13\transforms\34c2f79d8fc90c6b97461f316982e113\transformed\lottie-compose-6.3.0\AndroidManifest.xml:2:1-7:12
 MERGED from [androidx.navigation:navigation-common:2.7.6] C:\Users\gmudh\.gradle\caches\8.13\transforms\653dd0dd8bbe17c3e0da441604e7bd89\transformed\navigation-common-2.7.6\AndroidManifest.xml:17:1-22:12
 MERGED from [androidx.navigation:navigation-runtime:2.7.6] C:\Users\gmudh\.gradle\caches\8.13\transforms\7eea3b561a826a1a1d15c7291b14a5b5\transformed\navigation-runtime-2.7.6\AndroidManifest.xml:17:1-22:12
 MERGED from [androidx.navigation:navigation-common-ktx:2.7.6] C:\Users\gmudh\.gradle\caches\8.13\transforms\3b1a48bbb70f0bfa138b9c69052d0944\transformed\navigation-common-ktx-2.7.6\AndroidManifest.xml:2:1-7:12
@@ -11,6 +12,7 @@ MERGED from [androidx.navigation:navigation-runtime-ktx:2.7.6] C:\Users\gmudh\.g
 MERGED from [androidx.navigation:navigation-compose:2.7.6] C:\Users\gmudh\.gradle\caches\8.13\transforms\e0603eda7b907795314527e5ccaef33a\transformed\navigation-compose-2.7.6\AndroidManifest.xml:2:1-7:12
 MERGED from [com.google.android.material:material:1.11.0] C:\Users\gmudh\.gradle\caches\8.13\transforms\9b6d5dd8e51a124ca3753a50847ed588\transformed\material-1.11.0\AndroidManifest.xml:17:1-24:12
 MERGED from [androidx.constraintlayout:constraintlayout:2.0.1] C:\Users\gmudh\.gradle\caches\8.13\transforms\95c50cf50053c7525a3c33868b61d15e\transformed\constraintlayout-2.0.1\AndroidManifest.xml:2:1-11:12
+MERGED from [com.airbnb.android:lottie:6.3.0] C:\Users\gmudh\.gradle\caches\8.13\transforms\3ccdf1e56b0c6145160707056efb82a5\transformed\lottie-6.3.0\AndroidManifest.xml:2:1-9:12
 MERGED from [io.coil-kt:coil-compose:2.5.0] C:\Users\gmudh\.gradle\caches\8.13\transforms\1db1dcf8177398175f6648e961916993\transformed\coil-compose-2.5.0\AndroidManifest.xml:2:1-7:12
 MERGED from [io.coil-kt:coil-compose-base:2.5.0] C:\Users\gmudh\.gradle\caches\8.13\transforms\761a179808a915154240b27185378614\transformed\coil-compose-base-2.5.0\AndroidManifest.xml:2:1-7:12
 MERGED from [io.coil-kt:coil:2.5.0] C:\Users\gmudh\.gradle\caches\8.13\transforms\b74fc02073e8463523dadbff15c605eb\transformed\coil-2.5.0\AndroidManifest.xml:2:1-7:12
@@ -91,11 +93,11 @@ MERGED from [androidx.compose.runtime:runtime-android:1.6.7] C:\Users\gmudh\.gra
 MERGED from [androidx.sqlite:sqlite-framework:2.4.0] C:\Users\gmudh\.gradle\caches\8.13\transforms\79815f06030177f8d1234bd006aa7995\transformed\sqlite-framework-2.4.0\AndroidManifest.xml:17:1-22:12
 MERGED from [androidx.sqlite:sqlite:2.4.0] C:\Users\gmudh\.gradle\caches\8.13\transforms\8a1a09bd8f9bf05512c30339aada7cb8\transformed\sqlite-2.4.0\AndroidManifest.xml:17:1-22:12
 MERGED from [androidx.annotation:annotation-experimental:1.4.0] C:\Users\gmudh\.gradle\caches\8.13\transforms\447b7a88ec9ac70b265812076dbeafa7\transformed\annotation-experimental-1.4.0\AndroidManifest.xml:2:1-7:12
-MERGED from [androidx.versionedparcelable:versionedparcelable:1.1.1] C:\Users\gmudh\.gradle\caches\8.13\transforms\69d6ac2ab6b71b844b9a1e90123e575d\transformed\versionedparcelable-1.1.1\AndroidManifest.xml:17:1-27:12
 MERGED from [androidx.cardview:cardview:1.0.0] C:\Users\gmudh\.gradle\caches\8.13\transforms\0d22f7bf2798c2d4e2783f608caad296\transformed\cardview-1.0.0\AndroidManifest.xml:17:1-22:12
 MERGED from [androidx.exifinterface:exifinterface:1.3.6] C:\Users\gmudh\.gradle\caches\8.13\transforms\60ce3ffa719d874b2ab38e283a15a783\transformed\exifinterface-1.3.6\AndroidManifest.xml:17:1-24:12
 MERGED from [androidx.arch.core:core-runtime:2.2.0] C:\Users\gmudh\.gradle\caches\8.13\transforms\821108b47c5a7afa7f59558361a5b0fb\transformed\core-runtime-2.2.0\AndroidManifest.xml:17:1-22:12
 MERGED from [androidx.interpolator:interpolator:1.0.0] C:\Users\gmudh\.gradle\caches\8.13\transforms\5e2397965c35dd0ec4e9e87964029728\transformed\interpolator-1.0.0\AndroidManifest.xml:17:1-22:12
+MERGED from [androidx.versionedparcelable:versionedparcelable:1.1.1] C:\Users\gmudh\.gradle\caches\8.13\transforms\69d6ac2ab6b71b844b9a1e90123e575d\transformed\versionedparcelable-1.1.1\AndroidManifest.xml:17:1-27:12
 MERGED from [androidx.cursoradapter:cursoradapter:1.0.0] C:\Users\gmudh\.gradle\caches\8.13\transforms\1f724e6d3ad688d5d6a78f7cf57fcd93\transformed\cursoradapter-1.0.0\AndroidManifest.xml:17:1-22:12
 MERGED from [androidx.profileinstaller:profileinstaller:1.3.1] C:\Users\gmudh\.gradle\caches\8.13\transforms\93d08a43d63ee8727419ad3d9fc969bb\transformed\profileinstaller-1.3.1\AndroidManifest.xml:17:1-55:12
 MERGED from [androidx.startup:startup-runtime:1.1.1] C:\Users\gmudh\.gradle\caches\8.13\transforms\06b7d53b73f0847245d151be24d08af8\transformed\startup-runtime-1.1.1\AndroidManifest.xml:17:1-33:12
@@ -154,6 +156,8 @@ MERGED from [com.google.android.material:material:1.11.0] C:\Users\gmudh\.gradle
 MERGED from [com.google.android.material:material:1.11.0] C:\Users\gmudh\.gradle\caches\8.13\transforms\9b6d5dd8e51a124ca3753a50847ed588\transformed\material-1.11.0\AndroidManifest.xml:22:5-20
 MERGED from [androidx.constraintlayout:constraintlayout:2.0.1] C:\Users\gmudh\.gradle\caches\8.13\transforms\95c50cf50053c7525a3c33868b61d15e\transformed\constraintlayout-2.0.1\AndroidManifest.xml:9:5-20
 MERGED from [androidx.constraintlayout:constraintlayout:2.0.1] C:\Users\gmudh\.gradle\caches\8.13\transforms\95c50cf50053c7525a3c33868b61d15e\transformed\constraintlayout-2.0.1\AndroidManifest.xml:9:5-20
+MERGED from [com.airbnb.android:lottie:6.3.0] C:\Users\gmudh\.gradle\caches\8.13\transforms\3ccdf1e56b0c6145160707056efb82a5\transformed\lottie-6.3.0\AndroidManifest.xml:7:5-20
+MERGED from [com.airbnb.android:lottie:6.3.0] C:\Users\gmudh\.gradle\caches\8.13\transforms\3ccdf1e56b0c6145160707056efb82a5\transformed\lottie-6.3.0\AndroidManifest.xml:7:5-20
 MERGED from [androidx.compose.ui:ui-tooling-android:1.6.7] C:\Users\gmudh\.gradle\caches\8.13\transforms\19f40acdc673ad4ae0dc63ac8aa44e6e\transformed\ui-tooling-release\AndroidManifest.xml:22:5-26:19
 MERGED from [androidx.compose.ui:ui-tooling-android:1.6.7] C:\Users\gmudh\.gradle\caches\8.13\transforms\19f40acdc673ad4ae0dc63ac8aa44e6e\transformed\ui-tooling-release\AndroidManifest.xml:22:5-26:19
 MERGED from [androidx.compose.ui:ui-test-manifest:1.6.7] C:\Users\gmudh\.gradle\caches\8.13\transforms\1e39236d6390a2c216142a3ab178b099\transformed\ui-test-manifest-1.6.7\AndroidManifest.xml:22:5-26:19
@@ -240,6 +244,8 @@ uses-sdk
 INJECTED from D:\Beatflowy_Complete\Beatraxus\app\src\main\AndroidManifest.xml reason: use-sdk injection requested
 INJECTED from D:\Beatflowy_Complete\Beatraxus\app\src\main\AndroidManifest.xml
 INJECTED from D:\Beatflowy_Complete\Beatraxus\app\src\main\AndroidManifest.xml
+MERGED from [com.airbnb.android:lottie-compose:6.3.0] C:\Users\gmudh\.gradle\caches\8.13\transforms\34c2f79d8fc90c6b97461f316982e113\transformed\lottie-compose-6.3.0\AndroidManifest.xml:5:5-44
+MERGED from [com.airbnb.android:lottie-compose:6.3.0] C:\Users\gmudh\.gradle\caches\8.13\transforms\34c2f79d8fc90c6b97461f316982e113\transformed\lottie-compose-6.3.0\AndroidManifest.xml:5:5-44
 MERGED from [androidx.navigation:navigation-common:2.7.6] C:\Users\gmudh\.gradle\caches\8.13\transforms\653dd0dd8bbe17c3e0da441604e7bd89\transformed\navigation-common-2.7.6\AndroidManifest.xml:20:5-44
 MERGED from [androidx.navigation:navigation-common:2.7.6] C:\Users\gmudh\.gradle\caches\8.13\transforms\653dd0dd8bbe17c3e0da441604e7bd89\transformed\navigation-common-2.7.6\AndroidManifest.xml:20:5-44
 MERGED from [androidx.navigation:navigation-runtime:2.7.6] C:\Users\gmudh\.gradle\caches\8.13\transforms\7eea3b561a826a1a1d15c7291b14a5b5\transformed\navigation-runtime-2.7.6\AndroidManifest.xml:20:5-44
@@ -254,6 +260,8 @@ MERGED from [com.google.android.material:material:1.11.0] C:\Users\gmudh\.gradle
 MERGED from [com.google.android.material:material:1.11.0] C:\Users\gmudh\.gradle\caches\8.13\transforms\9b6d5dd8e51a124ca3753a50847ed588\transformed\material-1.11.0\AndroidManifest.xml:20:5-44
 MERGED from [androidx.constraintlayout:constraintlayout:2.0.1] C:\Users\gmudh\.gradle\caches\8.13\transforms\95c50cf50053c7525a3c33868b61d15e\transformed\constraintlayout-2.0.1\AndroidManifest.xml:5:5-7:41
 MERGED from [androidx.constraintlayout:constraintlayout:2.0.1] C:\Users\gmudh\.gradle\caches\8.13\transforms\95c50cf50053c7525a3c33868b61d15e\transformed\constraintlayout-2.0.1\AndroidManifest.xml:5:5-7:41
+MERGED from [com.airbnb.android:lottie:6.3.0] C:\Users\gmudh\.gradle\caches\8.13\transforms\3ccdf1e56b0c6145160707056efb82a5\transformed\lottie-6.3.0\AndroidManifest.xml:5:5-44
+MERGED from [com.airbnb.android:lottie:6.3.0] C:\Users\gmudh\.gradle\caches\8.13\transforms\3ccdf1e56b0c6145160707056efb82a5\transformed\lottie-6.3.0\AndroidManifest.xml:5:5-44
 MERGED from [io.coil-kt:coil-compose:2.5.0] C:\Users\gmudh\.gradle\caches\8.13\transforms\1db1dcf8177398175f6648e961916993\transformed\coil-compose-2.5.0\AndroidManifest.xml:5:5-44
 MERGED from [io.coil-kt:coil-compose:2.5.0] C:\Users\gmudh\.gradle\caches\8.13\transforms\1db1dcf8177398175f6648e961916993\transformed\coil-compose-2.5.0\AndroidManifest.xml:5:5-44
 MERGED from [io.coil-kt:coil-compose-base:2.5.0] C:\Users\gmudh\.gradle\caches\8.13\transforms\761a179808a915154240b27185378614\transformed\coil-compose-base-2.5.0\AndroidManifest.xml:5:5-44
@@ -414,8 +422,6 @@ MERGED from [androidx.sqlite:sqlite:2.4.0] C:\Users\gmudh\.gradle\caches\8.13\tr
 MERGED from [androidx.sqlite:sqlite:2.4.0] C:\Users\gmudh\.gradle\caches\8.13\transforms\8a1a09bd8f9bf05512c30339aada7cb8\transformed\sqlite-2.4.0\AndroidManifest.xml:20:5-44
 MERGED from [androidx.annotation:annotation-experimental:1.4.0] C:\Users\gmudh\.gradle\caches\8.13\transforms\447b7a88ec9ac70b265812076dbeafa7\transformed\annotation-experimental-1.4.0\AndroidManifest.xml:5:5-44
 MERGED from [androidx.annotation:annotation-experimental:1.4.0] C:\Users\gmudh\.gradle\caches\8.13\transforms\447b7a88ec9ac70b265812076dbeafa7\transformed\annotation-experimental-1.4.0\AndroidManifest.xml:5:5-44
-MERGED from [androidx.versionedparcelable:versionedparcelable:1.1.1] C:\Users\gmudh\.gradle\caches\8.13\transforms\69d6ac2ab6b71b844b9a1e90123e575d\transformed\versionedparcelable-1.1.1\AndroidManifest.xml:20:5-22:41
-MERGED from [androidx.versionedparcelable:versionedparcelable:1.1.1] C:\Users\gmudh\.gradle\caches\8.13\transforms\69d6ac2ab6b71b844b9a1e90123e575d\transformed\versionedparcelable-1.1.1\AndroidManifest.xml:20:5-22:41
 MERGED from [androidx.cardview:cardview:1.0.0] C:\Users\gmudh\.gradle\caches\8.13\transforms\0d22f7bf2798c2d4e2783f608caad296\transformed\cardview-1.0.0\AndroidManifest.xml:20:5-44
 MERGED from [androidx.cardview:cardview:1.0.0] C:\Users\gmudh\.gradle\caches\8.13\transforms\0d22f7bf2798c2d4e2783f608caad296\transformed\cardview-1.0.0\AndroidManifest.xml:20:5-44
 MERGED from [androidx.exifinterface:exifinterface:1.3.6] C:\Users\gmudh\.gradle\caches\8.13\transforms\60ce3ffa719d874b2ab38e283a15a783\transformed\exifinterface-1.3.6\AndroidManifest.xml:20:5-22:41
@@ -424,6 +430,8 @@ MERGED from [androidx.arch.core:core-runtime:2.2.0] C:\Users\gmudh\.gradle\cache
 MERGED from [androidx.arch.core:core-runtime:2.2.0] C:\Users\gmudh\.gradle\caches\8.13\transforms\821108b47c5a7afa7f59558361a5b0fb\transformed\core-runtime-2.2.0\AndroidManifest.xml:20:5-44
 MERGED from [androidx.interpolator:interpolator:1.0.0] C:\Users\gmudh\.gradle\caches\8.13\transforms\5e2397965c35dd0ec4e9e87964029728\transformed\interpolator-1.0.0\AndroidManifest.xml:20:5-44
 MERGED from [androidx.interpolator:interpolator:1.0.0] C:\Users\gmudh\.gradle\caches\8.13\transforms\5e2397965c35dd0ec4e9e87964029728\transformed\interpolator-1.0.0\AndroidManifest.xml:20:5-44
+MERGED from [androidx.versionedparcelable:versionedparcelable:1.1.1] C:\Users\gmudh\.gradle\caches\8.13\transforms\69d6ac2ab6b71b844b9a1e90123e575d\transformed\versionedparcelable-1.1.1\AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.versionedparcelable:versionedparcelable:1.1.1] C:\Users\gmudh\.gradle\caches\8.13\transforms\69d6ac2ab6b71b844b9a1e90123e575d\transformed\versionedparcelable-1.1.1\AndroidManifest.xml:20:5-22:41
 MERGED from [androidx.cursoradapter:cursoradapter:1.0.0] C:\Users\gmudh\.gradle\caches\8.13\transforms\1f724e6d3ad688d5d6a78f7cf57fcd93\transformed\cursoradapter-1.0.0\AndroidManifest.xml:20:5-44
 MERGED from [androidx.cursoradapter:cursoradapter:1.0.0] C:\Users\gmudh\.gradle\caches\8.13\transforms\1f724e6d3ad688d5d6a78f7cf57fcd93\transformed\cursoradapter-1.0.0\AndroidManifest.xml:20:5-44
 MERGED from [androidx.profileinstaller:profileinstaller:1.3.1] C:\Users\gmudh\.gradle\caches\8.13\transforms\93d08a43d63ee8727419ad3d9fc969bb\transformed\profileinstaller-1.3.1\AndroidManifest.xml:21:5-44

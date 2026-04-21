@@ -8,6 +8,7 @@ drawable app_icon_fg
 drawable ic_album_placeholder
 mipmap ic_launcher
 mipmap ic_launcher_round
+raw music_wave
 string app_name
 string cd_album_art
 string cd_equalizer

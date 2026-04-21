@@ -220,21 +220,9 @@ fun MainScreen(
         }
     }
 
-    val blurByScan by animateFloatAsState(
-        targetValue = if (uiState.isScanning) 15f else 0f,
-        animationSpec = tween(500),
-        label = "blur"
-    )
-    val saturationByScan by animateFloatAsState(
-        targetValue = if (uiState.isScanning) 0f else 1f,
-        animationSpec = tween(500),
-        label = "saturation"
-    )
-    val alphaByScan by animateFloatAsState(
-        targetValue = if (uiState.isScanning) 0.8f else 1f,
-        animationSpec = tween(500),
-        label = "alpha"
-    )
+    val blurByScan = 0f
+    val saturationByScan = 1f
+    val alphaByScan = 1f
 
     Box(Modifier.fillMaxSize()) {
         // Main content with blur and grayscale effects
@@ -1067,7 +1055,7 @@ fun MainScreen(
 
                 // Mini player overlay (Anchored to bottom, floating)
                 AnimatedVisibility(
-                    visible = uiState.currentSong != null && !uiState.isScanning && !showFullPlayer,
+                    visible = uiState.currentSong != null && !showFullPlayer,
                     enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
                     exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
                     modifier = Modifier
@@ -1225,52 +1213,7 @@ fun MainScreen(
         }
     } // End of Blurred Box
 
-    // Scan Overlay - Placed outside the blurred container
-        if (uiState.isScanning) {
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(0.7f))
-                    .pointerInput(Unit) {}, // Consume touches during scan
-                contentAlignment = Alignment.Center
-            ) {
-                // Glassy scanning dialog
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth(0.85f)
-                        .padding(24.dp)
-                        .clip(RoundedCornerShape(32.dp))
-                        .background(Color(0x991E1E22))
-                        .border(1.dp, Color.White.copy(0.1f), RoundedCornerShape(32.dp))
-                        .padding(32.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(
-                            "Scanning Library...",
-                            color = Color.White,
-                            fontWeight = FontWeight.Black,
-                            fontSize = 24.sp
-                        )
-                        Spacer(Modifier.height(16.dp))
-                        LinearProgressIndicator(
-                            progress = { uiState.scanProgress },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(8.dp)
-                                .clip(CircleShape),
-                            color = AccentBlue,
-                            trackColor = Color.White.copy(0.1f)
-                        )
-                        Spacer(Modifier.height(24.dp))
-                        Text(
-                            "${(uiState.scanProgress * 100).toInt()}%",
-                            color = Color.White.copy(0.7f),
-                            fontSize = 16.sp
-                        )
-                    }
-                }
-            }
+    // Scan Overlay removed from MainScreen as it's now in WelcomeScreen
         }
 
         AnimatedVisibility(
@@ -1359,6 +1302,23 @@ fun MainScreen(
         }
     }
 }
+
+@Composable
+fun StatItem(icon: androidx.compose.ui.graphics.vector.ImageVector, count: String, label: String, color: Color) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(
+            modifier = Modifier
+                .size(40.dp)
+                .background(color.copy(alpha = 0.15f), CircleShape)
+                .border(1.dp, color.copy(alpha = 0.3f), CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(icon, null, tint = color, modifier = Modifier.size(20.dp))
+        }
+        Spacer(Modifier.height(8.dp))
+        Text(count, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+        Text(label, color = Color.White.copy(0.5f), fontSize = 11.sp)
+    }
 }
 
 @Composable

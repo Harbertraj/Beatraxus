@@ -4307,7 +4307,42 @@
     </declare-styleable><declare-styleable name="StateListDrawableItem">
         
         <attr name="android:drawable"/>
-    </declare-styleable></file></source></dataSet><dataSet aapt-namespace="http://schemas.android.com/apk/res-auto" config="io.coil-kt:coil-base:2.5.0$Generated" generated="true" ignore_pattern="!.svn:!.git:!.ds_store:!*.scc:.*:&lt;dir>_*:!CVS:!thumbs.db:!picasa.ini:!*~"><source path="C:\Users\gmudh\.gradle\caches\8.13\transforms\5489462377f753d073b47aecf1886832\transformed\coil-base-2.5.0\res"/></dataSet><dataSet aapt-namespace="http://schemas.android.com/apk/res-auto" config="io.coil-kt:coil-base:2.5.0" from-dependency="true" generated-set="io.coil-kt:coil-base:2.5.0$Generated" ignore_pattern="!.svn:!.git:!.ds_store:!*.scc:.*:&lt;dir>_*:!CVS:!thumbs.db:!picasa.ini:!*~:!&lt;dir>navigation"><source path="C:\Users\gmudh\.gradle\caches\8.13\transforms\5489462377f753d073b47aecf1886832\transformed\coil-base-2.5.0\res"><file path="C:\Users\gmudh\.gradle\caches\8.13\transforms\5489462377f753d073b47aecf1886832\transformed\coil-base-2.5.0\res\values\values.xml" qualifiers=""><item name="coil_request_manager" type="id"/></file></source></dataSet><dataSet aapt-namespace="http://schemas.android.com/apk/res-auto" config="androidx.constraintlayout:constraintlayout:2.0.1$Generated" generated="true" ignore_pattern="!.svn:!.git:!.ds_store:!*.scc:.*:&lt;dir>_*:!CVS:!thumbs.db:!picasa.ini:!*~"><source path="C:\Users\gmudh\.gradle\caches\8.13\transforms\95c50cf50053c7525a3c33868b61d15e\transformed\constraintlayout-2.0.1\res"/></dataSet><dataSet aapt-namespace="http://schemas.android.com/apk/res-auto" config="androidx.constraintlayout:constraintlayout:2.0.1" from-dependency="true" generated-set="androidx.constraintlayout:constraintlayout:2.0.1$Generated" ignore_pattern="!.svn:!.git:!.ds_store:!*.scc:.*:&lt;dir>_*:!CVS:!thumbs.db:!picasa.ini:!*~:!&lt;dir>navigation"><source path="C:\Users\gmudh\.gradle\caches\8.13\transforms\95c50cf50053c7525a3c33868b61d15e\transformed\constraintlayout-2.0.1\res"><file path="C:\Users\gmudh\.gradle\caches\8.13\transforms\95c50cf50053c7525a3c33868b61d15e\transformed\constraintlayout-2.0.1\res\values\values.xml" qualifiers=""><attr format="reference" name="animate_relativeTo"/><attr format="enum" name="arcMode">
+    </declare-styleable></file></source></dataSet><dataSet aapt-namespace="http://schemas.android.com/apk/res-auto" config="io.coil-kt:coil-base:2.5.0$Generated" generated="true" ignore_pattern="!.svn:!.git:!.ds_store:!*.scc:.*:&lt;dir>_*:!CVS:!thumbs.db:!picasa.ini:!*~"><source path="C:\Users\gmudh\.gradle\caches\8.13\transforms\5489462377f753d073b47aecf1886832\transformed\coil-base-2.5.0\res"/></dataSet><dataSet aapt-namespace="http://schemas.android.com/apk/res-auto" config="io.coil-kt:coil-base:2.5.0" from-dependency="true" generated-set="io.coil-kt:coil-base:2.5.0$Generated" ignore_pattern="!.svn:!.git:!.ds_store:!*.scc:.*:&lt;dir>_*:!CVS:!thumbs.db:!picasa.ini:!*~:!&lt;dir>navigation"><source path="C:\Users\gmudh\.gradle\caches\8.13\transforms\5489462377f753d073b47aecf1886832\transformed\coil-base-2.5.0\res"><file path="C:\Users\gmudh\.gradle\caches\8.13\transforms\5489462377f753d073b47aecf1886832\transformed\coil-base-2.5.0\res\values\values.xml" qualifiers=""><item name="coil_request_manager" type="id"/></file></source></dataSet><dataSet aapt-namespace="http://schemas.android.com/apk/res-auto" config="com.airbnb.android:lottie:6.3.0$Generated" generated="true" ignore_pattern="!.svn:!.git:!.ds_store:!*.scc:.*:&lt;dir>_*:!CVS:!thumbs.db:!picasa.ini:!*~"><source path="C:\Users\gmudh\.gradle\caches\8.13\transforms\3ccdf1e56b0c6145160707056efb82a5\transformed\lottie-6.3.0\res"/></dataSet><dataSet aapt-namespace="http://schemas.android.com/apk/res-auto" config="com.airbnb.android:lottie:6.3.0" from-dependency="true" generated-set="com.airbnb.android:lottie:6.3.0$Generated" ignore_pattern="!.svn:!.git:!.ds_store:!*.scc:.*:&lt;dir>_*:!CVS:!thumbs.db:!picasa.ini:!*~:!&lt;dir>navigation"><source path="C:\Users\gmudh\.gradle\caches\8.13\transforms\3ccdf1e56b0c6145160707056efb82a5\transformed\lottie-6.3.0\res"><file path="C:\Users\gmudh\.gradle\caches\8.13\transforms\3ccdf1e56b0c6145160707056efb82a5\transformed\lottie-6.3.0\res\values\values.xml" qualifiers=""><attr format="reference" name="lottieAnimationViewStyle"/><item name="lottie_layer_name" type="id"/><declare-styleable name="LottieAnimationView">
+        <attr format="string" name="lottie_fileName"/>
+        <attr format="reference" name="lottie_rawRes"/>
+        <attr format="string" name="lottie_url"/>
+        <attr format="reference" name="lottie_fallbackRes"/>
+        <attr format="boolean" name="lottie_autoPlay"/>
+        <attr format="boolean" name="lottie_loop"/>
+        <attr format="enum" name="lottie_repeatMode">
+            <enum name="restart" value="1"/>
+            <enum name="reverse" value="2"/>
+        </attr>
+        <attr format="integer" name="lottie_repeatCount"/>
+        <attr format="string" name="lottie_imageAssetsFolder"/>
+        <attr format="float" name="lottie_progress"/>
+        <attr format="boolean" name="lottie_enableMergePathsForKitKatAndAbove"/>
+        <attr format="color" name="lottie_colorFilter"/>
+        <attr format="float" name="lottie_speed"/>
+        <attr format="boolean" name="lottie_cacheComposition"/>
+        <attr format="boolean" name="lottie_ignoreDisabledSystemAnimations"/>
+        <attr format="boolean" name="lottie_useCompositionFrameRate"/>
+        <attr format="boolean" name="lottie_clipToCompositionBounds"/>
+        <attr format="boolean" name="lottie_clipTextToBoundingBox"/>
+        
+        <attr format="string" name="lottie_defaultFontFileExtension"/>
+        
+        <attr format="enum" name="lottie_renderMode">
+            <enum name="automatic" value="0"/>
+            <enum name="hardware" value="1"/>
+            <enum name="software" value="2"/>
+        </attr>
+        <attr format="enum" name="lottie_asyncUpdates">
+            <enum name="automatic" value="0"/>
+            <enum name="enabled" value="1"/>
+            <enum name="disabled" value="2"/>
+        </attr>
+    </declare-styleable></file></source></dataSet><dataSet aapt-namespace="http://schemas.android.com/apk/res-auto" config="androidx.constraintlayout:constraintlayout:2.0.1$Generated" generated="true" ignore_pattern="!.svn:!.git:!.ds_store:!*.scc:.*:&lt;dir>_*:!CVS:!thumbs.db:!picasa.ini:!*~"><source path="C:\Users\gmudh\.gradle\caches\8.13\transforms\95c50cf50053c7525a3c33868b61d15e\transformed\constraintlayout-2.0.1\res"/></dataSet><dataSet aapt-namespace="http://schemas.android.com/apk/res-auto" config="androidx.constraintlayout:constraintlayout:2.0.1" from-dependency="true" generated-set="androidx.constraintlayout:constraintlayout:2.0.1$Generated" ignore_pattern="!.svn:!.git:!.ds_store:!*.scc:.*:&lt;dir>_*:!CVS:!thumbs.db:!picasa.ini:!*~:!&lt;dir>navigation"><source path="C:\Users\gmudh\.gradle\caches\8.13\transforms\95c50cf50053c7525a3c33868b61d15e\transformed\constraintlayout-2.0.1\res"><file path="C:\Users\gmudh\.gradle\caches\8.13\transforms\95c50cf50053c7525a3c33868b61d15e\transformed\constraintlayout-2.0.1\res\values\values.xml" qualifiers=""><attr format="reference" name="animate_relativeTo"/><attr format="enum" name="arcMode">
         <enum name="startVertical" value="0"/>
         <enum name="startHorizontal" value="1"/>
         <enum name="flip" value="2"/>
@@ -11830,7 +11865,7 @@
         <attr name="android:id"/>
         <attr format="string" name="route"/>
         <attr name="android:label"/>
-    </declare-styleable></file></source></dataSet><dataSet aapt-namespace="http://schemas.android.com/apk/res-auto" config="main$Generated" generated="true" ignore_pattern="!.svn:!.git:!.ds_store:!*.scc:.*:&lt;dir>_*:!CVS:!thumbs.db:!picasa.ini:!*~"><source path="D:\Beatflowy_Complete\Beatraxus\app\src\main\res"/></dataSet><dataSet aapt-namespace="http://schemas.android.com/apk/res-auto" config="main" generated-set="main$Generated" ignore_pattern="!.svn:!.git:!.ds_store:!*.scc:.*:&lt;dir>_*:!CVS:!thumbs.db:!picasa.ini:!*~:!&lt;dir>navigation"><source path="D:\Beatflowy_Complete\Beatraxus\app\src\main\res"><file name="app_icon_bg" path="D:\Beatflowy_Complete\Beatraxus\app\src\main\res\drawable\app_icon_bg.xml" qualifiers="" type="drawable"/><file name="app_icon_fg" path="D:\Beatflowy_Complete\Beatraxus\app\src\main\res\drawable\app_icon_fg.xml" qualifiers="" type="drawable"/><file name="ic_album_placeholder" path="D:\Beatflowy_Complete\Beatraxus\app\src\main\res\drawable\ic_album_placeholder.xml" qualifiers="" type="drawable"/><file name="ic_launcher" path="D:\Beatflowy_Complete\Beatraxus\app\src\main\res\mipmap-anydpi-v26\ic_launcher.xml" qualifiers="anydpi-v26" type="mipmap"/><file name="ic_launcher_round" path="D:\Beatflowy_Complete\Beatraxus\app\src\main\res\mipmap-anydpi-v26\ic_launcher_round.xml" qualifiers="anydpi-v26" type="mipmap"/><file path="D:\Beatflowy_Complete\Beatraxus\app\src\main\res\values\colors.xml" qualifiers=""><color name="bg_deep">#07070D</color><color name="accent_blue">#0A84FF</color><color name="accent_red">#FF2D55</color></file><file path="D:\Beatflowy_Complete\Beatraxus\app\src\main\res\values\strings.xml" qualifiers=""><string name="app_name">Beatraxus</string><string name="channel_name">Beatraxus Playback</string><string name="channel_description">Music playback controls</string><string name="cd_play">Play</string><string name="cd_pause">Pause</string><string name="cd_next">Next track</string><string name="cd_previous">Previous track</string><string name="cd_equalizer">Open Equalizer</string><string name="cd_album_art">Album artwork</string><string name="empty_library_title">No music found</string><string name="empty_library_body">Add audio files to your device to start playing</string><string name="permission_denied">Storage permission is required to read your music library</string><string name="select_track_hint">Select a track to begin</string></file><file path="D:\Beatflowy_Complete\Beatraxus\app\src\main\res\values\themes.xml" qualifiers=""><style name="Theme.Beatraxus" parent="Theme.Material3.DayNight.NoActionBar">
+    </declare-styleable></file></source></dataSet><dataSet aapt-namespace="http://schemas.android.com/apk/res-auto" config="main$Generated" generated="true" ignore_pattern="!.svn:!.git:!.ds_store:!*.scc:.*:&lt;dir>_*:!CVS:!thumbs.db:!picasa.ini:!*~"><source path="D:\Beatflowy_Complete\Beatraxus\app\src\main\res"/></dataSet><dataSet aapt-namespace="http://schemas.android.com/apk/res-auto" config="main" generated-set="main$Generated" ignore_pattern="!.svn:!.git:!.ds_store:!*.scc:.*:&lt;dir>_*:!CVS:!thumbs.db:!picasa.ini:!*~:!&lt;dir>navigation"><source path="D:\Beatflowy_Complete\Beatraxus\app\src\main\res"><file name="app_icon_bg" path="D:\Beatflowy_Complete\Beatraxus\app\src\main\res\drawable\app_icon_bg.xml" qualifiers="" type="drawable"/><file name="app_icon_fg" path="D:\Beatflowy_Complete\Beatraxus\app\src\main\res\drawable\app_icon_fg.xml" qualifiers="" type="drawable"/><file name="ic_album_placeholder" path="D:\Beatflowy_Complete\Beatraxus\app\src\main\res\drawable\ic_album_placeholder.xml" qualifiers="" type="drawable"/><file name="ic_launcher" path="D:\Beatflowy_Complete\Beatraxus\app\src\main\res\mipmap-anydpi-v26\ic_launcher.xml" qualifiers="anydpi-v26" type="mipmap"/><file name="ic_launcher_round" path="D:\Beatflowy_Complete\Beatraxus\app\src\main\res\mipmap-anydpi-v26\ic_launcher_round.xml" qualifiers="anydpi-v26" type="mipmap"/><file name="music_wave" path="D:\Beatflowy_Complete\Beatraxus\app\src\main\res\raw\music_wave.json" qualifiers="" type="raw"/><file path="D:\Beatflowy_Complete\Beatraxus\app\src\main\res\values\colors.xml" qualifiers=""><color name="bg_deep">#07070D</color><color name="accent_blue">#0A84FF</color><color name="accent_red">#FF2D55</color></file><file path="D:\Beatflowy_Complete\Beatraxus\app\src\main\res\values\strings.xml" qualifiers=""><string name="app_name">Beatraxus</string><string name="channel_name">Beatraxus Playback</string><string name="channel_description">Music playback controls</string><string name="cd_play">Play</string><string name="cd_pause">Pause</string><string name="cd_next">Next track</string><string name="cd_previous">Previous track</string><string name="cd_equalizer">Open Equalizer</string><string name="cd_album_art">Album artwork</string><string name="empty_library_title">No music found</string><string name="empty_library_body">Add audio files to your device to start playing</string><string name="permission_denied">Storage permission is required to read your music library</string><string name="select_track_hint">Select a track to begin</string></file><file path="D:\Beatflowy_Complete\Beatraxus\app\src\main\res\values\themes.xml" qualifiers=""><style name="Theme.Beatraxus" parent="Theme.Material3.DayNight.NoActionBar">
         <item name="android:statusBarColor">@color/bg_deep</item>
         <item name="android:navigationBarColor">@color/bg_deep</item>
         <item name="android:windowBackground">@color/bg_deep</item>
@@ -14726,6 +14761,41 @@
   </declare-styleable><declare-styleable name="DrawerLayout">
         
         <attr name="elevation"/>
+    </declare-styleable><declare-styleable name="LottieAnimationView">
+        <attr format="string" name="lottie_fileName"/>
+        <attr format="reference" name="lottie_rawRes"/>
+        <attr format="string" name="lottie_url"/>
+        <attr format="reference" name="lottie_fallbackRes"/>
+        <attr format="boolean" name="lottie_autoPlay"/>
+        <attr format="boolean" name="lottie_loop"/>
+        <attr format="enum" name="lottie_repeatMode">
+            <enum name="restart" value="1"/>
+            <enum name="reverse" value="2"/>
+        </attr>
+        <attr format="integer" name="lottie_repeatCount"/>
+        <attr format="string" name="lottie_imageAssetsFolder"/>
+        <attr format="float" name="lottie_progress"/>
+        <attr format="boolean" name="lottie_enableMergePathsForKitKatAndAbove"/>
+        <attr format="color" name="lottie_colorFilter"/>
+        <attr format="float" name="lottie_speed"/>
+        <attr format="boolean" name="lottie_cacheComposition"/>
+        <attr format="boolean" name="lottie_ignoreDisabledSystemAnimations"/>
+        <attr format="boolean" name="lottie_useCompositionFrameRate"/>
+        <attr format="boolean" name="lottie_clipToCompositionBounds"/>
+        <attr format="boolean" name="lottie_clipTextToBoundingBox"/>
+        
+        <attr format="string" name="lottie_defaultFontFileExtension"/>
+        
+        <attr format="enum" name="lottie_renderMode">
+            <enum name="automatic" value="0"/>
+            <enum name="hardware" value="1"/>
+            <enum name="software" value="2"/>
+        </attr>
+        <attr format="enum" name="lottie_asyncUpdates">
+            <enum name="automatic" value="0"/>
+            <enum name="enabled" value="1"/>
+            <enum name="disabled" value="2"/>
+        </attr>
     </declare-styleable><declare-styleable name="LinearProgressIndicator">
     
     <attr name="indeterminateAnimationType">

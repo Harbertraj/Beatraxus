@@ -121,6 +121,9 @@ dependencies {
     // Coil for Image Loading
     implementation("io.coil-kt:coil-compose:2.5.0")
 
+    // Lottie
+    implementation("com.airbnb.android:lottie-compose:6.3.0")
+
     // Reorderable
     implementation("sh.calvin.reorderable:reorderable:2.3.2")
 

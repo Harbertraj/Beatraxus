@@ -27,6 +27,7 @@ import com.beatflowy.app.service.AudioPlaybackService
 import com.beatflowy.app.ui.screens.EqualizerScreen
 import com.beatflowy.app.ui.screens.MainScreen
 import com.beatflowy.app.ui.screens.SettingsScreen
+import com.beatflowy.app.ui.screens.WelcomeScreen
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.graphics.Color
@@ -85,7 +86,10 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             BeatraxusTheme {
-                BeatraxusApp(viewModel = viewModel)
+                BeatraxusApp(
+                    viewModel = viewModel,
+                    onRequestPermissions = { requestPermissions() }
+                )
             }
         }
         if (isFirstCreate) {
@@ -116,7 +120,31 @@ class MainActivity : ComponentActivity() {
         bindService(intent, serviceConnection, BIND_AUTO_CREATE)
     }
 
+    fun requestPermissions(onAlreadyGranted: () -> Unit = {}) {
+        val permissions = mutableListOf<String>()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            permissions.add(Manifest.permission.READ_MEDIA_AUDIO)
+        } else {
+            permissions.add(Manifest.permission.READ_EXTERNAL_STORAGE)
+        }
+
+        val allGranted = permissions.all {
+            ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
+        }
+        if (allGranted) {
+            viewModel.loadLibrary()
+            onAlreadyGranted()
+        } else {
+            permissionLauncher.launch(permissions.toTypedArray())
+        }
+    }
+
     private fun checkAndRequestPermissions() {
+        // Only auto-request if not first run, to avoid interrupting welcome screen
+        val prefs = getSharedPreferences("beatraxus", MODE_PRIVATE)
+        val isFirstRun = prefs.getBoolean("first_run", true)
+        if (isFirstRun) return
+
         val permissions = mutableListOf<String>()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             permissions.add(Manifest.permission.READ_MEDIA_AUDIO)
@@ -141,7 +169,10 @@ sealed class Screen(val route: String) {
 }
 
 @Composable
-fun BeatraxusApp(viewModel: PlayerViewModel) {
+fun BeatraxusApp(
+    viewModel: PlayerViewModel,
+    onRequestPermissions: () -> Unit
+) {
     val navController = rememberNavController()
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val view = LocalView.current
@@ -163,34 +194,26 @@ fun BeatraxusApp(viewModel: PlayerViewModel) {
 
     NavHost(
         navController    = navController,
-        startDestination = Screen.Main.route,
+        startDestination = if (uiState.isFirstRun) "welcome" else Screen.Main.route,
         enterTransition  = {
-            if (targetState.destination.route == Screen.Equalizer.route) {
-                slideIntoContainer(
-                    AnimatedContentTransitionScope.SlideDirection.Up,
-                    animationSpec = tween(400)
-                ) + fadeIn(animationSpec = tween(400))
-            } else {
-                fadeIn(tween(320))
-            }
+            fadeIn(tween(500))
         },
         exitTransition   = {
-            fadeOut(tween(320))
-        },
-        popEnterTransition = {
-            fadeIn(tween(320))
-        },
-        popExitTransition  = {
-            if (initialState.destination.route == Screen.Equalizer.route) {
-                slideOutOfContainer(
-                    AnimatedContentTransitionScope.SlideDirection.Down,
-                    animationSpec = tween(400)
-                ) + fadeOut(animationSpec = tween(400))
-            } else {
-                fadeOut(tween(320))
-            }
+            fadeOut(tween(500))
         }
     ) {
+        composable("welcome") {
+            WelcomeScreen(
+                viewModel = viewModel,
+                onEnterFlow = onRequestPermissions,
+                onFinish = {
+                    viewModel.setFirstRunComplete()
+                    navController.navigate(Screen.Main.route) {
+                        popUpTo("welcome") { inclusive = true }
+                    }
+                }
+            )
+        }
         composable(Screen.Main.route) {
             MainScreen(
                 viewModel            = viewModel,
