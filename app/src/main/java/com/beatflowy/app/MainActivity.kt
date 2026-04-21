@@ -17,6 +17,8 @@ import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.runtime.Composable
 import androidx.core.content.ContextCompat
 import androidx.navigation.compose.NavHost
@@ -202,7 +204,12 @@ fun BeatraxusApp(
             fadeOut(tween(500))
         }
     ) {
-        composable("welcome") {
+        composable(
+            "welcome",
+            exitTransition = {
+                fadeOut(tween(700)) + scaleOut(targetScale = 0.8f, animationSpec = tween(700))
+            }
+        ) {
             WelcomeScreen(
                 viewModel = viewModel,
                 onEnterFlow = onRequestPermissions,
@@ -214,7 +221,12 @@ fun BeatraxusApp(
                 }
             )
         }
-        composable(Screen.Main.route) {
+        composable(
+            Screen.Main.route,
+            enterTransition = {
+                fadeIn(tween(700)) + scaleIn(initialScale = 1.2f, animationSpec = tween(700))
+            }
+        ) {
             MainScreen(
                 viewModel            = viewModel,
                 onNavigateToSettings  = { navController.navigate(Screen.Settings.route) }
