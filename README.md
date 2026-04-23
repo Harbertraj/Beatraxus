@@ -2,6 +2,14 @@
 
 Beatraxus is a high-performance Android music player designed for audiophiles. It features a custom audio engine built on Media3 ExoPlayer with integrated resampling and equalization capabilities.
 
+## Screenshots
+
+<p align="center">
+  <img src="screenshots/main_screen.png" width="32%" />
+  <img src="screenshots/now_playing_screen.png" width="32%" />
+  <img src="screenshots/settings_screen.png" width="32%" />
+</p>
+
 ## Features
 
 - **High-Resolution Audio Support**: Custom audio pipeline using `DefaultAudioSink` with float output via a custom `RenderersFactory`.
