@@ -41,6 +41,7 @@ class MusicRepository(private val context: Context) {
         ).apply {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 add(MediaStore.Audio.Media.BITRATE)
+                add(MediaStore.Audio.Media.GENRE)
             }
         }.toTypedArray()
 
@@ -61,9 +62,8 @@ class MusicRepository(private val context: Context) {
             val dataCol    = c.getColumnIndexOrThrow(MediaStore.Audio.Media.DATA)
             val dateCol    = c.getColumnIndexOrThrow(MediaStore.Audio.Media.DATE_ADDED)
             val yearCol    = c.getColumnIndexOrThrow(MediaStore.Audio.Media.YEAR)
-            val bitrateCol = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                c.getColumnIndex(MediaStore.Audio.Media.BITRATE)
-            } else -1
+            val bitrateCol = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) c.getColumnIndex(MediaStore.Audio.Media.BITRATE) else -1
+            val genreCol   = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) c.getColumnIndex(MediaStore.Audio.Media.GENRE) else -1
 
             while (c.moveToNext()) {
                 rawList.add(RawSongData(
@@ -76,6 +76,7 @@ class MusicRepository(private val context: Context) {
                     size = c.getLong(sizeCol),
                     albumId = c.getLong(albumIdCol),
                     bitrate = if (bitrateCol != -1) c.getInt(bitrateCol) else 0,
+                    genre = if (genreCol != -1) c.getString(genreCol) ?: "" else "",
                     path = c.getString(dataCol) ?: "",
                     dateAdded = c.getLong(dateCol),
                     year = c.getInt(yearCol)
@@ -107,6 +108,7 @@ class MusicRepository(private val context: Context) {
                     fileSizeBytes = raw.size,
                     albumArtUri = ContentUris.withAppendedId(Uri.parse("content://media/external/audio/albumart"), raw.albumId),
                     year = raw.year,
+                    genre = raw.genre.ifEmpty { "Unknown" },
                     dateAdded = raw.dateAdded,
                     folder = raw.path.substringBeforeLast("/", "Unknown")
                 ))
@@ -117,7 +119,7 @@ class MusicRepository(private val context: Context) {
             return@withContext processedSongs.sortedBy { it.title }
         }
 
-        // Use flatMapMerge for high-concurrency parallel processing.
+        // Use a more balanced concurrency level to avoid system-wide lag
         rawList.asFlow()
             .flatMapMerge(concurrency = 8) { raw ->
                 flow {
@@ -125,100 +127,127 @@ class MusicRepository(private val context: Context) {
                     var sampleRate = 44100
                     var bitDepth = 16
                     var formatName = "MP3"
-                    var genre = "Unknown"
+                    var genre = raw.genre.ifEmpty { "Unknown" }
                     val fallbackAlbumArt = ContentUris.withAppendedId(
                         Uri.parse("content://media/external/audio/albumart"),
                         raw.albumId
                     )
                     var albumArtUri: Uri = fallbackAlbumArt
 
-                    val retriever = MediaMetadataRetriever()
-                    val extractor = MediaExtractor()
-                    try {
-                        retriever.setDataSource(context, uri)
-                        extractor.setDataSource(context, uri, null)
-                        
-                        // Prefer lossless / primary audio when MP4/M4A exposes multiple tracks
-                        var trackFormat: android.media.MediaFormat? = null
-                        var bestAudioPriority = -1
-                        for (i in 0 until extractor.trackCount) {
-                            val f = extractor.getTrackFormat(i)
-                            val m = f.getString(android.media.MediaFormat.KEY_MIME) ?: continue
-                            if (!m.startsWith("audio/")) continue
-                            val p = when {
-                                m.contains("alac", true) -> 120
-                                m.contains("flac", true) -> 110
-                                m.contains("opus", true) -> 105
-                                m.contains("vorbis", true) -> 100
-                                m.contains("mpeg", true) || m.contains("mp3", true) -> 95
-                                m.contains("mp4a", true) || m.contains("aac", true) || m.contains("latm", true) -> 90
-                                else -> 10
-                            }
-                            if (p > bestAudioPriority) {
-                                bestAudioPriority = p
-                                trackFormat = f
-                            }
-                        }
+                    val extension = raw.path.substringAfterLast(".", "").lowercase()
+                    val isLossless = extension == "flac" || extension == "wav" || extension == "alac" || raw.mime.contains("flac") || raw.mime.contains("wav")
+                    
+                    // Optimization: Open the file if it's a full scan to extract better metadata/art,
+                    // or if we're on an old Android version missing bitrate.
+                    val needsFileOpen = fullScan || (raw.bitrate == 0 && Build.VERSION.SDK_INT < Build.VERSION_CODES.R)
 
-                        val brStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_BITRATE)
-                        val br = brStr?.toIntOrNull() ?: 0
-
-                        if (trackFormat != null) {
-                            if (trackFormat.containsKey(android.media.MediaFormat.KEY_SAMPLE_RATE)) {
-                                sampleRate = trackFormat.getInteger(android.media.MediaFormat.KEY_SAMPLE_RATE)
+                    if (needsFileOpen) {
+                        val retriever = MediaMetadataRetriever()
+                        try {
+                            retriever.setDataSource(context, uri)
+                            
+                            if (genre == "Unknown") {
+                                genre = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_GENRE) ?: "Unknown"
                             }
-                            // Try to get bit depth from extractor
-                            if (trackFormat.containsKey("bits-per-sample")) {
-                                bitDepth = trackFormat.getInteger("bits-per-sample")
-                            } else if (trackFormat.containsKey(android.media.MediaFormat.KEY_PCM_ENCODING)) {
-                                val encoding = trackFormat.getInteger(android.media.MediaFormat.KEY_PCM_ENCODING)
-                                bitDepth = when (encoding) {
-                                    android.media.AudioFormat.ENCODING_PCM_16BIT -> 16
-                                    android.media.AudioFormat.ENCODING_PCM_24BIT_PACKED -> 24
-                                    android.media.AudioFormat.ENCODING_PCM_32BIT -> 32
-                                    android.media.AudioFormat.ENCODING_PCM_FLOAT -> 32
-                                    else -> 16
+                            val br = if (raw.bitrate > 0) raw.bitrate else {
+                                retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_BITRATE)?.toIntOrNull() ?: 0
+                            }
+
+                            // Extract embedded art for all files if doing a full scan,
+                            // as MediaStore often provides very low quality thumbnails.
+                            val artBytes = runCatching { retriever.embeddedPicture }.getOrNull()
+                            if (artBytes != null && artBytes.isNotEmpty()) {
+                                albumArtUri = cacheEmbeddedAlbumArt(raw.id, raw.albumId, artBytes, forceRefresh = fullScan)
+                            }
+
+                            if (isLossless) {
+                                val extractor = MediaExtractor()
+                                try {
+                                    extractor.setDataSource(context, uri, null)
+                                    var trackFormat: android.media.MediaFormat? = null
+                                    var bestAudioPriority = -1
+                                    for (i in 0 until extractor.trackCount) {
+                                        val f = extractor.getTrackFormat(i)
+                                        val m = f.getString(android.media.MediaFormat.KEY_MIME) ?: continue
+                                        if (!m.startsWith("audio/")) continue
+                                        val p = when {
+                                            m.contains("alac", true) -> 120
+                                            m.contains("flac", true) -> 110
+                                            m.contains("opus", true) -> 105
+                                            m.contains("vorbis", true) -> 100
+                                            m.contains("mpeg", true) || m.contains("mp3", true) -> 95
+                                            m.contains("mp4a", true) || m.contains("aac", true) || m.contains("latm", true) -> 90
+                                            else -> 10
+                                        }
+                                        if (p > bestAudioPriority) {
+                                            bestAudioPriority = p
+                                            trackFormat = f
+                                        }
+                                    }
+
+                                    if (trackFormat != null) {
+                                        if (trackFormat.containsKey(android.media.MediaFormat.KEY_SAMPLE_RATE)) {
+                                            sampleRate = trackFormat.getInteger(android.media.MediaFormat.KEY_SAMPLE_RATE)
+                                        }
+                                        if (trackFormat.containsKey("bits-per-sample")) {
+                                            bitDepth = trackFormat.getInteger("bits-per-sample")
+                                        } else if (trackFormat.containsKey(android.media.MediaFormat.KEY_PCM_ENCODING)) {
+                                            val encoding = trackFormat.getInteger(android.media.MediaFormat.KEY_PCM_ENCODING)
+                                            bitDepth = when (encoding) {
+                                                android.media.AudioFormat.ENCODING_PCM_16BIT -> 16
+                                                android.media.AudioFormat.ENCODING_PCM_24BIT_PACKED -> 24
+                                                android.media.AudioFormat.ENCODING_PCM_32BIT -> 32
+                                                android.media.AudioFormat.ENCODING_PCM_FLOAT -> 32
+                                                else -> 16
+                                            }
+                                        }
+                                        
+                                        val extractorMime = trackFormat.getString(android.media.MediaFormat.KEY_MIME)?.lowercase() ?: ""
+                                        formatName = when {
+                                            extractorMime.contains("flac") || extension == "flac" -> "FLAC"
+                                            extractorMime.contains("wav") || extractorMime.contains("x-raw") || extension == "wav" -> "WAV"
+                                            extractorMime.contains("alac") || extension == "alac" -> "ALAC"
+                                            extractorMime.contains("mp4a") || extractorMime.contains("aac") || extension == "m4a" || extension == "aac" -> {
+                                                if (br > 400000 || bitDepth > 16 || raw.size > 8_000_000 || extractorMime.contains("alac")) "ALAC" else "AAC"
+                                            }
+                                            extractorMime.contains("mpeg") || extension == "mp3" -> "MP3"
+                                            extractorMime.contains("ogg") || extension == "ogg" -> "OGG"
+                                            extractorMime.contains("opus") || extension == "opus" -> "OPUS"
+                                            else -> "MP3"
+                                        }
+                                    }
+                                } finally {
+                                    try { extractor.release() } catch (e: Exception) {}
                                 }
+                                
+                                // Extract embedded art for lossless as MediaStore often misses it
+                                val artBytes = runCatching { retriever.embeddedPicture }.getOrNull()
+                                if (artBytes != null && artBytes.isNotEmpty()) {
+                                    albumArtUri = cacheEmbeddedAlbumArt(raw.id, raw.albumId, artBytes)
+                                }
+                            } else {
+                                formatName = mimeToFormat(raw.mime, raw.path, 16)
+                                sampleRate = guessSampleRate(raw.mime)
                             }
-                        }
-                        
-                        // Fallback to retriever for bit depth on API 31+
-                        if (bitDepth <= 16 && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                            val bdStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_BITS_PER_SAMPLE)
-                            if (!bdStr.isNullOrEmpty()) bitDepth = bdStr.toInt()
-                        }
 
-                        // Heuristic for high-res lossless if still unknown
-                        if (bitDepth <= 16 && br > 2116000) bitDepth = 24
-
-                        val extractorMime = trackFormat?.getString(android.media.MediaFormat.KEY_MIME)?.lowercase() ?: ""
-                        val extension = raw.path.substringAfterLast(".", "").lowercase()
-
-                        formatName = when {
-                            extractorMime.contains("flac") || extension == "flac" -> "FLAC"
-                            extractorMime.contains("wav") || extractorMime.contains("x-raw") || extension == "wav" -> "WAV"
-                            extractorMime.contains("alac") || extension == "alac" -> "ALAC"
-                            extractorMime.contains("mp4a") || extractorMime.contains("aac") || extension == "m4a" || extension == "aac" -> {
-                                if (br > 400000 || bitDepth > 16 || raw.size > 8_000_000 || extractorMime.contains("alac")) "ALAC" else "AAC"
+                            // Fallback to retriever for bit depth on API 31+ if still 16
+                            if (bitDepth <= 16 && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                                val bdStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_BITS_PER_SAMPLE)
+                                if (!bdStr.isNullOrEmpty()) bitDepth = bdStr.toInt()
                             }
-                            extractorMime.contains("mpeg") || extension == "mp3" -> "MP3"
-                            extractorMime.contains("ogg") || extension == "ogg" -> "OGG"
-                            extractorMime.contains("opus") || extension == "opus" -> "OPUS"
-                            else -> "MP3"
+                        } catch (e: Exception) {
+                            formatName = mimeToFormat(raw.mime, raw.path, bitDepth)
+                        } finally {
+                            try { retriever.release() } catch (e: Exception) {}
                         }
-
-                        genre = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_GENRE) ?: "Unknown"
-
-                        val artBytes = runCatching { retriever.embeddedPicture }.getOrNull()
-                        if (artBytes != null && artBytes.isNotEmpty()) {
-                            albumArtUri = cacheEmbeddedAlbumArt(raw.id, raw.albumId, artBytes)
-                        }
-                    } catch (e: Exception) {
-                        formatName = mimeToFormat(raw.mime, raw.path, bitDepth)
-                    } finally {
-                        try { retriever.release() } catch (e: Exception) {}
-                        try { extractor.release() } catch (e: Exception) {}
+                    } else {
+                        // ULTRA FAST PATH: No file opening, use MediaStore + Guesses
+                        formatName = mimeToFormat(raw.mime, raw.path, 16)
+                        sampleRate = guessSampleRate(raw.mime)
                     }
+
+                    // Final heuristics
+                    if (bitDepth <= 16 && raw.bitrate > 2116000) bitDepth = 24
 
                     emit(Song(
                         id = raw.id.toString(),
@@ -230,7 +259,7 @@ class MusicRepository(private val context: Context) {
                         format = formatName,
                         sampleRateHz = sampleRate,
                         bitDepth = bitDepth,
-                        bitrate = raw.bitrate,
+                        bitrate = if (raw.bitrate > 0) raw.bitrate else 0,
                         fileSizeBytes = raw.size,
                         albumArtUri = albumArtUri,
                         year = raw.year,
@@ -246,7 +275,7 @@ class MusicRepository(private val context: Context) {
                 artistsSet.add(song.artist)
                 processedCount++
                 
-                if (processedCount % 10 == 0 || processedCount == total) {
+                if (processedCount % 20 == 0 || processedCount == total) {
                     onProgress(processedCount, albumsSet.size, artistsSet.size, processedCount.toFloat() / total)
                 }
             }
@@ -264,13 +293,50 @@ class MusicRepository(private val context: Context) {
         else -> 16
     }
 
-    private fun cacheEmbeddedAlbumArt(mediaStoreId: Long, albumId: Long, bytes: ByteArray): Uri {
+    private fun cacheEmbeddedAlbumArt(mediaStoreId: Long, albumId: Long, bytes: ByteArray, forceRefresh: Boolean = false): Uri {
         val dir = File(context.cacheDir, "embedded_album_art").apply { mkdirs() }
         val f = File(dir, "$mediaStoreId.jpg")
+        
+        // If file exists and not forcing refresh, return it
+        if (!forceRefresh && f.exists() && f.length() > 0) return Uri.fromFile(f)
+
+        val prefs = context.getSharedPreferences("beatraxus", android.content.Context.MODE_PRIVATE)
+        val useOriginalQuality = prefs.getBoolean("use_original_quality_art", false)
+
         return try {
+            // Only compress if original quality is NOT requested
+            if (!useOriginalQuality && bytes.size > 100 * 1024) {
+                val options = android.graphics.BitmapFactory.Options().apply {
+                    inJustDecodeBounds = true
+                }
+                android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+                
+                // Max size 512x512 for thumbnails (Perfect balance of quality and storage)
+                var sampleSize = 1
+                while (options.outWidth / (sampleSize * 2) >= 512 && options.outHeight / (sampleSize * 2) >= 512) {
+                    sampleSize *= 2
+                }
+                
+                val decodeOptions = android.graphics.BitmapFactory.Options().apply {
+                    inSampleSize = sampleSize
+                }
+                val bitmap = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, decodeOptions)
+                
+                if (bitmap != null) {
+                    FileOutputStream(f).use { out ->
+                        // Use 70 quality for small footprint
+                        bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 70, out)
+                    }
+                    bitmap.recycle()
+                    return Uri.fromFile(f)
+                }
+            }
+            
+            // Otherwise just write raw bytes (Original Quality)
             FileOutputStream(f).use { it.write(bytes) }
             Uri.fromFile(f)
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            // Fallback to MediaStore album art provider if caching fails
             ContentUris.withAppendedId(Uri.parse("content://media/external/audio/albumart"), albumId)
         }
     }
@@ -283,7 +349,6 @@ class MusicRepository(private val context: Context) {
             ext == "wav" || m.contains("wav") || m.contains("wave") -> "WAV"
             ext == "alac" || m.contains("alac") -> "ALAC"
             ext == "m4a" || ext == "aac" || m.contains("mp4") || m.contains("aac") -> {
-                // If it's ALAC, it's usually inside M4A container
                 if (bitDepth > 16 || m.contains("alac")) "ALAC" else "AAC"
             }
             ext == "ogg" || m.contains("ogg") -> "OGG"
@@ -303,8 +368,25 @@ class MusicRepository(private val context: Context) {
         val size: Long,
         val albumId: Long,
         val bitrate: Int,
+        val genre: String,
         val path: String,
         val dateAdded: Long,
         val year: Int
     )
+
+    fun deleteSongs(uris: List<Uri>): android.app.PendingIntent? {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            return MediaStore.createDeleteRequest(context.contentResolver, uris)
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            try {
+                uris.forEach { context.contentResolver.delete(it, null, null) }
+            } catch (e: SecurityException) {
+                val recoverableSecurityException = e as? android.app.RecoverableSecurityException
+                return recoverableSecurityException?.userAction?.actionIntent
+            }
+        } else {
+            uris.forEach { context.contentResolver.delete(it, null, null) }
+        }
+        return null
+    }
 }

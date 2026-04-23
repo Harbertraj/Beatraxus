@@ -6,7 +6,18 @@ color bg_deep
 drawable app_icon_bg
 drawable app_icon_fg
 drawable ic_album_placeholder
+drawable ic_github
+drawable ic_pause
+drawable ic_play
+drawable ic_repeat
+drawable ic_shuffle
+drawable ic_skip_next
+drawable ic_skip_previous
+layout glance_default_layout
 mipmap ic_launcher
+mipmap ic_launcher_background
+mipmap ic_launcher_foreground
+mipmap ic_launcher_monochrome
 mipmap ic_launcher_round
 raw music_wave
 string app_name
@@ -25,3 +36,6 @@ string select_track_hint
 style Theme.Beatraxus
 xml backup_rules
 xml data_extraction_rules
+xml widget_info_large
+xml widget_info_medium
+xml widget_info_small

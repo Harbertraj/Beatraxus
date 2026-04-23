@@ -3,10 +3,13 @@ package com.beatflowy.app.engine
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 class AudioTrackOutput : AudioOutput {
     private var audioTrack: AudioTrack? = null
     private var channels = 2
+    private val mutex = Mutex()
 
     override fun init(sampleRate: Int, channels: Int): Boolean {
         this.channels = channels
@@ -16,7 +19,10 @@ class AudioTrackOutput : AudioOutput {
         if (bufferSize <= 0) return false
 
         try {
-            audioTrack?.release()
+            audioTrack?.let {
+                it.stop()
+                it.release()
+            }
             audioTrack = AudioTrack.Builder()
                 .setAudioAttributes(AudioAttributes.Builder()
                     .setUsage(AudioAttributes.USAGE_MEDIA)
@@ -45,16 +51,32 @@ class AudioTrackOutput : AudioOutput {
 
     override fun stop() { 
         try {
-            audioTrack?.stop() 
+            audioTrack?.pause()
+        } catch (e: Exception) {}
+    }
+
+    override fun flush() {
+        try {
+            audioTrack?.flush()
         } catch (e: Exception) {}
     }
 
     override fun release() { 
-        audioTrack?.release()
+        audioTrack?.let {
+            try {
+                it.stop()
+                it.release()
+            } catch (e: Exception) {}
+        }
         audioTrack = null 
     }
 
     override fun write(data: FloatArray, frameCount: Int): Int {
-        return audioTrack?.write(data, 0, frameCount * channels, AudioTrack.WRITE_BLOCKING) ?: 0
+        val track = audioTrack ?: return 0
+        return try {
+            track.write(data, 0, frameCount * channels, AudioTrack.WRITE_BLOCKING)
+        } catch (e: Exception) {
+            0
+        }
     }
 }

@@ -1,34 +1,178 @@
 [
     {
-        "merged": "com.beatflowy.app-debug-77:/drawable_app_icon_fg.xml.flat",
-        "source": "com.beatflowy.app-main-79:/drawable/app_icon_fg.xml"
+        "merged": "com.beatflowy.app-debug-85:/drawable_ic_skip_previous.xml.flat",
+        "source": "com.beatflowy.app-main-87:/drawable/ic_skip_previous.xml"
     },
     {
-        "merged": "com.beatflowy.app-debug-77:/xml_backup_rules.xml.flat",
-        "source": "com.beatflowy.app-main-79:/xml/backup_rules.xml"
+        "merged": "com.beatflowy.app-debug-85:/drawable_ic_github.xml.flat",
+        "source": "com.beatflowy.app-main-87:/drawable/ic_github.xml"
     },
     {
-        "merged": "com.beatflowy.app-debug-77:/drawable_app_icon_bg.xml.flat",
-        "source": "com.beatflowy.app-main-79:/drawable/app_icon_bg.xml"
+        "merged": "com.beatflowy.app-debug-85:/mipmap-xxhdpi_ic_launcher_background.webp.flat",
+        "source": "com.beatflowy.app-main-87:/mipmap-xxhdpi/ic_launcher_background.webp"
     },
     {
-        "merged": "com.beatflowy.app-debug-77:/mipmap-anydpi-v26_ic_launcher.xml.flat",
-        "source": "com.beatflowy.app-main-79:/mipmap-anydpi-v26/ic_launcher.xml"
+        "merged": "com.beatflowy.app-debug-85:/xml_widget_info_small.xml.flat",
+        "source": "com.beatflowy.app-main-87:/xml/widget_info_small.xml"
     },
     {
-        "merged": "com.beatflowy.app-debug-77:/raw_music_wave.json.flat",
-        "source": "com.beatflowy.app-main-79:/raw/music_wave.json"
+        "merged": "com.beatflowy.app-debug-85:/mipmap-xxhdpi_ic_launcher.webp.flat",
+        "source": "com.beatflowy.app-main-87:/mipmap-xxhdpi/ic_launcher.webp"
     },
     {
-        "merged": "com.beatflowy.app-debug-77:/drawable_ic_album_placeholder.xml.flat",
-        "source": "com.beatflowy.app-main-79:/drawable/ic_album_placeholder.xml"
+        "merged": "com.beatflowy.app-debug-85:/drawable_app_icon_fg.xml.flat",
+        "source": "com.beatflowy.app-main-87:/drawable/app_icon_fg.xml"
     },
     {
-        "merged": "com.beatflowy.app-debug-77:/xml_data_extraction_rules.xml.flat",
-        "source": "com.beatflowy.app-main-79:/xml/data_extraction_rules.xml"
+        "merged": "com.beatflowy.app-debug-85:/drawable_ic_shuffle.xml.flat",
+        "source": "com.beatflowy.app-main-87:/drawable/ic_shuffle.xml"
     },
     {
-        "merged": "com.beatflowy.app-debug-77:/mipmap-anydpi-v26_ic_launcher_round.xml.flat",
-        "source": "com.beatflowy.app-main-79:/mipmap-anydpi-v26/ic_launcher_round.xml"
+        "merged": "com.beatflowy.app-debug-85:/mipmap-xxhdpi_ic_launcher_round.webp.flat",
+        "source": "com.beatflowy.app-main-87:/mipmap-xxhdpi/ic_launcher_round.webp"
+    },
+    {
+        "merged": "com.beatflowy.app-debug-85:/drawable_app_icon_bg.xml.flat",
+        "source": "com.beatflowy.app-main-87:/drawable/app_icon_bg.xml"
+    },
+    {
+        "merged": "com.beatflowy.app-debug-85:/mipmap-xxxhdpi_ic_launcher_foreground.webp.flat",
+        "source": "com.beatflowy.app-main-87:/mipmap-xxxhdpi/ic_launcher_foreground.webp"
+    },
+    {
+        "merged": "com.beatflowy.app-debug-85:/mipmap-xxhdpi_ic_launcher_foreground.webp.flat",
+        "source": "com.beatflowy.app-main-87:/mipmap-xxhdpi/ic_launcher_foreground.webp"
+    },
+    {
+        "merged": "com.beatflowy.app-debug-85:/mipmap-xxxhdpi_ic_launcher.webp.flat",
+        "source": "com.beatflowy.app-main-87:/mipmap-xxxhdpi/ic_launcher.webp"
+    },
+    {
+        "merged": "com.beatflowy.app-debug-85:/mipmap-xhdpi_ic_launcher.webp.flat",
+        "source": "com.beatflowy.app-main-87:/mipmap-xhdpi/ic_launcher.webp"
+    },
+    {
+        "merged": "com.beatflowy.app-debug-85:/drawable_ic_repeat.xml.flat",
+        "source": "com.beatflowy.app-main-87:/drawable/ic_repeat.xml"
+    },
+    {
+        "merged": "com.beatflowy.app-debug-85:/mipmap-hdpi_ic_launcher_round.webp.flat",
+        "source": "com.beatflowy.app-main-87:/mipmap-hdpi/ic_launcher_round.webp"
+    },
+    {
+        "merged": "com.beatflowy.app-debug-85:/drawable_ic_album_placeholder.xml.flat",
+        "source": "com.beatflowy.app-main-87:/drawable/ic_album_placeholder.xml"
+    },
+    {
+        "merged": "com.beatflowy.app-debug-85:/drawable_ic_pause.xml.flat",
+        "source": "com.beatflowy.app-main-87:/drawable/ic_pause.xml"
+    },
+    {
+        "merged": "com.beatflowy.app-debug-85:/mipmap-anydpi-v26_ic_launcher.xml.flat",
+        "source": "com.beatflowy.app-main-87:/mipmap-anydpi-v26/ic_launcher.xml"
+    },
+    {
+        "merged": "com.beatflowy.app-debug-85:/mipmap-xxxhdpi_ic_launcher_monochrome.webp.flat",
+        "source": "com.beatflowy.app-main-87:/mipmap-xxxhdpi/ic_launcher_monochrome.webp"
+    },
+    {
+        "merged": "com.beatflowy.app-debug-85:/mipmap-hdpi_ic_launcher_foreground.webp.flat",
+        "source": "com.beatflowy.app-main-87:/mipmap-hdpi/ic_launcher_foreground.webp"
+    },
+    {
+        "merged": "com.beatflowy.app-debug-85:/xml_backup_rules.xml.flat",
+        "source": "com.beatflowy.app-main-87:/xml/backup_rules.xml"
+    },
+    {
+        "merged": "com.beatflowy.app-debug-85:/mipmap-xhdpi_ic_launcher_background.webp.flat",
+        "source": "com.beatflowy.app-main-87:/mipmap-xhdpi/ic_launcher_background.webp"
+    },
+    {
+        "merged": "com.beatflowy.app-debug-85:/mipmap-xxhdpi_ic_launcher_monochrome.webp.flat",
+        "source": "com.beatflowy.app-main-87:/mipmap-xxhdpi/ic_launcher_monochrome.webp"
+    },
+    {
+        "merged": "com.beatflowy.app-debug-85:/mipmap-xhdpi_ic_launcher_round.webp.flat",
+        "source": "com.beatflowy.app-main-87:/mipmap-xhdpi/ic_launcher_round.webp"
+    },
+    {
+        "merged": "com.beatflowy.app-debug-85:/mipmap-xhdpi_ic_launcher_monochrome.webp.flat",
+        "source": "com.beatflowy.app-main-87:/mipmap-xhdpi/ic_launcher_monochrome.webp"
+    },
+    {
+        "merged": "com.beatflowy.app-debug-85:/mipmap-hdpi_ic_launcher.webp.flat",
+        "source": "com.beatflowy.app-main-87:/mipmap-hdpi/ic_launcher.webp"
+    },
+    {
+        "merged": "com.beatflowy.app-debug-85:/mipmap-mdpi_ic_launcher_round.webp.flat",
+        "source": "com.beatflowy.app-main-87:/mipmap-mdpi/ic_launcher_round.webp"
+    },
+    {
+        "merged": "com.beatflowy.app-debug-85:/layout_glance_default_layout.xml.flat",
+        "source": "com.beatflowy.app-main-87:/layout/glance_default_layout.xml"
+    },
+    {
+        "merged": "com.beatflowy.app-debug-85:/xml_widget_info_large.xml.flat",
+        "source": "com.beatflowy.app-main-87:/xml/widget_info_large.xml"
+    },
+    {
+        "merged": "com.beatflowy.app-debug-85:/mipmap-mdpi_ic_launcher_monochrome.webp.flat",
+        "source": "com.beatflowy.app-main-87:/mipmap-mdpi/ic_launcher_monochrome.webp"
+    },
+    {
+        "merged": "com.beatflowy.app-debug-85:/mipmap-xhdpi_ic_launcher_foreground.webp.flat",
+        "source": "com.beatflowy.app-main-87:/mipmap-xhdpi/ic_launcher_foreground.webp"
+    },
+    {
+        "merged": "com.beatflowy.app-debug-85:/xml_widget_info_medium.xml.flat",
+        "source": "com.beatflowy.app-main-87:/xml/widget_info_medium.xml"
+    },
+    {
+        "merged": "com.beatflowy.app-debug-85:/mipmap-xxxhdpi_ic_launcher_round.webp.flat",
+        "source": "com.beatflowy.app-main-87:/mipmap-xxxhdpi/ic_launcher_round.webp"
+    },
+    {
+        "merged": "com.beatflowy.app-debug-85:/raw_music_wave.json.flat",
+        "source": "com.beatflowy.app-main-87:/raw/music_wave.json"
+    },
+    {
+        "merged": "com.beatflowy.app-debug-85:/mipmap-mdpi_ic_launcher_foreground.webp.flat",
+        "source": "com.beatflowy.app-main-87:/mipmap-mdpi/ic_launcher_foreground.webp"
+    },
+    {
+        "merged": "com.beatflowy.app-debug-85:/mipmap-hdpi_ic_launcher_monochrome.webp.flat",
+        "source": "com.beatflowy.app-main-87:/mipmap-hdpi/ic_launcher_monochrome.webp"
+    },
+    {
+        "merged": "com.beatflowy.app-debug-85:/xml_data_extraction_rules.xml.flat",
+        "source": "com.beatflowy.app-main-87:/xml/data_extraction_rules.xml"
+    },
+    {
+        "merged": "com.beatflowy.app-debug-85:/mipmap-anydpi-v26_ic_launcher_round.xml.flat",
+        "source": "com.beatflowy.app-main-87:/mipmap-anydpi-v26/ic_launcher_round.xml"
+    },
+    {
+        "merged": "com.beatflowy.app-debug-85:/mipmap-mdpi_ic_launcher.webp.flat",
+        "source": "com.beatflowy.app-main-87:/mipmap-mdpi/ic_launcher.webp"
+    },
+    {
+        "merged": "com.beatflowy.app-debug-85:/drawable_ic_skip_next.xml.flat",
+        "source": "com.beatflowy.app-main-87:/drawable/ic_skip_next.xml"
+    },
+    {
+        "merged": "com.beatflowy.app-debug-85:/mipmap-mdpi_ic_launcher_background.webp.flat",
+        "source": "com.beatflowy.app-main-87:/mipmap-mdpi/ic_launcher_background.webp"
+    },
+    {
+        "merged": "com.beatflowy.app-debug-85:/mipmap-hdpi_ic_launcher_background.webp.flat",
+        "source": "com.beatflowy.app-main-87:/mipmap-hdpi/ic_launcher_background.webp"
+    },
+    {
+        "merged": "com.beatflowy.app-debug-85:/mipmap-xxxhdpi_ic_launcher_background.webp.flat",
+        "source": "com.beatflowy.app-main-87:/mipmap-xxxhdpi/ic_launcher_background.webp"
+    },
+    {
+        "merged": "com.beatflowy.app-debug-85:/drawable_ic_play.xml.flat",
+        "source": "com.beatflowy.app-main-87:/drawable/ic_play.xml"
     }
 ]

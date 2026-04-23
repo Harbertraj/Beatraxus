@@ -16,13 +16,18 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
+import kotlin.coroutines.coroutineContext
 
 class AudioEngine(private val context: Context, private val output: AudioOutput) {
     private val TAG = "AudioEngine"
-    private var job: Job? = null
+    private val engineScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+    private var playbackJob: Job? = null
+    
+    // We use a sessionId to invalidate old decode loops if they somehow linger
+    private var currentSessionId = 0
+    
     private val isPlaying = AtomicBoolean(false)
     private val seekPositionMs = java.util.concurrent.atomic.AtomicLong(-1)
-    /** Thread-safe playback position for UI polling (extractor time base). */
     private val positionMsAtomic = AtomicLong(0L)
     
     private val _audioStateFlow = MutableStateFlow(AudioState())
@@ -33,20 +38,36 @@ class AudioEngine(private val context: Context, private val output: AudioOutput)
 
     private var currentSong: Song? = null
 
-    fun currentPositionMs(): Long = positionMsAtomic.get()
+    fun currentPositionMs(): Long {
+        val pending = seekPositionMs.get()
+        return if (pending != -1L) pending else positionMsAtomic.get()
+    }
 
     private val _onCompletion = kotlinx.coroutines.flow.MutableSharedFlow<Unit>()
     val onCompletion = _onCompletion.asSharedFlow()
 
     fun play(song: Song) {
-        cancelDecodeJob()
-        positionMsAtomic.set(0L)
         currentSong = song
         _playbackStateFlow.update { it.copy(currentSong = song, isPlaying = true) }
-        job = CoroutineScope(Dispatchers.IO).launch {
-            val reachedEnd = decodeAndPlay(song.uri, song.id, startPositionMs = 0L)
-            if (reachedEnd) {
-                _onCompletion.emit(Unit)
+        
+        val sessionId = ++currentSessionId
+        
+        playbackJob?.cancel()
+        playbackJob = engineScope.launch {
+            try {
+                // Ensure the previous job is truly finished before starting new one 
+                // to avoid racing on AudioTrack resources
+                yield() 
+                
+                positionMsAtomic.set(0L)
+                val reachedEnd = decodeAndPlay(song.uri, sessionId, startPositionMs = 0L)
+                if (reachedEnd && isActive && sessionId == currentSessionId) {
+                    _onCompletion.emit(Unit)
+                }
+            } catch (e: CancellationException) {
+                // Ignore
+            } catch (e: Exception) {
+                Log.e(TAG, "Playback job failed", e)
             }
         }
     }
@@ -56,8 +77,11 @@ class AudioEngine(private val context: Context, private val output: AudioOutput)
         val song = currentSong ?: return
         val resumeFrom = positionMsAtomic.get()
         _playbackStateFlow.update { it.copy(isPlaying = true) }
-        job = CoroutineScope(Dispatchers.IO).launch {
-            decodeAndPlay(song.uri, song.id, startPositionMs = resumeFrom)
+        
+        val sessionId = ++currentSessionId
+        playbackJob?.cancel()
+        playbackJob = engineScope.launch {
+            decodeAndPlay(song.uri, sessionId, startPositionMs = resumeFrom)
         }
     }
 
@@ -69,108 +93,56 @@ class AudioEngine(private val context: Context, private val output: AudioOutput)
         _playbackStateFlow.update { it.copy(repeatMode = mode) }
     }
 
-    /**
-     * Stops decoding immediately and publishes [PlaybackState.isPlaying] = false so UI never
-     * stays out of sync while the decode coroutine unwinds.
-     */
     fun stop() {
-        cancelDecodeJob()
-        _playbackStateFlow.update { it.copy(isPlaying = false) }
-    }
-
-    private fun cancelDecodeJob() {
         isPlaying.set(false)
-        job?.cancel()
-        job = null
+        playbackJob?.cancel()
+        _playbackStateFlow.update { it.copy(isPlaying = false) }
         output.stop()
     }
 
     fun seekTo(positionMs: Long) {
         seekPositionMs.set(positionMs)
+        output.flush()
     }
 
-    private suspend fun decodeAndPlay(uri: Uri, sessionSongId: String, startPositionMs: Long): Boolean {
+    private suspend fun decodeAndPlay(uri: Uri, sessionId: Int, startPositionMs: Long): Boolean {
         val extractor = MediaExtractor()
         var codec: MediaCodec? = null
         var reachedEnd = false
+        
         try {
             context.contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
                 extractor.setDataSource(pfd.fileDescriptor)
-            }
+            } ?: return false
+
+            if (sessionId != currentSessionId) return false
 
             val candidates = mutableListOf<Pair<Int, MediaFormat>>()
             for (i in 0 until extractor.trackCount) {
                 val format = extractor.getTrackFormat(i)
                 val mime = format.getString(MediaFormat.KEY_MIME) ?: continue
-                if (!mime.startsWith("audio/")) continue
-                candidates.add(i to format)
+                if (mime.startsWith("audio/")) candidates.add(i to format)
             }
-            if (candidates.isEmpty()) throw Exception("No audio track found")
+            if (candidates.isEmpty()) return false
 
-            val ordered = candidates.sortedWith(
-                compareByDescending<Pair<Int, MediaFormat>> { (_, f) ->
-                    audioMimePriority(f.getString(MediaFormat.KEY_MIME) ?: "")
-                }.thenBy { it.first }
-            )
+            val (trackIndex, format) = candidates.sortedByDescending { (_, f) ->
+                audioMimePriority(f.getString(MediaFormat.KEY_MIME) ?: "")
+            }.first()
 
-            var selectedFormat: MediaFormat? = null
-            var selectedMime: String? = null
-            var lastFailure: Exception? = null
-            pickCodec@ for (requireListedDecoder in listOf(true, false)) {
-                for ((idx, format) in ordered) {
-                    val mime = format.getString(MediaFormat.KEY_MIME) ?: continue
-                    if (requireListedDecoder && !isDecoderLikelyAvailable(mime)) {
-                        Log.w(TAG, "Skipping mime (no decoder listed, strict pass): $mime")
-                        continue
-                    }
-                    try {
-                        extractor.selectTrack(idx)
-                        val dec = MediaCodec.createDecoderByType(mime)
-                        dec.configure(format, null, null, 0)
-                        dec.start()
-                        codec = dec
-                        selectedFormat = format
-                        selectedMime = mime
-                        break@pickCodec
-                    } catch (e: Exception) {
-                        lastFailure = e
-                        Log.w(TAG, "Decoder init failed for track=$idx mime=$mime: ${e.message}")
-                        try {
-                            codec?.release()
-                        } catch (_: Exception) {
-                        }
-                        codec = null
-                        try {
-                            extractor.unselectTrack(idx)
-                        } catch (_: Exception) {
-                        }
-                    }
-                }
-            }
+            extractor.selectTrack(trackIndex)
+            val mime = format.getString(MediaFormat.KEY_MIME)!!
+            codec = MediaCodec.createDecoderByType(mime)
+            codec.configure(format, null, null, 0)
+            codec.start()
 
-            if (codec == null) {
-                throw lastFailure ?: IllegalStateException("No working audio decoder for this file")
-            }
+            val sampleRate = codec.outputFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE)
+            val channels = codec.outputFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
 
-            val format = selectedFormat!!
-            val mime = selectedMime!!
-            Log.d(TAG, "Playing mime=$mime format=$format")
-
-            val sampleRate = format.getInteger(MediaFormat.KEY_SAMPLE_RATE)
-            val channels = format.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
-
-            // Re-fetch format after start, some codecs update it
-            val outputFormat = codec.outputFormat
-            val actualSampleRate = if (outputFormat.containsKey(MediaFormat.KEY_SAMPLE_RATE)) 
-                outputFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE) else sampleRate
-            val actualChannels = if (outputFormat.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) 
-                outputFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT) else channels
-
-            if (!output.init(actualSampleRate, actualChannels)) return false
+            if (!output.init(sampleRate, channels)) return false
             output.start()
 
             val info = MediaCodec.BufferInfo()
-            _audioStateFlow.update { it.copy(sampleRate = actualSampleRate) }
+            _audioStateFlow.update { it.copy(sampleRate = sampleRate) }
             
             if (startPositionMs > 0) {
                 extractor.seekTo(startPositionMs * 1000, MediaExtractor.SEEK_TO_CLOSEST_SYNC)
@@ -178,19 +150,17 @@ class AudioEngine(private val context: Context, private val output: AudioOutput)
 
             isPlaying.set(true)
 
-            while (isPlaying.get()) {
+            while (isPlaying.get() && sessionId == currentSessionId && coroutineContext.isActive) {
                 val seekPos = seekPositionMs.getAndSet(-1)
                 if (seekPos != -1L) {
                     extractor.seekTo(seekPos * 1000, MediaExtractor.SEEK_TO_CLOSEST_SYNC)
                     codec.flush()
-                    positionMsAtomic.set(seekPos.coerceAtLeast(0L))
+                    output.flush()
+                    val actualPos = extractor.sampleTime
+                    positionMsAtomic.set(if (actualPos >= 0) actualPos / 1000 else seekPos)
                 }
 
-                val sampleUs = extractor.sampleTime
-                if (sampleUs >= 0) {
-                    positionMsAtomic.set(sampleUs / 1000)
-                }
-                val inIdx = codec.dequeueInputBuffer(10000)
+                val inIdx = codec.dequeueInputBuffer(5000)
                 if (inIdx >= 0) {
                     val buf = codec.getInputBuffer(inIdx)!!
                     val size = extractor.readSampleData(buf, 0)
@@ -202,65 +172,42 @@ class AudioEngine(private val context: Context, private val output: AudioOutput)
                     }
                 }
 
-                val outIdx = codec.dequeueOutputBuffer(info, 10000)
-                if (outIdx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
-                    val newFormat = codec.outputFormat
-                    val newSampleRate = newFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE)
-                    val newChannels = newFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
-                    output.stop()
-                    output.init(newSampleRate, newChannels)
-                    output.start()
-                    _audioStateFlow.update { it.copy(sampleRate = newSampleRate) }
-                } else if (outIdx >= 0) {
-                    val buf = codec.getOutputBuffer(outIdx)!!
-                    buf.position(info.offset)
-                    buf.limit(info.offset + info.size)
-
-                    if (info.size > 0) {
-                        // Support different PCM encodings if possible, but default to 16-bit to Float
-                        val pcmEncoding = if (codec.outputFormat.containsKey(MediaFormat.KEY_PCM_ENCODING))
-                            codec.outputFormat.getInteger(MediaFormat.KEY_PCM_ENCODING)
-                            else AudioFormat.ENCODING_PCM_16BIT
-
-                        val floatData = when (pcmEncoding) {
-                            AudioFormat.ENCODING_PCM_FLOAT -> {
-                                val floats = FloatArray(info.size / 4)
-                                buf.order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer().get(floats)
-                                floats
-                            }
-                            else -> {
-                                // Default to 16-bit
-                                val shorts = ShortArray(info.size / 2)
-                                buf.order(ByteOrder.LITTLE_ENDIAN).asShortBuffer().get(shorts)
-                                FloatArray(shorts.size) { shorts[it] / 32768f }
-                            }
-                        }
-                        
-                        val currentChannels = codec.outputFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
-                        if (floatData.isNotEmpty() && currentChannels > 0) {
-                            output.write(floatData, floatData.size / currentChannels)
-                        }
+                val outIdx = codec.dequeueOutputBuffer(info, 5000)
+                if (outIdx >= 0) {
+                    if (info.presentationTimeUs >= 0) {
+                        positionMsAtomic.set(info.presentationTimeUs / 1000)
                     }
-                    
+                    val buf = codec.getOutputBuffer(outIdx)!!
+                    if (info.size > 0) {
+                        val shorts = ShortArray(info.size / 2)
+                        buf.order(ByteOrder.LITTLE_ENDIAN).asShortBuffer().get(shorts)
+                        val floats = FloatArray(shorts.size) { shorts[it] / 32768f }
+                        output.write(floats, floats.size / channels)
+                    }
                     codec.releaseOutputBuffer(outIdx, false)
                     if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) {
                         reachedEnd = true
                         break
                     }
+                } else if (outIdx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                    val newFormat = codec.outputFormat
+                    output.init(newFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE), 
+                               newFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT))
+                    output.start()
                 }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Playback error: ${e.message}")
+            Log.e(TAG, "Error in decode loop", e)
         } finally {
-            // Avoid racing a newer session: only clear playing if this decode still owns the song.
-            if (currentSong?.id == sessionSongId) {
+            if (sessionId == currentSessionId) {
+                isPlaying.set(false)
                 _playbackStateFlow.update { it.copy(isPlaying = false) }
             }
             try {
                 codec?.stop()
                 codec?.release()
             } catch (e: Exception) {}
-            extractor.release()
+            try { extractor.release() } catch (e: Exception) {}
             output.stop()
         }
         return reachedEnd

@@ -41,13 +41,14 @@ import com.beatflowy.app.ui.components.WaveformSeekBar
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
 import java.util.Locale
+import kotlin.math.abs
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NowPlayingScreen(
     song: Song?,
     isPlaying: Boolean,
-    progressMs: Long,
+    progressMs: () -> Long,
     durationMs: Long,
     shuffleMode: Boolean,
     repeatMode: Int,
@@ -69,7 +70,8 @@ fun NowPlayingScreen(
     onPlayFromQueue: (String) -> Unit,
     upcomingSongs: List<Song>,
     isFavorite: Boolean,
-    onFavoriteClick: () -> Unit
+    onFavoriteClick: () -> Unit,
+    onNavigateToAlbum: (String) -> Unit
 ) {
     if (song == null) return
     val showQueue = uiState.showQueue
@@ -85,8 +87,10 @@ fun NowPlayingScreen(
             contentDescription = null,
             modifier = Modifier
                 .fillMaxSize()
-                .blur(80.dp)
-                .graphicsLayer(alpha = 0.65f),
+                .graphicsLayer {
+                    alpha = 0.65f
+                }
+                .blur(80.dp),
             contentScale = ContentScale.Crop,
         )
         
@@ -138,7 +142,22 @@ fun NowPlayingScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(paddingValues)
-                    .padding(horizontal = 24.dp),
+                    .padding(horizontal = 24.dp)
+                    .pointerInput(showQueue, showLyrics) {
+                        if (!showQueue && !showLyrics) {
+                            var totalY = 0f
+                            detectVerticalDragGestures(
+                                onDragStart = { totalY = 0f },
+                                onDragEnd = {
+                                    if (totalY > 100) onClose()
+                                },
+                                onVerticalDrag = { change, dragAmount ->
+                                    totalY += dragAmount
+                                    if (abs(totalY) > 50) change.consume()
+                                }
+                            )
+                        }
+                    },
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 if (showQueue) {
@@ -164,10 +183,10 @@ fun NowPlayingScreen(
                             .padding(horizontal = 4.dp)
                     ) {
                         if (showLyrics) {
-                            LyricsView(songId = song.id, progressMs = progressMs, lyrics = lyrics)
+                            LyricsView(songId = song.id, progressProvider = progressMs, lyrics = lyrics)
                         } else {
                             var isTouching by remember { mutableStateOf(false) }
-                            val scale by animateFloatAsState(
+                            val scaleState = animateFloatAsState(
                                 targetValue = if (isTouching) 0.92f else 1f,
                                 animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow),
                                 label = "scale"
@@ -178,8 +197,9 @@ fun NowPlayingScreen(
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .graphicsLayer {
-                                        scaleX = scale
-                                        scaleY = scale
+                                        val s = scaleState.value
+                                        scaleX = s
+                                        scaleY = s
                                     }
                                     .shadow(32.dp, RoundedCornerShape(32.dp))
                                     .clip(RoundedCornerShape(32.dp))
@@ -193,10 +213,27 @@ fun NowPlayingScreen(
                                         )
                                     }
                                     .pointerInput(Unit) {
-                                        detectHorizontalDragGestures { _, dragAmount ->
-                                            if (dragAmount > 80) onPrevious()
-                                            else if (dragAmount < -80) onNext()
-                                        }
+                                        var totalX = 0f
+                                        var totalY = 0f
+                                        detectDragGestures(
+                                            onDragStart = { 
+                                                totalX = 0f
+                                                totalY = 0f
+                                            },
+                                            onDragEnd = {
+                                                if (abs(totalX) > abs(totalY)) {
+                                                    if (totalX > 50) onPrevious()
+                                                    else if (totalX < -50) onNext()
+                                                } else {
+                                                    if (totalY > 100) onClose()
+                                                }
+                                            },
+                                            onDrag = { change, dragAmount ->
+                                                change.consume()
+                                                totalX += dragAmount.x
+                                                totalY += dragAmount.y
+                                            }
+                                        )
                                     }
                             ) {
                                 AnimatedContent(
@@ -253,7 +290,8 @@ fun NowPlayingScreen(
                                 style = MaterialTheme.typography.titleMedium,
                                 color = Color.White.copy(alpha = 0.6f),
                                 maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.clickable { onNavigateToAlbum(song.album) }
                             )
                         }
                         IconButton(onClick = onToggleLyrics) {
@@ -268,14 +306,14 @@ fun NowPlayingScreen(
                     Spacer(Modifier.height(20.dp))
 
                     // SeekBar
-                    val progress = if (durationMs > 0) (progressMs.toFloat() / durationMs) else 0f
+                    val progress = if (durationMs > 0) (progressMs().toFloat() / durationMs) else 0f
                     WaveformSeekBar(
                         progress = progress,
                         onProgressChange = { onSeek((it * durationMs).toLong()) },
                         activeColor = Color.White,
                         inactiveColor = Color.White.copy(0.2f),
                         seed = song.id.hashCode(),
-                        progressPollKey = progressMs / 200,
+                        progressPollKey = progressMs() / 200,
                         modifier = Modifier.fillMaxWidth().height(56.dp)
                     )
 
@@ -284,7 +322,7 @@ fun NowPlayingScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(fmtTime(progressMs), color = Color.White.copy(0.5f), fontSize = 12.sp)
+                        Text(fmtTime(progressMs()), color = Color.White.copy(0.5f), fontSize = 12.sp)
                         TechnicalInfo(song)
                         Text(fmtTime(durationMs), color = Color.White.copy(0.5f), fontSize = 12.sp)
                     }
@@ -371,7 +409,7 @@ fun AudioQualityBadge(song: Song) {
     }
 
     val infiniteTransition = rememberInfiniteTransition(label = "shimmer")
-    val shimmerTranslate by infiniteTransition.animateFloat(
+    val shimmerTranslate = infiniteTransition.animateFloat(
         initialValue = -200f,
         targetValue = 600f,
         animationSpec = infiniteRepeatable(tween(2500, easing = LinearEasing), RepeatMode.Restart),
@@ -382,27 +420,20 @@ fun AudioQualityBadge(song: Song) {
         shape = RoundedCornerShape(8.dp),
         color = badgeColor.copy(alpha = 0.15f),
         border = BorderStroke(1.dp, badgeColor.copy(alpha = 0.5f)),
-        modifier = Modifier.drawWithContent {
-            drawContent()
-            if (isHiRes) {
-                val brush = Brush.linearGradient(
-                    colors = listOf(Color.Transparent, Color.White.copy(0.4f), Color.Transparent),
-                    start = androidx.compose.ui.geometry.Offset(shimmerTranslate, 0f),
-                    end = androidx.compose.ui.geometry.Offset(shimmerTranslate + 100f, 100f)
-                )
-                // Use a path or clip to match the RoundedCornerShape
-                clipPath(androidx.compose.ui.graphics.Path().apply {
-                    addRoundRect(
-                        androidx.compose.ui.geometry.RoundRect(
-                            0f, 0f, size.width, size.height,
-                            androidx.compose.ui.geometry.CornerRadius(8.dp.toPx())
-                        )
+        modifier = Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .drawWithContent {
+                drawContent()
+                if (isHiRes) {
+                    val currentTranslate = shimmerTranslate.value
+                    val brush = Brush.linearGradient(
+                        colors = listOf(Color.Transparent, Color.White.copy(0.4f), Color.Transparent),
+                        start = androidx.compose.ui.geometry.Offset(currentTranslate, 0f),
+                        end = androidx.compose.ui.geometry.Offset(currentTranslate + 100f, 100f)
                     )
-                }) {
                     drawRect(brush = brush, blendMode = BlendMode.SrcAtop)
                 }
             }
-        }
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -447,7 +478,7 @@ fun TechnicalInfo(song: Song) {
 }
 
 @Composable
-fun LyricsView(songId: String, progressMs: Long, lyrics: List<Pair<Long, String>>) {
+fun LyricsView(songId: String, progressProvider: () -> Long, lyrics: List<Pair<Long, String>>) {
     val listState = rememberLazyListState()
     val hasTimedLines = remember(lyrics) {
         lyrics.any { it.first > 0L } || lyrics.size > 1
@@ -489,8 +520,11 @@ fun LyricsView(songId: String, progressMs: Long, lyrics: List<Pair<Long, String>
         return
     }
 
-    val activeIndex = remember(progressMs, lyrics) {
-        lyrics.indexOfLast { it.first <= progressMs }.coerceAtLeast(0)
+    val activeIndex by remember(lyrics) {
+        derivedStateOf {
+            val progress = progressProvider()
+            lyrics.indexOfLast { it.first <= progress }.coerceAtLeast(0)
+        }
     }
 
     LaunchedEffect(activeIndex, songId) {
@@ -508,24 +542,27 @@ fun LyricsView(songId: String, progressMs: Long, lyrics: List<Pair<Long, String>
     ) {
         itemsIndexed(lyrics, key = { index, _ -> "${songId}_$index" }) { index, line ->
             val isActive = index == activeIndex
-            val animatedSize by animateFloatAsState(
-                targetValue = if (isActive) 24f else 19f,
-                animationSpec = tween(220),
-                label = "lyricSize"
+            val scaleState = animateFloatAsState(
+                targetValue = if (isActive) 1.2f else 1f,
+                animationSpec = spring(dampingRatio = Spring.DampingRatioLowBouncy, stiffness = Spring.StiffnessLow),
+                label = "lyricScale"
             )
             Text(
                 text = line.second,
                 style = MaterialTheme.typography.headlineSmall.copy(
                     fontWeight = if (isActive) FontWeight.ExtraBold else FontWeight.Medium,
-                    fontSize = animatedSize.sp
+                    fontSize = 20.sp
                 ),
                 color = if (isActive) Color.White else Color.White.copy(alpha = 0.32f),
                 textAlign = TextAlign.Center,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 10.dp)
+                    .padding(vertical = 12.dp)
                     .graphicsLayer {
-                        alpha = if (isActive) 1f else 0.55f
+                        val s = scaleState.value
+                        scaleX = s
+                        scaleY = s
+                        alpha = if (isActive) 1f else 0.45f
                     }
             )
         }

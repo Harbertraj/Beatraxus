@@ -45,5 +45,41 @@
             </intent-filter>
         </service>
 
+        <receiver
+            android:name=".widget.MusicWidgetSmallReceiver"
+            android:exported="true"
+            android:label="Music Widget Small">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_info_small" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.MusicWidgetLargeReceiver"
+            android:exported="true"
+            android:label="Music Widget Large">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_info_large" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.MusicWidgetMediumReceiver"
+            android:exported="true"
+            android:label="Music Widget Medium">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_info_medium" />
+        </receiver>
+
     </application>
 </manifest>

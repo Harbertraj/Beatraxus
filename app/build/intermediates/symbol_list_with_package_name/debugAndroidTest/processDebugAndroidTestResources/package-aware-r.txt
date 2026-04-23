@@ -3,6 +3,7 @@ attr alpha
 attr font
 attr fontProviderAuthority
 attr fontProviderCerts
+attr fontProviderFallbackQuery
 attr fontProviderFetchStrategy
 attr fontProviderFetchTimeout
 attr fontProviderPackage
@@ -112,6 +113,7 @@ id consume_window_insets_tag
 id dialog_button
 id edit_text_id
 id forever
+id hide_graphics_layer_in_inspector_tag
 id hide_ime_id
 id hide_in_inspector_tag
 id icon
@@ -179,11 +181,12 @@ string in_progress
 string indeterminate
 string navigation_menu
 string not_selected
-string off
-string on
 string range_end
 string range_start
 string selected
+string state_empty
+string state_off
+string state_on
 string status_bar_notification_info_overflow
 string switch_role
 string tab
@@ -202,7 +205,7 @@ style Widget_Compat_NotificationActionContainer
 style Widget_Compat_NotificationActionText
 styleable Capability queryPatterns shortcutMatchRequired
 styleable ColorStateListItem android_color android_alpha android_lStar alpha lStar
-styleable FontFamily fontProviderAuthority fontProviderCerts fontProviderFetchStrategy fontProviderFetchTimeout fontProviderPackage fontProviderQuery fontProviderSystemFontFamily
+styleable FontFamily fontProviderAuthority fontProviderCerts fontProviderFallbackQuery fontProviderFetchStrategy fontProviderFetchTimeout fontProviderPackage fontProviderQuery fontProviderSystemFontFamily
 styleable FontFamilyFont android_font android_fontWeight android_fontStyle android_ttcIndex android_fontVariationSettings font fontStyle fontVariationSettings fontWeight ttcIndex
 styleable GradientColor android_startColor android_endColor android_type android_centerX android_centerY android_gradientRadius android_tileMode android_centerColor android_startX android_startY android_endX android_endY
 styleable GradientColorItem android_color android_offset

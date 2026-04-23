@@ -43,7 +43,7 @@ fun WaveformSeekBar(
         modifier = modifier
             .fillMaxWidth()
             .height(60.dp)
-            .pointerInput(seed, progressPollKey) {
+            .pointerInput(seed) {
                 awaitEachGesture {
                     val down = awaitFirstDown()
                     val width = size.width

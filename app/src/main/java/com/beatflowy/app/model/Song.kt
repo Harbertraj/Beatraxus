@@ -88,7 +88,10 @@ data class PlayerUiState(
     val format: String = "",
     val resamplingEnabled: Boolean = true,
     val currentFolderPath: String? = null,
-    val isFirstRun: Boolean = true
+    val isFirstRun: Boolean = true,
+    val previousView: LibraryView? = null,
+    val wasSearchingBeforeDetail: Boolean = false,
+    val useOriginalQualityArt: Boolean = false
 ) {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
@@ -96,6 +99,7 @@ data class PlayerUiState(
         return currentSong == other.currentSong &&
                 isPlaying == other.isPlaying &&
                 progressMs == other.progressMs &&
+                isBuffering == other.isBuffering &&
                 equalizerEnabled == other.equalizerEnabled &&
                 inputSampleRate == other.inputSampleRate &&
                 outputSampleRate == other.outputSampleRate &&
@@ -106,6 +110,10 @@ data class PlayerUiState(
                 isScanning == other.isScanning &&
                 scanProgress == other.scanProgress &&
                 scanCount == other.scanCount &&
+                albumCount == other.albumCount &&
+                artistCount == other.artistCount &&
+                permissionDenied == other.permissionDenied &&
+                errorMessage == other.errorMessage &&
                 shuffleMode == other.shuffleMode &&
                 repeatMode == other.repeatMode &&
                 currentView == other.currentView &&
@@ -116,17 +124,43 @@ data class PlayerUiState(
                 upcomingSongs == other.upcomingSongs &&
                 searchQuery == other.searchQuery &&
                 isMultiSelectMode == other.isMultiSelectMode &&
-                selectedSongIds == other.selectedSongIds
+                selectedSongIds == other.selectedSongIds &&
+                sortType == other.sortType &&
+                isAscending == other.isAscending &&
+                viewMode == other.viewMode &&
+                isSearchActive == other.isSearchActive &&
+                bitDepth == other.bitDepth &&
+                bitrate == other.bitrate &&
+                format == other.format &&
+                resamplingEnabled == other.resamplingEnabled &&
+                currentFolderPath == other.currentFolderPath &&
+                isFirstRun == other.isFirstRun &&
+                previousView == other.previousView &&
+                wasSearchingBeforeDetail == other.wasSearchingBeforeDetail &&
+                useOriginalQualityArt == other.useOriginalQualityArt
     }
+
     override fun hashCode(): Int {
         var result = currentSong?.hashCode() ?: 0
         result = 31 * result + isPlaying.hashCode()
+        result = 31 * result + progressMs.hashCode()
+        result = 31 * result + isBuffering.hashCode()
+        result = 31 * result + equalizerEnabled.hashCode()
+        result = 31 * result + inputSampleRate
+        result = 31 * result + outputSampleRate
+        result = 31 * result + outputDevice.hashCode()
+        result = 31 * result + outputMode.hashCode()
         result = 31 * result + eqGains.contentHashCode()
-        result = 31 * result + shuffleMode.hashCode()
-        result = 31 * result + repeatMode.hashCode()
+        result = 31 * result + isLoadingLibrary.hashCode()
         result = 31 * result + isScanning.hashCode()
         result = 31 * result + scanProgress.hashCode()
-        result = 31 * result + scanCount.hashCode()
+        result = 31 * result + scanCount
+        result = 31 * result + albumCount
+        result = 31 * result + artistCount
+        result = 31 * result + permissionDenied.hashCode()
+        result = 31 * result + (errorMessage?.hashCode() ?: 0)
+        result = 31 * result + shuffleMode.hashCode()
+        result = 31 * result + repeatMode
         result = 31 * result + currentView.hashCode()
         result = 31 * result + (selectedItemName?.hashCode() ?: 0)
         result = 31 * result + showFullPlayer.hashCode()
@@ -136,6 +170,19 @@ data class PlayerUiState(
         result = 31 * result + searchQuery.hashCode()
         result = 31 * result + isMultiSelectMode.hashCode()
         result = 31 * result + selectedSongIds.hashCode()
+        result = 31 * result + sortType.hashCode()
+        result = 31 * result + isAscending.hashCode()
+        result = 31 * result + viewMode.hashCode()
+        result = 31 * result + isSearchActive.hashCode()
+        result = 31 * result + bitDepth
+        result = 31 * result + bitrate
+        result = 31 * result + format.hashCode()
+        result = 31 * result + resamplingEnabled.hashCode()
+        result = 31 * result + (currentFolderPath?.hashCode() ?: 0)
+        result = 31 * result + isFirstRun.hashCode()
+        result = 31 * result + (previousView?.hashCode() ?: 0)
+        result = 31 * result + wasSearchingBeforeDetail.hashCode()
+        result = 31 * result + useOriginalQualityArt.hashCode()
         return result
     }
 }

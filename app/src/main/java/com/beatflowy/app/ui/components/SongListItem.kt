@@ -19,6 +19,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -107,10 +108,16 @@ fun SongListItem(
         animationSpec = tween(300),
         label         = "rowBgAlpha"
     )
+
     Box(
         modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(10.dp))
+            .graphicsLayer {
+                // Use graphicsLayer for clipping to improve scrolling performance
+                clip = true
+                shape = RoundedCornerShape(10.dp)
+            }
             .drawBehind {
                 if (bgAlpha > 0f) {
                     val color = if (isSelected) AccentBlue.copy(alpha = 0.3f * bgAlpha) else AccentBlue.copy(alpha = 0.18f * bgAlpha)
@@ -120,7 +127,7 @@ fun SongListItem(
                 }
             }
             .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 10.dp)
+            .padding(horizontal = 12.dp, vertical = 12.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             if (isMultiSelectMode) {
@@ -150,14 +157,18 @@ fun SongListItem(
                 )
                 Spacer(Modifier.width(10.dp))
             }
-            AlbumArtImage(song = song, size = 52.dp)
+            AlbumArtImage(
+                song = song,
+                size = 60.dp,
+                modifier = Modifier.padding(2.dp)
+            )
             Spacer(Modifier.width(16.dp))
             Column(Modifier.weight(1f)) {
-                Text(song.title + "...", fontSize = 16.sp,
+                Text(song.title, fontSize = 17.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 
-                Text("${song.artist}-${song.album}", fontSize = 12.sp, color = Color.LightGray,
+                Text("${song.artist}-${song.album}", fontSize = 13.sp, color = Color.LightGray,
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
                 
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -206,14 +217,26 @@ fun SongListItem(
 @Composable
 private fun MiniEqBars() {
     val inf = rememberInfiniteTransition(label = "eq")
-    val b1 by inf.animateFloat(4f, 14f, infiniteRepeatable(tween(380), RepeatMode.Reverse), "b1")
-    val b2 by inf.animateFloat(12f, 5f, infiniteRepeatable(tween(480), RepeatMode.Reverse), "b2")
-    val b3 by inf.animateFloat(7f, 16f, infiniteRepeatable(tween(310), RepeatMode.Reverse), "b3")
-    Row(horizontalArrangement = Arrangement.spacedBy(2.dp),
-        verticalAlignment = Alignment.Bottom, modifier = Modifier.height(18.dp)) {
-        listOf(b1, b2, b3).forEach { h ->
-            Box(Modifier.width(3.dp).height(h.dp).clip(RoundedCornerShape(1.5.dp))
-                .background(AccentBlue))
+    val b1 by inf.animateFloat(0.3f, 0.9f, infiniteRepeatable(tween(380), RepeatMode.Reverse), "b1")
+    val b2 by inf.animateFloat(0.8f, 0.4f, infiniteRepeatable(tween(480), RepeatMode.Reverse), "b2")
+    val b3 by inf.animateFloat(0.5f, 1.0f, infiniteRepeatable(tween(310), RepeatMode.Reverse), "b3")
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+        verticalAlignment = Alignment.Bottom,
+        modifier = Modifier.height(18.dp)
+    ) {
+        listOf(b1, b2, b3).forEach { scale ->
+            Box(
+                Modifier
+                    .width(3.dp)
+                    .fillMaxHeight()
+                    .graphicsLayer {
+                        scaleY = scale
+                        transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, 1f)
+                    }
+                    .clip(RoundedCornerShape(1.5.dp))
+                    .background(AccentBlue)
+            )
         }
     }
 }

@@ -2,8 +2,10 @@ package com.beatflowy.app.ui.screens
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.rememberScrollState
@@ -49,26 +51,26 @@ fun EqualizerScreen(viewModel: PlayerViewModel, onBack: () -> Unit) {
     var preset by remember { mutableStateOf("Flat") }
 
     Scaffold(
+        containerColor = Color.Transparent,
         topBar = {
-            TopAppBar(
-                title = { Text("Equalizer", fontWeight = FontWeight.Bold) },
+            CenterAlignedTopAppBar(
+                title = { Text("Equalizer", fontWeight = FontWeight.Bold, color = Color.White) },
+                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = Color.Transparent),
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.Rounded.ArrowBack, null)
+                        Icon(Icons.Rounded.KeyboardArrowDown, null, tint = Color.White, modifier = Modifier.size(32.dp))
                     }
                 },
                 actions = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(if (uiState.equalizerEnabled) "Enabled" else "Disabled", 
-                            fontSize = 12.sp, color = if (uiState.equalizerEnabled) AccentBlue else TextMuted)
-                        Spacer(Modifier.width(8.dp))
-                        Switch(
-                            checked = uiState.equalizerEnabled,
-                            onCheckedChange = { viewModel.toggleEqualizer() },
-                            colors = SwitchDefaults.colors(
-                                checkedTrackColor = AccentBlue, uncheckedTrackColor = Color.White.copy(0.1f))
-                        )
-                    }
+                    Switch(
+                        checked = uiState.equalizerEnabled,
+                        onCheckedChange = { viewModel.toggleEqualizer() },
+                        colors = SwitchDefaults.colors(
+                            checkedTrackColor = AccentBlue,
+                            uncheckedTrackColor = Color.White.copy(0.1f)
+                        ),
+                        modifier = Modifier.padding(end = 12.dp)
+                    )
                 }
             )
         }
@@ -104,62 +106,64 @@ fun EqualizerScreen(viewModel: PlayerViewModel, onBack: () -> Unit) {
                     .padding(pv)
                     .fillMaxSize()
                     .verticalScroll(rememberScrollState())
-                    .padding(20.dp),
+                    .padding(horizontal = 24.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 // Visualizer/Curve Area
-                Card(
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(180.dp),
-                    shape = RoundedCornerShape(24.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color.White.copy(0.05f)),
-                    border = CardDefaults.outlinedCardBorder().copy(brush = SolidColor(Color.White.copy(0.1f)))
+                        .height(180.dp)
+                        .clip(RoundedCornerShape(32.dp))
+                        .background(Color.White.copy(alpha = 0.05f))
+                        .border(0.5.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(32.dp))
                 ) {
-                    EqCurve(gains, uiState.equalizerEnabled, Modifier.fillMaxSize().padding(16.dp))
+                    EqCurve(gains, uiState.equalizerEnabled, Modifier.fillMaxSize().padding(20.dp))
                 }
 
-                Spacer(Modifier.height(24.dp))
+                Spacer(Modifier.height(32.dp))
 
-                // Presets Row
-                Text("Presets", modifier = Modifier.fillMaxWidth(), 
-                    fontSize = 14.sp, fontWeight = FontWeight.Bold, color = TextSecondary)
-                Spacer(Modifier.height(12.dp))
+                // Presets
                 LazyRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
                     contentPadding = PaddingValues(bottom = 16.dp)
                 ) {
                     EQ_PRESETS.forEach { (name, pGains) ->
                         item {
-                            FilterChip(
-                                selected = preset == name,
+                            Surface(
                                 onClick = {
                                     preset = name
                                     pGains.forEachIndexed { i, g -> viewModel.setEqBandGain(i, g) }
                                 },
-                                label = { Text(name) },
-                                shape = RoundedCornerShape(12.dp),
-                                colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = AccentBlue.copy(0.2f),
-                                    selectedLabelColor = AccentBlue
+                                shape = RoundedCornerShape(16.dp),
+                                color = if (preset == name) AccentBlue.copy(0.2f) else Color.White.copy(0.05f),
+                                border = BorderStroke(0.5.dp, if (preset == name) AccentBlue else Color.White.copy(0.1f))
+                            ) {
+                                Text(
+                                    name, 
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                                    fontSize = 14.sp,
+                                    color = if (preset == name) AccentBlue else Color.White.copy(0.7f),
+                                    fontWeight = if (preset == name) FontWeight.Bold else FontWeight.Medium
                                 )
-                            )
+                            }
                         }
                     }
                 }
 
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(16.dp))
 
                 // Band Sliders
-                Card(
+                Surface(
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(24.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color.White.copy(0.05f))
+                    shape = RoundedCornerShape(32.dp),
+                    color = Color.White.copy(alpha = 0.05f),
+                    border = BorderStroke(0.5.dp, Color.White.copy(alpha = 0.1f))
                 ) {
                     Row(
                         Modifier
-                            .padding(vertical = 20.dp, horizontal = 10.dp)
-                            .height(240.dp),
+                            .padding(vertical = 24.dp, horizontal = 8.dp)
+                            .height(260.dp),
                         horizontalArrangement = Arrangement.SpaceEvenly
                     ) {
                         BAND_LABELS.forEachIndexed { i, label ->
@@ -174,21 +178,23 @@ fun EqualizerScreen(viewModel: PlayerViewModel, onBack: () -> Unit) {
                     }
                 }
 
-                Spacer(Modifier.height(24.dp))
+                Spacer(Modifier.height(32.dp))
 
                 Button(
                     onClick = {
                         preset = "Flat"
                         FloatArray(10) { 0f }.forEachIndexed { i, g -> viewModel.setEqBandGain(i, g) }
                     },
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().height(56.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(0.1f)),
-                    shape = RoundedCornerShape(16.dp)
+                    shape = RoundedCornerShape(20.dp)
                 ) {
-                    Icon(Icons.Rounded.Refresh, null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("Reset to Flat", fontSize = 13.sp)
+                    Icon(Icons.Rounded.Refresh, null, modifier = Modifier.size(20.dp), tint = Color.White)
+                    Spacer(Modifier.width(10.dp))
+                    Text("Reset to Flat", fontSize = 15.sp, color = Color.White, fontWeight = FontWeight.Bold)
                 }
+                
+                Spacer(Modifier.height(40.dp))
             }
         }
     }

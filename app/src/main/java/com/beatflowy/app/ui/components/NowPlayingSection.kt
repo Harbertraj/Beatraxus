@@ -29,7 +29,7 @@ import com.beatflowy.app.ui.theme.*
 fun NowPlayingSection(
     song: Song?,
     isPlaying: Boolean,
-    progressMs: Long,
+    progressMs: () -> Long,
     durationMs: Long,
     onPlayPause: () -> Unit,
     onNext: () -> Unit,
@@ -77,10 +77,9 @@ fun NowPlayingSection(
             }
 
             // Progress line at the bottom
-            val progress = if (durationMs > 0) (progressMs.toFloat() / durationMs) else 0f
             Spacer(Modifier.height(8.dp))
             LinearProgressIndicator(
-                progress = { progress },
+                progress = { if (durationMs > 0) (progressMs().toFloat() / durationMs) else 0f },
                 modifier = Modifier.fillMaxWidth().height(2.dp).clip(CircleShape),
                 color = AccentBlue,
                 trackColor = EqTrack

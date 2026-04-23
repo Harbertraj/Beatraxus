@@ -1,19 +1,24 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import com.android.build.api.variant.FilterConfiguration
+import com.android.build.api.dsl.ApplicationExtension
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
-    id("kotlin-kapt")
+    id("com.google.devtools.ksp")
+    id("org.jetbrains.kotlin.plugin.compose")
 }
 
-android {
+configure<ApplicationExtension> {
     namespace = "com.beatflowy.app"
-    compileSdk = 34
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "com.beatflowy.app"
         minSdk = 26
-        targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
+        targetSdk = 35
+        versionCode = 2
+        versionName = "2.0.0-stable"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -48,21 +53,10 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
-        freeCompilerArgs += listOf(
-            "-opt-in=androidx.compose.material3.ExperimentalMaterial3Api",
-            "-opt-in=androidx.compose.animation.ExperimentalAnimationApi",
-            "-opt-in=androidx.compose.foundation.ExperimentalFoundationApi"
-        )
-    }
+
 
     buildFeatures {
         compose = true
-    }
-
-    composeOptions {
-        kotlinCompilerExtensionVersion = "1.5.8"
     }
 
     packaging {
@@ -72,25 +66,52 @@ android {
     }
 }
 
+kotlin {
+    compilerOptions {
+        jvmTarget.set(JvmTarget.JVM_17)
+        freeCompilerArgs.addAll(
+            "-opt-in=androidx.compose.material3.ExperimentalMaterial3Api",
+            "-opt-in=androidx.compose.animation.ExperimentalAnimationApi",
+            "-opt-in=androidx.compose.foundation.ExperimentalFoundationApi"
+        )
+    }
+}
+
+androidComponents {
+    onVariants { variant ->
+        variant.outputs.forEach { output ->
+            val appName = "Beatraxus"
+            val variantName = variant.name
+            val versionName = output.versionName.get()
+            val abi = output.filters.find { it.filterType == FilterConfiguration.FilterType.ABI }?.identifier ?: "universal"
+            
+            // Accessing outputFileName property via the implementation class as it's not yet in the public interface
+            (output as? com.android.build.api.variant.impl.VariantOutputImpl)?.let { impl ->
+                impl.outputFileName.set("${appName}-v${versionName}-${abi}-${variantName}.apk")
+            }
+        }
+    }
+}
+
 dependencies {
     // Kotlin
-    implementation("org.jetbrains.kotlin:kotlin-stdlib:1.9.22")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.1")
 
     // AndroidX Core
-    implementation("androidx.core:core-ktx:1.12.0")
-    implementation("androidx.activity:activity-compose:1.8.2")
-    implementation("com.google.android.material:material:1.11.0")
+    implementation("androidx.core:core-ktx:1.15.0")
+    implementation("androidx.activity:activity-compose:1.10.0")
+    implementation("com.google.android.material:material:1.12.0")
 
     // Lifecycle
-    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.7.0")
-    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.7.0")
-    implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.7.0")
-    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0")
-    implementation("androidx.lifecycle:lifecycle-service:2.7.0")
+    val lifecycleVersion = "2.8.7"
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:$lifecycleVersion")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:$lifecycleVersion")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:$lifecycleVersion")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:$lifecycleVersion")
+    implementation("androidx.lifecycle:lifecycle-service:$lifecycleVersion")
 
     // Jetpack Compose BOM
-    val composeBom = platform("androidx.compose:compose-bom:2024.02.00")
+    val composeBom = platform("androidx.compose:compose-bom:2024.05.00")
     implementation(composeBom)
     androidTestImplementation(composeBom)
 
@@ -101,12 +122,11 @@ dependencies {
     implementation("androidx.compose.material:material-icons-core")
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.compose.animation:animation")
-    implementation("androidx.compose.animation:animation-core")
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.runtime:runtime")
 
     // Navigation
-    implementation("androidx.navigation:navigation-compose:2.7.6")
+    implementation("androidx.navigation:navigation-compose:2.8.5")
 
     // Media3 / ExoPlayer
     implementation("androidx.media3:media3-exoplayer:1.2.1")
@@ -121,6 +141,9 @@ dependencies {
     // Coil for Image Loading
     implementation("io.coil-kt:coil-compose:2.5.0")
 
+    // Palette
+    implementation("androidx.palette:palette-ktx:1.0.0")
+
     // Lottie
     implementation("com.airbnb.android:lottie-compose:6.3.0")
 
@@ -128,14 +151,18 @@ dependencies {
     implementation("sh.calvin.reorderable:reorderable:2.3.2")
 
     // Room
-    val roomVersion = "2.6.1"
+    val roomVersion = "2.7.0-alpha11"
     implementation("androidx.room:room-runtime:$roomVersion")
     implementation("androidx.room:room-ktx:$roomVersion")
-    kapt("androidx.room:room-compiler:$roomVersion")
+    ksp("androidx.room:room-compiler:$roomVersion")
     // For Kotlin use kapt or ksp. Let's see if ksp is available.
     // If not, I'll use kapt. But first I need to check plugins.
     // Actually, I'll just use the runtime for now if I can't add plugins easily.
     // Wait, I can add plugins.
+
+    // Glance Widgets
+    implementation("androidx.glance:glance-appwidget:1.1.1")
+    implementation("androidx.glance:glance-material3:1.1.1")
 
     // Debug
     debugImplementation("androidx.compose.ui:ui-tooling")

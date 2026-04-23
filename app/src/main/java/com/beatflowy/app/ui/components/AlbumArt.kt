@@ -22,7 +22,6 @@ fun AlbumArtImage(
     modifier: Modifier = Modifier,
     cornerRadius: Dp = 8.dp
 ) {
-    val placeholder = painterResource(R.drawable.ic_album_placeholder)
     AsyncImage(
         model = song.albumArtUri,
         contentDescription = "Album Art",
@@ -30,9 +29,6 @@ fun AlbumArtImage(
             .size(size)
             .clip(RoundedCornerShape(cornerRadius))
             .background(BgHighlight),
-        contentScale = ContentScale.Crop,
-        placeholder = placeholder,
-        error = placeholder,
-        fallback = placeholder
+        contentScale = ContentScale.Crop
     )
 }

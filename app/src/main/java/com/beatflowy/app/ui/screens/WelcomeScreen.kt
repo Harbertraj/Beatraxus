@@ -19,7 +19,9 @@ import androidx.compose.material.icons.automirrored.rounded.*
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.ui.graphics.vector.ImageVector
 import kotlin.math.sin
+import kotlin.math.cos
 import kotlin.math.PI
+import kotlin.math.sqrt
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -33,10 +35,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.text.drawText
+import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.airbnb.lottie.compose.*
 import com.beatflowy.app.R
@@ -88,10 +94,20 @@ fun WelcomeScreen(
         label = "floatDrift"
     )
 
-    // 3. Sequential Entry Timings
+    // Sequential Entry Timings
     var showFloatingElements by remember { mutableStateOf(false) }
     var showTitle by remember { mutableStateOf(false) }
     var showButton by remember { mutableStateOf(false) }
+    
+    var thunderHitTrigger by remember { mutableStateOf(0) }
+    val thunderHitScale = remember { Animatable(1f) }
+
+    LaunchedEffect(thunderHitTrigger) {
+        if (thunderHitTrigger > 0) {
+            thunderHitScale.animateTo(1.15f, tween(100))
+            thunderHitScale.animateTo(1f, spring(dampingRatio = Spring.DampingRatioMediumBouncy))
+        }
+    }
 
     LaunchedEffect(Unit) {
         showFloatingElements = true
@@ -104,8 +120,8 @@ fun WelcomeScreen(
 
     // Effect to navigate when scanning finishes after button click
     LaunchedEffect(uiState.isScanning, uiState.scanProgress) {
-        if (showScanning && uiState.scanProgress >= 1f && !uiState.isScanning) {
-            delay(800) // Small delay for visual completion
+        if (showScanning && uiState.scanCount > 0 && !uiState.isScanning) {
+            delay(1500) // Give user time to see the results
             onFinish()
         }
     }
@@ -116,19 +132,25 @@ fun WelcomeScreen(
             .background(
                 Brush.verticalGradient(
                     colors = listOf(
-                        Color(0xFF0A0A0B),
-                        lerp(Color(0xFF121217), Color(0xFF1A1A22), gradientShift),
-                        Color(0xFF0A0A0B)
+                        Color(0xFF060608),
+                        lerp(Color(0xFF0E0E12), Color(0xFF15151D), gradientShift),
+                        Color(0xFF060608)
                     )
                 )
             )
     ) {
+        // 0. Premium Background Glows
+        PremiumGlows(infiniteTransition)
+
         // 1. Smooth Waveform Background (Liquid feel)
         WaveformBackground(infiniteTransition)
 
         // 2. Random Popping Music Icons
         if (showFloatingElements) {
-            RandomPopIconsBackground()
+            AttractedIconsBackground(
+                thunderCenter = Offset(0.5f, 0.42f),
+                onAbsorbed = { thunderHitTrigger++ }
+            )
         }
 
         // Overlay Gradient for that "Liquid" feel
@@ -169,8 +191,11 @@ fun WelcomeScreen(
                             visible = showTitle,
                             enter = fadeIn(animationSpec = spring(stiffness = Spring.StiffnessLow)) +
                                     slideInVertically(
-                                        initialOffsetY = { -40 },
-                                        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow)
+                                        initialOffsetY = { -200 },
+                                        animationSpec = spring(
+                                            dampingRatio = Spring.DampingRatioMediumBouncy,
+                                            stiffness = Spring.StiffnessLow
+                                        )
                                     )
                         ) {
                             val breathingScale by infiniteTransition.animateFloat(
@@ -218,60 +243,146 @@ fun WelcomeScreen(
 
                     Spacer(modifier = Modifier.height(80.dp))
 
-                    // Thunder Electric Effect
+                    // Thunder Electric Effect with Bigger Circle Background and Popping Icons
                     Box(
-                        modifier = Modifier.size(200.dp),
+                        modifier = Modifier
+                            .size(240.dp)
+                            .offset(y = 20.dp), // Move down a little
                         contentAlignment = Alignment.Center
                     ) {
                         val thunderPulse by infiniteTransition.animateFloat(
-                            initialValue = 0.8f,
-                            targetValue = 1.2f,
+                            initialValue = 0.95f,
+                            targetValue = 1.05f,
                             animationSpec = infiniteRepeatable(
-                                animation = tween(100, easing = LinearEasing),
+                                animation = tween(150, easing = LinearEasing),
                                 repeatMode = RepeatMode.Reverse
                             ),
                             label = "thunderPulse"
                         )
                         
                         val thunderAlpha by infiniteTransition.animateFloat(
-                            initialValue = 0.3f,
-                            targetValue = 0.9f,
+                            initialValue = 0.6f,
+                            targetValue = 1f,
                             animationSpec = infiniteRepeatable(
-                                animation = tween(50, easing = LinearEasing),
+                                animation = tween(100, easing = LinearEasing),
                                 repeatMode = RepeatMode.Reverse
                             ),
                             label = "thunderAlpha"
                         )
 
-                        // Glow behind thunder
+                        val auraPulse by infiniteTransition.animateFloat(
+                            initialValue = 1f,
+                            targetValue = 1.08f,
+                            animationSpec = infiniteRepeatable(
+                                animation = tween(2000, easing = EaseInOutSine),
+                                repeatMode = RepeatMode.Reverse
+                            ),
+                            label = "auraPulse"
+                        )
+
+                        // Launching animation values
+                        val iconScale by animateFloatAsState(
+                            targetValue = if (startAnimation) 1f else 0f,
+                            animationSpec = spring(
+                                dampingRatio = Spring.DampingRatioMediumBouncy,
+                                stiffness = Spring.StiffnessLow
+                            ),
+                            label = "iconLaunchScale"
+                        )
+
+                        val iconAlpha by animateFloatAsState(
+                            targetValue = if (startAnimation) 1f else 0f,
+                            animationSpec = tween(1000),
+                            label = "iconLaunchAlpha"
+                        )
+
+                        // 1. Bigger Circle Background (Aura)
                         Box(
                             modifier = Modifier
-                                .size(100.dp)
+                                .size(220.dp)
+                                .graphicsLayer {
+                                    scaleX = iconScale * auraPulse
+                                    scaleY = iconScale * auraPulse
+                                    alpha = iconAlpha * 0.25f
+                                }
+                                .background(
+                                    Brush.radialGradient(
+                                        colors = listOf(Color.White.copy(alpha = 0.15f), Color.Transparent)
+                                    ),
+                                    CircleShape
+                                )
+                                .border(1.2.dp, Color.White.copy(alpha = 0.25f), CircleShape)
+                        )
+
+                        // 2. Central Popping Icons
+                        if (startAnimation) {
+                            CentralPopIcons(infiniteTransition, iconAlpha)
+                        }
+
+                        // 3. Glow behind thunder
+                        Box(
+                            modifier = Modifier
+                                .size(110.dp)
                                 .graphicsLayer { 
-                                    scaleX = thunderPulse * 1.6f
-                                    scaleY = thunderPulse * 1.6f
-                                    alpha = thunderAlpha * 0.45f
+                                    scaleX = (thunderPulse * 1.7f) * iconScale
+                                    scaleY = (thunderPulse * 1.7f) * iconScale
+                                    alpha = (thunderAlpha * 0.45f) * iconAlpha
                                 }
                                 .background(Color(0xFF7C4DFF).copy(alpha = 0.5f), CircleShape)
                                 .blur(40.dp)
                         )
 
-                        Icon(
-                            imageVector = Icons.Rounded.FlashOn,
-                            contentDescription = null,
-                            tint = Color.White,
+                        // 4. Main Thunder Icon with Shape
+                        Box(
                             modifier = Modifier
                                 .size(140.dp)
                                 .graphicsLayer {
-                                    scaleX = thunderPulse
-                                    scaleY = thunderPulse
-                                    alpha = thunderAlpha
-                                    shadowElevation = 25f
+                                    scaleX = thunderPulse * iconScale * thunderHitScale.value
+                                    scaleY = thunderPulse * iconScale * thunderHitScale.value
+                                    alpha = thunderAlpha * iconAlpha
+                                    shadowElevation = 30f
                                 }
-                        )
+                                .background(Color.White.copy(alpha = 0.15f), CircleShape)
+                                .border(1.5.dp, Color.White.copy(alpha = 0.3f), CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.FlashOn,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(90.dp)
+                            )
+                        }
                     }
 
-                    Spacer(modifier = Modifier.height(180.dp))
+                    // Centered Question Text (Typewriter Animation)
+                    Box(
+                        modifier = Modifier
+                            .height(180.dp)
+                            .fillMaxWidth(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        var showQuestion by remember { mutableStateOf(false) }
+                        LaunchedEffect(startAnimation) {
+                            if (startAnimation) {
+                                delay(1000) // Start after thunder is fully visible
+                                showQuestion = true
+                            }
+                        }
+
+                        if (showQuestion) {
+                            TypewriterText(
+                                text = "Why did it take so long to install me?",
+                                style = TextStyle(
+                                    color = Color.White.copy(alpha = 0.5f),
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Light,
+                                    letterSpacing = 1.2.sp
+                                ),
+                                delayMillis = 25L
+                            )
+                        }
+                    }
 
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally
@@ -281,13 +392,14 @@ fun WelcomeScreen(
                         var musicPhraseIndex by remember { mutableIntStateOf(0) }
                         val musicPhrases = listOf(
                             "Feel the Rhythm", "Hear the Soul", "Deep Bass Awaits",
-                            "Crystal Clear Sound", "Your Music, Evolved"
+                            "Crystal Clear Sound", "Your Music, Evolved",
+                            "You are Magic", "Sonic Bliss", "Pure Audio"
                         )
 
                         LaunchedEffect(showTitle) {
                             if (showTitle) {
                                 while (true) {
-                                    delay(4000)
+                                    delay(1000)
                                     musicPhraseIndex = (musicPhraseIndex + 1) % musicPhrases.size
                                 }
                             }
@@ -330,7 +442,7 @@ fun WelcomeScreen(
                                         animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow)
                                     ) +
                                     slideInVertically(
-                                        initialOffsetY = { 60 },
+                                        initialOffsetY = { 300 },
                                         animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow)
                                     )
                         ) {
@@ -347,7 +459,7 @@ fun WelcomeScreen(
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 if (uiState.permissionDenied) {
                                     Text(
-                                        "Storage permission is required to find your music",
+                                        "Permissions are required to sync your library",
                                         color = Color(0xFFFF5252),
                                         fontSize = 12.sp,
                                         modifier = Modifier.padding(bottom = 8.dp)
@@ -544,34 +656,39 @@ fun WaveformBackground(transition: InfiniteTransition) {
         label = "phase"
     )
 
+    val colors = remember {
+        listOf(
+            Color(0xFF1E88E5).copy(alpha = 0.4f),
+            Color(0xFF7C4DFF).copy(alpha = 0.4f),
+            Color(0xFF1E88E5).copy(alpha = 0.4f)
+        )
+    }
+    val brush = remember(colors) { Brush.horizontalGradient(colors) }
+    val wavePath = remember { androidx.compose.ui.graphics.Path() }
+
     Canvas(modifier = Modifier.fillMaxSize().alpha(0.2f)) {
         val width = size.width
         val height = size.height
         val centerY = height / 2
 
-        val colors = listOf(
-            Color(0xFF1E88E5).copy(alpha = 0.4f),
-            Color(0xFF7C4DFF).copy(alpha = 0.4f),
-            Color(0xFF1E88E5).copy(alpha = 0.4f)
-        )
-
         for (i in 0 until 4) {
-            val path = androidx.compose.ui.graphics.Path()
             val waveOffset = i * PI.toFloat() / 2f
+            val strokeWidth = (2.dp + i.dp).toPx()
             
-            for (x in 0..width.toInt() step 4) {
+            wavePath.reset()
+            for (x in 0..width.toInt() step 12) { // Increased step further for performance
                 val variation = sin(x * 0.004f + phase + waveOffset) * (50f + i * 10f)
                 val secondaryVariation = sin(x * 0.008f - phase) * 20f
                 val y = centerY + variation + secondaryVariation
                 
-                if (x == 0) path.moveTo(0f, y) else path.lineTo(x.toFloat(), y)
+                if (x == 0) wavePath.moveTo(0f, y) else wavePath.lineTo(x.toFloat(), y)
             }
             
             drawPath(
-                path = path,
-                brush = Brush.horizontalGradient(colors),
+                path = wavePath,
+                brush = brush,
                 style = androidx.compose.ui.graphics.drawscope.Stroke(
-                    width = (2.dp + i.dp).toPx(),
+                    width = strokeWidth,
                     cap = StrokeCap.Round
                 )
             )
@@ -580,65 +697,158 @@ fun WaveformBackground(transition: InfiniteTransition) {
 }
 
 @Composable
-fun RandomPopIconsBackground() {
-    val icons = listOf(
-        Icons.Rounded.MusicNote,
-        Icons.Rounded.Album,
-        Icons.Rounded.Person,
-        Icons.Rounded.PlayArrow,
-        Icons.Rounded.SkipNext,
-        Icons.Rounded.GraphicEq,
-        Icons.AutoMirrored.Rounded.VolumeUp,
-        Icons.Rounded.Headset,
-        Icons.Rounded.Mic,
-        Icons.Rounded.Radio
-    )
+fun AttractedIconsBackground(
+    thunderCenter: Offset, // Normalized 0..1
+    onAbsorbed: () -> Unit
+) {
+    val icons = listOf("♫", "♪", "♬", "♩", "🎶", "⚡", "✨", "🎵", "🎸", "🎹", "🎻", "🎷", "🎺")
+    val particles = remember { mutableStateListOf<MovingParticle>() }
+    val textMeasurer = androidx.compose.ui.text.rememberTextMeasurer()
+    
+    LaunchedEffect(Unit) {
+        while (true) {
+            withFrameMillis { frameTime ->
+                // Spawn logic
+                if (Random.nextFloat() < 0.15f && particles.size < 40) {
+                    val side = Random.nextInt(4)
+                    var startX = 0f
+                    var startY = 0f
+                    
+                    when (side) {
+                        0 -> { startX = Random.nextFloat(); startY = -0.1f } // Top
+                        1 -> { startX = Random.nextFloat(); startY = 1.1f }  // Bottom
+                        2 -> { startX = -0.1f; startY = Random.nextFloat() } // Left
+                        3 -> { startX = 1.1f; startY = Random.nextFloat() }  // Right
+                    }
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        repeat(12) { index ->
-            PopIcon(icons = icons, index = index)
+                    particles.add(
+                        MovingParticle(
+                            x = startX,
+                            y = startY,
+                            icon = icons.random(),
+                            speed = 0.002f + Random.nextFloat() * 0.004f,
+                            drift = (Random.nextFloat() - 0.5f) * 0.001f,
+                            scale = 0f,
+                            targetScale = 0.5f + Random.nextFloat() * 0.5f,
+                            rotation = Random.nextFloat() * 360f,
+                            rotationSpeed = (Random.nextFloat() - 0.5f) * 4f,
+                            phase = Random.nextFloat() * 2 * PI.toFloat()
+                        )
+                    )
+                }
+
+                // Update and filter in one pass if possible, or use an iterator
+                val iterator = particles.iterator()
+                while (iterator.hasNext()) {
+                    val p = iterator.next()
+                    val dxToCenter = thunderCenter.x - p.x
+                    val dyToCenter = thunderCenter.y - p.y
+                    val distSq = dxToCenter * dxToCenter + dyToCenter * dyToCenter
+                    val distToCenter = sqrt(distSq.toDouble()).toFloat()
+                    
+                    p.x += (dxToCenter / distToCenter) * p.speed + sin(p.y * 5f + p.phase) * 0.001f
+                    p.y += (dyToCenter / distToCenter) * p.speed + cos(p.x * 5f + p.phase) * 0.001f
+                    p.rotation += p.rotationSpeed
+                    
+                    if (p.scale < p.targetScale) {
+                        p.scale += 0.04f
+                    }
+
+                    if (distToCenter < 0.5f) {
+                        val pull = 0.015f * (1f - distToCenter / 0.5f)
+                        p.x += dxToCenter * pull
+                        p.y += dyToCenter * pull
+                        if (distToCenter < 0.2f) {
+                            p.scale *= 0.92f
+                        }
+                    }
+
+                    if (distToCenter < 0.04f || p.scale < 0.05f) {
+                        iterator.remove()
+                        if (distToCenter < 0.06f) onAbsorbed()
+                    }
+                }
+            }
+        }
+    }
+
+    Canvas(modifier = Modifier.fillMaxSize()) {
+        particles.forEach { p ->
+            val x = p.x * size.width
+            val y = p.y * size.height
+            
+            withTransform({
+                translate(x, y)
+                scale(p.scale, p.scale, Offset.Zero)
+                rotate(p.rotation, Offset.Zero)
+            }) {
+                drawText(
+                    textMeasurer = textMeasurer,
+                    text = p.icon,
+                    style = TextStyle(
+                        color = Color.White.copy(alpha = (p.scale * 0.2f).coerceAtMost(0.15f)),
+                        fontSize = 24.sp
+                    )
+                )
+            }
         }
     }
 }
 
+class MovingParticle(
+    var x: Float,
+    var y: Float,
+    val icon: String,
+    val speed: Float,
+    val drift: Float,
+    var scale: Float,
+    val targetScale: Float,
+    var rotation: Float,
+    val rotationSpeed: Float,
+    val phase: Float
+)
+
 @Composable
-fun BoxScope.PopIcon(icons: List<ImageVector>, index: Int) {
-    var position by remember { mutableStateOf(Offset(Random.nextFloat(), Random.nextFloat())) }
-    var icon by remember { mutableStateOf(icons.random()) }
-    var isVisible by remember { mutableStateOf(false) }
-    var scale by remember { mutableStateOf(1f) }
+fun PremiumGlows(transition: InfiniteTransition) {
+    val animValue by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 2 * PI.toFloat(),
+        animationSpec = infiniteRepeatable(tween(20000, easing = LinearEasing)),
+        label = "glowAnim"
+    )
 
-    LaunchedEffect(Unit) {
-        delay(index * 350L) // Staggered entry
-        while (true) {
-            position = Offset(Random.nextFloat(), Random.nextFloat())
-            icon = icons.random()
-            scale = 0.5f + Random.nextFloat() * 0.7f
-            isVisible = true
-            delay(1500 + Random.nextLong(1500))
-            isVisible = false
-            delay(1000 + Random.nextLong(2500))
-        }
-    }
+    Canvas(modifier = Modifier.fillMaxSize().alpha(0.4f)) {
+        val width = size.width
+        val height = size.height
 
-    AnimatedVisibility(
-        visible = isVisible,
-        enter = fadeIn(tween(1200)) + scaleIn(tween(1200), initialScale = 0.5f),
-        exit = fadeOut(tween(1200)) + scaleOut(tween(1200), targetScale = 1.4f),
-        modifier = Modifier
-            .align(BiasAlignment(position.x * 2 - 1, position.y * 2 - 1))
-            .graphicsLayer {
-                this.scaleX = scale
-                this.scaleY = scale
-            }
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = Color.White.copy(alpha = 0.12f),
-            modifier = Modifier
-                .size(32.dp)
-                .blur(0.5.dp)
+        // Pre-calculating values for performance
+        val glow1Center = Offset(
+            width * (0.5f + 0.4f * sin(animValue).toFloat()),
+            height * (0.3f + 0.2f * sin(animValue * 0.8f).toFloat())
+        )
+        val glow2Center = Offset(
+            width * (0.2f + 0.3f * sin(animValue * 0.6f).toFloat()),
+            height * (0.7f + 0.3f * sin(animValue * 1.1f).toFloat())
+        )
+
+        drawCircle(
+            brush = Brush.radialGradient(
+                colors = listOf(Color(0xFF7C4DFF).copy(alpha = 0.15f), Color.Transparent),
+                center = glow1Center,
+                radius = 900f
+            ),
+            center = glow1Center,
+            radius = 900f
+        )
+        
+        drawCircle(
+            brush = Brush.radialGradient(
+                colors = listOf(Color(0xFF1E88E5).copy(alpha = 0.12f), Color.Transparent),
+                center = glow2Center,
+                radius = 1100f
+            ),
+            center = glow2Center,
+            radius = 1100f
         )
     }
 }
@@ -646,6 +856,80 @@ fun BoxScope.PopIcon(icons: List<ImageVector>, index: Int) {
 @Composable
 fun FloatingMusicElements(floatAnim: Float) {
     // Kept for compatibility if needed, but no longer used in main layout
+}
+
+@Composable
+fun CentralPopIcons(infiniteTransition: InfiniteTransition, parentAlpha: Float) {
+    val icons = listOf("♫", "♪", "♬", "♩", "🎶", "⚡", "✨", "🎵")
+    val density = LocalDensity.current
+    
+    Box(modifier = Modifier.size(240.dp), contentAlignment = Alignment.Center) {
+        repeat(15) { i ->
+            val duration = 1800 + i * 120
+            val delay = i * 150
+            
+            val progress by infiniteTransition.animateFloat(
+                initialValue = 0f,
+                targetValue = 1f,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(duration, delayMillis = delay, easing = LinearOutSlowInEasing),
+                    repeatMode = RepeatMode.Restart
+                ),
+                label = "pop-$i"
+            )
+            
+            // Emitting icons in a radial pattern
+            val startAngle = (i * (360f / 15f))
+            val angle = (startAngle + (progress * 40f)) * (PI.toFloat() / 180f)
+            
+            // "move little distance" - float from center-out slightly
+            val distancePx = with(density) { (50.dp + 40.dp * progress).toPx() }
+            
+            // Pop in and fade out logic
+            val alpha = if (progress < 0.15f) progress * 6.6f 
+                        else if (progress > 0.5f) (1f - progress) * 2f
+                        else 1f
+            
+            val scale = 0.4f + (progress * 0.6f)
+            
+            Text(
+                text = icons[i % icons.size],
+                color = Color.White.copy(alpha = alpha * 0.8f * parentAlpha),
+                fontSize = (16 + (i % 8)).sp,
+                modifier = Modifier.graphicsLayer {
+                    translationX = distancePx * cos(angle)
+                    translationY = distancePx * sin(angle)
+                    scaleX = scale
+                    scaleY = scale
+                    rotationZ = progress * 120f
+                }
+            )
+        }
+    }
+}
+
+@Composable
+fun TypewriterText(
+    text: String,
+    style: TextStyle,
+    modifier: Modifier = Modifier,
+    delayMillis: Long = 50L
+) {
+    var textToDisplay by remember { mutableStateOf("") }
+    
+    LaunchedEffect(text) {
+        textToDisplay = ""
+        for (i in 1..text.length) {
+            textToDisplay = text.substring(0, i)
+            delay(delayMillis)
+        }
+    }
+
+    Text(
+        text = textToDisplay,
+        style = style,
+        modifier = modifier
+    )
 }
 
 @Composable

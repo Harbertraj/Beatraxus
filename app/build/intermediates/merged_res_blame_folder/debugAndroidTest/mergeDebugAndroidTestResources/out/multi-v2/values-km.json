@@ -1,10 +1,10 @@
 {
     "logs": [
         {
-            "outputFile": "com.beatflowy.app.test.app-mergeDebugAndroidTestResources-32:/values-km/values-km.xml",
+            "outputFile": "com.beatflowy.app.test.app-mergeDebugAndroidTestResources-35:/values-km/values-km.xml",
             "map": [
                 {
-                    "source": "C:\\Users\\gmudh\\.gradle\\caches\\8.13\\transforms\\f86da19b544f31d0aed787ce23c126f1\\transformed\\core-1.12.0\\res\\values-km\\values-km.xml",
+                    "source": "C:\\Users\\gmudh\\.gradle\\caches\\9.3.1\\transforms\\6e4ff31e352f612bea7948c90a3e2b39\\workspace\\transformed\\core-1.15.0\\res\\values-km\\values-km.xml",
                     "from": {
                         "startLines": "2,3,4,5,6,7,8,9",
                         "startColumns": "4,4,4,4,4,4,4,4",
@@ -13,28 +13,28 @@
                         "endOffsets": "145,248,346,446,547,659,771,872"
                     },
                     "to": {
-                        "startLines": "2,3,4,5,6,7,8,23",
+                        "startLines": "2,3,4,5,6,7,8,24",
                         "startColumns": "4,4,4,4,4,4,4,4",
-                        "startOffsets": "105,200,303,401,501,602,714,1991",
+                        "startOffsets": "105,200,303,401,501,602,714,2078",
                         "endColumns": "94,102,97,99,100,111,111,100",
-                        "endOffsets": "195,298,396,496,597,709,821,2087"
+                        "endOffsets": "195,298,396,496,597,709,821,2174"
                     }
                 },
                 {
-                    "source": "C:\\Users\\gmudh\\.gradle\\caches\\8.13\\transforms\\31ac0b89db8b145dd357634bee80593e\\transformed\\ui-release\\res\\values-km\\values-km.xml",
+                    "source": "C:\\Users\\gmudh\\.gradle\\caches\\9.3.1\\transforms\\f95777b802ff9f74c0a17db7fd88cb37\\workspace\\transformed\\ui-release\\res\\values-km\\values-km.xml",
                     "from": {
-                        "startLines": "2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18",
-                        "startColumns": "4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4",
-                        "startOffsets": "105,190,270,374,472,560,644,727,812,899,964,1029,1109,1194,1270,1354,1420",
-                        "endColumns": "84,79,103,97,87,83,82,84,86,64,64,79,84,75,83,65,117",
-                        "endOffsets": "185,265,369,467,555,639,722,807,894,959,1024,1104,1189,1265,1349,1415,1533"
+                        "startLines": "2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19",
+                        "startColumns": "4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4",
+                        "startOffsets": "105,190,270,374,472,560,644,727,812,899,979,1064,1140,1214,1286,1357,1441,1507",
+                        "endColumns": "84,79,103,97,87,83,82,84,86,79,84,75,73,71,70,83,65,117",
+                        "endOffsets": "185,265,369,467,555,639,722,807,894,974,1059,1135,1209,1281,1352,1436,1502,1620"
                     },
                     "to": {
-                        "startLines": "9,10,11,12,13,14,15,16,17,18,19,20,21,22,24,25,26",
-                        "startColumns": "4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4",
-                        "startOffsets": "826,911,991,1095,1193,1281,1365,1448,1533,1620,1685,1750,1830,1915,2092,2176,2242",
-                        "endColumns": "84,79,103,97,87,83,82,84,86,64,64,79,84,75,83,65,117",
-                        "endOffsets": "906,986,1090,1188,1276,1360,1443,1528,1615,1680,1745,1825,1910,1986,2171,2237,2355"
+                        "startLines": "9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,25,26,27",
+                        "startColumns": "4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4",
+                        "startOffsets": "826,911,991,1095,1193,1281,1365,1448,1533,1620,1700,1785,1861,1935,2007,2179,2263,2329",
+                        "endColumns": "84,79,103,97,87,83,82,84,86,79,84,75,73,71,70,83,65,117",
+                        "endOffsets": "906,986,1090,1188,1276,1360,1443,1528,1615,1695,1780,1856,1930,2002,2073,2258,2324,2442"
                     }
                 }
             ]

@@ -1,6 +1,9 @@
 package com.beatflowy.app.viewmodel
 
+import java.io.File
+
 import android.app.Application
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -10,6 +13,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import com.beatflowy.app.BeatraxusApplication
 import com.beatflowy.app.model.PlaylistEntity
 import com.beatflowy.app.model.FavoriteEntity
@@ -32,13 +37,127 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private val favoriteDao = database.favoriteDao()
     private val songDao = database.songDao()
 
-    private val _uiState = MutableStateFlow(PlayerUiState())
+    private val prefs = application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE)
+
+    private val _uiState = MutableStateFlow(PlayerUiState(
+        isFirstRun = prefs.getBoolean("first_run", true),
+        useOriginalQualityArt = prefs.getBoolean("use_original_quality_art", false)
+    ))
     val uiState: StateFlow<PlayerUiState> = _uiState.asStateFlow()
 
+    private val _progressMs = MutableStateFlow(0L)
+    val progressMs: StateFlow<Long> = _progressMs.asStateFlow()
+
+    private val _deleteRequest = MutableStateFlow<android.app.PendingIntent?>(null)
+    val deleteRequest: StateFlow<android.app.PendingIntent?> = _deleteRequest.asStateFlow()
+
+    private var pendingDeleteIds = emptyList<String>()
+
+    fun consumeDeleteRequest() {
+        _deleteRequest.value = null
+    }
+
+    fun onDeleteSuccess() {
+        val ids = pendingDeleteIds
+        if (ids.isEmpty()) return
+        
+        viewModelScope.launch {
+            songDao.deleteSongsByIds(ids)
+            _songs.update { currentSongs ->
+                currentSongs.filterNot { it.id in ids }
+            }
+            pendingDeleteIds = emptyList()
+            setMultiSelectMode(false)
+            
+            // If the current song was deleted, skip it
+            if (ids.contains(_uiState.value.currentSong?.id)) {
+                skipToNext()
+            }
+            // Remove from queue
+            ids.forEach { id -> service?.removeFromQueue(id) }
+        }
+    }
+
+    fun setUseOriginalQualityArt(enabled: Boolean) {
+        viewModelScope.launch {
+            // 1. Update preferences and state synchronously for the next scan
+            withContext(Dispatchers.IO) {
+                prefs.edit().putBoolean("use_original_quality_art", enabled).commit()
+            }
+            _uiState.update { it.copy(useOriginalQualityArt = enabled) }
+            
+            // 2. Clear cached album art so it can be re-extracted with the new quality setting
+            withContext(Dispatchers.IO) {
+                try {
+                    val cacheDir = File(getApplication<android.app.Application>().cacheDir, "embedded_album_art")
+                    if (cacheDir.exists()) {
+                        cacheDir.deleteRecursively()
+                    }
+                } catch (e: Exception) {}
+            }
+            
+            // 3. Force a full scan to re-cache images with new quality setting
+            startFullScan()
+        }
+    }
+
     init {
-        val prefs = application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE)
-        val isFirstRun = prefs.getBoolean("first_run", true)
-        _uiState.update { it.copy(isFirstRun = isFirstRun) }
+        val isFirstRun = prefs?.getBoolean("first_run", true) ?: true
+        if (!isFirstRun) {
+            loadLibrary()
+        }
+    }
+
+    fun loadLibrary() {
+        _uiState.update { it.copy(permissionDenied = false) }
+        viewModelScope.launch {
+            try {
+                val dbSongs = songDao.getAllSongs().map { entity ->
+                    Song(
+                        id = entity.id,
+                        uri = Uri.parse(entity.uriString),
+                        title = entity.title,
+                        artist = entity.artist,
+                        album = entity.album,
+                        durationMs = entity.durationMs,
+                        format = entity.format,
+                        sampleRateHz = entity.sampleRateHz,
+                        bitDepth = entity.bitDepth,
+                        bitrate = entity.bitrate,
+                        fileSizeBytes = entity.fileSizeBytes,
+                        albumArtUri = entity.albumArtUriString?.let { Uri.parse(it) },
+                        year = entity.year,
+                        genre = entity.genre,
+                        folder = entity.folder,
+                        dateAdded = entity.dateAdded
+                    )
+                }
+                if (dbSongs.isNotEmpty()) {
+                    // Check if cached album art still exists. If not, we need a refresh.
+                    val cacheWiped = dbSongs.any { song ->
+                        val artUri = song.albumArtUri
+                        artUri != null && artUri.scheme == "file" && !File(artUri.path ?: "").exists()
+                    }
+                    
+                    _songs.value = dbSongs
+                    
+                    if (cacheWiped) {
+                        startFullScan()
+                        return@launch
+                    }
+                }
+            } catch (e: Exception) {
+                // Ignore initial load errors
+            }
+
+            // If it's the first run, perform a high-concurrency Full Scan to populate UI correctly.
+            // Otherwise, just a quick scan is enough to find new files.
+            if (_uiState.value.isFirstRun) {
+                startFullScan()
+            } else {
+                quickScan()
+            }
+        }
     }
 
     val playlists: StateFlow<List<Playlist>> = playlistDao.getAllPlaylists()
@@ -185,6 +304,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private var service: AudioPlaybackService? = null
     private var progressJob: Job? = null
 
+    private var lyricsJob: Job? = null
+
     fun attachService(svc: AudioPlaybackService) {
         service = svc
         viewModelScope.launch {
@@ -216,11 +337,13 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
                 if (pbState.currentSong?.id != prevSongId) {
                     if (pbState.currentSong == null) {
+                        lyricsJob?.cancel()
                         _lyrics.value = emptyList()
                     } else {
                         val song = pbState.currentSong
                         updateRecentlyPlayed(song.id)
-                        viewModelScope.launch {
+                        lyricsJob?.cancel()
+                        lyricsJob = viewModelScope.launch {
                             _lyrics.value = lyricsRepository.fetchLyrics(song)
                         }
                     }
@@ -236,63 +359,79 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun loadLibrary() {
-        val prefs = getApplication<Application>().getSharedPreferences("beatraxus", Application.MODE_PRIVATE)
-        val isFirstRun = prefs.getBoolean("first_run", true)
+    private var scanJob: Job? = null
 
-        viewModelScope.launch {
-            if (_uiState.value.isScanning) return@launch
-
-            // Try to load from cache first
-            val cachedEntities = songDao.getAllSongs()
-            if (cachedEntities.isNotEmpty()) {
-                _songs.value = cachedEntities.map { entity ->
-                    Song(
-                        id = entity.id,
-                        uri = android.net.Uri.parse(entity.uriString),
-                        title = entity.title,
-                        artist = entity.artist,
-                        album = entity.album,
-                        durationMs = entity.durationMs,
-                        format = entity.format,
-                        sampleRateHz = entity.sampleRateHz,
-                        bitDepth = entity.bitDepth,
-                        bitrate = entity.bitrate,
-                        fileSizeBytes = entity.fileSizeBytes,
-                        albumArtUri = entity.albumArtUriString?.let { android.net.Uri.parse(it) },
-                        year = entity.year,
-                        genre = entity.genre,
-                        folder = entity.folder,
-                        dateAdded = entity.dateAdded
-                    )
-                }
-                if (isFirstRun) prefs.edit().putBoolean("first_run", false).apply()
-                return@launch
-            }
-
-            if (isFirstRun) {
-                _uiState.update { it.copy(isScanning = true, scanProgress = 0f, scanCount = 0) }
-            } else {
-                _uiState.update { it.copy(isLoadingLibrary = true) }
-            }
-
+    fun quickScan() {
+        if (scanJob?.isActive == true) return
+        scanJob = viewModelScope.launch {
+            _uiState.update { it.copy(isLoadingLibrary = true) }
             try {
-                // Perform full scan
-                val results = repository.scanAudioFiles(fullScan = true) { count, albums, artists, progress ->
-                    if (isFirstRun) {
-                        _uiState.update { it.copy(
-                            scanCount = count,
-                            albumCount = albums,
-                            artistCount = artists,
-                            scanProgress = progress
-                        )}
-                        service?.updateScanningProgress(progress, count, false)
+                val results = repository.scanAudioFiles(fullScan = false) { _, _, _, _ -> }
+                
+                // Compare with current list to find new ones
+                val currentIds = _songs.value.map { it.id }.toSet()
+                val newSongs = results.filter { it.id !in currentIds }
+                
+                if (newSongs.isNotEmpty()) {
+                    _songs.value = results
+                    val entities = results.map { song ->
+                        com.beatflowy.app.model.SongEntity(
+                            id = song.id,
+                            uriString = song.uri.toString(),
+                            title = song.title,
+                            artist = song.artist,
+                            album = song.album,
+                            durationMs = song.durationMs,
+                            format = song.format,
+                            sampleRateHz = song.sampleRateHz,
+                            bitDepth = song.bitDepth,
+                            bitrate = song.bitrate,
+                            fileSizeBytes = song.fileSizeBytes,
+                            albumArtUriString = song.albumArtUri?.toString(),
+                            year = song.year,
+                            genre = song.genre,
+                            folder = song.folder,
+                            dateAdded = song.dateAdded
+                        )
                     }
+                    withContext(Dispatchers.IO) {
+                        songDao.insertSongs(entities)
+                    }
+                    
+                    val addedCount = newSongs.size
+                    _uiState.update { it.copy(errorMessage = "Added $addedCount new songs") }
+                    delay(3000)
+                    _uiState.update { it.copy(errorMessage = null) }
+                } else {
+                    _uiState.update { it.copy(errorMessage = "No new songs found") }
+                    delay(2000)
+                    _uiState.update { it.copy(errorMessage = null) }
+                }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(errorMessage = "Scan failed: ${e.message}") }
+            } finally {
+                _uiState.update { it.copy(isLoadingLibrary = false) }
+            }
+        }
+    }
+
+    fun startFullScan() {
+        scanJob?.cancel()
+        scanJob = viewModelScope.launch {
+            _uiState.update { it.copy(isScanning = true, scanProgress = 0f, scanCount = 0) }
+            
+            try {
+                val results = repository.scanAudioFiles(fullScan = true) { count, albums, artists, progress ->
+                    _uiState.update { it.copy(
+                        scanCount = count,
+                        albumCount = albums,
+                        artistCount = artists,
+                        scanProgress = progress
+                    )}
+                    service?.updateScanningProgress(progress, count, false)
                 }
                 
                 _songs.value = results
-                
-                // Save to DB
                 val entities = results.map { song ->
                     com.beatflowy.app.model.SongEntity(
                         id = song.id,
@@ -313,27 +452,21 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         dateAdded = song.dateAdded
                     )
                 }
-                songDao.insertSongs(entities)
                 
-                if (isFirstRun && results.isNotEmpty()) {
-                    prefs.edit().putBoolean("first_run", false).apply()
+                // Perform DB insertion on a background thread and handle chunks to avoid locking the UI
+                withContext(Dispatchers.IO) {
+                    entities.chunked(100).forEach { chunk ->
+                        songDao.insertSongs(chunk)
+                    }
                 }
-                
-                if (isFirstRun) {
-                    _uiState.update { it.copy(scanProgress = 1.0f) }
-                    service?.updateScanningProgress(1.0f, results.size, true)
-                }
+
+                _uiState.update { it.copy(scanProgress = 1.0f) }
+                service?.updateScanningProgress(1.0f, results.size, true)
+                delay(800)
             } catch (e: Exception) {
-                if (isFirstRun) {
-                    _uiState.update { it.copy(errorMessage = "Failed to load library: ${e.message}") }
-                }
+                _uiState.update { it.copy(errorMessage = "Full scan failed: ${e.message}") }
             } finally {
-                if (isFirstRun) {
-                    delay(500)
-                    _uiState.update { it.copy(isScanning = false) }
-                } else {
-                    _uiState.update { it.copy(isLoadingLibrary = false) }
-                }
+                _uiState.update { it.copy(isScanning = false) }
             }
         }
     }
@@ -372,10 +505,17 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun setLibraryView(view: LibraryView, itemName: String? = null) {
         _uiState.update { 
+            val isDetailView = view in listOf(
+                LibraryView.ALBUM_DETAIL, LibraryView.ARTIST_DETAIL, 
+                LibraryView.FOLDER_DETAIL, LibraryView.GENRE_DETAIL, LibraryView.YEAR_DETAIL,
+                LibraryView.PLAYLIST_DETAIL
+            )
             it.copy(
+                previousView = it.currentView,
                 currentView = view, 
                 selectedItemName = itemName,
-                currentFolderPath = if (view == LibraryView.FOLDER_DETAIL) it.currentFolderPath else null
+                currentFolderPath = if (view == LibraryView.FOLDER_DETAIL) it.currentFolderPath else null,
+                wasSearchingBeforeDetail = if (isDetailView) it.isSearchActive else it.wasSearchingBeforeDetail
             ) 
         }
     }
@@ -383,9 +523,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun navigateToFolder(path: String, name: String) {
         _uiState.update { 
             it.copy(
+                previousView = it.currentView,
                 currentView = LibraryView.FOLDER_DETAIL,
                 selectedItemName = name,
-                currentFolderPath = path
+                currentFolderPath = path,
+                wasSearchingBeforeDetail = it.isSearchActive
             ) 
         }
     }
@@ -415,11 +557,15 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         if (selectedIds.isEmpty()) return
         
         viewModelScope.launch {
-            songDao.deleteSongsByIds(selectedIds)
-            _songs.update { currentSongs ->
-                currentSongs.filterNot { it.id in selectedIds }
+            val songsToDelete = allSongs.value.filter { it.id in selectedIds }
+            pendingDeleteIds = selectedIds
+            val intent = repository.deleteSongs(songsToDelete.map { it.uri })
+            if (intent != null) {
+                _deleteRequest.value = intent
+            } else {
+                // Success for < Android 10 or pre-granted permissions
+                onDeleteSuccess()
             }
-            setMultiSelectMode(false)
         }
     }
 
@@ -503,16 +649,14 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun deleteSong(song: Song) {
-        // For now, just remove from list if it's there
         viewModelScope.launch {
-            // In a real app, this would delete from MediaStore or file system
-            _songs.value = _songs.value.filter { it.id != song.id }
-            // If it's the current song, skip to next
-            if (uiState.value.currentSong?.id == song.id) {
-                skipToNext()
+            pendingDeleteIds = listOf(song.id)
+            val intent = repository.deleteSongs(listOf(song.uri))
+            if (intent != null) {
+                _deleteRequest.value = intent
+            } else {
+                onDeleteSuccess()
             }
-            // Remove from queue
-            service?.removeFromQueue(song.id)
         }
     }
 
@@ -540,8 +684,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun seekTo(positionMs: Long) {
+        _progressMs.value = positionMs
         service?.seekTo(positionMs)
-        _uiState.update { it.copy(progressMs = positionMs) }
     }
 
     fun toggleResampling() {
@@ -608,9 +752,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 val svc = service ?: break
                 if (!_uiState.value.isPlaying) continue
                 val pos = svc.currentPositionMs
-                _uiState.update { cur ->
-                    if (!cur.isPlaying) cur else cur.copy(progressMs = pos)
-                }
+                _progressMs.value = pos
             }
         }
     }
@@ -621,9 +763,13 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun setFirstRunComplete() {
-        val prefs = getApplication<Application>().getSharedPreferences("beatraxus", Application.MODE_PRIVATE)
         prefs.edit().putBoolean("first_run", false).apply()
         _uiState.update { it.copy(isFirstRun = false) }
+    }
+
+    fun resetFirstRun() {
+        prefs.edit().putBoolean("first_run", true).apply()
+        _uiState.update { it.copy(isFirstRun = true) }
     }
 
     override fun onCleared() {

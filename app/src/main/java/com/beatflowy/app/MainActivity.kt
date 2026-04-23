@@ -64,8 +64,14 @@ class MainActivity : ComponentActivity() {
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { results ->
-        if (results.values.all { it }) {
-            Log.d("MainActivity", "Permissions granted, loading library")
+        val essentialPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            Manifest.permission.READ_MEDIA_AUDIO
+        } else {
+            Manifest.permission.READ_EXTERNAL_STORAGE
+        }
+
+        if (results[essentialPermission] == true) {
+            Log.d("MainActivity", "Essential permission granted, loading library")
             viewModel.loadLibrary()
         } else {
             viewModel.onPermissionDenied()
@@ -123,17 +129,20 @@ class MainActivity : ComponentActivity() {
     }
 
     fun requestPermissions(onAlreadyGranted: () -> Unit = {}) {
-        val permissions = mutableListOf<String>()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            permissions.add(Manifest.permission.READ_MEDIA_AUDIO)
+        val essentialPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            Manifest.permission.READ_MEDIA_AUDIO
         } else {
-            permissions.add(Manifest.permission.READ_EXTERNAL_STORAGE)
+            Manifest.permission.READ_EXTERNAL_STORAGE
         }
 
-        val allGranted = permissions.all {
-            ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
+        val permissions = mutableListOf(essentialPermission)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            permissions.add(Manifest.permission.POST_NOTIFICATIONS)
         }
-        if (allGranted) {
+
+        val essentialGranted = ContextCompat.checkSelfPermission(this, essentialPermission) == PackageManager.PERMISSION_GRANTED
+        
+        if (essentialGranted) {
             viewModel.loadLibrary()
             onAlreadyGranted()
         } else {
@@ -147,20 +156,23 @@ class MainActivity : ComponentActivity() {
         val isFirstRun = prefs.getBoolean("first_run", true)
         if (isFirstRun) return
 
-        val permissions = mutableListOf<String>()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            permissions.add(Manifest.permission.READ_MEDIA_AUDIO)
+        val essentialPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            Manifest.permission.READ_MEDIA_AUDIO
         } else {
-            permissions.add(Manifest.permission.READ_EXTERNAL_STORAGE)
+            Manifest.permission.READ_EXTERNAL_STORAGE
         }
+
+        val essentialGranted = ContextCompat.checkSelfPermission(this, essentialPermission) == PackageManager.PERMISSION_GRANTED
         
-        val allGranted = permissions.all {
-            ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
-        }
-        if (allGranted) {
+        if (essentialGranted) {
             viewModel.loadLibrary()
+        } else {
+            val permissions = mutableListOf(essentialPermission)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                permissions.add(Manifest.permission.POST_NOTIFICATIONS)
+            }
+            permissionLauncher.launch(permissions.toTypedArray())
         }
-        else permissionLauncher.launch(permissions.toTypedArray())
     }
 }
 
