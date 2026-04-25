@@ -83,7 +83,7 @@ fun NowPlayingSection(
                 progress = { if (durationMs > 0) (progressMs().toFloat() / durationMs) else 0f },
                 modifier = Modifier.fillMaxWidth().height(2.dp).clip(CircleShape),
                 color = AccentBlue,
-                trackColor = EqTrack
+                trackColor = Divider
             )
         }
     }

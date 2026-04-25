@@ -29,7 +29,6 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.beatflowy.app.service.AudioPlaybackService
-import com.beatflowy.app.ui.screens.EqualizerScreen
 import com.beatflowy.app.ui.screens.MainScreen
 import com.beatflowy.app.ui.screens.SettingsScreen
 import com.beatflowy.app.ui.screens.WelcomeScreen
@@ -186,7 +185,6 @@ class MainActivity : ComponentActivity() {
 
 sealed class Screen(val route: String) {
     object Main      : Screen("main")
-    object Equalizer : Screen("equalizer")
     object Settings  : Screen("settings")
 }
 
@@ -274,26 +272,6 @@ fun BeatraxusApp(
             MainScreen(
                 viewModel            = viewModel,
                 onNavigateToSettings  = { navController.navigate(Screen.Settings.route) }
-            )
-        }
-        composable(
-            Screen.Equalizer.route,
-            enterTransition = {
-                slideIntoContainer(
-                    towards = AnimatedContentTransitionScope.SlideDirection.Start,
-                    animationSpec = tween(400, easing = FastOutSlowInEasing)
-                ) + fadeIn(tween(400))
-            },
-            exitTransition = {
-                slideOutOfContainer(
-                    towards = AnimatedContentTransitionScope.SlideDirection.End,
-                    animationSpec = tween(400, easing = FastOutSlowInEasing)
-                ) + fadeOut(tween(400))
-            }
-        ) {
-            EqualizerScreen(
-                viewModel = viewModel,
-                onBack    = { navController.popBackStack() }
             )
         }
         composable(

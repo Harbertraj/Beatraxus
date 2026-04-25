@@ -10,6 +10,8 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.media.AudioAttributes
+import android.media.AudioDeviceCallback
+import android.media.AudioDeviceInfo
 import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.os.Binder
@@ -27,9 +29,12 @@ import androidx.media.app.NotificationCompat.MediaStyle
 import com.beatflowy.app.MainActivity
 import com.beatflowy.app.R
 import com.beatflowy.app.engine.AudioEngine
+import com.beatflowy.app.engine.OutputMode
+import com.beatflowy.app.engine.OutputRouteState
 import com.beatflowy.app.engine.AudioTrackOutput
 import com.beatflowy.app.engine.PlaybackState
 import com.beatflowy.app.engine.RepeatMode
+import com.beatflowy.app.model.DspConfig
 import com.beatflowy.app.model.Song
 import com.beatflowy.app.widget.MusicWidgetKeys
 import com.beatflowy.app.widget.MusicWidgetLarge
@@ -41,10 +46,22 @@ import kotlinx.coroutines.flow.*
 class AudioPlaybackService : Service() {
     private val binder = LocalBinder()
     private lateinit var engine: AudioEngine
+    private lateinit var audioOutput: AudioTrackOutput
     private lateinit var mediaSession: MediaSessionCompat
     private lateinit var audioManager: AudioManager
     private var audioFocusRequest: AudioFocusRequest? = null
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+    private val _outputRouteStateFlow = MutableStateFlow(OutputRouteState())
+    val outputRouteStateFlow: StateFlow<OutputRouteState> = _outputRouteStateFlow.asStateFlow()
+    private val audioDeviceCallback = object : AudioDeviceCallback() {
+        override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>) {
+            refreshOutputRoute(reconfigure = true)
+        }
+
+        override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>) {
+            refreshOutputRoute(reconfigure = true)
+        }
+    }
 
     private var lastSongId: String? = null
     private var currentAlbumArt: Bitmap? = null
@@ -55,8 +72,11 @@ class AudioPlaybackService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        engine = AudioEngine(this, AudioTrackOutput())
         audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        audioOutput = AudioTrackOutput(this)
+        engine = AudioEngine(this, audioOutput)
+        refreshOutputRoute()
+        audioManager.registerAudioDeviceCallback(audioDeviceCallback, null)
 
         mediaSession = MediaSessionCompat(this, "AudioPlaybackService").apply {
             setCallback(object : MediaSessionCompat.Callback() {
@@ -311,6 +331,15 @@ class AudioPlaybackService : Service() {
         engine.seekTo(pos)
     }
 
+    fun updateDspConfig(config: DspConfig) {
+        engine.updateDspConfig(config)
+    }
+
+    fun setOutputMode(mode: OutputMode) {
+        audioOutput.setOutputMode(mode)
+        refreshOutputRoute(reconfigure = true)
+    }
+
     fun setShuffleMode(enabled: Boolean) {
         if (engine.playbackStateFlow.value.shuffleMode == enabled) return
         
@@ -339,11 +368,6 @@ class AudioPlaybackService : Service() {
         }
         engine.setRepeatMode(next)
     }
-
-    fun setEqualizerEnabled(enabled: Boolean) {
-        engine.setEqualizerEnabled(enabled)
-    }
-    fun setEqBandGain(band: Int, gain: Float) {}
 
     fun updateScanningProgress(progress: Float, count: Int, completed: Boolean) {
         val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -606,6 +630,14 @@ class AudioPlaybackService : Service() {
         const val ACTION_TOGGLE_REPEAT = "com.beatflowy.app.ACTION_TOGGLE_REPEAT"
     }
 
+    private fun refreshOutputRoute(reconfigure: Boolean = false) {
+        val routeState = audioOutput.refreshRouteState()
+        _outputRouteStateFlow.value = routeState
+        if (reconfigure) {
+            engine.reconfigureOutput()
+        }
+    }
+
     override fun onDestroy() {
         // Update widgets one last time to reflect stopped state
         val finalState = engine.playbackStateFlow.value.copy(isPlaying = false)
@@ -617,6 +649,7 @@ class AudioPlaybackService : Service() {
         }
 
         serviceScope.cancel()
+        audioManager.unregisterAudioDeviceCallback(audioDeviceCallback)
         engine.release()
         mediaSession.release()
         abandonAudioFocus()

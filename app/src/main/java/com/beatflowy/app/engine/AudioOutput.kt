@@ -1,7 +1,8 @@
 package com.beatflowy.app.engine
 
 interface AudioOutput {
-    fun init(sampleRate: Int, channels: Int): Boolean
+    fun init(sampleRate: Int, channels: Int, bitDepth: Int): Boolean
+    fun setTargetSampleRate(sampleRate: Int)
     fun start()
     fun stop()
     fun flush()
@@ -9,6 +10,7 @@ interface AudioOutput {
     fun playbackPositionFrames(): Long
     fun outputSampleRate(): Int
     fun outputPathLabel(): String
+    fun outputDeviceLabel(): String
     fun estimatedLatencyMs(): Int
     fun release()
 }

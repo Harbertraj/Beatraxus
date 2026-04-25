@@ -43,7 +43,6 @@
         android:requestLegacyExternalStorage="true"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:testOnly="true"
         android:theme="@style/Theme.Beatraxus" >
         <activity
             android:name="com.beatflowy.app.MainActivity"

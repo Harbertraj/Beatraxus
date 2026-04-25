@@ -17,8 +17,12 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import com.beatflowy.app.BeatraxusApplication
+import com.beatflowy.app.engine.OutputMode
 import com.beatflowy.app.model.PlaylistEntity
 import com.beatflowy.app.model.FavoriteEntity
+import com.beatflowy.app.model.AutoEqProfileSummary
+import com.beatflowy.app.model.DspConfig
+import com.beatflowy.app.model.ParametricEqBand
 import com.beatflowy.app.model.LibraryView
 import com.beatflowy.app.model.Playlist
 import com.beatflowy.app.model.PlayerUiState
@@ -26,6 +30,7 @@ import com.beatflowy.app.model.Song
 import com.beatflowy.app.model.SortType
 import com.beatflowy.app.model.ViewMode
 import com.beatflowy.app.repository.MusicRepository
+import com.beatflowy.app.repository.AutoEqRepository
 import com.beatflowy.app.repository.LyricsRepository
 import com.beatflowy.app.repository.LrcParser
 import com.beatflowy.app.repository.LyricsSource
@@ -34,6 +39,7 @@ import com.beatflowy.app.service.AudioPlaybackService
 class PlayerViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository = MusicRepository(application)
+    private val autoEqRepository = AutoEqRepository(application)
     private val lyricsRepository = LyricsRepository(application, (application as BeatraxusApplication).database)
 
     private val database = (application as BeatraxusApplication).database
@@ -45,7 +51,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     private val _uiState = MutableStateFlow(PlayerUiState(
         isFirstRun = prefs.getBoolean("first_run", true),
-        useOriginalQualityArt = prefs.getBoolean("use_original_quality_art", false)
+        useOriginalQualityArt = prefs.getBoolean("use_original_quality_art", false),
+        outputMode = OutputMode.fromName(prefs.getString(KEY_OUTPUT_MODE, null)).name
     ))
     val uiState: StateFlow<PlayerUiState> = _uiState.asStateFlow()
 
@@ -305,21 +312,25 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun attachService(svc: AudioPlaybackService) {
         if (service === svc) return
         service = svc
+        svc.updateDspConfig(_uiState.value.dsp.config)
+        svc.setOutputMode(OutputMode.fromName(_uiState.value.outputMode))
         serviceObserversJob?.cancel()
         serviceObserversJob = viewModelScope.launch {
             launch {
                 svc.audioStateFlow.collect { audioState ->
                         _uiState.update {
                             it.copy(
-                                equalizerEnabled = audioState.equalizerActive,
                                 inputSampleRate = audioState.sampleRate,
                                 outputSampleRate = audioState.outputSampleRate,
                                 bitDepth = if (audioState.bitDepth > 0) audioState.bitDepth else it.currentSong?.bitDepth ?: 16,
                                 bitrate = if (audioState.bitrate > 0) audioState.bitrate else it.currentSong?.bitrate ?: 0,
                                 format = audioState.codec.ifBlank { it.currentSong?.format ?: "" },
+                                outputDevice = audioState.outputDevice,
                                 pipelineOutputPath = audioState.outputPath,
                                 pipelineDvcEnabled = audioState.dynamicVolumeControlActive,
-                                pipelineResamplerEnabled = audioState.resamplerActive
+                                pipelineResamplerEnabled = audioState.resamplerActive,
+                                pipelineActiveEffects = audioState.activeEffects,
+                                autoEqProfileName = audioState.autoEqProfileName
                             )
                         }
                     }
@@ -357,11 +368,23 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         }
 
                         if (pbState.isPlaying) startProgressPolling() else stopProgressPolling()
-                    }
+                }
             }
             launch {
                 svc.upcomingSongs.collect { songs ->
                     _uiState.update { it.copy(upcomingSongs = songs) }
+                }
+            }
+            launch {
+                svc.outputRouteStateFlow.collect { routeState ->
+                    _uiState.update {
+                        it.copy(
+                            outputMode = routeState.selectedMode.name,
+                            outputDevice = routeState.outputDevice,
+                            hiResDirectSupported = routeState.hiResDirectSupported,
+                            hiResCapabilitySummary = routeState.capabilitySummary
+                        )
+                    }
                 }
             }
         }
@@ -702,12 +725,141 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun toggleResampling() {
-        val newValue = !_uiState.value.resamplingEnabled
+        val newValue = !_uiState.value.dsp.config.resamplerEnabled
+        applyDspConfig { it.copy(resamplerEnabled = newValue) }
         _uiState.update { it.copy(resamplingEnabled = newValue) }
     }
 
-    fun setOutputMode(mode: com.beatflowy.app.engine.OutputMode) {
+    fun setResamplerEnabled(enabled: Boolean) {
+        applyDspConfig { it.copy(resamplerEnabled = enabled) }
+        _uiState.update { it.copy(resamplingEnabled = enabled) }
+    }
+
+    fun setTargetSampleRate(sampleRate: Int) {
+        applyDspConfig { it.copy(targetSampleRate = sampleRate.coerceIn(44_100, 192_000)) }
+    }
+
+    fun setResamplerCutoffRatio(value: Float) {
+        applyDspConfig { it.copy(resamplerCutoffRatio = value.coerceIn(0.80f, 0.995f)) }
+    }
+
+    fun setOutputMode(mode: OutputMode) {
+        prefs.edit().putString(KEY_OUTPUT_MODE, mode.name).apply()
         _uiState.update { it.copy(outputMode = mode.name) }
+        service?.setOutputMode(mode)
+    }
+
+    private fun applyDspConfig(transform: (DspConfig) -> DspConfig) {
+        val updated = transform(_uiState.value.dsp.config)
+        _uiState.update { it.copy(dsp = it.dsp.copy(config = updated, autoEqError = null)) }
+        service?.updateDspConfig(updated)
+    }
+
+    fun setPreampEnabled(enabled: Boolean) = applyDspConfig { it.copy(preampEnabled = enabled) }
+    fun setPreampDb(value: Float) = applyDspConfig { it.copy(preampDb = value.coerceIn(-18f, 18f)) }
+    fun setEqEnabled(enabled: Boolean) = applyDspConfig { it.copy(eqEnabled = enabled) }
+    fun setBassEnabled(enabled: Boolean) = applyDspConfig { it.copy(bassEnabled = enabled) }
+    fun setBassDb(value: Float) = applyDspConfig { it.copy(bassDb = value.coerceIn(-12f, 12f)) }
+    fun setTrebleEnabled(enabled: Boolean) = applyDspConfig { it.copy(trebleEnabled = enabled) }
+    fun setTrebleDb(value: Float) = applyDspConfig { it.copy(trebleDb = value.coerceIn(-12f, 12f)) }
+    fun setBalanceEnabled(enabled: Boolean) = applyDspConfig { it.copy(balanceEnabled = enabled) }
+    fun setBalance(value: Float) = applyDspConfig { it.copy(balance = value.coerceIn(-1f, 1f)) }
+    fun setStereoExpansionEnabled(enabled: Boolean) = applyDspConfig { it.copy(stereoExpansionEnabled = enabled) }
+    fun setStereoWidth(value: Float) = applyDspConfig { it.copy(stereoWidth = value.coerceIn(0.5f, 2f)) }
+    fun setReverbEnabled(enabled: Boolean) = applyDspConfig { it.copy(reverbEnabled = enabled) }
+    fun setReverbAmount(value: Float) = applyDspConfig { it.copy(reverbAmount = value.coerceIn(0f, 1f)) }
+
+    fun setEqBandEnabled(index: Int, enabled: Boolean) {
+        applyEqBand(index) { it.copy(enabled = enabled) }
+    }
+
+    fun setEqBandFrequency(index: Int, frequencyHz: Float) {
+        applyEqBand(index) { it.copy(frequencyHz = frequencyHz.coerceIn(20f, 20_000f)) }
+    }
+
+    fun setEqBandGain(index: Int, gainDb: Float) {
+        applyEqBand(index) { it.copy(gainDb = gainDb.coerceIn(-12f, 12f)) }
+    }
+
+    fun setEqBandQ(index: Int, q: Float) {
+        applyEqBand(index) { it.copy(q = q.coerceIn(0.2f, 8f)) }
+    }
+
+    private fun applyEqBand(index: Int, transform: (ParametricEqBand) -> ParametricEqBand) {
+        applyDspConfig { config ->
+            config.copy(
+                eqBands = config.eqBands.mapIndexed { bandIndex, band ->
+                    if (bandIndex == index) transform(band) else band
+                }
+            )
+        }
+    }
+
+    fun setAutoEqQuery(query: String) {
+        _uiState.update { it.copy(dsp = it.dsp.copy(autoEqQuery = query)) }
+    }
+
+    fun searchAutoEqProfiles() {
+        val query = _uiState.value.dsp.autoEqQuery.trim()
+        if (query.isBlank()) {
+            _uiState.update { it.copy(dsp = it.dsp.copy(autoEqResults = emptyList(), autoEqError = null)) }
+            return
+        }
+        viewModelScope.launch {
+            _uiState.update { it.copy(dsp = it.dsp.copy(autoEqLoading = true, autoEqError = null)) }
+            runCatching {
+                autoEqRepository.searchProfiles(query)
+            }.onSuccess { results ->
+                _uiState.update {
+                    it.copy(dsp = it.dsp.copy(autoEqLoading = false, autoEqResults = results, autoEqError = null))
+                }
+            }.onFailure { error ->
+                _uiState.update {
+                    it.copy(dsp = it.dsp.copy(autoEqLoading = false, autoEqError = error.message ?: "AutoEQ search failed"))
+                }
+            }
+        }
+    }
+
+    fun applyAutoEqProfile(summary: AutoEqProfileSummary) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(dsp = it.dsp.copy(autoEqLoading = true, autoEqError = null)) }
+            runCatching {
+                autoEqRepository.loadProfile(summary)
+            }.onSuccess { profile ->
+                applyDspConfig { config ->
+                    config.copy(
+                        autoEqEnabled = true,
+                        autoEqProfile = profile
+                    )
+                }
+                _uiState.update {
+                    it.copy(
+                        dsp = it.dsp.copy(
+                            autoEqLoading = false,
+                            autoEqError = null,
+                            autoEqQuery = profile.name
+                        )
+                    )
+                }
+            }.onFailure { error ->
+                _uiState.update {
+                    it.copy(dsp = it.dsp.copy(autoEqLoading = false, autoEqError = error.message ?: "AutoEQ load failed"))
+                }
+            }
+        }
+    }
+
+    fun clearAutoEqProfile() {
+        applyDspConfig { it.copy(autoEqEnabled = false, autoEqProfile = null) }
+        _uiState.update {
+            it.copy(
+                dsp = it.dsp.copy(
+                    autoEqError = null,
+                    autoEqResults = emptyList()
+                )
+            )
+        }
     }
 
     fun toggleShuffle() {
@@ -742,19 +894,6 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             val shuffled = currentSongs.shuffled()
             service?.playList(shuffled, 0)
         }
-    }
-
-    fun toggleEqualizer() {
-        val enabled = !_uiState.value.equalizerEnabled
-        _uiState.update { it.copy(equalizerEnabled = enabled) }
-        service?.setEqualizerEnabled(enabled)
-    }
-
-    fun setEqBandGain(band: Int, gain: Float) {
-        val newGains = _uiState.value.eqGains.copyOf()
-        newGains[band] = gain.coerceIn(-12f, 12f)
-        _uiState.update { it.copy(eqGains = newGains) }
-        service?.setEqBandGain(band, gain)
     }
 
     fun toggleLyrics() {
@@ -910,6 +1049,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     private companion object {
         const val FRAME_TICK_MS = 16L
+        const val KEY_OUTPUT_MODE = "output_mode"
     }
 
     private fun updateLibraryCounts(songs: List<Song>) {

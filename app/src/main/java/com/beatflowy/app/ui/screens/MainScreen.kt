@@ -189,14 +189,12 @@ fun MainScreen(
     val scope = rememberCoroutineScope()
     
     var showFullPlayer by remember { mutableStateOf(false) }
-    var showEqualizer by remember { mutableStateOf(false) }
     var showSortMenu   by remember { mutableStateOf(false) }
     var showLibraryPopup by remember { mutableStateOf(false) }
     var sortMenuAnchor by remember { mutableStateOf(Rect.Zero) }
     var libraryMenuAnchor by remember { mutableStateOf(Rect.Zero) }
     var selectedSongForOptions by remember { mutableStateOf<com.beatflowy.app.model.Song?>(null) }
 
-    // Logic to open full player if returning from Equalizer or if it was already open
     LaunchedEffect(uiState.showFullPlayer) {
         if (uiState.showFullPlayer) {
             showFullPlayer = true
@@ -210,13 +208,11 @@ fun MainScreen(
         LibraryView.PLAYLIST_DETAIL
     )
 
-    BackHandler(enabled = showFullPlayer || showEqualizer || uiState.isSearchActive || isDetailView || uiState.currentView != LibraryView.ALL_SONGS || showLibraryPopup || showSortMenu) {
+    BackHandler(enabled = showFullPlayer || uiState.isSearchActive || isDetailView || uiState.currentView != LibraryView.ALL_SONGS || showLibraryPopup || showSortMenu) {
         if (showLibraryPopup) {
             showLibraryPopup = false
         } else if (showSortMenu) {
             showSortMenu = false
-        } else if (showEqualizer) {
-            showEqualizer = false
         } else if (showFullPlayer) {
             if (uiState.showQueue) {
                 viewModel.toggleQueue()
@@ -1262,7 +1258,7 @@ fun MainScreen(
                 onRepeat = { viewModel.toggleRepeat() },
                 onSeek = { viewModel.seekTo(it) },
                 onClose = { showFullPlayer = false },
-                onOpenEqualizer = { showEqualizer = true },
+                onOpenEqualizer = { },
                 onToggleQueue = { viewModel.toggleQueue() },
                 onRemoveFromQueue = { viewModel.removeFromQueue(it) },
                 onMoveInQueue = { from, to -> viewModel.moveInQueue(from, to) },
@@ -1277,18 +1273,6 @@ fun MainScreen(
                 onToggleLyrics = { viewModel.toggleLyrics() },
                 onAdjustOffset = { viewModel.adjustLyricsOffset(it) }
             )
-        }
-
-        AnimatedVisibility(
-            visible = showEqualizer,
-            enter = slideInVertically(initialOffsetY = { it }, animationSpec = tween(400)),
-            exit = slideOutVertically(targetOffsetY = { it }, animationSpec = tween(400))
-        ) {
-            val context = androidx.compose.ui.platform.LocalContext.current
-            LaunchedEffect(Unit) {
-                android.widget.Toast.makeText(context, "Coming Soon", android.widget.Toast.LENGTH_SHORT).show()
-                showEqualizer = false
-            }
         }
 
         var songToDelete by remember { mutableStateOf<com.beatflowy.app.model.Song?>(null) }

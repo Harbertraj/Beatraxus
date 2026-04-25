@@ -36,13 +36,17 @@ import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
+import com.beatflowy.app.R
 import com.beatflowy.app.model.Song
 import com.beatflowy.app.ui.components.WaveformSeekBar
 import com.beatflowy.app.ui.components.KaraokeLyricsView
@@ -250,28 +254,65 @@ fun NowPlayingScreen(
                             enter = fadeIn(tween(800)),
                             exit = fadeOut(tween(800))
                         ) {
+                            val context = LocalContext.current
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth(0.86f)
                                     .aspectRatio(1f)
                                     .padding(top = 24.dp, bottom = 4.dp)
-                                    .shadow(24.dp, RoundedCornerShape(28.dp))
-                                    .clip(RoundedCornerShape(28.dp))
-                                    .background(Color.DarkGray)
                                     .graphicsLayer {
                                         scaleX = 1f
                                         scaleY = 1f
                                         translationY = with(density) { 52.dp.toPx() }
                                     }
                             ) {
-                                AsyncImage(
-                                    model = song.albumArtUri,
-                                    contentDescription = null,
+                                Surface(
                                     modifier = Modifier
                                         .fillMaxSize()
-                                        .background(Color.Black.copy(alpha = 0.18f)),
-                                    contentScale = ContentScale.Fit
-                                )
+                                        .shadow(24.dp, RoundedCornerShape(28.dp)),
+                                    shape = RoundedCornerShape(28.dp),
+                                    color = Color(0xFF12121A),
+                                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.14f))
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .background(
+                                                Brush.linearGradient(
+                                                    colors = listOf(
+                                                        Color.White.copy(alpha = 0.06f),
+                                                        Color.Black.copy(alpha = 0.16f)
+                                                    )
+                                                )
+                                            )
+                                    ) {
+                                        AsyncImage(
+                                            model = ImageRequest.Builder(context)
+                                                .data(song.albumArtUri)
+                                                .crossfade(true)
+                                                .build(),
+                                            contentDescription = null,
+                                            placeholder = painterResource(R.drawable.ic_album_placeholder),
+                                            error = painterResource(R.drawable.ic_album_placeholder),
+                                            fallback = painterResource(R.drawable.ic_album_placeholder),
+                                            modifier = Modifier.fillMaxSize(),
+                                            contentScale = ContentScale.Crop
+                                        )
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .background(
+                                                    Brush.verticalGradient(
+                                                        colors = listOf(
+                                                            Color.White.copy(alpha = 0.02f),
+                                                            Color.Transparent,
+                                                            Color.Black.copy(alpha = 0.08f)
+                                                        )
+                                                    )
+                                                )
+                                        )
+                                    }
+                                }
                             }
                         }
 
@@ -598,11 +639,10 @@ fun NowPlayingScreen(
                             )
                             Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
                                 IconButton(onClick = onOpenEqualizer) {
-                                    val equalizerEnabled = uiState.equalizerEnabled
                                     Icon(
-                                        if (equalizerEnabled) Icons.Rounded.Equalizer else Icons.Outlined.Equalizer,
+                                        Icons.Outlined.Equalizer,
                                         null,
-                                        tint = if (equalizerEnabled) Color(0xFF40C4FF) else Color.White.copy(0.6f),
+                                        tint = Color.White.copy(0.6f),
                                         modifier = Modifier.size(24.dp)
                                     )
                                 }
@@ -976,10 +1016,11 @@ private fun buildPipelineOverlayState(
     val outputSampleRate = if (uiState.outputSampleRate > 0) uiState.outputSampleRate else inputSampleRate
     val bitDepth = if (uiState.bitDepth > 0) uiState.bitDepth else song.bitDepth
     val effects = buildList {
-        add("EQ ${if (uiState.equalizerEnabled) "On" else "Off"}")
+        addAll(uiState.pipelineActiveEffects)
         add("DVC ${if (uiState.pipelineDvcEnabled) "On" else "Off"}")
         add("Resampler ${if (uiState.pipelineResamplerEnabled) "On" else "Bypass"}")
-    }.joinToString(" | ")
+        uiState.autoEqProfileName?.let { add("Profile $it") }
+    }.ifEmpty { listOf("None") }.joinToString(" | ")
 
     return PipelineOverlayState(
         codec = codec,

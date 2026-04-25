@@ -10,7 +10,6 @@
     <string name="cd_pause">Pause</string>
     <string name="cd_next">Next track</string>
     <string name="cd_previous">Previous track</string>
-    <string name="cd_equalizer">Open Equalizer</string>
     <string name="cd_album_art">Album artwork</string>
 
     <!-- Empty states -->

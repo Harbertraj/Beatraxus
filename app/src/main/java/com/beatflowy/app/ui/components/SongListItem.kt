@@ -171,7 +171,7 @@ fun SongListItem(
                 Spacer(Modifier.width(8.dp))
             } else if (isPlaying) {
                 Box(Modifier.width(32.dp), contentAlignment = Alignment.Center) {
-                    MiniEqBars()
+                    PlaybackBars()
                 }
                 Spacer(Modifier.width(10.dp))
             } else {
@@ -260,8 +260,8 @@ fun SongListItem(
 
 
 @Composable
-private fun MiniEqBars() {
-    val inf = rememberInfiniteTransition(label = "eq")
+private fun PlaybackBars() {
+    val inf = rememberInfiniteTransition(label = "playbackBars")
     val b1 by inf.animateFloat(0.3f, 0.9f, infiniteRepeatable(tween(380), RepeatMode.Reverse), "b1")
     val b2 by inf.animateFloat(0.8f, 0.4f, infiniteRepeatable(tween(480), RepeatMode.Reverse), "b2")
     val b3 by inf.animateFloat(0.5f, 1.0f, infiniteRepeatable(tween(310), RepeatMode.Reverse), "b3")

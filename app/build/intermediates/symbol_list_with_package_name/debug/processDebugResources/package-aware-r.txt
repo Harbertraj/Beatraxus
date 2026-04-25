@@ -5451,7 +5451,6 @@ string call_notification_incoming_text
 string call_notification_ongoing_text
 string call_notification_screening_text
 string cd_album_art
-string cd_equalizer
 string cd_next
 string cd_pause
 string cd_play

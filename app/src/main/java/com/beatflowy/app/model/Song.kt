@@ -1,6 +1,7 @@
 package com.beatflowy.app.model
 
 import android.net.Uri
+import com.beatflowy.app.engine.OutputMode
 import com.beatflowy.app.repository.LyricsSource
 
 data class Song(
@@ -55,12 +56,12 @@ data class PlayerUiState(
     val isPlaying: Boolean = false,
     val progressMs: Long = 0L,
     val isBuffering: Boolean = false,
-    val equalizerEnabled: Boolean = true,
     val inputSampleRate: Int = 44_100,
     val outputSampleRate: Int = 44_100,
     val outputDevice: String = AudioOutputDevice.SPEAKER.displayName,
-    val outputMode: String = "AAUDIO",
-    val eqGains: FloatArray = FloatArray(10) { 0f },
+    val outputMode: String = OutputMode.STANDARD_AUDIO_TRACK.name,
+    val hiResDirectSupported: Boolean = false,
+    val hiResCapabilitySummary: String = "Direct hi-res not available on this route",
     val isLoadingLibrary: Boolean = false,
     val isScanning: Boolean = false,
     val scanProgress: Float = 0f,
@@ -89,6 +90,9 @@ data class PlayerUiState(
     val pipelineOutputPath: String = "AudioTrack",
     val pipelineDvcEnabled: Boolean = false,
     val pipelineResamplerEnabled: Boolean = false,
+    val pipelineActiveEffects: List<String> = emptyList(),
+    val autoEqProfileName: String? = null,
+    val dsp: DspUiState = DspUiState(),
     val resamplingEnabled: Boolean = true,
     val currentFolderPath: String? = null,
     val isFirstRun: Boolean = true,
@@ -110,12 +114,12 @@ data class PlayerUiState(
                 isPlaying == other.isPlaying &&
                 progressMs == other.progressMs &&
                 isBuffering == other.isBuffering &&
-                equalizerEnabled == other.equalizerEnabled &&
                 inputSampleRate == other.inputSampleRate &&
                 outputSampleRate == other.outputSampleRate &&
                 outputDevice == other.outputDevice &&
                 outputMode == other.outputMode &&
-                eqGains.contentEquals(other.eqGains) &&
+                hiResDirectSupported == other.hiResDirectSupported &&
+                hiResCapabilitySummary == other.hiResCapabilitySummary &&
                 isLoadingLibrary == other.isLoadingLibrary &&
                 isScanning == other.isScanning &&
                 scanProgress == other.scanProgress &&
@@ -144,6 +148,9 @@ data class PlayerUiState(
                 pipelineOutputPath == other.pipelineOutputPath &&
                 pipelineDvcEnabled == other.pipelineDvcEnabled &&
                 pipelineResamplerEnabled == other.pipelineResamplerEnabled &&
+                pipelineActiveEffects == other.pipelineActiveEffects &&
+                autoEqProfileName == other.autoEqProfileName &&
+                dsp == other.dsp &&
                 resamplingEnabled == other.resamplingEnabled &&
                 currentFolderPath == other.currentFolderPath &&
                 isFirstRun == other.isFirstRun &&
@@ -165,12 +172,12 @@ data class PlayerUiState(
         result = 31 * result + isPlaying.hashCode()
         result = 31 * result + progressMs.hashCode()
         result = 31 * result + isBuffering.hashCode()
-        result = 31 * result + equalizerEnabled.hashCode()
         result = 31 * result + inputSampleRate
         result = 31 * result + outputSampleRate
         result = 31 * result + outputDevice.hashCode()
         result = 31 * result + outputMode.hashCode()
-        result = 31 * result + eqGains.contentHashCode()
+        result = 31 * result + hiResDirectSupported.hashCode()
+        result = 31 * result + hiResCapabilitySummary.hashCode()
         result = 31 * result + isLoadingLibrary.hashCode()
         result = 31 * result + isScanning.hashCode()
         result = 31 * result + scanProgress.hashCode()
@@ -199,6 +206,9 @@ data class PlayerUiState(
         result = 31 * result + pipelineOutputPath.hashCode()
         result = 31 * result + pipelineDvcEnabled.hashCode()
         result = 31 * result + pipelineResamplerEnabled.hashCode()
+        result = 31 * result + pipelineActiveEffects.hashCode()
+        result = 31 * result + (autoEqProfileName?.hashCode() ?: 0)
+        result = 31 * result + dsp.hashCode()
         result = 31 * result + resamplingEnabled.hashCode()
         result = 31 * result + (currentFolderPath?.hashCode() ?: 0)
         result = 31 * result + isFirstRun.hashCode()

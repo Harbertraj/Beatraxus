@@ -22,7 +22,6 @@ mipmap ic_launcher_round
 raw music_wave
 string app_name
 string cd_album_art
-string cd_equalizer
 string cd_next
 string cd_pause
 string cd_play

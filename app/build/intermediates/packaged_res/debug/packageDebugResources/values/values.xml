@@ -5,7 +5,6 @@
     <color name="bg_deep">#07070D</color>
     <string name="app_name">Beatraxus</string>
     <string name="cd_album_art">Album artwork</string>
-    <string name="cd_equalizer">Open Equalizer</string>
     <string name="cd_next">Next track</string>
     <string name="cd_pause">Pause</string>
     <string name="cd_play">Play</string>
