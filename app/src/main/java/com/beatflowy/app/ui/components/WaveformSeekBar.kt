@@ -5,6 +5,7 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.*
@@ -42,27 +43,30 @@ fun WaveformSeekBar(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .height(60.dp)
-            .pointerInput(seed) {
+            .pointerInput(seed, progressPollKey) {
                 awaitEachGesture {
                     val down = awaitFirstDown()
                     val width = size.width
-                    draggingProgress = (down.position.x / width).coerceIn(0f, 1f)
+                    
+                    // Update UI immediately on touch down
+                    val initialProgress = (down.position.x / width).coerceIn(0f, 1f)
+                    draggingProgress = initialProgress
+                    onProgressChange(initialProgress)
                     
                     var lastPos = down.position.x
                     val dragSuccess = drag(down.id) { change ->
                         lastPos = change.position.x
-                        draggingProgress = (lastPos / width).coerceIn(0f, 1f)
+                        val newProgress = (lastPos / width).coerceIn(0f, 1f)
+                        draggingProgress = newProgress
+                        onProgressChange(newProgress)
                         change.consume()
                     }
                     
-                    val finalPos = if (dragSuccess) lastPos else down.position.x
-                    onProgressChange((finalPos / width).coerceIn(0f, 1f))
                     draggingProgress = null
                 }
             }
     ) {
-        Canvas(modifier = Modifier.fillMaxWidth().height(60.dp)) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
             val width = size.width
             val height = size.height
             val centerY = height / 2f

@@ -65,8 +65,9 @@ fun NowPlayingSection(
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = onPlayPause, modifier = Modifier.size(40.dp)) {
+                        val currentIsPlaying = remember(isPlaying) { isPlaying }
                         Icon(
-                            if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                            if (currentIsPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
                             null, tint = TextPrimary, modifier = Modifier.size(28.dp)
                         )
                     }

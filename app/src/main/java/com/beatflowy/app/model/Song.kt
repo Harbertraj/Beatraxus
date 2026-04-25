@@ -1,6 +1,7 @@
 package com.beatflowy.app.model
 
 import android.net.Uri
+import com.beatflowy.app.repository.LyricsSource
 
 data class Song(
     val id: String,
@@ -73,7 +74,6 @@ data class PlayerUiState(
     val currentView: LibraryView = LibraryView.ALL_SONGS,
     val selectedItemName: String? = null, // For Album name, Artist name etc.
     val showFullPlayer: Boolean = false,
-    val showLyrics: Boolean = false,
     val showQueue: Boolean = false,
     val upcomingSongs: List<Song> = emptyList(),
     val searchQuery: String = "",
@@ -86,12 +86,22 @@ data class PlayerUiState(
     val bitDepth: Int = 16,
     val bitrate: Int = 0,
     val format: String = "",
+    val pipelineOutputPath: String = "AudioTrack",
+    val pipelineDvcEnabled: Boolean = false,
+    val pipelineResamplerEnabled: Boolean = false,
     val resamplingEnabled: Boolean = true,
     val currentFolderPath: String? = null,
     val isFirstRun: Boolean = true,
     val previousView: LibraryView? = null,
     val wasSearchingBeforeDetail: Boolean = false,
-    val useOriginalQualityArt: Boolean = false
+    val useOriginalQualityArt: Boolean = false,
+    val showLyrics: Boolean = false,
+    val lyrics: List<LrcLine> = emptyList(),
+    val lyricsCurrentIndex: Int = -1,
+    val lyricsOffsetMs: Long = 0L,
+    val isLoadingLyrics: Boolean = false,
+    val lyricsCurrentSongId: String? = null,
+    val lyricsSource: LyricsSource? = null
 ) {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
@@ -119,7 +129,6 @@ data class PlayerUiState(
                 currentView == other.currentView &&
                 selectedItemName == other.selectedItemName &&
                 showFullPlayer == other.showFullPlayer &&
-                showLyrics == other.showLyrics &&
                 showQueue == other.showQueue &&
                 upcomingSongs == other.upcomingSongs &&
                 searchQuery == other.searchQuery &&
@@ -132,16 +141,27 @@ data class PlayerUiState(
                 bitDepth == other.bitDepth &&
                 bitrate == other.bitrate &&
                 format == other.format &&
+                pipelineOutputPath == other.pipelineOutputPath &&
+                pipelineDvcEnabled == other.pipelineDvcEnabled &&
+                pipelineResamplerEnabled == other.pipelineResamplerEnabled &&
                 resamplingEnabled == other.resamplingEnabled &&
                 currentFolderPath == other.currentFolderPath &&
                 isFirstRun == other.isFirstRun &&
                 previousView == other.previousView &&
                 wasSearchingBeforeDetail == other.wasSearchingBeforeDetail &&
-                useOriginalQualityArt == other.useOriginalQualityArt
+                useOriginalQualityArt == other.useOriginalQualityArt &&
+                showLyrics == other.showLyrics &&
+                lyrics == other.lyrics &&
+                lyricsCurrentIndex == other.lyricsCurrentIndex &&
+                lyricsOffsetMs == other.lyricsOffsetMs &&
+                isLoadingLyrics == other.isLoadingLyrics &&
+                lyricsCurrentSongId == other.lyricsCurrentSongId &&
+                lyricsSource == other.lyricsSource
     }
 
     override fun hashCode(): Int {
         var result = currentSong?.hashCode() ?: 0
+        // ... (truncated for brevity, ensure all fields are included in implementation)
         result = 31 * result + isPlaying.hashCode()
         result = 31 * result + progressMs.hashCode()
         result = 31 * result + isBuffering.hashCode()
@@ -164,7 +184,6 @@ data class PlayerUiState(
         result = 31 * result + currentView.hashCode()
         result = 31 * result + (selectedItemName?.hashCode() ?: 0)
         result = 31 * result + showFullPlayer.hashCode()
-        result = 31 * result + showLyrics.hashCode()
         result = 31 * result + showQueue.hashCode()
         result = 31 * result + upcomingSongs.hashCode()
         result = 31 * result + searchQuery.hashCode()
@@ -177,12 +196,22 @@ data class PlayerUiState(
         result = 31 * result + bitDepth
         result = 31 * result + bitrate
         result = 31 * result + format.hashCode()
+        result = 31 * result + pipelineOutputPath.hashCode()
+        result = 31 * result + pipelineDvcEnabled.hashCode()
+        result = 31 * result + pipelineResamplerEnabled.hashCode()
         result = 31 * result + resamplingEnabled.hashCode()
         result = 31 * result + (currentFolderPath?.hashCode() ?: 0)
         result = 31 * result + isFirstRun.hashCode()
         result = 31 * result + (previousView?.hashCode() ?: 0)
         result = 31 * result + wasSearchingBeforeDetail.hashCode()
         result = 31 * result + useOriginalQualityArt.hashCode()
+        result = 31 * result + showLyrics.hashCode()
+        result = 31 * result + lyrics.hashCode()
+        result = 31 * result + lyricsCurrentIndex
+        result = 31 * result + lyricsOffsetMs.hashCode()
+        result = 31 * result + isLoadingLyrics.hashCode()
+        result = 31 * result + (lyricsCurrentSongId?.hashCode() ?: 0)
+        result = 31 * result + (lyricsSource?.hashCode() ?: 0)
         return result
     }
 }

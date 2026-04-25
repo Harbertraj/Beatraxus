@@ -5,6 +5,10 @@ interface AudioOutput {
     fun start()
     fun stop()
     fun flush()
-    fun write(data: FloatArray, frameCount: Int): Int
+    fun write(data: FloatArray, offsetInSamples: Int, frameCount: Int): Int
+    fun playbackPositionFrames(): Long
+    fun outputSampleRate(): Int
+    fun outputPathLabel(): String
+    fun estimatedLatencyMs(): Int
     fun release()
 }

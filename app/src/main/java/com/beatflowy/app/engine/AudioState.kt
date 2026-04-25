@@ -4,8 +4,16 @@ import com.beatflowy.app.model.Song
 
 data class AudioState(
     val sampleRate: Int = 44100,
+    val outputSampleRate: Int = 44100,
     val bitDepth: Int = 16,
-    val equalizerActive: Boolean = false
+    val codec: String = "",
+    val bitrate: Int = 0,
+    val outputPath: String = "AudioTrack",
+    val equalizerActive: Boolean = false,
+    val dynamicVolumeControlActive: Boolean = false,
+    val resamplerActive: Boolean = false,
+    val outputLatencyMs: Int = 0,
+    val underrunCount: Int = 0
 )
 
 data class PlaybackState(

@@ -79,7 +79,10 @@ import com.beatflowy.app.ui.theme.*
 import com.beatflowy.app.viewmodel.PlayerViewModel
 
 @Composable
-fun MainBackground(albumArtUri: android.net.Uri?) {
+fun MainBackground(
+    albumArtUri: android.net.Uri?,
+    blurEffect: AndroidRenderEffect?
+) {
     if (albumArtUri != null) {
         Box(Modifier.fillMaxSize()) {
             AsyncImage(
@@ -89,12 +92,17 @@ fun MainBackground(albumArtUri: android.net.Uri?) {
                     .fillMaxSize()
                     .graphicsLayer {
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                            renderEffect = AndroidRenderEffect
-                                .createBlurEffect(120f, 120f, Shader.TileMode.DECAL)
-                                .asComposeRenderEffect()
+                            renderEffect = blurEffect?.asComposeRenderEffect()
                         }
                         alpha = 0.4f
-                    },
+                    }
+                    .then(
+                        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+                            Modifier.blur(36.dp)
+                        } else {
+                            Modifier
+                        }
+                    ),
                 contentScale = ContentScale.Crop,
             )
             Box(
@@ -133,13 +141,17 @@ fun MainScreen(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val progressMs by viewModel.progressMs.collectAsStateWithLifecycle()
     val songs   by viewModel.songs.collectAsStateWithLifecycle()
-    val lyrics by viewModel.lyrics.collectAsStateWithLifecycle()
     val favorites by viewModel.favorites.collectAsStateWithLifecycle()
     val deleteRequest by viewModel.deleteRequest.collectAsStateWithLifecycle()
 
     val cachedBlurEffect = remember {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             AndroidRenderEffect.createBlurEffect(20f, 20f, Shader.TileMode.DECAL)
+        } else null
+    }
+    val cachedBackgroundBlurEffect = remember {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            AndroidRenderEffect.createBlurEffect(72f, 72f, Shader.TileMode.DECAL)
         } else null
     }
 
@@ -208,8 +220,6 @@ fun MainScreen(
         } else if (showFullPlayer) {
             if (uiState.showQueue) {
                 viewModel.toggleQueue()
-            } else if (uiState.showLyrics) {
-                viewModel.toggleLyrics()
             } else {
                 showFullPlayer = false
             }
@@ -281,7 +291,10 @@ fun MainScreen(
             )
     ) {
             // Background Layer
-            MainBackground(uiState.currentSong?.albumArtUri)
+            MainBackground(
+                albumArtUri = uiState.currentSong?.albumArtUri,
+                blurEffect = cachedBackgroundBlurEffect
+            )
 
             Scaffold(
                 containerColor = Color.Transparent,
@@ -517,53 +530,62 @@ fun MainScreen(
                                 else -> true
                             }
 
-                            val playAllWeight = if (canShufflePlay) 3.5f else 0.001f
+                            val playAllWeight by animateFloatAsState(
+                                targetValue = if (canShufflePlay) 3.5f else 0.001f,
+                                animationSpec = spring(stiffness = Spring.StiffnessLow),
+                                label = "playAllWeight"
+                            )
 
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth(),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                if (canShufflePlay) {
-                                    Box(
+                                Box(
+                                    modifier = Modifier
+                                        .weight(playAllWeight)
+                                        .graphicsLayer {
+                                            alpha = (playAllWeight / 3.5f).coerceIn(0f, 1f)
+                                            scaleX = (playAllWeight / 3.5f).coerceIn(0.5f, 1f)
+                                            scaleY = (playAllWeight / 3.5f).coerceIn(0.5f, 1f)
+                                            clip = true
+                                        },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Surface(
+                                        color = Color.White.copy(alpha = 0.15f),
+                                        shape = RoundedCornerShape(28.dp),
+                                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.5f)),
                                         modifier = Modifier
-                                            .weight(playAllWeight)
-                                            .graphicsLayer {
-                                                alpha = (playAllWeight / 3.5f).coerceIn(0f, 1f)
-                                                clip = true
-                                            },
-                                        contentAlignment = Alignment.Center
+                                            .wrapContentSize()
+                                            .clickable(enabled = canShufflePlay) { viewModel.shuffleAndPlay() }
                                     ) {
-                                        Surface(
-                                            color = Color.White.copy(alpha = 0.15f),
-                                            shape = RoundedCornerShape(28.dp),
-                                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.5f)),
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
                                             modifier = Modifier
-                                                .wrapContentSize()
-                                                .clickable(enabled = canShufflePlay) { viewModel.shuffleAndPlay() }
+                                                .padding(horizontal = 12.dp, vertical = 6.dp)
                                         ) {
-                                            Row(
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                modifier = Modifier
-                                                    .padding(horizontal = 12.dp, vertical = 6.dp)
+                                            Box(
+                                                modifier = Modifier.size(28.dp).background(Color.White.copy(0.1f), CircleShape),
+                                                contentAlignment = Alignment.Center
                                             ) {
-                                                Box(
-                                                    modifier = Modifier.size(28.dp).background(Color.White.copy(0.1f), CircleShape),
-                                                    contentAlignment = Alignment.Center
-                                                ) {
-                                                    Icon(Icons.Rounded.PlayArrow, null, tint = Color.White, modifier = Modifier.size(18.dp))
-                                                }
-                                                if (playAllWeight > 1.8f) {
-                                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                                        Spacer(Modifier.width(8.dp))
-                                                        Text(
-                                                            text = "Shuffle All",
-                                                            color = Color.White,
-                                                            fontSize = 15.sp,
-                                                            fontWeight = FontWeight.Bold,
-                                                            maxLines = 1
-                                                        )
-                                                    }
+                                                Icon(Icons.Rounded.PlayArrow, null, tint = Color.White, modifier = Modifier.size(18.dp))
+                                            }
+
+                                            AnimatedVisibility(
+                                                visible = playAllWeight > 2f,
+                                                enter = fadeIn() + expandHorizontally(),
+                                                exit = fadeOut() + shrinkHorizontally()
+                                            ) {
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    Spacer(Modifier.width(8.dp))
+                                                    Text(
+                                                        text = "Shuffle All",
+                                                        color = Color.White,
+                                                        fontSize = 15.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        maxLines = 1
+                                                    )
                                                 }
                                             }
                                         }
@@ -1187,8 +1209,9 @@ fun MainScreen(
                             // Controls
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 IconButton(onClick = { viewModel.togglePlayPause() }) {
+                                    val currentIsPlaying = remember(uiState.isPlaying) { uiState.isPlaying }
                                     Icon(
-                                        if (uiState.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                                        if (currentIsPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
                                         null,
                                         tint = Color.White,
                                         modifier = Modifier.size(28.dp)
@@ -1231,8 +1254,6 @@ fun MainScreen(
                 durationMs = uiState.currentSong?.durationMs ?: 0L,
                 shuffleMode = uiState.shuffleMode,
                 repeatMode = uiState.repeatMode,
-                showLyrics = uiState.showLyrics,
-                lyrics = lyrics,
                 uiState = uiState,
                 onPlayPause = { viewModel.togglePlayPause() },
                 onNext = { viewModel.skipToNext() },
@@ -1242,7 +1263,6 @@ fun MainScreen(
                 onSeek = { viewModel.seekTo(it) },
                 onClose = { showFullPlayer = false },
                 onOpenEqualizer = { showEqualizer = true },
-                onToggleLyrics = { viewModel.toggleLyrics() },
                 onToggleQueue = { viewModel.toggleQueue() },
                 onRemoveFromQueue = { viewModel.removeFromQueue(it) },
                 onMoveInQueue = { from, to -> viewModel.moveInQueue(from, to) },
@@ -1253,7 +1273,9 @@ fun MainScreen(
                 onNavigateToAlbum = { album ->
                     viewModel.setLibraryView(com.beatflowy.app.model.LibraryView.ALBUM_DETAIL, album)
                     showFullPlayer = false
-                }
+                },
+                onToggleLyrics = { viewModel.toggleLyrics() },
+                onAdjustOffset = { viewModel.adjustLyricsOffset(it) }
             )
         }
 
@@ -1784,7 +1806,7 @@ fun LibraryViewDropdown(
                         viewModel.setLibraryView(view)
                         onDismiss()
                     }
-                    .padding(horizontal = 12.dp, vertical = 6.dp)
+                    .padding(horizontal = 12.dp, vertical = 2.dp)
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -1792,9 +1814,9 @@ fun LibraryViewDropdown(
                         .fillMaxWidth()
                         .background(
                             if (isSelected) color.copy(0.15f) else Color.Transparent,
-                            RoundedCornerShape(12.dp)
+                            RoundedCornerShape(10.dp)
                         )
-                        .padding(horizontal = 10.dp, vertical = 5.dp)
+                        .padding(horizontal = 10.dp, vertical = 4.dp)
                 ) {
                     Box(
                         Modifier
@@ -1821,4 +1843,3 @@ fun LibraryViewDropdown(
         Spacer(Modifier.height(6.dp))
     }
 }
-

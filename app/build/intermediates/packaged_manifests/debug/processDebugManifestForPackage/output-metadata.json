@@ -16,8 +16,8 @@
         }
       ],
       "attributes": [],
-      "versionCode": 2,
-      "versionName": "2.0.0-stable",
+      "versionCode": 3,
+      "versionName": "2.3.0-beta",
       "outputFile": "arm64-v8a/AndroidManifest.xml"
     }
   ],

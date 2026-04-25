@@ -1,9 +1,12 @@
 package com.beatflowy.app.ui.components
 
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Badge
@@ -20,6 +23,8 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -93,6 +98,19 @@ fun EmptyLibraryView() {
 }
 
 @Composable
+private fun getFormatColor(format: String): Color {
+    return when (format.lowercase()) {
+        "flac" -> Color(0xFF00E5FF) // Cyan
+        "wav" -> Color(0xFFFFD600)  // Gold/Yellow
+        "alac", "m4a" -> Color(0xFFFF9100) // Orange
+        "mp3" -> Color(0xFFB0BEC5)  // Blue Grey
+        "aac" -> Color(0xFF00E676)  // Bright Green
+        "ogg", "opus" -> Color(0xFFD1C4E9) // Lavender
+        else -> Color.White.copy(0.6f)
+    }
+}
+
+@Composable
 fun SongListItem(
     song: Song,
     isPlaying: Boolean,
@@ -108,6 +126,8 @@ fun SongListItem(
         animationSpec = tween(300),
         label         = "rowBgAlpha"
     )
+
+    val haptic = LocalHapticFeedback.current
 
     Box(
         modifier = modifier
@@ -126,7 +146,15 @@ fun SongListItem(
                     )))
                 }
             }
-            .clickable(onClick = onClick)
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = {
+                    if (onMoreClick != null) {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        onMoreClick()
+                    }
+                }
+            )
             .padding(horizontal = 12.dp, vertical = 12.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
@@ -142,20 +170,49 @@ fun SongListItem(
                 )
                 Spacer(Modifier.width(8.dp))
             } else if (isPlaying) {
-                Box(Modifier.width(28.dp), contentAlignment = Alignment.Center) {
+                Box(Modifier.width(32.dp), contentAlignment = Alignment.Center) {
                     MiniEqBars()
                 }
                 Spacer(Modifier.width(10.dp))
             } else {
-                Text(
-                    text = if (trackNumber < 10) "0$trackNumber" else trackNumber.toString(),
-                    color = Color.White.copy(0.4f),
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.width(28.dp),
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                )
-                Spacer(Modifier.width(10.dp))
+                Column(
+                    modifier = Modifier.width(46.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    val formatColor = getFormatColor(song.format)
+                    Surface(
+                        color = formatColor.copy(alpha = 0.15f),
+                        shape = RoundedCornerShape(5.dp),
+                        border = BorderStroke(0.6.dp, formatColor.copy(alpha = 0.4f)),
+                        modifier = Modifier.padding(bottom = 2.5.dp)
+                    ) {
+                        Text(
+                            text = song.format.uppercase(),
+                            color = formatColor,
+                            fontSize = 8.sp,
+                            fontWeight = FontWeight.Black,
+                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.5.dp),
+                            maxLines = 1,
+                            overflow = TextOverflow.Visible
+                        )
+                    }
+                    Surface(
+                        color = Color.White.copy(alpha = 0.05f),
+                        shape = RoundedCornerShape(4.dp),
+                        border = BorderStroke(0.5.dp, Color.White.copy(alpha = 0.15f))
+                    ) {
+                        Text(
+                            text = formatDuration(song.durationMs),
+                            color = Color.White.copy(alpha = 0.8f),
+                            fontSize = 7.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
+                            maxLines = 1
+                        )
+                    }
+                }
+                Spacer(Modifier.width(8.dp))
             }
             AlbumArtImage(
                 song = song,
@@ -168,7 +225,7 @@ fun SongListItem(
                     fontWeight = FontWeight.Bold,
                     color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 
-                Text("${song.artist}-${song.album}", fontSize = 13.sp, color = Color.LightGray,
+                Text("${song.artist} • ${song.album}", fontSize = 13.sp, color = Color.LightGray,
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
                 
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -181,9 +238,10 @@ fun SongListItem(
                     Spacer(Modifier.width(3.dp))
                     Text(
                         text = buildString {
-                            append(formatDuration(song.durationMs))
-                            append(" | ${song.format.lowercase()}")
-                            append(" | ${"%.1f".format(song.sampleRateHz / 1000.0)}kHz")
+                            if (song.bitDepth > 0) {
+                                append("${song.bitDepth}bit | ")
+                            }
+                            append("${"%.1f".format(song.sampleRateHz / 1000.0)}kHz")
                             if (song.bitrate > 0) {
                                 append(" | ${song.bitrate / 1000}kbps")
                             }
@@ -193,19 +251,6 @@ fun SongListItem(
                         fontWeight = FontWeight.Medium,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
-                    )
-                }
-            }
-            if (onMoreClick != null && !isMultiSelectMode) {
-                IconButton(
-                    onClick = onMoreClick,
-                    modifier = Modifier.padding(start = 0.dp).offset(x = 8.dp)
-                ) {
-                    Icon(
-                        Icons.Rounded.MoreVert,
-                        contentDescription = "More",
-                        tint = Color.White,
-                        modifier = Modifier.size(20.dp)
                     )
                 }
             }

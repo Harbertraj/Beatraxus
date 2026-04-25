@@ -178,15 +178,13 @@ fun SongOptionsSheet(
                         }
                     }
 
-                    // Row 4: Folder & Lyrics
+                    // Row 4: Folder
                     Row(modifier = Modifier.fillMaxWidth()) {
                         OptionGridItem(OptionItem(Icons.Rounded.FolderOpen, "Folder", {}), contentColor, Modifier.weight(1f)) {
                             onGoToFolder()
                             onDismiss()
                         }
-                        OptionGridItem(OptionItem(Icons.Rounded.Notes, "Lyrics", {}), contentColor, Modifier.weight(1f)) {
-                            onDismiss()
-                        }
+                        Spacer(Modifier.weight(1f))
                     }
 
                     // Row 5: Genre & Delete

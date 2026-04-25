@@ -1,5 +1,8 @@
 package com.beatflowy.app.ui.screens
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -48,231 +51,255 @@ fun SettingsScreen(
     onBack: () -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    
-    if (uiState.isScanning) {
-        FullScanPopup(uiState.scanProgress, uiState.scanCount, uiState.albumCount, uiState.artistCount)
-    }
+    var showInfoPopup by remember { mutableStateOf(false) }
 
-    Scaffold(
-        containerColor = BgDeep,
-        topBar = {
-            CenterAlignedTopAppBar(
-                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = Color.Transparent),
-                title = { Text("Settings", color = Color.White, fontWeight = FontWeight.Bold) },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back", tint = Color.White)
-                    }
-                }
-            )
-        }
-    ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .verticalScroll(rememberScrollState())
-                .padding(16.dp)
+    Box(modifier = Modifier.fillMaxSize().background(BgDeep)) {
+        // Only show settings if not scanning and not showing info
+        androidx.compose.animation.AnimatedVisibility(
+            visible = !uiState.isScanning && !showInfoPopup,
+            enter = fadeIn(),
+            exit = fadeOut()
         ) {
-            SettingsSection(title = "Audio Engine", icon = Icons.Rounded.GraphicEq) {
-                // Output Mode Selection
-                Text(
-                    "Output Method",
-                    color = Color.White.copy(0.7f),
-                    fontSize = 14.sp,
-                    modifier = Modifier.padding(bottom = 8.dp)
-                )
-                
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutputModeButton(
-                        text = "AudioTrack",
-                        selected = true,
-                        onClick = { },
-                        modifier = Modifier.weight(1f)
+            Scaffold(
+                containerColor = BgDeep,
+                topBar = {
+                    CenterAlignedTopAppBar(
+                        colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = Color.Transparent),
+                        title = { Text("Settings", color = Color.White, fontWeight = FontWeight.Bold) },
+                        navigationIcon = {
+                            IconButton(onClick = onBack) {
+                                Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back", tint = Color.White)
+                            }
+                        }
                     )
                 }
-                
-                Spacer(Modifier.height(16.dp))
-                
-                // Resampling Toggle
-                Row(
-                    Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+            ) { padding ->
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(padding)
+                        .verticalScroll(rememberScrollState())
+                        .padding(16.dp)
                 ) {
-                    Column {
-                        Text("Stable Engine", color = Color.White, fontSize = 16.sp)
-                        Text("Using stable MediaCodec + AudioTrack", color = Color.White.copy(0.5f), fontSize = 12.sp)
-                    }
-                }
-            }
-            
-            Spacer(Modifier.height(24.dp))
-            
-            SettingsSection(title = "Library", icon = Icons.Rounded.AudioFile) {
-                Button(
-                    onClick = { viewModel.startFullScan() },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(0.1f)),
-                    shape = MaterialTheme.shapes.medium,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("Full Rescan Library", color = Color.White)
-                }
-                
-                Spacer(Modifier.height(12.dp))
-                
-                Column(modifier = Modifier.fillMaxWidth()) {
-                    Button(
-                        onClick = { viewModel.quickScan() },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(0.1f)),
-                        shape = MaterialTheme.shapes.medium,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("Quick Scan", color = Color.White)
+                    SettingsSection(title = "Audio Engine", icon = Icons.Rounded.GraphicEq) {
+                        // Output Mode Selection
+                        Text(
+                            "Output Method",
+                            color = Color.White.copy(0.7f),
+                            fontSize = 14.sp,
+                            modifier = Modifier.padding(bottom = 8.dp)
+                        )
+                        
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutputModeButton(
+                                text = "AudioTrack",
+                                selected = true,
+                                onClick = { },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                        
+                        Spacer(Modifier.height(16.dp))
+                        
+                        // Resampling Toggle
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column {
+                                Text("Stable Engine", color = Color.White, fontSize = 16.sp)
+                                Text("Using stable MediaCodec + AudioTrack", color = Color.White.copy(0.5f), fontSize = 12.sp)
+                            }
+                        }
                     }
                     
-                    if (uiState.isLoadingLibrary) {
-                        LinearProgressIndicator(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(2.dp)
-                                .padding(horizontal = 4.dp),
-                            color = AccentBlue,
-                            trackColor = Color.Transparent
-                        )
-                    }
-                }
-                
-                if (uiState.errorMessage != null && (uiState.errorMessage!!.contains("Added") || uiState.errorMessage!!.contains("No new"))) {
-                    Text(
-                        uiState.errorMessage!!,
-                        color = AccentBlue,
-                        fontSize = 12.sp,
-                        modifier = Modifier.padding(top = 8.dp, start = 4.dp)
-                    )
-                }
-
-                Spacer(Modifier.height(16.dp))
-
-                var showInfoPopup by remember { mutableStateOf(false) }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Original Quality Album Art", color = Color.White, fontSize = 16.sp)
-                        Spacer(Modifier.width(4.dp))
-                        IconButton(
-                            onClick = { showInfoPopup = true },
-                            modifier = Modifier.size(20.dp)
+                    Spacer(Modifier.height(24.dp))
+                    
+                    SettingsSection(title = "Library", icon = Icons.Rounded.AudioFile) {
+                        Button(
+                            onClick = { viewModel.startFullScan() },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(0.1f)),
+                            shape = MaterialTheme.shapes.medium,
+                            modifier = Modifier.fillMaxWidth()
                         ) {
-                            Icon(
-                                Icons.Rounded.Info,
-                                contentDescription = "Info",
-                                tint = Color.White.copy(0.4f),
-                                modifier = Modifier.size(16.dp)
+                            Text("Full Rescan Library", color = Color.White)
+                        }
+                        
+                        Spacer(Modifier.height(12.dp))
+                        
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            Button(
+                                onClick = { viewModel.quickScan() },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(0.1f)),
+                                shape = MaterialTheme.shapes.medium,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("Quick Scan", color = Color.White)
+                            }
+                            
+                            if (uiState.isLoadingLibrary) {
+                                LinearProgressIndicator(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(2.dp)
+                                        .padding(horizontal = 4.dp),
+                                    color = AccentBlue,
+                                    trackColor = Color.Transparent
+                                )
+                            }
+                        }
+                        
+                        if (uiState.errorMessage != null && (uiState.errorMessage!!.contains("Added") || uiState.errorMessage!!.contains("No new"))) {
+                            Text(
+                                uiState.errorMessage!!,
+                                color = AccentBlue,
+                                fontSize = 12.sp,
+                                modifier = Modifier.padding(top = 8.dp, start = 4.dp)
+                            )
+                        }
+
+                        Spacer(Modifier.height(16.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("Original Quality Album Art", color = Color.White, fontSize = 16.sp)
+                                Spacer(Modifier.width(4.dp))
+                                IconButton(
+                                    onClick = { showInfoPopup = true },
+                                    modifier = Modifier.size(20.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Rounded.Info,
+                                        contentDescription = "Info",
+                                        tint = Color.White.copy(0.4f),
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+                            Switch(
+                                checked = uiState.useOriginalQualityArt,
+                                onCheckedChange = { viewModel.setUseOriginalQualityArt(it) },
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = AccentBlue,
+                                    checkedTrackColor = AccentBlue.copy(0.3f),
+                                    uncheckedThumbColor = Color.White.copy(0.5f),
+                                    uncheckedTrackColor = Color.White.copy(0.1f)
+                                )
                             )
                         }
                     }
-                    Switch(
-                        checked = uiState.useOriginalQualityArt,
-                        onCheckedChange = { viewModel.setUseOriginalQualityArt(it) },
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = AccentBlue,
-                            checkedTrackColor = AccentBlue.copy(0.3f),
-                            uncheckedThumbColor = Color.White.copy(0.5f),
-                            uncheckedTrackColor = Color.White.copy(0.1f)
-                        )
-                    )
-                }
+                    
+                    Spacer(Modifier.height(24.dp))
+                    
+                    SettingsSection(title = "About", icon = Icons.Rounded.Settings) {
+                        val context = LocalContext.current
+                        val uriHandler = LocalUriHandler.current
+                        val versionName = try {
+                            context.packageManager.getPackageInfo(context.packageName, 0).versionName
+                        } catch (e: Exception) {
+                            "Unknown"
+                        }
 
-                if (showInfoPopup) {
-                    Dialog(
-                        onDismissRequest = { showInfoPopup = false },
-                        properties = DialogProperties(usePlatformDefaultWidth = false)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth(0.75f)
-                                .clip(RoundedCornerShape(20.dp))
-                                .background(Color(0xFF1A1A24))
-                                .border(1.dp, Color.White.copy(0.1f), RoundedCornerShape(20.dp))
-                                .padding(20.dp),
-                            contentAlignment = Alignment.Center
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Icon(
-                                    Icons.Rounded.Info,
-                                    contentDescription = null,
-                                    tint = AccentBlue,
-                                    modifier = Modifier.size(24.dp)
-                                )
-                                Spacer(Modifier.height(12.dp))
-                                Text(
-                                    "If you enable this then app increase their storage",
-                                    color = Color.White.copy(0.8f),
-                                    fontSize = 13.sp,
-                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                                    lineHeight = 18.sp
-                                )
-                                Spacer(Modifier.height(16.dp))
-                                TextButton(
-                                    onClick = { showInfoPopup = false },
-                                    modifier = Modifier.height(36.dp)
+                            Column {
+                                Text("Beatraxus Music player", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                                Text("HarbertRaj", color = Color.White.copy(0.6f), fontSize = 14.sp)
+                                Spacer(Modifier.height(10.dp))
+                                Surface(
+                                    shape = CircleShape,
+                                    color = Color.White.copy(0.15f)
                                 ) {
-                                    Text("Got it", color = AccentBlue, fontWeight = FontWeight.Bold)
+                                    Text(
+                                        "v$versionName",
+                                        color = Color.White,
+                                        fontSize = 12.sp,
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                                    )
                                 }
+                            }
+
+                            IconButton(
+                                onClick = { uriHandler.openUri("https://github.com/Harbertraj/Beatraxus") },
+                                modifier = Modifier.align(Alignment.Top)
+                            ) {
+                                Icon(
+                                    painter = painterResource(R.drawable.ic_github),
+                                    contentDescription = "GitHub",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(28.dp)
+                                )
                             }
                         }
                     }
                 }
             }
-            
-            Spacer(Modifier.height(24.dp))
-            
-            SettingsSection(title = "About", icon = Icons.Rounded.Settings) {
-                val context = LocalContext.current
-                val uriHandler = LocalUriHandler.current
-                val versionName = try {
-                    context.packageManager.getPackageInfo(context.packageName, 0).versionName
-                } catch (e: Exception) {
-                    "Unknown"
-                }
+        }
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+        if (uiState.isScanning) {
+            FullScanPopup(uiState.scanProgress, uiState.scanCount, uiState.albumCount, uiState.artistCount)
+        }
+
+        if (showInfoPopup) {
+            Dialog(
+                onDismissRequest = { showInfoPopup = false },
+                properties = DialogProperties(usePlatformDefaultWidth = false)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(BgDeep),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Column {
-                        Text("Beatraxus Music player", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                        Text("HarbertRaj", color = Color.White.copy(0.6f), fontSize = 14.sp)
-                        Spacer(Modifier.height(10.dp))
-                        Surface(
-                            shape = CircleShape,
-                            color = Color.White.copy(0.15f)
-                        ) {
-                            Text(
-                                "v$versionName",
-                                color = Color.White,
-                                fontSize = 12.sp,
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
-                            )
-                        }
-                    }
-
-                    IconButton(
-                        onClick = { uriHandler.openUri("https://github.com/Harbertraj/Beatraxus") },
-                        modifier = Modifier.align(Alignment.Top)
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth(0.8f)
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(Color(0xFF1A1A24))
+                            .border(1.dp, Color.White.copy(0.1f), RoundedCornerShape(20.dp))
+                            .padding(24.dp),
+                        contentAlignment = Alignment.Center
                     ) {
-                        Icon(
-                            painter = painterResource(R.drawable.ic_github),
-                            contentDescription = "GitHub",
-                            tint = Color.White,
-                            modifier = Modifier.size(28.dp)
-                        )
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(
+                                Icons.Rounded.Info,
+                                contentDescription = null,
+                                tint = AccentBlue,
+                                modifier = Modifier.size(32.dp)
+                            )
+                            Spacer(Modifier.height(16.dp))
+                            Text(
+                                "Original Quality Art",
+                                color = Color.White,
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(Modifier.height(12.dp))
+                            Text(
+                                "If you enable this, the app will store high-resolution album art which increases storage usage.",
+                                color = Color.White.copy(0.8f),
+                                fontSize = 14.sp,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                lineHeight = 20.sp
+                            )
+                            Spacer(Modifier.height(24.dp))
+                            Button(
+                                onClick = { showInfoPopup = false },
+                                colors = ButtonDefaults.buttonColors(containerColor = AccentBlue),
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Text("Got it", color = Color.Black, fontWeight = FontWeight.Bold)
+                            }
+                        }
                     }
                 }
             }
@@ -289,7 +316,7 @@ fun FullScanPopup(progress: Float, count: Int, albums: Int, artists: Int) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.6f)),
+                .background(BgDeep),
             contentAlignment = Alignment.Center
         ) {
             Box(

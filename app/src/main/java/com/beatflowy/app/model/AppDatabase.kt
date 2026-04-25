@@ -32,9 +32,19 @@ interface FavoriteDao {
     suspend fun removeFavorite(songId: String)
 }
 
-@Database(entities = [PlaylistEntity::class, FavoriteEntity::class, SongEntity::class, RecentlyPlayedEntity::class], version = 2)
+@Dao
+interface LyricsDao {
+    @Query("SELECT * FROM lyrics WHERE songId = :songId")
+    suspend fun getLyrics(songId: String): LyricsEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertLyrics(lyrics: LyricsEntity)
+}
+
+@Database(entities = [PlaylistEntity::class, FavoriteEntity::class, SongEntity::class, RecentlyPlayedEntity::class, LyricsEntity::class], version = 3)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun playlistDao(): PlaylistDao
     abstract fun favoriteDao(): FavoriteDao
     abstract fun songDao(): SongDao
+    abstract fun lyricsDao(): LyricsDao
 }

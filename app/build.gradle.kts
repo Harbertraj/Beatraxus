@@ -17,8 +17,8 @@ configure<ApplicationExtension> {
         applicationId = "com.beatflowy.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "2.0.0-stable"
+        versionCode = 3
+        versionName = "2.3.0-beta"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -144,6 +144,12 @@ dependencies {
     // Palette
     implementation("androidx.palette:palette-ktx:1.0.0")
 
+    // Retrofit
+    val retrofitVersion = "2.9.0"
+    implementation("com.squareup.retrofit2:retrofit:$retrofitVersion")
+    implementation("com.squareup.retrofit2:converter-gson:$retrofitVersion")
+    implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
+
     // Lottie
     implementation("com.airbnb.android:lottie-compose:6.3.0")
 
@@ -163,6 +169,10 @@ dependencies {
     // Glance Widgets
     implementation("androidx.glance:glance-appwidget:1.1.1")
     implementation("androidx.glance:glance-material3:1.1.1")
+
+    // Native codec fallback for ALAC / M4A parsing and decode
+    implementation(files("libs/ffmpeg-kit-full-gpl-6.0-2.aar"))
+    implementation("com.arthenica:smart-exception-java:0.2.1")
 
     // Debug
     debugImplementation("androidx.compose.ui:ui-tooling")

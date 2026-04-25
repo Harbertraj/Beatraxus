@@ -4,6 +4,7 @@ import java.io.File
 
 import android.app.Application
 import android.net.Uri
+import android.view.Choreographer
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -25,12 +26,15 @@ import com.beatflowy.app.model.Song
 import com.beatflowy.app.model.SortType
 import com.beatflowy.app.model.ViewMode
 import com.beatflowy.app.repository.MusicRepository
+import com.beatflowy.app.repository.LyricsRepository
+import com.beatflowy.app.repository.LrcParser
+import com.beatflowy.app.repository.LyricsSource
 import com.beatflowy.app.service.AudioPlaybackService
 
 class PlayerViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository = MusicRepository(application)
-    private val lyricsRepository = com.beatflowy.app.repository.LyricsRepository(application)
+    private val lyricsRepository = LyricsRepository(application, (application as BeatraxusApplication).database)
 
     private val database = (application as BeatraxusApplication).database
     private val playlistDao = database.playlistDao()
@@ -52,6 +56,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     val deleteRequest: StateFlow<android.app.PendingIntent?> = _deleteRequest.asStateFlow()
 
     private var pendingDeleteIds = emptyList<String>()
+    private var libraryLoadJob: Job? = null
+    private var serviceObserversJob: Job? = null
 
     fun consumeDeleteRequest() {
         _deleteRequest.value = null
@@ -101,36 +107,32 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    init {
-        val isFirstRun = prefs?.getBoolean("first_run", true) ?: true
-        if (!isFirstRun) {
-            loadLibrary()
-        }
-    }
-
     fun loadLibrary() {
+        if (libraryLoadJob?.isActive == true) return
         _uiState.update { it.copy(permissionDenied = false) }
-        viewModelScope.launch {
+        libraryLoadJob = viewModelScope.launch {
             try {
-                val dbSongs = songDao.getAllSongs().map { entity ->
-                    Song(
-                        id = entity.id,
-                        uri = Uri.parse(entity.uriString),
-                        title = entity.title,
-                        artist = entity.artist,
-                        album = entity.album,
-                        durationMs = entity.durationMs,
-                        format = entity.format,
-                        sampleRateHz = entity.sampleRateHz,
-                        bitDepth = entity.bitDepth,
-                        bitrate = entity.bitrate,
-                        fileSizeBytes = entity.fileSizeBytes,
-                        albumArtUri = entity.albumArtUriString?.let { Uri.parse(it) },
-                        year = entity.year,
-                        genre = entity.genre,
-                        folder = entity.folder,
-                        dateAdded = entity.dateAdded
-                    )
+                val dbSongs = withContext(Dispatchers.IO) {
+                    songDao.getAllSongs().map { entity ->
+                        Song(
+                            id = entity.id,
+                            uri = Uri.parse(entity.uriString),
+                            title = entity.title,
+                            artist = entity.artist,
+                            album = entity.album,
+                            durationMs = entity.durationMs,
+                            format = entity.format,
+                            sampleRateHz = entity.sampleRateHz,
+                            bitDepth = entity.bitDepth,
+                            bitrate = entity.bitrate,
+                            fileSizeBytes = entity.fileSizeBytes,
+                            albumArtUri = entity.albumArtUriString?.let { Uri.parse(it) },
+                            year = entity.year,
+                            genre = entity.genre,
+                            folder = entity.folder,
+                            dateAdded = entity.dateAdded
+                        )
+                    }
                 }
                 if (dbSongs.isNotEmpty()) {
                     // Check if cached album art still exists. If not, we need a refresh.
@@ -251,9 +253,6 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         list
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    private val _lyrics = MutableStateFlow<List<Pair<Long, String>>>(emptyList())
-    val lyrics: StateFlow<List<Pair<Long, String>>> = _lyrics.asStateFlow()
-
     private val _recentlyPlayed = MutableStateFlow<List<String>>(emptyList())
 
     val songs: StateFlow<List<Song>> = combine(allSongs, _uiState, debouncedSearchQuery, _recentlyPlayed, playlists) { all, state, debouncedQuery, recentIds, pls ->
@@ -302,64 +301,74 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     private var service: AudioPlaybackService? = null
-    private var progressJob: Job? = null
-
-    private var lyricsJob: Job? = null
 
     fun attachService(svc: AudioPlaybackService) {
+        if (service === svc) return
         service = svc
-        viewModelScope.launch {
-            svc.audioStateFlow.collect { audioState ->
-                _uiState.update { it.copy(
-                    equalizerEnabled = audioState.equalizerActive,
-                    inputSampleRate = audioState.sampleRate,
-                    bitDepth = audioState.bitDepth
-                )}
-            }
-        }
-        viewModelScope.launch {
-            svc.playbackStateFlow.collect { pbState ->
-                val prevSongId = _uiState.value.currentSong?.id
-                val pos = svc.currentPositionMs
-                _uiState.update {
-                    it.copy(
-                        isPlaying = pbState.isPlaying,
-                        currentSong = pbState.currentSong,
-                        shuffleMode = pbState.shuffleMode,
-                        repeatMode = pbState.repeatMode.ordinal,
-                        progressMs = when {
-                            pbState.currentSong == null -> 0L
-                            pbState.currentSong?.id != prevSongId -> 0L
-                            else -> pos
-                        }
-                    )
-                }
-
-                if (pbState.currentSong?.id != prevSongId) {
-                    if (pbState.currentSong == null) {
-                        lyricsJob?.cancel()
-                        _lyrics.value = emptyList()
-                    } else {
-                        val song = pbState.currentSong
-                        updateRecentlyPlayed(song.id)
-                        lyricsJob?.cancel()
-                        lyricsJob = viewModelScope.launch {
-                            _lyrics.value = lyricsRepository.fetchLyrics(song)
+        serviceObserversJob?.cancel()
+        serviceObserversJob = viewModelScope.launch {
+            launch {
+                svc.audioStateFlow.collect { audioState ->
+                        _uiState.update {
+                            it.copy(
+                                equalizerEnabled = audioState.equalizerActive,
+                                inputSampleRate = audioState.sampleRate,
+                                outputSampleRate = audioState.outputSampleRate,
+                                bitDepth = if (audioState.bitDepth > 0) audioState.bitDepth else it.currentSong?.bitDepth ?: 16,
+                                bitrate = if (audioState.bitrate > 0) audioState.bitrate else it.currentSong?.bitrate ?: 0,
+                                format = audioState.codec.ifBlank { it.currentSong?.format ?: "" },
+                                pipelineOutputPath = audioState.outputPath,
+                                pipelineDvcEnabled = audioState.dynamicVolumeControlActive,
+                                pipelineResamplerEnabled = audioState.resamplerActive
+                            )
                         }
                     }
-                }
-
-                if (pbState.isPlaying) startProgressPolling() else stopProgressPolling()
             }
-        }
-        viewModelScope.launch {
-            svc.upcomingSongs.collect { songs ->
-                _uiState.update { it.copy(upcomingSongs = songs) }
+            launch {
+                svc.playbackStateFlow.collect { pbState ->
+                        val prevSongId = _uiState.value.currentSong?.id
+                        val nextSongId = pbState.currentSong?.id
+                        val resetProgress = nextSongId == null || nextSongId != prevSongId
+
+                        _uiState.update {
+                            val sameSong = it.currentSong?.id == pbState.currentSong?.id
+                            it.copy(
+                                isPlaying = pbState.isPlaying,
+                                currentSong = pbState.currentSong,
+                                shuffleMode = pbState.shuffleMode,
+                                repeatMode = pbState.repeatMode.ordinal,
+                                bitrate = if (sameSong && it.bitrate > 0) it.bitrate else pbState.currentSong?.bitrate ?: 0,
+                                format = if (sameSong && it.format.isNotBlank()) it.format else pbState.currentSong?.format ?: ""
+                            )
+                        }
+
+                        if (resetProgress) {
+                            _progressMs.value = 0L
+                            if (pbState.currentSong != null) {
+                                updateRecentlyPlayed(pbState.currentSong.id)
+                                if (_uiState.value.showLyrics) {
+                                    loadLyrics(pbState.currentSong)
+                                }
+                            } else {
+                                _uiState.update {
+                                    it.copy(lyrics = emptyList(), lyricsCurrentIndex = -1, lyricsCurrentSongId = null)
+                                }
+                            }
+                        }
+
+                        if (pbState.isPlaying) startProgressPolling() else stopProgressPolling()
+                    }
+            }
+            launch {
+                svc.upcomingSongs.collect { songs ->
+                    _uiState.update { it.copy(upcomingSongs = songs) }
+                }
             }
         }
     }
 
     private var scanJob: Job? = null
+    private var lyricsJob: Job? = null
 
     fun quickScan() {
         if (scanJob?.isActive == true) return
@@ -367,46 +376,40 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             _uiState.update { it.copy(isLoadingLibrary = true) }
             try {
                 val results = repository.scanAudioFiles(fullScan = false) { _, _, _, _ -> }
-                
-                // Compare with current list to find new ones
-                val currentIds = _songs.value.map { it.id }.toSet()
+
+                val currentSongs = _songs.value
+                val currentIds = currentSongs.map { it.id }.toSet()
+                val resultIds = results.map { it.id }.toSet()
                 val newSongs = results.filter { it.id !in currentIds }
-                
-                if (newSongs.isNotEmpty()) {
+                val removedIds = currentIds - resultIds
+                val metadataChanged = currentSongs.size != results.size || currentSongs != results
+
+                if (metadataChanged) {
                     _songs.value = results
-                    val entities = results.map { song ->
-                        com.beatflowy.app.model.SongEntity(
-                            id = song.id,
-                            uriString = song.uri.toString(),
-                            title = song.title,
-                            artist = song.artist,
-                            album = song.album,
-                            durationMs = song.durationMs,
-                            format = song.format,
-                            sampleRateHz = song.sampleRateHz,
-                            bitDepth = song.bitDepth,
-                            bitrate = song.bitrate,
-                            fileSizeBytes = song.fileSizeBytes,
-                            albumArtUriString = song.albumArtUri?.toString(),
-                            year = song.year,
-                            genre = song.genre,
-                            folder = song.folder,
-                            dateAdded = song.dateAdded
-                        )
-                    }
+                    val entities = results.map { song -> song.toEntity() }
                     withContext(Dispatchers.IO) {
-                        songDao.insertSongs(entities)
+                        if (removedIds.isNotEmpty()) {
+                            songDao.deleteSongsByIds(removedIds.toList())
+                        }
+                        entities.chunked(200).forEach { chunk ->
+                            songDao.insertSongs(chunk)
+                        }
                     }
-                    
-                    val addedCount = newSongs.size
-                    _uiState.update { it.copy(errorMessage = "Added $addedCount new songs") }
-                    delay(3000)
-                    _uiState.update { it.copy(errorMessage = null) }
-                } else {
-                    _uiState.update { it.copy(errorMessage = "No new songs found") }
-                    delay(2000)
-                    _uiState.update { it.copy(errorMessage = null) }
                 }
+
+                updateLibraryCounts(results)
+
+                val message = when {
+                    newSongs.isNotEmpty() && removedIds.isNotEmpty() -> "Added ${newSongs.size} songs, removed ${removedIds.size}"
+                    newSongs.isNotEmpty() -> "Added ${newSongs.size} new songs"
+                    removedIds.isNotEmpty() -> "Removed ${removedIds.size} missing songs"
+                    metadataChanged -> "Library updated"
+                    else -> "No changes found"
+                }
+
+                _uiState.update { it.copy(errorMessage = message) }
+                delay(2000)
+                _uiState.update { it.copy(errorMessage = null) }
             } catch (e: Exception) {
                 _uiState.update { it.copy(errorMessage = "Scan failed: ${e.message}") }
             } finally {
@@ -421,6 +424,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             _uiState.update { it.copy(isScanning = true, scanProgress = 0f, scanCount = 0) }
             
             try {
+                // Use fullScan = true for "Full Rescan" to ensure MediaExtractor/MediaMetadataRetriever are used
                 val results = repository.scanAudioFiles(fullScan = true) { count, albums, artists, progress ->
                     _uiState.update { it.copy(
                         scanCount = count,
@@ -455,12 +459,21 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 
                 // Perform DB insertion on a background thread and handle chunks to avoid locking the UI
                 withContext(Dispatchers.IO) {
+                    songDao.deleteAllSongs()
                     entities.chunked(100).forEach { chunk ->
                         songDao.insertSongs(chunk)
                     }
                 }
 
-                _uiState.update { it.copy(scanProgress = 1.0f) }
+                updateLibraryCounts(results)
+                _uiState.update {
+                    it.copy(
+                        scanProgress = 1.0f,
+                        scanCount = results.size,
+                        albumCount = results.map { song -> song.album }.toSet().size,
+                        artistCount = results.map { song -> song.artist }.toSet().size
+                    )
+                }
                 service?.updateScanningProgress(1.0f, results.size, true)
                 delay(800)
             } catch (e: Exception) {
@@ -493,6 +506,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
         updateRecentlyPlayed(song.id)
+        loadLyrics(song)
     }
 
     private fun updateRecentlyPlayed(songId: String) {
@@ -616,12 +630,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         _uiState.update { it.copy(showFullPlayer = show) }
     }
 
-    fun toggleLyrics() {
-        _uiState.update { it.copy(showLyrics = !it.showLyrics, showQueue = false) }
-    }
-
     fun toggleQueue() {
-        _uiState.update { it.copy(showQueue = !it.showQueue, showLyrics = false) }
+        _uiState.update { it.copy(showQueue = !it.showQueue) }
     }
 
     fun getUpcomingSongs(): List<Song> {
@@ -671,8 +681,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun togglePlayPause() {
-        service?.togglePlayPause()
-            ?: _uiState.update { it.copy(isPlaying = !it.isPlaying) }
+        service?.let { svc ->
+            val nextPlaying = !(_uiState.value.isPlaying)
+            _uiState.update { it.copy(isPlaying = nextPlaying) }
+            svc.togglePlayPause()
+        } ?: _uiState.update { it.copy(isPlaying = !it.isPlaying) }
     }
 
     fun skipToNext() {
@@ -744,22 +757,138 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         service?.setEqBandGain(band, gain)
     }
 
-    private fun startProgressPolling() {
-        progressJob?.cancel()
-        progressJob = viewModelScope.launch {
-            while (isActive) {
-                delay(120)
-                val svc = service ?: break
-                if (!_uiState.value.isPlaying) continue
-                val pos = svc.currentPositionMs
-                _progressMs.value = pos
+    fun toggleLyrics() {
+        _uiState.update { it.copy(showLyrics = !it.showLyrics) }
+        if (_uiState.value.showLyrics && (_uiState.value.lyrics.isEmpty() || _uiState.value.lyricsCurrentSongId != _uiState.value.currentSong?.id)) {
+            loadLyrics(_uiState.value.currentSong)
+        }
+    }
+
+    private fun loadLyrics(song: Song?) {
+        lyricsJob?.cancel()
+
+        if (song == null) {
+            _uiState.update {
+                it.copy(
+                    lyrics = emptyList(),
+                    lyricsCurrentIndex = -1,
+                    lyricsCurrentSongId = null,
+                    isLoadingLyrics = false,
+                    lyricsSource = null
+                )
+            }
+            return
+        }
+
+        _uiState.update {
+            it.copy(
+                lyrics = emptyList(),
+                lyricsCurrentIndex = -1,
+                lyricsCurrentSongId = song.id,
+                isLoadingLyrics = false,
+                lyricsSource = null
+            )
+        }
+
+        lyricsJob = viewModelScope.launch {
+            val embeddedLyrics = lyricsRepository.getEmbeddedLyrics(song)
+            if (!isActive || _uiState.value.currentSong?.id != song.id) return@launch
+
+            if (embeddedLyrics != null) {
+                _uiState.update {
+                    it.copy(
+                        lyrics = embeddedLyrics.lines,
+                        lyricsCurrentIndex = -1,
+                        isLoadingLyrics = false,
+                        lyricsSource = embeddedLyrics.source
+                    )
+                }
+                return@launch
+            }
+
+            val cachedLyrics = lyricsRepository.getCachedLyrics(song)
+            if (!isActive || _uiState.value.currentSong?.id != song.id) return@launch
+
+            if (cachedLyrics != null) {
+                _uiState.update {
+                    it.copy(
+                        lyrics = cachedLyrics.lines,
+                        lyricsCurrentIndex = -1,
+                        isLoadingLyrics = false,
+                        lyricsSource = cachedLyrics.source
+                    )
+                }
+                return@launch
+            }
+
+            _uiState.update { it.copy(isLoadingLyrics = true, lyricsSource = null) }
+
+            val onlineLyrics = lyricsRepository.fetchOnlineLyrics(song)
+            if (!isActive || _uiState.value.currentSong?.id != song.id) return@launch
+
+            _uiState.update {
+                it.copy(
+                    lyrics = onlineLyrics?.lines ?: emptyList(),
+                    lyricsCurrentIndex = -1,
+                    isLoadingLyrics = false,
+                    lyricsSource = onlineLyrics?.source
+                )
             }
         }
     }
 
+    fun adjustLyricsOffset(deltaMs: Long) {
+        _uiState.update { it.copy(lyricsOffsetMs = it.lyricsOffsetMs + deltaMs) }
+    }
+
+    fun saveLyrics(songId: String, lyricsText: String) {
+        viewModelScope.launch {
+            lyricsRepository.saveLyrics(songId, lyricsText)
+            // Reload lyrics if it's the current song
+            if (_uiState.value.currentSong?.id == songId) {
+                _uiState.update {
+                    it.copy(
+                        lyrics = LrcParser.parse(lyricsText),
+                        lyricsSource = LyricsSource.CACHE,
+                        isLoadingLyrics = false
+                    )
+                }
+            }
+        }
+    }
+
+    private fun updateLyricsIndex(currentMs: Long) {
+        val state = _uiState.value
+        if (state.lyrics.isEmpty()) return
+        
+        val adjustedMs = currentMs + state.lyricsOffsetMs
+        val index = state.lyrics.findLast { it.time <= adjustedMs }?.let { state.lyrics.indexOf(it) } ?: -1
+        
+        if (index != state.lyricsCurrentIndex) {
+            _uiState.update { it.copy(lyricsCurrentIndex = index) }
+        }
+    }
+
+    private val progressFrameCallback = object : Choreographer.FrameCallback {
+        override fun doFrame(frameTimeNanos: Long) {
+            if (!_uiState.value.isPlaying) return
+            val svc = service ?: return
+            val pos = svc.currentPositionMs
+            if (_progressMs.value != pos) {
+                _progressMs.value = pos
+                updateLyricsIndex(pos)
+            }
+            Choreographer.getInstance().postFrameCallbackDelayed(this, FRAME_TICK_MS)
+        }
+    }
+
+    private fun startProgressPolling() {
+        Choreographer.getInstance().removeFrameCallback(progressFrameCallback)
+        Choreographer.getInstance().postFrameCallback(progressFrameCallback)
+    }
+
     private fun stopProgressPolling() {
-        progressJob?.cancel()
-        progressJob = null
+        Choreographer.getInstance().removeFrameCallback(progressFrameCallback)
     }
 
     fun setFirstRunComplete() {
@@ -774,8 +903,43 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     override fun onCleared() {
         super.onCleared()
-        progressJob?.cancel()
+        stopProgressPolling()
+        serviceObserversJob?.cancel()
+        libraryLoadJob?.cancel()
     }
+
+    private companion object {
+        const val FRAME_TICK_MS = 16L
+    }
+
+    private fun updateLibraryCounts(songs: List<Song>) {
+        _uiState.update {
+            it.copy(
+                scanCount = songs.size,
+                albumCount = songs.map { song -> song.album }.toSet().size,
+                artistCount = songs.map { song -> song.artist }.toSet().size
+            )
+        }
+    }
+
+    private fun Song.toEntity() = com.beatflowy.app.model.SongEntity(
+        id = id,
+        uriString = uri.toString(),
+        title = title,
+        artist = artist,
+        album = album,
+        durationMs = durationMs,
+        format = format,
+        sampleRateHz = sampleRateHz,
+        bitDepth = bitDepth,
+        bitrate = bitrate,
+        fileSizeBytes = fileSizeBytes,
+        albumArtUriString = albumArtUri?.toString(),
+        year = year,
+        genre = genre,
+        folder = folder,
+        dateAdded = dateAdded
+    )
 }
 
 class PlayerViewModelFactory(private val application: Application) : ViewModelProvider.Factory {

@@ -340,7 +340,9 @@ class AudioPlaybackService : Service() {
         engine.setRepeatMode(next)
     }
 
-    fun setEqualizerEnabled(enabled: Boolean) {}
+    fun setEqualizerEnabled(enabled: Boolean) {
+        engine.setEqualizerEnabled(enabled)
+    }
     fun setEqBandGain(band: Int, gain: Float) {}
 
     fun updateScanningProgress(progress: Float, count: Int, completed: Boolean) {

@@ -14,11 +14,14 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.animation.AnimatedContentTransitionScope
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.runtime.Composable
 import androidx.core.content.ContextCompat
 import androidx.navigation.compose.NavHost
@@ -37,6 +40,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.beatflowy.app.perf.FrameJankMonitor
 import com.beatflowy.app.ui.theme.BeatraxusTheme
 import com.beatflowy.app.viewmodel.PlayerViewModel
 import com.beatflowy.app.viewmodel.PlayerViewModelFactory
@@ -48,6 +52,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private var serviceBound = false
+    private lateinit var frameJankMonitor: FrameJankMonitor
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             val localBinder = binder as? AudioPlaybackService.LocalBinder
@@ -80,6 +85,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
+        frameJankMonitor.start()
         startAudioService()
         bindAudioService()
     }
@@ -88,6 +94,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        frameJankMonitor = FrameJankMonitor("BeatraxusFrameMonitor")
         
         // Enable edge-to-edge
         WindowCompat.setDecorFitsSystemWindows(window, false)
@@ -101,13 +108,14 @@ class MainActivity : ComponentActivity() {
             }
         }
         if (isFirstCreate) {
-            checkAndRequestPermissions()
+            window.decorView.post { checkAndRequestPermissions() }
             isFirstCreate = false
         }
     }
 
     override fun onStop() {
         super.onStop()
+        frameJankMonitor.stop()
         if (serviceBound) {
             unbindService(serviceConnection)
             serviceBound = false
@@ -209,17 +217,18 @@ fun BeatraxusApp(
     NavHost(
         navController    = navController,
         startDestination = if (uiState.isFirstRun) "welcome" else Screen.Main.route,
-        enterTransition  = {
-            fadeIn(tween(500))
+        enterTransition = {
+            fadeIn(animationSpec = tween(400, easing = FastOutSlowInEasing))
         },
-        exitTransition   = {
-            fadeOut(tween(500))
+        exitTransition = {
+            fadeOut(animationSpec = tween(400, easing = FastOutSlowInEasing))
         }
     ) {
         composable(
             "welcome",
             exitTransition = {
-                fadeOut(tween(700)) + scaleOut(targetScale = 0.8f, animationSpec = tween(700))
+                fadeOut(tween(600, easing = FastOutSlowInEasing)) +
+                        scaleOut(targetScale = 0.9f, animationSpec = tween(600, easing = FastOutSlowInEasing))
             }
         ) {
             WelcomeScreen(
@@ -236,7 +245,30 @@ fun BeatraxusApp(
         composable(
             Screen.Main.route,
             enterTransition = {
-                fadeIn(tween(700)) + scaleIn(initialScale = 1.2f, animationSpec = tween(700))
+                if (initialState.destination.route == "welcome") {
+                    fadeIn(tween(800, easing = FastOutSlowInEasing)) +
+                            scaleIn(initialScale = 1.1f, animationSpec = tween(800, easing = FastOutSlowInEasing))
+                } else {
+                    fadeIn(tween(400, easing = FastOutSlowInEasing)) +
+                            slideIntoContainer(
+                                towards = AnimatedContentTransitionScope.SlideDirection.End,
+                                animationSpec = tween(400, easing = FastOutSlowInEasing)
+                            )
+                }
+            },
+            exitTransition = {
+                fadeOut(tween(400, easing = FastOutSlowInEasing)) +
+                        slideOutOfContainer(
+                            towards = AnimatedContentTransitionScope.SlideDirection.Start,
+                            animationSpec = tween(400, easing = FastOutSlowInEasing)
+                        )
+            },
+            popEnterTransition = {
+                fadeIn(tween(400, easing = FastOutSlowInEasing)) +
+                        slideIntoContainer(
+                            towards = AnimatedContentTransitionScope.SlideDirection.End,
+                            animationSpec = tween(400, easing = FastOutSlowInEasing)
+                        )
             }
         ) {
             MainScreen(
@@ -244,13 +276,41 @@ fun BeatraxusApp(
                 onNavigateToSettings  = { navController.navigate(Screen.Settings.route) }
             )
         }
-        composable(Screen.Equalizer.route) {
+        composable(
+            Screen.Equalizer.route,
+            enterTransition = {
+                slideIntoContainer(
+                    towards = AnimatedContentTransitionScope.SlideDirection.Start,
+                    animationSpec = tween(400, easing = FastOutSlowInEasing)
+                ) + fadeIn(tween(400))
+            },
+            exitTransition = {
+                slideOutOfContainer(
+                    towards = AnimatedContentTransitionScope.SlideDirection.End,
+                    animationSpec = tween(400, easing = FastOutSlowInEasing)
+                ) + fadeOut(tween(400))
+            }
+        ) {
             EqualizerScreen(
                 viewModel = viewModel,
                 onBack    = { navController.popBackStack() }
             )
         }
-        composable(Screen.Settings.route) {
+        composable(
+            Screen.Settings.route,
+            enterTransition = {
+                slideIntoContainer(
+                    towards = AnimatedContentTransitionScope.SlideDirection.Start,
+                    animationSpec = tween(400, easing = FastOutSlowInEasing)
+                ) + fadeIn(tween(400))
+            },
+            exitTransition = {
+                slideOutOfContainer(
+                    towards = AnimatedContentTransitionScope.SlideDirection.End,
+                    animationSpec = tween(400, easing = FastOutSlowInEasing)
+                ) + fadeOut(tween(400))
+            }
+        ) {
             SettingsScreen(
                 viewModel = viewModel,
                 onBack    = { navController.popBackStack() }
