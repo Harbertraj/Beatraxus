@@ -15,13 +15,17 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.runtime.Composable
 import androidx.core.content.ContextCompat
 import androidx.navigation.compose.NavHost
@@ -32,6 +36,7 @@ import com.beatflowy.app.service.AudioPlaybackService
 import com.beatflowy.app.ui.screens.MainScreen
 import com.beatflowy.app.ui.screens.SettingsScreen
 import com.beatflowy.app.ui.screens.WelcomeScreen
+import com.beatflowy.app.ui.components.dsp.DspScreen
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.graphics.Color
@@ -106,10 +111,9 @@ class MainActivity : ComponentActivity() {
                 )
             }
         }
-        if (isFirstCreate) {
-            window.decorView.post { checkAndRequestPermissions() }
-            isFirstCreate = false
-        }
+        
+        // Immediate check to start loading if possible
+        window.decorView.post { checkAndRequestPermissions() }
     }
 
     override fun onStop() {
@@ -135,7 +139,7 @@ class MainActivity : ComponentActivity() {
         bindService(intent, serviceConnection, BIND_AUTO_CREATE)
     }
 
-    fun requestPermissions(onAlreadyGranted: () -> Unit = {}) {
+    fun requestPermissions(onPermissionGranted: () -> Unit = {}) {
         val essentialPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             Manifest.permission.READ_MEDIA_AUDIO
         } else {
@@ -151,18 +155,13 @@ class MainActivity : ComponentActivity() {
         
         if (essentialGranted) {
             viewModel.loadLibrary()
-            onAlreadyGranted()
+            onPermissionGranted()
         } else {
             permissionLauncher.launch(permissions.toTypedArray())
         }
     }
 
     private fun checkAndRequestPermissions() {
-        // Only auto-request if not first run, to avoid interrupting welcome screen
-        val prefs = getSharedPreferences("beatraxus", MODE_PRIVATE)
-        val isFirstRun = prefs.getBoolean("first_run", true)
-        if (isFirstRun) return
-
         val essentialPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             Manifest.permission.READ_MEDIA_AUDIO
         } else {
@@ -171,6 +170,15 @@ class MainActivity : ComponentActivity() {
 
         val essentialGranted = ContextCompat.checkSelfPermission(this, essentialPermission) == PackageManager.PERMISSION_GRANTED
         
+        val prefs = getSharedPreferences("beatraxus", MODE_PRIVATE)
+        val isFirstRun = prefs.getBoolean("first_run", true)
+
+        if (isFirstRun) {
+            // On first run, we let the WelcomeScreen handle the flow.
+            // Do not auto-request or auto-load library yet.
+            return
+        }
+
         if (essentialGranted) {
             viewModel.loadLibrary()
         } else {
@@ -186,6 +194,7 @@ class MainActivity : ComponentActivity() {
 sealed class Screen(val route: String) {
     object Main      : Screen("main")
     object Settings  : Screen("settings")
+    object Dsp       : Screen("dsp")
 }
 
 @Composable
@@ -271,7 +280,8 @@ fun BeatraxusApp(
         ) {
             MainScreen(
                 viewModel            = viewModel,
-                onNavigateToSettings  = { navController.navigate(Screen.Settings.route) }
+                onNavigateToSettings  = { navController.navigate(Screen.Settings.route) },
+                onNavigateToDsp = { navController.navigate(Screen.Dsp.route) }
             )
         }
         composable(
@@ -291,7 +301,30 @@ fun BeatraxusApp(
         ) {
             SettingsScreen(
                 viewModel = viewModel,
-                onBack    = { navController.popBackStack() }
+                onBack    = { navController.popBackStack() },
+                onNavigateToDsp = { navController.navigate(Screen.Dsp.route) }
+            )
+        }
+        composable(
+            Screen.Dsp.route,
+            enterTransition = {
+                slideIntoContainer(
+                    towards = AnimatedContentTransitionScope.SlideDirection.Start,
+                    animationSpec = tween(400, easing = FastOutSlowInEasing)
+                ) + fadeIn(tween(400))
+            },
+            exitTransition = {
+                slideOutOfContainer(
+                    towards = AnimatedContentTransitionScope.SlideDirection.End,
+                    animationSpec = tween(400, easing = FastOutSlowInEasing)
+                ) + fadeOut(tween(400))
+            }
+        ) {
+            DspScreen(
+                viewModel = viewModel,
+                onBack = {
+                    navController.popBackStack()
+                }
             )
         }
     }

@@ -38,5 +38,9 @@ data class SongEntity(
     val year: Int,
     val genre: String,
     val folder: String,
-    val dateAdded: Long
+    val dateAdded: Long,
+    val replayGainTrackDb: Float?,
+    val replayGainAlbumDb: Float?,
+    val replayGainTrackPeak: Float?,
+    val replayGainAlbumPeak: Float?
 )

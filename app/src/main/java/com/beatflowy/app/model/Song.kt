@@ -1,7 +1,7 @@
 package com.beatflowy.app.model
 
 import android.net.Uri
-import com.beatflowy.app.engine.OutputMode
+import com.beatflowy.app.model.OutputMode
 import com.beatflowy.app.repository.LyricsSource
 
 data class Song(
@@ -21,6 +21,10 @@ data class Song(
     val genre: String = "Unknown",
     val folder: String = "",
     val dateAdded: Long = 0,
+    val replayGainTrackDb: Float? = null,
+    val replayGainAlbumDb: Float? = null,
+    val replayGainTrackPeak: Float? = null,
+    val replayGainAlbumPeak: Float? = null,
     val isFavorite: Boolean = false
 )
 
@@ -58,12 +62,14 @@ data class PlayerUiState(
     val isBuffering: Boolean = false,
     val inputSampleRate: Int = 44_100,
     val outputSampleRate: Int = 44_100,
+    val outputBitDepth: Int = 16,
     val outputDevice: String = AudioOutputDevice.SPEAKER.displayName,
-    val outputMode: String = OutputMode.STANDARD_AUDIO_TRACK.name,
+    val outputMode: String = OutputMode.AAUDIO.name,
     val hiResDirectSupported: Boolean = false,
     val hiResCapabilitySummary: String = "Direct hi-res not available on this route",
     val isLoadingLibrary: Boolean = false,
     val isScanning: Boolean = false,
+    val isFullScanning: Boolean = false,
     val scanProgress: Float = 0f,
     val scanCount: Int = 0,
     val albumCount: Int = 0,
@@ -90,7 +96,9 @@ data class PlayerUiState(
     val pipelineOutputPath: String = "AudioTrack",
     val pipelineDvcEnabled: Boolean = false,
     val pipelineResamplerEnabled: Boolean = false,
+    val pipelineResamplerType: String = "SW",
     val pipelineActiveEffects: List<String> = emptyList(),
+    val pipelineSummary: String = "",
     val autoEqProfileName: String? = null,
     val dsp: DspUiState = DspUiState(),
     val resamplingEnabled: Boolean = true,
@@ -100,6 +108,7 @@ data class PlayerUiState(
     val wasSearchingBeforeDetail: Boolean = false,
     val useOriginalQualityArt: Boolean = false,
     val showLyrics: Boolean = false,
+    val cameFromNowPlaying: Boolean = false,
     val lyrics: List<LrcLine> = emptyList(),
     val lyricsCurrentIndex: Int = -1,
     val lyricsOffsetMs: Long = 0L,
@@ -116,6 +125,7 @@ data class PlayerUiState(
                 isBuffering == other.isBuffering &&
                 inputSampleRate == other.inputSampleRate &&
                 outputSampleRate == other.outputSampleRate &&
+                outputBitDepth == other.outputBitDepth &&
                 outputDevice == other.outputDevice &&
                 outputMode == other.outputMode &&
                 hiResDirectSupported == other.hiResDirectSupported &&
@@ -148,7 +158,9 @@ data class PlayerUiState(
                 pipelineOutputPath == other.pipelineOutputPath &&
                 pipelineDvcEnabled == other.pipelineDvcEnabled &&
                 pipelineResamplerEnabled == other.pipelineResamplerEnabled &&
+                pipelineResamplerType == other.pipelineResamplerType &&
                 pipelineActiveEffects == other.pipelineActiveEffects &&
+                pipelineSummary == other.pipelineSummary &&
                 autoEqProfileName == other.autoEqProfileName &&
                 dsp == other.dsp &&
                 resamplingEnabled == other.resamplingEnabled &&
@@ -158,6 +170,7 @@ data class PlayerUiState(
                 wasSearchingBeforeDetail == other.wasSearchingBeforeDetail &&
                 useOriginalQualityArt == other.useOriginalQualityArt &&
                 showLyrics == other.showLyrics &&
+                cameFromNowPlaying == other.cameFromNowPlaying &&
                 lyrics == other.lyrics &&
                 lyricsCurrentIndex == other.lyricsCurrentIndex &&
                 lyricsOffsetMs == other.lyricsOffsetMs &&
@@ -174,6 +187,7 @@ data class PlayerUiState(
         result = 31 * result + isBuffering.hashCode()
         result = 31 * result + inputSampleRate
         result = 31 * result + outputSampleRate
+        result = 31 * result + outputBitDepth
         result = 31 * result + outputDevice.hashCode()
         result = 31 * result + outputMode.hashCode()
         result = 31 * result + hiResDirectSupported.hashCode()
@@ -206,7 +220,9 @@ data class PlayerUiState(
         result = 31 * result + pipelineOutputPath.hashCode()
         result = 31 * result + pipelineDvcEnabled.hashCode()
         result = 31 * result + pipelineResamplerEnabled.hashCode()
+        result = 31 * result + pipelineResamplerType.hashCode()
         result = 31 * result + pipelineActiveEffects.hashCode()
+        result = 31 * result + pipelineSummary.hashCode()
         result = 31 * result + (autoEqProfileName?.hashCode() ?: 0)
         result = 31 * result + dsp.hashCode()
         result = 31 * result + resamplingEnabled.hashCode()
@@ -216,6 +232,7 @@ data class PlayerUiState(
         result = 31 * result + wasSearchingBeforeDetail.hashCode()
         result = 31 * result + useOriginalQualityArt.hashCode()
         result = 31 * result + showLyrics.hashCode()
+        result = 31 * result + cameFromNowPlaying.hashCode()
         result = 31 * result + lyrics.hashCode()
         result = 31 * result + lyricsCurrentIndex
         result = 31 * result + lyricsOffsetMs.hashCode()

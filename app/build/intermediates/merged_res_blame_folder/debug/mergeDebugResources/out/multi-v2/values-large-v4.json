@@ -1,10 +1,10 @@
 {
     "logs": [
         {
-            "outputFile": "com.beatflowy.app-mergeDebugResources-84:/values-large-v4/values-large-v4.xml",
+            "outputFile": "com.beatflowy.app-mergeDebugResources-85:/values-large-v4/values-large-v4.xml",
             "map": [
                 {
-                    "source": "C:\\Users\\gmudh\\.gradle\\caches\\9.3.1\\transforms\\6d9743e84434364135196d82d3d4e726\\workspace\\transformed\\material-1.12.0\\res\\values-large-v4\\values-large-v4.xml",
+                    "source": "C:\\Users\\prasa\\.gradle\\caches\\8.10.2\\transforms\\8c94434d41992105b82e863af47c5758\\transformed\\material-1.12.0\\res\\values-large-v4\\values-large-v4.xml",
                     "from": {
                         "startLines": "2,3,4,5",
                         "startColumns": "4,4,4,4",
@@ -21,7 +21,7 @@
                     }
                 },
                 {
-                    "source": "C:\\Users\\gmudh\\.gradle\\caches\\9.3.1\\transforms\\3c8c3f412977711d719e10fb653a31d5\\workspace\\transformed\\appcompat-1.6.1\\res\\values-large-v4\\values-large-v4.xml",
+                    "source": "C:\\Users\\prasa\\.gradle\\caches\\8.10.2\\transforms\\89e805c2e68a3b79ff5f04b9e5c369cc\\transformed\\appcompat-1.6.1\\res\\values-large-v4\\values-large-v4.xml",
                     "from": {
                         "startLines": "2,3,4,5,6,7,8,9,10",
                         "startColumns": "4,4,4,4,4,4,4,4,4",

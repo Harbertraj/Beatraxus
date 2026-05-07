@@ -10,7 +10,10 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalContext
 import coil.compose.AsyncImage
+import coil.request.CachePolicy
+import coil.request.ImageRequest
 import com.beatflowy.app.R
 import com.beatflowy.app.model.Song
 import com.beatflowy.app.ui.theme.BgHighlight
@@ -23,7 +26,11 @@ fun AlbumArtImage(
     cornerRadius: Dp = 8.dp
 ) {
     AsyncImage(
-        model = song.albumArtUri,
+        model = ImageRequest.Builder(LocalContext.current)
+            .data(song.albumArtUri)
+            .diskCachePolicy(CachePolicy.ENABLED)
+            .memoryCachePolicy(CachePolicy.ENABLED)
+            .build(),
         contentDescription = "Album Art",
         modifier = modifier
             .size(size)

@@ -203,7 +203,7 @@ fun SongListItem(
                         border = BorderStroke(0.5.dp, Color.White.copy(alpha = 0.15f))
                     ) {
                         Text(
-                            text = formatDuration(song.durationMs),
+                            text = if (song.bitDepth > 0) "${song.bitDepth}BIT" else "16BIT",
                             color = Color.White.copy(alpha = 0.8f),
                             fontSize = 7.5.sp,
                             fontWeight = FontWeight.Bold,
@@ -217,9 +217,9 @@ fun SongListItem(
             AlbumArtImage(
                 song = song,
                 size = 60.dp,
-                modifier = Modifier.padding(2.dp)
+                modifier = Modifier.padding(vertical = 2.dp)
             )
-            Spacer(Modifier.width(16.dp))
+            Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(song.title, fontSize = 17.sp,
                     fontWeight = FontWeight.Bold,
@@ -228,22 +228,29 @@ fun SongListItem(
                 Text("${song.artist} • ${song.album}", fontSize = 13.sp, color = Color.LightGray,
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
                 
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(top = 1.dp)
+                ) {
                     Icon(
                         Icons.Rounded.Badge, 
                         null, 
                         tint = Color.Gray, 
-                        modifier = Modifier.size(11.dp).padding(top = 1.dp)
+                        modifier = Modifier.size(10.dp)
                     )
                     Spacer(Modifier.width(3.dp))
                     Text(
                         text = buildString {
-                            if (song.bitDepth > 0) {
-                                append("${song.bitDepth}bit | ")
+                            append(formatDuration(song.durationMs))
+                            append(" | ")
+                            val khz = song.sampleRateHz / 1000.0
+                            if (khz == khz.toInt().toDouble()) {
+                                append("${khz.toInt()}khz")
+                            } else {
+                                append("${"%.1f".format(khz)}khz")
                             }
-                            append("${"%.1f".format(song.sampleRateHz / 1000.0)}kHz")
                             if (song.bitrate > 0) {
-                                append(" | ${song.bitrate / 1000}kbps")
+                                append(" | ${song.bitrate / 1000} KBPS")
                             }
                         },
                         fontSize = 11.sp,

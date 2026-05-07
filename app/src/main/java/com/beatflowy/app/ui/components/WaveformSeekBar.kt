@@ -23,16 +23,18 @@ fun WaveformSeekBar(
     progress: Float, // 0.0 to 1.0
     onProgressChange: (Float) -> Unit,
     modifier: Modifier = Modifier,
+    onProgressFinished: (Float) -> Unit = {},
     activeColor: Color = Color.White,
     inactiveColor: Color = Color.White.copy(alpha = 0.3f),
     barWidth: Float = 4f,
     gap: Float = 4f,
-    seed: Int = 0,
-    /** Changes while playing so pointer handling stays aligned after seeks without resetting mid-drag unnecessarily. */
-    progressPollKey: Long = 0L
+    seed: Int = 0
 ) {
-    var draggingProgress by remember { mutableStateOf<Float?>(null) }
+    var draggingProgress by remember(seed) { mutableStateOf<Float?>(null) }
     val displayProgress = draggingProgress ?: progress
+
+    val currentOnProgressChange by rememberUpdatedState(onProgressChange)
+    val currentOnProgressFinished by rememberUpdatedState(onProgressFinished)
 
     // Generate unique heights for this song based on the seed (song ID hash)
     val barHeights = remember(seed) {
@@ -43,7 +45,7 @@ fun WaveformSeekBar(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .pointerInput(seed, progressPollKey) {
+            .pointerInput(seed) {
                 awaitEachGesture {
                     val down = awaitFirstDown()
                     val width = size.width
@@ -51,18 +53,20 @@ fun WaveformSeekBar(
                     // Update UI immediately on touch down
                     val initialProgress = (down.position.x / width).coerceIn(0f, 1f)
                     draggingProgress = initialProgress
-                    onProgressChange(initialProgress)
+                    currentOnProgressChange(initialProgress)
                     
                     var lastPos = down.position.x
                     val dragSuccess = drag(down.id) { change ->
                         lastPos = change.position.x
                         val newProgress = (lastPos / width).coerceIn(0f, 1f)
                         draggingProgress = newProgress
-                        onProgressChange(newProgress)
+                        currentOnProgressChange(newProgress)
                         change.consume()
                     }
                     
+                    val finalProgress = (lastPos / width).coerceIn(0f, 1f)
                     draggingProgress = null
+                    currentOnProgressFinished(finalProgress)
                 }
             }
     ) {

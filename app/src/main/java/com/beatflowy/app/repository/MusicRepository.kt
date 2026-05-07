@@ -9,11 +9,17 @@ import android.media.AudioFormat
 import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
+import com.arthenica.ffmpegkit.FFmpegKit
+import com.arthenica.ffmpegkit.FFmpegKitConfig
+import com.arthenica.ffmpegkit.FFprobeKit
+import com.arthenica.ffmpegkit.ReturnCode
 import com.beatflowy.app.model.Song
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
+import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
+import java.io.RandomAccessFile
 import java.util.Locale
 import kotlin.math.max
 
@@ -94,48 +100,27 @@ class MusicRepository(private val context: Context) {
         var processedCount = 0
         val processedSongs = mutableListOf<Song>()
         
-        // Optimize: If not a full scan, we do NOT use MediaMetadataRetriever/MediaExtractor at all.
-        // This makes the first scan 10x-20x faster.
-        if (!fullScan) {
-            rawList.forEach { raw ->
-                val uri = ContentUris.withAppendedId(collection, raw.id)
-                processedSongs.add(Song(
-                    id = raw.id.toString(),
-                    uri = uri,
-                    title = raw.title,
-                    artist = raw.artist,
-                    album = raw.album,
-                    durationMs = raw.duration,
-                    format = mimeToFormat(raw.mime, raw.path, guessBitDepth(raw.mime, raw.path)),
-                    sampleRateHz = guessSampleRate(raw.mime, raw.path),
-                    bitDepth = guessBitDepth(raw.mime, raw.path),
-                    bitrate = raw.bitrate,
-                    fileSizeBytes = raw.size,
-                    albumArtUri = ContentUris.withAppendedId(Uri.parse("content://media/external/audio/albumart"), raw.albumId),
-                    year = raw.year,
-                    genre = raw.genre.ifEmpty { "Unknown" },
-                    dateAdded = raw.dateAdded,
-                    folder = raw.path.substringBeforeLast("/", "Unknown")
-                ))
-                albumsSet.add(raw.album)
-                artistsSet.add(raw.artist)
-                
-                processedCount++
-                if (processedCount % 50 == 0 || processedCount == total) {
-                    onProgress(processedCount, albumsSet.size, artistsSet.size, processedCount.toFloat() / total)
-                }
-            }
-            return@withContext processedSongs.sortedBy { it.title }
-        }
-
-        val concurrency = max(2, minOf(6, Runtime.getRuntime().availableProcessors()))
+        val concurrency = Runtime.getRuntime().availableProcessors().coerceAtLeast(4)
 
         rawList.asFlow()
             .flatMapMerge(concurrency = concurrency) { raw ->
                 flow {
                     val uri = ContentUris.withAppendedId(collection, raw.id)
+                    val extension = raw.path.substringAfterLast(".", "").lowercase()
+                    
+                    // Force extraction for containers that can be both lossy and lossless
+                    val isLosslessCandidate = extension == "flac" || extension == "wav" || extension == "alac" || extension == "m4a" || extension == "caf" ||
+                                     raw.mime.contains("flac") || raw.mime.contains("wav") || raw.mime.contains("alac") ||
+                                     raw.mime.contains("dsd") || raw.mime.contains("aiff")
+
+                    // QUICK AND ACCURATE: 
+                    // Use retriever for lossless candidates or when full scan is requested.
+                    // This ensures accuracy for high-res files while keeping MP3/AAC scans fast.
+                    val shouldReadRetriever = fullScan || isLosslessCandidate || raw.bitrate <= 0 || 
+                                            raw.genre.isBlank() || raw.genre.equals("unknown", ignoreCase = true)
+                    
                     var sampleRate = guessSampleRate(raw.mime, raw.path)
-                    var bitDepth = guessBitDepth(raw.mime, raw.path)
+                    var bitDepth = guessBitDepth(raw.mime, raw.path, raw.size, raw.duration)
                     var formatName = mimeToFormat(raw.mime, raw.path, bitDepth)
                     var genre = raw.genre.ifEmpty { "Unknown" }
                     val fallbackAlbumArt = ContentUris.withAppendedId(
@@ -143,15 +128,7 @@ class MusicRepository(private val context: Context) {
                         raw.albumId
                     )
                     var albumArtUri: Uri = fallbackAlbumArt
-
-                    val extension = raw.path.substringAfterLast(".", "").lowercase()
-                    // Force extraction for containers that can be both lossy and lossless
-                    val forceDeepScan = extension == "flac" || extension == "wav" || extension == "alac" || extension == "m4a" || extension == "caf" ||
-                                     raw.mime.contains("flac") || raw.mime.contains("wav") || raw.mime.contains("alac") ||
-                                     raw.mime.contains("dsd") || raw.mime.contains("aiff")
-
-                    val shouldReadRetriever = fullScan && shouldReadWithRetriever(raw, forceDeepScan)
-                    val shouldReadExtractor = fullScan && forceDeepScan
+                    var replayGain = ReplayGainMetadata()
 
                     if (shouldReadRetriever) {
                         val retriever = MediaMetadataRetriever()
@@ -165,12 +142,24 @@ class MusicRepository(private val context: Context) {
                                 retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_BITRATE)?.toIntOrNull() ?: 0
                             }
 
-                            val artBytes = runCatching { retriever.embeddedPicture }.getOrNull()
-                            if (artBytes != null && artBytes.isNotEmpty()) {
-                                albumArtUri = cacheEmbeddedAlbumArt(raw.id, raw.albumId, artBytes, forceRefresh = fullScan)
-                            }
+                            if (fullScan || isLosslessCandidate) {
+                                val artBytes = runCatching { retriever.embeddedPicture }.getOrNull()
+                                if (artBytes != null && artBytes.isNotEmpty()) {
+                                    albumArtUri = cacheEmbeddedAlbumArt(raw.id, raw.albumId, artBytes, forceRefresh = fullScan)
+                                } else if (extension == "wav") {
+                                    // Special handling for WAV files which often fail with MediaMetadataRetriever
+                                    val wavArt = extractEmbeddedArtFromWavFile(raw.path, raw.id, raw.albumId)
+                                    if (wavArt != null) albumArtUri = wavArt
+                                }
+                                
+                                // Last resort fallback: FFmpeg if art is still the default and it's a deep scan or lossless
+                                if (albumArtUri == fallbackAlbumArt && (fullScan || isLosslessCandidate)) {
+                                    val ffmpegArt = extractEmbeddedArtWithFfmpeg(raw.id, uri)
+                                    if (ffmpegArt != null) albumArtUri = ffmpegArt
+                                }
 
-                            if (shouldReadExtractor) {
+                                replayGain = extractReplayGain(uri)
+
                                 val extractor = MediaExtractor()
                                 try {
                                     extractor.setDataSource(context, uri, null)
@@ -213,17 +202,17 @@ class MusicRepository(private val context: Context) {
                                         }
                                         
                                         val extractorMime = trackFormat.getString(android.media.MediaFormat.KEY_MIME)?.lowercase() ?: ""
-                                        val avgBitrate = if (raw.duration > 0) (raw.size * 8000) / raw.duration else 0L
                                         
                                         // Precise identification for M4A container (ALAC vs AAC)
-                                        // 450kbps and 4.5MB/min thresholds for AAC
                                         val durationMin = raw.duration / 60000.0
                                         val sizeMb = raw.size / (1024.0 * 1024.0)
+                                        val mbPerMin = if (durationMin > 0) sizeMb / durationMin else 0.0
+                                        
                                         val isActuallyLossyM4A = (extension == "m4a" || extension == "mp4") && 
-                                            ((durationMin > 0 && (sizeMb / durationMin) < 4.5) || (br > 0 && br < 450000))
+                                            (mbPerMin < 2.1 || (br > 0 && br < 400000))
 
                                         val isActuallyAlac = extractorMime.contains("alac") || 
-                                                           (!isActuallyLossyM4A && (avgBitrate > 500000 || br > 500000) && (extension == "m4a" || extension == "alac"))
+                                                           (!isActuallyLossyM4A && (mbPerMin >= 2.1 || br >= 400000) && (extension == "m4a" || extension == "alac"))
 
                                         formatName = when {
                                             extractorMime.contains("flac") || extension == "flac" -> "FLAC"
@@ -240,18 +229,12 @@ class MusicRepository(private val context: Context) {
                                             else -> "MP3"
                                         }
                                         
-                                        // If AAC or MP3, bit depth is irrelevant for "Lossless" labeling
                                         if (formatName == "AAC" || formatName == "MP3" || formatName == "OPUS" || formatName == "OGG") {
                                             bitDepth = 0
                                         }
                                     }
                                 } finally {
                                     try { extractor.release() } catch (e: Exception) {}
-                                }
-                                
-                                val artBytesRetriever = runCatching { retriever.embeddedPicture }.getOrNull()
-                                if (artBytesRetriever != null && artBytesRetriever.isNotEmpty()) {
-                                    albumArtUri = cacheEmbeddedAlbumArt(raw.id, raw.albumId, artBytesRetriever)
                                 }
                             }
 
@@ -266,7 +249,6 @@ class MusicRepository(private val context: Context) {
                         }
                     }
 
-                    // Final heuristics: High bitrate + non-lossy format means high quality lossy, but not "Lossless"
                     if (bitDepth <= 16 && raw.bitrate > 2116000 && bitDepth > 0) bitDepth = 24
 
                     emit(Song(
@@ -285,7 +267,11 @@ class MusicRepository(private val context: Context) {
                         year = raw.year,
                         genre = genre,
                         dateAdded = raw.dateAdded,
-                        folder = raw.path.substringBeforeLast("/", "Unknown")
+                        folder = raw.path.substringBeforeLast("/", "Unknown"),
+                        replayGainTrackDb = replayGain.trackGainDb,
+                        replayGainAlbumDb = replayGain.albumGainDb,
+                        replayGainTrackPeak = replayGain.trackPeak,
+                        replayGainAlbumPeak = replayGain.albumPeak
                     ))
                 }
             }
@@ -317,11 +303,22 @@ class MusicRepository(private val context: Context) {
         else -> 44100
     }
 
-    private fun guessBitDepth(mime: String, path: String): Int = when {
-        mime.contains("flac", true) || mime.contains("wav", true) || mime.contains("alac", true) ||
-            path.endsWith(".flac", true) || path.endsWith(".wav", true) || path.endsWith(".alac", true) ||
-            path.endsWith(".aiff", true) || path.endsWith(".aif", true) -> 16
-        else -> 0 // 0 for lossy formats
+    private fun guessBitDepth(mime: String, path: String, size: Long = 0, duration: Long = 0): Int {
+        val m = mime.lowercase()
+        val p = path.lowercase()
+        return when {
+            m.contains("flac") || m.contains("wav") || m.contains("alac") ||
+                p.endsWith(".flac") || p.endsWith(".wav") || p.endsWith(".alac") ||
+                p.endsWith(".aiff") || p.endsWith(".aif") -> 16
+            p.endsWith(".m4a") || m.contains("mp4") -> {
+                // Heuristic for ALAC in M4A container (typically > 2.5MB/min)
+                if (duration > 0 && size > 0) {
+                    val mbPerMin = (size / (1024.0 * 1024.0)) / (duration / 60000.0)
+                    if (mbPerMin > 2.3) 16 else 0 
+                } else 0
+            }
+            else -> 0
+        }
     }
 
     private fun cacheEmbeddedAlbumArt(mediaStoreId: Long, albumId: Long, bytes: ByteArray, forceRefresh: Boolean = false): Uri {
@@ -384,6 +381,202 @@ class MusicRepository(private val context: Context) {
             else -> "MP3"
         }
     }
+
+    private fun extractEmbeddedArtWithFfmpeg(mediaStoreId: Long, uri: Uri): Uri? {
+        val outputFile = File(File(context.cacheDir, "embedded_album_art").apply { mkdirs() }, "$mediaStoreId-ffmpeg.jpg")
+        val inputSource = FFmpegKitConfig.getSafParameterForRead(context, uri)
+        val session = FFmpegKit.executeWithArguments(
+            arrayOf(
+                "-y",
+                "-v", "error",
+                "-i", inputSource,
+                "-map", "0:v:0",
+                "-frames:v", "1",
+                outputFile.absolutePath
+            )
+        )
+        return if (ReturnCode.isSuccess(session.returnCode) && outputFile.exists() && outputFile.length() > 0L) {
+            Uri.fromFile(outputFile)
+        } else {
+            null
+        }
+    }
+
+    private fun extractEmbeddedArtFromWavFile(path: String, mediaStoreId: Long, albumId: Long): Uri? {
+        if (path.isBlank()) return null
+        return runCatching {
+            RandomAccessFile(path, "r").use { raf ->
+                if (raf.length() < 12) return@use null
+                if (raf.readFourCc() != "RIFF") return@use null
+                raf.skipBytes(4)
+                if (raf.readFourCc() != "WAVE") return@use null
+                while (raf.filePointer + 8 <= raf.length()) {
+                    val chunkId = raf.readFourCc()
+                    val chunkSize = raf.readLittleEndianInt().toLong().coerceAtLeast(0L)
+                    if (chunkSize > raf.length() - raf.filePointer) break
+                    when (chunkId) {
+                        "ID3 ", "id3 " -> {
+                            val bytes = ByteArray(chunkSize.toInt())
+                            raf.readFully(bytes)
+                            extractApicFromId3(bytes)?.let { art ->
+                                return@runCatching cacheEmbeddedAlbumArt(mediaStoreId, albumId, art, forceRefresh = true)
+                            }
+                        }
+                        "DISP" -> {
+                            if (chunkSize > 8) {
+                                raf.skipBytes(4)
+                                val artSize = (chunkSize - 4).toInt()
+                                val bytes = ByteArray(artSize)
+                                raf.readFully(bytes)
+                                if (bytes.isNotEmpty()) {
+                                    return@runCatching cacheEmbeddedAlbumArt(mediaStoreId, albumId, bytes, forceRefresh = true)
+                                }
+                            } else {
+                                raf.skipBytes(chunkSize.toInt())
+                            }
+                        }
+                        else -> raf.skipBytes(chunkSize.toInt())
+                    }
+                    if ((chunkSize and 1L) == 1L && raf.filePointer < raf.length()) {
+                        raf.skipBytes(1)
+                    }
+                }
+                null
+            }
+        }.getOrElse {
+            ContentUris.withAppendedId(Uri.parse("content://media/external/audio/albumart"), albumId)
+        }
+    }
+
+    private fun extractApicFromId3(bytes: ByteArray): ByteArray? {
+        if (bytes.size < 10 || String(bytes, 0, 3) != "ID3") return null
+        val tagSize = synchsafeToInt(bytes.copyOfRange(6, 10)).coerceAtMost(bytes.size - 10)
+        var offset = 10
+        while (offset + 10 <= 10 + tagSize && offset + 10 <= bytes.size) {
+            val frameId = String(bytes, offset, 4)
+            val frameSize = bytesToInt(bytes, offset + 4)
+            if (frameSize <= 0 || offset + 10 + frameSize > bytes.size) break
+            if (frameId == "APIC") {
+                val frame = bytes.copyOfRange(offset + 10, offset + 10 + frameSize)
+                return parseApicFrame(frame)
+            }
+            offset += 10 + frameSize
+        }
+        return null
+    }
+
+    private fun parseApicFrame(frame: ByteArray): ByteArray? {
+        if (frame.size < 4) return null
+        val encoding = frame[0].toInt() and 0xFF
+        var index = 1
+        while (index < frame.size && frame[index].toInt() != 0) index++
+        index++
+        if (index >= frame.size) return null
+        index++ // picture type
+        if (encoding == 0 || encoding == 3) {
+            while (index < frame.size && frame[index].toInt() != 0) index++
+            index++
+        } else {
+            while (index + 1 < frame.size && !(frame[index].toInt() == 0 && frame[index + 1].toInt() == 0)) index += 2
+            index += 2
+        }
+        return if (index in 0 until frame.size) frame.copyOfRange(index, frame.size) else null
+    }
+
+    private fun synchsafeToInt(bytes: ByteArray): Int {
+        if (bytes.size < 4) return 0
+        return (bytes[0].toInt() and 0x7F shl 21) or
+            (bytes[1].toInt() and 0x7F shl 14) or
+            (bytes[2].toInt() and 0x7F shl 7) or
+            (bytes[3].toInt() and 0x7F)
+    }
+
+    private fun bytesToInt(bytes: ByteArray, offset: Int): Int {
+        return ((bytes[offset].toInt() and 0xFF) shl 24) or
+            ((bytes[offset + 1].toInt() and 0xFF) shl 16) or
+            ((bytes[offset + 2].toInt() and 0xFF) shl 8) or
+            (bytes[offset + 3].toInt() and 0xFF)
+    }
+
+    private fun RandomAccessFile.readFourCc(): String {
+        val bytes = ByteArray(4)
+        readFully(bytes)
+        return String(bytes, Charsets.US_ASCII)
+    }
+
+    private fun RandomAccessFile.readLittleEndianInt(): Int {
+        val b0 = read()
+        val b1 = read()
+        val b2 = read()
+        val b3 = read()
+        return (b0 and 0xFF) or
+            ((b1 and 0xFF) shl 8) or
+            ((b2 and 0xFF) shl 16) or
+            ((b3 and 0xFF) shl 24)
+    }
+
+    private fun extractReplayGain(uri: Uri): ReplayGainMetadata {
+        return runCatching {
+            val source = FFmpegKitConfig.getSafParameterForRead(context, uri)
+            val session = FFprobeKit.executeWithArguments(
+                arrayOf("-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", source)
+            )
+            if (!ReturnCode.isSuccess(session.returnCode)) {
+                return@runCatching ReplayGainMetadata()
+            }
+
+            val json = JSONObject(session.output.orEmpty())
+            val formatTags = json.optJSONObject("format")?.optJSONObject("tags")
+            val streams = json.optJSONArray("streams")
+            val streamTags = buildList {
+                if (streams != null) {
+                    for (index in 0 until streams.length()) {
+                        streams.optJSONObject(index)?.optJSONObject("tags")?.let(::add)
+                    }
+                }
+            }
+
+            val tagValue: (String) -> String? = { key ->
+                formatTags?.optString(key)?.takeIf { it.isNotBlank() }
+                    ?: streamTags.firstNotNullOfOrNull { tags ->
+                        tags.optString(key).takeIf { it.isNotBlank() }
+                    }
+                    ?: formatTags?.keys()?.asSequence()
+                        ?.firstOrNull { it.equals(key, ignoreCase = true) }
+                        ?.let { formatTags.optString(it) }
+                    ?: streamTags.firstNotNullOfOrNull { tags ->
+                        tags.keys().asSequence()
+                            .firstOrNull { it.equals(key, ignoreCase = true) }
+                            ?.let { tags.optString(it) }
+                            ?.takeIf { it.isNotBlank() }
+                    }
+            }
+
+            ReplayGainMetadata(
+                trackGainDb = parseReplayGainDb(tagValue("REPLAYGAIN_TRACK_GAIN")),
+                albumGainDb = parseReplayGainDb(tagValue("REPLAYGAIN_ALBUM_GAIN")),
+                trackPeak = parsePeak(tagValue("REPLAYGAIN_TRACK_PEAK")),
+                albumPeak = parsePeak(tagValue("REPLAYGAIN_ALBUM_PEAK"))
+            )
+        }.getOrDefault(ReplayGainMetadata())
+    }
+
+    private fun parseReplayGainDb(value: String?): Float? {
+        if (value.isNullOrBlank()) return null
+        return Regex("""([+-]?\d+(?:\.\d+)?)""").find(value)?.groupValues?.get(1)?.toFloatOrNull()
+    }
+
+    private fun parsePeak(value: String?): Float? {
+        if (value.isNullOrBlank()) return null
+        return value.trim().toFloatOrNull()
+    }
+
+    private data class ReplayGainMetadata(
+        val trackGainDb: Float? = null,
+        val albumGainDb: Float? = null,
+        val trackPeak: Float? = null,
+        val albumPeak: Float? = null
+    )
 
     private data class RawSongData(
         val id: Long,

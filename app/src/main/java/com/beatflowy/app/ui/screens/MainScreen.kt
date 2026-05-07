@@ -33,6 +33,7 @@ import androidx.compose.material.icons.automirrored.rounded.Sort
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import kotlinx.coroutines.launch
 import android.graphics.RenderEffect as AndroidRenderEffect
 import android.graphics.Shader
@@ -59,6 +60,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -72,6 +74,8 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
+import coil.request.CachePolicy
+import coil.request.ImageRequest
 import com.beatflowy.app.model.LibraryView
 import com.beatflowy.app.model.SortType
 import com.beatflowy.app.ui.components.*
@@ -86,7 +90,11 @@ fun MainBackground(
     if (albumArtUri != null) {
         Box(Modifier.fillMaxSize()) {
             AsyncImage(
-                model = albumArtUri,
+                model = ImageRequest.Builder(LocalContext.current)
+                    .data(albumArtUri)
+                    .diskCachePolicy(CachePolicy.ENABLED)
+                    .memoryCachePolicy(CachePolicy.ENABLED)
+                    .build(),
                 contentDescription = null,
                 modifier = Modifier
                     .fillMaxSize()
@@ -94,11 +102,11 @@ fun MainBackground(
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                             renderEffect = blurEffect?.asComposeRenderEffect()
                         }
-                        alpha = 0.4f
+                        alpha = 0.45f
                     }
                     .then(
                         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
-                            Modifier.blur(36.dp)
+                            Modifier.blur(64.dp)
                         } else {
                             Modifier
                         }
@@ -136,7 +144,8 @@ private fun formatTime(ms: Long): String {
 @Composable
 fun MainScreen(
     viewModel: PlayerViewModel,
-    onNavigateToSettings: () -> Unit
+    onNavigateToSettings: () -> Unit,
+    onNavigateToDsp: () -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val progressMs by viewModel.progressMs.collectAsStateWithLifecycle()
@@ -151,7 +160,7 @@ fun MainScreen(
     }
     val cachedBackgroundBlurEffect = remember {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            AndroidRenderEffect.createBlurEffect(72f, 72f, Shader.TileMode.DECAL)
+            AndroidRenderEffect.createBlurEffect(120f, 120f, Shader.TileMode.DECAL)
         } else null
     }
 
@@ -188,12 +197,17 @@ fun MainScreen(
 
     val scope = rememberCoroutineScope()
     
-    var showFullPlayer by remember { mutableStateOf(false) }
+    var showFullPlayer by rememberSaveable { mutableStateOf(false) }
     var showSortMenu   by remember { mutableStateOf(false) }
     var showLibraryPopup by remember { mutableStateOf(false) }
     var sortMenuAnchor by remember { mutableStateOf(Rect.Zero) }
     var libraryMenuAnchor by remember { mutableStateOf(Rect.Zero) }
     var selectedSongForOptions by remember { mutableStateOf<com.beatflowy.app.model.Song?>(null) }
+    var showPipelineOverlay by remember { mutableStateOf(false) }
+
+    var titleRight by remember { mutableFloatStateOf(0f) }
+    var settingsLeft by remember { mutableFloatStateOf(Float.MAX_VALUE) }
+    val isTitleTouchingSettings by remember { derivedStateOf { titleRight >= settingsLeft - 10f } }
 
     LaunchedEffect(uiState.showFullPlayer) {
         if (uiState.showFullPlayer) {
@@ -208,8 +222,10 @@ fun MainScreen(
         LibraryView.PLAYLIST_DETAIL
     )
 
-    BackHandler(enabled = showFullPlayer || uiState.isSearchActive || isDetailView || uiState.currentView != LibraryView.ALL_SONGS || showLibraryPopup || showSortMenu) {
-        if (showLibraryPopup) {
+    BackHandler(enabled = showFullPlayer || uiState.isSearchActive || isDetailView || uiState.currentView != LibraryView.ALL_SONGS || showLibraryPopup || showSortMenu || showPipelineOverlay) {
+        if (showPipelineOverlay) {
+            showPipelineOverlay = false
+        } else if (showLibraryPopup) {
             showLibraryPopup = false
         } else if (showSortMenu) {
             showSortMenu = false
@@ -231,9 +247,15 @@ fun MainScreen(
                 LibraryView.PLAYLIST_DETAIL -> LibraryView.PLAYLISTS
                 else -> LibraryView.ALL_SONGS
             }
-            viewModel.setLibraryView(backView)
-            if (uiState.wasSearchingBeforeDetail) {
-                viewModel.setSearchActive(true)
+            if (uiState.cameFromNowPlaying) {
+                viewModel.setCameFromNowPlaying(false)
+                showFullPlayer = true
+                viewModel.setLibraryView(backView)
+            } else {
+                viewModel.setLibraryView(backView)
+                if (uiState.wasSearchingBeforeDetail) {
+                    viewModel.setSearchActive(true)
+                }
             }
         } else if (uiState.currentView != LibraryView.ALL_SONGS) {
             viewModel.setLibraryView(LibraryView.ALL_SONGS)
@@ -380,25 +402,27 @@ fun MainScreen(
                                     color = viewAccentColor.copy(alpha = 0.15f),
                                     shape = RoundedCornerShape(28.dp),
                                     border = BorderStroke(1.dp, viewAccentColor.copy(alpha = 0.5f)),
-                                    modifier = Modifier.animateContentSize()
+                                    modifier = Modifier
+                                        .animateContentSize()
+                                        .onGloballyPositioned { titleRight = it.boundsInRoot().right }
                                 ) {
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,
-                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
                                     ) {
                                         Box(
                                             modifier = Modifier
-                                                .size(28.dp)
+                                                .size(36.dp)
                                                 .background(viewAccentColor.copy(alpha = 0.1f), CircleShape),
                                             contentAlignment = Alignment.Center
                                         ) {
-                                            Icon(titleIcon, null, tint = viewAccentColor, modifier = Modifier.size(18.dp))
+                                            Icon(titleIcon, null, tint = viewAccentColor, modifier = Modifier.size(24.dp))
                                         }
-                                        Spacer(Modifier.width(8.dp))
+                                        Spacer(Modifier.width(10.dp))
                                         Text(
                                             text = titleText,
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 15.sp,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            fontSize = 18.sp,
                                             color = Color.White,
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis
@@ -424,25 +448,33 @@ fun MainScreen(
                                         }
                                     }
                                 } else {
-                                    androidx.compose.animation.AnimatedVisibility(
-                                        visible = !isTitleWide,
-                                        enter = fadeIn(tween(400)) + scaleIn(initialScale = 0.8f, animationSpec = tween(400)) + 
-                                               expandHorizontally(expandFrom = Alignment.CenterHorizontally) { 0 },
-                                        exit = fadeOut(tween(400)) + scaleOut(targetScale = 0.8f, animationSpec = tween(400)) + 
-                                              shrinkHorizontally(shrinkTowards = Alignment.CenterHorizontally) { 0 }
+                                    val rotation by animateFloatAsState(
+                                        targetValue = if (isTitleTouchingSettings) 180f else 0f,
+                                        animationSpec = tween(500),
+                                        label = "settingsRotation"
+                                    )
+                                    val scale by animateFloatAsState(
+                                        targetValue = if (isTitleTouchingSettings) 0f else 1f,
+                                        animationSpec = tween(500),
+                                        label = "settingsScale"
+                                    )
+                                    IconButton(
+                                        onClick = onNavigateToSettings,
+                                        modifier = Modifier
+                                            .onGloballyPositioned { settingsLeft = it.boundsInRoot().left }
+                                            .graphicsLayer {
+                                                rotationZ = rotation
+                                                scaleX = scale
+                                                scaleY = scale
+                                                alpha = scale
+                                            }
                                     ) {
-                                        IconButton(onClick = onNavigateToSettings) {
-                                            Icon(
-                                                Icons.Rounded.Settings,
-                                                null,
-                                                tint = Color.White.copy(0.7f),
-                                                modifier = Modifier
-                                                    .size(24.dp)
-                                                    .graphicsLayer {
-                                                        // Fallback rotation if rotateIn/Out are not available
-                                                    }
-                                            )
-                                        }
+                                        Icon(
+                                            Icons.Rounded.Settings,
+                                            null,
+                                            tint = Color.White.copy(0.7f),
+                                            modifier = Modifier.size(24.dp)
+                                        )
                                     }
                                 }
                             }
@@ -565,7 +597,7 @@ fun MainScreen(
                                                 modifier = Modifier.size(28.dp).background(Color.White.copy(0.1f), CircleShape),
                                                 contentAlignment = Alignment.Center
                                             ) {
-                                                Icon(Icons.Rounded.PlayArrow, null, tint = Color.White, modifier = Modifier.size(18.dp))
+                                                Icon(Icons.Rounded.PlayArrow, null, tint = Color.White, modifier = Modifier.size(20.dp))
                                             }
 
                                             AnimatedVisibility(
@@ -578,7 +610,7 @@ fun MainScreen(
                                                     Text(
                                                         text = "Shuffle All",
                                                         color = Color.White,
-                                                        fontSize = 15.sp,
+                                                        fontSize = 14.sp,
                                                         fontWeight = FontWeight.Bold,
                                                         maxLines = 1
                                                     )
@@ -1115,7 +1147,11 @@ fun MainScreen(
                             
                             // Sub-layer for internal blur to simulate glass
                             AsyncImage(
-                                model = uiState.currentSong?.albumArtUri,
+                                model = ImageRequest.Builder(LocalContext.current)
+                                    .data(uiState.currentSong?.albumArtUri)
+                                    .diskCachePolicy(CachePolicy.ENABLED)
+                                    .memoryCachePolicy(CachePolicy.ENABLED)
+                                    .build(),
                                 contentDescription = null,
                                 modifier = Modifier
                                     .fillMaxSize()
@@ -1166,7 +1202,11 @@ fun MainScreen(
                                 color = Color.White.copy(0.05f)
                             ) {
                                 AsyncImage(
-                                    model = uiState.currentSong?.albumArtUri,
+                                    model = ImageRequest.Builder(LocalContext.current)
+                                        .data(uiState.currentSong?.albumArtUri)
+                                        .diskCachePolicy(CachePolicy.ENABLED)
+                                        .memoryCachePolicy(CachePolicy.ENABLED)
+                                        .build(),
                                     contentDescription = null,
                                     contentScale = ContentScale.Crop
                                 )
@@ -1240,7 +1280,7 @@ fun MainScreen(
             ) + fadeIn(tween(400)),
             exit = slideOutVertically(
                 targetOffsetY = { it },
-                animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium)
+                animationSpec = spring(dampingRatio = Spring.DampingRatioLowBouncy, stiffness = Spring.StiffnessLow)
             ) + fadeOut(tween(400))
         ) {
             NowPlayingScreen(
@@ -1258,7 +1298,7 @@ fun MainScreen(
                 onRepeat = { viewModel.toggleRepeat() },
                 onSeek = { viewModel.seekTo(it) },
                 onClose = { showFullPlayer = false },
-                onOpenEqualizer = { },
+                onOpenEqualizer = onNavigateToDsp,
                 onToggleQueue = { viewModel.toggleQueue() },
                 onRemoveFromQueue = { viewModel.removeFromQueue(it) },
                 onMoveInQueue = { from, to -> viewModel.moveInQueue(from, to) },
@@ -1267,11 +1307,14 @@ fun MainScreen(
                 isFavorite = uiState.currentSong?.let { favorites.contains(it.id) } ?: false,
                 onFavoriteClick = { uiState.currentSong?.let { viewModel.toggleFavorite(it) } },
                 onNavigateToAlbum = { album ->
+                    viewModel.setCameFromNowPlaying(true)
                     viewModel.setLibraryView(com.beatflowy.app.model.LibraryView.ALBUM_DETAIL, album)
                     showFullPlayer = false
                 },
                 onToggleLyrics = { viewModel.toggleLyrics() },
-                onAdjustOffset = { viewModel.adjustLyricsOffset(it) }
+                onAdjustOffset = { viewModel.adjustLyricsOffset(it) },
+                showPipelineOverlay = showPipelineOverlay,
+                onTogglePipeline = { showPipelineOverlay = it }
             )
         }
 

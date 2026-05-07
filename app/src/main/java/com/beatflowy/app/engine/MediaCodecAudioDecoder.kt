@@ -51,7 +51,17 @@ internal class MediaCodecAudioDecoder(private val context: Context) : AudioDecod
             var floatBuffer = FloatArray(PCM_CHUNK_SAMPLES)
 
             while (control.isActive()) {
-                control.consumePendingSeekMs()?.let { return@withContext DecodeResult.Seek(it) }
+                val pendingSeek = control.consumePendingSeekMs()
+                if (pendingSeek != null) {
+                    try {
+                        extractor.seekTo(pendingSeek * 1000, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
+                        codec.flush()
+                        control.notifySeek(pendingSeek)
+                    } catch (e: Exception) {
+                        control.logWarn("Seek failed: ${e.message}")
+                    }
+                    continue
+                }
 
                 var inputProgress = false
                 try {
@@ -112,10 +122,11 @@ internal class MediaCodecAudioDecoder(private val context: Context) : AudioDecod
                 }
 
                 if (!inputProgress && !outputProgress) {
-                    Thread.sleep(4)
+                    kotlinx.coroutines.delay(4)
                 }
             }
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Log.e(TAG, "MediaCodec decode failed", e)
             return@withContext DecodeResult.Failed(e.message)
         } finally {
@@ -133,7 +144,8 @@ internal class MediaCodecAudioDecoder(private val context: Context) : AudioDecod
             }
         }
 
-        DecodeResult.Failed("Playback stopped")
+        if (control.isActive()) DecodeResult.Failed("Decoder loop exited prematurely")
+        else DecodeResult.Failed("Playback stopped")
     }
 
     private fun selectBestAudioTrack(extractor: MediaExtractor): TrackSelection? {

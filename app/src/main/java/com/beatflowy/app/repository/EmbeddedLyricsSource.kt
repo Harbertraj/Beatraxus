@@ -5,23 +5,28 @@ import android.media.MediaMetadataRetriever
 import android.net.Uri
 import java.io.File
 import java.io.InputStream
+import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
+/**
+ * Metadata key for lyrics. Added in API 31, but the value 23 is consistent.
+ */
+private const val METADATA_KEY_LYRIC_INT = 23
+
 class EmbeddedLyricsSource(private val context: Context) {
-    suspend fun getEmbeddedLyrics(songPath: String): String? = withContext(Dispatchers.IO) {
+
+    suspend fun getLyrics(songPath: String): LyricsResult? = withContext(Dispatchers.IO) {
         val file = File(songPath)
         if (!file.exists()) return@withContext null
-        extractEmbeddedLyrics(
-            configureRetriever = { retriever ->
-                retriever.setDataSource(songPath)
-            },
+        extract(
+            configureRetriever = { it.setDataSource(songPath) },
             openTagStream = { file.inputStream() }
         )
     }
 
-    suspend fun getLyrics(uri: Uri): String? = withContext(Dispatchers.IO) {
-        extractEmbeddedLyrics(
+    suspend fun getLyrics(uri: Uri): LyricsResult? = withContext(Dispatchers.IO) {
+        extract(
             configureRetriever = { retriever ->
                 context.contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
                     retriever.setDataSource(pfd.fileDescriptor)
@@ -31,141 +36,194 @@ class EmbeddedLyricsSource(private val context: Context) {
         )
     }
 
-    private fun extractEmbeddedLyrics(
+    private fun extract(
         configureRetriever: (MediaMetadataRetriever) -> Unit,
         openTagStream: () -> InputStream?
-    ): String? {
+    ): LyricsResult? {
         val retriever = MediaMetadataRetriever()
-        return try {
+        try {
             configureRetriever(retriever)
+            
+            // 1. Try MediaMetadataRetriever first (Priority)
+            val mmrLyrics = extractFromMMR(retriever)
+            if (mmrLyrics != null) return mmrLyrics
 
-            val metadataLyrics = extractLyricsFromMetadata(retriever)
-            if (!metadataLyrics.isNullOrBlank()) {
-                return metadataLyrics
-            }
-
+            // 2. Fallback to manual ID3 Parsing for USLT/SYLT
             openTagStream()?.use { input ->
-                parseUsltLyrics(input)?.takeIf { it.isNotBlank() }
+                return parseId3Tags(input)
             }
         } catch (e: Exception) {
-            null
+            e.printStackTrace()
         } finally {
-            try {
-                retriever.release()
-            } catch (e: Exception) {
-                // Ignore
-            }
+            runCatching { retriever.release() }
         }
-    }
-
-    private fun extractLyricsFromMetadata(retriever: MediaMetadataRetriever): String? {
-        val candidates = listOf(23)
-
-        return candidates
-            .asSequence()
-            .mapNotNull { key -> runCatching { retriever.extractMetadata(key) }.getOrNull() }
-            .firstOrNull { !it.isNullOrBlank() }
-            ?.trim()
-    }
-
-    private fun parseUsltLyrics(input: InputStream): String? {
-        val header = ByteArray(10)
-        if (!readFully(input, header)) return null
-        if (header.copyOfRange(0, 3).decodeToString() != "ID3") return null
-
-        val versionMajor = header[3].toInt() and 0xFF
-        val tagSize = decodeSynchsafeInt(header.copyOfRange(6, 10))
-        if (tagSize <= 0) return null
-
-        val tagBytes = ByteArray(tagSize)
-        if (!readFully(input, tagBytes)) return null
-
-        var offset = 0
-        while (offset + 10 <= tagBytes.size) {
-            val frameId = tagBytes.copyOfRange(offset, offset + 4).decodeToString()
-            val frameSizeBytes = tagBytes.copyOfRange(offset + 4, offset + 8)
-            val frameSize = when (versionMajor) {
-                4 -> decodeSynchsafeInt(frameSizeBytes)
-                else -> decodeInt(frameSizeBytes)
-            }
-
-            if (frameId.isBlank() || frameSize <= 0 || offset + 10 + frameSize > tagBytes.size) break
-
-            if (frameId == "USLT") {
-                val frameData = tagBytes.copyOfRange(offset + 10, offset + 10 + frameSize)
-                return decodeUsltFrame(frameData)
-            }
-
-            offset += 10 + frameSize
-        }
-
         return null
     }
 
-    private fun decodeUsltFrame(frameData: ByteArray): String? {
-        if (frameData.size <= 4) return null
-
-        val encoding = frameData[0].toInt() and 0xFF
-        var offset = 4 // encoding + 3-byte language
-
-        offset += when (encoding) {
-            1, 2 -> findUtf16Terminator(frameData, offset) + 2
-            else -> findSingleByteTerminator(frameData, offset) + 1
-        } - offset
-
-        if (offset >= frameData.size) return null
-
-        val lyricsBytes = frameData.copyOfRange(offset, frameData.size)
-        return decodeText(lyricsBytes, encoding)?.trim()?.takeIf { it.isNotEmpty() }
-    }
-
-    private fun decodeText(bytes: ByteArray, encoding: Int): String? = when (encoding) {
-        0 -> bytes.toString(Charsets.ISO_8859_1)
-        1 -> if (hasUtf16Bom(bytes)) bytes.toString(Charsets.UTF_16) else bytes.toString(Charsets.UTF_16BE)
-        2 -> bytes.toString(Charsets.UTF_16BE)
-        3 -> bytes.toString(Charsets.UTF_8)
-        else -> null
-    }
-
-    private fun hasUtf16Bom(bytes: ByteArray): Boolean {
-        return bytes.size >= 2 && (
-            (bytes[0] == 0xFE.toByte() && bytes[1] == 0xFF.toByte()) ||
-                (bytes[0] == 0xFF.toByte() && bytes[1] == 0xFE.toByte())
+    private fun extractFromMMR(retriever: MediaMetadataRetriever): LyricsResult? {
+        val raw = try {
+            retriever.extractMetadata(METADATA_KEY_LYRIC_INT)
+        } catch (e: Exception) {
+            null
+        }
+        
+        return if (!raw.isNullOrBlank()) {
+            LyricsResult(
+                type = if (isSynced(raw)) LyricsType.SYNCED else LyricsType.PLAIN,
+                content = raw.trim()
             )
+        } else null
     }
 
-    private fun findSingleByteTerminator(bytes: ByteArray, startIndex: Int): Int {
-        for (index in startIndex until bytes.size) {
-            if (bytes[index] == 0.toByte()) return index
-        }
-        return bytes.size
+    private fun isSynced(text: String): Boolean {
+        // Simple check for LRC format [00:00.00]
+        return text.contains(Regex("\\[\\d+:\\d+[.:]\\d+\\]"))
     }
 
-    private fun findUtf16Terminator(bytes: ByteArray, startIndex: Int): Int {
-        var index = startIndex
-        while (index + 1 < bytes.size) {
-            if (bytes[index] == 0.toByte() && bytes[index + 1] == 0.toByte()) {
-                return index
+    private fun parseId3Tags(input: InputStream): LyricsResult? {
+        val header = ByteArray(10)
+        if (!readFully(input, header) || header.copyOfRange(0, 3).decodeToString() != "ID3") return null
+
+        val version = header[3].toInt() and 0xFF
+        val tagSize = decodeSynchsafeInt(header.copyOfRange(6, 10))
+        if (tagSize <= 0) return null
+
+        val tagData = ByteArray(tagSize)
+        if (!readFully(input, tagData)) return null
+
+        var offset = 0
+        var usltLyrics: String? = null
+
+        while (offset + 10 <= tagData.size) {
+            val frameId = try {
+                tagData.copyOfRange(offset, offset + 4).decodeToString()
+            } catch (e: Exception) {
+                ""
             }
-            index += 2
+            
+            if (frameId.any { it !in 'A'..'Z' && it !in '0'..'9' }) break
+
+            val frameSizeBytes = tagData.copyOfRange(offset + 4, offset + 8)
+            val frameSize = if (version >= 4) decodeSynchsafeInt(frameSizeBytes) else decodeInt(frameSizeBytes)
+            
+            if (frameSize <= 0 || offset + 10 + frameSize > tagData.size) break
+            
+            val frameContent = tagData.copyOfRange(offset + 10, offset + 10 + frameSize)
+
+            when (frameId) {
+                "SYLT" -> {
+                    val synced = decodeSyltFrame(frameContent)
+                    if (synced != null) return LyricsResult(LyricsType.SYNCED, synced)
+                }
+                "USLT" -> {
+                    val unsynced = decodeUsltFrame(frameContent)
+                    if (!unsynced.isNullOrBlank()) usltLyrics = unsynced
+                }
+            }
+            offset += 10 + frameSize
         }
-        return bytes.size
+
+        return usltLyrics?.let { LyricsResult(LyricsType.PLAIN, it) }
     }
+
+    private fun decodeUsltFrame(data: ByteArray): String? {
+        if (data.size < 5) return null
+        val encoding = data[0].toInt() and 0xFF
+        var offset = 4 // encoding (1) + lang (3)
+        
+        // Skip description
+        val termLen = findTerminator(data, offset, encoding)
+        offset += termLen + (if (encoding == 1 || encoding == 2) 2 else 1)
+        if (offset >= data.size) return null
+
+        return decodeText(data.copyOfRange(offset, data.size), encoding)
+    }
+
+    private fun decodeSyltFrame(data: ByteArray): String? {
+        if (data.size < 6) return null
+        val encoding = data[0].toInt() and 0xFF
+        // data[1..3] is lang
+        val timestampFormat = data[4].toInt() and 0xFF // 1 = ms, 2 = frames
+        val contentType = data[5].toInt() and 0xFF // 1 = lyrics
+        if (contentType != 1) return null
+
+        var offset = 6
+        // Skip description
+        val descTermLen = findTerminator(data, offset, encoding)
+        offset += descTermLen + (if (encoding == 1 || encoding == 2) 2 else 1)
+        
+        val lrcBuilder = StringBuilder()
+        while (offset + 4 < data.size) {
+            val textTermLen = findTerminator(data, offset, encoding)
+            val textBytes = data.copyOfRange(offset, offset + textTermLen)
+            val text = decodeText(textBytes, encoding) ?: ""
+            offset += textTermLen + (if (encoding == 1 || encoding == 2) 2 else 1)
+            
+            if (offset + 4 > data.size) break
+            
+            val timestamp = decodeInt(data.copyOfRange(offset, offset + 4)).toLong()
+            // We assume ms format (1) as it's the standard for lyrics
+            
+            if (text.isNotBlank() || lrcBuilder.isNotEmpty()) {
+                lrcBuilder.append(formatLrcTime(timestamp)).append(text).append("\n")
+            }
+            offset += 4
+        }
+        
+        return lrcBuilder.toString().takeIf { it.isNotBlank() }
+    }
+
+    private fun formatLrcTime(ms: Long): String {
+        val totalSeconds = ms / 1000
+        val minutes = totalSeconds / 60
+        val seconds = totalSeconds % 60
+        val hundredths = (ms % 1000) / 10
+        return String.format(Locale.US, "[%02d:%02d.%02d]", minutes, seconds, hundredths)
+    }
+
+    private fun findTerminator(data: ByteArray, start: Int, encoding: Int): Int {
+        var i = start
+        val isWide = encoding == 1 || encoding == 2
+        while (i < data.size) {
+            if (isWide) {
+                if (i + 1 < data.size && data[i] == 0.toByte() && data[i + 1] == 0.toByte()) return i - start
+                i += 2
+            } else {
+                if (data[i] == 0.toByte()) return i - start
+                i++
+            }
+        }
+        return data.size - start
+    }
+
+    private fun decodeText(bytes: ByteArray, encoding: Int): String? = runCatching {
+        when (encoding) {
+            0 -> String(bytes, Charsets.ISO_8859_1)
+            1 -> String(bytes, Charsets.UTF_16)
+            2 -> String(bytes, Charsets.UTF_16BE)
+            3 -> String(bytes, Charsets.UTF_8)
+            else -> String(bytes)
+        }
+    }.getOrNull()?.trim()
 
     private fun decodeInt(bytes: ByteArray): Int {
-        return bytes.fold(0) { acc, byte -> (acc shl 8) or (byte.toInt() and 0xFF) }
+        var res = 0
+        for (b in bytes) res = (res shl 8) or (b.toInt() and 0xFF)
+        return res
     }
 
     private fun decodeSynchsafeInt(bytes: ByteArray): Int {
-        return bytes.fold(0) { acc, byte -> (acc shl 7) or (byte.toInt() and 0x7F) }
+        var res = 0
+        for (b in bytes) res = (res shl 7) or (b.toInt() and 0x7F)
+        return res
     }
 
     private fun readFully(input: InputStream, buffer: ByteArray): Boolean {
-        var totalRead = 0
-        while (totalRead < buffer.size) {
-            val read = input.read(buffer, totalRead, buffer.size - totalRead)
+        var total = 0
+        while (total < buffer.size) {
+            val read = input.read(buffer, total, buffer.size - total)
             if (read <= 0) return false
-            totalRead += read
+            total += read
         }
         return true
     }

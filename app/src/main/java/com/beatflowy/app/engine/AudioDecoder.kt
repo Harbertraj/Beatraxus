@@ -20,6 +20,7 @@ internal interface DecoderSink {
 internal interface DecoderControl {
     fun isActive(): Boolean
     fun consumePendingSeekMs(): Long?
+    fun notifySeek(positionMs: Long)
     fun logDebug(message: String)
     fun logWarn(message: String)
 }

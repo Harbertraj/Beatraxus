@@ -29,7 +29,7 @@ import androidx.media.app.NotificationCompat.MediaStyle
 import com.beatflowy.app.MainActivity
 import com.beatflowy.app.R
 import com.beatflowy.app.engine.AudioEngine
-import com.beatflowy.app.engine.OutputMode
+import com.beatflowy.app.model.OutputMode
 import com.beatflowy.app.engine.OutputRouteState
 import com.beatflowy.app.engine.AudioTrackOutput
 import com.beatflowy.app.engine.PlaybackState
@@ -40,8 +40,13 @@ import com.beatflowy.app.widget.MusicWidgetKeys
 import com.beatflowy.app.widget.MusicWidgetLarge
 import com.beatflowy.app.widget.MusicWidgetMedium
 import com.beatflowy.app.widget.MusicWidgetSmall
+import com.beatflowy.app.repository.DspPreferences
 import kotlinx.coroutines.*
-import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 
 class AudioPlaybackService : Service() {
     private val binder = LocalBinder()
@@ -49,10 +54,18 @@ class AudioPlaybackService : Service() {
     private lateinit var audioOutput: AudioTrackOutput
     private lateinit var mediaSession: MediaSessionCompat
     private lateinit var audioManager: AudioManager
+    private lateinit var dspPreferences: DspPreferences
     private var audioFocusRequest: AudioFocusRequest? = null
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private val _outputRouteStateFlow = MutableStateFlow(OutputRouteState())
     val outputRouteStateFlow: StateFlow<OutputRouteState> = _outputRouteStateFlow.asStateFlow()
+    
+    // Playback control state
+    private var playbackJob: Job? = null
+    private var originalPlaylist: List<Song> = emptyList()
+    private var playlist: List<Song> = emptyList()
+    private var currentIndex: Int = -1
+
     private val audioDeviceCallback = object : AudioDeviceCallback() {
         override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>) {
             refreshOutputRoute(reconfigure = true)
@@ -65,6 +78,8 @@ class AudioPlaybackService : Service() {
 
     private var lastSongId: String? = null
     private var currentAlbumArt: Bitmap? = null
+    private var currentAlbumArtSongId: String? = null
+    private var albumArtLoadJob: Job? = null
 
     inner class LocalBinder : Binder() {
         fun getService(): AudioPlaybackService = this@AudioPlaybackService
@@ -72,6 +87,7 @@ class AudioPlaybackService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        dspPreferences = DspPreferences(this)
         audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         audioOutput = AudioTrackOutput(this)
         engine = AudioEngine(this, audioOutput)
@@ -91,15 +107,19 @@ class AudioPlaybackService : Service() {
 
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, createNotification())
+
+        serviceScope.launch {
+            dspPreferences.dspConfig.collectLatest { config ->
+                engine.updateDspConfig(config)
+            }
+        }
         
-        // Handle song completion for Loop/Repeat and Next
         serviceScope.launch {
             engine.onCompletion.collect {
                 handleCompletion()
             }
         }
 
-        // Update notification and widgets when playback state changes
         serviceScope.launch {
             engine.playbackStateFlow
                 .collectLatest { state ->
@@ -107,28 +127,27 @@ class AudioPlaybackService : Service() {
                     
                     if (songChanged) {
                         lastSongId = state.currentSong?.id
-                        // Load art in background to not block widget updates
-                        serviceScope.launch {
+                        albumArtLoadJob?.cancel()
+                        albumArtLoadJob = serviceScope.launch {
                             loadAlbumArt(state.currentSong)
                             updateNotification()
                         }
                     }
 
-                    // Update widgets and notification immediately
                     updateAllWidgets(state)
-                    updateNotification()
+                    if (!songChanged) updateNotification()
                 }
         }
     }
 
     private suspend fun loadAlbumArt(song: Song?) {
-        currentAlbumArt = withContext(Dispatchers.IO) {
+        if (song?.id == currentAlbumArtSongId && currentAlbumArt != null) return
+        val loaded = withContext(Dispatchers.IO) {
             val uri = song?.albumArtUri ?: return@withContext null
             try {
                 contentResolver.openInputStream(uri)?.use { input ->
                     val original = BitmapFactory.decodeStream(input)
                     if (original != null) {
-                        // Scale down to avoid transaction too large exception (max 500x500 is safe)
                         val size = 500
                         val ratio = original.width.toFloat() / original.height.toFloat()
                         val w = if (ratio > 1) size else (size * ratio).toInt()
@@ -140,6 +159,13 @@ class AudioPlaybackService : Service() {
                 null
             }
         }
+        if (loaded != null) {
+            currentAlbumArt = loaded
+            currentAlbumArtSongId = song?.id
+        } else if (song == null) {
+            currentAlbumArt = null
+            currentAlbumArtSongId = null
+        }
     }
 
     private fun handleCompletion() {
@@ -149,9 +175,7 @@ class AudioPlaybackService : Service() {
                 val song = engine.playbackStateFlow.value.currentSong
                 if (song != null) engine.play(song)
             }
-            RepeatMode.ALL -> {
-                next()
-            }
+            RepeatMode.ALL -> next()
             RepeatMode.OFF -> {
                 if (playlist.isNotEmpty() && currentIndex < playlist.size - 1) {
                     next()
@@ -183,7 +207,6 @@ class AudioPlaybackService : Service() {
         val shuffleOn = state.shuffleMode
         val repeatMode = state.repeatMode.name
 
-        // Use a separate scope to ensure updates complete and don't block main thread
         serviceScope.launch(Dispatchers.Default) {
             try {
                 val context = this@AudioPlaybackService
@@ -211,21 +234,15 @@ class AudioPlaybackService : Service() {
                             }
                             widget.update(context, id)
                         } catch (e: Exception) {
-                            Log.e("AudioPlaybackService", "Error updating widget instance $id", e)
                         }
                     }
                 }
             } catch (e: Exception) {
-                Log.e("AudioPlaybackService", "Failed to update widgets", e)
             }
         }
     }
 
     override fun onBind(intent: Intent): IBinder = binder
-
-    private var originalPlaylist: List<Song> = emptyList()
-    private var playlist: List<Song> = emptyList()
-    private var currentIndex: Int = -1
 
     private val _upcomingSongs = MutableStateFlow<List<Song>>(emptyList())
     val upcomingSongs: StateFlow<List<Song>> = _upcomingSongs.asStateFlow()
@@ -250,9 +267,7 @@ class AudioPlaybackService : Service() {
                     engine.stop()
                 }
             }
-            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
-                // Ducking not implemented
-            }
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {}
             AudioManager.AUDIOFOCUS_GAIN -> {
                 if (!engine.playbackStateFlow.value.isPlaying && playlist.isNotEmpty()) {
                     engine.resume()
@@ -293,6 +308,7 @@ class AudioPlaybackService : Service() {
     }
 
     fun togglePlayPause() {
+        playbackJob?.cancel()
         if (engine.playbackStateFlow.value.isPlaying) {
             engine.stop()
             abandonAudioFocus()
@@ -310,20 +326,39 @@ class AudioPlaybackService : Service() {
     }
 
     fun next() {
-        if (playlist.isEmpty()) return
-        if (requestAudioFocus()) {
-            currentIndex = (currentIndex + 1) % playlist.size
-            engine.play(playlist[currentIndex])
-            updateUpcomingSongs()
-        }
+        performTrackChange(1)
     }
 
     fun previous() {
+        performTrackChange(-1)
+    }
+    
+    /**
+     * Proper track change system:
+     * 1. Cancel any pending playback requests.
+     * 2. Update the target index.
+     * 3. Update the UI title immediately via prepare().
+     * 4. Debounce (150ms) before starting actual playback.
+     */
+    private fun performTrackChange(delta: Int) {
         if (playlist.isEmpty()) return
-        if (requestAudioFocus()) {
-            currentIndex = if (currentIndex <= 0) playlist.size - 1 else currentIndex - 1
-            engine.play(playlist[currentIndex])
-            updateUpcomingSongs()
+        
+        playbackJob?.cancel()
+        
+        currentIndex = (currentIndex + delta) % playlist.size
+        if (currentIndex < 0) currentIndex += playlist.size
+        
+        val nextSong = playlist[currentIndex]
+        
+        // Requirement: Update UI title immediately, but keep playing state as-is or false
+        engine.prepare(nextSong)
+        
+        playbackJob = serviceScope.launch {
+            delay(150) // Debounce for rapid presses
+            if (isActive && requestAudioFocus()) {
+                engine.play(nextSong)
+                updateUpcomingSongs()
+            }
         }
     }
 
@@ -422,7 +457,6 @@ class AudioPlaybackService : Service() {
         mutable.add(to, item)
         playlist = mutable
         
-        // Update currentIndex if the current song was moved or affected by the move
         if (from == currentIndex) {
             currentIndex = to
         } else if (from < currentIndex && to >= currentIndex) {
@@ -575,7 +609,6 @@ class AudioPlaybackService : Service() {
         val state = engine.playbackStateFlow.value
         val song = state.currentSong
 
-        // Update Metadata
         if (song != null) {
             val metadataBuilder = android.support.v4.media.MediaMetadataCompat.Builder()
                 .putString(android.support.v4.media.MediaMetadataCompat.METADATA_KEY_TITLE, song.title)
@@ -639,15 +672,10 @@ class AudioPlaybackService : Service() {
     }
 
     override fun onDestroy() {
-        // Update widgets one last time to reflect stopped state
         val finalState = engine.playbackStateFlow.value.copy(isPlaying = false)
-        
-        // Use GlobalScope or a new scope that isn't tied to the service's lifecycle 
-        // to ensure the final widget update actually happens
         CoroutineScope(Dispatchers.Default + SupervisorJob()).launch {
             updateAllWidgets(finalState)
         }
-
         serviceScope.cancel()
         audioManager.unregisterAudioDeviceCallback(audioDeviceCallback)
         engine.release()

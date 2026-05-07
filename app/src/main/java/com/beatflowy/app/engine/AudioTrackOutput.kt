@@ -7,52 +7,67 @@ import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioTrack
 import android.os.Build
+import android.util.Log
+import com.beatflowy.app.model.DvcMode
+import com.beatflowy.app.model.OutputMode
+import com.beatflowy.app.model.SampleFormat
 import kotlin.math.roundToInt
 
 class AudioTrackOutput(
     context: Context
 ) : AudioOutput {
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+    private val stateLock = Any()
 
+    @Volatile
     private var audioTrack: AudioTrack? = null
+    
     private var sampleRate = 44_100
     private var targetSampleRate = 44_100
+    private var sampleFormat = SampleFormat.AUTO
     private var channels = 2
     private var totalFramesWritten = 0L
     private var playbackHeadWraps = 0L
     private var lastPlaybackHeadPosition = 0
-    private var selectedMode = OutputMode.STANDARD_AUDIO_TRACK
-    private var activeMode = OutputMode.STANDARD_AUDIO_TRACK
+    private var playbackHeadOffset = 0L
+    private var selectedMode = OutputMode.AAUDIO
+    private var activeMode = OutputMode.AAUDIO
     private var outputDeviceName = OutputDeviceType.SPEAKER.displayName
     private var preferredDevice: AudioDeviceInfo? = null
     private var currentEncoding = AudioFormat.ENCODING_PCM_FLOAT
     private var currentBytesPerSample = 4
     private var supportedDirectRates: List<Int> = emptyList()
+    private var dvcEnabled = true
+    private var dvcMode = DvcMode.DAC
+    private var dvcLevel = 1f
+    private var ditherState = 0x1234ABCD
 
     fun setOutputMode(mode: OutputMode) {
-        selectedMode = mode
+        synchronized(stateLock) {
+            selectedMode = mode
+        }
     }
 
-    fun selectedOutputMode(): OutputMode = selectedMode
+    fun selectedOutputMode(): OutputMode = synchronized(stateLock) { selectedMode }
 
-    fun refreshRouteState(): OutputRouteState {
+    fun refreshRouteState(): OutputRouteState = synchronized(stateLock) {
         val device = resolvePreferredOutputDevice()
         preferredDevice = device
         outputDeviceName = deviceTypeLabel(device)
         supportedDirectRates = detectDirectRates()
         val maxDirectRate = supportedDirectRates.maxOrNull() ?: 48_000
-        val hiResSupported = supportedDirectRates.any { it > 48_000 }
+        val hiResSupported = supportedDirectRates.any { it > 48_000 } || Build.MANUFACTURER.contains("MTK", ignoreCase = true) || Build.HARDWARE.contains("mt", ignoreCase = true)
         val summary = if (hiResSupported) {
-            "Direct PCM available up to ${formatRate(maxDirectRate)} on $outputDeviceName"
+            "MTK HiFi / Direct PCM available on $outputDeviceName"
         } else {
             "Direct hi-res not available on $outputDeviceName"
         }
         return OutputRouteState(
             selectedMode = selectedMode,
-            activeMode = if (selectedMode == OutputMode.HI_RES_DIRECT && hiResSupported) {
-                OutputMode.HI_RES_DIRECT
+            activeMode = if (selectedMode == OutputMode.HI_RES && hiResSupported) {
+                OutputMode.HI_RES
             } else {
-                OutputMode.STANDARD_AUDIO_TRACK
+                OutputMode.AAUDIO
             },
             outputDevice = outputDeviceName,
             hiResDirectSupported = hiResSupported,
@@ -61,62 +76,123 @@ class AudioTrackOutput(
         )
     }
 
-    override fun init(sampleRate: Int, channels: Int, bitDepth: Int): Boolean {
+    override fun init(sampleRate: Int, channels: Int, bitDepth: Int): Boolean = synchronized(stateLock) {
         refreshRouteState()
-        this.sampleRate = if (targetSampleRate > 0) targetSampleRate else sampleRate
-        this.channels = channels
+        
         val channelConfig = when (channels) {
             1 -> AudioFormat.CHANNEL_OUT_MONO
             2 -> AudioFormat.CHANNEL_OUT_STEREO
             else -> AudioFormat.CHANNEL_OUT_STEREO
         }
 
-        val directEncoding = chooseDirectEncoding(bitDepth)
-        val directSupported = selectedMode == OutputMode.HI_RES_DIRECT &&
-            isDirectPlaybackSupported(this.sampleRate, channelConfig, directEncoding)
+        activeMode = if (selectedMode == OutputMode.HI_RES) {
+            val supportedEncodings = listOf(
+                AudioFormat.ENCODING_PCM_FLOAT,
+                AudioFormat.ENCODING_PCM_32BIT,
+                AudioFormat.ENCODING_PCM_24BIT_PACKED
+            ).filter { enc -> 
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    isDirectPlaybackSupported(sampleRate, channelConfig, enc)
+                } else false
+            }
 
-        currentEncoding = if (directSupported) directEncoding else AudioFormat.ENCODING_PCM_FLOAT
+            if (supportedEncodings.isNotEmpty()) {
+                OutputMode.HI_RES
+            } else {
+                if (sampleRate > 48000 && isDirectPlaybackSupported(sampleRate, channelConfig, AudioFormat.ENCODING_PCM_16BIT)) {
+                    OutputMode.HI_RES
+                } else {
+                    OutputMode.AAUDIO
+                }
+            }
+        } else {
+            OutputMode.AAUDIO
+        }
+
+        this.sampleRate = resolveSupportedSampleRate(if (targetSampleRate > 0) targetSampleRate else sampleRate)
+        this.channels = channels
+        currentEncoding = resolveBestEncoding(bitDepth, channelConfig)
         currentBytesPerSample = bytesPerSample(currentEncoding)
-        activeMode = if (directSupported) OutputMode.HI_RES_DIRECT else OutputMode.STANDARD_AUDIO_TRACK
 
         val minBuffer = AudioTrack.getMinBufferSize(this.sampleRate, channelConfig, currentEncoding)
         val bufferSize = maxOf(minBuffer * 4, this.sampleRate * channels * currentBytesPerSample / 5)
         if (bufferSize <= 0) return false
 
         try {
-            audioTrack?.let {
-                it.stop()
-                it.release()
+            // Important: Release old track outside of lock if possible, but here we are in stateLock.
+            // Since stop() and flush() are now not synchronized on stateLock, we can safely call them.
+            val oldTrack = audioTrack
+            audioTrack = null // Disconnect immediately
+            
+            oldTrack?.let {
+                try {
+                    it.pause()
+                    it.flush()
+                    it.stop()
+                    it.release()
+                } catch (e: Exception) {
+                    Log.e("AudioTrackOutput", "Error releasing old track", e)
+                }
             }
+            
+            val audioAttributes = AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_MEDIA)
+                .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).apply {
+                    if (activeMode == OutputMode.HI_RES) {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                            setFlags(AudioAttributes.FLAG_HW_AV_SYNC)
+                        }
+                    }
+                }
+                .build()
+
+            val audioFormat = AudioFormat.Builder()
+                .setEncoding(currentEncoding)
+                .setSampleRate(this.sampleRate)
+                .setChannelMask(channelConfig)
+                .build()
+
             val builder = AudioTrack.Builder()
-                .setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_MEDIA)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                        .build()
-                )
-                .setAudioFormat(
-                    AudioFormat.Builder()
-                        .setEncoding(currentEncoding)
-                        .setSampleRate(this.sampleRate)
-                        .setChannelMask(channelConfig)
-                        .build()
-                )
+                .setAudioAttributes(audioAttributes)
+                .setAudioFormat(audioFormat)
                 .setBufferSizeInBytes(bufferSize)
                 .setTransferMode(AudioTrack.MODE_STREAM)
 
-            if (activeMode == OutputMode.STANDARD_AUDIO_TRACK) {
+            if (activeMode == OutputMode.AAUDIO) {
                 builder.setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY)
+            } else {
+                builder.setPerformanceMode(AudioTrack.PERFORMANCE_MODE_NONE)
             }
 
-            audioTrack = builder.build()
+            val track = builder.build()
+
+            if (track.state != AudioTrack.STATE_INITIALIZED) {
+                track.release()
+                val fallbackAttributes = AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                    .build()
+                
+                audioTrack = AudioTrack.Builder()
+                    .setAudioAttributes(fallbackAttributes)
+                    .setAudioFormat(audioFormat)
+                    .setBufferSizeInBytes(bufferSize)
+                    .setTransferMode(AudioTrack.MODE_STREAM)
+                    .setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY)
+                    .build()
+            } else {
+                audioTrack = track
+            }
+
             if (preferredDevice != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 audioTrack?.setPreferredDevice(preferredDevice)
             }
             totalFramesWritten = 0L
             playbackHeadWraps = 0L
             lastPlaybackHeadPosition = 0
-        } catch (_: Exception) {
+            playbackHeadOffset = 0L
+        } catch (e: Exception) {
+            Log.e("AudioTrackOutput", "Init failed", e)
             return false
         }
 
@@ -124,42 +200,54 @@ class AudioTrackOutput(
     }
 
     override fun start() {
+        val track = audioTrack ?: return
         try {
-            audioTrack?.play()
-        } catch (_: Exception) {
-        }
+            track.setVolume(if (shouldUseTrackVolume()) dvcLevel.coerceIn(0f, 1f) else 1f)
+            track.play()
+        } catch (_: Exception) {}
     }
 
     override fun stop() {
+        val track = audioTrack
         try {
-            audioTrack?.pause()
-            audioTrack?.flush()
-            totalFramesWritten = 0L
-            playbackHeadWraps = 0L
-            lastPlaybackHeadPosition = 0
-        } catch (_: Exception) {
-        }
+            track?.let {
+                if (it.playState == AudioTrack.PLAYSTATE_PLAYING) {
+                    it.pause()
+                    it.flush()
+                }
+            }
+        } catch (_: Exception) {}
+        totalFramesWritten = 0L
+        playbackHeadWraps = 0L
+        lastPlaybackHeadPosition = 0
     }
 
     override fun flush() {
+        val track = audioTrack
         try {
-            audioTrack?.flush()
-            totalFramesWritten = 0L
-            playbackHeadWraps = 0L
-            lastPlaybackHeadPosition = 0
-        } catch (_: Exception) {
-        }
+            track?.let {
+                it.pause()
+                it.flush()
+                playbackHeadOffset = getAbsolutePlaybackHeadPosition()
+                totalFramesWritten = 0L
+                if (it.state == AudioTrack.STATE_INITIALIZED) {
+                    it.play()
+                }
+            }
+        } catch (_: Exception) {}
     }
 
     override fun release() {
-        audioTrack?.let {
-            try {
-                it.stop()
-                it.release()
-            } catch (_: Exception) {
+        synchronized(stateLock) {
+            val track = audioTrack
+            audioTrack = null
+            track?.let {
+                try {
+                    it.stop()
+                    it.release()
+                } catch (_: Exception) {}
             }
         }
-        audioTrack = null
     }
 
     override fun write(data: FloatArray, offsetInSamples: Int, frameCount: Int): Int {
@@ -170,13 +258,19 @@ class AudioTrackOutput(
                 AudioFormat.ENCODING_PCM_16BIT -> {
                     val buffer = toPcm16(data, offsetInSamples, sampleCount)
                     val writtenBytes = track.write(buffer, 0, buffer.size, AudioTrack.WRITE_BLOCKING)
-                    if (writtenBytes > 0) writtenBytes / (channels * currentBytesPerSample) else writtenBytes
+                    if (writtenBytes > 0) writtenBytes / (channels * 2) else writtenBytes
                 }
 
                 AudioFormat.ENCODING_PCM_24BIT_PACKED -> {
                     val buffer = toPcm24(data, offsetInSamples, sampleCount)
                     val writtenBytes = track.write(buffer, 0, buffer.size, AudioTrack.WRITE_BLOCKING)
-                    if (writtenBytes > 0) writtenBytes / (channels * currentBytesPerSample) else writtenBytes
+                    if (writtenBytes > 0) writtenBytes / (channels * 3) else writtenBytes
+                }
+
+                AudioFormat.ENCODING_PCM_32BIT -> {
+                    val buffer = toPcm32(data, offsetInSamples, sampleCount)
+                    val writtenBytes = track.write(buffer, 0, buffer.size, AudioTrack.WRITE_BLOCKING)
+                    if (writtenBytes > 0) writtenBytes / (channels * 4) else writtenBytes
                 }
 
                 else -> {
@@ -194,6 +288,10 @@ class AudioTrackOutput(
     }
 
     override fun playbackPositionFrames(): Long {
+        return (getAbsolutePlaybackHeadPosition() - playbackHeadOffset).coerceAtLeast(0L)
+    }
+
+    private fun getAbsolutePlaybackHeadPosition(): Long {
         val track = audioTrack ?: return 0L
         return try {
             val head = track.playbackHeadPosition
@@ -208,40 +306,112 @@ class AudioTrackOutput(
     }
 
     override fun setTargetSampleRate(sampleRate: Int) {
-        targetSampleRate = sampleRate.coerceIn(8_000, 192_000)
-    }
-
-    override fun outputSampleRate(): Int = sampleRate
-
-    override fun outputPathLabel(): String {
-        return if (activeMode == OutputMode.HI_RES_DIRECT) {
-            "Hi-Res Direct"
-        } else {
-            "AudioTrack"
+        synchronized(stateLock) {
+            targetSampleRate = sampleRate
         }
     }
 
-    override fun outputDeviceLabel(): String = outputDeviceName
+    override fun setDvcState(enabled: Boolean, mode: String, level: Float) {
+        synchronized(stateLock) {
+            dvcEnabled = enabled
+            dvcMode = DvcMode.entries.firstOrNull { it.name == mode } ?: DvcMode.DAC
+            dvcLevel = level.coerceIn(0f, 1f)
+            runCatching {
+                audioTrack?.setVolume(if (shouldUseTrackVolume()) dvcLevel else 1f)
+            }
+        }
+    }
+
+    override fun setSampleFormat(format: SampleFormat) {
+        synchronized(stateLock) {
+            this.sampleFormat = format
+        }
+    }
+
+    override fun outputSampleRate(): Int = synchronized(stateLock) { sampleRate }
+    override fun outputBitDepth(): Int = synchronized(stateLock) { currentBytesPerSample * 8 }
+
+    override fun outputPathLabel(): String = synchronized(stateLock) {
+        if (activeMode == OutputMode.HI_RES) "MTK HiFi" else "AAudio"
+    }
+
+    override fun outputDeviceLabel(): String = synchronized(stateLock) { outputDeviceName }
 
     override fun estimatedLatencyMs(): Int {
         val queuedFrames = (totalFramesWritten - playbackPositionFrames()).coerceAtLeast(0L)
-        if (sampleRate <= 0) return 0
-        return ((queuedFrames * 1000L) / sampleRate).toInt()
+        val rate = synchronized(stateLock) { sampleRate }
+        if (rate <= 0) return 0
+        return ((queuedFrames * 1000L) / rate).toInt()
     }
 
-    private fun chooseDirectEncoding(bitDepth: Int): Int {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && bitDepth > 16) {
-            AudioFormat.ENCODING_PCM_24BIT_PACKED
+    private fun resolveBestEncoding(bitDepth: Int, channelConfig: Int): Int {
+        if (sampleFormat != SampleFormat.AUTO) {
+            return when (sampleFormat) {
+                SampleFormat.PCM_16BIT -> AudioFormat.ENCODING_PCM_16BIT
+                SampleFormat.PCM_24BIT -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) AudioFormat.ENCODING_PCM_24BIT_PACKED else AudioFormat.ENCODING_PCM_16BIT
+                SampleFormat.PCM_32BIT -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) AudioFormat.ENCODING_PCM_32BIT else AudioFormat.ENCODING_PCM_FLOAT
+                SampleFormat.FLOAT_32BIT -> AudioFormat.ENCODING_PCM_FLOAT
+                else -> AudioFormat.ENCODING_PCM_FLOAT
+            }
+        }
+
+        if (activeMode == OutputMode.HI_RES) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && isDirectPlaybackSupported(sampleRate, channelConfig, AudioFormat.ENCODING_PCM_32BIT)) {
+                return AudioFormat.ENCODING_PCM_32BIT
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && isDirectPlaybackSupported(sampleRate, channelConfig, AudioFormat.ENCODING_PCM_24BIT_PACKED)) {
+                return AudioFormat.ENCODING_PCM_24BIT_PACKED
+            }
+            if (isDirectPlaybackSupported(sampleRate, channelConfig, AudioFormat.ENCODING_PCM_FLOAT)) {
+                return AudioFormat.ENCODING_PCM_FLOAT
+            }
+            return AudioFormat.ENCODING_PCM_16BIT
+        }
+
+        return if (dvcEnabled || bitDepth > 16) {
+            AudioFormat.ENCODING_PCM_FLOAT
         } else {
             AudioFormat.ENCODING_PCM_16BIT
         }
     }
 
+    private fun resolveSupportedSampleRate(requestedRate: Int): Int {
+        val device = preferredDevice ?: resolvePreferredOutputDevice()
+        val isBluetooth = device?.type in BLUETOOTH_TYPES
+        val isUsb = device?.type == AudioDeviceInfo.TYPE_USB_DEVICE || device?.type == AudioDeviceInfo.TYPE_USB_HEADSET
+        
+        if (isBluetooth) {
+            return BLUETOOTH_RATE_CANDIDATES.minByOrNull { kotlin.math.abs(it - requestedRate) } ?: 48_000
+        }
+
+        if (selectedMode == OutputMode.HI_RES) {
+            val directRates = detectDirectRates().sortedDescending()
+            if (directRates.isNotEmpty()) {
+                if (directRates.contains(requestedRate)) return requestedRate
+                return directRates.firstOrNull { it == 192000 }
+                    ?: directRates.firstOrNull { it == 176400 }
+                    ?: directRates.firstOrNull { it == 96000 }
+                    ?: directRates.firstOrNull { it == 88200 }
+                    ?: directRates.first()
+            }
+        }
+        
+        if (isUsb) {
+            val directRates = detectDirectRates()
+            return directRates.minByOrNull { kotlin.math.abs(it - requestedRate) } ?: requestedRate
+        }
+
+        return requestedRate
+    }
+
     private fun detectDirectRates(): List<Int> {
         val channelMask = AudioFormat.CHANNEL_OUT_STEREO
+        val encodings = mutableListOf(AudioFormat.ENCODING_PCM_16BIT)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) encodings.add(AudioFormat.ENCODING_PCM_24BIT_PACKED)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) encodings.add(AudioFormat.ENCODING_PCM_32BIT)
+
         return DIRECT_RATE_CANDIDATES.filter { rate ->
-            isDirectPlaybackSupported(rate, channelMask, AudioFormat.ENCODING_PCM_24BIT_PACKED) ||
-                isDirectPlaybackSupported(rate, channelMask, AudioFormat.ENCODING_PCM_16BIT)
+            encodings.any { enc -> isDirectPlaybackSupported(rate, channelMask, enc) }
         }
     }
 
@@ -252,16 +422,21 @@ class AudioTrackOutput(
     ): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return false
         return runCatching {
+            val attrBuilder = AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_MEDIA)
+                .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+            
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                attrBuilder.setFlags(AudioAttributes.FLAG_HW_AV_SYNC)
+            }
+
             AudioTrack.isDirectPlaybackSupported(
                 AudioFormat.Builder()
                     .setEncoding(encoding)
                     .setSampleRate(sampleRate)
                     .setChannelMask(channelMask)
                     .build(),
-                AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_MEDIA)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                    .build()
+                attrBuilder.build()
             )
         }.getOrDefault(false)
     }
@@ -303,7 +478,8 @@ class AudioTrackOutput(
         return when (encoding) {
             AudioFormat.ENCODING_PCM_16BIT -> 2
             AudioFormat.ENCODING_PCM_24BIT_PACKED -> 3
-            else -> 4
+            AudioFormat.ENCODING_PCM_32BIT -> 4
+            else -> 4 // Float
         }
     }
 
@@ -312,7 +488,7 @@ class AudioTrackOutput(
         var inIndex = offset
         var outIndex = 0
         repeat(sampleCount) {
-            val sample = (data[inIndex++].coerceIn(-1f, 1f) * Short.MAX_VALUE).roundToInt().toShort()
+            val sample = (data[inIndex++] * Short.MAX_VALUE + tpdfDither(1f)).roundToInt().coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt()).toShort()
             buffer[outIndex++] = (sample.toInt() and 0xFF).toByte()
             buffer[outIndex++] = ((sample.toInt() shr 8) and 0xFF).toByte()
         }
@@ -324,7 +500,7 @@ class AudioTrackOutput(
         var inIndex = offset
         var outIndex = 0
         repeat(sampleCount) {
-            val sample = (data[inIndex++].coerceIn(-1f, 1f) * PCM_24_MAX).roundToInt()
+            val sample = (data[inIndex++] * PCM_24_MAX + tpdfDither(256f)).roundToInt().coerceIn(-8388608, 8388607)
             buffer[outIndex++] = (sample and 0xFF).toByte()
             buffer[outIndex++] = ((sample shr 8) and 0xFF).toByte()
             buffer[outIndex++] = ((sample shr 16) and 0xFF).toByte()
@@ -332,17 +508,42 @@ class AudioTrackOutput(
         return buffer
     }
 
-    private fun formatRate(sampleRate: Int): String {
-        return if (sampleRate % 1000 == 0) {
-            "${sampleRate / 1000} kHz"
-        } else {
-            "${sampleRate / 1000f} kHz"
+    private fun toPcm32(data: FloatArray, offset: Int, sampleCount: Int): ByteArray {
+        val buffer = ByteArray(sampleCount * 4)
+        var inIndex = offset
+        var outIndex = 0
+        repeat(sampleCount) {
+            val sample = (data[inIndex++] * Int.MAX_VALUE).roundToInt()
+            buffer[outIndex++] = (sample and 0xFF).toByte()
+            buffer[outIndex++] = ((sample shr 8) and 0xFF).toByte()
+            buffer[outIndex++] = ((sample shr 16) and 0xFF).toByte()
+            buffer[outIndex++] = ((sample shr 24) and 0xFF).toByte()
         }
+        return buffer
+    }
+
+    private fun shouldUseTrackVolume(): Boolean {
+        val device = preferredDevice
+        val bluetooth = device?.type in BLUETOOTH_TYPES
+        return dvcEnabled && when (dvcMode) {
+            DvcMode.DAC -> !bluetooth
+            DvcMode.BLUETOOTH -> bluetooth
+            DvcMode.SYSTEM -> false
+        }
+    }
+
+    private fun tpdfDither(scale: Float): Float {
+        ditherState = 1664525 * ditherState + 1013904223
+        val a = ((ditherState ushr 1) and 0x7FFF) / 32767f
+        ditherState = 1664525 * ditherState + 1013904223
+        val b = ((ditherState ushr 1) and 0x7FFF) / 32767f
+        return (a - b) / scale
     }
 
     companion object {
         private const val PCM_24_MAX = 8_388_607f
         private val DIRECT_RATE_CANDIDATES = listOf(44_100, 48_000, 88_200, 96_000, 176_400, 192_000)
+        private val BLUETOOTH_RATE_CANDIDATES = listOf(44_100, 48_000)
         private val BLUETOOTH_TYPES = setOf(
             AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
             AudioDeviceInfo.TYPE_BLE_HEADSET,

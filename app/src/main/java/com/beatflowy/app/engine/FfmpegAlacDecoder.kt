@@ -43,7 +43,7 @@ internal class FfmpegAlacDecoder(private val context: Context) : AudioDecoder {
                 "channels=${outputFormat.channels}, bitDepth=${format.bitDepth}"
         )
 
-        cleanupStalePipes()
+        // Only cleanup this specific pipe if it somehow existed, but FFmpegKit handles registration.
         val inputSource = FFmpegKitConfig.getSafParameterForRead(context, request.song.uri)
         val pipePath = FFmpegKitConfig.registerNewFFmpegPipe(context)
         val args = buildList {
@@ -86,8 +86,9 @@ internal class FfmpegAlacDecoder(private val context: Context) : AudioDecoder {
                 return@withContext DecodeResult.Failed("Unable to open ffmpeg pipe")
             }
 
-            val byteBuffer = ByteArray(BYTES_PER_BATCH * outputFormat.channels)
-            val floatBuffer = FloatArray(FLOATS_PER_BATCH * outputFormat.channels)
+            val byteBuffer = ByteArray(BYTES_PER_BATCH)
+            val floatBuffer = FloatArray(FLOATS_PER_BATCH)
+            var remainder = 0
 
             while (control.isActive()) {
                 control.consumePendingSeekMs()?.let {
@@ -95,16 +96,35 @@ internal class FfmpegAlacDecoder(private val context: Context) : AudioDecoder {
                     return@withContext DecodeResult.Seek(it)
                 }
 
-                val bytesRead = input.read(byteBuffer)
-                if (bytesRead < 0) break
-                if (bytesRead == 0) {
-                    Thread.sleep(4)
-                    continue
+                // Read into buffer, keeping remainder in mind
+                val bytesToRead = byteBuffer.size - remainder
+                val bytesRead = input.read(byteBuffer, remainder, bytesToRead)
+                
+                if (bytesRead < 0) {
+                    if (remainder > 0) {
+                        // We have partial sample at the end of file, ignore it
+                    }
+                    break
                 }
-
-                val sampleCount = bytesRead / FLOAT_SIZE_BYTES
-                unpackFloats(byteBuffer, floatBuffer, sampleCount)
-                sink.write(floatBuffer, sampleCount)
+                
+                val totalBytes = remainder + bytesRead
+                val sampleCount = totalBytes / FLOAT_SIZE_BYTES
+                
+                if (sampleCount > 0) {
+                    unpackFloats(byteBuffer, floatBuffer, sampleCount)
+                    sink.write(floatBuffer, sampleCount)
+                    
+                    // Move unused bytes to the beginning of buffer
+                    remainder = totalBytes % FLOAT_SIZE_BYTES
+                    if (remainder > 0) {
+                        System.arraycopy(byteBuffer, sampleCount * FLOAT_SIZE_BYTES, byteBuffer, 0, remainder)
+                    }
+                } else {
+                    remainder = totalBytes
+                    if (bytesRead == 0) {
+                        kotlinx.coroutines.delay(10)
+                    }
+                }
             }
 
             if (!control.isActive()) {
@@ -116,10 +136,12 @@ internal class FfmpegAlacDecoder(private val context: Context) : AudioDecoder {
             return@withContext if (ReturnCode.isSuccess(ReturnCode(code))) {
                 DecodeResult.Ended
             } else {
+                if (!control.isActive()) return@withContext DecodeResult.Failed("Playback stopped")
                 control.logWarn("ffmpeg session failed: code=$code logs=${session.allLogsAsString}")
                 DecodeResult.Failed("ffmpeg exit code=$code")
             }
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Log.e(TAG, "ALAC decode failed", e)
             DecodeResult.Failed(e.message)
         } finally {
@@ -250,7 +272,9 @@ internal class FfmpegAlacDecoder(private val context: Context) : AudioDecoder {
             try {
                 return@withContext FileInputStream(pipePath)
             } catch (_: Exception) {
-                if (attempt < 19) Thread.sleep(25)
+                if (attempt < 19) {
+                    kotlinx.coroutines.delay(25)
+                }
             }
         }
         null

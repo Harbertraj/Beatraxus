@@ -24,6 +24,7 @@
         android:theme="@style/Theme.Beatraxus"
         android:hardwareAccelerated="true"
         android:requestLegacyExternalStorage="true"
+        android:enableOnBackInvokedCallback="true"
         tools:targetApi="31">
 
         <activity

@@ -72,7 +72,7 @@ class AutoEqRepository(private val context: Context) {
                     q = match.groupValues[5].toFloatOrNull() ?: 1f
                 )
             }
-            .take(10)
+            .take(32)
             .toList()
 
         return AutoEqProfile(

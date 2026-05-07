@@ -73,4 +73,6 @@ internal class FloatRingBuffer(capacitySamples: Int) {
     }
 
     fun isEmpty(): Boolean = synchronized(lock) { size == 0 }
+
+    fun availableRead(): Int = synchronized(lock) { size }
 }

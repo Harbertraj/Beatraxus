@@ -1,91 +1,109 @@
 package com.beatflowy.app.repository
 
 import com.beatflowy.app.model.LrcLine
-import com.beatflowy.app.model.Word
+import com.beatflowy.app.model.WordTiming
+import java.util.regex.Pattern
 
 object LrcParser {
-    private val lineRegex = Regex("\\[(\\d+):(\\d+)(?:[.:](\\d+))?]\\s*(.*)")
-    private val wordRegex = Regex("<(\\d+):(\\d+)(?:[.:](\\d+))?>\\s*([^<]*)")
+    private val TIME_PATTERN = Pattern.compile("\\[(\\d{2,3}):(\\d{2})(?:[.:](\\d{2,3}))?\\]")
+    private val WORD_TIME_PATTERN = Pattern.compile("<(\\d{2,3}):(\\d{2})(?:[.:](\\d{2,3}))?>")
 
-    fun parse(lrcContent: String): List<LrcLine> {
+    fun parse(lrcContent: String?): List<LrcLine> {
+        if (lrcContent.isNullOrBlank()) return emptyList()
+
         val lines = mutableListOf<LrcLine>()
         val rawLines = lrcContent.lines()
-        
-        // Try parsing as synced LRC first
-        rawLines.forEach { rawLine ->
-            val match = lineRegex.find(rawLine)
-            if (match != null) {
-                val min = match.groupValues[1].toLong()
-                val sec = match.groupValues[2].toLong()
-                val msStr = match.groupValues[3]
-                val ms = when (msStr.length) {
-                    0 -> 0L
-                    1 -> msStr.toLong() * 100
-                    2 -> msStr.toLong() * 10
-                    3 -> msStr.toLong()
-                    else -> 0L
-                }
-                val time = (min * 60 + sec) * 1000 + ms
-                val textWithWords = match.groupValues[4]
-                
-                val words = parseWords(textWithWords)
-                val cleanText = if (words.isNotEmpty()) {
-                    words.joinToString("") { it.text }.trim()
-                } else {
-                    textWithWords.trim()
-                }
-                
-                if (cleanText.isNotEmpty()) {
-                    lines.add(LrcLine(time, cleanText, words))
-                }
+
+        for (rawLine in rawLines) {
+            val trimmedLine = rawLine.trim()
+            if (trimmedLine.isEmpty()) continue
+
+            // 1. Extract leading timestamps
+            val timeMatches = mutableListOf<Long>()
+            val matcher = TIME_PATTERN.matcher(trimmedLine)
+            var lastIndex = 0
+            while (matcher.find()) {
+                if (matcher.start() > lastIndex + 1) break // Gap between timestamps
+                timeMatches.add(parseTime(matcher.group(1), matcher.group(2), matcher.group(3)))
+                lastIndex = matcher.end()
+            }
+
+            if (timeMatches.isEmpty()) continue
+
+            // 2. Extract content and word timings
+            val content = trimmedLine.substring(lastIndex).trim()
+            val wordTimings = parseWordTimings(content)
+            val cleanText = content.replace(WORD_TIME_PATTERN.toRegex(), "").trim()
+
+            for (startTime in timeMatches) {
+                lines.add(LrcLine(startTime, cleanText, wordTimings.takeIf { it.isNotEmpty() }))
             }
         }
 
-        // If no synced lines found, treat as plain text
         if (lines.isEmpty()) {
-            rawLines.filter { it.trim().isNotEmpty() }.forEachIndexed { index, text ->
-                // Assign a dummy time so they show up in order (e.g., 2 seconds per line)
-                lines.add(LrcLine(index * 2000L, text.trim()))
+            return rawLines.filter { it.isNotBlank() }.mapIndexed { index, text ->
+                LrcLine(index * 3000L, text.trim(), duration = 3000L)
             }
         }
 
-        return lines.sortedBy { it.time }
+        // 3. Sort and calculate durations for interpolation
+        val sorted = lines.sortedBy { it.startTime }
+        val result = mutableListOf<LrcLine>()
+        
+        for (i in sorted.indices) {
+            val current = sorted[i]
+            val nextTime = if (i < sorted.size - 1) sorted[i + 1].startTime else current.startTime + 5000L
+            val duration = (nextTime - current.startTime).coerceAtLeast(0L)
+            
+            // Deduplicate: If multiple lines have same startTime, merge them or keep last
+            if (result.isNotEmpty() && result.last().startTime == current.startTime) {
+                // Skip or merge? Usually skip duplicates in LRC
+                continue
+            }
+            
+            result.add(current.copy(duration = duration))
+        }
+
+        return result
     }
 
-    private fun parseWords(text: String): List<Word> {
-        val words = mutableListOf<Word>()
-        val matches = wordRegex.findAll(text).toList()
-        for (i in matches.indices) {
-            val match = matches[i]
-            val min = match.groupValues[1].toLong()
-            val sec = match.groupValues[2].toLong()
-            val msStr = match.groupValues[3]
-            val ms = when (msStr.length) {
-                2 -> msStr.toLong() * 10
-                3 -> msStr.toLong()
-                else -> 0L
-            }
-            val time = (min * 60 + sec) * 1000 + ms
-            val wordText = match.groupValues[4]
-            
-            val duration = if (i < matches.size - 1) {
-                val nextMatch = matches[i + 1]
-                val nMin = nextMatch.groupValues[1].toLong()
-                val nSec = nextMatch.groupValues[2].toLong()
-                val nMsStr = nextMatch.groupValues[3]
-                val nMs = when (nMsStr.length) {
-                    2 -> nMsStr.toLong() * 10
-                    3 -> nMsStr.toLong()
-                    else -> 0L
-                }
-                val nTime = (nMin * 60 + nSec) * 1000 + nMs
-                (nTime - time).coerceAtLeast(0L)
-            } else {
-                500L // Default duration for last word
-            }
-            
-            words.add(Word(time, wordText, duration))
+    private fun parseTime(min: String, sec: String, ms: String?): Long {
+        val m = min.toLong()
+        val s = sec.toLong()
+        val msVal = when (ms?.length ?: 0) {
+            1 -> ms!!.toLong() * 100
+            2 -> ms!!.toLong() * 10
+            3 -> ms!!.toLong()
+            else -> 0L
         }
-        return words
+        return (m * 60 + s) * 1000 + msVal
+    }
+
+    private fun parseWordTimings(text: String): List<WordTiming> {
+        val timings = mutableListOf<WordTiming>()
+        val matcher = WORD_TIME_PATTERN.matcher(text)
+        
+        val temp = mutableListOf<Pair<Long, Int>>() // Time to Start Index of text
+        while (matcher.find()) {
+            temp.add(parseTime(matcher.group(1), matcher.group(2), matcher.group(3)) to matcher.end())
+        }
+
+        for (i in temp.indices) {
+            val (startTime, textStart) = temp[i]
+            val nextTagStart = if (i < temp.size - 1) {
+                val nextMatcher = WORD_TIME_PATTERN.matcher(text)
+                if (nextMatcher.find(textStart)) nextMatcher.start() else text.length
+            } else text.length
+            
+            val wordText = text.substring(textStart, nextTagStart).trim()
+            val duration = if (i < temp.size - 1) {
+                (temp[i + 1].first - startTime).coerceAtLeast(0L)
+            } else 500L
+
+            if (wordText.isNotEmpty()) {
+                timings.add(WordTiming(startTime, duration, wordText))
+            }
+        }
+        return timings
     }
 }

@@ -12,13 +12,14 @@ plugins {
 configure<ApplicationExtension> {
     namespace = "com.beatflowy.app"
     compileSdk = 35
+    ndkVersion = "26.1.10909125"
 
     defaultConfig {
         applicationId = "com.beatflowy.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 3
-        versionName = "2.3.0-beta"
+        versionCode = 4
+        versionName = "2.5.0-stable"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -57,6 +58,13 @@ configure<ApplicationExtension> {
 
     buildFeatures {
         compose = true
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
     }
 
     packaging {
@@ -169,6 +177,9 @@ dependencies {
     // Glance Widgets
     implementation("androidx.glance:glance-appwidget:1.1.1")
     implementation("androidx.glance:glance-material3:1.1.1")
+
+    // DataStore
+    implementation("androidx.datastore:datastore-preferences:1.1.1")
 
     // Native codec fallback for ALAC / M4A parsing and decode
     implementation(files("libs/ffmpeg-kit-full-gpl-6.0-2.aar"))

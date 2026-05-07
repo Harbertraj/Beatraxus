@@ -59,13 +59,25 @@ fun WelcomeScreen(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     var showScanning by remember { mutableStateOf(false) }
     var startAnimation by remember { mutableStateOf(false) }
+    var hasStartedScanning by remember { mutableStateOf(false) }
 
     // Automatically transition to scanning screen based on state
     LaunchedEffect(uiState.isScanning, uiState.permissionDenied) {
         if (uiState.isScanning) {
             showScanning = true
+            hasStartedScanning = true
         } else if (uiState.permissionDenied) {
+            // If permission denied, we might want to stay on first screen to let them try again
             showScanning = false
+        }
+    }
+
+    // Effect to navigate when scanning finishes
+    LaunchedEffect(hasStartedScanning, uiState.isScanning) {
+        if (hasStartedScanning && !uiState.isScanning) {
+            // Give a small delay so user can see 100% for a moment
+            delay(500)
+            onFinish()
         }
     }
 
@@ -118,13 +130,7 @@ fun WelcomeScreen(
         startAnimation = true
     }
 
-    // Effect to navigate when scanning finishes after button click
-    LaunchedEffect(uiState.isScanning, uiState.scanProgress) {
-        if (showScanning && uiState.scanCount > 0 && !uiState.isScanning) {
-            delay(1500) // Give user time to see the results
-            onFinish()
-        }
-    }
+    // Removed the effect that navigated based on scanCount > 0
 
     Box(
         modifier = Modifier
@@ -481,8 +487,10 @@ fun WelcomeScreen(
                                             interactionSource = remember { MutableInteractionSource() },
                                             indication = null,
                                             onClick = {
-                                                onEnterFlow()
-                                                showScanning = true
+                                                if (!uiState.isScanning) {
+                                                    showScanning = true
+                                                    onEnterFlow()
+                                                }
                                             }
                                         )
                                         .alpha(buttonGlowAlpha)
