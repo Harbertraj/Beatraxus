@@ -3,11 +3,15 @@ package com.beatflowy.app.ui.screens
 import android.graphics.Shader
 import android.os.Build
 import android.graphics.RenderEffect as AndroidRenderEffect
-import androidx.compose.animation.AnimatedVisibility
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -16,15 +20,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
-import androidx.compose.material.icons.rounded.Album
-import androidx.compose.material.icons.rounded.AudioFile
-import androidx.compose.material.icons.rounded.GraphicEq
-import androidx.compose.material.icons.rounded.Info
-import androidx.compose.material.icons.rounded.MusicNote
-import androidx.compose.material.icons.rounded.Person
-import androidx.compose.material.icons.rounded.Settings
-import androidx.compose.material.icons.rounded.VolumeUp
+import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -64,6 +62,11 @@ fun SettingsScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     var showInfoPopup by remember { mutableStateOf(false) }
+    var currentSection by remember { mutableStateOf<String?>(null) }
+
+    BackHandler {
+        if (currentSection != null) currentSection = null else onBack()
+    }
 
     val blurEffect = remember {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -77,384 +80,95 @@ fun SettingsScreen(
             blurEffect = blurEffect
         )
 
-        // Only show settings if not showing info
-        androidx.compose.animation.AnimatedVisibility(
-            visible = !showInfoPopup,
-            enter = fadeIn(),
-            exit = fadeOut()
-        ) {
-            Scaffold(
-                containerColor = Color.Transparent,
-                topBar = {
-                    CenterAlignedTopAppBar(
-                        colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = Color.Transparent),
-                        title = { Text("Settings", color = Color.White, fontWeight = FontWeight.Bold) },
-                        navigationIcon = {
-                            IconButton(onClick = onBack) {
-                                Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back", tint = Color.White)
+        Scaffold(
+            containerColor = Color.Transparent,
+            topBar = {
+                CenterAlignedTopAppBar(
+                    colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = Color.Transparent),
+                    title = {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(
+                                text = "SETTINGS",
+                                color = Color.White,
+                                fontWeight = FontWeight.Black,
+                                fontSize = if (currentSection == null) 22.sp else 16.sp,
+                                letterSpacing = 2.sp
+                            )
+                            if (currentSection != null) {
+                                Text(
+                                    text = currentSection!!.uppercase(),
+                                    color = Color.White.copy(0.6f),
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    letterSpacing = 1.sp
+                                )
                             }
                         }
-                    )
-                }
-            ) { padding ->
+                    },
+                    navigationIcon = {
+                        IconButton(onClick = {
+                            if (currentSection != null) currentSection = null else onBack()
+                        }) {
+                            Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back", tint = Color.White)
+                        }
+                    }
+                )
+            }
+        ) { padding ->
+            Crossfade(
+                targetState = currentSection,
+                modifier = Modifier.padding(padding),
+                label = "settings_transition"
+            ) { section ->
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(padding)
                         .verticalScroll(rememberScrollState())
-                        .padding(16.dp)
+                        .padding(horizontal = 16.dp, vertical = 8.dp)
                 ) {
-                    SettingsSection(title = "Audio Engine", icon = Icons.Rounded.GraphicEq) {
-                        val sampleFormats = com.beatflowy.app.model.SampleFormat.entries
-
-                        // Output Mode Selection
-                        Text(
-                            "Output Method",
-                            color = Color.White.copy(0.7f),
-                            fontSize = 14.sp,
-                            modifier = Modifier.padding(bottom = 8.dp)
+                    if (section == null) {
+                        SettingMenuItem(
+                            title = "Audio Engine",
+                            subtitle = "Configure output, sample rates and DVC",
+                            icon = Icons.Rounded.GraphicEq,
+                            iconColor = Color(0xFF4CAF50),
+                            onClick = { currentSection = "Audio Engine" }
                         )
-                        
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutputModeButton(
-                                text = "AAudio",
-                                selected = uiState.outputMode == OutputMode.AAUDIO.name,
-                                onClick = { viewModel.setOutputMode(OutputMode.AAUDIO) },
-                                modifier = Modifier.weight(1f)
-                            )
-                            OutputModeButton(
-                                text = "MTK HiFi",
-                                selected = uiState.outputMode == OutputMode.HI_RES.name,
-                                onClick = { viewModel.setOutputMode(OutputMode.HI_RES) },
-                                enabled = uiState.hiResDirectSupported,
-                                modifier = Modifier.weight(1f)
-                            )
-                        }
-
-                        Spacer(Modifier.height(14.dp))
-
-                        Spacer(Modifier.height(10.dp))
-                        Text(
-                            text = uiState.hiResCapabilitySummary,
-                            color = if (uiState.hiResDirectSupported) PremiumAccent else Color.White.copy(0.5f),
-                            fontSize = 12.sp,
-                            lineHeight = 16.sp
+                        SettingMenuItem(
+                            title = "DSP Enhancements",
+                            subtitle = "Peak limiter and Crossfeed",
+                            icon = Icons.Rounded.Tune,
+                            iconColor = Color(0xFFFF9800),
+                            onClick = { currentSection = "DSP Enhancements" }
                         )
-
-                        Spacer(Modifier.height(16.dp))
-
-                        // Resampling Toggle
-                        Row(
-                            Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Column {
-                                val activeMode = OutputMode.fromName(uiState.outputMode)
-                                Text(activeMode.title, color = Color.White, fontSize = 16.sp)
-                                Text(activeMode.subtitle, color = Color.White.copy(0.5f), fontSize = 12.sp)
-                            }
-                        }
-
-                        Spacer(Modifier.height(18.dp))
-                        DspToggleRow("High-Quality Resampler", uiState.dsp.config.highQualityResampler) {
-                            viewModel.setHighQualityResampler(it)
-                        }
-                        
-                        // Sample Rate Buttons
-                        Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-                            Text("Target Sample Rate", color = Color.White.copy(0.6f), fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                            Spacer(Modifier.height(8.dp))
-                            Row(
-                                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                ResamplerMode.entries.forEach { mode ->
-                                    val isSelected = uiState.dsp.config.resamplerMode == mode
-                                    FilterChip(
-                                        selected = isSelected,
-                                        onClick = { viewModel.setResamplerMode(mode) },
-                                        enabled = uiState.dsp.config.highQualityResampler,
-                                        label = { Text(mode.displayName, color = if (isSelected) Color.Black else if (uiState.dsp.config.highQualityResampler) Color.White else Color.White.copy(0.3f)) },
-                                        colors = FilterChipDefaults.filterChipColors(
-                                            selectedContainerColor = PremiumAccent,
-                                            containerColor = Color.White.copy(0.05f),
-                                            disabledContainerColor = Color.White.copy(0.02f)
-                                        ),
-                                        border = null
-                                    )
-                                }
-                            }
-                        }
-
-                        DspSliderRow(
-                            title = "Cutoff Ratio",
-                            value = uiState.dsp.config.resamplerCutoffRatio,
-                            range = 0.5f..1.0f,
-                            enabled = uiState.dsp.config.highQualityResampler,
-                            valueText = { "${(it * 100).toInt()}%" },
-                            onValueChange = viewModel::setResamplerCutoffRatio
+                        SettingMenuItem(
+                            title = "Replay Gain",
+                            subtitle = "Normalize volume across tracks",
+                            icon = Icons.AutoMirrored.Rounded.VolumeUp,
+                            iconColor = Color(0xFF2196F3),
+                            onClick = { currentSection = "Replay Gain" }
                         )
-                        
-                        Spacer(Modifier.height(8.dp))
-                        
-                        // Sample Format Buttons
-                        Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-                            Text("Target Sample Format", color = Color.White.copy(0.6f), fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                            Spacer(Modifier.height(8.dp))
-                            Row(
-                                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                sampleFormats.forEach { format ->
-                                    val isSelected = uiState.dsp.config.sampleFormat == format
-                                    FilterChip(
-                                        selected = isSelected,
-                                        onClick = { viewModel.setSampleFormat(format) },
-                                        label = { Text(format.displayName, color = if (isSelected) Color.Black else Color.White) },
-                                        colors = FilterChipDefaults.filterChipColors(
-                                            selectedContainerColor = PremiumAccent,
-                                            containerColor = Color.White.copy(0.05f)
-                                        ),
-                                        border = null
-                                    )
-                                }
-                            }
-                        }
-
-                        Spacer(Modifier.height(16.dp))
-                        DspToggleRow("Direct Volume Control", uiState.dsp.config.dvcEnabled) {
-                            viewModel.setDvcEnabled(it)
-                        }
-                        Spacer(Modifier.height(10.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            DvcMode.entries.forEach { mode ->
-                                val isSelected = uiState.dsp.config.dvcMode == mode
-                                FilterChip(
-                                    selected = isSelected,
-                                    onClick = { if (uiState.dsp.config.dvcEnabled) viewModel.setDvcMode(mode) },
-                                    enabled = uiState.dsp.config.dvcEnabled,
-                                    label = { Text(mode.displayName, color = if (isSelected) Color.Black else Color.White) },
-                                    colors = FilterChipDefaults.filterChipColors(
-                                        selectedContainerColor = PremiumAccent,
-                                        containerColor = Color.White.copy(0.05f)
-                                    ),
-                                    border = null
-                                )
-                            }
-                        }
-                        DspSliderRow(
-                            title = "DVC Level",
-                            value = uiState.dsp.config.dvcLevel,
-                            range = 0f..1f,
-                            enabled = uiState.dsp.config.dvcEnabled,
-                            valueText = { "${(it * 100).toInt()}%" },
-                            onValueChange = viewModel::setDvcLevel
+                        SettingMenuItem(
+                            title = "Library",
+                            subtitle = "Manage music folders and scanning",
+                            icon = Icons.Rounded.AudioFile,
+                            iconColor = Color(0xFFE91E63),
+                            onClick = { currentSection = "Library" }
                         )
-                        Spacer(Modifier.height(12.dp))
-                        DspToggleRow("Peak Limiter", uiState.dsp.config.limiterEnabled) {
-                            viewModel.setLimiterEnabled(it)
-                        }
-                    }
-
-                    Spacer(Modifier.height(24.dp))
-
-                    SettingsSection(title = "Replay Gain", icon = Icons.AutoMirrored.Rounded.VolumeUp) {
-                        val config = uiState.dsp.config
-                        DspToggleRow("Enable Replay Gain", config.replayGainEnabled) {
-                            viewModel.setReplayGainEnabled(it)
-                        }
-                        
-                        if (config.replayGainEnabled) {
-                            Spacer(Modifier.height(12.dp))
-                            
-                            // Replay Gain Option Buttons
-                            Text("Processing Mode", color = Color.White.copy(0.6f), fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                            Spacer(Modifier.height(8.dp))
-                            Row(
-                                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                com.beatflowy.app.model.ReplayGainOption.entries.forEach { option ->
-                                    val isSelected = config.replayGainOption == option
-                                    FilterChip(
-                                        selected = isSelected,
-                                        onClick = { viewModel.setReplayGainOption(option) },
-                                        label = { Text(option.displayName, color = if (isSelected) Color.Black else Color.White) },
-                                        colors = FilterChipDefaults.filterChipColors(
-                                            selectedContainerColor = PremiumAccent,
-                                            containerColor = Color.White.copy(0.05f)
-                                        ),
-                                        border = null
-                                    )
-                                }
-                            }
-
-                            Spacer(Modifier.height(16.dp))
-
-                            // Source Buttons
-                            Text("Source", color = Color.White.copy(0.6f), fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                            Spacer(Modifier.height(8.dp))
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                com.beatflowy.app.model.ReplayGainSource.entries.forEach { source ->
-                                    val isSelected = config.replayGainSource == source
-                                    FilterChip(
-                                        selected = isSelected,
-                                        onClick = { viewModel.setReplayGainSource(source) },
-                                        label = { Text(source.displayName, color = if (isSelected) Color.Black else Color.White) },
-                                        modifier = Modifier.weight(1f),
-                                        colors = FilterChipDefaults.filterChipColors(
-                                            selectedContainerColor = PremiumAccent,
-                                            containerColor = Color.White.copy(0.05f)
-                                        ),
-                                        border = null
-                                    )
-                                }
-                            }
-
-                            Spacer(Modifier.height(16.dp))
-
-                            DspSliderRow(
-                                title = "Pre-amplification",
-                                value = config.replayGainPreamp,
-                                range = -15f..15f,
-                                enabled = true,
-                                valueText = { String.format("%.1f dB", it) },
-                                onValueChange = viewModel::setReplayGainPreamp
-                            )
-                        }
-                    }
-                    
-                    Spacer(Modifier.height(24.dp))
-                    
-                    SettingsSection(title = "Library", icon = Icons.Rounded.AudioFile) {
-                        Button(
-                            onClick = { viewModel.startFullScan() },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(0.1f)),
-                            shape = MaterialTheme.shapes.medium,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text("Full Rescan Library", color = Color.White)
-                        }
-                        
-                        Spacer(Modifier.height(12.dp))
-                        
-                        Column(modifier = Modifier.fillMaxWidth()) {
-                            Button(
-                                onClick = { viewModel.quickScan() },
-                                colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(0.1f)),
-                                shape = MaterialTheme.shapes.medium,
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Text("Quick Scan", color = Color.White)
-                            }
-                            
-                            if (uiState.isLoadingLibrary) {
-                                LinearProgressIndicator(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(2.dp)
-                                        .padding(horizontal = 4.dp),
-                                    color = PremiumAccent,
-                                    trackColor = Color.Transparent
-                                )
-                            }
-                        }
-                        
-                        if (uiState.errorMessage != null && (uiState.errorMessage!!.contains("Added") || uiState.errorMessage!!.contains("No new"))) {
-                            Text(
-                                uiState.errorMessage!!,
-                                color = PremiumAccent,
-                                fontSize = 12.sp,
-                                modifier = Modifier.padding(top = 8.dp, start = 4.dp)
-                            )
-                        }
-
-                        Spacer(Modifier.height(16.dp))
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text("Original Quality Album Art", color = Color.White, fontSize = 16.sp)
-                                Spacer(Modifier.width(4.dp))
-                                IconButton(
-                                    onClick = { showInfoPopup = true },
-                                    modifier = Modifier.size(20.dp)
-                                ) {
-                                    Icon(
-                                        Icons.Rounded.Info,
-                                        contentDescription = "Info",
-                                        tint = Color.White.copy(0.4f),
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                }
-                            }
-                            Switch(
-                                checked = uiState.useOriginalQualityArt,
-                                onCheckedChange = { viewModel.setUseOriginalQualityArt(it) },
-                                colors = SwitchDefaults.colors(
-                                    checkedThumbColor = PremiumAccent,
-                                    checkedTrackColor = PremiumAccent.copy(0.3f),
-                                    uncheckedThumbColor = Color.White.copy(0.5f),
-                                    uncheckedTrackColor = Color.White.copy(0.1f)
-                                )
-                            )
-                        }
-                    }
-                    
-                    Spacer(Modifier.height(24.dp))
-                    
-                    SettingsSection(title = "About", icon = Icons.Rounded.Settings) {
-                        val context = LocalContext.current
-                        val uriHandler = LocalUriHandler.current
-                        val versionName = try {
-                            context.packageManager.getPackageInfo(context.packageName, 0).versionName
-                        } catch (e: Exception) {
-                            "Unknown"
-                        }
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Column {
-                                Text("Beatraxus Music player", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                                Text("HarbertRaj", color = Color.White.copy(0.6f), fontSize = 14.sp)
-                                Spacer(Modifier.height(10.dp))
-                                Surface(
-                                    shape = CircleShape,
-                                    color = Color.White.copy(0.15f)
-                                ) {
-                                    Text(
-                                        "v$versionName",
-                                        color = Color.White,
-                                        fontSize = 12.sp,
-                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
-                                    )
-                                }
-                            }
-
-                            IconButton(
-                                onClick = { uriHandler.openUri("https://github.com/Harbertraj/Beatraxus") },
-                                modifier = Modifier.align(Alignment.Top)
-                            ) {
-                                Icon(
-                                    painter = painterResource(R.drawable.ic_github),
-                                    contentDescription = "GitHub",
-                                    tint = Color.White,
-                                    modifier = Modifier.size(28.dp)
-                                )
-                            }
+                        SettingMenuItem(
+                            title = "About",
+                            subtitle = "App version and information",
+                            icon = Icons.Rounded.Info,
+                            iconColor = Color(0xFF9C27B0),
+                            onClick = { currentSection = "About" }
+                        )
+                    } else {
+                        when (section) {
+                            "Audio Engine" -> AudioEngineContent(uiState, viewModel)
+                            "DSP Enhancements" -> DspEnhancementsContent(uiState, viewModel)
+                            "Replay Gain" -> ReplayGainContent(uiState, viewModel)
+                            "Library" -> LibraryContent(uiState, viewModel, onShowInfo = { showInfoPopup = true })
+                            "About" -> AboutContent()
                         }
                     }
                 }
@@ -525,6 +239,583 @@ fun SettingsScreen(
 }
 
 @Composable
+fun SettingMenuItem(
+    title: String,
+    subtitle: String,
+    icon: ImageVector,
+    iconColor: Color,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(42.dp)
+                .clip(CircleShape)
+                .background(iconColor.copy(alpha = 0.15f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = iconColor,
+                modifier = Modifier.size(24.dp)
+            )
+        }
+        
+        Spacer(Modifier.width(16.dp))
+        
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                color = Color.White,
+                fontSize = 17.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                text = subtitle,
+                color = Color.White.copy(alpha = 0.5f),
+                fontSize = 12.sp,
+                lineHeight = 16.sp
+            )
+        }
+        
+        Icon(
+            imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+            contentDescription = null,
+            tint = Color.White.copy(alpha = 0.3f),
+            modifier = Modifier.size(20.dp)
+        )
+    }
+}
+
+@Composable
+fun AudioEngineContent(uiState: com.beatflowy.app.model.PlayerUiState, viewModel: com.beatflowy.app.viewmodel.PlayerViewModel) {
+    val sampleFormats = com.beatflowy.app.model.SampleFormat.entries
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        // Output Mode Selection
+        Text(
+            "Output Method",
+            color = Color.White.copy(0.7f),
+            fontSize = 14.sp,
+            modifier = Modifier.padding(bottom = 8.dp)
+        )
+        
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutputModeButton(
+                text = "AAudio",
+                selected = uiState.outputMode == OutputMode.AAUDIO.name,
+                onClick = { viewModel.setOutputMode(OutputMode.AAUDIO) },
+                modifier = Modifier.weight(1f)
+            )
+            OutputModeButton(
+                text = "MTK HiFi",
+                selected = uiState.outputMode == OutputMode.HI_RES.name,
+                onClick = { viewModel.setOutputMode(OutputMode.HI_RES) },
+                enabled = uiState.hiResDirectSupported,
+                modifier = Modifier.weight(1f)
+            )
+        }
+
+        Spacer(Modifier.height(14.dp))
+
+        Text(
+            text = uiState.hiResCapabilitySummary,
+            color = if (uiState.hiResDirectSupported) PremiumAccent else Color.White.copy(0.5f),
+            fontSize = 12.sp,
+            lineHeight = 16.sp
+        )
+
+        Spacer(Modifier.height(16.dp))
+
+        // Output Info
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column {
+                val activeMode = OutputMode.fromName(uiState.outputMode)
+                Text(activeMode.title, color = Color.White, fontSize = 16.sp)
+                Text(activeMode.subtitle, color = Color.White.copy(0.5f), fontSize = 12.sp)
+            }
+        }
+
+        Spacer(Modifier.height(18.dp))
+        DspToggleRow("High-Quality Resampler", uiState.dsp.config.highQualityResampler) {
+            viewModel.setHighQualityResampler(it)
+        }
+        
+        // Sample Rate Buttons
+        Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+            Text("Target Sample Rate", color = Color.White.copy(0.6f), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                ResamplerMode.entries.forEach { mode ->
+                    val isSelected = uiState.dsp.config.resamplerMode == mode
+                    FilterChip(
+                        selected = isSelected,
+                        onClick = { viewModel.setResamplerMode(mode) },
+                        enabled = uiState.dsp.config.highQualityResampler,
+                        label = { Text(mode.displayName, color = if (isSelected) Color.Black else if (uiState.dsp.config.highQualityResampler) Color.White else Color.White.copy(0.3f)) },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = PremiumAccent,
+                            containerColor = Color.White.copy(0.05f),
+                            disabledContainerColor = Color.White.copy(0.02f)
+                        ),
+                        border = null
+                    )
+                }
+            }
+        }
+
+        DspSliderRow(
+            title = "Cutoff Ratio",
+            value = uiState.dsp.config.resamplerCutoffRatio,
+            range = 0.5f..1.0f,
+            enabled = uiState.dsp.config.highQualityResampler,
+            valueText = { "${(it * 100).toInt()}%" },
+            onValueChange = viewModel::setResamplerCutoffRatio
+        )
+        
+        Spacer(Modifier.height(8.dp))
+        
+        // Sample Format Buttons
+        Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+            Text("Target Sample Format", color = Color.White.copy(0.6f), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                sampleFormats.forEach { format ->
+                    val isSelected = uiState.dsp.config.sampleFormat == format
+                    FilterChip(
+                        selected = isSelected,
+                        onClick = { viewModel.setSampleFormat(format) },
+                        label = { Text(format.displayName, color = if (isSelected) Color.Black else Color.White) },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = PremiumAccent,
+                            containerColor = Color.White.copy(0.05f)
+                        ),
+                        border = null
+                    )
+                }
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+        DspToggleRow("Direct Volume Control", uiState.dsp.config.dvcEnabled) {
+            viewModel.setDvcEnabled(it)
+        }
+        Spacer(Modifier.height(10.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            DvcMode.entries.forEach { mode ->
+                val isSelected = uiState.dsp.config.dvcMode == mode
+                FilterChip(
+                    selected = isSelected,
+                    onClick = { if (uiState.dsp.config.dvcEnabled) viewModel.setDvcMode(mode) },
+                    enabled = uiState.dsp.config.dvcEnabled,
+                    label = { Text(mode.displayName, color = if (isSelected) Color.Black else Color.White) },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = PremiumAccent,
+                        containerColor = Color.White.copy(0.05f)
+                    ),
+                    border = null
+                )
+            }
+        }
+        DspSliderRow(
+            title = "DVC Level",
+            value = uiState.dsp.config.dvcLevel,
+            range = 0f..1f,
+            enabled = uiState.dsp.config.dvcEnabled,
+            valueText = { "${(it * 100).toInt()}%" },
+            onValueChange = viewModel::setDvcLevel
+        )
+        Spacer(Modifier.height(12.dp))
+        DspToggleRow("DC Offset Blocker", uiState.dsp.config.dcBlockerEnabled) {
+            viewModel.setDcBlockerEnabled(it)
+        }
+    }
+}
+
+@Composable
+fun DspEnhancementsContent(uiState: com.beatflowy.app.model.PlayerUiState, viewModel: com.beatflowy.app.viewmodel.PlayerViewModel) {
+    val config = uiState.dsp.config
+    Column(modifier = Modifier.fillMaxWidth()) {
+        DspToggleRow("Peak Limiter", config.limiterEnabled) {
+            viewModel.setLimiterEnabled(it)
+        }
+        Spacer(Modifier.height(12.dp))
+        DspToggleRow("Crossfeed", config.crossfeedEnabled) {
+            viewModel.setCrossfeedEnabled(it)
+        }
+        if (config.crossfeedEnabled) {
+            DspSliderRow(
+                title = "Crossfeed Level",
+                value = config.crossfeedLevel,
+                range = 0f..1f,
+                enabled = true,
+                valueText = { "${(it * 100).toInt()}%" },
+                onValueChange = viewModel::setCrossfeedLevel
+            )
+        }
+    }
+}
+
+@Composable
+fun ReplayGainContent(uiState: com.beatflowy.app.model.PlayerUiState, viewModel: com.beatflowy.app.viewmodel.PlayerViewModel) {
+    val config = uiState.dsp.config
+    Column(modifier = Modifier.fillMaxWidth()) {
+        DspToggleRow("Enable Replay Gain", config.replayGainEnabled) {
+            viewModel.setReplayGainEnabled(it)
+        }
+        
+        if (config.replayGainEnabled) {
+            Spacer(Modifier.height(12.dp))
+            
+            // Replay Gain Option Buttons
+            Text("Processing Mode", color = Color.White.copy(0.6f), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                com.beatflowy.app.model.ReplayGainOption.entries.forEach { option ->
+                    val isSelected = config.replayGainOption == option
+                    FilterChip(
+                        selected = isSelected,
+                        onClick = { viewModel.setReplayGainOption(option) },
+                        label = { Text(option.displayName, color = if (isSelected) Color.Black else Color.White) },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = PremiumAccent,
+                            containerColor = Color.White.copy(0.05f)
+                        ),
+                        border = null
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            // Source Buttons
+            Text("Source", color = Color.White.copy(0.6f), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                com.beatflowy.app.model.ReplayGainSource.entries.forEach { source ->
+                    val isSelected = config.replayGainSource == source
+                    FilterChip(
+                        selected = isSelected,
+                        onClick = { viewModel.setReplayGainSource(source) },
+                        label = { Text(source.displayName, color = if (isSelected) Color.Black else Color.White) },
+                        modifier = Modifier.weight(1f),
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = PremiumAccent,
+                            containerColor = Color.White.copy(0.05f)
+                        ),
+                        border = null
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            DspSliderRow(
+                title = "Pre-amplification",
+                value = config.replayGainPreamp,
+                range = -15f..15f,
+                enabled = true,
+                valueText = { String.format("%.1f dB", it) },
+                onValueChange = viewModel::setReplayGainPreamp
+            )
+        }
+    }
+}
+
+@Composable
+fun LibraryContent(uiState: com.beatflowy.app.model.PlayerUiState, viewModel: com.beatflowy.app.viewmodel.PlayerViewModel, onShowInfo: () -> Unit) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Button(
+            onClick = { viewModel.startFullScan() },
+            colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(0.1f)),
+            shape = MaterialTheme.shapes.medium,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Full Rescan Library", color = Color.White)
+        }
+        
+        Spacer(Modifier.height(12.dp))
+        
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Button(
+                onClick = { viewModel.quickScan() },
+                colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(0.1f)),
+                shape = MaterialTheme.shapes.medium,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Quick Scan", color = Color.White)
+            }
+            
+            if (uiState.isLoadingLibrary) {
+                LinearProgressIndicator(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(2.dp)
+                        .padding(horizontal = 4.dp),
+                    color = PremiumAccent,
+                    trackColor = Color.Transparent
+                )
+            }
+        }
+        
+        if (uiState.errorMessage != null && (uiState.errorMessage!!.contains("Added") || uiState.errorMessage!!.contains("No new"))) {
+            Text(
+                uiState.errorMessage!!,
+                color = PremiumAccent,
+                fontSize = 12.sp,
+                modifier = Modifier.padding(top = 8.dp, start = 4.dp)
+            )
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Original Quality Album Art", color = Color.White, fontSize = 16.sp)
+                Spacer(Modifier.width(4.dp))
+                IconButton(
+                    onClick = onShowInfo,
+                    modifier = Modifier.size(20.dp)
+                ) {
+                    Icon(
+                        Icons.Rounded.Info,
+                        contentDescription = "Info",
+                        tint = Color.White.copy(0.4f),
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
+            Switch(
+                checked = uiState.useOriginalQualityArt,
+                onCheckedChange = { viewModel.setUseOriginalQualityArt(it) },
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = PremiumAccent,
+                    checkedTrackColor = PremiumAccent.copy(0.3f),
+                    uncheckedThumbColor = Color.White.copy(0.5f),
+                    uncheckedTrackColor = Color.White.copy(0.1f)
+                )
+            )
+        }
+
+        Spacer(Modifier.height(20.dp))
+
+        HorizontalDivider(color = Color.White.copy(0.06f))
+
+        Spacer(Modifier.height(16.dp))
+
+        // Folder Management Header
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column {
+                Text(
+                    "Music Folders",
+                    color = Color.White,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    "${uiState.musicFolders.size} folder${if (uiState.musicFolders.size != 1) "s" else ""} indexed",
+                    color = Color.White.copy(0.45f),
+                    fontSize = 11.sp
+                )
+            }
+            Surface(
+                onClick = { viewModel.openFolderPicker() },
+                shape = RoundedCornerShape(12.dp),
+                color = PremiumAccent.copy(0.12f),
+                border = androidx.compose.foundation.BorderStroke(1.dp, PremiumAccent.copy(0.3f))
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Icon(
+                        Icons.Rounded.CreateNewFolder,
+                        null,
+                        tint = PremiumAccent,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Text("Add Folder", color = PremiumAccent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+
+        Spacer(Modifier.height(12.dp))
+
+        // Folder List
+        if (uiState.musicFolders.isEmpty()) {
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = Color.White.copy(0.03f),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(0.06f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier.padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Icon(
+                        Icons.Rounded.FolderOpen,
+                        null,
+                        tint = Color.White.copy(0.25f),
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Text(
+                        "No folders added. Tap 'Add Folder' to select your music location.",
+                        color = Color.White.copy(0.35f),
+                        fontSize = 12.sp,
+                        lineHeight = 17.sp
+                    )
+                }
+            }
+        } else {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                uiState.musicFolders.forEachIndexed { index, folder ->
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = Color.White.copy(0.04f),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(0.07f)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(PremiumAccent.copy(0.1f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    Icons.Rounded.Folder,
+                                    null,
+                                    tint = PremiumAccent,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    folder.substringAfterLast("/"),
+                                    color = Color.White,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    folder,
+                                    color = Color.White.copy(0.35f),
+                                    fontSize = 10.sp,
+                                    maxLines = 1,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                )
+                            }
+                            IconButton(
+                                onClick = { viewModel.removeMusicFolder(folder) },
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(
+                                    Icons.Rounded.RemoveCircleOutline,
+                                    null,
+                                    tint = Color.Red.copy(0.5f),
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun AboutContent() {
+    val context = LocalContext.current
+    val uriHandler = LocalUriHandler.current
+    val versionName = try {
+        context.packageManager.getPackageInfo(context.packageName, 0).versionName
+    } catch (e: Exception) {
+        "Unknown"
+    }
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column {
+                Text("Beatraxus Music player", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Text("HarbertRaj", color = Color.White.copy(0.6f), fontSize = 14.sp)
+                Spacer(Modifier.height(10.dp))
+                Surface(
+                    shape = CircleShape,
+                    color = Color.White.copy(0.15f)
+                ) {
+                    Text(
+                        "v$versionName",
+                        color = Color.White,
+                        fontSize = 12.sp,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                    )
+                }
+            }
+
+            IconButton(
+                onClick = { uriHandler.openUri("https://github.com/Harbertraj/Beatraxus") },
+                modifier = Modifier.align(Alignment.Top)
+            ) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_github),
+                    contentDescription = "GitHub",
+                    tint = Color.White,
+                    modifier = Modifier.size(28.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
 fun FullScanPopup(progress: Float, count: Int, albums: Int, artists: Int) {
     Dialog(
         onDismissRequest = { },
@@ -540,14 +831,25 @@ fun FullScanPopup(progress: Float, count: Int, albums: Int, artists: Int) {
                 modifier = Modifier
                     .fillMaxWidth(0.85f)
                     .wrapContentHeight()
-                    .shadow(elevation = 20.dp, shape = RoundedCornerShape(28.dp))
+                    .shadow(
+                        elevation = 28.dp, 
+                        shape = RoundedCornerShape(28.dp),
+                        ambientColor = Color(0xFF00F2FF).copy(0.15f),
+                        spotColor = Color(0xFF00F2FF).copy(0.2f)
+                    )
                     .clip(RoundedCornerShape(28.dp))
                     .background(
                         Brush.verticalGradient(
-                            listOf(Color(0xFF1A1A24), Color(0xFF0F0F14))
+                            listOf(Color(0xFF131B2A), Color(0xFF0A0E18))
                         )
                     )
-                    .border(1.dp, Color.White.copy(0.1f), RoundedCornerShape(28.dp))
+                    .border(
+                        1.dp,
+                        Brush.verticalGradient(
+                            listOf(Color(0xFF00F2FF).copy(0.3f), Color.White.copy(0.05f))
+                        ),
+                        RoundedCornerShape(28.dp)
+                    )
                     .padding(32.dp),
                 contentAlignment = Alignment.Center
             ) {
@@ -610,18 +912,56 @@ fun SettingsSection(
     content: @Composable ColumnScope.() -> Unit
 ) {
     Column(Modifier.fillMaxWidth()) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(icon, null, tint = PremiumAccent, modifier = Modifier.size(20.dp))
-            Spacer(Modifier.width(12.dp))
-            Text(title, color = PremiumAccent, fontWeight = FontWeight.ExtraBold, fontSize = 12.sp, letterSpacing = 1.sp)
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            // Accent bar
+            Box(
+                modifier = Modifier
+                    .width(3.dp)
+                    .height(18.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(Color(0xFF00F2FF), Color(0xFF0066FF))
+                        )
+                    )
+            )
+            Spacer(Modifier.width(10.dp))
+            Icon(icon, null, tint = PremiumAccent, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
+            Text(
+                title,
+                color = Color.White,
+                fontWeight = FontWeight.ExtraBold,
+                fontSize = 13.sp,
+                letterSpacing = 0.8.sp
+            )
         }
         Spacer(Modifier.height(12.dp))
         Column(
             Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(24.dp))
-                .background(Color.Black.copy(alpha = 0.2f))
-                .border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(24.dp))
+                .clip(RoundedCornerShape(20.dp))
+                .background(
+                    Brush.verticalGradient(
+                        listOf(
+                            Color(0xFF131B2A).copy(alpha = 0.92f),
+                            Color(0xFF0C1018).copy(alpha = 0.95f)
+                        )
+                    )
+                )
+                .border(
+                    width = 1.dp,
+                    brush = Brush.verticalGradient(
+                        listOf(
+                            Color(0xFF00F2FF).copy(alpha = 0.18f),
+                            Color.White.copy(alpha = 0.04f)
+                        )
+                    ),
+                    shape = RoundedCornerShape(20.dp)
+                )
                 .padding(18.dp),
             content = content
         )

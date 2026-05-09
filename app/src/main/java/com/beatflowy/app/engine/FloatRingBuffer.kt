@@ -1,8 +1,13 @@
 package com.beatflowy.app.engine
 
-internal class FloatRingBuffer(capacitySamples: Int) {
-    private val buffer = FloatArray(capacitySamples.coerceAtLeast(1))
-    private val lock = Object()
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.locks.ReentrantLock
+
+internal class FloatRingBuffer(capacitySamples: Int = DEFAULT_CAPACITY_SAMPLES) {
+    private val buffer = FloatArray(calculateEffectiveCapacity(capacitySamples))
+    private val lock = ReentrantLock()
+    private val notEmpty = lock.newCondition()
+    private val notFull = lock.newCondition()
 
     private var readIndex = 0
     private var writeIndex = 0
@@ -14,9 +19,12 @@ internal class FloatRingBuffer(capacitySamples: Int) {
         var remaining = sampleCount.coerceAtMost(source.size)
 
         while (remaining > 0) {
-            synchronized(lock) {
+            lock.lock()
+            try {
                 while (!closed && size == buffer.size) {
-                    lock.wait(20L)
+                    if (!notFull.await(5, TimeUnit.MILLISECONDS)) {
+                        // Timeout on wait, but we stay in loop to retry until closed
+                    }
                 }
                 if (closed) return
 
@@ -31,15 +39,18 @@ internal class FloatRingBuffer(capacitySamples: Int) {
                 size += writable
                 offset += writable
                 remaining -= writable
-                lock.notifyAll()
+                notEmpty.signalAll()
+            } finally {
+                lock.unlock()
             }
         }
     }
 
     fun read(target: FloatArray, maxSamples: Int, timeoutMs: Long = 40L): Int {
-        synchronized(lock) {
+        lock.lock()
+        try {
             if (size == 0 && !closed) {
-                lock.wait(timeoutMs)
+                notEmpty.await(timeoutMs, TimeUnit.MILLISECONDS)
             }
             if (size == 0) return 0
 
@@ -51,28 +62,67 @@ internal class FloatRingBuffer(capacitySamples: Int) {
             }
             readIndex = (readIndex + toRead) % buffer.size
             size -= toRead
-            lock.notifyAll()
+            notFull.signalAll()
             return toRead
+        } finally {
+            lock.unlock()
         }
     }
 
     fun clear() {
-        synchronized(lock) {
+        lock.lock()
+        try {
             readIndex = 0
             writeIndex = 0
             size = 0
-            lock.notifyAll()
+            notFull.signalAll()
+        } finally {
+            lock.unlock()
         }
     }
 
     fun close() {
-        synchronized(lock) {
+        lock.lock()
+        try {
             closed = true
-            lock.notifyAll()
+            notFull.signalAll()
+            notEmpty.signalAll()
+        } finally {
+            lock.unlock()
         }
     }
 
-    fun isEmpty(): Boolean = synchronized(lock) { size == 0 }
+    fun isEmpty(): Boolean {
+        lock.lock()
+        try {
+            return size == 0
+        } finally {
+            lock.unlock()
+        }
+    }
 
-    fun availableRead(): Int = synchronized(lock) { size }
+    fun availableRead(): Int {
+        lock.lock()
+        try {
+            return size
+        } finally {
+            lock.unlock()
+        }
+    }
+
+    companion object {
+        const val DEFAULT_CAPACITY_SAMPLES = 65536
+
+        private fun calculateEffectiveCapacity(requested: Int): Int {
+            val min = 32768
+            val v = maxOf(requested, min)
+            var n = v - 1
+            n = n or (n shr 1)
+            n = n or (n shr 2)
+            n = n or (n shr 4)
+            n = n or (n shr 8)
+            n = n or (n shr 16)
+            return n + 1
+        }
+    }
 }

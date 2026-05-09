@@ -3,6 +3,7 @@ package com.beatflowy.app.viewmodel
 import java.io.File
 
 import android.app.Application
+import android.media.AudioManager
 import android.net.Uri
 import android.view.Choreographer
 import org.json.JSONArray
@@ -18,6 +19,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlin.math.roundToInt
 import com.beatflowy.app.BeatraxusApplication
 import com.beatflowy.app.model.OutputMode
 import com.beatflowy.app.model.PlaylistEntity
@@ -49,8 +51,9 @@ import com.beatflowy.app.service.AudioPlaybackService
 
 class PlayerViewModel(application: Application) : AndroidViewModel(application) {
 
-    private val repository = MusicRepository(application)
+    private val musicRepository = MusicRepository(application)
     private val autoEqRepository = AutoEqRepository(application)
+    private val autoEqApiService = com.beatflowy.app.repository.AutoEqApiService(application)
     private val lyricsRepository = LyricsRepository(application, (application as BeatraxusApplication).database)
     private val dspPreferences = DspPreferences(application)
 
@@ -65,6 +68,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         isFirstRun = prefs.getBoolean("first_run", true),
         useOriginalQualityArt = prefs.getBoolean("use_original_quality_art", false),
         outputMode = OutputMode.fromName(prefs.getString(KEY_OUTPUT_MODE, null)).name,
+        musicFolders = musicRepository.getMusicFolders(),
         dsp = com.beatflowy.app.model.DspUiState(
             customEqPresets = loadCustomEqPresets()
         )
@@ -140,7 +144,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun loadLibrary() {
         if (libraryLoadJob?.isActive == true) return
-        _uiState.update { it.copy(permissionDenied = false) }
+        _uiState.update { it.copy(permissionDenied = false, isScanning = true) }
         libraryLoadJob = viewModelScope.launch {
             if (_uiState.value.isFirstRun) {
                 quickScan()
@@ -347,6 +351,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             launch {
                 svc.audioStateFlow.collect { audioState ->
                         _uiState.update {
+                            // Only update if the engine is reporting for the same song we think is current
+                            if (audioState.songId != null && audioState.songId != it.currentSong?.id) {
+                                return@update it
+                            }
                             it.copy(
                                 inputSampleRate = audioState.sampleRate,
                                 outputSampleRate = audioState.outputSampleRate,
@@ -379,9 +387,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                                 currentSong = pbState.currentSong,
                                 shuffleMode = pbState.shuffleMode,
                                 repeatMode = pbState.repeatMode.ordinal,
-                                bitrate = if (sameSong && it.bitrate > 0) it.bitrate else pbState.currentSong?.bitrate ?: 0,
-                                format = if (sameSong && it.format.isNotBlank()) it.format else pbState.currentSong?.format ?: "",
-                                // Initialize stats from song metadata when song changes to prevent hi-res badge flicker
+                                // If it's a new song, we can't trust 'it.bitrate' etc. yet as they might belong to the previous song.
+                                // But if the engine has already updated for the new song, we should keep it.
+                                bitrate = if (sameSong) (if (it.bitrate > 0) it.bitrate else pbState.currentSong?.bitrate ?: 0) else pbState.currentSong?.bitrate ?: 0,
+                                format = if (sameSong) (if (it.format.isNotBlank()) it.format else pbState.currentSong?.format ?: "") else pbState.currentSong?.format ?: "",
                                 bitDepth = if (sameSong) it.bitDepth else pbState.currentSong?.bitDepth ?: 16,
                                 inputSampleRate = if (sameSong) it.inputSampleRate else pbState.currentSong?.sampleRateHz ?: 44100
                             )
@@ -391,6 +400,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                             _progressMs.value = 0L
                             if (pbState.currentSong != null) {
                                 updateRecentlyPlayed(pbState.currentSong.id)
+                                handleSongChangeForSleepTimer(pbState.currentSong)
                                 if (_uiState.value.showLyrics) {
                                     loadLyrics(pbState.currentSong)
                                 }
@@ -433,7 +443,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             _uiState.update { it.copy(isLoadingLibrary = true, isScanning = true) }
             try {
                 val currentSongsMap = _songs.value.associateBy { it.id }
-                val resultsFromMediaStore = repository.scanAudioFiles(fullScan = false) { count, albums, artists, progress ->
+                val resultsFromMediaStore = musicRepository.scanAudioFiles(fullScan = false) { count, albums, artists, progress ->
                     _uiState.update { it.copy(
                         scanCount = count,
                         albumCount = albums,
@@ -497,7 +507,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             
             try {
                 // Use fullScan = true for "Full Rescan" to ensure MediaExtractor/MediaMetadataRetriever are used
-                val results = repository.scanAudioFiles(fullScan = true) { count, albums, artists, progress ->
+                val results = musicRepository.scanAudioFiles(fullScan = true) { count, albums, artists, progress ->
                     _uiState.update { it.copy(
                         scanCount = count,
                         albumCount = albums,
@@ -648,7 +658,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             val songsToDelete = allSongs.value.filter { it.id in selectedIds }
             pendingDeleteIds = selectedIds
-            val intent = repository.deleteSongs(songsToDelete.map { it.uri })
+            val intent = musicRepository.deleteSongs(songsToDelete.map { it.uri })
             if (intent != null) {
                 _deleteRequest.value = intent
             } else {
@@ -709,6 +719,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         _uiState.update { it.copy(showFullPlayer = show) }
     }
 
+    fun setSettingsIconPosition(x: Float, y: Float) {
+        _uiState.update { it.copy(settingsIconX = x, settingsIconY = y) }
+    }
+
     fun toggleQueue() {
         _uiState.update { it.copy(showQueue = !it.showQueue) }
     }
@@ -740,7 +754,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun deleteSong(song: Song) {
         viewModelScope.launch {
             pendingDeleteIds = listOf(song.id)
-            val intent = repository.deleteSongs(listOf(song.uri))
+            val intent = musicRepository.deleteSongs(listOf(song.uri))
             if (intent != null) {
                 _deleteRequest.value = intent
             } else {
@@ -815,6 +829,27 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun openFolderPicker() {
+        // Launch SAF folder picker via Activity result
+        _uiState.update { it.copy(triggerFolderPicker = true) }
+    }
+
+    fun addMusicFolder(uri: String) {
+        viewModelScope.launch {
+            musicRepository.addMusicFolder(uri)
+            _uiState.update { it.copy(triggerFolderPicker = false, musicFolders = musicRepository.getMusicFolders()) }
+            startFullScan()
+        }
+    }
+
+    fun removeMusicFolder(path: String) {
+        viewModelScope.launch {
+            musicRepository.removeMusicFolder(path)
+            _uiState.update { it.copy(musicFolders = musicRepository.getMusicFolders()) }
+            quickScan()
+        }
+    }
+
     fun setPreampEnabled(enabled: Boolean) = applyDspConfig { it.copy(preampEnabled = enabled) }
     fun setPreampDb(value: Float) = applyDspConfig {
         val db = value.coerceIn(-15f, 15f)
@@ -862,6 +897,14 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun setReverbEnabled(enabled: Boolean) = applyDspConfig { it.copy(reverbEnabled = enabled) }
     fun setReverbAmount(value: Float) = applyDspConfig { it.copy(reverbAmount = value.coerceIn(0f, 1f), reverbEnabled = true) }
     fun setReverbPreset(preset: String) = applyDspConfig { it.copy(reverbPreset = preset) }
+    fun setReverbDamping(value: Float) = applyDspConfig { it.copy(reverbDamping = value.coerceIn(0f, 1f)) }
+    fun setReverbWidth(value: Float) = applyDspConfig { it.copy(reverbWidth = value.coerceIn(0f, 1f)) }
+    fun setReverbRoomSize(value: Float) = applyDspConfig { it.copy(reverbRoomSize = value.coerceIn(0f, 1f)) }
+    fun setReverbPredelayMix(value: Float) = applyDspConfig { it.copy(reverbPredelayMix = value.coerceIn(0f, 1f)) }
+    fun setReverbPredelay(value: Float) = applyDspConfig { it.copy(reverbPredelayMs = value.coerceIn(0f, 1000f)) }
+    fun setCrossfeedEnabled(enabled: Boolean) = applyDspConfig { it.copy(crossfeedEnabled = enabled) }
+    fun setCrossfeedLevel(value: Float) = applyDspConfig { it.copy(crossfeedLevel = value.coerceIn(0f, 1f), crossfeedEnabled = true) }
+    fun setDcBlockerEnabled(enabled: Boolean) = applyDspConfig { it.copy(dcBlockerEnabled = enabled) }
 
     // Replay Gain
     fun setReplayGainEnabled(enabled: Boolean) = applyDspConfig { it.copy(replayGainEnabled = enabled) }
@@ -872,6 +915,54 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun setDvcMode(mode: DvcMode) = applyDspConfig { it.copy(dvcMode = mode) }
     fun setDvcLevel(level: Float) = applyDspConfig { it.copy(dvcLevel = level.coerceIn(0f, 1f), dvcEnabled = true) }
     fun setLimiterEnabled(enabled: Boolean) = applyDspConfig { it.copy(limiterEnabled = enabled) }
+
+    fun setSystemVolume(normalizedVolume: Float) {
+        val am = getApplication<Application>().getSystemService(AudioManager::class.java)
+        val maxVol = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        am.setStreamVolume(AudioManager.STREAM_MUSIC, (normalizedVolume * maxVol).roundToInt(), 0)
+        // Also update DSP internal volume (for DVC path)
+        // Use square-law for internal gain as requested for perceptual taper
+        setDvcLevel(normalizedVolume * normalizedVolume)
+        if (_uiState.value.showVolumeOverlay) resetVolumeHideTimer()
+    }
+
+    private var volumeHideJob: Job? = null
+
+    fun toggleVolumeOverlay() {
+        _uiState.update { it.copy(showVolumeOverlay = !it.showVolumeOverlay) }
+        if (_uiState.value.showVolumeOverlay) {
+            resetVolumeHideTimer()
+        }
+    }
+
+    fun showVolumeOverlay() {
+        _uiState.update { it.copy(showVolumeOverlay = true) }
+        resetVolumeHideTimer()
+    }
+
+    private fun resetVolumeHideTimer() {
+        volumeHideJob?.cancel()
+        volumeHideJob = viewModelScope.launch {
+            delay(2000)
+            _uiState.update { it.copy(showVolumeOverlay = false) }
+        }
+    }
+
+    fun incrementVolume() {
+        val current = _uiState.value.dsp.config.dvcLevel
+        val sliderPos = kotlin.math.sqrt(current)
+        val nextSliderPos = (sliderPos + 0.01f).coerceIn(0f, 1f)
+        setSystemVolume(nextSliderPos)
+        showVolumeOverlay()
+    }
+
+    fun decrementVolume() {
+        val current = _uiState.value.dsp.config.dvcLevel
+        val sliderPos = kotlin.math.sqrt(current)
+        val nextSliderPos = (sliderPos - 0.01f).coerceIn(0f, 1f)
+        setSystemVolume(nextSliderPos)
+        showVolumeOverlay()
+    }
 
     fun setEqBandEnabled(index: Int, enabled: Boolean) {
         applyEqBand(index) { it.copy(enabled = enabled) }
@@ -927,66 +1018,77 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun searchAutoEqProfiles() {
-        val query = _uiState.value.dsp.autoEqQuery.trim()
+        val query = _uiState.value.dsp.autoEqQuery
         if (query.isBlank()) {
-            _uiState.update { it.copy(dsp = it.dsp.copy(autoEqResults = emptyList(), autoEqError = null)) }
+            clearAutoEqResults()
             return
         }
+
         viewModelScope.launch {
-            _uiState.update { it.copy(dsp = it.dsp.copy(autoEqLoading = true, autoEqError = null)) }
-            runCatching {
+            // 1. Show local results immediately
+            val localResults = withContext(Dispatchers.Default) {
                 autoEqRepository.searchProfiles(query)
-            }.onSuccess { results ->
-                _uiState.update {
-                    it.copy(dsp = it.dsp.copy(autoEqLoading = false, autoEqResults = results, autoEqError = null))
+            }
+            _uiState.update { state ->
+                state.copy(dsp = state.dsp.copy(autoEqResults = localResults))
+            }
+
+            // 2. Online search
+            _uiState.update { state -> state.copy(dsp = state.dsp.copy(autoEqLoading = true)) }
+            try {
+                val onlineResults = autoEqApiService.searchProfiles(query)
+                val filteredOnline = onlineResults.filter { online ->
+                    localResults.none { it.name.equals(online.name, ignoreCase = true) }
                 }
-            }.onFailure { error ->
-                _uiState.update {
-                    it.copy(dsp = it.dsp.copy(autoEqLoading = false, autoEqError = error.message ?: "AutoEQ search failed"))
+                
+                _uiState.update { state ->
+                    state.copy(dsp = state.dsp.copy(
+                        autoEqResults = state.dsp.autoEqResults + filteredOnline,
+                        autoEqLoading = false
+                    ))
                 }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(dsp = it.dsp.copy(autoEqLoading = false)) }
             }
         }
     }
 
     fun applyAutoEqProfile(summary: AutoEqProfileSummary) {
         viewModelScope.launch {
-            _uiState.update { it.copy(dsp = it.dsp.copy(autoEqLoading = true, autoEqError = null)) }
-            runCatching {
-                autoEqRepository.loadProfile(summary)
-            }.onSuccess { profile ->
-                val newBands = profile.bands.mapIndexed { index, source ->
-                    ParametricEqBand(index, source.enabled, source.frequencyHz, source.gainDb, source.q)
+            _uiState.update { it.copy(dsp = it.dsp.copy(autoEqLoading = true)) }
+            try {
+                val profile = if (summary.source.startsWith("GITHUB:")) {
+                    autoEqApiService.fetchProfile(summary)
+                } else {
+                    autoEqRepository.loadProfile(summary)
                 }
 
-                val updatedConfig = _uiState.value.dsp.config.copy(
-                    autoEqEnabled = true,
-                    eqEnabled = true,
-                    eqBands = newBands,
-                    autoEqProfile = profile,
-                    preampEnabled = true,
-                    preampDb = profile.preampDb
-                )
+                if (profile == null) {
+                    _uiState.update { it.copy(dsp = it.dsp.copy(autoEqLoading = false, autoEqError = "Failed to load profile")) }
+                    return@launch
+                }
 
-                _uiState.update { state ->
-                    state.copy(
-                        dsp = state.dsp.copy(
-                            config = updatedConfig,
-                            autoEqLoading = false,
-                            autoEqError = null,
-                            autoEqQuery = profile.name
-                        )
+                applyDspConfig { config ->
+                    config.copy(
+                        autoEqEnabled = false,
+                        autoEqProfile = profile,
+                        eqEnabled = true,
+                        eqBands = config.eqBands.map { localBand ->
+                            val closest = profile.bands.minByOrNull {
+                                kotlin.math.abs(it.frequencyHz - localBand.frequencyHz)
+                            }
+                            if (closest != null && kotlin.math.abs(closest.frequencyHz - localBand.frequencyHz) < localBand.frequencyHz * 0.4f) {
+                                localBand.copy(gainDb = closest.gainDb, q = closest.q, enabled = true)
+                            } else {
+                                localBand.copy(gainDb = 0f, q = 1.0f, enabled = true)
+                            }
+                        },
+                        preampDb = profile.preampDb
                     )
                 }
-                
-                // Explicitly sync to service and storage using the new config
-                service?.updateDspConfig(updatedConfig)
-                withContext(Dispatchers.IO) {
-                    dspPreferences.saveConfig(updatedConfig)
-                }
-            }.onFailure { error ->
-                _uiState.update {
-                    it.copy(dsp = it.dsp.copy(autoEqLoading = false, autoEqError = error.message ?: "Failed to load AutoEQ profile"))
-                }
+                _uiState.update { it.copy(dsp = it.dsp.copy(autoEqLoading = false)) }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(dsp = it.dsp.copy(autoEqLoading = false, autoEqError = e.message)) }
             }
         }
     }
@@ -1188,8 +1290,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     private val progressFrameCallback = object : Choreographer.FrameCallback {
         override fun doFrame(frameTimeNanos: Long) {
-            if (!_uiState.value.isPlaying) return
             val svc = service ?: return
+            // Use service state directly to avoid being killed by stale UI state
+            if (!svc.playbackStateFlow.value.isPlaying) {
+                // Check if we should still try for a few frames in case of state lag
+                return
+            }
             val pos = svc.currentPositionMs
             if (_progressMs.value != pos) {
                 _progressMs.value = pos
@@ -1218,11 +1324,88 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         _uiState.update { it.copy(isFirstRun = true) }
     }
 
-    override fun onCleared() {
-        super.onCleared()
-        stopProgressPolling()
-        serviceObserversJob?.cancel()
-        libraryLoadJob?.cancel()
+    private var sleepTimerJob: Job? = null
+
+    fun setSleepTimer(seconds: Int, finishTrack: Boolean = false, playCount: Int = 0) {
+        sleepTimerJob?.cancel()
+        if (seconds <= 0 && playCount <= 0) {
+            _uiState.update { it.copy(
+                isSleepTimerActive = false, 
+                sleepTimerRemainingSeconds = 0,
+                sleepTimerPlayCount = 0,
+                sleepTimerRemainingPlayCount = 0
+            ) }
+            return
+        }
+
+        _uiState.update { it.copy(
+            isSleepTimerActive = true, 
+            sleepTimerRemainingSeconds = seconds,
+            sleepTimerFinishTrack = finishTrack,
+            sleepTimerPlayCount = playCount,
+            sleepTimerRemainingPlayCount = playCount
+        ) }
+        
+        if (seconds > 0) {
+            sleepTimerJob = viewModelScope.launch {
+                while (_uiState.value.sleepTimerRemainingSeconds > 0) {
+                    delay(1000)
+                    _uiState.update { it.copy(sleepTimerRemainingSeconds = it.sleepTimerRemainingSeconds - 1) }
+                }
+                
+                // Timer expired
+                if (_uiState.value.sleepTimerFinishTrack) {
+                    // We wait for song completion - handled in playbackStateFlow observer
+                } else {
+                    if (_uiState.value.isPlaying) {
+                        togglePlayPause()
+                    }
+                    _uiState.update { it.copy(isSleepTimerActive = false) }
+                }
+            }
+        }
+    }
+
+    private fun handleSongChangeForSleepTimer(newSong: Song?) {
+        val state = _uiState.value
+        if (!state.isSleepTimerActive) return
+
+        var shouldStop = false
+        
+        // 1. Handle Play Count
+        if (state.sleepTimerRemainingPlayCount > 0) {
+            val remaining = state.sleepTimerRemainingPlayCount - 1
+            _uiState.update { it.copy(sleepTimerRemainingPlayCount = remaining) }
+            if (remaining <= 0) {
+                shouldStop = true
+            }
+        }
+
+        // 2. Handle Finish Track when time expired
+        if (state.sleepTimerRemainingSeconds <= 0 && state.sleepTimerFinishTrack) {
+            shouldStop = true
+        }
+
+        if (shouldStop) {
+            if (state.isPlaying) {
+                togglePlayPause()
+            }
+            _uiState.update { it.copy(
+                isSleepTimerActive = false,
+                sleepTimerRemainingSeconds = 0,
+                sleepTimerRemainingPlayCount = 0
+            ) }
+        }
+    }
+
+    fun stopSleepTimer() {
+        sleepTimerJob?.cancel()
+        _uiState.update { it.copy(
+            isSleepTimerActive = false, 
+            sleepTimerRemainingSeconds = 0,
+            sleepTimerPlayCount = 0,
+            sleepTimerRemainingPlayCount = 0
+        ) }
     }
 
     private companion object {

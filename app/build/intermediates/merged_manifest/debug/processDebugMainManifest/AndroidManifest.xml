@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.beatflowy.app"
-    android:versionCode="4"
-    android:versionName="2.5.0-stable" >
+    android:versionCode="5"
+    android:versionName="2.6.2-beta" >
 
     <uses-sdk
         android:minSdkVersion="26"
@@ -44,7 +44,6 @@
         android:requestLegacyExternalStorage="true"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:testOnly="true"
         android:theme="@style/Theme.Beatraxus" >
         <activity
             android:name="com.beatflowy.app.MainActivity"

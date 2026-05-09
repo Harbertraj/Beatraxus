@@ -4,6 +4,7 @@ import com.beatflowy.app.model.OutputMode
 import com.beatflowy.app.model.Song
 
 data class AudioState(
+    val songId: String? = null,
     val sampleRate: Int = 44100,
     val outputSampleRate: Int = 44100,
     val bitDepth: Int = 16,

@@ -51,14 +51,31 @@ class AudioEngine(
     val onCompletion = _onCompletion.asSharedFlow()
 
     private var currentSong: Song? = null
+    private var nextSong: Song? = null
+    
     private var currentSessionId = AtomicLong(0)
-    private var sessionJob: Job? = null
     private var activeSession: PlaybackSession? = null
+    private var nextSession: PlaybackSession? = null
+    
+    private var rendererJob: Job? = null
+    
     private var positionMs: Long = 0L
     private var underrunCount = 0
     @Volatile private var dspConfig: DspConfig = DspConfig()
     private val dspRevision = AtomicLong(0L)
     private val isSeeking = AtomicBoolean(false)
+
+    init {
+        startRenderer()
+    }
+
+    private fun startRenderer() {
+        rendererJob?.cancel()
+        rendererJob = engineScope.launch(Dispatchers.IO) {
+            runCatching { Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO) }
+            renderLoop()
+        }
+    }
 
     fun currentPositionMs(): Long {
         if (isSeeking.get()) return positionMs
@@ -69,15 +86,32 @@ class AudioEngine(
         engineScope.launch {
             controlMutex.withLock {
                 currentSong = song
+                nextSong = null
                 positionMs = 0L
                 updateAudioStateForSong(song)
                 
-                // Important: Don't set isPlaying=true yet. 
-                // We update currentSong so UI shows the new title, but keep isPlaying as-is or false if transitioning.
-                _playbackStateFlow.update { it.copy(currentSong = song) }
+                _playbackStateFlow.update { it.copy(currentSong = song, isPlaying = true) }
                 
-                stopInternal()
+                stopSessionsInternal()
                 startSessionInternal(song, startPositionMs = 0L)
+            }
+        }
+    }
+
+    fun preloadNext(song: Song) {
+        engineScope.launch {
+            controlMutex.withLock {
+                if (nextSong?.id == song.id) return@withLock
+                nextSong = song
+                nextSession?.stop()
+                
+                val sessionId = currentSessionId.incrementAndGet()
+                val session = PlaybackSession(sessionId, song, 0L)
+                nextSession = session
+                
+                engineScope.launch(Dispatchers.IO) {
+                    session.run()
+                }
             }
         }
     }
@@ -89,7 +123,7 @@ class AudioEngine(
                 positionMs = 0L
                 updateAudioStateForSong(song)
                 _playbackStateFlow.update { it.copy(currentSong = song, isPlaying = false) }
-                stopInternal()
+                stopSessionsInternal()
             }
         }
     }
@@ -97,6 +131,7 @@ class AudioEngine(
     private fun updateAudioStateForSong(song: Song) {
         _audioStateFlow.update {
             it.copy(
+                songId = song.id,
                 codec = normalizeCodec(song.format),
                 bitrate = song.bitrate,
                 bitDepth = song.bitDepth,
@@ -114,7 +149,15 @@ class AudioEngine(
             controlMutex.withLock {
                 val song = currentSong ?: return@withLock
                 if (_playbackStateFlow.value.isPlaying) return@withLock
-                startSessionInternal(song, startPositionMs = currentPositionMs())
+                
+                // Set isPlaying = true EAGERLY to ensure UI responsiveness
+                _playbackStateFlow.update { it.copy(isPlaying = true) }
+                
+                if (activeSession == null) {
+                    startSessionInternal(song, startPositionMs = currentPositionMs())
+                } else {
+                    output.start()
+                }
             }
         }
     }
@@ -122,19 +165,19 @@ class AudioEngine(
     fun stop() {
         engineScope.launch {
             controlMutex.withLock {
-                stopInternal()
+                stopSessionsInternal()
+                output.stop()
+                _playbackStateFlow.update { it.copy(isPlaying = false) }
             }
         }
     }
 
-    private fun stopInternal() {
+    private fun stopSessionsInternal() {
         positionMs = activeSession?.currentRenderedPositionMs() ?: positionMs
         activeSession?.stop()
         activeSession = null
-        sessionJob?.cancel()
-        currentSessionId.incrementAndGet()
-        _playbackStateFlow.update { it.copy(isPlaying = false) }
-        output.stop()
+        nextSession?.stop()
+        nextSession = null
     }
 
     fun seekTo(positionMs: Long) {
@@ -153,6 +196,7 @@ class AudioEngine(
 
     fun release() {
         stop()
+        rendererJob?.cancel()
         output.release()
     }
 
@@ -167,7 +211,7 @@ class AudioEngine(
                     val resumePositionMs = currentPositionMs()
                     startSessionInternal(song, resumePositionMs)
                 } else {
-                    publishDspState(activeSession?.currentFormat())
+                    publishDspState(activeSession?.pcmFormat)
                 }
             }
         }
@@ -191,67 +235,149 @@ class AudioEngine(
                 oldConfig.outputMode != config.outputMode ||
                 oldConfig.dvcEnabled != config.dvcEnabled
 
+        // Always increment revision for ANY config change — this triggers
+        // updateConfig() in renderLoop for parameters like reverb, EQ, tone.
+        dspRevision.incrementAndGet()
+
         if (structuralChange) {
-            dspRevision.incrementAndGet()
-            reconfigureOutput()
+            reconfigureOutput()  // Handles refreshDspPipeline for structural changes
         }
     }
 
     private fun startSessionInternal(song: Song, startPositionMs: Long) {
-        val sessionId = currentSessionId.get()
+        val sessionId = currentSessionId.incrementAndGet()
         val session = PlaybackSession(sessionId, song, startPositionMs)
         activeSession = session
 
-        sessionJob = engineScope.launch {
+        engineScope.launch(Dispatchers.IO) {
             try {
-                runCatching { Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO) }
-                
-                // Ensure the output is clean before starting
-                output.stop()
-                
-                val ended = session.run()
-                if (ended && isActive && sessionId == currentSessionId.get()) {
-                    _onCompletion.emit(Unit)
-                }
-            } catch (_: CancellationException) {
-                // Normal cancellation
+                session.run()
             } catch (t: Throwable) {
-                Log.e(TAG, "Playback session $sessionId failed", t)
-            } finally {
-                if (sessionId == currentSessionId.get()) {
-                    val finalPos = session.currentRenderedPositionMs()
-                    positionMs = finalPos
-                    _playbackStateFlow.update { it.copy(isPlaying = false) }
-                    session.stop()
+                if (t !is CancellationException) {
+                    Log.e(TAG, "Playback session $sessionId failed", t)
                 }
+            }
+        }
+    }
+
+    private suspend fun renderLoop() {
+        val localBuffer = FloatArray(RENDER_BATCH_SAMPLES)
+
+        while (engineScope.isActive) {
+            val session = activeSession
+            if (session == null) {
+                delay(10)
+                continue
+            }
+
+            val format = session.pcmFormat
+            if (format == null) {
+                delay(2)
+                continue
+            }
+
+            val sampleCount = session.ringBuffer.read(localBuffer, localBuffer.size)
+            if (sampleCount > 0) {
+                val currentRevision = dspRevision.get()
+                if (appliedDspRevision != currentRevision) {
+                    // Light update: push new parameter values to existing native DSP
+                    session.dspPipeline.updateConfig(dspConfig)
+                    appliedDspRevision = currentRevision
+                    // Note: refreshDspPipeline() is called by reconfigureOutput() 
+                    // only for structural changes (sample rate, mode changes)
+                }
+                
+                val processed = session.dspPipeline.process(localBuffer, sampleCount, format.channels, format.sampleRate)
+                val frames = processed.sampleCount / format.channels
+                var writtenFramesTotal = 0
+                
+                while (writtenFramesTotal < frames && engineScope.isActive && activeSession?.sessionId == session.sessionId && !isSeeking.get()) {
+                    val written = output.write(
+                        data = processed.data,
+                        offsetInSamples = writtenFramesTotal * format.channels,
+                        frameCount = frames - writtenFramesTotal
+                    )
+                    if (written <= 0) {
+                        underrunCount++
+                        delay(2)
+                        break
+                    }
+                    writtenFramesTotal += written
+                }
+                
+                val newPos = session.currentRenderedPositionMs()
+                if (engineScope.isActive && activeSession?.sessionId == session.sessionId && !isSeeking.get()) {
+                    this@AudioEngine.positionMs = newPos
+                }
+                continue
+            }
+
+            if (session.decoderCompleted && session.ringBuffer.isEmpty()) {
+                // TRACK COMPLETED - Transition to next if available
+                controlMutex.withLock {
+                    if (activeSession?.sessionId == session.sessionId) {
+                        val next = nextSession
+                        if (next != null && next.pcmFormat != null) {
+                            // Gapless transition
+                            val oldFormat = session.pcmFormat
+                            val newFormat = next.pcmFormat
+                            
+                            activeSession = next
+                            nextSession = null
+                            currentSong = next.song
+                            nextSong = null
+                            
+                            val framesAtTransition = output.totalFramesWritten()
+                            next.setStartFrameOffset(framesAtTransition)
+                            
+                            if (oldFormat != newFormat) {
+                                // If formats differ, we MUST re-init output
+                                // This might cause a tiny gap but is necessary
+                                next.configure(newFormat!!)
+                            }
+
+                            updateAudioStateForSong(currentSong!!)
+                            _playbackStateFlow.update { it.copy(currentSong = currentSong) }
+                            _onCompletion.emit(Unit)
+                        } else {
+                            // No next track ready
+                            activeSession = null
+                            _playbackStateFlow.update { it.copy(isPlaying = false) }
+                            _onCompletion.emit(Unit)
+                        }
+                    }
+                }
+            } else {
+                delay(2)
             }
         }
     }
 
     private inner class PlaybackSession(
-        private val sessionId: Long,
-        private val song: Song,
+        val sessionId: Long,
+        val song: Song,
         private val initialStartPositionMs: Long
     ) : DecoderSink, DecoderControl {
-        private val ringBuffer = FloatRingBuffer(RING_BUFFER_SAMPLES)
-        private var rendererJob: Job? = null
+        val ringBuffer = FloatRingBuffer(RING_BUFFER_SAMPLES)
         private val pendingSeekMs = AtomicLong(NO_SEEK_PENDING)
         @Volatile private var started = true
-        private var decoderCompleted = false
+        var decoderCompleted = false
+            private set
+            
         var pcmFormat: PcmAudioFormat? = null
             private set
         private var basePositionMs: Long = initialStartPositionMs
-        private var dspPipeline = AudioDspPipeline.create(44_100, 44_100, 2, this@AudioEngine.dspConfig, song)
-        private var appliedDspRevision = -1L
+        private var startFrameOffset = 0L
+        var dspPipeline = AudioDspPipeline.create(44_100, 44_100, 2, output.outputBitDepth(), this@AudioEngine.dspConfig, song)
+        
+        fun setStartFrameOffset(offset: Long) {
+            startFrameOffset = offset
+        }
 
-        suspend fun run(): Boolean {
+        suspend fun run() {
             val decoder = decoderFactory.create(song)
-            rendererJob = engineScope.launch(Dispatchers.IO) {
-                runCatching { Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO) }
-                renderLoop()
-            }
-
             var decodeStartMs = initialStartPositionMs
+            
             while (isActive()) {
                 decoderCompleted = false
                 val result = decoder.decode(
@@ -263,43 +389,24 @@ class AudioEngine(
                 when (result) {
                     DecodeResult.Ended -> {
                         decoderCompleted = true
-                        while (isActive() && !ringBuffer.isEmpty()) {
-                            delay(5)
-                        }
-                        ringBuffer.close()
-                        rendererJob?.join()
-                        return true
+                        return
                     }
-
                     is DecodeResult.Seek -> {
                         notifySeek(result.positionMs)
                         decodeStartMs = result.positionMs
                     }
-
                     is DecodeResult.Failed -> {
                         logWarn("Decoder failed: ${result.reason ?: "unknown"}")
                         ringBuffer.close()
-                        rendererJob?.join()
-                        return false
+                        return
                     }
                 }
             }
-
-            ringBuffer.close()
-            rendererJob?.join()
-            return false
         }
 
         fun stop() {
-            if (!started) return
-            val finalPos = currentRenderedPositionMs()
             started = false
             ringBuffer.close()
-            rendererJob?.cancel()
-            output.stop()
-            if (sessionId == currentSessionId.get()) {
-                this@AudioEngine.positionMs = finalPos
-            }
         }
 
         fun requestSeek(positionMs: Long) {
@@ -307,11 +414,10 @@ class AudioEngine(
             this@AudioEngine.positionMs = positionMs
         }
 
-        fun currentFormat(): PcmAudioFormat? = pcmFormat
-
         fun currentRenderedPositionMs(): Long {
             val sampleRate = output.outputSampleRate().takeIf { it > 0 } ?: pcmFormat?.sampleRate ?: 44_100
-            return basePositionMs + framesToMs(output.playbackPositionFrames(), sampleRate)
+            val framesSinceStart = (output.playbackPositionFrames() - startFrameOffset).coerceAtLeast(0L)
+            return basePositionMs + framesToMs(framesSinceStart, sampleRate)
         }
 
         fun requestOutputRestart() {
@@ -328,41 +434,39 @@ class AudioEngine(
         override suspend fun configure(format: PcmAudioFormat) {
             val formatChanged = pcmFormat != format
             pcmFormat = format
-            if (formatChanged) {
-                ringBuffer.clear()
-                output.flush()
-            }
             
-            val targetRate = resolveTargetSampleRate(format.sampleRate, dspConfig)
-            output.setTargetSampleRate(targetRate)
-            
-            if (dspConfig.outputMode == OutputMode.HI_RES) {
-                output.setSampleFormat(SampleFormat.FLOAT_32BIT)
-            } else {
-                output.setSampleFormat(dspConfig.sampleFormat)
-            }
-
-            if (!output.init(format.sampleRate, format.channels, format.bitDepth)) {
-                logWarn("Audio output initialization failed")
-                val nativeRate = AudioTrack.getNativeOutputSampleRate(AudioManager.STREAM_MUSIC)
-                output.setTargetSampleRate(nativeRate)
-                if (!output.init(format.sampleRate, format.channels, format.bitDepth)) {
-                    output.setSampleFormat(SampleFormat.PCM_16BIT)
-                    if (!output.init(format.sampleRate, format.channels, format.bitDepth)) {
-                        throw IllegalStateException("AudioTrack init failed")
-                    }
+            if (activeSession?.sessionId == this.sessionId) {
+                if (formatChanged) {
+                    ringBuffer.clear()
+                    output.flush()
+                    startFrameOffset = 0L
                 }
+                
+                val targetRate = resolveTargetSampleRate(format.sampleRate, dspConfig)
+                output.setTargetSampleRate(targetRate)
+                
+                if (dspConfig.outputMode == OutputMode.HI_RES) {
+                    output.setSampleFormat(SampleFormat.FLOAT_32BIT)
+                } else {
+                    output.setSampleFormat(dspConfig.sampleFormat)
+                }
+
+                if (!output.init(format.sampleRate, format.channels, format.bitDepth)) {
+                    logWarn("Audio output initialization failed")
+                }
+                
+                output.start()
+                
+                if (sessionId == currentSessionId.get()) {
+                    _playbackStateFlow.update { it.copy(isPlaying = true) }
+                }
+                
+                refreshDspPipeline(format)
+                publishDspState(format)
+            } else if (nextSession?.sessionId == this.sessionId) {
+                // For preloaded session, we just prepare the DSP
+                refreshDspPipeline(format)
             }
-            
-            output.start()
-            
-            // CRITICAL: UI state sync - only confirm playing when actually configured and output started
-            if (sessionId == currentSessionId.get()) {
-                _playbackStateFlow.update { it.copy(isPlaying = true) }
-            }
-            
-            refreshDspPipeline(format)
-            publishDspState(format)
         }
 
         override suspend fun write(data: FloatArray, sampleCount: Int) {
@@ -370,7 +474,7 @@ class AudioEngine(
         }
 
         override fun isActive(): Boolean {
-            return started && sessionId == currentSessionId.get()
+            return started && (activeSession?.sessionId == sessionId || nextSession?.sessionId == sessionId)
         }
 
         override fun consumePendingSeekMs(): Long? {
@@ -391,55 +495,7 @@ class AudioEngine(
             Log.w(TAG, "[session=$sessionId] $message")
         }
 
-        private suspend fun renderLoop() {
-            val localBuffer = FloatArray(RENDER_BATCH_SAMPLES)
-
-            while (started && sessionId == currentSessionId.get()) {
-                val format = pcmFormat
-                if (format == null) {
-                    delay(2)
-                    continue
-                }
-
-                val sampleCount = ringBuffer.read(localBuffer, localBuffer.size)
-                if (sampleCount > 0) {
-                    dspPipeline.updateConfig(dspConfig)
-                    if (appliedDspRevision != dspRevision.get()) {
-                        refreshDspPipeline(format)
-                        publishDspState(format)
-                    }
-                    val processed = dspPipeline.process(localBuffer, sampleCount, format.channels, format.sampleRate)
-                    val frames = processed.sampleCount / format.channels
-                    var writtenFramesTotal = 0
-                    while (writtenFramesTotal < frames && started && sessionId == currentSessionId.get() && !isSeeking.get()) {
-                        val written = output.write(
-                            data = processed.data,
-                            offsetInSamples = writtenFramesTotal * format.channels,
-                            frameCount = frames - writtenFramesTotal
-                        )
-                        if (written <= 0) {
-                            underrunCount++
-                            delay(2)
-                            break
-                        }
-                        writtenFramesTotal += written
-                    }
-                    val newPos = currentRenderedPositionMs()
-                    if (started && sessionId == currentSessionId.get() && !isSeeking.get()) {
-                        this@AudioEngine.positionMs = newPos
-                    }
-                    continue
-                }
-
-                if (decoderCompleted && ringBuffer.isEmpty()) {
-                    break
-                }
-
-                delay(2)
-            }
-        }
-
-        private fun performSeek(positionMs: Long) {
+        fun performSeek(positionMs: Long) {
             basePositionMs = positionMs
             decoderCompleted = false
             ringBuffer.clear()
@@ -447,12 +503,13 @@ class AudioEngine(
             this@AudioEngine.positionMs = positionMs
         }
 
-        private fun refreshDspPipeline(format: PcmAudioFormat) {
+        fun refreshDspPipeline(format: PcmAudioFormat) {
             val actualOutputRate = output.outputSampleRate().takeIf { it > 0 } ?: resolveTargetSampleRate(format.sampleRate, dspConfig)
             dspPipeline = AudioDspPipeline.create(
                 inputSampleRate = format.sampleRate,
                 outputSampleRate = actualOutputRate,
                 channels = format.channels,
+                outputBitDepth = output.outputBitDepth(),
                 config = dspConfig,
                 song = song
             )
@@ -460,10 +517,12 @@ class AudioEngine(
         }
     }
 
+    private var appliedDspRevision = -1L
+
     companion object {
         private const val TAG = "AudioEngine"
-        private const val RING_BUFFER_SAMPLES = 131_072
-        private const val RENDER_BATCH_SAMPLES = 4_096
+        private const val RING_BUFFER_SAMPLES = 262_144 // Increased for better pre-fetch
+        private const val RENDER_BATCH_SAMPLES = 1_024
         private const val NO_SEEK_PENDING = -1L
 
         private fun framesToMs(frames: Long, sampleRate: Int): Long {
@@ -476,10 +535,15 @@ class AudioEngine(
             return when {
                 format.contains("flac") -> "FLAC"
                 format.contains("alac") -> "ALAC"
+                format.contains("dsd") || format.contains("dsf") || format.contains("dff") -> "DSD"
+                format.contains("aiff") || format.contains("aif") -> "AIFF"
+                format.contains("opus") -> "OPUS"
+                format.contains("ogg") || format.contains("vorbis") -> "OGG"
                 format == "m4a" || format == "mp4" || format.contains("aac") -> "AAC"
                 format.contains("mpeg") || format.contains("mp3") -> "MP3"
                 format.contains("wav") -> "WAV"
-                format.isBlank() -> "Unknown"
+                format.contains("raw") || format.contains("pcm") -> "" 
+                format.isBlank() -> ""
                 else -> format.uppercase()
             }
         }
@@ -498,13 +562,16 @@ class AudioEngine(
 
     }
 
-    private fun publishDspState(format: PcmAudioFormat? = activeSession?.currentFormat()) {
+    private fun publishDspState(format: PcmAudioFormat? = activeSession?.pcmFormat) {
         val sourceSampleRate = format?.sampleRate ?: _audioStateFlow.value.sampleRate
         val outputSampleRate = output.outputSampleRate().takeIf { it > 0 }
             ?: resolveTargetSampleRate(sourceSampleRate, dspConfig)
         val currentConfig = dspConfig
         _audioStateFlow.update { state ->
+            val codec = if (!format?.codec.isNullOrBlank()) normalizeCodec(format!!.codec!!) else state.codec
             state.copy(
+                songId = currentSong?.id,
+                codec = codec,
                 sampleRate = sourceSampleRate,
                 outputSampleRate = outputSampleRate,
                 bitDepth = format?.bitDepth ?: state.bitDepth,
@@ -517,7 +584,7 @@ class AudioEngine(
                 activeEffects = currentConfig.activeEffects(),
                 autoEqProfileName = currentConfig.autoEqProfile?.name,
                 pipelineSummary = buildPipelineSummary(
-                    codec = state.codec.ifBlank { currentSong?.format ?: "Unknown" },
+                    codec = codec.ifBlank { currentSong?.format ?: "Unknown" },
                     inputRate = sourceSampleRate,
                     outputRate = outputSampleRate,
                     outputBitDepth = output.outputBitDepth(),
@@ -531,11 +598,19 @@ class AudioEngine(
     private fun resolveTargetSampleRate(inputRate: Int, config: DspConfig): Int {
         return when (config.resamplerMode) {
             ResamplerMode.AUTO -> {
+                val nativeRate = AudioTrack.getNativeOutputSampleRate(AudioManager.STREAM_MUSIC)
                 if (config.outputMode == OutputMode.HI_RES) {
-                    val nativeRate = AudioTrack.getNativeOutputSampleRate(AudioManager.STREAM_MUSIC)
-                    maxOf(inputRate, maxOf(nativeRate, 96000))
+                    // Use the source rate if it's higher than hardware native rate,
+                    // but only up to what the hardware actually supports.
+                    // Don't force upsampling beyond device capability.
+                    when {
+                        inputRate <= nativeRate -> nativeRate          // e.g. 44.1k source -> 48k hardware
+                        inputRate <= 96000 -> inputRate                // e.g. 96k source -> 96k output
+                        inputRate <= 192000 -> inputRate               // e.g. 192k source -> 192k output
+                        else -> 192000                                 // Cap at 192kHz
+                    }
                 } else {
-                    AudioTrack.getNativeOutputSampleRate(AudioManager.STREAM_MUSIC)
+                    nativeRate  // AAudio always outputs at hardware native rate
                 }
             }
             ResamplerMode.SR_44100 -> 44100
@@ -546,5 +621,4 @@ class AudioEngine(
             ResamplerMode.SR_192000 -> 192000
         }
     }
-
 }

@@ -18,8 +18,8 @@ configure<ApplicationExtension> {
         applicationId = "com.beatflowy.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 4
-        versionName = "2.5.0-stable"
+        versionCode = 5
+        versionName = "2.6.2-beta"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

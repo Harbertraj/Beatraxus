@@ -99,13 +99,21 @@ data class DspConfig(
     val trebleDb: Float = 0f,
     val airEnabled: Boolean = false,
     val airDb: Float = 0f,
+    val dcBlockerEnabled: Boolean = true,
     val balanceEnabled: Boolean = false,
     val balance: Float = 0f,
     val stereoExpansionEnabled: Boolean = false,
     val stereoWidth: Float = 1f,
+    val crossfeedEnabled: Boolean = false,
+    val crossfeedLevel: Float = 0.4f,
     val reverbEnabled: Boolean = false,
     val reverbAmount: Float = 0f,
     val reverbPreset: String = "FLAT",
+    val reverbPredelayMs: Float = 0f,
+    val reverbWidth: Float = 1.0f,
+    val reverbDamping: Float = 0.5f,
+    val reverbRoomSize: Float = 0.5f,
+    val reverbPredelayMix: Float = 0.62f,
     
     // Replay Gain
     val replayGainEnabled: Boolean = false,
@@ -137,8 +145,10 @@ data class DspConfig(
         if (midBassEnabled && abs(midBassDb) > 0.05f) add("Mid Bass")
         if (trebleEnabled && abs(trebleDb) > 0.05f) add("Treble")
         if (airEnabled && abs(airDb) > 0.05f) add("Air")
+        if (dcBlockerEnabled) add("DC Block")
         if (balanceEnabled && abs(balance) > 0.01f) add("Balance")
         if (stereoExpansionEnabled && abs(stereoWidth - 1f) > 0.01f) add("Stereo")
+        if (crossfeedEnabled) add("Crossfeed")
         if (reverbEnabled && reverbAmount > 0.01f) add("Reverb")
         if (replayGainEnabled) add("Replay Gain")
         if (dvcEnabled) add("DVC")

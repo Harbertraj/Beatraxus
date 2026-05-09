@@ -127,6 +127,10 @@ class AudioPlaybackService : Service() {
                     
                     if (songChanged) {
                         lastSongId = state.currentSong?.id
+                        
+                        // Preload next song for gapless playback
+                        getNextSong()?.let { engine.preloadNext(it) }
+
                         albumArtLoadJob?.cancel()
                         albumArtLoadJob = serviceScope.launch {
                             loadAlbumArt(state.currentSong)
@@ -170,6 +174,19 @@ class AudioPlaybackService : Service() {
 
     private fun handleCompletion() {
         val currentRepeatMode = engine.playbackStateFlow.value.repeatMode
+        val engineCurrentSong = engine.playbackStateFlow.value.currentSong
+        
+        // Check if engine already transitioned gaplessly
+        if (engineCurrentSong != null && engineCurrentSong.id != playlist.getOrNull(currentIndex)?.id) {
+            val newIndex = playlist.indexOfFirst { it.id == engineCurrentSong.id }
+            if (newIndex != -1) {
+                currentIndex = newIndex
+                updateUpcomingSongs()
+                // Already playing the new song, no need to call play()
+                return
+            }
+        }
+
         when (currentRepeatMode) {
             RepeatMode.ONE -> {
                 val song = engine.playbackStateFlow.value.currentSong

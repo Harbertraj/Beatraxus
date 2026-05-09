@@ -1,0 +1,991 @@
+[
+  {
+    "name": "Sony WH-1000XM5",
+    "preampDb": -6.5,
+    "bands": [
+      {"freq": 31, "gain": 5.9, "q": 0.6},
+      {"freq": 105, "gain": 3.0, "q": 0.7},
+      {"freq": 316, "gain": -2.0, "q": 1.4},
+      {"freq": 1000, "gain": -1.6, "q": 2.7},
+      {"freq": 3162, "gain": 3.8, "q": 2.5},
+      {"freq": 6310, "gain": -3.6, "q": 3.0},
+      {"freq": 9000, "gain": 4.0, "q": 3.0}
+    ]
+  },
+  {
+    "name": "Sony WH-1000XM4",
+    "preampDb": -6.2,
+    "bands": [
+      {"freq": 105, "gain": -4.5, "q": 0.71},
+      {"freq": 210, "gain": -3.2, "q": 0.7},
+      {"freq": 680, "gain": 1.8, "q": 1.5},
+      {"freq": 1100, "gain": -2.5, "q": 2.0},
+      {"freq": 2800, "gain": 5.5, "q": 1.2},
+      {"freq": 3500, "gain": -3.0, "q": 4.0},
+      {"freq": 4800, "gain": -4.5, "q": 3.5},
+      {"freq": 6200, "gain": 4.0, "q": 2.0},
+      {"freq": 7800, "gain": -6.0, "q": 4.5},
+      {"freq": 11000, "gain": -2.0, "q": 0.71}
+    ]
+  },
+  {
+    "name": "Sony WH-1000XM3",
+    "preampDb": -5.8,
+    "bands": [
+      {"freq": 31, "gain": 4.0, "q": 0.6},
+      {"freq": 150, "gain": -3.5, "q": 1.5},
+      {"freq": 1100, "gain": -1.8, "q": 2.0},
+      {"freq": 3800, "gain": 3.2, "q": 2.5},
+      {"freq": 7500, "gain": -4.5, "q": 3.0}
+    ]
+  },
+  {
+    "name": "Sony WF-1000XM5",
+    "preampDb": -6.0,
+    "bands": [
+      {"freq": 40, "gain": 4.2, "q": 0.6},
+      {"freq": 160, "gain": -1.8, "q": 1.8},
+      {"freq": 650, "gain": -1.2, "q": 2.0},
+      {"freq": 3200, "gain": 3.0, "q": 2.2},
+      {"freq": 6800, "gain": -4.2, "q": 2.8},
+      {"freq": 10500, "gain": 3.5, "q": 3.0}
+    ]
+  },
+  {
+    "name": "Sony WF-1000XM4",
+    "preampDb": -5.5,
+    "bands": [
+      {"freq": 50, "gain": 3.5, "q": 0.6},
+      {"freq": 200, "gain": -2.0, "q": 1.5},
+      {"freq": 3200, "gain": 2.5, "q": 2.0},
+      {"freq": 6500, "gain": -4.0, "q": 2.5},
+      {"freq": 9000, "gain": 3.0, "q": 3.0}
+    ]
+  },
+  {
+    "name": "Sony LinkBuds S",
+    "preampDb": -5.0,
+    "bands": [
+      {"freq": 45, "gain": 4.0, "q": 0.6},
+      {"freq": 220, "gain": -2.5, "q": 1.4},
+      {"freq": 3000, "gain": 2.8, "q": 2.0},
+      {"freq": 7000, "gain": -3.8, "q": 3.0}
+    ]
+  },
+  {
+    "name": "Sony MDR-7506",
+    "preampDb": -6.4,
+    "bands": [
+      {"freq": 40, "gain": 6.5, "q": 0.5},
+      {"freq": 150, "gain": -3.0, "q": 1.2},
+      {"freq": 2200, "gain": -2.0, "q": 2.0},
+      {"freq": 3500, "gain": 3.5, "q": 1.8},
+      {"freq": 6000, "gain": -4.5, "q": 2.5},
+      {"freq": 8500, "gain": 5.0, "q": 3.0}
+    ]
+  },
+  {
+    "name": "Sony MDR-V6",
+    "preampDb": -6.0,
+    "bands": [
+      {"freq": 45, "gain": 5.8, "q": 0.6},
+      {"freq": 160, "gain": -2.5, "q": 1.4},
+      {"freq": 3200, "gain": 2.5, "q": 2.0},
+      {"freq": 7500, "gain": -4.0, "q": 3.0}
+    ]
+  },
+  {
+    "name": "Sony MDR-Z7M2",
+    "preampDb": -7.0,
+    "bands": [
+      {"freq": 35, "gain": 5.2, "q": 0.6},
+      {"freq": 1100, "gain": -1.5, "q": 2.0},
+      {"freq": 3500, "gain": 3.0, "q": 2.2},
+      {"freq": 6000, "gain": -4.2, "q": 2.8}
+    ]
+  },
+  {
+    "name": "Sony MDR-1AM2",
+    "preampDb": -6.5,
+    "bands": [
+      {"freq": 40, "gain": 4.8, "q": 0.6},
+      {"freq": 150, "gain": -2.0, "q": 1.5},
+      {"freq": 3000, "gain": 3.5, "q": 1.8},
+      {"freq": 7000, "gain": -3.5, "q": 2.5}
+    ]
+  },
+  {
+    "name": "Sony WF-C700N",
+    "preampDb": -5.5,
+    "bands": [
+      {"freq": 50, "gain": 3.8, "q": 0.7},
+      {"freq": 3200, "gain": 2.5, "q": 2.0},
+      {"freq": 6500, "gain": -3.0, "q": 2.8}
+    ]
+  },
+  {
+    "name": "Sony LinkBuds",
+    "preampDb": -4.5,
+    "bands": [
+      {"freq": 105, "gain": 8.5, "q": 0.71},
+      {"freq": 3000, "gain": 2.5, "q": 1.5},
+      {"freq": 8000, "gain": -3.0, "q": 3.0}
+    ]
+  },
+  {
+    "name": "Sennheiser HD 600",
+    "preampDb": -6.1,
+    "bands": [
+      {"freq": 20, "gain": 4.0, "q": 1.1},
+      {"freq": 97, "gain": -2.5, "q": 0.7},
+      {"freq": 105, "gain": 5.5, "q": 0.71},
+      {"freq": 215, "gain": -1.7, "q": 1.1},
+      {"freq": 1400, "gain": -2.1, "q": 1.5},
+      {"freq": 2000, "gain": 3.0, "q": 0.71},
+      {"freq": 2700, "gain": -1.3, "q": 3.0},
+      {"freq": 3370, "gain": -3.9, "q": 2.5},
+      {"freq": 5350, "gain": -3.5, "q": 3.0},
+      {"freq": 11000, "gain": -4.0, "q": 0.71}
+    ]
+  },
+  {
+    "name": "Sennheiser HD 650",
+    "preampDb": -6.3,
+    "bands": [
+      {"freq": 30, "gain": 4.5, "q": 0.71},
+      {"freq": 45, "gain": -2.8, "q": 0.35},
+      {"freq": 105, "gain": 5.5, "q": 0.71},
+      {"freq": 165, "gain": -2.0, "q": 1.1},
+      {"freq": 1250, "gain": -1.5, "q": 1.6},
+      {"freq": 2150, "gain": 1.5, "q": 2.5},
+      {"freq": 3350, "gain": -2.2, "q": 2.8},
+      {"freq": 5450, "gain": -3.0, "q": 3.5},
+      {"freq": 8100, "gain": -1.5, "q": 4.0},
+      {"freq": 11000, "gain": -4.0, "q": 0.71}
+    ]
+  },
+  {
+    "name": "Sennheiser HD 660S",
+    "preampDb": -5.9,
+    "bands": [
+      {"freq": 35, "gain": 5.0, "q": 0.6},
+      {"freq": 1200, "gain": 1.8, "q": 1.5},
+      {"freq": 3500, "gain": 2.5, "q": 2.0},
+      {"freq": 5800, "gain": -3.5, "q": 2.5}
+    ]
+  },
+  {
+    "name": "Sennheiser HD 660S2",
+    "preampDb": -6.0,
+    "bands": [
+      {"freq": 40, "gain": 4.5, "q": 0.7},
+      {"freq": 1100, "gain": 1.5, "q": 1.8},
+      {"freq": 3200, "gain": 2.2, "q": 2.2},
+      {"freq": 6500, "gain": -3.0, "q": 2.5}
+    ]
+  },
+  {
+    "name": "Sennheiser HD 800 S",
+    "preampDb": -6.5,
+    "bands": [
+      {"freq": 30, "gain": 6.5, "q": 0.5},
+      {"freq": 1500, "gain": 2.0, "q": 1.2},
+      {"freq": 3500, "gain": -1.5, "q": 2.0},
+      {"freq": 5800, "gain": -4.8, "q": 3.0},
+      {"freq": 10000, "gain": -2.5, "q": 2.5}
+    ]
+  },
+  {
+    "name": "Sennheiser HD 560S",
+    "preampDb": -5.8,
+    "bands": [
+      {"freq": 42, "gain": 5.0, "q": 0.6},
+      {"freq": 160, "gain": -2.2, "q": 1.5},
+      {"freq": 1300, "gain": -1.0, "q": 2.0},
+      {"freq": 3100, "gain": 2.5, "q": 2.0},
+      {"freq": 4400, "gain": -4.0, "q": 3.0},
+      {"freq": 6000, "gain": 2.0, "q": 4.0},
+      {"freq": 7800, "gain": -2.5, "q": 3.0}
+    ]
+  },
+  {
+    "name": "Sennheiser HD 599",
+    "preampDb": -5.5,
+    "bands": [
+      {"freq": 105, "gain": -3.5, "q": 0.71},
+      {"freq": 3200, "gain": 3.0, "q": 1.5},
+      {"freq": 6500, "gain": -2.5, "q": 2.5}
+    ]
+  },
+  {
+    "name": "Sennheiser IE 200",
+    "preampDb": -5.2,
+    "bands": [
+      {"freq": 50, "gain": 4.2, "q": 0.6},
+      {"freq": 2800, "gain": 2.5, "q": 2.0},
+      {"freq": 7500, "gain": -3.8, "q": 3.0}
+    ]
+  },
+  {
+    "name": "Sennheiser IE 300",
+    "preampDb": -6.0,
+    "bands": [
+      {"freq": 45, "gain": -3.0, "q": 0.5},
+      {"freq": 3000, "gain": 3.2, "q": 1.8},
+      {"freq": 6000, "gain": -4.5, "q": 2.5}
+    ]
+  },
+  {
+    "name": "Sennheiser IE 600",
+    "preampDb": -5.8,
+    "bands": [
+      {"freq": 55, "gain": 3.5, "q": 0.7},
+      {"freq": 3500, "gain": 2.0, "q": 2.2},
+      {"freq": 8000, "gain": -4.0, "q": 3.0}
+    ]
+  },
+  {
+    "name": "Sennheiser IE 900",
+    "preampDb": -6.2,
+    "bands": [
+      {"freq": 50, "gain": 4.0, "q": 0.6},
+      {"freq": 3200, "gain": 3.5, "q": 1.5},
+      {"freq": 7000, "gain": -5.0, "q": 2.5}
+    ]
+  },
+  {
+    "name": "Sennheiser Momentum 4",
+    "preampDb": -5.7,
+    "bands": [
+      {"freq": 40, "gain": -3.5, "q": 0.6},
+      {"freq": 180, "gain": -2.0, "q": 1.5},
+      {"freq": 1200, "gain": 2.5, "q": 1.8},
+      {"freq": 3500, "gain": 3.0, "q": 2.0},
+      {"freq": 6000, "gain": -4.0, "q": 2.5},
+      {"freq": 9500, "gain": 3.5, "q": 3.0}
+    ]
+  },
+  {
+    "name": "Beyerdynamic DT 770 Pro",
+    "preampDb": -6.4,
+    "bands": [
+      {"freq": 105, "gain": 2.0, "q": 0.71},
+      {"freq": 120, "gain": -3.4, "q": 0.6},
+      {"freq": 200, "gain": 3.0, "q": 1.41},
+      {"freq": 3500, "gain": 4.0, "q": 1.41},
+      {"freq": 4300, "gain": 1.0, "q": 1.41},
+      {"freq": 5800, "gain": -1.1, "q": 4.0},
+      {"freq": 6400, "gain": -6.5, "q": 3.5},
+      {"freq": 8300, "gain": -5.0, "q": 5.0},
+      {"freq": 9500, "gain": -2.0, "q": 3.0},
+      {"freq": 13000, "gain": -5.0, "q": 0.71}
+    ]
+  },
+  {
+    "name": "Beyerdynamic DT 880 Pro",
+    "preampDb": -5.9,
+    "bands": [
+      {"freq": 35, "gain": 5.5, "q": 0.6},
+      {"freq": 1000, "gain": -1.2, "q": 1.5},
+      {"freq": 3500, "gain": 2.0, "q": 2.0},
+      {"freq": 8000, "gain": -5.5, "q": 3.5}
+    ]
+  },
+  {
+    "name": "Beyerdynamic DT 990 Pro",
+    "preampDb": -6.0,
+    "bands": [
+      {"freq": 50, "gain": 5.5, "q": 0.5},
+      {"freq": 160, "gain": -2.5, "q": 1.5},
+      {"freq": 1000, "gain": -1.8, "q": 2.0},
+      {"freq": 5800, "gain": -6.0, "q": 2.5},
+      {"freq": 8500, "gain": 5.5, "q": 3.5},
+      {"freq": 11000, "gain": -4.0, "q": 3.0}
+    ]
+  },
+  {
+    "name": "Beyerdynamic DT 1990 Pro",
+    "preampDb": -6.8,
+    "bands": [
+      {"freq": 40, "gain": 4.5, "q": 0.6},
+      {"freq": 1200, "gain": 1.5, "q": 1.8},
+      {"freq": 4500, "gain": 2.8, "q": 2.0},
+      {"freq": 8200, "gain": -6.5, "q": 3.5}
+    ]
+  },
+  {
+    "name": "Beyerdynamic T1 3rd Gen",
+    "preampDb": -6.5,
+    "bands": [
+      {"freq": 105, "gain": -4.0, "q": 0.71},
+      {"freq": 3500, "gain": 5.5, "q": 1.5},
+      {"freq": 7000, "gain": -3.5, "q": 3.0}
+    ]
+  },
+  {
+    "name": "Audio-Technica ATH-M50x",
+    "preampDb": -6.4,
+    "bands": [
+      {"freq": 40, "gain": -4.6, "q": 0.6},
+      {"freq": 105, "gain": 5.5, "q": 0.71},
+      {"freq": 150, "gain": -4.3, "q": 0.8},
+      {"freq": 335, "gain": 5.7, "q": 1.3},
+      {"freq": 1600, "gain": 1.6, "q": 1.2},
+      {"freq": 2600, "gain": -1.1, "q": 2.0},
+      {"freq": 4300, "gain": -4.5, "q": 4.0},
+      {"freq": 5300, "gain": 5.5, "q": 1.0},
+      {"freq": 5700, "gain": -3.5, "q": 4.0},
+      {"freq": 10000, "gain": -1.0, "q": 0.71}
+    ]
+  },
+  {
+    "name": "Audio-Technica ATH-M40x",
+    "preampDb": -5.5,
+    "bands": [
+      {"freq": 105, "gain": -3.5, "q": 0.71},
+      {"freq": 3000, "gain": 3.8, "q": 1.5},
+      {"freq": 7500, "gain": -4.0, "q": 3.0}
+    ]
+  },
+  {
+    "name": "Audio-Technica ATH-AD700X",
+    "preampDb": -5.0,
+    "bands": [
+      {"freq": 50, "gain": 9.5, "q": 0.5},
+      {"freq": 3500, "gain": 1.5, "q": 1.8},
+      {"freq": 8000, "gain": -2.5, "q": 3.0}
+    ]
+  },
+  {
+    "name": "Bose QC35 II",
+    "preampDb": -5.8,
+    "bands": [
+      {"freq": 105, "gain": -4.0, "q": 0.7},
+      {"freq": 1200, "gain": 2.5, "q": 1.4},
+      {"freq": 3000, "gain": 6.0, "q": 1.0},
+      {"freq": 7500, "gain": -3.5, "q": 2.5}
+    ]
+  },
+  {
+    "name": "Bose QC45",
+    "preampDb": -6.0,
+    "bands": [
+      {"freq": 40, "gain": 5.2, "q": 0.5},
+      {"freq": 160, "gain": -2.0, "q": 1.8},
+      {"freq": 600, "gain": -1.5, "q": 2.0},
+      {"freq": 2200, "gain": 2.8, "q": 2.4},
+      {"freq": 5500, "gain": -3.8, "q": 2.5},
+      {"freq": 9000, "gain": 3.2, "q": 3.0}
+    ]
+  },
+  {
+    "name": "Bose NC 700",
+    "preampDb": -5.5,
+    "bands": [
+      {"freq": 50, "gain": 4.0, "q": 0.6},
+      {"freq": 3000, "gain": 3.5, "q": 1.8},
+      {"freq": 6500, "gain": -3.5, "q": 2.5}
+    ]
+  },
+  {
+    "name": "Apple AirPods Pro 2",
+    "preampDb": -5.8,
+    "bands": [
+      {"freq": 40, "gain": 3.8, "q": 0.7},
+      {"freq": 200, "gain": -2.5, "q": 1.5},
+      {"freq": 800, "gain": -1.2, "q": 2.0},
+      {"freq": 2500, "gain": 2.0, "q": 2.5},
+      {"freq": 6000, "gain": -4.5, "q": 2.2},
+      {"freq": 10000, "gain": 4.0, "q": 2.8}
+    ]
+  },
+  {
+    "name": "Apple AirPods Max",
+    "preampDb": -6.2,
+    "bands": [
+      {"freq": 35, "gain": 4.5, "q": 0.6},
+      {"freq": 220, "gain": -2.8, "q": 1.5},
+      {"freq": 1100, "gain": -1.5, "q": 2.0},
+      {"freq": 3000, "gain": 3.5, "q": 1.8},
+      {"freq": 6500, "gain": -4.2, "q": 2.5},
+      {"freq": 9500, "gain": 4.0, "q": 3.0}
+    ]
+  },
+  {
+    "name": "Samsung Galaxy Buds2 Pro",
+    "preampDb": -5.5,
+    "bands": [
+      {"freq": 50, "gain": 4.0, "q": 0.6},
+      {"freq": 180, "gain": -1.8, "q": 1.6},
+      {"freq": 700, "gain": -1.0, "q": 2.2},
+      {"freq": 2800, "gain": 2.4, "q": 2.6},
+      {"freq": 6000, "gain": -3.2, "q": 2.8},
+      {"freq": 10000, "gain": 3.8, "q": 3.2}
+    ]
+  },
+  {
+    "name": "Hifiman Sundara",
+    "preampDb": -5.5,
+    "bands": [
+      {"freq": 50, "gain": 4.5, "q": 0.6},
+      {"freq": 1800, "gain": 1.8, "q": 1.5},
+      {"freq": 3200, "gain": 2.5, "q": 2.0},
+      {"freq": 6000, "gain": -3.5, "q": 2.5},
+      {"freq": 9000, "gain": 3.0, "q": 3.0}
+    ]
+  },
+  {
+    "name": "Hifiman Ananda",
+    "preampDb": -6.0,
+    "bands": [
+      {"freq": 45, "gain": 5.2, "q": 0.5},
+      {"freq": 3500, "gain": 2.8, "q": 2.0},
+      {"freq": 7000, "gain": -4.2, "q": 2.8}
+    ]
+  },
+  {
+    "name": "Hifiman Edition XS",
+    "preampDb": -6.2,
+    "bands": [
+      {"freq": 45, "gain": 5.0, "q": 0.5},
+      {"freq": 1600, "gain": 2.0, "q": 1.6},
+      {"freq": 3500, "gain": 2.8, "q": 2.2},
+      {"freq": 6500, "gain": -4.0, "q": 2.8},
+      {"freq": 10000, "gain": 3.5, "q": 3.2}
+    ]
+  },
+  {
+    "name": "Moondrop Aria",
+    "preampDb": -5.6,
+    "bands": [
+      {"freq": 45, "gain": 4.5, "q": 0.5},
+      {"freq": 200, "gain": -2.5, "q": 1.4},
+      {"freq": 3000, "gain": 2.8, "q": 2.0},
+      {"freq": 8000, "gain": -5.0, "q": 3.0},
+      {"freq": 12000, "gain": 4.0, "q": 3.5}
+    ]
+  },
+  {
+    "name": "Moondrop Blessing 2",
+    "preampDb": -5.8,
+    "bands": [
+      {"freq": 50, "gain": 3.8, "q": 0.6},
+      {"freq": 180, "gain": -1.5, "q": 1.5},
+      {"freq": 3200, "gain": 2.2, "q": 2.0},
+      {"freq": 6500, "gain": -3.5, "q": 2.5},
+      {"freq": 9000, "gain": 3.0, "q": 3.0}
+    ]
+  },
+  {
+    "name": "Moondrop KATO",
+    "preampDb": -5.4,
+    "bands": [
+      {"freq": 55, "gain": 3.2, "q": 0.7},
+      {"freq": 3000, "gain": 2.5, "q": 1.8},
+      {"freq": 7500, "gain": -3.8, "q": 3.0}
+    ]
+  },
+  {
+    "name": "7Hz Salnotes Zero",
+    "preampDb": -5.5,
+    "bands": [
+      {"freq": 55, "gain": 4.0, "q": 0.6},
+      {"freq": 250, "gain": -2.0, "q": 1.4},
+      {"freq": 3200, "gain": 2.5, "q": 2.2},
+      {"freq": 6500, "gain": -3.8, "q": 3.0},
+      {"freq": 11000, "gain": 3.0, "q": 3.5}
+    ]
+  },
+  {
+    "name": "7Hz Timeless",
+    "preampDb": -6.0,
+    "bands": [
+      {"freq": 50, "gain": 4.5, "q": 0.6},
+      {"freq": 2200, "gain": 2.8, "q": 2.0},
+      {"freq": 8000, "gain": -4.2, "q": 3.0}
+    ]
+  },
+  {
+    "name": "Truthear Hexa",
+    "preampDb": -5.7,
+    "bands": [
+      {"freq": 45, "gain": 3.5, "q": 0.7},
+      {"freq": 210, "gain": -1.8, "q": 1.5},
+      {"freq": 3300, "gain": 2.2, "q": 2.4},
+      {"freq": 7000, "gain": -4.0, "q": 2.8},
+      {"freq": 10500, "gain": 3.2, "q": 3.2}
+    ]
+  },
+  {
+    "name": "Truthear Zero: RED",
+    "preampDb": -5.5,
+    "bands": [
+      {"freq": 55, "gain": 4.2, "q": 0.6},
+      {"freq": 3200, "gain": 3.0, "q": 2.0},
+      {"freq": 6800, "gain": -3.5, "q": 2.8}
+    ]
+  },
+  {
+    "name": "Focal Clear",
+    "preampDb": -6.2,
+    "bands": [
+      {"freq": 40, "gain": 4.2, "q": 0.6},
+      {"freq": 180, "gain": -2.0, "q": 1.5},
+      {"freq": 1200, "gain": -1.5, "q": 2.0},
+      {"freq": 3200, "gain": 2.5, "q": 1.8},
+      {"freq": 6000, "gain": -4.0, "q": 2.5},
+      {"freq": 9500, "gain": 3.5, "q": 3.0}
+    ]
+  },
+  {
+    "name": "Focal Utopia",
+    "preampDb": -6.5,
+    "bands": [
+      {"freq": 45, "gain": 3.8, "q": 0.7},
+      {"freq": 3500, "gain": 3.2, "q": 1.5},
+      {"freq": 6500, "gain": -3.5, "q": 2.5}
+    ]
+  },
+  {
+    "name": "Etymotic ER2XR",
+    "preampDb": -5.2,
+    "bands": [
+      {"freq": 105, "gain": -2.5, "q": 0.7},
+      {"freq": 1800, "gain": 1.5, "q": 1.5},
+      {"freq": 3500, "gain": 2.5, "q": 2.0},
+      {"freq": 6500, "gain": -3.5, "q": 3.0},
+      {"freq": 11000, "gain": 4.0, "q": 3.5}
+    ]
+  },
+  {
+    "name": "Meze 99 Classics",
+    "preampDb": -6.5,
+    "bands": [
+      {"freq": 105, "gain": -6.5, "q": 0.71},
+      {"freq": 350, "gain": -3.0, "q": 1.5},
+      {"freq": 1200, "gain": 2.5, "q": 1.8},
+      {"freq": 4500, "gain": 4.0, "q": 2.0},
+      {"freq": 8500, "gain": -5.0, "q": 3.5}
+    ]
+  },
+  {
+    "name": "Meze Empyrean",
+    "preampDb": -6.0,
+    "bands": [
+      {"freq": 105, "gain": -3.5, "q": 0.71},
+      {"freq": 3200, "gain": 3.0, "q": 1.5},
+      {"freq": 7000, "gain": -4.0, "q": 3.0}
+    ]
+  },
+  {
+    "name": "Koss Porta Pro",
+    "preampDb": -6.0,
+    "bands": [
+      {"freq": 40, "gain": 6.0, "q": 0.5},
+      {"freq": 180, "gain": -4.0, "q": 1.2},
+      {"freq": 2500, "gain": 4.5, "q": 1.5},
+      {"freq": 6000, "gain": 3.0, "q": 2.5},
+      {"freq": 10000, "gain": 2.5, "q": 3.0}
+    ]
+  },
+  {
+    "name": "Koss KSC75",
+    "preampDb": -5.5,
+    "bands": [
+      {"freq": 105, "gain": 5.5, "q": 0.71},
+      {"freq": 3500, "gain": 2.5, "q": 1.8},
+      {"freq": 8000, "gain": -3.5, "q": 3.0}
+    ]
+  },
+  {
+    "name": "AKG K702",
+    "preampDb": -6.0,
+    "bands": [
+      {"freq": 30, "gain": 5.5, "q": 0.6},
+      {"freq": 150, "gain": -2.2, "q": 1.8},
+      {"freq": 2200, "gain": -2.5, "q": 2.5},
+      {"freq": 4500, "gain": 3.0, "q": 2.0},
+      {"freq": 6800, "gain": -4.5, "q": 3.0},
+      {"freq": 9500, "gain": 4.0, "q": 3.5}
+    ]
+  },
+  {
+    "name": "AKG K371",
+    "preampDb": -5.2,
+    "bands": [
+      {"freq": 50, "gain": -2.5, "q": 0.6},
+      {"freq": 3000, "gain": 1.5, "q": 2.0},
+      {"freq": 6500, "gain": -3.0, "q": 3.0}
+    ]
+  },
+  {
+    "name": "Philips Fidelio X2HR",
+    "preampDb": -5.5,
+    "bands": [
+      {"freq": 35, "gain": 4.5, "q": 0.6},
+      {"freq": 150, "gain": -3.5, "q": 1.4},
+      {"freq": 1800, "gain": 2.0, "q": 1.8},
+      {"freq": 5500, "gain": -5.5, "q": 3.0},
+      {"freq": 10000, "gain": 3.5, "q": 3.5}
+    ]
+  },
+  {
+    "name": "Philips SHP9500",
+    "preampDb": -5.0,
+    "bands": [
+      {"freq": 105, "gain": 6.5, "q": 0.71},
+      {"freq": 3500, "gain": -1.5, "q": 2.0},
+      {"freq": 6000, "gain": -4.0, "q": 3.5}
+    ]
+  },
+  {
+    "name": "Shure SE215",
+    "preampDb": -6.0,
+    "bands": [
+      {"freq": 105, "gain": -4.5, "q": 0.71},
+      {"freq": 1500, "gain": 3.5, "q": 1.5},
+      {"freq": 4500, "gain": 5.0, "q": 2.0},
+      {"freq": 9000, "gain": 4.0, "q": 3.0}
+    ]
+  },
+  {
+    "name": "Shure SRH440",
+    "preampDb": -5.5,
+    "bands": [
+      {"freq": 50, "gain": 3.8, "q": 0.6},
+      {"freq": 3200, "gain": 2.5, "q": 1.8},
+      {"freq": 7500, "gain": -4.2, "q": 3.0}
+    ]
+  },
+  {
+    "name": "Grado SR80e",
+    "preampDb": -5.0,
+    "bands": [
+      {"freq": 50, "gain": 8.0, "q": 0.5},
+      {"freq": 150, "gain": -2.5, "q": 1.2},
+      {"freq": 2200, "gain": -4.0, "q": 2.0},
+      {"freq": 5000, "gain": -5.5, "q": 3.0},
+      {"freq": 10000, "gain": -3.0, "q": 3.5}
+    ]
+  },
+  {
+    "name": "Jabra Elite 75t",
+    "preampDb": -6.5,
+    "bands": [
+      {"freq": 105, "gain": -8.5, "q": 0.71},
+      {"freq": 3500, "gain": 3.5, "q": 1.5},
+      {"freq": 9000, "gain": 4.0, "q": 3.0}
+    ]
+  },
+  {
+    "name": "Anker Soundcore Liberty 4 NC",
+    "preampDb": -5.8,
+    "bands": [
+      {"freq": 40, "gain": -4.2, "q": 0.6},
+      {"freq": 3200, "gain": 3.8, "q": 2.0},
+      {"freq": 7000, "gain": -5.0, "q": 2.5}
+    ]
+  },
+  {
+    "name": "Tin HiFi T2",
+    "preampDb": -5.2,
+    "bands": [
+      {"freq": 105, "gain": 4.5, "q": 0.71},
+      {"freq": 3500, "gain": -2.0, "q": 2.0},
+      {"freq": 9000, "gain": 2.5, "q": 3.5}
+    ]
+  },
+  {
+    "name": "KZ ZS10 Pro",
+    "preampDb": -6.0,
+    "bands": [
+      {"freq": 105, "gain": -4.5, "q": 0.71},
+      {"freq": 3000, "gain": 4.0, "q": 1.5},
+      {"freq": 8000, "gain": -6.5, "q": 3.5}
+    ]
+  },
+  {
+    "name": "Thieaudio Monarch MKII",
+    "preampDb": -5.5,
+    "bands": [
+      {"freq": 50, "gain": 3.5, "q": 0.7},
+      {"freq": 3500, "gain": 2.2, "q": 2.0},
+      {"freq": 8500, "gain": -3.5, "q": 3.0}
+    ]
+  },
+  {
+    "name": "Campfire Andromeda",
+    "preampDb": -5.0,
+    "bands": [
+      {"freq": 105, "gain": 4.0, "q": 0.71},
+      {"freq": 3000, "gain": -2.5, "q": 2.0},
+      {"freq": 9000, "gain": 3.8, "q": 3.5}
+    ]
+  },
+  {
+    "name": "64 Audio U12t",
+    "preampDb": -5.5,
+    "bands": [
+      {"freq": 105, "gain": 3.5, "q": 0.71},
+      {"freq": 3200, "gain": 2.0, "q": 1.8},
+      {"freq": 7000, "gain": -3.0, "q": 2.5}
+    ]
+  },
+  {
+    "name": "Westone W40",
+    "preampDb": -5.8,
+    "bands": [
+      {"freq": 105, "gain": -4.5, "q": 0.71},
+      {"freq": 3500, "gain": 5.0, "q": 1.5},
+      {"freq": 9000, "gain": 3.5, "q": 3.0}
+    ]
+  },
+  {
+    "name": "Fiio FH5",
+    "preampDb": -5.5,
+    "bands": [
+      {"freq": 105, "gain": -3.5, "q": 0.71},
+      {"freq": 3000, "gain": 2.8, "q": 2.0},
+      {"freq": 7500, "gain": -4.0, "q": 3.0}
+    ]
+  },
+  {
+    "name": "JBL Club One",
+    "preampDb": -6.2,
+    "bands": [
+      {"freq": 40, "gain": 3.5, "q": 0.6},
+      {"freq": 3200, "gain": 3.0, "q": 1.8},
+      {"freq": 6500, "gain": -4.5, "q": 2.5}
+    ]
+  },
+  {
+    "name": "Razer Opus",
+    "preampDb": -5.4,
+    "bands": [
+      {"freq": 50, "gain": 4.2, "q": 0.6},
+      {"freq": 3000, "gain": 2.5, "q": 2.0},
+      {"freq": 8000, "gain": -3.8, "q": 3.0}
+    ]
+  },
+  {
+    "name": "SteelSeries Arctis Nova Pro",
+    "preampDb": -6.5,
+    "bands": [
+      {"freq": 105, "gain": -5.5, "q": 0.71},
+      {"freq": 3500, "gain": 4.5, "q": 1.5},
+      {"freq": 7000, "gain": -4.0, "q": 3.5}
+    ]
+  },
+  {
+    "name": "HyperX Cloud II",
+    "preampDb": -5.8,
+    "bands": [
+      {"freq": 50, "gain": 3.0, "q": 0.6},
+      {"freq": 3200, "gain": 3.5, "q": 1.8},
+      {"freq": 8500, "gain": -5.0, "q": 3.0}
+    ]
+  },
+  {
+    "name": "Audeze LCD-X",
+    "preampDb": -6.6,
+    "bands": [
+      {"freq": 30, "gain": 6.5, "q": 0.5},
+      {"freq": 1000, "gain": 1.8, "q": 1.2},
+      {"freq": 3500, "gain": 5.5, "q": 1.5},
+      {"freq": 6000, "gain": -3.5, "q": 3.0}
+    ]
+  },
+  {
+    "name": "ZMF Verite Open",
+    "preampDb": -6.0,
+    "bands": [
+      {"freq": 105, "gain": -3.5, "q": 0.71},
+      {"freq": 3200, "gain": 4.0, "q": 1.5},
+      {"freq": 7500, "gain": -3.0, "q": 2.5}
+    ]
+  },
+  {
+    "name": "Dan Clark Audio Stealth",
+    "preampDb": -5.5,
+    "bands": [
+      {"freq": 50, "gain": 2.5, "q": 0.6},
+      {"freq": 3500, "gain": 1.8, "q": 2.0},
+      {"freq": 8000, "gain": -2.0, "q": 3.0}
+    ]
+  },
+  {
+    "name": "Ikko OH10",
+    "preampDb": -6.3,
+    "bands": [
+      {"freq": 45, "gain": -4.5, "q": 0.6},
+      {"freq": 3000, "gain": 3.2, "q": 1.8},
+      {"freq": 8500, "gain": -5.5, "q": 3.5}
+    ]
+  },
+  {
+    "name": "Sony WF-1000XM3",
+    "preampDb": -5.8,
+    "bands": [
+      {"freq": 50, "gain": 4.5, "q": 0.6},
+      {"freq": 2800, "gain": 2.8, "q": 2.2},
+      {"freq": 7000, "gain": -4.0, "q": 2.8}
+    ]
+  },
+  {
+    "name": "Sony MDR-1A",
+    "preampDb": -6.2,
+    "bands": [
+      {"freq": 40, "gain": 5.5, "q": 0.6},
+      {"freq": 3200, "gain": 3.0, "q": 1.8},
+      {"freq": 7500, "gain": -4.2, "q": 3.0}
+    ]
+  },
+  {
+    "name": "Sennheiser HD 58X",
+    "preampDb": -5.8,
+    "bands": [
+      {"freq": 40, "gain": 4.8, "q": 0.6},
+      {"freq": 1200, "gain": 1.5, "q": 1.8},
+      {"freq": 3500, "gain": 2.2, "q": 2.2},
+      {"freq": 6000, "gain": -3.5, "q": 2.5}
+    ]
+  },
+  {
+    "name": "Sennheiser Momentum True Wireless 3",
+    "preampDb": -5.5,
+    "bands": [
+      {"freq": 55, "gain": 3.8, "q": 0.7},
+      {"freq": 3200, "gain": 2.5, "q": 2.0},
+      {"freq": 7500, "gain": -4.0, "q": 3.0}
+    ]
+  },
+  {
+    "name": "Beyerdynamic Amiron Home",
+    "preampDb": -6.5,
+    "bands": [
+      {"freq": 105, "gain": -4.5, "q": 0.71},
+      {"freq": 3500, "gain": 4.8, "q": 1.5},
+      {"freq": 8000, "gain": -6.0, "q": 3.5}
+    ]
+  },
+  {
+    "name": "Audio-Technica ATH-R70x",
+    "preampDb": -6.0,
+    "bands": [
+      {"freq": 45, "gain": 4.2, "q": 0.6},
+      {"freq": 1100, "gain": 1.8, "q": 1.8},
+      {"freq": 3200, "gain": 2.5, "q": 2.0},
+      {"freq": 7000, "gain": -4.5, "q": 3.0}
+    ]
+  },
+  {
+    "name": "Apple AirPods 3",
+    "preampDb": -5.2,
+    "bands": [
+      {"freq": 105, "gain": 8.5, "q": 0.71},
+      {"freq": 3000, "gain": 3.0, "q": 1.5},
+      {"freq": 8500, "gain": -3.5, "q": 3.0}
+    ]
+  },
+  {
+    "name": "Hifiman Arya Stealth",
+    "preampDb": -6.8,
+    "bands": [
+      {"freq": 40, "gain": 5.5, "q": 0.5},
+      {"freq": 1500, "gain": 2.2, "q": 1.5},
+      {"freq": 3500, "gain": 3.2, "q": 2.2},
+      {"freq": 8500, "gain": -4.5, "q": 3.5}
+    ]
+  },
+  {
+    "name": "Moondrop Chu II",
+    "preampDb": -5.4,
+    "bands": [
+      {"freq": 55, "gain": 3.8, "q": 0.6},
+      {"freq": 3200, "gain": 3.0, "q": 1.8},
+      {"freq": 8000, "gain": -4.2, "q": 3.0}
+    ]
+  },
+  {
+    "name": "Samsung Galaxy Buds Pro",
+    "preampDb": -5.2,
+    "bands": [
+      {"freq": 45, "gain": 4.5, "q": 0.6},
+      {"freq": 3000, "gain": 2.5, "q": 2.0},
+      {"freq": 7000, "gain": -3.5, "q": 3.0}
+    ]
+  },
+  {
+    "name": "Samsung Galaxy Buds2",
+    "preampDb": -5.0,
+    "bands": [
+      {"freq": 50, "gain": 3.8, "q": 0.7},
+      {"freq": 3200, "gain": 2.2, "q": 2.2},
+      {"freq": 8500, "gain": -4.0, "q": 3.0}
+    ]
+  },
+  {
+    "name": "Hifiman Arya",
+    "preampDb": -6.5,
+    "bands": [
+      {"freq": 35, "gain": 5.5, "q": 0.6},
+      {"freq": 1500, "gain": 1.8, "q": 1.5},
+      {"freq": 4000, "gain": 2.5, "q": 2.0},
+      {"freq": 8000, "gain": -5.0, "q": 3.5}
+    ]
+  },
+  {
+    "name": "Meze Elite",
+    "preampDb": -6.2,
+    "bands": [
+      {"freq": 40, "gain": 4.2, "q": 0.7},
+      {"freq": 3500, "gain": 3.0, "q": 1.5},
+      {"freq": 7000, "gain": -3.5, "q": 2.5}
+    ]
+  },
+  {
+    "name": "Focal Clear Mg",
+    "preampDb": -5.8,
+    "bands": [
+      {"freq": 50, "gain": 3.5, "q": 0.6},
+      {"freq": 3200, "gain": 2.8, "q": 1.8},
+      {"freq": 6500, "gain": -4.2, "q": 2.8}
+    ]
+  },
+  {
+    "name": "Beyerdynamic DT 1770 Pro",
+    "preampDb": -6.7,
+    "bands": [
+      {"freq": 45, "gain": 5.0, "q": 0.6},
+      {"freq": 3500, "gain": 4.5, "q": 1.4},
+      {"freq": 8200, "gain": -6.0, "q": 3.5}
+    ]
+  },
+  {
+    "name": "Audio-Technica ATH-AD900X",
+    "preampDb": -5.2,
+    "bands": [
+      {"freq": 55, "gain": 8.5, "q": 0.5},
+      {"freq": 3000, "gain": 2.0, "q": 1.6},
+      {"freq": 9000, "gain": -3.0, "q": 3.0}
+    ]
+  },
+  {
+    "name": "Sony WF-C500",
+    "preampDb": -5.4,
+    "bands": [
+      {"freq": 50, "gain": 4.2, "q": 0.6},
+      {"freq": 2800, "gain": 2.5, "q": 2.0},
+      {"freq": 7500, "gain": -3.8, "q": 3.0}
+    ]
+  },
+  {
+    "name": "Sennheiser Momentum 3 Wireless",
+    "preampDb": -6.0,
+    "bands": [
+      {"freq": 40, "gain": -4.5, "q": 0.7},
+      {"freq": 1500, "gain": 3.2, "q": 1.8},
+      {"freq": 6000, "gain": -3.5, "q": 2.5}
+    ]
+  }
+]

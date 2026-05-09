@@ -35,7 +35,8 @@ internal class FfmpegAlacDecoder(private val context: Context) : AudioDecoder {
         val outputFormat = PcmAudioFormat(
             sampleRate = format.sampleRate,
             channels = format.channels.coerceIn(1, 2),
-            bitDepth = format.bitDepth
+            bitDepth = format.bitDepth,
+            codec = format.codecName
         )
         sink.configure(outputFormat)
         control.logDebug(

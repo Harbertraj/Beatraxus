@@ -10,6 +10,7 @@ interface AudioOutput {
     fun flush()
     fun write(data: FloatArray, offsetInSamples: Int, frameCount: Int): Int
     fun playbackPositionFrames(): Long
+    fun totalFramesWritten(): Long
     fun outputSampleRate(): Int
     fun outputBitDepth(): Int
     fun outputPathLabel(): String

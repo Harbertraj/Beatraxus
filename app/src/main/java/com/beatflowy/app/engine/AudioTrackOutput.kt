@@ -7,6 +7,7 @@ import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioTrack
 import android.os.Build
+import android.os.Process
 import android.util.Log
 import com.beatflowy.app.model.DvcMode
 import com.beatflowy.app.model.OutputMode
@@ -41,6 +42,7 @@ class AudioTrackOutput(
     private var dvcMode = DvcMode.DAC
     private var dvcLevel = 1f
     private var ditherState = 0x1234ABCD
+    private var lastThreadId = -1L
 
     fun setOutputMode(mode: OutputMode) {
         synchronized(stateLock) {
@@ -109,18 +111,22 @@ class AudioTrackOutput(
             OutputMode.AAUDIO
         }
 
-        this.sampleRate = resolveSupportedSampleRate(if (targetSampleRate > 0) targetSampleRate else sampleRate)
+        if (activeMode == OutputMode.AAUDIO) {
+            this.sampleRate = getHardwareSampleRate()
+            currentEncoding = AudioFormat.ENCODING_PCM_FLOAT
+        } else {
+            this.sampleRate = resolveSupportedSampleRate(if (targetSampleRate > 0) targetSampleRate else sampleRate)
+            currentEncoding = resolveBestEncoding(bitDepth, channelConfig)
+        }
+        
         this.channels = channels
-        currentEncoding = resolveBestEncoding(bitDepth, channelConfig)
         currentBytesPerSample = bytesPerSample(currentEncoding)
 
         val minBuffer = AudioTrack.getMinBufferSize(this.sampleRate, channelConfig, currentEncoding)
-        val bufferSize = maxOf(minBuffer * 4, this.sampleRate * channels * currentBytesPerSample / 5)
+        val bufferSize = minBuffer * 3
         if (bufferSize <= 0) return false
 
         try {
-            // Important: Release old track outside of lock if possible, but here we are in stateLock.
-            // Since stop() and flush() are now not synchronized on stateLock, we can safely call them.
             val oldTrack = audioTrack
             audioTrack = null // Disconnect immediately
             
@@ -152,36 +158,18 @@ class AudioTrackOutput(
                 .setChannelMask(channelConfig)
                 .build()
 
-            val builder = AudioTrack.Builder()
+            audioTrack = AudioTrack.Builder()
                 .setAudioAttributes(audioAttributes)
                 .setAudioFormat(audioFormat)
                 .setBufferSizeInBytes(bufferSize)
                 .setTransferMode(AudioTrack.MODE_STREAM)
+                .setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY)
+                .build()
 
-            if (activeMode == OutputMode.AAUDIO) {
-                builder.setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY)
-            } else {
-                builder.setPerformanceMode(AudioTrack.PERFORMANCE_MODE_NONE)
-            }
-
-            val track = builder.build()
-
-            if (track.state != AudioTrack.STATE_INITIALIZED) {
-                track.release()
-                val fallbackAttributes = AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_MEDIA)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                    .build()
-                
-                audioTrack = AudioTrack.Builder()
-                    .setAudioAttributes(fallbackAttributes)
-                    .setAudioFormat(audioFormat)
-                    .setBufferSizeInBytes(bufferSize)
-                    .setTransferMode(AudioTrack.MODE_STREAM)
-                    .setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY)
-                    .build()
-            } else {
-                audioTrack = track
+            if (audioTrack?.state != AudioTrack.STATE_INITIALIZED) {
+                audioTrack?.release()
+                audioTrack = null
+                return false
             }
 
             if (preferredDevice != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -202,7 +190,7 @@ class AudioTrackOutput(
     override fun start() {
         val track = audioTrack ?: return
         try {
-            track.setVolume(if (shouldUseTrackVolume()) dvcLevel.coerceIn(0f, 1f) else 1f)
+            applyTrackVolume()
             track.play()
         } catch (_: Exception) {}
     }
@@ -251,6 +239,10 @@ class AudioTrackOutput(
     }
 
     override fun write(data: FloatArray, offsetInSamples: Int, frameCount: Int): Int {
+        if (lastThreadId != Thread.currentThread().id) {
+            Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO)
+            lastThreadId = Thread.currentThread().id
+        }
         val track = audioTrack ?: return 0
         val sampleCount = frameCount * channels
         return try {
@@ -291,6 +283,8 @@ class AudioTrackOutput(
         return (getAbsolutePlaybackHeadPosition() - playbackHeadOffset).coerceAtLeast(0L)
     }
 
+    override fun totalFramesWritten(): Long = totalFramesWritten
+
     private fun getAbsolutePlaybackHeadPosition(): Long {
         val track = audioTrack ?: return 0L
         return try {
@@ -316,9 +310,22 @@ class AudioTrackOutput(
             dvcEnabled = enabled
             dvcMode = DvcMode.entries.firstOrNull { it.name == mode } ?: DvcMode.DAC
             dvcLevel = level.coerceIn(0f, 1f)
-            runCatching {
-                audioTrack?.setVolume(if (shouldUseTrackVolume()) dvcLevel else 1f)
-            }
+            
+            applyTrackVolume()
+        }
+    }
+
+    private fun applyTrackVolume() {
+        val track = audioTrack ?: return
+        if (dvcEnabled) {
+            // Volume controlled by NativeDsp.setDvcLevel() — do not apply here to avoid double attenuation.
+            track.setVolume(1f)
+        } else {
+            // When DVC is OFF, the track volume follows system volume
+            val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+            val current = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+            val vol = current.toFloat() / max.toFloat()
+            track.setVolume(vol)
         }
     }
 
@@ -328,7 +335,9 @@ class AudioTrackOutput(
         }
     }
 
-    override fun outputSampleRate(): Int = synchronized(stateLock) { sampleRate }
+    override fun outputSampleRate(): Int = synchronized(stateLock) {
+        if (activeMode == OutputMode.AAUDIO) getHardwareSampleRate() else sampleRate
+    }
     override fun outputBitDepth(): Int = synchronized(stateLock) { currentBytesPerSample * 8 }
 
     override fun outputPathLabel(): String = synchronized(stateLock) {
@@ -520,6 +529,11 @@ class AudioTrackOutput(
             buffer[outIndex++] = ((sample shr 24) and 0xFF).toByte()
         }
         return buffer
+    }
+
+    private fun getHardwareSampleRate(): Int {
+        val rateStr = audioManager.getProperty(AudioManager.PROPERTY_OUTPUT_SAMPLE_RATE)
+        return rateStr?.toIntOrNull() ?: 48000
     }
 
     private fun shouldUseTrackVolume(): Boolean {

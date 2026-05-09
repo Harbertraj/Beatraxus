@@ -32,23 +32,15 @@ internal class MediaCodecAudioDecoder(private val context: Context) : AudioDecod
             codec.configure(track.format, null, null, 0)
             codec.start()
 
-            val initialFormat = codec.outputFormat
-            sink.configure(
-                PcmAudioFormat(
-                    sampleRate = initialFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE),
-                    channels = initialFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT),
-                    bitDepth = resolveBitDepth(initialFormat)
-                )
-            )
-
             if (request.startPositionMs > 0) {
                 extractor.seekTo(request.startPositionMs * 1000, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
             }
 
             val info = MediaCodec.BufferInfo()
-            var currentPcmEncoding = resolvePcmEncoding(initialFormat)
-            var currentChannels = initialFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
+            var currentPcmEncoding = AudioFormat.ENCODING_PCM_16BIT
+            var currentChannels = 2
             var floatBuffer = FloatArray(PCM_CHUNK_SAMPLES)
+            var configured = false
 
             while (control.isActive()) {
                 val pendingSeek = control.consumePendingSeekMs()
@@ -84,6 +76,22 @@ internal class MediaCodecAudioDecoder(private val context: Context) : AudioDecod
 
                 val timeoutUs = if (inputProgress) 0L else 5_000L
                 var outIndex = codec.dequeueOutputBuffer(info, timeoutUs)
+
+                if (outIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED || (outIndex >= 0 && !configured)) {
+                    val newFormat = codec.outputFormat
+                    currentPcmEncoding = resolvePcmEncoding(newFormat)
+                    currentChannels = newFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
+                    sink.configure(
+                        PcmAudioFormat(
+                            sampleRate = newFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE),
+                            channels = currentChannels,
+                            bitDepth = resolveBitDepth(newFormat),
+                            codec = track.mime
+                        )
+                    )
+                    configured = true
+                }
+
                 var outputProgress = false
                 while (outIndex >= 0) {
                     val outputBuffer = codec.getOutputBuffer(outIndex)
@@ -106,23 +114,26 @@ internal class MediaCodecAudioDecoder(private val context: Context) : AudioDecod
                         return@withContext DecodeResult.Ended
                     }
                     outIndex = codec.dequeueOutputBuffer(info, 0)
-                }
 
-                if (outIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
-                    val newFormat = codec.outputFormat
-                    currentPcmEncoding = resolvePcmEncoding(newFormat)
-                    currentChannels = newFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
-                    sink.configure(
-                        PcmAudioFormat(
-                            sampleRate = newFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE),
-                            channels = currentChannels,
-                            bitDepth = resolveBitDepth(newFormat)
+                    if (outIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                        val newFormat = codec.outputFormat
+                        currentPcmEncoding = resolvePcmEncoding(newFormat)
+                        currentChannels = newFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
+                        sink.configure(
+                            PcmAudioFormat(
+                                sampleRate = newFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE),
+                                channels = currentChannels,
+                                bitDepth = resolveBitDepth(newFormat),
+                                codec = track.mime
+                            )
                         )
-                    )
+                        configured = true
+                        outIndex = codec.dequeueOutputBuffer(info, 0)
+                    }
                 }
 
                 if (!inputProgress && !outputProgress) {
-                    kotlinx.coroutines.delay(4)
+                    Thread.yield()
                 }
             }
         } catch (e: Exception) {

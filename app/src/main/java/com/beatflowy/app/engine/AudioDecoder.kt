@@ -33,7 +33,8 @@ internal data class PlaybackRequest(
 internal data class PcmAudioFormat(
     val sampleRate: Int,
     val channels: Int,
-    val bitDepth: Int
+    val bitDepth: Int,
+    val codec: String? = null
 )
 
 internal sealed interface DecodeResult {

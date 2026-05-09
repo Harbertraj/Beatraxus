@@ -9,24 +9,22 @@ import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
 import android.util.Log
+import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.viewModels
-import androidx.compose.animation.AnimatedContentTransitionScope
+import androidx.compose.animation.*
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.Alignment
 import androidx.core.content.ContextCompat
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -36,7 +34,9 @@ import com.beatflowy.app.service.AudioPlaybackService
 import com.beatflowy.app.ui.screens.MainScreen
 import com.beatflowy.app.ui.screens.SettingsScreen
 import com.beatflowy.app.ui.screens.WelcomeScreen
+import com.beatflowy.app.ui.components.VolumeKnobOverlay
 import com.beatflowy.app.ui.components.dsp.DspScreen
+import androidx.compose.ui.Modifier
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.graphics.Color
@@ -92,6 +92,20 @@ class MainActivity : ComponentActivity() {
         frameJankMonitor.start()
         startAudioService()
         bindAudioService()
+    }
+
+    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
+        return when (keyCode) {
+            KeyEvent.KEYCODE_VOLUME_UP -> {
+                viewModel.incrementVolume()
+                true
+            }
+            KeyEvent.KEYCODE_VOLUME_DOWN -> {
+                viewModel.decrementVolume()
+                true
+            }
+            else -> super.onKeyDown(keyCode, event)
+        }
     }
 
     private var isFirstCreate = true
@@ -205,127 +219,143 @@ fun BeatraxusApp(
     val navController = rememberNavController()
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val view = LocalView.current
+    val context = view.context
 
-    // Observe navigation backstack to determine the current screen
-    val navBackStackEntry by navController.currentBackStackEntryAsState()
-
-    if (!view.isInEditMode) {
-        SideEffect {
-            val window = (view.context as android.app.Activity).window
-            window.statusBarColor = Color.Transparent.toArgb()
-            window.navigationBarColor = Color.Transparent.toArgb()
-            
-            val insetsController = WindowCompat.getInsetsController(window, view)
-            insetsController.isAppearanceLightStatusBars = false
-            insetsController.isAppearanceLightNavigationBars = false
+    val folderPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        uri?.let {
+            context.contentResolver.takePersistableUriPermission(
+                it,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
+            viewModel.addMusicFolder(it.toString())
         }
     }
 
-    NavHost(
-        navController    = navController,
-        startDestination = if (uiState.isFirstRun) "welcome" else Screen.Main.route,
-        enterTransition = {
-            fadeIn(animationSpec = tween(400, easing = FastOutSlowInEasing))
-        },
-        exitTransition = {
-            fadeOut(animationSpec = tween(400, easing = FastOutSlowInEasing))
+    LaunchedEffect(uiState.triggerFolderPicker) {
+        if (uiState.triggerFolderPicker) {
+            folderPickerLauncher.launch(null)
         }
-    ) {
-        composable(
-            "welcome",
+    }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        NavHost(
+            navController    = navController,
+            startDestination = if (uiState.isFirstRun) "welcome" else Screen.Main.route,
+            enterTransition = {
+                fadeIn(animationSpec = tween(400, easing = FastOutSlowInEasing))
+            },
             exitTransition = {
-                fadeOut(tween(600, easing = FastOutSlowInEasing)) +
-                        scaleOut(targetScale = 0.9f, animationSpec = tween(600, easing = FastOutSlowInEasing))
+                fadeOut(animationSpec = tween(400, easing = FastOutSlowInEasing))
             }
         ) {
-            WelcomeScreen(
-                viewModel = viewModel,
-                onEnterFlow = onRequestPermissions,
-                onFinish = {
-                    viewModel.setFirstRunComplete()
-                    navController.navigate(Screen.Main.route) {
-                        popUpTo("welcome") { inclusive = true }
-                    }
+            composable(
+                "welcome",
+                exitTransition = {
+                    fadeOut(tween(600, easing = FastOutSlowInEasing)) +
+                            scaleOut(targetScale = 0.9f, animationSpec = tween(600, easing = FastOutSlowInEasing))
                 }
-            )
-        }
-        composable(
-            Screen.Main.route,
-            enterTransition = {
-                if (initialState.destination.route == "welcome") {
-                    fadeIn(tween(800, easing = FastOutSlowInEasing)) +
-                            scaleIn(initialScale = 1.1f, animationSpec = tween(800, easing = FastOutSlowInEasing))
-                } else {
+            ) {
+                WelcomeScreen(
+                    viewModel = viewModel,
+                    onEnterFlow = onRequestPermissions,
+                    onFinish = {
+                        viewModel.setFirstRunComplete()
+                        navController.navigate(Screen.Main.route) {
+                            popUpTo("welcome") { inclusive = true }
+                        }
+                    }
+                )
+            }
+            composable(
+                Screen.Main.route,
+                enterTransition = {
+                    if (initialState.destination.route == "welcome") {
+                        fadeIn(tween(800, easing = FastOutSlowInEasing)) +
+                                scaleIn(initialScale = 1.1f, animationSpec = tween(800, easing = FastOutSlowInEasing))
+                    } else {
+                        fadeIn(tween(400, easing = FastOutSlowInEasing)) +
+                                slideIntoContainer(
+                                    towards = AnimatedContentTransitionScope.SlideDirection.End, // Back from Right to Left
+                                    animationSpec = tween(400, easing = FastOutSlowInEasing)
+                                )
+                    }
+                },
+                exitTransition = {
+                    fadeOut(tween(400, easing = FastOutSlowInEasing)) +
+                            slideOutOfContainer(
+                                towards = AnimatedContentTransitionScope.SlideDirection.Start, // Forward to Right
+                                animationSpec = tween(400, easing = FastOutSlowInEasing)
+                            )
+                },
+                popEnterTransition = {
                     fadeIn(tween(400, easing = FastOutSlowInEasing)) +
                             slideIntoContainer(
                                 towards = AnimatedContentTransitionScope.SlideDirection.End,
                                 animationSpec = tween(400, easing = FastOutSlowInEasing)
                             )
                 }
-            },
-            exitTransition = {
-                fadeOut(tween(400, easing = FastOutSlowInEasing)) +
-                        slideOutOfContainer(
-                            towards = AnimatedContentTransitionScope.SlideDirection.Start,
-                            animationSpec = tween(400, easing = FastOutSlowInEasing)
-                        )
-            },
-            popEnterTransition = {
-                fadeIn(tween(400, easing = FastOutSlowInEasing)) +
-                        slideIntoContainer(
-                            towards = AnimatedContentTransitionScope.SlideDirection.End,
-                            animationSpec = tween(400, easing = FastOutSlowInEasing)
-                        )
+            ) {
+                MainScreen(
+                    viewModel            = viewModel,
+                    onNavigateToSettings  = { navController.navigate(Screen.Settings.route) },
+                    onNavigateToDsp = { navController.navigate(Screen.Dsp.route) }
+                )
             }
-        ) {
-            MainScreen(
-                viewModel            = viewModel,
-                onNavigateToSettings  = { navController.navigate(Screen.Settings.route) },
-                onNavigateToDsp = { navController.navigate(Screen.Dsp.route) }
-            )
-        }
-        composable(
-            Screen.Settings.route,
-            enterTransition = {
-                slideIntoContainer(
-                    towards = AnimatedContentTransitionScope.SlideDirection.Start,
-                    animationSpec = tween(400, easing = FastOutSlowInEasing)
-                ) + fadeIn(tween(400))
-            },
-            exitTransition = {
-                slideOutOfContainer(
-                    towards = AnimatedContentTransitionScope.SlideDirection.End,
-                    animationSpec = tween(400, easing = FastOutSlowInEasing)
-                ) + fadeOut(tween(400))
-            }
-        ) {
-            SettingsScreen(
-                viewModel = viewModel,
-                onBack    = { navController.popBackStack() },
-                onNavigateToDsp = { navController.navigate(Screen.Dsp.route) }
-            )
-        }
-        composable(
-            Screen.Dsp.route,
-            enterTransition = {
-                slideIntoContainer(
-                    towards = AnimatedContentTransitionScope.SlideDirection.Start,
-                    animationSpec = tween(400, easing = FastOutSlowInEasing)
-                ) + fadeIn(tween(400))
-            },
-            exitTransition = {
-                slideOutOfContainer(
-                    towards = AnimatedContentTransitionScope.SlideDirection.End,
-                    animationSpec = tween(400, easing = FastOutSlowInEasing)
-                ) + fadeOut(tween(400))
-            }
-        ) {
-            DspScreen(
-                viewModel = viewModel,
-                onBack = {
-                    navController.popBackStack()
+            composable(
+                Screen.Settings.route,
+                enterTransition = {
+                    slideIntoContainer(
+                        towards = AnimatedContentTransitionScope.SlideDirection.Start,
+                        animationSpec = tween(450, easing = FastOutSlowInEasing)
+                    ) + fadeIn(tween(400))
+                },
+                exitTransition = {
+                    slideOutOfContainer(
+                        towards = AnimatedContentTransitionScope.SlideDirection.End,
+                        animationSpec = tween(450, easing = FastOutSlowInEasing)
+                    ) + fadeOut(tween(400))
+                },
+                popExitTransition = {
+                    slideOutOfContainer(
+                        towards = AnimatedContentTransitionScope.SlideDirection.End,
+                        animationSpec = tween(450, easing = FastOutSlowInEasing)
+                    ) + fadeOut(tween(400))
                 }
-            )
+            ) {
+                SettingsScreen(
+                    viewModel = viewModel,
+                    onBack    = { navController.popBackStack() },
+                    onNavigateToDsp = { navController.navigate(Screen.Dsp.route) }
+                )
+            }
+            composable(
+                Screen.Dsp.route,
+                enterTransition = {
+                    slideIntoContainer(
+                        towards = AnimatedContentTransitionScope.SlideDirection.Start,
+                        animationSpec = tween(400, easing = FastOutSlowInEasing)
+                    ) + fadeIn(tween(400))
+                },
+                exitTransition = {
+                    slideOutOfContainer(
+                        towards = AnimatedContentTransitionScope.SlideDirection.End,
+                        animationSpec = tween(400, easing = FastOutSlowInEasing)
+                    ) + fadeOut(tween(400))
+                }
+            ) {
+                DspScreen(
+                    viewModel = viewModel,
+                    onBack = {
+                        navController.popBackStack()
+                    }
+                )
+            }
         }
+
+        VolumeKnobOverlay(viewModel)
     }
+
+    // Observe navigation backstack to determine the current screen
 }

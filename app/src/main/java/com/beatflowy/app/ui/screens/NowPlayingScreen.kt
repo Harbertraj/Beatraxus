@@ -24,10 +24,14 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -44,9 +48,16 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
 import coil.request.CachePolicy
 import coil.request.ImageRequest
+import coil.ImageLoader
+import coil.request.SuccessResult
+import android.graphics.drawable.BitmapDrawable
+import android.net.Uri
+import androidx.palette.graphics.Palette
 import com.beatflowy.app.R
 import com.beatflowy.app.model.Song
 import com.beatflowy.app.ui.components.WaveformSeekBar
@@ -58,6 +69,7 @@ import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
 import java.util.Locale
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -88,11 +100,14 @@ fun NowPlayingScreen(
     onToggleLyrics: () -> Unit = {},
     onAdjustOffset: (Long) -> Unit = {},
     showPipelineOverlay: Boolean = false,
-    onTogglePipeline: (Boolean) -> Unit = {}
+    onTogglePipeline: (Boolean) -> Unit = {},
+    onSetSleepTimer: (Int, Boolean, Int) -> Unit = { _, _, _ -> },
+    onStopSleepTimer: () -> Unit = {}
 ) {
     if (song == null) return
     val showQueue = uiState.showQueue
     val showLyrics = uiState.showLyrics
+    var showSleepTimerSheet by remember { mutableStateOf(false) }
 
     var badgeVisible by remember(song.id) { mutableStateOf(false) }
     LaunchedEffect(song.id) {
@@ -108,7 +123,7 @@ fun NowPlayingScreen(
 
     val backgroundBlurEffect = remember {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            AndroidRenderEffect.createBlurEffect(150f, 150f, Shader.TileMode.DECAL)
+            AndroidRenderEffect.createBlurEffect(250f, 250f, Shader.TileMode.DECAL)
         } else null
     }
 
@@ -128,14 +143,14 @@ fun NowPlayingScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .graphicsLayer {
-                    alpha = 0.65f
+                    alpha = 0.75f
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                         renderEffect = backgroundBlurEffect?.asComposeRenderEffect()
                     }
                 }
                 .then(
                     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
-                        Modifier.blur(100.dp)
+                        Modifier.blur(150.dp)
                     } else {
                         Modifier
                     }
@@ -149,9 +164,9 @@ fun NowPlayingScreen(
                 .background(
                     Brush.verticalGradient(
                         colors = listOf(
-                            Color.Black.copy(alpha = 0.4f),
+                            Color.Black.copy(alpha = 0.3f),
                             Color.Transparent,
-                            Color.Black.copy(alpha = 0.8f)
+                            Color.Black.copy(alpha = 0.5f)
                         )
                     )
                 )
@@ -237,6 +252,57 @@ fun NowPlayingScreen(
                                 modifier = Modifier.size(32.dp)
                             )
                         }
+                    },
+                    actions = {
+                        AnimatedContent(
+                            targetState = showQueue,
+                            transitionSpec = {
+                                (fadeIn(tween(700)) + scaleIn(initialScale = 0.85f))
+                                    .togetherWith(fadeOut(tween(700)) + scaleOut(targetScale = 0.85f))
+                            },
+                            label = "actionToggle",
+                            modifier = Modifier.padding(end = 12.dp)
+                        ) { queueVisible ->
+                            if (!queueVisible) {
+                                IconButton(onClick = { onTogglePipeline(true) }) {
+                                    Icon(
+                                        Icons.Rounded.Info,
+                                        null,
+                                        tint = Color.White.copy(alpha = 0.8f),
+                                        modifier = Modifier.size(28.dp)
+                                    )
+                                }
+                            } else {
+                                // Sleep Timer Button
+                                Surface(
+                                    onClick = { showSleepTimerSheet = true },
+                                    shape = RoundedCornerShape(14.dp),
+                                    color = if (uiState.isSleepTimerActive) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f) else Color.White.copy(alpha = 0.08f),
+                                    border = BorderStroke(1.dp, if (uiState.isSleepTimerActive) MaterialTheme.colorScheme.primary.copy(alpha = 0.4f) else Color.White.copy(alpha = 0.05f))
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.padding(horizontal = if (uiState.isSleepTimerActive) 10.dp else 8.dp, vertical = 8.dp)
+                                    ) {
+                                        Icon(
+                                            Icons.Rounded.Timer,
+                                            null,
+                                            tint = if (uiState.isSleepTimerActive) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.8f),
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                        if (uiState.isSleepTimerActive) {
+                                            Spacer(Modifier.width(6.dp))
+                                            Text(
+                                                text = fmtSleepTime(uiState.sleepTimerRemainingSeconds),
+                                                color = MaterialTheme.colorScheme.primary,
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 )
             }
@@ -256,7 +322,6 @@ fun NowPlayingScreen(
                         onMove = onMoveInQueue,
                         onPlayFromQueue = {
                             onPlayFromQueue(it)
-                            onToggleQueue()
                         },
                         onClose = onToggleQueue
                     )
@@ -677,6 +742,18 @@ fun NowPlayingScreen(
                 )
             }
         }
+
+        if (showSleepTimerSheet) {
+            SleepTimerSheet(
+                albumArtUri = song.albumArtUri,
+                uiState = uiState,
+                onSetTimer = { seconds, finishTrack, playCount ->
+                    onSetSleepTimer(seconds, finishTrack, playCount)
+                },
+                onStopTimer = onStopSleepTimer,
+                onDismiss = { showSleepTimerSheet = false }
+            )
+        }
     }
 }
 
@@ -688,85 +765,139 @@ fun AudioQualityBadge(
     onLongPress: () -> Unit
 ) {
     val format = song.format.lowercase()
-    val bitDepth = if (uiState.bitDepth > 0) uiState.bitDepth else song.bitDepth
-    val sampleRate = if (uiState.inputSampleRate > 0) uiState.inputSampleRate else song.sampleRateHz
-    val bitrate = if (uiState.bitrate > 0) uiState.bitrate else song.bitrate
+    val bitDepth = song.bitDepth
+    val sampleRate = song.sampleRateHz
+    val bitrate = song.bitrate
 
-    // Improved ALAC & AAC logic:
-    // M4A files under 10.5MB for a 5min song are typically AAC.
-    // Logic: If size < 2.1MB per minute, it's definitely AAC (5min = 10.5MB).
     val durationMin = song.durationMs / 60000.0
     val sizeMb = song.fileSizeBytes / (1024.0 * 1024.0)
-    // If the file is M4A and bitrate is less than 400kbps, or density is low, it's AAC.
-    val isLikelyLossyM4A = (format == "m4a" || format == "mp4") && 
-        ((durationMin > 0 && (sizeMb / durationMin) < 2.1) || (bitrate > 0 && bitrate < 400000))
+    val isLikelyLossyM4A = (format == "m4a" || format == "mp4" || format == "aac") && 
+        ((durationMin > 0 && (sizeMb / durationMin) < 2.3) || (bitrate > 0 && bitrate < 400000))
 
-    val isALAC = format.contains("alac") || (format == "m4a" && !isLikelyLossyM4A)
+    val isALAC = format.contains("alac") || ((format == "m4a" || format == "mp4") && !isLikelyLossyM4A)
+    val isLosslessFormat = format.contains("flac") || isALAC || format.contains("wav") || format.contains("dsd") || format.contains("aiff")
+    val isHiRes = (bitDepth >= 24 || sampleRate > 48000) && isLosslessFormat
     
-    val isLosslessFormat = format.contains("flac") || isALAC || format.contains("wav")
-    val isHiRes = (bitDepth >= 24 || sampleRate >= 48000) && isLosslessFormat
-    
-    val badgeColor = when {
-        isHiRes -> Color(0xFFFFD700)
-        isLosslessFormat -> Color(0xFF40C4FF)
-        else -> Color(0xFFC0C0C0)
+    val primaryColor = when {
+        isHiRes -> Color(0xFFFFD54F)       // Premium Gold
+        isLosslessFormat -> Color(0xFF4FC3F7) // Premium Cyan
+        else -> Color(0xFFE0E0E0)          // Silver
     }
-    
+
+    val secondaryColor = when {
+        isHiRes -> Color(0xFFFF8F00)
+        isLosslessFormat -> Color(0xFF00ACC1)
+        else -> Color(0xFF757575)
+    }
+
     val label = when {
         isHiRes -> "HIRES LOSSLESS"
         isLosslessFormat -> "LOSSLESS"
         else -> "${format.uppercase(Locale.US)} QUALITY"
     }
 
-    val infiniteTransition = rememberInfiniteTransition(label = "glow")
+    val infiniteTransition = rememberInfiniteTransition(label = "premiumBadge")
     val glowAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.3f,
-        targetValue = 0.7f,
+        initialValue = 0.45f,
+        targetValue = 0.9f,
         animationSpec = infiniteRepeatable(
-            animation = tween(2000, easing = LinearEasing),
+            animation = tween(2200, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
         ),
-        label = "glowAlpha"
+        label = "glow"
+    )
+
+    val shimmerTranslate by infiniteTransition.animateFloat(
+        initialValue = -300f,
+        targetValue = 900f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(3200, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "shimmer"
     )
 
     Surface(
-        shape = RoundedCornerShape(12.dp),
-        color = Color.Black.copy(alpha = 0.5f),
-        border = BorderStroke(1.5.dp, badgeColor.copy(alpha = 0.8f)),
         modifier = Modifier
+            .graphicsLayer {
+                shadowElevation = 28f
+                shape = RoundedCornerShape(18.dp)
+                clip = false
+            }
             .shadow(
-                elevation = 16.dp,
-                shape = RoundedCornerShape(12.dp),
-                ambientColor = badgeColor.copy(alpha = glowAlpha),
-                spotColor = badgeColor.copy(alpha = glowAlpha)
+                elevation = 26.dp,
+                shape = RoundedCornerShape(18.dp),
+                ambientColor = primaryColor.copy(alpha = glowAlpha * 0.55f),
+                spotColor = primaryColor.copy(alpha = glowAlpha * 0.75f)
             )
             .combinedClickable(
                 onClick = onClick,
                 onLongClick = onLongPress
+            ),
+        shape = RoundedCornerShape(18.dp),
+        color = Color(0xCC0A0A0F),
+        border = BorderStroke(
+            1.4.dp,
+            Brush.linearGradient(
+                colors = listOf(
+                    primaryColor.copy(alpha = 0.95f),
+                    secondaryColor.copy(alpha = 0.75f),
+                    Color.White.copy(alpha = 0.35f)
+                )
             )
+        )
     ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
-        ) {
-            Icon(
-                Icons.Rounded.HighQuality, 
-                null, 
-                tint = badgeColor, 
-                modifier = Modifier.size(20.dp).graphicsLayer {
-                    shadowElevation = 15f
-                    spotShadowColor = badgeColor
+        Box(
+            modifier = Modifier
+                .background(
+                    Brush.linearGradient(
+                        colors = listOf(
+                            Color.White.copy(alpha = 0.08f),
+                            Color.Transparent,
+                            primaryColor.copy(alpha = 0.08f)
+                        )
+                    )
+                )
+                .drawWithContent {
+                    drawContent()
+                    drawRect(
+                        brush = Brush.linearGradient(
+                            colors = listOf(
+                                Color.Transparent,
+                                Color.White.copy(alpha = 0.22f),
+                                Color.Transparent
+                            ),
+                            start = Offset(shimmerTranslate - 180f, 0f),
+                            end = Offset(shimmerTranslate, size.height)
+                        )
+                    )
                 }
-            )
-            Spacer(Modifier.width(8.dp))
-            Text(
-                text = label,
-                style = MaterialTheme.typography.labelMedium.copy(
-                    fontWeight = FontWeight.ExtraBold,
-                    letterSpacing = 1.5.sp
-                ),
-                color = badgeColor
-            )
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+            ) {
+                Icon(
+                    imageVector = if (isHiRes) Icons.Rounded.Diamond else Icons.Rounded.HighQuality,
+                    contentDescription = null,
+                    tint = primaryColor,
+                    modifier = Modifier
+                        .size(20.dp)
+                        .graphicsLayer {
+                            shadowElevation = 18f
+                            spotShadowColor = primaryColor
+                        }
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelMedium.copy(
+                        fontWeight = FontWeight.Black,
+                        letterSpacing = 1.5.sp
+                    ),
+                    color = primaryColor
+                )
+            }
         }
     }
 }
@@ -866,35 +997,31 @@ private fun PipelineInfoRow(label: String, value: String) {
 
 @Composable
 fun TechnicalInfo(song: Song, uiState: com.beatflowy.app.model.PlayerUiState) {
-    val format = uiState.format.lowercase().ifEmpty { song.format.lowercase() }
+    // Show only song static info (original info) as requested
+    val format = song.format.lowercase()
+    val bitDepth = song.bitDepth
+    val sampleRate = song.sampleRateHz
+    val bitrate = song.bitrate
     
     val durationMin = song.durationMs / 60000.0
     val sizeMb = song.fileSizeBytes / (1024.0 * 1024.0)
-    val isLikelyLossyM4A = (format == "m4a" || format == "mp4") && 
-        ((durationMin > 0 && (sizeMb / durationMin) < 2.5) || (uiState.bitrate > 0 && uiState.bitrate < 400000))
+    val isLikelyLossyM4A = (format == "m4a" || format == "mp4" || format == "aac") && 
+        ((durationMin > 0 && (sizeMb / durationMin) < 2.3) || (bitrate > 0 && bitrate < 400000))
 
-    val isALAC = format.contains("alac") || (format == "m4a" && !isLikelyLossyM4A)
-    val isLosslessFormat = format.contains("flac") || isALAC || format.contains("wav")
-    val isHiRes = (uiState.bitDepth >= 24 || uiState.inputSampleRate > 48000) && isLosslessFormat
+    val isALAC = format.contains("alac") || ((format == "m4a" || format == "mp4") && !isLikelyLossyM4A)
+    val isLosslessFormat = format.contains("flac") || isALAC || format.contains("wav") || format.contains("dsd") || format.contains("aiff")
+    val isHiRes = (bitDepth >= 24 || sampleRate > 48000) && isLosslessFormat
     
     Surface(shape = RoundedCornerShape(12.dp), color = Color.White.copy(alpha = 0.08f)) {
         val info = buildString {
-            // Priority display for bit depth: Force 24BIT only if it's actually lossless Hi-Res
-            if (isHiRes) {
-                append("24BIT ")
-            } else if (uiState.bitDepth > 0) {
-                append("${uiState.bitDepth}BIT ")
-            } else if (song.bitDepth > 0) {
-                append("${song.bitDepth}BIT ")
+            if (bitDepth > 0) {
+                append("${bitDepth}BIT ")
             }
             
-            val sampleRate = if (uiState.inputSampleRate > 0) uiState.inputSampleRate else song.sampleRateHz
             append("${String.format(Locale.US, "%.1f", sampleRate / 1000.0)}KHZ ")
             
-            // Fixed bitrate display: fallback to calculating from size if metadata is 0
-            val currentBitrate = if (uiState.bitrate > 0) uiState.bitrate else song.bitrate
-            val displayBitrate: Long = if (currentBitrate > 0) {
-                currentBitrate.toLong() / 1000
+            val displayBitrate: Long = if (bitrate > 0) {
+                bitrate.toLong() / 1000
             } else if (song.durationMs > 0) {
                 (song.fileSizeBytes * 8) / song.durationMs
             } else 0L
@@ -931,11 +1058,39 @@ fun QueueView(
     onPlayFromQueue: (String) -> Unit,
     onClose: () -> Unit
 ) {
+    val context = LocalContext.current
+    var dominantColor by remember { mutableStateOf(Color(0xFF2C2C2C)) }
+    
+    LaunchedEffect(currentSong.albumArtUri) {
+        val loader = ImageLoader(context)
+        val request = ImageRequest.Builder(context)
+            .data(currentSong.albumArtUri)
+            .allowHardware(false)
+            .build()
+            
+        val result = (loader.execute(request) as? SuccessResult)?.drawable
+        val bitmap = (result as? BitmapDrawable)?.bitmap
+        if (bitmap != null) {
+            Palette.from(bitmap).generate { palette ->
+                palette?.vibrantSwatch?.rgb?.let { dominantColor = Color(it) }
+                    ?: palette?.dominantSwatch?.rgb?.let { dominantColor = Color(it) }
+            }
+        }
+    }
+
+    val cardColor = dominantColor.copy(alpha = 0.95f)
+    val isLight = remember(dominantColor) {
+        val luminance = 0.299 * dominantColor.red + 0.587 * dominantColor.green + 0.114 * dominantColor.blue
+        luminance > 0.5
+    }
+    val textColor = if (isLight) Color.Black else Color.White
+    val subTextColor = if (isLight) Color.Black.copy(0.7f) else Color.White.copy(0.7f)
+
     Column(modifier = Modifier.fillMaxSize()) {
         Surface(
             modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp).clickable { onClose() },
             shape = RoundedCornerShape(24.dp),
-            color = Color.White.copy(alpha = 0.1f)
+            color = cardColor
         ) {
             Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                 AsyncImage(
@@ -950,14 +1105,44 @@ fun QueueView(
                 )
                 Spacer(Modifier.width(16.dp))
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("NOW PLAYING", style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.6f))
-                    Text(currentSong.title, style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold), color = Color.White, maxLines = 1)
-                    Text(currentSong.artist, style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.6f), maxLines = 1)
+                    Text("NOW PLAYING", style = MaterialTheme.typography.labelSmall, color = subTextColor)
+                    Text(currentSong.title, style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold), color = textColor, maxLines = 1)
+                    Text(currentSong.artist, style = MaterialTheme.typography.bodySmall, color = subTextColor, maxLines = 1)
                 }
             }
         }
 
-        Text("UP NEXT", style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold), color = Color.White, modifier = Modifier.padding(vertical = 8.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Surface(
+                color = dominantColor.copy(alpha = 0.2f),
+                shape = RoundedCornerShape(14.dp),
+                border = BorderStroke(1.dp, dominantColor.copy(alpha = 0.3f))
+            ) {
+                Text(
+                    "NEXT UP",
+                    style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Black, letterSpacing = 1.2.sp),
+                    color = Color.White,
+                    modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp)
+                )
+            }
+            
+            Surface(
+                color = dominantColor.copy(alpha = 0.2f),
+                shape = RoundedCornerShape(14.dp),
+                border = BorderStroke(1.dp, dominantColor.copy(alpha = 0.3f))
+            ) {
+                Text(
+                    "${upcomingSongs.size} SONGS",
+                    style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Black, letterSpacing = 1.2.sp),
+                    color = Color.White.copy(alpha = 0.8f),
+                    modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp)
+                )
+            }
+        }
 
         val lazyListState = rememberLazyListState()
         val reorderableState = rememberReorderableLazyListState(lazyListState) { from, to -> onMove(from.index, to.index) }
@@ -965,17 +1150,19 @@ fun QueueView(
         LazyColumn(
             state = lazyListState,
             modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+            contentPadding = PaddingValues(bottom = 24.dp)
         ) {
             items(upcomingSongs, key = { it.id }) { song ->
                 ReorderableItem(reorderableState, key = song.id) { isDragging ->
                     Surface(
                         modifier = Modifier.fillMaxWidth().clickable { onPlayFromQueue(song.id) },
-                        shape = RoundedCornerShape(16.dp),
-                        color = if (isDragging) Color.White.copy(alpha = 0.2f) else Color.White.copy(alpha = 0.05f)
+                        shape = RoundedCornerShape(18.dp),
+                        color = if (isDragging) dominantColor.copy(alpha = 0.35f) else dominantColor.copy(alpha = 0.15f),
+                        border = BorderStroke(1.dp, Color.White.copy(alpha = if (isDragging) 0.15f else 0.05f))
                     ) {
                         Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Rounded.DragHandle, null, tint = Color.White.copy(alpha = 0.4f), modifier = Modifier.draggableHandle())
+                            Icon(Icons.Rounded.DragHandle, null, tint = Color.White.copy(alpha = 0.3f), modifier = Modifier.draggableHandle())
                             Spacer(Modifier.width(12.dp))
                             AsyncImage(
                                 model = ImageRequest.Builder(LocalContext.current)
@@ -984,16 +1171,16 @@ fun QueueView(
                                     .memoryCachePolicy(CachePolicy.ENABLED)
                                     .build(),
                                 contentDescription = null,
-                                modifier = Modifier.size(48.dp).clip(RoundedCornerShape(8.dp)),
+                                modifier = Modifier.size(50.dp).clip(RoundedCornerShape(10.dp)),
                                 contentScale = ContentScale.Crop
                             )
                             Spacer(Modifier.width(12.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(song.title, style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold), color = Color.White, maxLines = 1)
-                                Text(song.artist, style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.6f), maxLines = 1)
+                                Text(song.artist, style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.5f), maxLines = 1)
                             }
                             IconButton(onClick = { onRemoveFromQueue(song.id) }) {
-                                Icon(Icons.Rounded.Close, null, tint = Color.White.copy(alpha = 0.4f))
+                                Icon(Icons.Rounded.Close, null, tint = Color.White.copy(alpha = 0.3f))
                             }
                         }
                     }
@@ -1005,6 +1192,12 @@ fun QueueView(
 
 private fun fmtTime(ms: Long): String {
     val s = ms / 1000; return "%d:%02d".format(s / 60, s % 60)
+}
+
+private fun fmtSleepTime(seconds: Int): String {
+    val m = seconds / 60
+    val s = seconds % 60
+    return if (m > 0) "%d:%02d".format(m, s) else "%ds".format(s)
 }
 
 private fun buildPipelineOverlayState(
@@ -1057,5 +1250,450 @@ private fun formatPipelineBitrate(bitrate: Int): String {
 
 private fun formatPipelineSampleRate(sampleRate: Int): String {
     if (sampleRate <= 0) return "Unknown"
-    return String.format(Locale.US, "%.1f kHz", sampleRate / 1000f)
+    return if (sampleRate % 1000 == 0) {
+        "${sampleRate / 1000} kHz"
+    } else {
+        String.format(Locale.US, "%.1f kHz", sampleRate / 1000f)
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SleepTimerSheet(
+    albumArtUri: Uri?,
+    uiState: com.beatflowy.app.model.PlayerUiState,
+    onSetTimer: (Int, Boolean, Int) -> Unit,
+    onStopTimer: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val presets = listOf(0, 15, 30, 45, 60, 120, 180, 240) // in minutes
+    var timerValue by remember { mutableFloatStateOf(0f) }
+    var playCountValue by remember { mutableFloatStateOf(0f) }
+    var endOfTrack by remember { mutableStateOf(uiState.sleepTimerFinishTrack) }
+    var showCustomPicker by remember { mutableStateOf(false) }
+
+    val selectedMinutes = remember(timerValue) {
+        val index = (timerValue * (presets.size - 1)).roundToInt()
+        presets[index]
+    }
+
+    val selectedPlayCount = remember(playCountValue) {
+        (playCountValue * 50).roundToInt()
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = Color.Transparent,
+        scrimColor = Color.Black.copy(alpha = 0.75f),
+        dragHandle = null,
+        windowInsets = WindowInsets(0)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(topStart = 42.dp, topEnd = 42.dp))
+                .background(Color(0xFF161414))
+        ) {
+            // Background Layer with full coverage
+            AsyncImage(
+                model = ImageRequest.Builder(LocalContext.current)
+                    .data(albumArtUri)
+                    .build(),
+                contentDescription = null,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .blur(140.dp)
+                    .alpha(0.35f),
+                contentScale = ContentScale.Crop
+            )
+
+            Column(
+                modifier = Modifier
+                    .padding(horizontal = 24.dp)
+                    .padding(top = 16.dp, bottom = 40.dp)
+                    .navigationBarsPadding(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(24.dp)
+            ) {
+                // Drag handle
+                Box(
+                    modifier = Modifier
+                        .size(44.dp, 5.dp)
+                        .background(Color.White.copy(0.15f), CircleShape)
+                )
+
+                // Title Section with Countdown
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Surface(
+                        color = Color.White.copy(0.06f),
+                        shape = RoundedCornerShape(24.dp),
+                        border = BorderStroke(1.dp, Color.White.copy(0.08f))
+                    ) {
+                        Text(
+                            "Sleep Timer",
+                            color = Color(0xFFFFB2AD),
+                            modifier = Modifier.padding(horizontal = 24.dp, vertical = 10.dp),
+                            style = MaterialTheme.typography.titleLarge.copy(
+                                fontWeight = FontWeight.Black,
+                                fontSize = 22.sp,
+                                letterSpacing = 0.5.sp
+                            )
+                        )
+                    }
+
+                    if (uiState.isSleepTimerActive) {
+                        Spacer(Modifier.height(12.dp))
+                        val remaining = uiState.sleepTimerRemainingSeconds
+                        val h = remaining / 3600
+                        val m = (remaining % 3600) / 60
+                        val s = remaining % 60
+                        val countdownText = if (h > 0) "%02d:%02d:%02d".format(h, m, s) else "%02d:%02d".format(m, s)
+                        
+                        Text(
+                            text = "Ends in $countdownText",
+                            color = Color.White.copy(0.6f),
+                            style = MaterialTheme.typography.labelLarge.copy(
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = 1.2.sp
+                            )
+                        )
+                    }
+                }
+
+                // Timer Slider
+                Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "Duration",
+                            color = Color.White.copy(0.8f),
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = if (selectedMinutes == 0) "Off" else if (selectedMinutes >= 60) "${selectedMinutes/60}h ${if (selectedMinutes%60>0) "${selectedMinutes%60}m" else ""}" else "${selectedMinutes}m",
+                            color = Color(0xFFFFB2AD),
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Black
+                        )
+                    }
+                    PremiumSnappingSlider(
+                        value = timerValue,
+                        onValueChange = { timerValue = it },
+                        steps = presets.size
+                    )
+                }
+
+                // Play Count Slider
+                Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "Play Count",
+                            color = Color.White.copy(0.8f),
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = if (selectedPlayCount == 0) "Off" else "$selectedPlayCount songs",
+                            color = Color(0xFFFFB2AD),
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Black
+                        )
+                    }
+                    PremiumSnappingSlider(
+                        value = playCountValue,
+                        onValueChange = { playCountValue = it },
+                        steps = 51
+                    )
+                }
+
+                // End of track switch
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(24.dp))
+                        .background(Color.White.copy(0.04f))
+                        .clickable { endOfTrack = !endOfTrack }
+                        .padding(horizontal = 20.dp, vertical = 18.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(
+                            "Finish current track",
+                            color = Color.White.copy(0.9f),
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            "Stop only after song finishes",
+                            color = Color.White.copy(0.45f),
+                            fontSize = 13.sp
+                        )
+                    }
+                    Switch(
+                        checked = endOfTrack,
+                        onCheckedChange = { endOfTrack = it },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color(0xFFFFB2AD),
+                            checkedTrackColor = Color(0xFFFFB2AD).copy(0.3f),
+                            uncheckedThumbColor = Color.White.copy(0.4f),
+                            uncheckedTrackColor = Color.White.copy(0.08f),
+                            uncheckedBorderColor = Color.Transparent
+                        )
+                    )
+                }
+
+                // Buttons
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    Button(
+                        onClick = {
+                            if (selectedMinutes > 0 || selectedPlayCount > 0) {
+                                onSetTimer(selectedMinutes * 60, endOfTrack, selectedPlayCount)
+                                onDismiss()
+                            } else {
+                                showCustomPicker = true
+                            }
+                        },
+                        modifier = Modifier.weight(1.1f).height(68.dp),
+                        shape = RoundedCornerShape(24.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFB2AD))
+                    ) {
+                        Text(
+                            if (selectedMinutes == 0 && selectedPlayCount == 0) "Custom Time" else "Start Timer",
+                            color = Color(0xFF331D1B),
+                            fontWeight = FontWeight.Black,
+                            fontSize = 17.sp
+                        )
+                    }
+                    
+                    if (uiState.isSleepTimerActive) {
+                        Button(
+                            onClick = {
+                                onStopTimer()
+                                onDismiss()
+                            },
+                            modifier = Modifier.weight(0.9f).height(68.dp),
+                            shape = RoundedCornerShape(24.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(0.08f)),
+                            border = BorderStroke(1.dp, Color.White.copy(0.06f))
+                        ) {
+                            Text("Cancel", color = Color.White.copy(0.8f), fontWeight = FontWeight.Bold)
+                        }
+                    } else {
+                        Button(
+                            onClick = onDismiss,
+                            modifier = Modifier.weight(0.9f).height(68.dp),
+                            shape = RoundedCornerShape(24.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(0.08f)),
+                            border = BorderStroke(1.dp, Color.White.copy(0.06f))
+                        ) {
+                            Text("Dismiss", color = Color.White.copy(0.6f), fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (showCustomPicker) {
+        CustomTimePickerDialog(
+            onDismiss = { showCustomPicker = false },
+            onConfirm = { seconds ->
+                onSetTimer(seconds, endOfTrack, 0)
+                showCustomPicker = false
+                onDismiss()
+            }
+        )
+    }
+}
+
+@Composable
+fun PremiumSnappingSlider(
+    value: Float,
+    onValueChange: (Float) -> Unit,
+    steps: Int
+) {
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+    
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(60.dp)
+            .clip(RoundedCornerShape(30.dp))
+            .background(Color.White.copy(0.05f))
+            .pointerInput(steps) {
+                detectTapGestures { offset ->
+                    val raw = (offset.x / size.width).coerceIn(0f, 1f)
+                    val stepped = (raw * (steps - 1)).roundToInt() / (steps - 1).toFloat()
+                    if (stepped != value) {
+                        haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                        onValueChange(stepped)
+                    }
+                }
+            }
+            .pointerInput(steps) {
+                detectDragGestures { change, _ ->
+                    val raw = (change.position.x / size.width).coerceIn(0f, 1f)
+                    val stepped = (raw * (steps - 1)).roundToInt() / (steps - 1).toFloat()
+                    if (stepped != value) {
+                        haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                        onValueChange(stepped)
+                    }
+                }
+            },
+        contentAlignment = Alignment.CenterStart
+    ) {
+        val animatedValue by animateFloatAsState(
+            targetValue = value,
+            animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+            label = "sliderProgress"
+        )
+
+        // Track Progress
+        Box(
+            modifier = Modifier
+                .fillMaxWidth(animatedValue)
+                .fillMaxHeight()
+                .background(
+                    Brush.horizontalGradient(
+                        colors = listOf(Color(0xFF4A2F2D), Color(0xFF6D4542))
+                    )
+                )
+        )
+        
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val horizontalPadding = 30.dp.toPx()
+            val availableWidth = size.width - (horizontalPadding * 2)
+            
+            // Draw Dots for steps if not too many
+            if (steps <= 12) {
+                for (i in 0 until steps) {
+                    drawCircle(
+                        color = Color.White.copy(0.2f),
+                        radius = 2.dp.toPx(),
+                        center = Offset(horizontalPadding + i * (availableWidth / (steps - 1)), size.height / 2)
+                    )
+                }
+            }
+            
+            // Thumb
+            val thumbX = horizontalPadding + (animatedValue * availableWidth)
+            drawRoundRect(
+                color = Color(0xFFFFB2AD),
+                topLeft = Offset(thumbX - 3.dp.toPx(), 14.dp.toPx()),
+                size = androidx.compose.ui.geometry.Size(6.dp.toPx(), size.height - 28.dp.toPx()),
+                cornerRadius = androidx.compose.ui.geometry.CornerRadius(3.dp.toPx())
+            )
+        }
+    }
+}
+
+@Composable
+fun CustomTimePickerDialog(
+    onDismiss: () -> Unit,
+    onConfirm: (Int) -> Unit
+) {
+    var hours by remember { mutableIntStateOf(0) }
+    var minutes by remember { mutableIntStateOf(30) }
+    var seconds by remember { mutableIntStateOf(0) }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth(0.85f)
+                .wrapContentHeight(),
+            shape = RoundedCornerShape(32.dp),
+            color = Color(0xFF1E1B1B),
+            border = BorderStroke(1.dp, Color.White.copy(0.1f))
+        ) {
+            Column(
+                modifier = Modifier.padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(24.dp)
+            ) {
+                Text(
+                    "Custom Duration",
+                    color = Color.White,
+                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Black)
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TimeValuePicker("HH", hours) { hours = it.coerceIn(0, 23) }
+                    Text(":", color = Color.White.copy(0.3f), fontSize = 32.sp, fontWeight = FontWeight.Light)
+                    TimeValuePicker("MM", minutes) { minutes = it.coerceIn(0, 59) }
+                    Text(":", color = Color.White.copy(0.3f), fontSize = 32.sp, fontWeight = FontWeight.Light)
+                    TimeValuePicker("SS", seconds) { seconds = it.coerceIn(0, 59) }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    TextButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.weight(1f).height(54.dp)
+                    ) {
+                        Text("Cancel", color = Color.White.copy(0.6f))
+                    }
+                    Button(
+                        onClick = {
+                            val totalSeconds = (hours * 3600) + (minutes * 60) + seconds
+                            if (totalSeconds > 0) onConfirm(totalSeconds)
+                        },
+                        modifier = Modifier.weight(1.5f).height(54.dp),
+                        shape = RoundedCornerShape(18.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFB2AD))
+                    ) {
+                        Text("Set Timer", color = Color(0xFF331D1B), fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TimeValuePicker(label: String, value: Int, onValueChange: (Int) -> Unit) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        IconButton(onClick = { onValueChange(value + 1) }) {
+            Icon(Icons.Rounded.KeyboardArrowUp, null, tint = Color.White.copy(0.5f))
+        }
+        Column(
+            modifier = Modifier
+                .width(60.dp)
+                .height(70.dp)
+                .background(Color.White.copy(0.06f), RoundedCornerShape(16.dp)),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Text(
+                text = "%02d".format(value),
+                color = Color(0xFFFFB2AD),
+                fontSize = 28.sp,
+                fontWeight = FontWeight.Black
+            )
+            Text(label, color = Color.White.copy(0.3f), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+        }
+        IconButton(onClick = { onValueChange(value - 1) }) {
+            Icon(Icons.Rounded.KeyboardArrowDown, null, tint = Color.White.copy(0.5f))
+        }
+    }
 }

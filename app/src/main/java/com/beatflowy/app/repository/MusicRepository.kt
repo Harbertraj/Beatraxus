@@ -30,6 +30,7 @@ class MusicRepository(private val context: Context) {
         fullScan: Boolean = true,
         onProgress: (count: Int, albumCount: Int, artistCount: Int, progress: Float) -> Unit
     ): List<Song> = withContext(Dispatchers.IO) {
+        onProgress(0, 0, 0, 0f)
         val albumsSet = mutableSetOf<String>()
         val artistsSet = mutableSetOf<String>()
         val collection = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
@@ -158,7 +159,10 @@ class MusicRepository(private val context: Context) {
                                     if (ffmpegArt != null) albumArtUri = ffmpegArt
                                 }
 
-                                replayGain = extractReplayGain(uri)
+                                // ONLY extract ReplayGain if it's a FULL scan. FFprobe is too slow for quick scan.
+                                if (fullScan) {
+                                    replayGain = extractReplayGain(uri)
+                                }
 
                                 val extractor = MediaExtractor()
                                 try {
@@ -281,7 +285,14 @@ class MusicRepository(private val context: Context) {
                 artistsSet.add(song.artist)
                 processedCount++
                 
-                if (processedCount % 20 == 0 || processedCount == total) {
+                // Report more frequently at the start to feel more immediate
+                val reportFrequency = when {
+                    processedCount <= 10 -> 1
+                    processedCount <= 50 -> 5
+                    else -> 20
+                }
+                
+                if (processedCount % reportFrequency == 0 || processedCount == total) {
                     onProgress(processedCount, albumsSet.size, artistsSet.size, processedCount.toFloat() / total)
                 }
             }
@@ -608,5 +619,38 @@ class MusicRepository(private val context: Context) {
             uris.forEach { context.contentResolver.delete(it, null, null) }
         }
         return null
+    }
+
+    fun getMusicFolders(): List<String> {
+        val prefs = context.getSharedPreferences("beatraxus", Context.MODE_PRIVATE)
+        val foldersJson = prefs.getString("music_folders", null) ?: return emptyList()
+        return try {
+            val array = org.json.JSONArray(foldersJson)
+            List(array.length()) { array.getString(it) }
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    fun addMusicFolder(uri: String) {
+        val current = getMusicFolders().toMutableList()
+        if (!current.contains(uri)) {
+            current.add(uri)
+            saveMusicFolders(current)
+        }
+    }
+
+    fun removeMusicFolder(uri: String) {
+        val current = getMusicFolders().toMutableList()
+        if (current.remove(uri)) {
+            saveMusicFolders(current)
+        }
+    }
+
+    private fun saveMusicFolders(folders: List<String>) {
+        val prefs = context.getSharedPreferences("beatraxus", Context.MODE_PRIVATE)
+        val array = org.json.JSONArray()
+        folders.forEach { array.put(it) }
+        prefs.edit().putString("music_folders", array.toString()).apply()
     }
 }

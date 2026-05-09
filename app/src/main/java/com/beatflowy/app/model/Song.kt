@@ -114,7 +114,17 @@ data class PlayerUiState(
     val lyricsOffsetMs: Long = 0L,
     val isLoadingLyrics: Boolean = false,
     val lyricsCurrentSongId: String? = null,
-    val lyricsSource: LyricsSource? = null
+    val lyricsSource: LyricsSource? = null,
+    val sleepTimerRemainingSeconds: Int = 0,
+    val isSleepTimerActive: Boolean = false,
+    val sleepTimerFinishTrack: Boolean = false,
+    val sleepTimerPlayCount: Int = 0, // 0 means play count timer inactive
+    val sleepTimerRemainingPlayCount: Int = 0,
+    val musicFolders: List<String> = emptyList(),
+    val triggerFolderPicker: Boolean = false,
+    val showVolumeOverlay: Boolean = false,
+    val settingsIconX: Float = 0f,
+    val settingsIconY: Float = 0f
 ) {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
@@ -176,12 +186,18 @@ data class PlayerUiState(
                 lyricsOffsetMs == other.lyricsOffsetMs &&
                 isLoadingLyrics == other.isLoadingLyrics &&
                 lyricsCurrentSongId == other.lyricsCurrentSongId &&
-                lyricsSource == other.lyricsSource
+                lyricsSource == other.lyricsSource &&
+                sleepTimerRemainingSeconds == other.sleepTimerRemainingSeconds &&
+                isSleepTimerActive == other.isSleepTimerActive &&
+                sleepTimerFinishTrack == other.sleepTimerFinishTrack &&
+                sleepTimerPlayCount == other.sleepTimerPlayCount &&
+                sleepTimerRemainingPlayCount == other.sleepTimerRemainingPlayCount &&
+                musicFolders == other.musicFolders &&
+                triggerFolderPicker == other.triggerFolderPicker
     }
 
     override fun hashCode(): Int {
         var result = currentSong?.hashCode() ?: 0
-        // ... (truncated for brevity, ensure all fields are included in implementation)
         result = 31 * result + isPlaying.hashCode()
         result = 31 * result + progressMs.hashCode()
         result = 31 * result + isBuffering.hashCode()
@@ -239,6 +255,13 @@ data class PlayerUiState(
         result = 31 * result + isLoadingLyrics.hashCode()
         result = 31 * result + (lyricsCurrentSongId?.hashCode() ?: 0)
         result = 31 * result + (lyricsSource?.hashCode() ?: 0)
+        result = 31 * result + sleepTimerRemainingSeconds
+        result = 31 * result + isSleepTimerActive.hashCode()
+        result = 31 * result + sleepTimerFinishTrack.hashCode()
+        result = 31 * result + sleepTimerPlayCount
+        result = 31 * result + sleepTimerRemainingPlayCount
+        result = 31 * result + musicFolders.hashCode()
+        result = 31 * result + triggerFolderPicker.hashCode()
         return result
     }
 }

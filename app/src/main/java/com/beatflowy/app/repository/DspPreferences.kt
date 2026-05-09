@@ -41,9 +41,17 @@ class DspPreferences(private val context: Context) {
             balance = preferences[BALANCE] ?: 0f,
             stereoExpansionEnabled = preferences[STEREO_EXP_ENABLED] ?: false,
             stereoWidth = preferences[STEREO_WIDTH] ?: 1f,
+            crossfeedEnabled = preferences[CROSSFEED_ENABLED] ?: false,
+            crossfeedLevel = preferences[CROSSFEED_LEVEL] ?: 0.4f,
             reverbEnabled = preferences[REVERB_ENABLED] ?: false,
             reverbAmount = preferences[REVERB_AMOUNT] ?: 0f,
             reverbPreset = preferences[REVERB_PRESET] ?: "FLAT",
+            reverbPredelayMs = preferences[REVERB_PREDELAY] ?: 0f,
+            reverbWidth = preferences[REVERB_WIDTH] ?: 1.0f,
+            reverbDamping = preferences[REVERB_DAMPING] ?: 0.5f,
+            reverbRoomSize = preferences[REVERB_ROOM_SIZE] ?: 0.5f,
+            reverbPredelayMix = preferences[REVERB_PREDELAY_MIX] ?: 0.62f,
+            dcBlockerEnabled = preferences[DC_BLOCKER_ENABLED] ?: true,
             replayGainEnabled = preferences[REPLAY_GAIN_ENABLED] ?: false,
             replayGainOption = ReplayGainOption.valueOf(preferences[REPLAY_GAIN_OPTION] ?: ReplayGainOption.APPLY_GAIN.name),
             replayGainSource = ReplayGainSource.valueOf(preferences[REPLAY_GAIN_SOURCE] ?: ReplayGainSource.TRACK.name),
@@ -80,9 +88,17 @@ class DspPreferences(private val context: Context) {
             preferences[BALANCE] = config.balance
             preferences[STEREO_EXP_ENABLED] = config.stereoExpansionEnabled
             preferences[STEREO_WIDTH] = config.stereoWidth
+            preferences[CROSSFEED_ENABLED] = config.crossfeedEnabled
+            preferences[CROSSFEED_LEVEL] = config.crossfeedLevel
             preferences[REVERB_ENABLED] = config.reverbEnabled
             preferences[REVERB_AMOUNT] = config.reverbAmount
             preferences[REVERB_PRESET] = config.reverbPreset
+            preferences[REVERB_PREDELAY] = config.reverbPredelayMs
+            preferences[REVERB_WIDTH] = config.reverbWidth
+            preferences[REVERB_DAMPING] = config.reverbDamping
+            preferences[REVERB_ROOM_SIZE] = config.reverbRoomSize
+            preferences[REVERB_PREDELAY_MIX] = config.reverbPredelayMix
+            preferences[DC_BLOCKER_ENABLED] = config.dcBlockerEnabled
             preferences[REPLAY_GAIN_ENABLED] = config.replayGainEnabled
             preferences[REPLAY_GAIN_OPTION] = config.replayGainOption.name
             preferences[REPLAY_GAIN_SOURCE] = config.replayGainSource.name
@@ -122,8 +138,8 @@ class DspPreferences(private val context: Context) {
                     q = obj.getDouble("q").toFloat()
                 )
             }
-            // Migration: If we find the old 32-band default with 1k duplicates, truncate to 10
-            if (bands.size == 32 && bands.count { it.frequencyHz == 1000f } > 20) {
+            // Migration: Only truncate if it's the specific old default pattern (32 bands, all 1k)
+            if (bands.size == 32 && bands.count { it.frequencyHz == 1000f } > 30) {
                 bands.take(10)
             } else {
                 bands
@@ -180,9 +196,17 @@ class DspPreferences(private val context: Context) {
         private val BALANCE = floatPreferencesKey("balance")
         private val STEREO_EXP_ENABLED = booleanPreferencesKey("stereo_exp_enabled")
         private val STEREO_WIDTH = floatPreferencesKey("stereo_width")
+        private val CROSSFEED_ENABLED = booleanPreferencesKey("crossfeed_enabled")
+        private val CROSSFEED_LEVEL = floatPreferencesKey("crossfeed_level")
         private val REVERB_ENABLED = booleanPreferencesKey("reverb_enabled")
         private val REVERB_AMOUNT = floatPreferencesKey("reverb_amount")
         private val REVERB_PRESET = stringPreferencesKey("reverb_preset")
+        private val REVERB_PREDELAY = floatPreferencesKey("reverb_predelay")
+        private val REVERB_WIDTH = floatPreferencesKey("reverb_width")
+        private val REVERB_DAMPING = floatPreferencesKey("reverb_damping")
+        private val REVERB_ROOM_SIZE = floatPreferencesKey("reverb_room_size")
+        private val REVERB_PREDELAY_MIX = floatPreferencesKey("reverb_predelay_mix")
+        private val DC_BLOCKER_ENABLED = booleanPreferencesKey("dc_blocker_enabled")
         private val REPLAY_GAIN_ENABLED = booleanPreferencesKey("replay_gain_enabled")
         private val REPLAY_GAIN_OPTION = stringPreferencesKey("replay_gain_option")
         private val REPLAY_GAIN_SOURCE = stringPreferencesKey("replay_gain_source")
