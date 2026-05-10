@@ -7,6 +7,8 @@ import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import kotlin.math.sqrt
+import kotlinx.coroutines.delay
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -52,6 +54,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.*
@@ -60,17 +63,22 @@ import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.ui.zIndex
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import androidx.compose.ui.zIndex
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.unit.Velocity
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.runtime.derivedStateOf
@@ -152,6 +160,20 @@ fun MainScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val progressMs by viewModel.progressMs.collectAsStateWithLifecycle()
+
+    val viewAccentColor = when (uiState.currentView) {
+        LibraryView.ALL_SONGS -> Color(0xFFFF4081)
+        LibraryView.ALBUMS, LibraryView.ALBUM_DETAIL -> Color(0xFFB2FF59)
+        LibraryView.ARTISTS, LibraryView.ARTIST_DETAIL -> Color(0xFF7C4DFF)
+        LibraryView.FOLDERS, LibraryView.FOLDER_DETAIL -> Color(0xFFFFAB40)
+        LibraryView.YEARS, LibraryView.YEAR_DETAIL -> Color(0xFFFF5252)
+        LibraryView.GENRES, LibraryView.GENRE_DETAIL -> Color(0xFFE040FB)
+        LibraryView.PLAYLISTS, LibraryView.PLAYLIST_DETAIL -> Color(0xFFFDD835)
+        LibraryView.FAVORITES -> Color(0xFFFF4081)
+        LibraryView.RECENTLY_PLAYED -> Color(0xFF40C4FF)
+        LibraryView.RECENTLY_ADDED -> Color(0xFF00E676)
+    }
+
     val songs   by viewModel.songs.collectAsStateWithLifecycle()
     val albums  by viewModel.albums.collectAsStateWithLifecycle()
     val artists by viewModel.artists.collectAsStateWithLifecycle()
@@ -241,20 +263,24 @@ fun MainScreen(
 
     var showFullPlayer by rememberSaveable { mutableStateOf(false) }
     var showSortMenu   by remember { mutableStateOf(false) }
-    var showLibraryPopup by remember { mutableStateOf(false) }
     var sortMenuAnchor by remember { mutableStateOf(Rect.Zero) }
-    var libraryMenuAnchor by remember { mutableStateOf(Rect.Zero) }
     var selectedSongForOptions by remember { mutableStateOf<com.beatflowy.app.model.Song?>(null) }
     var showPipelineOverlay by remember { mutableStateOf(false) }
+    var showDrawer by rememberSaveable { mutableStateOf(false) }
 
-    var titleRight by remember { mutableFloatStateOf(0f) }
+    var gridColumns by rememberSaveable { mutableIntStateOf(2) }
+    var listDensityColumns by rememberSaveable { mutableIntStateOf(2) }
+
+    val isCompactList = listDensityColumns >= 3
+
+    var titleWidth by remember { mutableFloatStateOf(0f) }
     var settingsLeft by remember { mutableFloatStateOf(Float.MAX_VALUE) }
     val configuration = androidx.compose.ui.platform.LocalConfiguration.current
     val density = LocalDensity.current
     val screenWidthPx = remember(configuration, density) {
         with(density) { configuration.screenWidthDp.dp.toPx() }
     }
-    val isTitleTouchingSettings by remember { derivedStateOf { titleRight >= settingsLeft - 40f } }
+    val isTitleTouchingSettings by remember { derivedStateOf { (titleWidth + with(density) { 128.dp.toPx() }) > screenWidthPx } }
 
     LaunchedEffect(showFullPlayer) {
         if (showFullPlayer) {
@@ -270,11 +296,11 @@ fun MainScreen(
         LibraryView.PLAYLIST_DETAIL
     )
 
-    BackHandler(enabled = showFullPlayer || uiState.isSearchActive || isDetailView || uiState.currentView != LibraryView.ALL_SONGS || showLibraryPopup || showSortMenu || showPipelineOverlay) {
-        if (showPipelineOverlay) {
+    BackHandler(enabled = showFullPlayer || uiState.isSearchActive || isDetailView || uiState.currentView != LibraryView.ALL_SONGS || showDrawer || showSortMenu || showPipelineOverlay) {
+        if (showDrawer) {
+            showDrawer = false
+        } else if (showPipelineOverlay) {
             showPipelineOverlay = false
-        } else if (showLibraryPopup) {
-            showLibraryPopup = false
         } else if (showSortMenu) {
             showSortMenu = false
         } else if (showFullPlayer) {
@@ -314,12 +340,41 @@ fun MainScreen(
     val saturationByScan = 1f
     val alphaByScan = 1f
 
+    val drawerTranslation by animateFloatAsState(
+        targetValue = if (showDrawer) 1f else 0f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMediumLow),
+        label = "drawerSlide"
+    )
+
+    val contentScale by animateFloatAsState(
+        targetValue = if (showDrawer) 0.88f else 1f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMediumLow),
+        label = "contentScale"
+    )
+
+    val contentCornerRadius by animateDpAsState(
+        targetValue = if (showDrawer) 28.dp else 0.dp,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMediumLow),
+        label = "contentCorner"
+    )
+
     Box(Modifier.fillMaxSize()) {
         val needsGraphicsLayer = blurByScan > 0.1f || saturationByScan < 0.99f || alphaByScan < 0.99f
         Box(
             Modifier
                 .fillMaxSize()
-                .then(
+                .graphicsLayer {
+                    translationX = drawerTranslation * with(density) { 200.dp.toPx() }
+                    scaleX = contentScale
+                    scaleY = contentScale
+                    shape = RoundedCornerShape(contentCornerRadius)
+                    clip = true
+                }
+        ) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .then(
                     if (needsGraphicsLayer) {
                         Modifier.graphicsLayer {
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -420,55 +475,40 @@ fun MainScreen(
                                 LibraryView.GENRE_DETAIL -> Icons.Rounded.GridView
                                 LibraryView.PLAYLIST_DETAIL -> Icons.AutoMirrored.Rounded.PlaylistPlay
                             }
-                            val viewAccentColor = when (uiState.currentView) {
-                                LibraryView.ALL_SONGS -> Color(0xFFFF4081)
-                                LibraryView.ALBUMS, LibraryView.ALBUM_DETAIL -> Color(0xFFB2FF59)
-                                LibraryView.ARTISTS, LibraryView.ARTIST_DETAIL -> Color(0xFF7C4DFF)
-                                LibraryView.FOLDERS, LibraryView.FOLDER_DETAIL -> Color(0xFFFFAB40)
-                                LibraryView.YEARS, LibraryView.YEAR_DETAIL -> Color(0xFFFF5252)
-                                LibraryView.GENRES, LibraryView.GENRE_DETAIL -> Color(0xFFE040FB)
-                                LibraryView.PLAYLISTS, LibraryView.PLAYLIST_DETAIL -> Color(0xFFFDD835)
-                                LibraryView.FAVORITES -> Color(0xFFFF4081)
-                                LibraryView.RECENTLY_PLAYED -> Color(0xFF40C4FF)
-                                LibraryView.RECENTLY_ADDED -> Color(0xFF00E676)
-                            }
 
                             // Menu icon on the left
                             IconButton(
-                                onClick = { /* Menu action */ },
+                                onClick = { showDrawer = true },
                                 modifier = Modifier.align(Alignment.CenterStart).size(48.dp)
                             ) {
                                 Icon(
                                     Icons.Rounded.Menu,
                                     null,
                                     tint = Color.White.copy(0.8f),
-                                    modifier = Modifier.size(26.dp)
+                                    modifier = Modifier.size(32.dp)
                                 )
                             }
 
                             // Centered Title
                             Box(
                                 modifier = Modifier
-                                    .animateContentSize(
-                                        animationSpec = spring(
-                                            dampingRatio = Spring.DampingRatioLowBouncy,
-                                            stiffness = Spring.StiffnessLow
-                                        )
-                                    )
-                                    .onGloballyPositioned { titleRight = it.boundsInRoot().right },
+                                    .fillMaxWidth()
+                                    .padding(start = 64.dp, end = if (isTitleTouchingSettings) 12.dp else 64.dp)
+                                    .animateContentSize(),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Box(
                                     modifier = Modifier
                                         .animateContentSize()
+                                        .onGloballyPositioned { titleWidth = it.size.width.toFloat() }
                                         .clip(RoundedCornerShape(28.dp))
-                                        .background(viewAccentColor.copy(alpha = 0.12f))
+                                        .background(viewAccentColor.copy(alpha = 0.15f))
                                         .border(
                                             width = 1.dp,
                                             brush = Brush.linearGradient(
                                                 colors = listOf(
-                                                    viewAccentColor.copy(alpha = 0.4f),
-                                                    viewAccentColor.copy(alpha = 0.05f)
+                                                    viewAccentColor.copy(alpha = 0.5f),
+                                                    viewAccentColor.copy(alpha = 0.1f)
                                                 )
                                             ),
                                             shape = RoundedCornerShape(28.dp)
@@ -476,15 +516,15 @@ fun MainScreen(
                                 ) {
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,
-                                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+                                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
                                     ) {
                                         Box(
                                             modifier = Modifier
-                                                .size(32.dp)
-                                                .background(viewAccentColor.copy(alpha = 0.1f), CircleShape),
+                                                .size(28.dp)
+                                                .background(viewAccentColor.copy(alpha = 0.15f), CircleShape),
                                             contentAlignment = Alignment.Center
                                         ) {
-                                            Icon(titleIcon, null, tint = viewAccentColor, modifier = Modifier.size(20.dp))
+                                            Icon(titleIcon, null, tint = viewAccentColor, modifier = Modifier.size(18.dp))
                                         }
                                         Spacer(Modifier.width(10.dp))
                                         Text(
@@ -516,24 +556,21 @@ fun MainScreen(
                                             Icon(Icons.Rounded.Close, null, tint = Color.White)
                                         }
                                     }
-                                } else {
-                                    // Disappear if title touches settings
-                                    if (!isTitleTouchingSettings) {
-                                        IconButton(
-                                            onClick = onNavigateToSettings,
-                                            modifier = Modifier.onGloballyPositioned {
-                                                settingsLeft = it.boundsInRoot().left
-                                                val center = it.boundsInRoot().center
-                                                viewModel.setSettingsIconPosition(center.x, center.y)
-                                            }
-                                        ) {
-                                            Icon(
-                                                Icons.Rounded.Settings,
-                                                null,
-                                                tint = Color.White.copy(0.7f),
-                                                modifier = Modifier.size(26.dp)
-                                            )
+                                } else if (!isTitleTouchingSettings) {
+                                    IconButton(
+                                        onClick = onNavigateToSettings,
+                                        modifier = Modifier.onGloballyPositioned {
+                                            settingsLeft = it.boundsInRoot().left
+                                            val center = it.boundsInRoot().center
+                                            viewModel.setSettingsIconPosition(center.x, center.y)
                                         }
+                                    ) {
+                                        Icon(
+                                            Icons.Rounded.Settings,
+                                            null,
+                                            tint = Color.White.copy(0.7f),
+                                            modifier = Modifier.size(26.dp)
+                                        )
                                     }
                                 }
                             }
@@ -545,13 +582,8 @@ fun MainScreen(
                         // Search field
                         AnimatedVisibility(
                             visible = searchFieldRowVisible,
-                            enter = fadeIn(tween(400, easing = FastOutSlowInEasing)) + expandVertically(
-                                animationSpec = spring(
-                                    dampingRatio = Spring.DampingRatioLowBouncy,
-                                    stiffness = Spring.StiffnessLow
-                                )
-                            ),
-                            exit = shrinkVertically(animationSpec = tween(500)) + fadeOut(tween(500)),
+                            enter = fadeIn(tween(250)) + expandVertically(tween(250)),
+                            exit = fadeOut(tween(200)) + shrinkVertically(tween(200)),
                             modifier = Modifier.padding(horizontal = 24.dp)
                         ) {
                             Box(
@@ -619,8 +651,8 @@ fun MainScreen(
                         // Action Icons Row
                         AnimatedVisibility(
                             visible = headerVisible || activeItemsCount <= 8,
-                            enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
-                            exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut()
+                            enter = fadeIn(tween(200)) + expandVertically(tween(200)),
+                            exit = fadeOut(tween(200)) + shrinkVertically(tween(200))
                         ) {
                             Box(
                                 modifier = Modifier
@@ -766,43 +798,15 @@ fun MainScreen(
                                         }
                                     }
 
-                                    Box(
-                                        modifier = Modifier.weight(1f),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        val libraryIconBgColor by animateColorAsState(
-                                            targetValue = if (showLibraryPopup) Color.White.copy(0.2f) else Color.Transparent,
-                                            animationSpec = tween(400),
-                                            label = "libraryIconBgColor"
-                                        )
-                                        Box(contentAlignment = Alignment.Center) {
-                                            IconButton(
-                                                onClick = { showLibraryPopup = true },
-                                                modifier = Modifier
-                                                    .size(48.dp)
-                                                    .background(libraryIconBgColor, CircleShape)
-                                                    .border(
-                                                        width = if (showLibraryPopup) 1.dp else 0.dp,
-                                                        color = if (showLibraryPopup) Color.White.copy(0.15f) else Color.Transparent,
-                                                        shape = CircleShape
-                                                    )
-                                            ) {
-                                                Icon(
-                                                    Icons.Rounded.LibraryMusic,
-                                                    null,
-                                                    tint = if (showLibraryPopup) AccentBlue else Color.White.copy(0.7f),
-                                                    modifier = Modifier
-                                                        .size(26.dp)
-                                                        .onGloballyPositioned { libraryMenuAnchor = it.boundsInRoot() }
-                                                )
-                                            }
-                                            LibraryViewDropdown(
-                                                expanded = showLibraryPopup,
-                                                onDismiss = { showLibraryPopup = false },
-                                                anchorBounds = libraryMenuAnchor,
-                                                viewModel = viewModel,
-                                                currentView = uiState.currentView
-                                            )
+                                    Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                                        val context = androidx.compose.ui.platform.LocalContext.current
+                                        IconButton(
+                                            onClick = {
+                                                android.widget.Toast.makeText(context, "Cast – Coming Soon", android.widget.Toast.LENGTH_SHORT).show()
+                                            },
+                                            modifier = Modifier.size(44.dp)
+                                        ) {
+                                            Icon(Icons.Rounded.Cast, null, tint = Color.White.copy(0.7f), modifier = Modifier.size(24.dp))
                                         }
                                     }
 
@@ -822,7 +826,34 @@ fun MainScreen(
                         }
 
                         // Content Area
-                        Box(Modifier.weight(1f)) {
+                        Box(
+                            Modifier
+                                .weight(1f)
+                                .pinchToZoomColumns(
+                                    onZoomIn  = {
+                                        val isGrid = uiState.currentView in listOf(
+                                            LibraryView.ALBUMS, LibraryView.ARTISTS, LibraryView.FOLDERS,
+                                            LibraryView.YEARS, LibraryView.GENRES, LibraryView.PLAYLISTS
+                                        )
+                                        if (isGrid) {
+                                            gridColumns = (gridColumns - 1).coerceAtLeast(1)
+                                        } else {
+                                            listDensityColumns = (listDensityColumns - 1).coerceAtLeast(1)
+                                        }
+                                    },
+                                    onZoomOut = {
+                                        val isGrid = uiState.currentView in listOf(
+                                            LibraryView.ALBUMS, LibraryView.ARTISTS, LibraryView.FOLDERS,
+                                            LibraryView.YEARS, LibraryView.GENRES, LibraryView.PLAYLISTS
+                                        )
+                                        if (isGrid) {
+                                            gridColumns = (gridColumns + 1).coerceAtMost(4)
+                                        } else {
+                                            listDensityColumns = (listDensityColumns + 1).coerceAtMost(4)
+                                        }
+                                    }
+                                )
+                        ) {
                             // Search Overlay
                             androidx.compose.animation.AnimatedVisibility(
                                 visible = uiState.isSearchActive && uiState.searchQuery.isNotEmpty(),
@@ -866,7 +897,8 @@ fun MainScreen(
                                                                 trackNumber = currentNumber,
                                                                 isPlaying = uiState.currentSong?.id == item.id,
                                                                 onClick = { viewModel.playSong(item) },
-                                                                onMoreClick = { selectedSongForOptions = item }
+                                                                onMoreClick = { selectedSongForOptions = item },
+                                                                isCompact = isCompactList
                                                             )
                                                         }
                                                     }
@@ -911,10 +943,10 @@ fun MainScreen(
                                         Box(Modifier.fillMaxSize()) {
                                             LazyVerticalGrid(
                                                 state = gridState,
-                                                columns = GridCells.Fixed(2),
+                                                columns = GridCells.Fixed(gridColumns.coerceIn(1, 4)),
                                                 contentPadding = PaddingValues(16.dp, 8.dp, 16.dp, 120.dp),
-                                                horizontalArrangement = Arrangement.spacedBy(16.dp),
-                                                verticalArrangement = Arrangement.spacedBy(16.dp)
+                                                horizontalArrangement = Arrangement.spacedBy(if (gridColumns >= 3) 8.dp else 16.dp),
+                                                verticalArrangement = Arrangement.spacedBy(if (gridColumns >= 3) 8.dp else 16.dp)
                                             ) {
                                                 items(albums, key = { it.first + it.second }) { album ->
                                                     LibraryGridItem(album.first, album.second, album.third) {
@@ -928,10 +960,10 @@ fun MainScreen(
                                         Box(Modifier.fillMaxSize()) {
                                             LazyVerticalGrid(
                                                 state = gridState,
-                                                columns = GridCells.Fixed(2),
+                                                columns = GridCells.Fixed(gridColumns.coerceIn(1, 4)),
                                                 contentPadding = PaddingValues(16.dp, 8.dp, 16.dp, 120.dp),
-                                                horizontalArrangement = Arrangement.spacedBy(16.dp),
-                                                verticalArrangement = Arrangement.spacedBy(16.dp)
+                                                horizontalArrangement = Arrangement.spacedBy(if (gridColumns >= 3) 8.dp else 16.dp),
+                                                verticalArrangement = Arrangement.spacedBy(if (gridColumns >= 3) 8.dp else 16.dp)
                                             ) {
                                                 items(artists, key = { it.first }) { artist ->
                                                     LibraryGridItem(artist.first, artist.second, artist.third) {
@@ -944,10 +976,10 @@ fun MainScreen(
                                     LibraryView.FOLDERS -> {
                                         LazyVerticalGrid(
                                             state = gridState,
-                                            columns = GridCells.Fixed(2),
+                                            columns = GridCells.Fixed(gridColumns.coerceIn(1, 4)),
                                             contentPadding = PaddingValues(16.dp, 8.dp, 16.dp, 120.dp),
-                                            horizontalArrangement = Arrangement.spacedBy(16.dp),
-                                            verticalArrangement = Arrangement.spacedBy(16.dp)
+                                            horizontalArrangement = Arrangement.spacedBy(if (gridColumns >= 3) 8.dp else 16.dp),
+                                            verticalArrangement = Arrangement.spacedBy(if (gridColumns >= 3) 8.dp else 16.dp)
                                         ) {
                                             items(folders, key = { it.first }) { folder ->
                                                 LibraryGridItem(folder.second, folder.first, folder.third) {
@@ -983,7 +1015,8 @@ fun MainScreen(
                                                         },
                                                         isMultiSelectMode = uiState.isMultiSelectMode,
                                                         isSelected = uiState.selectedSongIds.contains(song.id),
-                                                        onMoreClick = { selectedSongForOptions = song }
+                                                        onMoreClick = { selectedSongForOptions = song },
+                                                        isCompact = isCompactList
                                                     )
                                                 }
                                             }
@@ -991,10 +1024,10 @@ fun MainScreen(
                                     }
                                     LibraryView.YEARS -> {
                                         LazyVerticalGrid(
-                                            columns = GridCells.Fixed(2),
+                                            columns = GridCells.Fixed(gridColumns.coerceIn(1, 4)),
                                             contentPadding = PaddingValues(16.dp, 8.dp, 16.dp, 120.dp),
-                                            horizontalArrangement = Arrangement.spacedBy(16.dp),
-                                            verticalArrangement = Arrangement.spacedBy(16.dp)
+                                            horizontalArrangement = Arrangement.spacedBy(if (gridColumns >= 3) 8.dp else 16.dp),
+                                            verticalArrangement = Arrangement.spacedBy(if (gridColumns >= 3) 8.dp else 16.dp)
                                         ) {
                                             items(years, key = { it.first }) { year ->
                                                 LibraryGridItem(year.first, year.second, year.third) {
@@ -1005,10 +1038,10 @@ fun MainScreen(
                                     }
                                     LibraryView.GENRES -> {
                                         LazyVerticalGrid(
-                                            columns = GridCells.Fixed(2),
+                                            columns = GridCells.Fixed(gridColumns.coerceIn(1, 4)),
                                             contentPadding = PaddingValues(16.dp, 8.dp, 16.dp, 120.dp),
-                                            horizontalArrangement = Arrangement.spacedBy(16.dp),
-                                            verticalArrangement = Arrangement.spacedBy(16.dp)
+                                            horizontalArrangement = Arrangement.spacedBy(if (gridColumns >= 3) 8.dp else 16.dp),
+                                            verticalArrangement = Arrangement.spacedBy(if (gridColumns >= 3) 8.dp else 16.dp)
                                         ) {
                                             items(genres, key = { it.first }) { genre ->
                                                 GenreGridItem(genre.first, genre.second) {
@@ -1035,10 +1068,10 @@ fun MainScreen(
                                             }
                                         } else {
                                             LazyVerticalGrid(
-                                                columns = GridCells.Fixed(2),
+                                                columns = GridCells.Fixed(gridColumns.coerceIn(1, 4)),
                                                 contentPadding = PaddingValues(16.dp, 8.dp, 16.dp, 120.dp),
-                                                horizontalArrangement = Arrangement.spacedBy(16.dp),
-                                                verticalArrangement = Arrangement.spacedBy(16.dp)
+                                                horizontalArrangement = Arrangement.spacedBy(if (gridColumns >= 3) 8.dp else 16.dp),
+                                                verticalArrangement = Arrangement.spacedBy(if (gridColumns >= 3) 8.dp else 16.dp)
                                             ) {
                                                 items(playlists, key = { it.name }) { playlist ->
                                                     LibraryGridItem(playlist.name, "${playlist.songIds.size} songs", null) {
@@ -1076,7 +1109,8 @@ fun MainScreen(
                                                         },
                                                         isMultiSelectMode = uiState.isMultiSelectMode,
                                                         isSelected = uiState.selectedSongIds.contains(song.id),
-                                                        onMoreClick = { selectedSongForOptions = song }
+                                                        onMoreClick = { selectedSongForOptions = song },
+                                                        isCompact = isCompactList
                                                     )
                                                 }
                                             }
@@ -1108,7 +1142,8 @@ fun MainScreen(
                                                         },
                                                         isMultiSelectMode = uiState.isMultiSelectMode,
                                                         isSelected = uiState.selectedSongIds.contains(song.id),
-                                                        onMoreClick = { selectedSongForOptions = song }
+                                                        onMoreClick = { selectedSongForOptions = song },
+                                                        isCompact = isCompactList
                                                     )
                                                 }
                                             }
@@ -1140,7 +1175,8 @@ fun MainScreen(
                                                         },
                                                         isMultiSelectMode = uiState.isMultiSelectMode,
                                                         isSelected = uiState.selectedSongIds.contains(song.id),
-                                                        onMoreClick = { selectedSongForOptions = song }
+                                                        onMoreClick = { selectedSongForOptions = song },
+                                                        isCompact = isCompactList
                                                     )
                                                 }
                                             }
@@ -1319,6 +1355,44 @@ fun MainScreen(
                 }
             }
         } // end blurred Box
+        }
+
+        if (showDrawer) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.5f * drawerTranslation))
+                    .clickable { showDrawer = false }
+                    .zIndex(8f)
+            )
+        }
+
+        // Slide drawer
+        val drawerOffsetX by animateDpAsState(
+            targetValue = if (showDrawer) 0.dp else (-200).dp,
+            animationSpec = spring(dampingRatio = Spring.DampingRatioLowBouncy, stiffness = Spring.StiffnessMediumLow),
+            label = "drawerOffset"
+        )
+
+        Box(
+            Modifier
+                .width(200.dp)
+                .fillMaxHeight()
+                .offset(x = drawerOffsetX)
+                .shadow(elevation = if (showDrawer) 24.dp else 0.dp)
+                .zIndex(9f)
+                .clip(RoundedCornerShape(topEnd = 28.dp, bottomEnd = 28.dp))
+        ) {
+            SlideDrawerMenu(
+                currentView = uiState.currentView,
+                accentColor = viewAccentColor,
+                onSelectView = { view ->
+                    viewModel.setLibraryView(view)
+                },
+                onNavigateToSettings = onNavigateToSettings,
+                onClose = { showDrawer = false }
+            )
+        }
 
         AnimatedVisibility(
             visible = showFullPlayer && uiState.currentSong != null,
@@ -1830,91 +1904,226 @@ fun SortDropdown(
     }
 }
 
+private data class DrawerMenuItem(
+    val label: String,
+    val view: LibraryView,
+    val icon: ImageVector,
+    val color: Color
+)
+
 @Composable
-fun LibraryViewDropdown(
-    expanded: Boolean,
-    onDismiss: () -> Unit,
-    anchorBounds: Rect,
-    viewModel: PlayerViewModel,
-    currentView: LibraryView
+private fun SlideDrawerMenu(
+    currentView: LibraryView,
+    accentColor: Color,
+    onSelectView: (LibraryView) -> Unit,
+    onNavigateToSettings: () -> Unit,
+    onClose: () -> Unit
 ) {
     val menuItems = listOf(
-        Triple("All Songs", LibraryView.ALL_SONGS, Icons.Rounded.MusicNote to Color(0xFFFF4081)),
-        Triple("Albums", LibraryView.ALBUMS, Icons.Rounded.Album to Color(0xFFB2FF59)),
-        Triple("Artists", LibraryView.ARTISTS, Icons.Rounded.Person to Color(0xFF7C4DFF)),
-        Triple("Folders", LibraryView.FOLDERS, Icons.Rounded.Folder to Color(0xFFFFAB40)),
-        Triple("Years", LibraryView.YEARS, Icons.Rounded.CalendarMonth to Color(0xFFFF5252)),
-        Triple("Genres", LibraryView.GENRES, Icons.Rounded.GridView to Color(0xFFE040FB)),
-        Triple("Playlists", LibraryView.PLAYLISTS, Icons.AutoMirrored.Rounded.PlaylistPlay to Color(0xFFFDD835)),
-        Triple("Favorite songs", LibraryView.FAVORITES, Icons.Rounded.Favorite to Color(0xFFFF4081)),
-        Triple("Recently played", LibraryView.RECENTLY_PLAYED, Icons.Rounded.History to Color(0xFF40C4FF)),
-        Triple("Recently added", LibraryView.RECENTLY_ADDED, Icons.Rounded.NewReleases to Color(0xFF00E676))
+        DrawerMenuItem("All Songs", LibraryView.ALL_SONGS, Icons.Rounded.MusicNote, Color(0xFFFF4081)),
+        DrawerMenuItem("Albums", LibraryView.ALBUMS, Icons.Rounded.Album, Color(0xFFB2FF59)),
+        DrawerMenuItem("Artists", LibraryView.ARTISTS, Icons.Rounded.Person, Color(0xFF7C4DFF)),
+        DrawerMenuItem("Folders", LibraryView.FOLDERS, Icons.Rounded.Folder, Color(0xFFFFAB40)),
+        DrawerMenuItem("Years", LibraryView.YEARS, Icons.Rounded.CalendarMonth, Color(0xFFFF5252)),
+        DrawerMenuItem("Genres", LibraryView.GENRES, Icons.Rounded.GridView, Color(0xFFE040FB)),
+        DrawerMenuItem("Playlists", LibraryView.PLAYLISTS, Icons.AutoMirrored.Rounded.PlaylistPlay, Color(0xFFFDD835)),
+        DrawerMenuItem("Favorite Songs", LibraryView.FAVORITES, Icons.Rounded.Favorite, Color(0xFFFF4081)),
+        DrawerMenuItem("Recently Played", LibraryView.RECENTLY_PLAYED, Icons.Rounded.History, Color(0xFF40C4FF)),
+        DrawerMenuItem("Recently Added", LibraryView.RECENTLY_ADDED, Icons.Rounded.NewReleases, Color(0xFF00E676))
     )
 
-    GlassMenuPopup(
-        expanded = expanded,
-        onDismiss = onDismiss,
-        anchorBounds = anchorBounds,
-        cardWidth = 170.dp
+    Column(
+        modifier = Modifier
+            .fillMaxHeight()
+            .width(200.dp)
+            .background(
+                Brush.verticalGradient(
+                    colors = listOf(
+                        Color.Black,
+                        accentColor.copy(alpha = 0.35f).compositeOver(Color.Black)
+                    )
+                )
+            )
+            .drawBehind {
+                val strokeWidth = 0.5.dp.toPx()
+                drawLine(
+                    color = Color.White.copy(0.08f),
+                    start = Offset(size.width, 0f),
+                    end = Offset(size.width, size.height),
+                    strokeWidth = strokeWidth
+                )
+            }
     ) {
-        Text(
-            "Library",
-            color = Color.White,
-            fontWeight = FontWeight.Black,
-            fontSize = 16.sp,
-            modifier = Modifier.padding(start = 20.dp, end = 16.dp, top = 2.dp, bottom = 6.dp)
-        )
-        menuItems.forEach { (label, view, iconPair) ->
-            val (icon, color) = iconPair
-            val isSelected = currentView == view ||
-                (view == LibraryView.ALBUMS && currentView == LibraryView.ALBUM_DETAIL) ||
-                (view == LibraryView.ARTISTS && currentView == LibraryView.ARTIST_DETAIL) ||
-                (view == LibraryView.FOLDERS && currentView == LibraryView.FOLDER_DETAIL) ||
-                (view == LibraryView.YEARS && currentView == LibraryView.YEAR_DETAIL) ||
-                (view == LibraryView.GENRES && currentView == LibraryView.GENRE_DETAIL) ||
-                (view == LibraryView.PLAYLISTS && currentView == LibraryView.PLAYLIST_DETAIL)
-
+        // SECTION 1 — Header
+        Column(
+            modifier = Modifier
+                .padding(top = 52.dp, start = 20.dp, end = 20.dp, bottom = 16.dp)
+        ) {
+            Icon(
+                Icons.Rounded.Headphones,
+                null,
+                modifier = Modifier.size(36.dp),
+                tint = accentColor
+            )
+            Spacer(Modifier.height(12.dp))
+            Text(
+                "Hello,",
+                color = Color.White.copy(0.5f),
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                "Audiophile",
+                color = Color.White,
+                fontSize = 28.sp,
+                fontWeight = FontWeight.Black,
+                fontStyle = FontStyle.Italic
+            )
+            Spacer(Modifier.height(4.dp))
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable {
-                        viewModel.setLibraryView(view)
-                        onDismiss()
-                    }
-                    .padding(horizontal = 12.dp, vertical = 2.dp)
-            ) {
+                    .height(1.dp)
+                    .background(
+                        Brush.horizontalGradient(
+                            listOf(accentColor.copy(0.6f), Color.Transparent)
+                        )
+                    )
+            )
+        }
+
+        // SECTION 2 — Library label
+        Text(
+            "LIBRARY",
+            modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 8.dp),
+            fontSize = 11.sp,
+            fontWeight = FontWeight.ExtraBold,
+            letterSpacing = 2.sp,
+            color = Color.White.copy(0.3f)
+        )
+
+        // SECTION 3 — Library items
+        LazyColumn(
+            modifier = Modifier.weight(1f)
+        ) {
+            items(menuItems) { item ->
+                val isSelected = currentView == item.view ||
+                    (item.view == LibraryView.ALBUMS && currentView == LibraryView.ALBUM_DETAIL) ||
+                    (item.view == LibraryView.ARTISTS && currentView == LibraryView.ARTIST_DETAIL) ||
+                    (item.view == LibraryView.FOLDERS && currentView == LibraryView.FOLDER_DETAIL) ||
+                    (item.view == LibraryView.YEARS && currentView == LibraryView.YEAR_DETAIL) ||
+                    (item.view == LibraryView.GENRES && currentView == LibraryView.GENRE_DETAIL) ||
+                    (item.view == LibraryView.PLAYLISTS && currentView == LibraryView.PLAYLIST_DETAIL)
+
                 Row(
-                    verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
                         .fillMaxWidth()
+                        .clickable { onSelectView(item.view); onClose() }
+                        .padding(horizontal = 12.dp, vertical = 4.dp)
                         .background(
-                            if (isSelected) color.copy(0.15f) else Color.Transparent,
-                            RoundedCornerShape(10.dp)
+                            if (isSelected) accentColor.copy(alpha = 0.1f) else Color.Transparent,
+                            RoundedCornerShape(12.dp)
                         )
-                        .padding(horizontal = 10.dp, vertical = 4.dp)
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     Box(
-                        Modifier
-                            .size(28.dp)
-                            .background(color.copy(0.2f), CircleShape),
+                        modifier = Modifier
+                            .size(38.dp)
+                            .background(
+                                item.color.copy(alpha = if (isSelected) 0.25f else 0.1f),
+                                RoundedCornerShape(10.dp)
+                            ),
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(icon, null, tint = color, modifier = Modifier.size(15.dp))
+                        Icon(
+                            item.icon,
+                            null,
+                            modifier = Modifier.size(18.dp),
+                            tint = if (isSelected) item.color else item.color.copy(alpha = 0.7f)
+                        )
                     }
-                    Spacer(Modifier.width(10.dp))
+                    Spacer(Modifier.width(14.dp))
                     Text(
-                        label,
-                        color = if (isSelected) Color.White else Color.White.copy(0.88f),
-                        fontSize = 13.sp,
-                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                        item.label,
+                        color = if (isSelected) Color.White else Color.White.copy(0.7f),
+                        fontSize = 14.sp,
+                        fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.Medium
                     )
-                    if (isSelected) {
-                        Spacer(Modifier.weight(1f))
-                        Icon(Icons.Rounded.Check, null, tint = color, modifier = Modifier.size(16.dp))
-                    }
                 }
             }
         }
-        Spacer(Modifier.height(6.dp))
+
+        // SECTION 4 — Bottom
+        Column(
+            modifier = Modifier.padding(16.dp)
+        ) {
+            HorizontalDivider(
+                modifier = Modifier.padding(bottom = 8.dp),
+                color = Color.White.copy(0.06f)
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onNavigateToSettings(); onClose() }
+                    .padding(vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    Icons.Rounded.Settings,
+                    null,
+                    modifier = Modifier.size(20.dp),
+                    tint = Color.White.copy(0.5f)
+                )
+                Spacer(Modifier.width(12.dp))
+                Text(
+                    "Settings",
+                    color = Color.White.copy(0.6f),
+                    fontSize = 14.sp
+                )
+            }
+            Spacer(Modifier.height(16.dp))
+        }
     }
 }
+
+private fun Modifier.pinchToZoomColumns(onZoomIn: () -> Unit, onZoomOut: () -> Unit): Modifier =
+    this.pointerInput(Unit) {
+        awaitEachGesture {
+            awaitFirstDown(requireUnconsumed = false)
+            var initialDist = -1f
+            var fired = false
+
+            while (true) {
+                val event = awaitPointerEvent(PointerEventPass.Initial)
+                val changes = event.changes
+                
+                if (changes.size >= 2) {
+                    val p1 = changes[0].position
+                    val p2 = changes[1].position
+                    val dx = p1.x - p2.x
+                    val dy = p1.y - p2.y
+                    val dist = sqrt(dx * dx + dy * dy)
+
+                    if (initialDist < 0) {
+                        initialDist = dist
+                    } else if (!fired && initialDist > 10f) {
+                        val ratio = dist / initialDist
+                        if (ratio > 1.30f) {
+                            onZoomIn()
+                            fired = true
+                        } else if (ratio < 0.75f) {
+                            onZoomOut()
+                            fired = true
+                        }
+                    }
+
+                    if (fired) {
+                        changes.forEach { it.consume() }
+                    }
+                }
+
+                if (changes.none { it.pressed }) break
+            }
+        }
+    }

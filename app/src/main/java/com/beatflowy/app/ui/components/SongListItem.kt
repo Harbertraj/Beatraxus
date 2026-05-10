@@ -119,7 +119,8 @@ fun SongListItem(
     modifier: Modifier = Modifier,
     isMultiSelectMode: Boolean = false,
     isSelected: Boolean = false,
-    onMoreClick: (() -> Unit)? = null
+    onMoreClick: (() -> Unit)? = null,
+    isCompact: Boolean = false
 ) {
     val bgAlpha by animateFloatAsState(
         targetValue   = if (isPlaying || isSelected) 1f else 0f,
@@ -155,7 +156,7 @@ fun SongListItem(
                     }
                 }
             )
-            .padding(horizontal = 12.dp, vertical = 12.dp)
+            .padding(horizontal = 12.dp, vertical = if (isCompact) 6.dp else 12.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             if (isMultiSelectMode) {
@@ -216,49 +217,51 @@ fun SongListItem(
             }
             AlbumArtImage(
                 song = song,
-                size = 60.dp,
+                size = if (isCompact) 44.dp else 60.dp,
                 modifier = Modifier.padding(vertical = 2.dp)
             )
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
-                Text(song.title, fontSize = 17.sp,
+                Text(song.title, fontSize = if (isCompact) 14.sp else 17.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 
-                Text("${song.artist} • ${song.album}", fontSize = 13.sp, color = Color.LightGray,
+                Text("${song.artist} • ${song.album}", fontSize = if (isCompact) 12.sp else 13.sp, color = Color.LightGray,
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
                 
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(top = 1.dp)
-                ) {
-                    Icon(
-                        Icons.Rounded.Badge, 
-                        null, 
-                        tint = Color.Gray, 
-                        modifier = Modifier.size(10.dp)
-                    )
-                    Spacer(Modifier.width(3.dp))
-                    Text(
-                        text = buildString {
-                            append(formatDuration(song.durationMs))
-                            append(" | ")
-                            val khz = song.sampleRateHz / 1000.0
-                            if (khz == khz.toInt().toDouble()) {
-                                append("${khz.toInt()}khz")
-                            } else {
-                                append("${"%.1f".format(khz)}khz")
-                            }
-                            if (song.bitrate > 0) {
-                                append(" | ${song.bitrate / 1000} KBPS")
-                            }
-                        },
-                        fontSize = 11.sp,
-                        color = Color.Gray,
-                        fontWeight = FontWeight.Medium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                if (!isCompact) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(top = 1.dp)
+                    ) {
+                        Icon(
+                            Icons.Rounded.Badge, 
+                            null, 
+                            tint = Color.Gray, 
+                            modifier = Modifier.size(10.dp)
+                        )
+                        Spacer(Modifier.width(3.dp))
+                        Text(
+                            text = buildString {
+                                append(formatDuration(song.durationMs))
+                                append(" | ")
+                                val khz = song.sampleRateHz / 1000.0
+                                if (khz == khz.toInt().toDouble()) {
+                                    append("${khz.toInt()}khz")
+                                } else {
+                                    append("${"%.1f".format(khz)}khz")
+                                }
+                                if (song.bitrate > 0) {
+                                    append(" | ${song.bitrate / 1000} KBPS")
+                                }
+                            },
+                            fontSize = 11.sp,
+                            color = Color.Gray,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
             }
         }

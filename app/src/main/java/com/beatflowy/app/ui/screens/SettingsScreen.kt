@@ -41,7 +41,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.graphics.asComposeRenderEffect
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.beatflowy.app.R
 import com.beatflowy.app.model.OutputMode
 import com.beatflowy.app.model.DvcMode
@@ -70,15 +74,32 @@ fun SettingsScreen(
 
     val blurEffect = remember {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            AndroidRenderEffect.createBlurEffect(64f, 64f, Shader.TileMode.DECAL)
+            AndroidRenderEffect.createBlurEffect(120f, 120f, Shader.TileMode.DECAL)
         } else null
     }
 
-    Box(modifier = Modifier.fillMaxSize().background(Color(0xFF121821))) {
-        MainBackground(
-            albumArtUri = uiState.currentSong?.albumArtUri,
-            blurEffect = blurEffect
-        )
+    Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+        if (uiState.currentSong?.albumArtUri != null) {
+            Box(Modifier.fillMaxSize()) {
+                AsyncImage(
+                    model = ImageRequest.Builder(LocalContext.current)
+                        .data(uiState.currentSong?.albumArtUri)
+                        .crossfade(true)
+                        .build(),
+                    contentDescription = null,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .blur(if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) 100.dp else 0.dp)
+                        .graphicsLayer {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                                renderEffect = blurEffect?.asComposeRenderEffect()
+                            }
+                            alpha = 0.1f
+                        },
+                    contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                )
+            }
+        }
 
         Scaffold(
             containerColor = Color.Transparent,

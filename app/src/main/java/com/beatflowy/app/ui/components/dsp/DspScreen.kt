@@ -1265,19 +1265,20 @@ private fun KnobControl(
                     if (!enabled) return@pointerInput
                     val centerX = size.width / 2f
                     val centerY = size.height / 2f
+                    val totalRadius = size.width / 2f
+                    // Center area (45% of radius) is reserved for long-press toggle
+                    val innerThreshold = totalRadius * 0.45f
                     
                     awaitPointerEventScope {
                         while (true) {
                             val event = awaitFirstDown(requireUnconsumed = false)
-                            
-                            // Check if touch is within the knob area
                             val distFromCenter = kotlin.math.sqrt(
                                 (event.position.x - centerX) * (event.position.x - centerX) + 
                                 (event.position.y - centerY) * (event.position.y - centerY)
                             )
                             
-                            if (distFromCenter <= size.width / 2f) {
-                                // Consume the down event to prevent parent scrolling
+                            // Only initiate dragging if touch is in the outer "ring"
+                            if (distFromCenter in innerThreshold..totalRadius) {
                                 event.consume()
                                 isDragging = true
                                 
@@ -1310,7 +1311,18 @@ private fun KnobControl(
                     }
                 }
                 .pointerInput(Unit) {
-                    detectTapGestures(onLongPress = { currentOnToggle() })
+                    detectTapGestures(onLongPress = { offset ->
+                        val centerX = size.width / 2f
+                        val centerY = size.height / 2f
+                        val distFromCenter = kotlin.math.sqrt(
+                            (offset.x - centerX) * (offset.x - centerX) + 
+                            (offset.y - centerY) * (offset.y - centerY)
+                        )
+                        // Long press to toggle only works if pressing near the center
+                        if (distFromCenter < (size.width / 2f) * 0.5f) {
+                            currentOnToggle()
+                        }
+                    })
                 },
             contentAlignment = Alignment.Center
         ) {
