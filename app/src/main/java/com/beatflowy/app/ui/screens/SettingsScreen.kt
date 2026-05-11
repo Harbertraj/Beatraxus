@@ -12,6 +12,7 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -179,8 +180,8 @@ fun SettingsScreen(
                             onClick = { currentSection = "Library" }
                         )
                         SettingMenuItem(
-                            title = "Cloud",
-                            subtitle = "Stream music from Google Drive",
+                            title = "Google Cloud",
+                            subtitle = "Stream music from your cloud storage",
                             icon = Icons.Rounded.Cloud,
                             iconColor = Color(0xFF1A73E8),
                             onClick = { currentSection = "Cloud" }
@@ -804,7 +805,7 @@ fun CloudContent(viewModel: PlayerViewModel, onRequestGDriveAccount: () -> Unit)
 
     Column(modifier = Modifier.fillMaxWidth()) {
         Text(
-            "GOOGLE DRIVE",
+            "GOOGLE CLOUD",
             style = MaterialTheme.typography.labelSmall,
             color = Color.Gray,
             letterSpacing = 1.sp,
@@ -839,7 +840,7 @@ fun CloudContent(viewModel: PlayerViewModel, onRequestGDriveAccount: () -> Unit)
                     }
                     Spacer(Modifier.width(16.dp))
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("Google Drive", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                        Text("Google Cloud", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
                         Text("Connect your account", color = Color.White.copy(0.5f), fontSize = 13.sp)
                     }
                     Button(
@@ -858,6 +859,7 @@ fun CloudContent(viewModel: PlayerViewModel, onRequestGDriveAccount: () -> Unit)
                         ConnectedAccountRow(
                             account = account,
                             onScan = { viewModel.scanDriveAccount(account.email) },
+                            onToggle = { enabled -> viewModel.toggleDriveAccountEnabled(account.email, enabled) },
                             onRemove = { viewModel.removeDriveAccount(account.email) }
                         )
                     }
@@ -867,11 +869,23 @@ fun CloudContent(viewModel: PlayerViewModel, onRequestGDriveAccount: () -> Unit)
     }
 }
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-private fun ConnectedAccountRow(account: DriveAccount, onScan: () -> Unit, onRemove: () -> Unit) {
+private fun ConnectedAccountRow(
+    account: DriveAccount,
+    onScan: () -> Unit,
+    onToggle: (Boolean) -> Unit,
+    onRemove: () -> Unit
+) {
+    var showDelete by remember { mutableStateOf(false) }
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .combinedClickable(
+                onClick = { /* Could do something here */ },
+                onLongClick = { showDelete = !showDelete }
+            )
             .padding(12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -885,20 +899,35 @@ private fun ConnectedAccountRow(account: DriveAccount, onScan: () -> Unit, onRem
         }
         Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
-            Text(account.accountName, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-            Text(account.email, color = Color.Gray, fontSize = 12.sp)
+            Text(account.email, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+            Text(if (account.enabled) "Sync enabled" else "Sync disabled", color = Color.Gray, fontSize = 12.sp)
         }
+        
         IconButton(
             onClick = onScan,
-            modifier = Modifier.size(32.dp)
+            modifier = Modifier.size(36.dp)
         ) {
-            Icon(Icons.Rounded.Sync, contentDescription = "Scan", tint = Color.Gray, modifier = Modifier.size(18.dp))
+            Icon(Icons.Rounded.Sync, contentDescription = "Sync", tint = Color.White.copy(0.7f), modifier = Modifier.size(20.dp))
         }
-        IconButton(
-            onClick = onRemove,
-            modifier = Modifier.size(32.dp)
-        ) {
-            Icon(Icons.Rounded.Close, contentDescription = "Remove", tint = Color.Gray, modifier = Modifier.size(18.dp))
+        
+        Spacer(Modifier.width(8.dp))
+        
+        Switch(
+            checked = account.enabled,
+            onCheckedChange = onToggle,
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Color(0xFF1A73E8),
+                checkedTrackColor = Color(0xFF1A73E8).copy(alpha = 0.5f)
+            )
+        )
+        
+        if (showDelete) {
+            IconButton(
+                onClick = onRemove,
+                modifier = Modifier.size(32.dp)
+            ) {
+                Icon(Icons.Rounded.Delete, contentDescription = "Remove", tint = Color.Red.copy(0.6f), modifier = Modifier.size(18.dp))
+            }
         }
     }
 }
@@ -966,7 +995,7 @@ fun FullScanPopup(progress: Float, count: Int, albums: Int, artists: Int) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth(0.85f)
-                    .wrapContentHeight()
+                    .heightIn(max = 300.dp) // Adjusted to be more compact like filter popup
                     .shadow(
                         elevation = 28.dp, 
                         shape = RoundedCornerShape(28.dp),

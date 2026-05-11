@@ -640,6 +640,19 @@ class MusicRepository(private val context: Context) {
         }
     }
 
+    fun addMusicFolders(uris: List<String>) {
+        val current = getMusicFolders().toMutableSet()
+        var changed = false
+        uris.forEach { uri ->
+            if (current.add(uri)) {
+                changed = true
+            }
+        }
+        if (changed) {
+            saveMusicFolders(current.toList())
+        }
+    }
+
     fun removeMusicFolder(uri: String) {
         val current = getMusicFolders().toMutableList()
         if (current.remove(uri)) {

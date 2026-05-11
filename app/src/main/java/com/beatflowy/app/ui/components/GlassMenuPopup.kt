@@ -78,21 +78,23 @@ fun GlassMenuPopup(
     ) {
         val scale = remember { Animatable(0.88f) }
         val fade = remember { Animatable(0f) }
+        val translateY = remember { Animatable(15f) } // Added for "move up" effect
+
         LaunchedEffect(Unit) {
             launch { scale.animateTo(1f, tween(220, easing = FastOutSlowInEasing)) }
+            launch { translateY.animateTo(0f, tween(220, easing = FastOutSlowInEasing)) }
             fade.animateTo(1f, tween(180, easing = FastOutSlowInEasing))
         }
 
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val density = LocalDensity.current
+            // ... (keep existing logic)
             val cardWpx = with(density) { cardWidth.toPx() }
             val maxWpx = with(density) { maxWidth.toPx() }
             val maxHpx = with(density) { maxHeight.toPx() }
             val hasAnchor = anchorBounds.width > 1f && anchorBounds.height > 1f
             val anchorCx = if (hasAnchor) anchorBounds.center.x else maxWpx / 2f
             
-            // Auto-position: if anchor is in the bottom 40% of the screen, show above. 
-            // Otherwise show below (especially for "top icons").
             val showAbove = hasAnchor && anchorBounds.top > maxHpx * 0.6f
 
             var menuLeftPx = anchorCx - cardWpx / 2f
@@ -121,7 +123,6 @@ fun GlassMenuPopup(
                                 addRect(Rect(0f, 0f, size.width, size.height))
                             }
                             val holePath = Path().apply {
-                                // Create a circular or rounded-rect hole for the icon
                                 addOval(anchorBounds.inflate(2.dp.toPx()))
                             }
                             val combinedPath = Path.combine(
@@ -157,7 +158,6 @@ fun GlassMenuPopup(
 
                     if (!showAbove) { // Arrow at Top
                         moveTo(cr, ah)
-                        // Arrow
                         lineTo(acx - aw / 2f, ah)
                         lineTo(acx - 6f, 6f)
                         quadraticTo(acx, 0f, acx + 6f, 6f)
@@ -178,7 +178,6 @@ fun GlassMenuPopup(
                         lineTo(size.width, size.height - ah - cr)
                         arcTo(Rect(size.width - 2 * cr, size.height - ah - 2 * cr, size.width, size.height - ah), 0f, 90f, false)
                         
-                        // Arrow
                         lineTo(acx + aw / 2f, size.height - ah)
                         lineTo(acx + 6f, size.height - 6f)
                         quadraticTo(acx, size.height, acx - 6f, size.height - 6f)
@@ -195,26 +194,26 @@ fun GlassMenuPopup(
 
             if (showAbove) {
                 val anchorTop = anchorBounds.top
-                val overlapPx = with(density) { 20.dp.toPx() }
+                val overlapPx = with(density) { 26.dp.toPx() } // Increased overlap to move up more
                 Box(
                     modifier = Modifier
-                        .offset { IntOffset(menuLeftPx.roundToInt(), (anchorTop + overlapPx).roundToInt() - maxHeight.roundToPx()) }
+                        .offset { IntOffset(menuLeftPx.roundToInt(), (anchorTop + overlapPx + translateY.value).roundToInt() - maxHeight.roundToPx()) }
                         .width(cardWidth)
                         .height(maxHeight),
                     contentAlignment = Alignment.BottomCenter
                 ) {
-                    MenuCard(scale.value, fade.value, bubbleShape, arrowHeight, false, content)
+                    MenuCard(scale.value, fade.value, translateY.value, bubbleShape, arrowHeight, false, content)
                 }
             } else {
                 val anchorBottom = if (hasAnchor) anchorBounds.bottom else with(density) { 100.dp.toPx() }
-                val overlapPx = with(density) { 20.dp.toPx() }
+                val overlapPx = with(density) { 26.dp.toPx() } // Increased overlap to move up more
                 Box(
                     modifier = Modifier
-                        .offset { IntOffset(menuLeftPx.roundToInt(), (anchorBottom - overlapPx).roundToInt()) }
+                        .offset { IntOffset(menuLeftPx.roundToInt(), (anchorBottom - overlapPx + translateY.value).roundToInt()) }
                         .width(cardWidth)
                         .wrapContentHeight()
                 ) {
-                    MenuCard(scale.value, fade.value, bubbleShape, arrowHeight, true, content)
+                    MenuCard(scale.value, fade.value, translateY.value, bubbleShape, arrowHeight, true, content)
                 }
             }
         }
@@ -225,6 +224,7 @@ fun GlassMenuPopup(
 private fun MenuCard(
     scale: Float,
     alpha: Float,
+    translateY: Float,
     cardShape: Shape,
     arrowHeight: Dp,
     isArrowAtTop: Boolean,
@@ -254,6 +254,7 @@ private fun MenuCard(
                 this.scaleX = scale
                 this.scaleY = scale
                 this.alpha = alpha
+                this.translationY = translateY
             },
         content = content
     )

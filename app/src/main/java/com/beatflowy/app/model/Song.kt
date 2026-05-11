@@ -49,7 +49,8 @@ enum class AudioOutputDevice(val displayName: String) {
 
 enum class LibraryView {
     ALL_SONGS, ALBUMS, ARTISTS, FOLDERS, YEARS, GENRES, FAVORITES, RECENTLY_PLAYED, RECENTLY_ADDED,
-    ALBUM_DETAIL, ARTIST_DETAIL, FOLDER_DETAIL, YEAR_DETAIL, GENRE_DETAIL, PLAYLISTS, PLAYLIST_DETAIL
+    ALBUM_DETAIL, ARTIST_DETAIL, FOLDER_DETAIL, YEAR_DETAIL, GENRE_DETAIL, PLAYLISTS, PLAYLIST_DETAIL,
+    CLOUD
 }
 
 enum class SortType {
@@ -75,6 +76,7 @@ data class PlayerUiState(
     val isLoadingLibrary: Boolean = false,
     val isScanning: Boolean = false,
     val isFullScanning: Boolean = false,
+    val isCloudScanning: Boolean = false,
     val scanProgress: Float = 0f,
     val scanCount: Int = 0,
     val albumCount: Int = 0,

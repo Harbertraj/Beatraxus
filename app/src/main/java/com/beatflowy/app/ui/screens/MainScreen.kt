@@ -78,6 +78,8 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.grid.LazyGridState
@@ -172,6 +174,7 @@ fun MainScreen(
         LibraryView.FAVORITES -> Color(0xFFFF4081)
         LibraryView.RECENTLY_PLAYED -> Color(0xFF40C4FF)
         LibraryView.RECENTLY_ADDED -> Color(0xFF00E676)
+        LibraryView.CLOUD -> Color(0xFF1A73E8)
     }
 
     val songs   by viewModel.songs.collectAsStateWithLifecycle()
@@ -268,6 +271,8 @@ fun MainScreen(
     var showPipelineOverlay by remember { mutableStateOf(false) }
     var showDrawer by rememberSaveable { mutableStateOf(false) }
     var showCastPopup by remember { mutableStateOf(false) }
+    var showCloudPopup by remember { mutableStateOf(false) }
+    var showSortPopup by remember { mutableStateOf(false) }
 
     var gridColumns by rememberSaveable { mutableIntStateOf(2) }
     var listDensityColumns by rememberSaveable { mutableIntStateOf(2) }
@@ -457,6 +462,7 @@ fun MainScreen(
                                 LibraryView.FOLDER_DETAIL -> uiState.selectedItemName ?: "Folder"
                                 LibraryView.YEAR_DETAIL -> uiState.selectedItemName ?: "Year"
                                 LibraryView.GENRE_DETAIL -> uiState.selectedItemName ?: "Genre"
+                                LibraryView.CLOUD -> "Cloud Library"
                             }
                             val titleIcon = when (uiState.currentView) {
                                 LibraryView.ALL_SONGS -> Icons.Rounded.MusicNote
@@ -475,6 +481,7 @@ fun MainScreen(
                                 LibraryView.YEAR_DETAIL -> Icons.Rounded.CalendarMonth
                                 LibraryView.GENRE_DETAIL -> Icons.Rounded.GridView
                                 LibraryView.PLAYLIST_DETAIL -> Icons.AutoMirrored.Rounded.PlaylistPlay
+                                LibraryView.CLOUD -> Icons.Rounded.Cloud
                             }
 
                             // Menu icon on the left
@@ -799,22 +806,40 @@ fun MainScreen(
                                         }
                                     }
 
+                                    var castIconBounds by remember { mutableStateOf(Rect.Zero) }
+                                    var cloudIconBounds by remember { mutableStateOf(Rect.Zero) }
                                     Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
                                         val context = androidx.compose.ui.platform.LocalContext.current
+                                        val castIconBgColor by animateColorAsState(
+                                            targetValue = if (showCastPopup) Color.White.copy(0.12f) else Color.Transparent,
+                                            label = "castIconBg"
+                                        )
                                         IconButton(
                                             onClick = { showCastPopup = true },
-                                            modifier = Modifier.size(44.dp)
+                                            modifier = Modifier
+                                                .size(40.dp)
+                                                .background(castIconBgColor, CircleShape)
+                                                .border(
+                                                    width = if (showCastPopup) 1.dp else 0.dp,
+                                                    color = if (showCastPopup) Color.White.copy(0.15f) else Color.Transparent,
+                                                    shape = CircleShape
+                                                )
                                         ) {
                                             Icon(
                                                 Icons.Rounded.Cast,
                                                 null,
-                                                tint = if (com.beatflowy.app.cast.CastManager.isConnected) AccentBlue else Color.White.copy(0.7f),
-                                                modifier = Modifier.size(24.dp)
+                                                tint = if (showCastPopup || com.beatflowy.app.cast.CastManager.isConnected) AccentBlue else Color.White.copy(0.7f),
+                                                modifier = Modifier
+                                                    .size(24.dp)
+                                                    .onGloballyPositioned {
+                                                        castIconBounds = it.boundsInRoot()
+                                                    }
                                             )
                                         }
                                         CastDevicePopup(
                                             expanded = showCastPopup,
                                             onDismiss = { showCastPopup = false },
+                                            anchorBounds = castIconBounds,
                                             currentSong = uiState.currentSong,
                                             onCast = { route ->
                                                 uiState.currentSong?.let { song ->
@@ -825,15 +850,42 @@ fun MainScreen(
                                     }
 
                                     Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                                        val context = androidx.compose.ui.platform.LocalContext.current
+                                        val cloudIconBgColor by animateColorAsState(
+                                            targetValue = if (showCloudPopup) Color.White.copy(0.12f) else Color.Transparent,
+                                            label = "cloudIconBg"
+                                        )
                                         IconButton(
-                                            onClick = {
-                                                android.widget.Toast.makeText(context, "Coming Soon", android.widget.Toast.LENGTH_SHORT).show()
-                                            },
-                                            modifier = Modifier.size(44.dp)
+                                            onClick = { showCloudPopup = true },
+                                            modifier = Modifier
+                                                .size(40.dp)
+                                                .background(cloudIconBgColor, CircleShape)
+                                                .border(
+                                                    width = if (showCloudPopup) 1.dp else 0.dp,
+                                                    color = if (showCloudPopup) Color.White.copy(0.15f) else Color.Transparent,
+                                                    shape = CircleShape
+                                                )
                                         ) {
-                                            Icon(Icons.Rounded.Cloud, null, tint = Color.White.copy(0.7f), modifier = Modifier.size(24.dp))
+                                            Icon(
+                                                Icons.Rounded.Cloud, 
+                                                null, 
+                                                tint = if (showCloudPopup) AccentBlue else Color.White.copy(0.7f), 
+                                                modifier = Modifier
+                                                    .size(24.dp)
+                                                    .onGloballyPositioned {
+                                                        cloudIconBounds = it.boundsInRoot()
+                                                    }
+                                            )
                                         }
+                                        val driveAccounts by viewModel.driveAccounts.collectAsState(initial = emptyList())
+                                        CloudDrivePopup(
+                                            expanded = showCloudPopup,
+                                            onDismiss = { showCloudPopup = false },
+                                            anchorBounds = cloudIconBounds,
+                                            accounts = driveAccounts,
+                                            onSelectAccount = { email ->
+                                                viewModel.setLibraryView(LibraryView.CLOUD, email)
+                                            }
+                                        )
                                     }
                                 }
                             }
@@ -953,6 +1005,58 @@ fun MainScreen(
                                 exit = fadeOut(tween(400))
                             ) {
                                 when (uiState.currentView) {
+                                    LibraryView.CLOUD -> {
+                                        val accounts by viewModel.driveAccounts.collectAsStateWithLifecycle(emptyList())
+                                        if (accounts.isEmpty()) {
+                                            Column(Modifier.fillMaxSize(), horizontalAlignment=Alignment.CenterHorizontally, verticalArrangement=Arrangement.Center) {
+                                                Icon(Icons.Rounded.Cloud, null, tint=Color(0xFF1A73E8), modifier=Modifier.size(64.dp))
+                                                Spacer(Modifier.height(16.dp))
+                                                Text("No Google Drive accounts connected", color=Color.White.copy(0.6f), textAlign=TextAlign.Center)
+                                                Text("Add an account in Settings → Cloud", color=Color.White.copy(0.3f), fontSize=13.sp, textAlign=TextAlign.Center)
+                                            }
+                                        } else if (uiState.isCloudScanning && songs.isEmpty()) {
+                                            Column(Modifier.fillMaxSize(), horizontalAlignment=Alignment.CenterHorizontally, verticalArrangement=Arrangement.Center) {
+                                                CircularProgressIndicator(color=Color(0xFF1A73E8))
+                                                Spacer(Modifier.height(16.dp))
+                                                Text("Searching for music in your Drive...", color=Color.White.copy(0.6f), textAlign=TextAlign.Center)
+                                                Text("This may take a moment depending on your library size", color=Color.White.copy(0.3f), fontSize=12.sp, textAlign=TextAlign.Center)
+                                            }
+                                        } else if (songs.isEmpty()) {
+                                            Column(Modifier.fillMaxSize(), horizontalAlignment=Alignment.CenterHorizontally, verticalArrangement=Arrangement.Center) {
+                                                Icon(Icons.Rounded.SearchOff, null, tint=Color.White.copy(0.3f), modifier=Modifier.size(64.dp))
+                                                Spacer(Modifier.height(16.dp))
+                                                Text("No music found in your Drive", color=Color.White.copy(0.6f), textAlign=TextAlign.Center)
+                                                Text("Try clicking 'Sync' in Settings if you have new files", color=Color.White.copy(0.3f), fontSize=12.sp, textAlign=TextAlign.Center)
+                                            }
+                                        } else {
+                                            val albumCount = remember(songs) { songs.map { it.album }.distinct().size }
+                                            val artistCount = remember(songs) { songs.map { it.artist }.distinct().size }
+
+                                            LazyColumn(state=listState, contentPadding=PaddingValues(bottom=120.dp)) {
+                                                item {
+                                                    Row(
+                                                        modifier = Modifier
+                                                            .fillMaxWidth()
+                                                            .padding(vertical = 20.dp, horizontal = 16.dp),
+                                                        horizontalArrangement = Arrangement.SpaceEvenly,
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
+                                                        StatItem(Icons.Rounded.MusicNote, songs.size.toString(), "Songs", Color(0xFF1A73E8))
+                                                        StatItem(Icons.Rounded.Album, albumCount.toString(), "Albums", Color(0xFF1A73E8))
+                                                        StatItem(Icons.Rounded.Person, artistCount.toString(), "Artists", Color(0xFF1A73E8))
+                                                    }
+                                                }
+                                                itemsIndexed(songs, key={_,s->s.id}) { index, song ->
+                                                    SongListItem(
+                                                        song=song, isPlaying=uiState.isPlaying && uiState.currentSong?.id==song.id,
+                                                        trackNumber=index+1, isCompact=isCompactList,
+                                                        onClick={ viewModel.playSong(song) },
+                                                        onMoreClick={ selectedSongForOptions=song }
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
                                     LibraryView.ALBUMS -> {
                                         Box(Modifier.fillMaxSize()) {
                                             LazyVerticalGrid(
@@ -1537,91 +1641,154 @@ fun MainScreen(
 private fun CastDevicePopup(
     expanded: Boolean,
     onDismiss: () -> Unit,
+    anchorBounds: Rect,
     currentSong: com.beatflowy.app.model.Song?,
     onCast: (androidx.mediarouter.media.MediaRouter.RouteInfo) -> Unit
 ) {
-    if (expanded) {
-        androidx.compose.ui.window.Popup(
-            onDismissRequest = onDismiss,
-            properties = androidx.compose.ui.window.PopupProperties(focusable = true)
-        ) {
-            Box(
-                modifier = Modifier
-                    .width(260.dp)
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(Color(0xFF1C1C2E))
-                    .border(1.dp, Color.White.copy(0.1f), RoundedCornerShape(16.dp))
-                    .padding(16.dp)
-            ) {
-                Column {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Rounded.Cast, null, tint = Color.White)
-                        Spacer(Modifier.width(12.dp))
-                        Text("Cast to Device", color = Color.White, fontWeight = FontWeight.Bold)
-                    }
+    GlassMenuPopup(
+        expanded = expanded,
+        onDismiss = onDismiss,
+        anchorBounds = anchorBounds,
+        cardWidth = 260.dp
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Rounded.Cast, null, tint = Color.White)
+                Spacer(Modifier.width(12.dp))
+                Text("Cast to Device", color = Color.White, fontWeight = FontWeight.Bold)
+            }
 
-                    Spacer(Modifier.height(12.dp))
-                    HorizontalDivider(color = Color.White.copy(0.1f))
-                    Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(12.dp))
+            HorizontalDivider(color = Color.White.copy(0.1f))
+            Spacer(Modifier.height(12.dp))
 
-                    if (com.beatflowy.app.cast.CastManager.availableDevices.isEmpty()) {
-                        Text(
-                            "Scanning for devices...",
-                            color = Color.Gray,
-                            fontSize = 14.sp,
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 20.dp),
-                            textAlign = TextAlign.Center
-                        )
-                    } else {
-                        LazyColumn(modifier = Modifier.heightIn(max = 300.dp)) {
-                            items(com.beatflowy.app.cast.CastManager.availableDevices) { route ->
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable { onCast(route); onDismiss() }
-                                        .padding(vertical = 12.dp)
-                                ) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(Icons.Rounded.Tv, null, tint = AccentBlue)
-                                        Spacer(Modifier.width(12.dp))
-                                        Column {
-                                            Text(route.name, color = Color.White, fontWeight = FontWeight.Bold)
-                                            Text("Available", color = Color.Green, fontSize = 12.sp)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    if (com.beatflowy.app.cast.CastManager.isConnected) {
-                        Spacer(Modifier.height(12.dp))
-                        HorizontalDivider(color = Color.White.copy(0.1f))
-                        Spacer(Modifier.height(12.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+            if (com.beatflowy.app.cast.CastManager.availableDevices.isEmpty()) {
+                Text(
+                    "Scanning for devices...",
+                    color = Color.Gray,
+                    fontSize = 14.sp,
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 20.dp),
+                    textAlign = TextAlign.Center
+                )
+            } else {
+                LazyColumn(modifier = Modifier.heightIn(max = 240.dp)) {
+                    items(com.beatflowy.app.cast.CastManager.availableDevices) { route ->
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onCast(route); onDismiss() }
+                                .padding(vertical = 12.dp)
                         ) {
-                            Text(
-                                "Connected to ${com.beatflowy.app.cast.CastManager.connectedDeviceName}",
-                                color = Color.Green,
-                                fontSize = 12.sp,
-                                modifier = Modifier.weight(1f)
-                            )
-                            Button(
-                                onClick = { com.beatflowy.app.cast.CastManager.stopCast(); onDismiss() },
-                                colors = ButtonDefaults.buttonColors(containerColor = Color.Red.copy(0.2f)),
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-                                shape = RoundedCornerShape(8.dp)
-                            ) {
-                                Text("Stop Cast", color = Color.Red, fontSize = 11.sp)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Rounded.Tv, null, tint = AccentBlue)
+                                Spacer(Modifier.width(12.dp))
+                                Column {
+                                    Text(route.name, color = Color.White, fontWeight = FontWeight.Bold)
+                                    Text("Available", color = Color.Green, fontSize = 12.sp)
+                                }
                             }
                         }
                     }
                 }
             }
+
+            if (com.beatflowy.app.cast.CastManager.isConnected) {
+                Spacer(Modifier.height(12.dp))
+                HorizontalDivider(color = Color.White.copy(0.1f))
+                Spacer(Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "Connected to ${com.beatflowy.app.cast.CastManager.connectedDeviceName}",
+                        color = Color.Green,
+                        fontSize = 12.sp,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Button(
+                        onClick = { com.beatflowy.app.cast.CastManager.stopCast(); onDismiss() },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color.Red.copy(0.2f)),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text("Stop Cast", color = Color.Red, fontSize = 11.sp)
+                    }
+                }
+            }
         }
+    }
+}
+
+@Composable
+private fun CloudDrivePopup(
+    expanded: Boolean,
+    onDismiss: () -> Unit,
+    anchorBounds: Rect,
+    accounts: List<com.beatflowy.app.repository.DriveAccount>,
+    onSelectAccount: (String?) -> Unit
+) {
+    val enabledAccounts = remember(accounts) { accounts.filter { it.enabled } }
+    
+    GlassMenuPopup(
+        expanded = expanded,
+        onDismiss = onDismiss,
+        anchorBounds = anchorBounds,
+        cardWidth = 220.dp
+    ) {
+        Text(
+            "Cloud Storage",
+            color = Color.White,
+            fontWeight = FontWeight.Black,
+            fontSize = 16.sp,
+            modifier = Modifier.padding(start = 20.dp, end = 16.dp, top = 2.dp, bottom = 8.dp)
+        )
+        
+        // Option to show ALL cloud songs
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onSelectAccount(null); onDismiss() }
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(Icons.Rounded.CloudQueue, null, tint = AccentBlue, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(12.dp))
+            Text("All Cloud Songs", color = Color.White, fontSize = 14.sp)
+        }
+        
+        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp, horizontal = 12.dp), color = Color.White.copy(0.1f))
+        
+        if (enabledAccounts.isEmpty()) {
+            Text(
+                "No accounts enabled",
+                color = Color.Gray,
+                fontSize = 12.sp,
+                modifier = Modifier.padding(16.dp)
+            )
+        } else {
+            enabledAccounts.forEach { account ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onSelectAccount(account.email); onDismiss() }
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Rounded.AccountCircle, null, tint = Color.White.copy(0.6f), modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(12.dp))
+                    Text(
+                        account.email, 
+                        color = Color.White, 
+                        fontSize = 14.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(4.dp))
     }
 }
 
@@ -1964,11 +2131,11 @@ fun SortDropdown(
             modifier = Modifier.padding(start = 20.dp, end = 16.dp, top = 2.dp, bottom = 8.dp)
         )
         listOf(
-            "Name" to SortType.NAME,
-            "Date Added" to SortType.DATE_ADDED,
-            "File Size" to SortType.FILE_SIZE,
-            "Duration" to SortType.DURATION
-        ).forEach { (label, type) ->
+            Triple("Name", SortType.NAME, Icons.Rounded.SortByAlpha),
+            Triple("Date Added", SortType.DATE_ADDED, Icons.Rounded.CalendarToday),
+            Triple("File Size", SortType.FILE_SIZE, Icons.Rounded.Storage),
+            Triple("Duration", SortType.DURATION, Icons.Rounded.Schedule)
+        ).forEach { (label, type, icon) ->
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1976,13 +2143,23 @@ fun SortDropdown(
                     .padding(horizontal = 16.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                Icon(
+                    icon,
+                    null,
+                    tint = if (uiState.sortType == type) AccentBlue else Color.White.copy(0.5f),
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(Modifier.width(12.dp))
+                Text(
+                    label,
+                    color = if (uiState.sortType == type) Color.White else Color.White.copy(0.7f),
+                    fontSize = 14.sp,
+                    fontWeight = if (uiState.sortType == type) FontWeight.Bold else FontWeight.Normal
+                )
                 if (uiState.sortType == type) {
-                    Icon(Icons.Rounded.Check, null, tint = AccentBlue, modifier = Modifier.size(18.dp))
-                } else {
-                    Spacer(Modifier.size(18.dp))
+                    Spacer(Modifier.weight(1f))
+                    Icon(Icons.Rounded.Check, null, tint = AccentBlue, modifier = Modifier.size(14.dp))
                 }
-                Spacer(Modifier.width(10.dp))
-                Text(label, color = Color.White, fontSize = 14.sp)
             }
         }
         HorizontalDivider(modifier = Modifier.padding(vertical = 2.dp, horizontal = 12.dp), color = Color.White.copy(0.12f))

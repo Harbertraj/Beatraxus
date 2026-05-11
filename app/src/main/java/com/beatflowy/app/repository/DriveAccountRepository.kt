@@ -12,7 +12,12 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import org.json.JSONObject
 
-data class DriveAccount(val email: String, val accountName: String, val photoUrl: String?)
+data class DriveAccount(
+    val email: String,
+    val accountName: String,
+    val photoUrl: String?,
+    val enabled: Boolean = true
+)
 
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "drive_accounts")
 
@@ -28,7 +33,8 @@ class DriveAccountRepository(private val context: Context) {
             DriveAccount(
                 obj.getString("email"),
                 obj.getString("name"),
-                obj.optString("photo", "")
+                obj.optString("photo", ""),
+                obj.optBoolean("enabled", true)
             )
         }
     }
@@ -44,8 +50,25 @@ class DriveAccountRepository(private val context: Context) {
                 put("email", account.email)
                 put("name", account.accountName)
                 put("photo", account.photoUrl ?: "")
+                put("enabled", account.enabled)
             }.toString()
             prefs[DRIVE_ACCOUNTS] = (filtered + json).toSet()
+        }
+    }
+
+    suspend fun updateAccountEnabled(email: String, enabled: Boolean) {
+        context.dataStore.edit { prefs ->
+            val current = prefs[DRIVE_ACCOUNTS] ?: emptySet()
+            val updated = current.map { json ->
+                val obj = JSONObject(json)
+                if (obj.getString("email") == email) {
+                    obj.put("enabled", enabled)
+                    obj.toString()
+                } else {
+                    json
+                }
+            }.toSet()
+            prefs[DRIVE_ACCOUNTS] = updated
         }
     }
 

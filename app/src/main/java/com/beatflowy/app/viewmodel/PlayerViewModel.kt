@@ -100,6 +100,19 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 service?.updateDspConfig(config)
             }
         }
+        viewModelScope.launch(Dispatchers.IO) {
+            driveAccountRepository.accounts.collect { accounts ->
+                if (accounts.isEmpty()) {
+                    _songs.update { it.filter { song -> song.source != SongSource.GDRIVE } }
+                    return@collect
+                }
+
+                val accountEmails = accounts.map { it.email }.toSet()
+                _songs.update { current ->
+                    current.filter { it.source != SongSource.GDRIVE || it.driveAccountEmail in accountEmails }
+                }
+            }
+        }
     }
 
     fun consumeDeleteRequest() {
@@ -232,6 +245,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         songs.map { it.copy(isFavorite = favoriteIds.contains(it.id)) }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    val driveLibrarySongs: StateFlow<List<Song>> = allSongs.map { songs ->
+        songs.filter { it.source == SongSource.GDRIVE }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
     val albums = allSongs.map { songs ->
         songs.groupBy { it.album }
             .map { (name, list) -> Triple(name, list.first().artist, list.first().albumArtUri) }
@@ -328,6 +345,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             LibraryView.PLAYLIST_DETAIL -> {
                 val playlist = pls.find { it.name == state.selectedItemName }
                 playlist?.songIds?.mapNotNull { id -> all.find { it.id == id } } ?: emptyList()
+            }
+            LibraryView.CLOUD -> all.filter { 
+                it.source == com.beatflowy.app.model.SongSource.GDRIVE && 
+                (state.selectedItemName == null || it.driveAccountEmail == state.selectedItemName)
             }
         }
         
@@ -458,7 +479,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun scanDriveAccount(email: String) {
         viewModelScope.launch {
-            _uiState.update { it.copy(isScanning = true, scanProgress = 0f) }
+            _uiState.update { it.copy(isCloudScanning = true, scanProgress = 0f) }
             try {
                 val credential = driveAccountRepository.getCredential(email)
                 val scanner = com.beatflowy.app.drive.DriveLibraryScanner(getApplication())
@@ -477,7 +498,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             } catch (e: Exception) {
                 _uiState.update { it.copy(errorMessage = "Drive scan failed: ${e.message}") }
             } finally {
-                _uiState.update { it.copy(isScanning = false) }
+                _uiState.update { it.copy(isCloudScanning = false) }
             }
         }
     }
@@ -485,6 +506,14 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun addDriveAccount(account: DriveAccount) {
         viewModelScope.launch {
             driveAccountRepository.addAccount(account)
+            // Trigger an initial scan for the new account
+            scanDriveAccount(account.email)
+        }
+    }
+
+    fun toggleDriveAccountEnabled(email: String, enabled: Boolean) {
+        viewModelScope.launch {
+            driveAccountRepository.updateAccountEnabled(email, enabled)
         }
     }
 
@@ -534,6 +563,18 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 }
 
                 updateLibraryCounts(results)
+                
+                // Auto-add folders containing music (minimal set)
+                val allFolders = results.map { it.folder }.filter { it != "Unknown" }.toSet()
+                val sortedFolders = allFolders.sortedBy { it.length }
+                val minimalFolders = mutableListOf<String>()
+                for (folder in sortedFolders) {
+                    if (minimalFolders.none { folder.startsWith(it + "/") || folder == it }) {
+                        minimalFolders.add(folder)
+                    }
+                }
+                musicRepository.addMusicFolders(minimalFolders)
+                _uiState.update { it.copy(musicFolders = musicRepository.getMusicFolders()) }
 
                 val message = when {
                     newSongs.isNotEmpty() && removedIds.isNotEmpty() -> "Added ${newSongs.size} songs, removed ${removedIds.size}"
@@ -609,12 +650,25 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 }
 
                 updateLibraryCounts(results)
+                
+                // Auto-add folders containing music (minimal set)
+                val allFolders = results.map { it.folder }.filter { it != "Unknown" }.toSet()
+                val sortedFolders = allFolders.sortedBy { it.length }
+                val minimalFolders = mutableListOf<String>()
+                for (folder in sortedFolders) {
+                    if (minimalFolders.none { folder.startsWith(it + "/") || folder == it }) {
+                        minimalFolders.add(folder)
+                    }
+                }
+                musicRepository.addMusicFolders(minimalFolders)
+
                 _uiState.update {
                     it.copy(
                         scanProgress = 1.0f,
                         scanCount = results.size,
                         albumCount = results.map { song -> song.album }.toSet().size,
-                        artistCount = results.map { song -> song.artist }.toSet().size
+                        artistCount = results.map { song -> song.artist }.toSet().size,
+                        musicFolders = musicRepository.getMusicFolders()
                     )
                 }
                 service?.updateScanningProgress(1.0f, results.size, true)
