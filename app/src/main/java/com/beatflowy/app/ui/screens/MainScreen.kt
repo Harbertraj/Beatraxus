@@ -267,6 +267,7 @@ fun MainScreen(
     var selectedSongForOptions by remember { mutableStateOf<com.beatflowy.app.model.Song?>(null) }
     var showPipelineOverlay by remember { mutableStateOf(false) }
     var showDrawer by rememberSaveable { mutableStateOf(false) }
+    var showCastPopup by remember { mutableStateOf(false) }
 
     var gridColumns by rememberSaveable { mutableIntStateOf(2) }
     var listDensityColumns by rememberSaveable { mutableIntStateOf(2) }
@@ -801,13 +802,26 @@ fun MainScreen(
                                     Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
                                         val context = androidx.compose.ui.platform.LocalContext.current
                                         IconButton(
-                                            onClick = {
-                                                android.widget.Toast.makeText(context, "Cast – Coming Soon", android.widget.Toast.LENGTH_SHORT).show()
-                                            },
+                                            onClick = { showCastPopup = true },
                                             modifier = Modifier.size(44.dp)
                                         ) {
-                                            Icon(Icons.Rounded.Cast, null, tint = Color.White.copy(0.7f), modifier = Modifier.size(24.dp))
+                                            Icon(
+                                                Icons.Rounded.Cast,
+                                                null,
+                                                tint = if (com.beatflowy.app.cast.CastManager.isConnected) AccentBlue else Color.White.copy(0.7f),
+                                                modifier = Modifier.size(24.dp)
+                                            )
                                         }
+                                        CastDevicePopup(
+                                            expanded = showCastPopup,
+                                            onDismiss = { showCastPopup = false },
+                                            currentSong = uiState.currentSong,
+                                            onCast = { route ->
+                                                uiState.currentSong?.let { song ->
+                                                    com.beatflowy.app.cast.CastManager.castSong(context, route, song, song.uri.toString())
+                                                }
+                                            }
+                                        )
                                     }
 
                                     Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
@@ -1515,6 +1529,98 @@ fun MainScreen(
                     selectedSongForOptions = null
                 }
             )
+        }
+    }
+}
+
+@Composable
+private fun CastDevicePopup(
+    expanded: Boolean,
+    onDismiss: () -> Unit,
+    currentSong: com.beatflowy.app.model.Song?,
+    onCast: (androidx.mediarouter.media.MediaRouter.RouteInfo) -> Unit
+) {
+    if (expanded) {
+        androidx.compose.ui.window.Popup(
+            onDismissRequest = onDismiss,
+            properties = androidx.compose.ui.window.PopupProperties(focusable = true)
+        ) {
+            Box(
+                modifier = Modifier
+                    .width(260.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(Color(0xFF1C1C2E))
+                    .border(1.dp, Color.White.copy(0.1f), RoundedCornerShape(16.dp))
+                    .padding(16.dp)
+            ) {
+                Column {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Rounded.Cast, null, tint = Color.White)
+                        Spacer(Modifier.width(12.dp))
+                        Text("Cast to Device", color = Color.White, fontWeight = FontWeight.Bold)
+                    }
+
+                    Spacer(Modifier.height(12.dp))
+                    HorizontalDivider(color = Color.White.copy(0.1f))
+                    Spacer(Modifier.height(12.dp))
+
+                    if (com.beatflowy.app.cast.CastManager.availableDevices.isEmpty()) {
+                        Text(
+                            "Scanning for devices...",
+                            color = Color.Gray,
+                            fontSize = 14.sp,
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 20.dp),
+                            textAlign = TextAlign.Center
+                        )
+                    } else {
+                        LazyColumn(modifier = Modifier.heightIn(max = 300.dp)) {
+                            items(com.beatflowy.app.cast.CastManager.availableDevices) { route ->
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable { onCast(route); onDismiss() }
+                                        .padding(vertical = 12.dp)
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(Icons.Rounded.Tv, null, tint = AccentBlue)
+                                        Spacer(Modifier.width(12.dp))
+                                        Column {
+                                            Text(route.name, color = Color.White, fontWeight = FontWeight.Bold)
+                                            Text("Available", color = Color.Green, fontSize = 12.sp)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (com.beatflowy.app.cast.CastManager.isConnected) {
+                        Spacer(Modifier.height(12.dp))
+                        HorizontalDivider(color = Color.White.copy(0.1f))
+                        Spacer(Modifier.height(12.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                "Connected to ${com.beatflowy.app.cast.CastManager.connectedDeviceName}",
+                                color = Color.Green,
+                                fontSize = 12.sp,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Button(
+                                onClick = { com.beatflowy.app.cast.CastManager.stopCast(); onDismiss() },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color.Red.copy(0.2f)),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text("Stop Cast", color = Color.Red, fontSize = 11.sp)
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }

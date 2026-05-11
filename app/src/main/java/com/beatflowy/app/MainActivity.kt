@@ -112,6 +112,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        com.beatflowy.app.cast.CastManager.initialize(this)
         frameJankMonitor = FrameJankMonitor("BeatraxusFrameMonitor")
         
         // Enable edge-to-edge

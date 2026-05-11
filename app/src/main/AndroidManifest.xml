@@ -25,7 +25,17 @@
         android:hardwareAccelerated="true"
         android:requestLegacyExternalStorage="true"
         android:enableOnBackInvokedCallback="true"
+        android:usesCleartextTraffic="true"
         tools:targetApi="31">
+
+        <meta-data
+            android:name="com.google.android.gms.cast.framework.OPTIONS_PROVIDER_CLASS_NAME"
+            android:value="com.beatflowy.app.CastOptionsProvider" />
+
+        <activity
+            android:name="com.google.android.gms.cast.framework.media.widget.ExpandedControllerActivity"
+            android:theme="@style/Theme.AppCompat"
+            android:launchMode="singleTask" />
 
         <activity
             android:name=".MainActivity"
