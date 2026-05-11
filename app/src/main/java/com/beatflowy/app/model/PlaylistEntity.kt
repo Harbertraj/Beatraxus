@@ -42,5 +42,8 @@ data class SongEntity(
     val replayGainTrackDb: Float?,
     val replayGainAlbumDb: Float?,
     val replayGainTrackPeak: Float?,
-    val replayGainAlbumPeak: Float?
+    val replayGainAlbumPeak: Float?,
+    val source: String = "LOCAL",
+    val driveFileId: String? = null,
+    val driveAccountEmail: String? = null
 )

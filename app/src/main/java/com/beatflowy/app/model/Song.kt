@@ -4,6 +4,8 @@ import android.net.Uri
 import com.beatflowy.app.model.OutputMode
 import com.beatflowy.app.repository.LyricsSource
 
+enum class SongSource { LOCAL, GDRIVE }
+
 data class Song(
     val id: String,
     val uri: Uri,
@@ -25,7 +27,10 @@ data class Song(
     val replayGainAlbumDb: Float? = null,
     val replayGainTrackPeak: Float? = null,
     val replayGainAlbumPeak: Float? = null,
-    val isFavorite: Boolean = false
+    val isFavorite: Boolean = false,
+    val source: SongSource = SongSource.LOCAL,
+    val driveFileId: String? = null,
+    val driveAccountEmail: String? = null
 )
 
 data class Playlist(

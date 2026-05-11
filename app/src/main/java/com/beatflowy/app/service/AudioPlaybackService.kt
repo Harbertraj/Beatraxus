@@ -42,6 +42,14 @@ import com.beatflowy.app.widget.MusicWidgetMedium
 import com.beatflowy.app.widget.MusicWidgetSmall
 import com.beatflowy.app.repository.DspPreferences
 import kotlinx.coroutines.*
+import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.ProgressiveMediaSource
+import com.beatflowy.app.drive.DrivePlaybackHelper
+import com.beatflowy.app.model.SongSource
+import com.beatflowy.app.repository.DriveAccountRepository
+import android.net.Uri
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -261,6 +269,49 @@ class AudioPlaybackService : Service() {
 
     override fun onBind(intent: Intent): IBinder = binder
 
+    private val driveAccountRepository by lazy { DriveAccountRepository(this) }
+    private var exoPlayer: ExoPlayer? = null
+    private var isUsingExoPlayer = false
+
+    private fun getExoPlayer(): ExoPlayer {
+        if (exoPlayer == null) {
+            exoPlayer = ExoPlayer.Builder(this).build().apply {
+                addListener(object : Player.Listener {
+                    override fun onPlaybackStateChanged(playbackState: Int) {
+                        if (playbackState == Player.STATE_ENDED) {
+                            handleCompletion()
+                        }
+                    }
+                })
+            }
+        }
+        return exoPlayer!!
+    }
+
+    fun playDriveSong(song: Song) {
+        serviceScope.launch {
+            val email = song.driveAccountEmail ?: return@launch
+            val credential = driveAccountRepository.getCredential(email)
+            val driveUri = Uri.parse("https://www.googleapis.com/drive/v3/files/${song.driveFileId}?alt=media")
+            
+            isUsingExoPlayer = true
+            engine.stop()
+            
+            if (requestAudioFocus()) {
+                val player = getExoPlayer()
+                player.setMediaSource(
+                    ProgressiveMediaSource.Factory(DrivePlaybackHelper.buildDriveDataSourceFactory(credential))
+                        .createMediaSource(MediaItem.fromUri(driveUri))
+                )
+                player.prepare()
+                player.play()
+                
+                updateMediaSessionState()
+                updateNotification()
+            }
+        }
+    }
+
     private val _upcomingSongs = MutableStateFlow<List<Song>>(emptyList())
     val upcomingSongs: StateFlow<List<Song>> = _upcomingSongs.asStateFlow()
 
@@ -326,6 +377,19 @@ class AudioPlaybackService : Service() {
 
     fun togglePlayPause() {
         playbackJob?.cancel()
+        if (isUsingExoPlayer) {
+            val player = getExoPlayer()
+            if (player.isPlaying) {
+                player.pause()
+                abandonAudioFocus()
+            } else {
+                if (requestAudioFocus()) {
+                    player.play()
+                }
+            }
+            return
+        }
+
         if (engine.playbackStateFlow.value.isPlaying) {
             engine.stop()
             abandonAudioFocus()
@@ -696,6 +760,7 @@ class AudioPlaybackService : Service() {
         serviceScope.cancel()
         audioManager.unregisterAudioDeviceCallback(audioDeviceCallback)
         engine.release()
+        exoPlayer?.release()
         mediaSession.release()
         abandonAudioFocus()
         super.onDestroy()

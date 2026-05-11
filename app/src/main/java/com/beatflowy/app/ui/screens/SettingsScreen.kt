@@ -51,6 +51,7 @@ import com.beatflowy.app.model.OutputMode
 import com.beatflowy.app.model.DvcMode
 import com.beatflowy.app.model.ParametricEqBand
 import com.beatflowy.app.model.ResamplerMode
+import com.beatflowy.app.repository.DriveAccount
 import com.beatflowy.app.ui.theme.AccentBlue
 import com.beatflowy.app.ui.theme.BgDeep
 import com.beatflowy.app.viewmodel.PlayerViewModel
@@ -62,7 +63,8 @@ private val PremiumAccent = Color(0xFF00F2FF)
 fun SettingsScreen(
     viewModel: PlayerViewModel,
     onBack: () -> Unit,
-    onNavigateToDsp: () -> Unit
+    onNavigateToDsp: () -> Unit,
+    onRequestGDriveAccount: () -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     var showInfoPopup by remember { mutableStateOf(false) }
@@ -177,6 +179,13 @@ fun SettingsScreen(
                             onClick = { currentSection = "Library" }
                         )
                         SettingMenuItem(
+                            title = "Cloud",
+                            subtitle = "Stream music from Google Drive",
+                            icon = Icons.Rounded.Cloud,
+                            iconColor = Color(0xFF1A73E8),
+                            onClick = { currentSection = "Cloud" }
+                        )
+                        SettingMenuItem(
                             title = "About",
                             subtitle = "App version and information",
                             icon = Icons.Rounded.Info,
@@ -189,6 +198,7 @@ fun SettingsScreen(
                             "DSP Enhancements" -> DspEnhancementsContent(uiState, viewModel)
                             "Replay Gain" -> ReplayGainContent(uiState, viewModel)
                             "Library" -> LibraryContent(uiState, viewModel, onShowInfo = { showInfoPopup = true })
+                            "Cloud" -> CloudContent(viewModel, onRequestGDriveAccount = onRequestGDriveAccount)
                             "About" -> AboutContent()
                         }
                     }
@@ -784,6 +794,111 @@ fun LibraryContent(uiState: com.beatflowy.app.model.PlayerUiState, viewModel: co
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+fun CloudContent(viewModel: PlayerViewModel, onRequestGDriveAccount: () -> Unit) {
+    val accounts by viewModel.driveAccounts.collectAsStateWithLifecycle(initialValue = emptyList())
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            "GOOGLE DRIVE",
+            style = MaterialTheme.typography.labelSmall,
+            color = Color.Gray,
+            letterSpacing = 1.sp,
+            modifier = Modifier.padding(bottom = 12.dp)
+        )
+
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF1A1A2E)),
+            shape = RoundedCornerShape(16.dp),
+            border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(0.08f))
+        ) {
+            Column {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(52.dp)
+                            .background(Color(0xFF1A73E8).copy(0.15f), RoundedCornerShape(12.dp)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            Icons.Rounded.Cloud,
+                            contentDescription = null,
+                            tint = Color(0xFF1A73E8),
+                            modifier = Modifier.size(28.dp)
+                        )
+                    }
+                    Spacer(Modifier.width(16.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Google Drive", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                        Text("Connect your account", color = Color.White.copy(0.5f), fontSize = 13.sp)
+                    }
+                    Button(
+                        onClick = onRequestGDriveAccount,
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1A73E8)),
+                        shape = RoundedCornerShape(50),
+                        contentPadding = PaddingValues(horizontal = 24.dp, vertical = 10.dp)
+                    ) {
+                        Text("Connect", color = Color.White, fontWeight = FontWeight.Bold)
+                    }
+                }
+
+                if (accounts.isNotEmpty()) {
+                    HorizontalDivider(color = Color.White.copy(0.08f), thickness = 1.dp)
+                    accounts.forEach { account ->
+                        ConnectedAccountRow(
+                            account = account,
+                            onScan = { viewModel.scanDriveAccount(account.email) },
+                            onRemove = { viewModel.removeDriveAccount(account.email) }
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ConnectedAccountRow(account: DriveAccount, onScan: () -> Unit, onRemove: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(40.dp)
+                .background(Color(0xFF1A73E8).copy(0.2f), CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(Icons.Rounded.Person, contentDescription = null, tint = Color(0xFF1A73E8))
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(account.accountName, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+            Text(account.email, color = Color.Gray, fontSize = 12.sp)
+        }
+        IconButton(
+            onClick = onScan,
+            modifier = Modifier.size(32.dp)
+        ) {
+            Icon(Icons.Rounded.Sync, contentDescription = "Scan", tint = Color.Gray, modifier = Modifier.size(18.dp))
+        }
+        IconButton(
+            onClick = onRemove,
+            modifier = Modifier.size(32.dp)
+        ) {
+            Icon(Icons.Rounded.Close, contentDescription = "Remove", tint = Color.Gray, modifier = Modifier.size(18.dp))
         }
     }
 }

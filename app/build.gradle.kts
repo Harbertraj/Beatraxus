@@ -140,12 +140,6 @@ dependencies {
     // Navigation
     implementation("androidx.navigation:navigation-compose:2.8.5")
 
-    // Media3 / ExoPlayer
-    implementation("androidx.media3:media3-exoplayer:1.2.1")
-    implementation("androidx.media3:media3-ui:1.2.1")
-    implementation("androidx.media3:media3-session:1.2.1")
-    implementation("androidx.media3:media3-common:1.2.1")
-    implementation("androidx.media3:media3-datasource:1.2.1")
 
     // Media (for MediaSessionCompat / NotificationCompat.MediaStyle)
     implementation("androidx.media:media:1.7.0")
@@ -160,6 +154,7 @@ dependencies {
     val retrofitVersion = "2.9.0"
     implementation("com.squareup.retrofit2:retrofit:$retrofitVersion")
     implementation("com.squareup.retrofit2:converter-gson:$retrofitVersion")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
 
     // Lottie
@@ -173,6 +168,15 @@ dependencies {
     implementation("androidx.room:room-runtime:$roomVersion")
     implementation("androidx.room:room-ktx:$roomVersion")
     ksp("androidx.room:room-compiler:$roomVersion")
+
+    // Media3 / ExoPlayer
+    val media3Version = "1.2.1"
+    implementation("androidx.media3:media3-exoplayer:$media3Version")
+    implementation("androidx.media3:media3-ui:$media3Version")
+    implementation("androidx.media3:media3-session:$media3Version")
+    implementation("androidx.media3:media3-common:$media3Version")
+    implementation("androidx.media3:media3-datasource:$media3Version")
+    implementation("androidx.media3:media3-datasource-okhttp:$media3Version")
     // For Kotlin use kapt or ksp. Let's see if ksp is available.
     // If not, I'll use kapt. But first I need to check plugins.
     // Actually, I'll just use the runtime for now if I can't add plugins easily.

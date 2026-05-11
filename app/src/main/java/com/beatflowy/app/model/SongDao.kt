@@ -18,4 +18,7 @@ interface SongDao {
 
     @Query("DELETE FROM songs WHERE id IN (:ids)")
     suspend fun deleteSongsByIds(ids: List<String>)
+
+    @Query("DELETE FROM songs WHERE driveAccountEmail = :email")
+    suspend fun deleteSongsByAccount(email: String)
 }

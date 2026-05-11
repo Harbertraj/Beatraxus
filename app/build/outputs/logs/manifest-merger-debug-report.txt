@@ -65,6 +65,7 @@ MERGED from [androidx.savedstate:savedstate-ktx:1.2.1] C:\Users\prasa\.gradle\ca
 MERGED from [androidx.savedstate:savedstate:1.2.1] C:\Users\prasa\.gradle\caches\8.10.2\transforms\54f45a60c709a6c5165b61e293880195\transformed\savedstate-1.2.1\AndroidManifest.xml:17:1-22:12
 MERGED from [androidx.media3:media3-exoplayer:1.2.1] C:\Users\prasa\.gradle\caches\8.10.2\transforms\1dc3973e417e8f5bc9b80d09bc1e5e82\transformed\media3-exoplayer-1.2.1\AndroidManifest.xml:17:1-24:12
 MERGED from [androidx.media3:media3-session:1.2.1] C:\Users\prasa\.gradle\caches\8.10.2\transforms\1ec475a1ae295d7a933e6c970acb4475\transformed\media3-session-1.2.1\AndroidManifest.xml:17:1-22:12
+MERGED from [androidx.media3:media3-datasource-okhttp:1.2.1] C:\Users\prasa\.gradle\caches\8.10.2\transforms\41b2dd279937946d12815ee7471227a3\transformed\media3-datasource-okhttp-1.2.1\AndroidManifest.xml:17:1-22:12
 MERGED from [androidx.media3:media3-datasource:1.2.1] C:\Users\prasa\.gradle\caches\8.10.2\transforms\35cc177736139bb914d84cb4b3aecb1b\transformed\media3-datasource-1.2.1\AndroidManifest.xml:17:1-22:12
 MERGED from [androidx.media3:media3-extractor:1.2.1] C:\Users\prasa\.gradle\caches\8.10.2\transforms\49b390b254058e9158eae742bb514318\transformed\media3-extractor-1.2.1\AndroidManifest.xml:17:1-22:12
 MERGED from [androidx.media3:media3-container:1.2.1] C:\Users\prasa\.gradle\caches\8.10.2\transforms\75a76ad0ac6eae72e47c2e6f99c95738\transformed\media3-container-1.2.1\AndroidManifest.xml:17:1-22:12
@@ -501,6 +502,8 @@ MERGED from [androidx.media3:media3-exoplayer:1.2.1] C:\Users\prasa\.gradle\cach
 MERGED from [androidx.media3:media3-exoplayer:1.2.1] C:\Users\prasa\.gradle\caches\8.10.2\transforms\1dc3973e417e8f5bc9b80d09bc1e5e82\transformed\media3-exoplayer-1.2.1\AndroidManifest.xml:20:5-44
 MERGED from [androidx.media3:media3-session:1.2.1] C:\Users\prasa\.gradle\caches\8.10.2\transforms\1ec475a1ae295d7a933e6c970acb4475\transformed\media3-session-1.2.1\AndroidManifest.xml:20:5-44
 MERGED from [androidx.media3:media3-session:1.2.1] C:\Users\prasa\.gradle\caches\8.10.2\transforms\1ec475a1ae295d7a933e6c970acb4475\transformed\media3-session-1.2.1\AndroidManifest.xml:20:5-44
+MERGED from [androidx.media3:media3-datasource-okhttp:1.2.1] C:\Users\prasa\.gradle\caches\8.10.2\transforms\41b2dd279937946d12815ee7471227a3\transformed\media3-datasource-okhttp-1.2.1\AndroidManifest.xml:20:5-44
+MERGED from [androidx.media3:media3-datasource-okhttp:1.2.1] C:\Users\prasa\.gradle\caches\8.10.2\transforms\41b2dd279937946d12815ee7471227a3\transformed\media3-datasource-okhttp-1.2.1\AndroidManifest.xml:20:5-44
 MERGED from [androidx.media3:media3-datasource:1.2.1] C:\Users\prasa\.gradle\caches\8.10.2\transforms\35cc177736139bb914d84cb4b3aecb1b\transformed\media3-datasource-1.2.1\AndroidManifest.xml:20:5-44
 MERGED from [androidx.media3:media3-datasource:1.2.1] C:\Users\prasa\.gradle\caches\8.10.2\transforms\35cc177736139bb914d84cb4b3aecb1b\transformed\media3-datasource-1.2.1\AndroidManifest.xml:20:5-44
 MERGED from [androidx.media3:media3-extractor:1.2.1] C:\Users\prasa\.gradle\caches\8.10.2\transforms\49b390b254058e9158eae742bb514318\transformed\media3-extractor-1.2.1\AndroidManifest.xml:20:5-44

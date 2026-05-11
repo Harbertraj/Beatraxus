@@ -35,6 +35,12 @@ import com.beatflowy.app.model.ResamplerMode
 import com.beatflowy.app.model.LibraryView
 import com.beatflowy.app.model.defaultEqBands
 import com.beatflowy.app.model.Playlist
+import androidx.media3.common.MediaItem
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.ProgressiveMediaSource
+import com.beatflowy.app.drive.DrivePlaybackHelper
+import com.beatflowy.app.model.SongSource
+import com.beatflowy.app.repository.DriveAccountRepository
 import com.beatflowy.app.model.PlayerUiState
 import com.beatflowy.app.model.Song
 import com.beatflowy.app.model.SortType
@@ -47,6 +53,7 @@ import com.beatflowy.app.repository.LyricsSource
 import com.beatflowy.app.repository.LyricsState
 import com.beatflowy.app.repository.LyricsType
 import com.beatflowy.app.repository.DspPreferences
+import com.beatflowy.app.repository.DriveAccount
 import com.beatflowy.app.service.AudioPlaybackService
 
 class PlayerViewModel(application: Application) : AndroidViewModel(application) {
@@ -56,6 +63,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private val autoEqApiService = com.beatflowy.app.repository.AutoEqApiService(application)
     private val lyricsRepository = LyricsRepository(application, (application as BeatraxusApplication).database)
     private val dspPreferences = DspPreferences(application)
+    private val driveAccountRepository = DriveAccountRepository(application)
 
     private val database = (application as BeatraxusApplication).database
     private val playlistDao = database.playlistDao()
@@ -174,7 +182,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                             replayGainTrackDb = entity.replayGainTrackDb,
                             replayGainAlbumDb = entity.replayGainAlbumDb,
                             replayGainTrackPeak = entity.replayGainTrackPeak,
-                            replayGainAlbumPeak = entity.replayGainAlbumPeak
+                            replayGainAlbumPeak = entity.replayGainAlbumPeak,
+                            source = SongSource.valueOf(entity.source),
+                            driveFileId = entity.driveFileId,
+                            driveAccountEmail = entity.driveAccountEmail
                         )
                     }
                 }
@@ -434,6 +445,49 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    val driveAccounts = driveAccountRepository.accounts
+
+    fun removeDriveAccount(email: String) {
+        viewModelScope.launch {
+            driveAccountRepository.removeAccount(email)
+            // Optionally remove songs from this account from database
+            songDao.deleteSongsByAccount(email)
+            _songs.update { current -> current.filterNot { it.driveAccountEmail == email } }
+        }
+    }
+
+    fun scanDriveAccount(email: String) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isScanning = true, scanProgress = 0f) }
+            try {
+                val credential = driveAccountRepository.getCredential(email)
+                val scanner = com.beatflowy.app.drive.DriveLibraryScanner(getApplication())
+                val newSongs = scanner.scanAccount(credential)
+                
+                if (newSongs.isNotEmpty()) {
+                    val entities = newSongs.map { it.toEntity() }
+                    songDao.insertSongs(entities)
+                    
+                    // Update current song list
+                    _songs.update { current ->
+                        val filtered = current.filterNot { it.driveAccountEmail == email }
+                        filtered + newSongs
+                    }
+                }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(errorMessage = "Drive scan failed: ${e.message}") }
+            } finally {
+                _uiState.update { it.copy(isScanning = false) }
+            }
+        }
+    }
+
+    fun addDriveAccount(account: DriveAccount) {
+        viewModelScope.launch {
+            driveAccountRepository.addAccount(account)
+        }
+    }
+
     private var scanJob: Job? = null
     private var lyricsJob: Job? = null
 
@@ -539,7 +593,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         replayGainTrackDb = song.replayGainTrackDb,
                         replayGainAlbumDb = song.replayGainAlbumDb,
                         replayGainTrackPeak = song.replayGainTrackPeak,
-                        replayGainAlbumPeak = song.replayGainAlbumPeak
+                        replayGainAlbumPeak = song.replayGainAlbumPeak,
+                        source = song.source.name,
+                        driveFileId = song.driveFileId,
+                        driveAccountEmail = song.driveAccountEmail
                     )
                 }
                 
@@ -574,20 +631,24 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun playSong(song: Song) {
-        val list = songs.value
-        val index = list.indexOf(song)
-        if (index >= 0) {
-            // Check if we are already playing this song to handle resume correctly
-            if (_uiState.value.currentSong?.id == song.id) {
-                service?.togglePlayPause()
-            } else {
-                service?.playList(list, index)
-            }
+        if (song.source == SongSource.GDRIVE) {
+            service?.playDriveSong(song)
         } else {
-            if (_uiState.value.currentSong?.id == song.id) {
-                service?.togglePlayPause()
+            val list = songs.value
+            val index = list.indexOf(song)
+            if (index >= 0) {
+                // Check if we are already playing this song to handle resume correctly
+                if (_uiState.value.currentSong?.id == song.id) {
+                    service?.togglePlayPause()
+                } else {
+                    service?.playList(list, index)
+                }
             } else {
-                service?.playSong(song)
+                if (_uiState.value.currentSong?.id == song.id) {
+                    service?.togglePlayPause()
+                } else {
+                    service?.playSong(song)
+                }
             }
         }
         updateRecentlyPlayed(song.id)
@@ -1444,7 +1505,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         replayGainTrackDb = replayGainTrackDb,
         replayGainAlbumDb = replayGainAlbumDb,
         replayGainTrackPeak = replayGainTrackPeak,
-        replayGainAlbumPeak = replayGainAlbumPeak
+        replayGainAlbumPeak = replayGainAlbumPeak,
+        source = source.name,
+        driveFileId = driveFileId,
+        driveAccountEmail = driveAccountEmail
     )
 }
 

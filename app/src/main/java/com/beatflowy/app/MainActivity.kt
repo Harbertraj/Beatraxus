@@ -30,6 +30,9 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import android.accounts.AccountManager
+import com.google.android.gms.common.AccountPicker
+import com.beatflowy.app.repository.DriveAccount
 import com.beatflowy.app.service.AudioPlaybackService
 import com.beatflowy.app.ui.screens.MainScreen
 import com.beatflowy.app.ui.screens.SettingsScreen
@@ -234,6 +237,13 @@ fun BeatraxusApp(
         }
     }
 
+    val driveAccountLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == android.app.Activity.RESULT_OK) {
+            val accountName = result.data?.getStringExtra(AccountManager.KEY_ACCOUNT_NAME) ?: return@rememberLauncherForActivityResult
+            viewModel.addDriveAccount(DriveAccount(accountName, accountName, null))
+        }
+    }
+
     LaunchedEffect(uiState.triggerFolderPicker) {
         if (uiState.triggerFolderPicker) {
             folderPickerLauncher.launch(null)
@@ -328,7 +338,16 @@ fun BeatraxusApp(
                 SettingsScreen(
                     viewModel = viewModel,
                     onBack    = { navController.popBackStack() },
-                    onNavigateToDsp = { navController.navigate(Screen.Dsp.route) }
+                    onNavigateToDsp = { navController.navigate(Screen.Dsp.route) },
+                    onRequestGDriveAccount = {
+                        driveAccountLauncher.launch(
+                            AccountPicker.newChooseAccountIntent(
+                                AccountPicker.AccountChooserOptions.Builder()
+                                    .setAllowableAccountsTypes(listOf("com.google"))
+                                    .build()
+                            )
+                        )
+                    }
                 )
             }
             composable(
