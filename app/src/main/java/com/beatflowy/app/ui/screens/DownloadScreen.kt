@@ -1,1147 +1,422 @@
 package com.beatflowy.app.ui.screens
 
-import android.webkit.CookieManager
-import android.webkit.WebResourceRequest
-import android.webkit.WebView
-import android.webkit.WebViewClient
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
+import android.annotation.SuppressLint
+import android.app.DownloadManager
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.webkit.*
+import android.widget.Toast
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.*
+import androidx.compose.animation.core.*
+import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
-import androidx.compose.material.icons.rounded.Close
-import androidx.compose.material.icons.rounded.Delete
-import androidx.compose.material.icons.rounded.Download
-import androidx.compose.material.icons.rounded.ExpandLess
-import androidx.compose.material.icons.rounded.ExpandMore
-import androidx.compose.material.icons.rounded.MusicNote
-import androidx.compose.material.icons.rounded.Refresh
-import androidx.compose.material.icons.rounded.Search
-import androidx.compose.material.icons.rounded.Warning
+import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
-import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.rememberVectorPainter
-import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import coil.compose.AsyncImage
-import com.beatflowy.app.model.AlbumItem
-import com.beatflowy.app.model.DownloadItem
-import com.beatflowy.app.model.DownloadQuality
-import com.beatflowy.app.model.DownloadStatus
-import com.beatflowy.app.viewmodel.QobuzDownloadViewModel
+import androidx.compose.ui.zIndex
+import com.beatflowy.app.ui.theme.*
+import kotlinx.coroutines.delay
 
+private data class ActiveDownload(
+    val id: Long,
+    val title: String,
+    var progress: Int = 0,
+    var status: String = "Queued"
+)
+
+// ── Stealth Browser Script (Theming & Scrubbing Lucida) ──────────────────────
+private val STEALTH_SCRIPT = """
+(function() {
+    const style = document.createElement('style');
+    style.innerHTML = `
+        @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap');
+        
+        html, body { 
+            background: #07070D !important; 
+            color: #F0F0FF !important; 
+            font-family: 'Space Grotesk', sans-serif !important;
+            scrollbar-width: none !important;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        /* 1. Eliminate site branding and intrusive elements */
+        header, footer, nav, [class*="navbar"], [class*="topbar"], [class*="footer"],
+        [class*="logo"], [id*="logo"], .brand, [title*="lucida" i], [alt*="lucida" i],
+        [src*="lucida" i], .cookie-notice, .cookie-banner, .announcement-bar, #announcement,
+        [class*="sidebar"], #sidebar, .nav-menu, .menu-icon, .user-profile,
+        [aria-label*="lucida" i], [data-testid*="lucida" i], .lucida-ad, .site-header, .site-footer {
+            display: none !important;
+            visibility: hidden !important;
+            height: 0 !important;
+            opacity: 0 !important;
+            pointer-events: none !important;
+        }
+
+        /* 2. Redesign cards for a high-end application look */
+        .result, .card, .track-item, [class*="item"], [class*="row"], .search-result, .media-card {
+            background: linear-gradient(160deg, #13131F, #0D0D18) !important;
+            border: 1px solid rgba(255,255,255,0.05) !important;
+            border-radius: 20px !important;
+            margin-bottom: 16px !important;
+            padding: 20px !important;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5) !important;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+        }
+        
+        .result:hover {
+            border-color: #0A84FF60 !important;
+            transform: translateY(-2px);
+        }
+
+        /* 3. Professional Buttons (Glassmorphism) */
+        button, .btn, .button, input[type="submit"], [role="button"] {
+            background: linear-gradient(135deg, #0A84FF, #5AC8FA) !important;
+            color: #FFFFFF !important;
+            border-radius: 14px !important;
+            font-weight: 700 !important;
+            padding: 14px 24px !important;
+            border: none !important;
+            text-transform: uppercase !important;
+            font-size: 12px !important;
+            letter-spacing: 0.5px !important;
+            box-shadow: 0 8px 20px rgba(10, 132, 255, 0.2) !important;
+            cursor: pointer !important;
+        }
+
+        /* 4. Professional Inputs */
+        input, select, textarea {
+            background: #0D0D18 !important;
+            border: 1px solid #1E1E35 !important;
+            color: #F0F0FF !important;
+            border-radius: 12px !important;
+            padding: 12px 16px !important;
+            outline: none !important;
+            width: 100% !important;
+            box-sizing: border-box !important;
+            font-size: 15px !important;
+        }
+        input:focus { 
+            border-color: #0A84FF !important; 
+        }
+
+        ::-webkit-scrollbar { display: none !important; }
+    `;
+    document.head.appendChild(style);
+
+    function scrub(node) {
+        if (node.nodeType === 3) {
+            if (node.nodeValue.toLowerCase().includes('lucida')) {
+                node.nodeValue = node.nodeValue.replace(/lucida/gi, 'Music Engine');
+            }
+        } else if (node.nodeType === 1) {
+            ['title', 'placeholder', 'aria-label', 'alt', 'data-title'].forEach(attr => {
+                if (node.hasAttribute(attr) && node.getAttribute(attr).toLowerCase().includes('lucida')) {
+                    node.setAttribute(attr, node.getAttribute(attr).replace(/lucida/gi, 'Music Engine'));
+                }
+            });
+            for (let i = 0; i < node.childNodes.length; i++) scrub(node.childNodes[i]);
+        }
+    }
+    scrub(document.body);
+    document.title = document.title.replace(/lucida/gi, 'Beatraxus Engine');
+
+    const observer = new MutationObserver((mutations) => {
+        mutations.forEach((m) => m.addedNodes.forEach(scrub));
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+})();
+""".trimIndent()
+
+@SuppressLint("SetJavaScriptEnabled")
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun DownloadScreen(
-    viewModel: QobuzDownloadViewModel,
-    onBack: () -> Unit,
-    onPickFolder: () -> Unit
-) {
-    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    var isPopping by remember { mutableStateOf(false) }
-    val cyanBlue = Color(0xFF00F2FF)
-    
-    var selectedTabIndex by remember { mutableIntStateOf(0) }
-    val tabs = listOf("Tracks", "Albums")
-
-    var showQualitySheet by remember { mutableStateOf(false) }
-    var selectedItemForDownload by remember { mutableStateOf<DownloadItem?>(null) }
-
+fun DownloadScreen(onBack: () -> Unit) {
+    val context = LocalContext.current
+    var isPageLoading by remember { mutableStateOf(false) }
+    var isWebReady by remember { mutableStateOf(false) }
+    var loadingProgress by remember { mutableStateOf(0) }
+    var webViewRef by remember { mutableStateOf<WebView?>(null) }
+    var activeDownloads by remember { mutableStateOf(listOf<ActiveDownload>()) }
+    var showDownloadPanel by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
 
-    LaunchedEffect(uiState.snackbarMessage) {
-        uiState.snackbarMessage?.let {
-            snackbarHostState.showSnackbar(it)
-            viewModel.clearSnackbarMessage()
+    // ── Download Manager Receiver ────────────────────────────────────────────
+    DisposableEffect(Unit) {
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(ctx: Context, intent: Intent) {
+                val id = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1L)
+                if (id != -1L) {
+                    activeDownloads = activeDownloads.map {
+                        if (it.id == id) it.copy(progress = 100, status = "Completed") else it
+                    }
+                }
+            }
+        }
+        val filter = IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            context.registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)
+        } else {
+            @Suppress("UnspecifiedRegisterReceiverFlag")
+            context.registerReceiver(receiver, filter)
+        }
+        onDispose { context.unregisterReceiver(receiver) }
+    }
+
+    // ── Progress Sync ────────────────────────────────────────────────────────
+    LaunchedEffect(activeDownloads) {
+        while (activeDownloads.any { it.status == "Downloading" || it.status == "Queued" }) {
+            delay(1200)
+            val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+            activeDownloads = activeDownloads.map { dl ->
+                if (dl.status == "Completed" || dl.status == "Failed") return@map dl
+                val cursor = dm.query(DownloadManager.Query().setFilterById(dl.id))
+                if (cursor != null && cursor.moveToFirst()) {
+                    val bytes = cursor.getLong(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR))
+                    val total = cursor.getLong(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES))
+                    val status = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))
+                    cursor.close()
+                    val prog = if (total > 0) ((bytes * 100) / total).toInt() else 0
+                    val stat = when (status) {
+                        DownloadManager.STATUS_RUNNING -> "Downloading"
+                        DownloadManager.STATUS_SUCCESSFUL -> "Completed"
+                        DownloadManager.STATUS_FAILED -> "Failed"
+                        else -> "Queued"
+                    }
+                    dl.copy(progress = prog, status = stat)
+                } else { cursor?.close(); dl }
+            }
         }
     }
 
-    androidx.activity.compose.BackHandler(enabled = !isPopping) {
-        isPopping = true
-        onBack()
+    BackHandler {
+        if (webViewRef?.canGoBack() == true) webViewRef?.goBack() else onBack()
     }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Black)
-    ) {
-        Scaffold(
-            containerColor = Color.Transparent,
-            snackbarHost = { SnackbarHost(snackbarHostState) },
-            topBar = {
-                CenterAlignedTopAppBar(
-                    title = {
-                        Text(
-                            "DOWNLOADS",
-                            color = Color.White,
-                            fontWeight = FontWeight.Black,
-                            letterSpacing = 2.sp
-                        )
-                    },
-                    navigationIcon = {
-                        IconButton(onClick = {
-                            if (!isPopping) {
-                                isPopping = true
-                                onBack()
-                            }
-                        }) {
-                            Icon(
-                                Icons.AutoMirrored.Rounded.ArrowBack,
-                                contentDescription = "Back",
-                                tint = Color.White
-                            )
-                        }
-                    },
-                    colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
-                        containerColor = Color.Transparent
-                    )
-                )
-            }
-        ) { padding ->
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding)
-                    .padding(horizontal = 20.dp),
-                verticalArrangement = Arrangement.spacedBy(24.dp),
-                contentPadding = PaddingValues(bottom = 40.dp)
+    Scaffold(
+        containerColor = BgDeep,
+        snackbarHost = { SnackbarHost(snackbarHostState) },
+        topBar = {
+            Surface(
+                modifier = Modifier.fillMaxWidth().zIndex(10f),
+                color = BgDeep,
+                shadowElevation = 0.dp
             ) {
-                // SECTION 0: Folder Picker Banner
-                if (uiState.downloadSettings.downloadLocation == null) {
-                    item {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(Color(0xFFFFC107).copy(alpha = 0.12f))
-                                .clickable { onPickFolder() }
-                                .padding(16.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                Icons.Rounded.Warning,
-                                contentDescription = null,
-                                tint = Color(0xFFFFC107)
-                            )
-                            Spacer(Modifier.width(12.dp))
-                            Text(
-                                "No download folder set — tap to choose",
-                                color = Color(0xFFFFC107),
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Medium
-                            )
-                        }
-                    }
-                }
-
-                // SECTION 1: Search Bar
-                item {
-                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        OutlinedTextField(
-                            value = uiState.searchQuery,
-                            onValueChange = { viewModel.setSearchQuery(it) },
-                            placeholder = {
-                                Text(
-                                    "Search by song, artist or album name…",
-                                    color = Color.White.copy(0.4f),
-                                    fontSize = 14.sp
-                                )
-                            },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .heightIn(min = 56.dp),
-                            shape = RoundedCornerShape(24.dp),
-                            leadingIcon = {
-                                Icon(Icons.Rounded.Search, null, tint = Color.White.copy(0.6f))
-                            },
-                            trailingIcon = {
-                                if (uiState.searchQuery.isNotEmpty()) {
-                                    IconButton(onClick = { viewModel.setSearchQuery("") }) {
-                                        Icon(Icons.Rounded.Close, null, tint = Color.White.copy(0.6f))
-                                    }
-                                }
-                            },
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedTextColor = Color.White,
-                                unfocusedTextColor = Color.White,
-                                focusedContainerColor = Color.White.copy(0.05f),
-                                unfocusedContainerColor = Color.White.copy(0.05f),
-                                focusedBorderColor = Color.White.copy(0.2f),
-                                unfocusedBorderColor = Color.White.copy(0.1f)
-                            ),
-                            singleLine = true
-                        )
-
-                        Button(
-                            onClick = { viewModel.searchQobuz(uiState.searchQuery) },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(52.dp),
-                            shape = RoundedCornerShape(24.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = cyanBlue,
-                                contentColor = Color.Black
-                            )
-                        ) {
-                            Text("Search / Add", fontWeight = FontWeight.Bold)
-                        }
-                    }
-                }
-
-                item {
-                    Column {
-                        TabRow(
-                            selectedTabIndex = selectedTabIndex,
-                            containerColor = Color.Transparent,
-                            contentColor = cyanBlue,
-                            indicator = { tabPositions ->
-                                TabRowDefaults.SecondaryIndicator(
-                                    Modifier.tabIndicatorOffset(tabPositions[selectedTabIndex]),
-                                    color = cyanBlue
-                                )
-                            },
-                            divider = {}
-                        ) {
-                            tabs.forEachIndexed { index, title ->
-                                Tab(
-                                    selected = selectedTabIndex == index,
-                                    onClick = { selectedTabIndex = index },
-                                    text = {
-                                        Text(
-                                            text = title,
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 14.sp
-                                        )
-                                    },
-                                    selectedContentColor = cyanBlue,
-                                    unselectedContentColor = Color.White.copy(alpha = 0.6f)
-                                )
-                            }
-                        }
-
-                        val isSearching = uiState.isSearching
-                        val error = uiState.errorMessage
-                        val isAutoVerifying = uiState.isAutoVerifying
-                        val verificationStep = uiState.verificationStep
-
-                        AnimatedVisibility(
-                            visible = isSearching || isAutoVerifying,
-                            enter = fadeIn() + expandVertically(),
-                            exit = fadeOut() + shrinkVertically()
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 16.dp),
-                                horizontalArrangement = Arrangement.Center,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(18.dp),
-                                    color = cyanBlue,
-                                    strokeWidth = 2.dp
-                                )
-                                Spacer(Modifier.width(10.dp))
-                                Text(
-                                    if (isAutoVerifying) verificationStep ?: "Verifying humanity..." else "Searching Qobuz…", 
-                                    color = Color.White.copy(0.7f), 
-                                    fontSize = 13.sp
-                                )
-                            }
-                        }
-
-                        if (!isSearching && !isAutoVerifying && error != null) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 16.dp)
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(Color(0xFFFF5252).copy(alpha = 0.12f))
-                                    .padding(horizontal = 14.dp, vertical = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    Icons.Rounded.Warning,
-                                    contentDescription = null,
-                                    tint = Color(0xFFFF5252),
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(Modifier.width(8.dp))
-                                Text(
-                                    error,
-                                    color = Color(0xFFFF5252),
-                                    fontSize = 13.sp,
-                                    lineHeight = 18.sp
-                                )
-                            }
-                        }
-                    }
-                }
-
-                // SECTION 2.5: Search Results
-                if (selectedTabIndex == 0 && uiState.searchResults.isNotEmpty()) {
-                    items(uiState.searchResults, key = { "search_${it.id}" }) { item ->
-                        SearchResultItemCard(
-                            item = item,
-                            onDownload = {
-                                selectedItemForDownload = item
-                                showQualitySheet = true
-                            }
-                        )
-                    }
-                } else if (selectedTabIndex == 1 && uiState.albumResults.isNotEmpty()) {
-                    items(uiState.albumResults, key = { "album_${it.id}" }) { album ->
-                        val isExpanded = uiState.expandedAlbumId == album.id
-                        Column {
-                            AlbumItemCard(
-                                album = album,
-                                isExpanded = isExpanded,
-                                onToggleExpand = { viewModel.toggleAlbumExpand(album.id) }
-                            )
-                            
-                            if (isExpanded) {
-                                if (uiState.isLoadingAlbumTracks) {
-                                    Box(
-                                        modifier = Modifier.fillMaxWidth().padding(16.dp),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        CircularProgressIndicator(
-                                            modifier = Modifier.size(24.dp),
-                                            color = cyanBlue,
-                                            strokeWidth = 2.dp
-                                        )
-                                    }
-                                } else {
-                                    val tracks = uiState.albumTracksMap[album.id] ?: emptyList()
-                                    Column(modifier = Modifier.padding(start = 16.dp, end = 8.dp, bottom = 8.dp)) {
-                                        Button(
-                                            onClick = { viewModel.addAllToQueue(tracks) },
-                                            modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
-                                            colors = ButtonDefaults.buttonColors(
-                                                containerColor = cyanBlue,
-                                                contentColor = Color.Black
-                                            ),
-                                            shape = RoundedCornerShape(12.dp)
-                                        ) {
-                                            Text("Queue All Tracks", fontWeight = FontWeight.Bold)
-                                        }
-                                        tracks.forEach { track ->
-                                            AlbumTrackRow(
-                                                track = track,
-                                                onDownload = {
-                                                    selectedItemForDownload = track
-                                                    showQualitySheet = true
-                                                }
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // SECTION 2: Quality Selector (Global settings - kept as is for context)
-                item {
-                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Text(
-                            "Default Download Quality",
-                            color = Color.White.copy(0.6f),
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-
-                        val qualities = listOf(
-                            DownloadQuality.HiRes24Bit,
-                            DownloadQuality.Lossless
-                        )
-
-                        LazyRow(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            contentPadding = PaddingValues(end = 20.dp)
-                        ) {
-                            items(qualities) { quality ->
-                                val isSelected = uiState.selectedQuality == quality
-                                QualityChip(
-                                    label = quality.label.split(" ").first(), // Short label
-                                    isSelected = isSelected,
-                                    selectedColor = cyanBlue,
-                                    onClick = { viewModel.setSelectedQuality(quality) }
-                                )
-                            }
-                        }
-                    }
-                }
-
-                // SECTION 3: Download Queue
-                item {
-                    Text(
-                        "Queue",
-                        color = Color.White,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-
-                if (uiState.downloadQueue.isEmpty()) {
-                    item {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 32.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                "No downloads queued",
-                                color = Color.White.copy(0.4f),
-                                fontSize = 14.sp
-                            )
-                        }
-                    }
-                } else {
-                    items(uiState.downloadQueue, key = { it.id }) { item ->
-                        QueueItemCard(
-                            item = item,
-                            onDelete = { viewModel.removeFromQueue(item.id) },
-                            onStart = {
-                                viewModel.startDownload(item)
-                            }
-                        )
-                    }
-                }
-
-                // SECTION 4: How It Works
-                item {
-                    InfoCard()
-                }
-            }
-        }
-
-        if (showQualitySheet && selectedItemForDownload != null) {
-            DownloadQualityBottomSheet(
-                item = selectedItemForDownload!!,
-                onDismiss = {
-                    showQualitySheet = false
-                    selectedItemForDownload = null
-                },
-                onAddToQueue = { quality ->
-                    viewModel.addToQueue(selectedItemForDownload!!.copy(quality = quality))
-                    showQualitySheet = false
-                    selectedItemForDownload = null
-                }
-            )
-        }
-
-        if (uiState.showCaptchaDialog && uiState.captchaUrl != null) {
-            CaptchaDialog(
-                url = uiState.captchaUrl!!,
-                onDismiss = { viewModel.dismissCaptcha() }
-            )
-        }
-
-        // Hidden background verification WebView
-        if (uiState.isAutoVerifying && uiState.captchaUrl != null) {
-            BackgroundVerificationWebView(
-                url = uiState.captchaUrl!!,
-                searchQuery = uiState.autoVerificationQuery ?: uiState.searchQuery,
-                onSuccess = { viewModel.onVerificationSuccess() },
-                onStepUpdate = { viewModel.updateVerificationStep(it) },
-                onFailure = { viewModel.onVerificationFailed(it) }
-            )
-        }
-    }
-}
-
-@Composable
-fun BackgroundVerificationWebView(
-    url: String,
-    searchQuery: String,
-    onSuccess: () -> Unit,
-    onStepUpdate: (String) -> Unit,
-    onFailure: (String) -> Unit
-) {
-    AndroidView(
-        factory = { context ->
-            WebView(context).apply {
-                // Optimize for background operation
-                alpha = 0.01f
-                settings.apply {
-                    javaScriptEnabled = true
-                    domStorageEnabled = true
-                    databaseEnabled = true
-                    cacheMode = android.webkit.WebSettings.LOAD_DEFAULT
-                    userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-                }
-                webViewClient = object : WebViewClient() {
-                    override fun onPageFinished(view: WebView?, url: String?) {
-                        onStepUpdate("Bypassing security...")
-                        view?.evaluateJavascript("""
-                            (function() {
-                                function trySolve() {
-                                    // 1. Try Turnstile/hCaptcha/ReCaptcha checkbox in iframes
-                                    const iframes = document.querySelectorAll('iframe');
-                                    for (let i = 0; i < iframes.length; i++) {
-                                        try {
-                                            const innerDoc = iframes[i].contentDocument || iframes[i].contentWindow.document;
-                                            const checkbox = innerDoc.querySelector('.recaptcha-checkbox-border, #checkbox, .ctp-checkbox-label, .h-captcha iframe');
-                                            if (checkbox) {
-                                                checkbox.click();
-                                                return true;
-                                            }
-                                        } catch(e) {}
-                                    }
-                                    
-                                    // 2. Direct search simulation
-                                    const searchInput = document.querySelector('input[name="q"], input[type="search"]');
-                                    if (searchInput && !document.querySelector('.cf-turnstile') && !document.querySelector('.g-recaptcha')) {
-                                        searchInput.value = "$searchQuery";
-                                        searchInput.dispatchEvent(new Event('input', { bubbles: true }));
-                                        const form = searchInput.closest('form');
-                                        if (form) {
-                                            form.submit();
-                                            return "SEARCHING";
-                                        }
-                                    }
-                                    return false;
-                                }
-
-                                let attempts = 0;
-                                const interval = setInterval(() => {
-                                    attempts++;
-                                    const result = trySolve();
-                                    if (result === "SEARCHING" || result === true) {
-                                        clearInterval(interval);
-                                        setTimeout(() => { 
-                                            if (window.verification_callback) window.verification_callback.onSuccess(); 
-                                        }, 4000);
-                                    }
-                                    if (attempts > 15) {
-                                        clearInterval(interval);
-                                        if (window.verification_callback) window.verification_callback.onFailure("Verification timeout");
-                                    }
-                                }, 2500);
-                            })();
-                        """.trimIndent(), null)
-                    }
-                }
-                addJavascriptInterface(object {
-                    @android.webkit.JavascriptInterface
-                    fun onSuccess() {
-                        post { onSuccess() }
-                    }
-                    @android.webkit.JavascriptInterface
-                    fun onFailure(error: String) {
-                        post { onFailure(error) }
-                    }
-                }, "verification_callback")
-                loadUrl(url)
-            }
-        },
-        onRelease = { webView ->
-            webView.stopLoading()
-            webView.removeJavascriptInterface("verification_callback")
-            webView.removeAllViews()
-            webView.destroy()
-        },
-        modifier = Modifier.size(1.dp).alpha(0f)
-    )
-}
-
-@Composable
-fun CaptchaDialog(url: String, onDismiss: () -> Unit) {
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(
-            usePlatformDefaultWidth = false,
-            dismissOnBackPress = true,
-            dismissOnClickOutside = false
-        )
-    ) {
-        Card(
-            modifier = Modifier
-                .fillMaxWidth(0.95f)
-                .fillMaxHeight(0.7f)
-                .padding(vertical = 16.dp),
-            shape = RoundedCornerShape(28.dp),
-            colors = CardDefaults.cardColors(containerColor = Color.White),
-            elevation = CardDefaults.cardElevation(defaultElevation = 16.dp)
-        ) {
-            Column(modifier = Modifier.fillMaxSize()) {
-                // Focused Header
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(Color(0xFFFAFAFA))
-                        .padding(horizontal = 24.dp, vertical = 18.dp)
-                ) {
-                    Text(
-                        "Verify Humanity",
-                        color = Color.Black,
-                        fontWeight = FontWeight.Black,
-                        fontSize = 18.sp,
-                        modifier = Modifier.align(Alignment.CenterStart)
-                    )
-                    IconButton(
-                        onClick = onDismiss,
-                        modifier = Modifier.align(Alignment.CenterEnd).size(36.dp)
+                Column(modifier = Modifier.statusBarsPadding()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.Rounded.Close, null, tint = Color.Black.copy(0.4f))
-                    }
-                }
-
-                var isLoading by remember { mutableStateOf(true) }
-
-                Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                    AndroidView(
-                        factory = { context ->
-                            WebView(context).apply {
-                                webViewClient = object : WebViewClient() {
-                                    override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
-                                        isLoading = true
-                                    }
-                                    override fun onPageFinished(view: WebView?, url: String?) {
-                                        isLoading = false
-                                        // Selective focus injection: Hide EVERYTHING then only show known captcha containers
-                                        // This makes it look like a native captcha popup
-                                        view?.evaluateJavascript("""
-                                            (function() {
-                                                var style = document.createElement('style');
-                                                style.innerHTML = `
-                                                    * { 
-                                                        background-image: none !important;
-                                                    }
-                                                    header, footer, nav, aside, .navbar, .footer, .header, .nav, .sidebar, 
-                                                    .logo, .branding, .site-header, .site-footer, #header, #footer, 
-                                                    .top-bar, .bottom-bar, .cookie-banner, .announcement, .ad-unit,
-                                                    h1, h2, h3, p:not(.captcha-text), .description, .welcome-text {
-                                                        display: none !important;
-                                                        visibility: hidden !important;
-                                                        height: 0 !important;
-                                                        overflow: hidden !important;
-                                                    }
-                                                    body {
-                                                        background: white !important;
-                                                        display: flex !important;
-                                                        justify-content: center !important;
-                                                        align-items: center !important;
-                                                        min-height: 100vh !important;
-                                                        margin: 0 !important;
-                                                        padding: 0 !important;
-                                                    }
-                                                    /* Ensure captcha elements stay visible */
-                                                    .cf-turnstile, #captcha-container, .g-recaptcha, iframe, .h-captcha {
-                                                        display: block !important;
-                                                        visibility: visible !important;
-                                                        margin: 0 auto !important;
-                                                    }
-                                                `;
-                                                document.head.appendChild(style);
-                                            })();
-                                        """.trimIndent(), null)
-                                    }
-
-                                    override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
-                                        return false
-                                    }
-                                }
-                                settings.apply {
-                                    javaScriptEnabled = true
-                                    domStorageEnabled = true
-                                    databaseEnabled = true
-                                    useWideViewPort = true
-                                    loadWithOverviewMode = true
-                                    userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-                                }
-                                // Software layer fixes the potential NPE crash in some system versions
-                                setLayerType(android.view.View.LAYER_TYPE_SOFTWARE, null)
-                                loadUrl(url)
-                            }
-                        },
-                        onRelease = { webView ->
-                            webView.stopLoading()
-                            webView.clearHistory()
-                            webView.removeAllViews()
-                            webView.destroy()
-                        },
-                        modifier = Modifier.fillMaxSize()
-                    )
-
-                    if (isLoading) {
-                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            CircularProgressIndicator(color = Color.Black, strokeWidth = 3.dp)
-                        }
-                    }
-                }
-
-                // Clean Footer
-                Surface(
-                    color = Color.White,
-                    tonalElevation = 4.dp,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(Modifier.padding(20.dp)) {
-                        Button(
-                            onClick = {
-                                CookieManager.getInstance().flush()
-                                onDismiss()
-                            },
-                            modifier = Modifier.fillMaxWidth().height(54.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = Color.Black),
-                            shape = RoundedCornerShape(16.dp)
+                        IconButton(
+                            onClick = { if (webViewRef?.canGoBack() == true) webViewRef?.goBack() else onBack() },
+                            modifier = Modifier.background(BgSurface, CircleShape).size(40.dp)
                         ) {
-                            Text("I'VE COMPLETED IT", fontWeight = FontWeight.Black, letterSpacing = 1.sp)
+                            Icon(Icons.AutoMirrored.Rounded.ArrowBack, null, tint = TextPrimary, modifier = Modifier.size(20.dp))
+                        }
+
+                        Spacer(Modifier.width(16.dp))
+
+                        Text(
+                            text = "Music Downloader",
+                            color = TextPrimary,
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.weight(1f)
+                        )
+
+                        // ── Download Center Toggle ──
+                        Box {
+                            IconButton(
+                                onClick = { showDownloadPanel = !showDownloadPanel },
+                                modifier = Modifier.background(BgSurface, CircleShape).size(40.dp)
+                            ) {
+                                Icon(Icons.Rounded.Download, null, tint = if (showDownloadPanel) AccentBlue else TextPrimary, modifier = Modifier.size(20.dp))
+                            }
+                            if (activeDownloads.any { it.status == "Downloading" }) {
+                                Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(AccentBlue).align(Alignment.TopEnd).border(2.dp, BgDeep, CircleShape))
+                            }
                         }
                     }
-                }
-            }
-        }
-    }
-}
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun DownloadQualityBottomSheet(
-    item: DownloadItem,
-    onDismiss: () -> Unit,
-    onAddToQueue: (DownloadQuality) -> Unit
-) {
-    var selectedQuality by remember { mutableStateOf<DownloadQuality>(DownloadQuality.HiRes24Bit) }
-    val sheetState = rememberModalBottomSheetState()
-
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        containerColor = Color(0xFF1A1A2E),
-        contentColor = Color.White,
-        dragHandle = { BottomSheetDefaults.DragHandle(color = Color.White.copy(0.2f)) }
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 24.dp)
-                .padding(bottom = 32.dp, top = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            Column {
-                Text(
-                    item.title,
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 18.sp
-                )
-                Text(
-                    item.artist,
-                    color = Color.White.copy(0.6f),
-                    fontSize = 14.sp
-                )
-            }
-
-            HorizontalDivider(color = Color.White.copy(0.1f))
-
-            QualityOption(
-                quality = DownloadQuality.HiRes24Bit,
-                isSelected = selectedQuality == DownloadQuality.HiRes24Bit,
-                onClick = { selectedQuality = DownloadQuality.HiRes24Bit }
-            )
-
-            QualityOption(
-                quality = DownloadQuality.Lossless,
-                isSelected = selectedQuality == DownloadQuality.Lossless,
-                onClick = { selectedQuality = DownloadQuality.Lossless }
-            )
-
-            Spacer(Modifier.height(8.dp))
-
-            Button(
-                onClick = { onAddToQueue(selectedQuality) },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(52.dp),
-                shape = RoundedCornerShape(24.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = Color(0xFF00F2FF),
-                    contentColor = Color.Black
-                )
-            ) {
-                Text("Add to Queue", fontWeight = FontWeight.Bold)
-            }
-
-            TextButton(
-                onClick = onDismiss,
-                modifier = Modifier.align(Alignment.CenterHorizontally)
-            ) {
-                Text("Cancel", color = Color.White.copy(0.6f))
-            }
-        }
-    }
-}
-
-@Composable
-fun QualityOption(
-    quality: DownloadQuality,
-    isSelected: Boolean,
-    onClick: () -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .background(if (isSelected) Color.White.copy(alpha = 0.05f) else Color.Transparent)
-            .border(
-                1.dp,
-                if (isSelected) Color(0xFF00F2FF) else Color.White.copy(0.1f),
-                RoundedCornerShape(12.dp)
-            )
-            .clickable { onClick() }
-            .padding(16.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        RadioButton(
-            selected = isSelected,
-            onClick = onClick,
-            colors = RadioButtonDefaults.colors(
-                selectedColor = Color(0xFF00F2FF),
-                unselectedColor = Color.White.copy(0.3f)
-            )
-        )
-        Spacer(Modifier.width(12.dp))
-        Column {
-            Text(
-                quality.label,
-                color = Color.White,
-                fontWeight = FontWeight.Bold,
-                fontSize = 15.sp
-            )
-            Text(
-                quality.description,
-                color = Color.White.copy(0.5f),
-                fontSize = 12.sp
-            )
-        }
-    }
-}
-
-@Composable
-fun QualityChip(
-    label: String,
-    isSelected: Boolean,
-    selectedColor: Color,
-    onClick: () -> Unit
-) {
-    Surface(
-        onClick = onClick,
-        shape = RoundedCornerShape(16.dp),
-        color = if (isSelected) selectedColor else Color.Transparent,
-        border = if (isSelected) null else BorderStroke(1.dp, Color.White.copy(0.3f)),
-        contentColor = if (isSelected) Color.Black else Color.White
-    ) {
-        Text(
-            text = label,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-            fontSize = 13.sp,
-            fontWeight = FontWeight.Medium
-        )
-    }
-}
-
-@Composable
-fun SearchResultItemCard(
-    item: DownloadItem,
-    onDownload: () -> Unit
-) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 4.dp),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = Color(0xFF1A1A2E)
-        )
-    ) {
-        Row(
-            modifier = Modifier
-                .padding(12.dp)
-                .fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            AsyncImage(
-                model = item.coverUrl,
-                contentDescription = null,
-                modifier = Modifier
-                    .size(52.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(Color(0xFF252540)),
-                contentScale = ContentScale.Crop,
-                error = rememberVectorPainter(Icons.Rounded.MusicNote),
-                placeholder = rememberVectorPainter(Icons.Rounded.MusicNote)
-            )
-
-            Spacer(Modifier.width(12.dp))
-
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    item.title,
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 15.sp,
-                    maxLines = 1
-                )
-                Text(
-                    "${item.artist} · ${item.album}",
-                    color = Color.White.copy(0.55f),
-                    fontSize = 12.sp,
-                    maxLines = 1
-                )
-            }
-
-            IconButton(onClick = onDownload) {
-                Icon(Icons.Rounded.Download, null, tint = Color(0xFF00F2FF))
-            }
-        }
-    }
-}
-
-@Composable
-fun AlbumItemCard(
-    album: AlbumItem,
-    isExpanded: Boolean,
-    onToggleExpand: () -> Unit
-) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 4.dp)
-            .clickable { onToggleExpand() },
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = Color(0xFF1A1A2E)
-        )
-    ) {
-        Row(
-            modifier = Modifier
-                .padding(12.dp)
-                .fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            AsyncImage(
-                model = album.coverUrl,
-                contentDescription = null,
-                modifier = Modifier
-                    .size(52.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(Color(0xFF252540)),
-                contentScale = ContentScale.Crop,
-                error = rememberVectorPainter(Icons.Rounded.MusicNote),
-                placeholder = rememberVectorPainter(Icons.Rounded.MusicNote)
-            )
-
-            Spacer(Modifier.width(12.dp))
-
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    album.title,
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 15.sp,
-                    maxLines = 1
-                )
-                Text(
-                    "${album.artist} · ${album.tracksCount} tracks",
-                    color = Color.White.copy(0.55f),
-                    fontSize = 12.sp,
-                    maxLines = 1
-                )
-            }
-
-            Icon(
-                if (isExpanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
-                null,
-                tint = Color.White.copy(0.4f)
-            )
-        }
-    }
-}
-
-@Composable
-fun AlbumTrackRow(
-    track: DownloadItem,
-    onDownload: () -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                track.title,
-                color = Color.White,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1
-            )
-            Text(
-                track.artist,
-                color = Color.White.copy(0.5f),
-                fontSize = 12.sp,
-                maxLines = 1
-            )
-        }
-        IconButton(onClick = onDownload) {
-            Icon(
-                Icons.Rounded.Download,
-                null,
-                tint = Color(0xFF00F2FF),
-                modifier = Modifier.size(20.dp)
-            )
-        }
-    }
-}
-
-@Composable
-fun QueueItemCard(
-    item: DownloadItem,
-    onDelete: () -> Unit,
-    onStart: () -> Unit
-) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 4.dp),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = Color(0xFF1A1A2E)
-        )
-    ) {
-        Column {
-            Row(
-                modifier = Modifier
-                    .padding(12.dp)
-                    .fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                AsyncImage(
-                    model = item.coverUrl,
-                    contentDescription = null,
-                    modifier = Modifier
-                        .size(52.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(Color(0xFF252540)),
-                    contentScale = ContentScale.Crop,
-                    error = rememberVectorPainter(Icons.Rounded.MusicNote),
-                    placeholder = rememberVectorPainter(Icons.Rounded.MusicNote)
-                )
-
-                Spacer(Modifier.width(12.dp))
-
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        item.title,
-                        color = Color.White,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp,
-                        maxLines = 1
-                    )
-                    Text(
-                        "${item.artist} · ${item.quality.label}",
-                        color = Color.White.copy(0.55f),
-                        fontSize = 12.sp,
-                        maxLines = 1
-                    )
-                }
-
-                if (item.status == DownloadStatus.QUEUED || item.status == DownloadStatus.FAILED) {
-                    IconButton(onClick = onStart) {
-                        Icon(
-                            if (item.status == DownloadStatus.FAILED) Icons.Rounded.Refresh else Icons.Rounded.Download, 
-                            null, 
-                            tint = Color(0xFF00F2FF)
+                    if (isPageLoading) {
+                        LinearProgressIndicator(
+                            progress = { loadingProgress / 100f },
+                            modifier = Modifier.fillMaxWidth().height(2.dp),
+                            color = AccentBlue,
+                            trackColor = Color.Transparent
                         )
                     }
                 }
+            }
+        }
+    ) { padding ->
+        Box(modifier = Modifier.padding(padding).fillMaxSize().background(BgDeep)) {
+            AndroidView(
+                factory = { ctx ->
+                    WebView(ctx).apply {
+                        webViewRef = this
+                        settings.apply {
+                            javaScriptEnabled = true
+                            domStorageEnabled = true
+                            databaseEnabled = true
+                            userAgentString = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Mobile Safari/537.36"
+                            setSupportZoom(true)
+                            builtInZoomControls = false
+                        }
 
-                IconButton(onClick = onDelete) {
-                    Icon(Icons.Rounded.Delete, null, tint = Color.White.copy(0.6f))
+                        setDownloadListener { url, userAgent, contentDisp, mime, _ ->
+                            try {
+                                var fileName = URLUtil.guessFileName(url, contentDisp, mime)
+                                fileName = fileName.replace("lucida", "Music", ignoreCase = true)
+                                val request = DownloadManager.Request(Uri.parse(url)).apply {
+                                    setMimeType(mime)
+                                    addRequestHeader("User-Agent", userAgent)
+                                    addRequestHeader("Cookie", CookieManager.getInstance().getCookie(url))
+                                    setTitle(fileName)
+                                    setDescription("Downloading High-Quality Music")
+                                    setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                                    setDestinationInExternalPublicDir(Environment.DIRECTORY_MUSIC, "Beatraxus/$fileName")
+                                }
+                                val id = (ctx.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager).enqueue(request)
+                                activeDownloads = activeDownloads + ActiveDownload(id, fileName.replace(Regex("\\..*$"), ""))
+                                showDownloadPanel = true
+                            } catch (e: Exception) { Toast.makeText(ctx, "Download Error", Toast.LENGTH_SHORT).show() }
+                        }
+
+                        webViewClient = object : WebViewClient() {
+                            override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) { 
+                                isPageLoading = true
+                                isWebReady = false 
+                            }
+                            override fun onPageFinished(view: WebView?, url: String?) {
+                                view?.evaluateJavascript(STEALTH_SCRIPT) {
+                                    isWebReady = true 
+                                    isPageLoading = false
+                                }
+                            }
+                        }
+                        webChromeClient = object : WebChromeClient() { override fun onProgressChanged(view: WebView?, newProgress: Int) { loadingProgress = newProgress } }
+                        loadUrl("https://lucida.to/")
+                    }
+                },
+                modifier = Modifier.fillMaxSize().alpha(if (isWebReady) 1f else 0f)
+            )
+
+            // ── Stealth Loading Overlay ──
+            if (!isWebReady) {
+                Box(modifier = Modifier.fillMaxSize().background(BgDeep), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        CircularProgressIndicator(color = AccentBlue, modifier = Modifier.size(32.dp))
+                        Spacer(Modifier.height(16.dp))
+                        Text("Optimizing Engine...", color = TextSecondary, fontSize = 14.sp)
+                    }
                 }
             }
 
-            if (item.status == DownloadStatus.DOWNLOADING) {
-                LinearProgressIndicator(
-                    progress = { item.progressPercent / 100f },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(2.dp),
-                    color = Color(0xFF00F2FF),
-                    trackColor = Color.Transparent,
-                )
-            }
-
-            if (item.status == DownloadStatus.DONE) {
-                Text(
-                    "✓ Saved to downloads folder",
-                    color = Color(0xFF00E676),
-                    fontSize = 11.sp,
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
-                )
-            }
-            if (item.status == DownloadStatus.FAILED) {
-                Text(
-                    "Download failed — verifying security...",
-                    color = Color(0xFFFF5252),
-                    fontSize = 11.sp,
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
-                )
+            // ── Side Download Panel ──
+            AnimatedVisibility(
+                visible = showDownloadPanel,
+                enter = slideInHorizontally(initialOffsetX = { it }) + fadeIn(),
+                exit = slideOutHorizontally(targetOffsetX = { it }) + fadeOut(),
+                modifier = Modifier.align(Alignment.TopEnd).fillMaxHeight().width(320.dp).zIndex(20f)
+            ) {
+                Surface(
+                    color = BgBase,
+                    shadowElevation = 24.dp,
+                    border = BorderStroke(1.dp, Divider),
+                    shape = RoundedCornerShape(topStart = 24.dp, bottomStart = 24.dp)
+                ) {
+                    Column(modifier = Modifier.padding(20.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("Download Queue", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 18.sp, modifier = Modifier.weight(1f))
+                            IconButton(onClick = { showDownloadPanel = false }) { Icon(Icons.Rounded.Close, null, tint = TextSecondary) }
+                        }
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp), color = Divider)
+                        if (activeDownloads.isEmpty()) {
+                            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                                Text("No active downloads", color = TextMuted, fontSize = 14.sp)
+                            }
+                        } else {
+                            LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                items(activeDownloads.reversed()) { dl -> DownloadItemCard(dl) }
+                            }
+                        }
+                        Button(
+                            onClick = { activeDownloads = emptyList() },
+                            modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = BgSurface),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text("Clear History", color = TextSecondary)
+                        }
+                    }
+                }
             }
         }
     }
 }
 
 @Composable
-fun InfoCard() {
-    Card(
+private fun DownloadItemCard(dl: ActiveDownload) {
+    val isDone = dl.status == "Completed"
+    val rotation = rememberInfiniteTransition(label = "").animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(tween(2000, easing = LinearEasing)),
+        label = ""
+    )
+
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .border(1.dp, Color.White.copy(0.08f), RoundedCornerShape(16.dp)),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = Color(0xFF1A1A2E)
-        )
+            .clip(RoundedCornerShape(16.dp))
+            .background(BgSurface)
+            .border(1.dp, if (isDone) Divider else AccentBlue.copy(0.3f), RoundedCornerShape(16.dp))
+            .padding(16.dp)
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text(
-                "Search Qobuz's full catalog — Hi-Res FLAC and lossless results.\n" +
-                "Tap ↓ on any result to add it to the queue, then tap the download icon to start.\n" +
-                "Set your download folder in Settings → Downloads first.",
-                color = Color.White.copy(0.7f),
-                fontSize = 13.sp,
-                lineHeight = 20.sp
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                imageVector = if (isDone) Icons.Rounded.CheckCircle else Icons.Rounded.Sync,
+                contentDescription = null,
+                tint = if (isDone) Color(0xFF30D158) else AccentBlue,
+                modifier = Modifier.size(18.dp).graphicsLayer { if (!isDone) rotationZ = rotation.value }
             )
+            Spacer(Modifier.width(12.dp))
+            Text(dl.title, color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+        }
+        Spacer(Modifier.height(12.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            LinearProgressIndicator(
+                progress = { dl.progress / 100f },
+                modifier = Modifier.weight(1f).height(4.dp).clip(CircleShape),
+                color = if (isDone) Color(0xFF30D158) else AccentBlue,
+                trackColor = BgElevated
+            )
+            Spacer(Modifier.width(12.dp))
+            Text(if (dl.status == "Downloading") "${dl.progress}%" else dl.status, color = TextSecondary, fontSize = 11.sp, fontWeight = FontWeight.Medium)
         }
     }
 }

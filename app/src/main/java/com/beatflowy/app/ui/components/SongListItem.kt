@@ -30,6 +30,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.beatflowy.app.model.Song
+import com.beatflowy.app.model.SongSource
 import com.beatflowy.app.ui.theme.*
 import java.util.Locale
 import java.util.concurrent.TimeUnit
@@ -133,7 +134,7 @@ fun SongListItem(
 
     // Quality determination logic
     val rawFormat = song.format.lowercase()
-    val baseFormat = rawFormat.substringBefore(" ").trim()
+    val baseFormat = rawFormat.replace("g ", "").substringBefore(" ").trim()
     val bitDepth = when {
         rawFormat.contains("24") -> 24
         rawFormat.contains("16") -> 16
@@ -277,10 +278,20 @@ fun SongListItem(
                                     }
                                 }
 
-                                if (isLosslessFormat && bitDepth > 0) {
-                                    append(" | ${bitDepth}bit")
-                                } else if (bitrate > 0) {
-                                    append(" | ${bitrate / 1000}kbps")
+                                if (song.source == SongSource.GDRIVE) {
+                                    append(" | G DRIVE")
+                                } else {
+                                    val accurateBitrate = if (bitrate > 0) {
+                                        bitrate.toLong()
+                                    } else if (song.durationMs > 0) {
+                                        (song.fileSizeBytes * 8 * 1000) / song.durationMs
+                                    } else 0L
+                                    
+                                    if (accurateBitrate > 0) {
+                                        append(" | ${accurateBitrate / 1000}kbps")
+                                    } else if (bitDepth > 0) {
+                                        append(" | ${bitDepth}bit")
+                                    }
                                 }
                             },
                             fontSize = 11.sp,

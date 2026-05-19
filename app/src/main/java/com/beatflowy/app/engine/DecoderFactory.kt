@@ -17,38 +17,31 @@ internal class DecoderFactory(
     private val mediaCodecDecoder: MediaCodecAudioDecoder
 ) {
     suspend fun create(song: Song): AudioDecoder {
-        if (song.format.equals("ALAC", ignoreCase = true)) {
+        val format = song.format.lowercase()
+        val isCloud = song.source == com.beatflowy.app.model.SongSource.GDRIVE ||
+                      song.source == com.beatflowy.app.model.SongSource.WEB ||
+                      song.source == com.beatflowy.app.model.SongSource.TELEGRAM
+
+        // 1. Explicit ALAC or problematic cloud formats
+        // Cloud WAV and M4A/ALAC are routed to FFmpeg for better stability and range-request handling.
+        if (format.contains("alac") || (isCloud && (format == "m4a" || format == "mp4" || format == "wav"))) {
+            Log.d(TAG, "Routing ${format.uppercase()} to FFmpeg: ${song.title}")
             return ffmpegAlacDecoder
         }
 
-        // Check if it's a known ALAC in an M4A container via heuristic or explicit probe
-        val isM4A = song.format.equals("M4A", ignoreCase = true) || song.format.equals("MP4", ignoreCase = true)
+        // 2. Heuristic for ALAC in M4A (Local)
+        val isM4A = format == "m4a" || format == "mp4"
         if (isM4A && (song.bitrate > 450000 || song.bitDepth > 16)) {
-            Log.d(TAG, "Routing ${song.title} to FFmpeg via heuristic (M4A with bitrate=${song.bitrate})")
+            Log.d(TAG, "Routing local M4A to FFmpeg via heuristic (bitrate=${song.bitrate}): ${song.title}")
             return ffmpegAlacDecoder
         }
 
-        // Optimization: For cloud songs, trust the format/extension for routing to avoid
-        // high-latency MediaExtractor probing. Cloud songs will call setDataSource
-        // again in the actual decoder, so we avoid doing it twice here.
-        if (song.source == com.beatflowy.app.model.SongSource.GDRIVE ||
-            song.source == com.beatflowy.app.model.SongSource.WEB ||
-            song.source == com.beatflowy.app.model.SongSource.TELEGRAM) {
-            
-            val isWav = song.format.equals("WAV", ignoreCase = true)
-            // If it's M4A or WAV and we haven't enriched it yet (bitrate=0), we MUST probe 
-            // because it might be ALAC which MediaCodec can't handle on many devices.
-            if ((isM4A || isWav) && song.bitrate == 0) {
-                Log.d(TAG, "Cloud ${song.format} without metadata, probing to avoid MediaCodec failure: ${song.title}")
-            } else {
-                return mediaCodecDecoder
-            }
-        }
-
-        val probedMime = probeAudioMime(song)
-        if (probedMime?.contains("alac", ignoreCase = true) == true) {
-            Log.d(TAG, "Routing ${song.title} to FFmpeg via probed mime=$probedMime")
-            return ffmpegAlacDecoder
+        // 3. Probing for cloud songs that aren't M4A/WAV (e.g. unknown extensions)
+        if (isCloud && song.bitrate == 0) {
+             val probedMime = probeAudioMime(song)
+             if (probedMime?.contains("alac", ignoreCase = true) == true) {
+                 return ffmpegAlacDecoder
+             }
         }
 
         return mediaCodecDecoder

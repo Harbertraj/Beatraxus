@@ -1,6 +1,7 @@
 package com.beatflowy.app
 
 import android.Manifest
+import android.app.Activity
 import android.content.ComponentName
 import android.content.Intent
 import android.content.ServiceConnection
@@ -9,7 +10,6 @@ import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
 import android.util.Log
-import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -17,8 +17,6 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.viewModels
 import androidx.compose.animation.*
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -28,9 +26,7 @@ import androidx.compose.ui.Alignment
 import androidx.core.content.ContextCompat
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
-import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
-import android.accounts.AccountManager
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions
 import com.google.android.gms.common.api.ApiException
@@ -43,12 +39,8 @@ import com.beatflowy.app.ui.screens.SettingsScreen
 import com.beatflowy.app.ui.screens.WelcomeScreen
 import com.beatflowy.app.ui.screens.DownloadScreen
 import com.beatflowy.app.ui.components.dsp.DspScreen
-import com.beatflowy.app.viewmodel.QobuzDownloadViewModel
 import androidx.compose.ui.Modifier
-import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -61,10 +53,6 @@ class MainActivity : ComponentActivity() {
 
     private val viewModel: PlayerViewModel by viewModels {
         PlayerViewModelFactory(application)
-    }
-
-    private val downloadViewModel: QobuzDownloadViewModel by viewModels {
-        QobuzDownloadViewModel.Factory
     }
 
     private var serviceBound = false
@@ -106,8 +94,6 @@ class MainActivity : ComponentActivity() {
         bindAudioService()
     }
 
-    private var isFirstCreate = true
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         com.beatflowy.app.cast.CastManager.initialize(this)
@@ -120,7 +106,6 @@ class MainActivity : ComponentActivity() {
             BeatraxusTheme {
                 BeatraxusApp(
                     viewModel = viewModel,
-                    downloadViewModel = downloadViewModel,
                     onRequestPermissions = { requestPermissions() }
                 )
             }
@@ -164,15 +149,7 @@ class MainActivity : ComponentActivity() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             permissions.add(Manifest.permission.POST_NOTIFICATIONS)
         }
-
-        val essentialGranted = ContextCompat.checkSelfPermission(this, essentialPermission) == PackageManager.PERMISSION_GRANTED
-        
-        if (essentialGranted) {
-            viewModel.loadLibrary()
-            onPermissionGranted()
-        } else {
-            permissionLauncher.launch(permissions.toTypedArray())
-        }
+        permissionLauncher.launch(permissions.toTypedArray())
     }
 
     private fun checkAndRequestPermissions() {
@@ -182,25 +159,10 @@ class MainActivity : ComponentActivity() {
             Manifest.permission.READ_EXTERNAL_STORAGE
         }
 
-        val essentialGranted = ContextCompat.checkSelfPermission(this, essentialPermission) == PackageManager.PERMISSION_GRANTED
-        
-        val prefs = getSharedPreferences("beatraxus", MODE_PRIVATE)
-        val isFirstRun = prefs.getBoolean("first_run", true)
-
-        if (isFirstRun) {
-            // On first run, we let the WelcomeScreen handle the flow.
-            // Do not auto-request or auto-load library yet.
-            return
-        }
-
-        if (essentialGranted) {
+        if (ContextCompat.checkSelfPermission(this, essentialPermission) == PackageManager.PERMISSION_GRANTED) {
             viewModel.loadLibrary()
         } else {
-            val permissions = mutableListOf(essentialPermission)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                permissions.add(Manifest.permission.POST_NOTIFICATIONS)
-            }
-            permissionLauncher.launch(permissions.toTypedArray())
+            requestPermissions()
         }
     }
 }
@@ -209,13 +171,12 @@ sealed class Screen(val route: String) {
     object Main      : Screen("main")
     object Settings  : Screen("settings")
     object Dsp       : Screen("dsp")
-    object Download  : Screen("download_screen")
+    object Download  : Screen("download")
 }
 
 @Composable
 fun BeatraxusApp(
     viewModel: PlayerViewModel,
-    downloadViewModel: QobuzDownloadViewModel,
     onRequestPermissions: () -> Unit
 ) {
     val navController = rememberNavController()
@@ -232,7 +193,6 @@ fun BeatraxusApp(
                 Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
             )
             viewModel.setDownloadLocation(it.toString())
-            downloadViewModel.setDownloadLocation(it.toString())
         }
         viewModel.consumeDownloadFolderPickerTrigger()
     }
@@ -247,50 +207,29 @@ fun BeatraxusApp(
             )
             viewModel.addMusicFolder(it.toString())
         }
+        viewModel.consumeFolderPickerTrigger()
     }
 
-    // Note: For Google Drive API, a Web Client ID is often required in requestIdToken
-    // to avoid ApiException 10 (DEVELOPER_ERROR). 
-    // Ensure you have registered your SHA-1 in the Google Cloud Console.
     val driveSignInOptions = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
         .requestEmail()
-        .requestProfile()
-        .requestScopes(
-            Scope(DriveScopes.DRIVE_READONLY),
-            Scope(DriveScopes.DRIVE_METADATA_READONLY)
-        )
+        .requestScopes(Scope(DriveScopes.DRIVE_READONLY))
         .build()
 
-    val googleSignInClient = GoogleSignIn.getClient(context, driveSignInOptions)
+    val googleSignInClient = GoogleSignIn.getClient(context as Activity, driveSignInOptions)
 
-    val driveAccountLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        val task = GoogleSignIn.getSignedInAccountFromIntent(result.data)
-        try {
-            val account = task.getResult(ApiException::class.java)
-            if (account != null && account.email != null) {
-                viewModel.addDriveAccount(
-                    DriveAccount(
-                        email = account.email!!,
-                        accountName = account.displayName ?: account.email!!,
-                        photoUrl = account.photoUrl?.toString()
-                    )
-                )
+    val driveAccountLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val task = GoogleSignIn.getSignedInAccountFromIntent(result.data)
+            try {
+                val account = task.getResult(ApiException::class.java)
+                account?.email?.let { email ->
+                    viewModel.addDriveAccount(DriveAccount(email, account.displayName ?: "Google Drive", account.photoUrl?.toString(), true))
+                }
+            } catch (e: ApiException) {
+                Log.e("MainActivity", "Google sign in failed", e)
             }
-        } catch (e: ApiException) {
-            Log.e("MainActivity", "Google Sign-In failed", e)
-        }
-    }
-
-    val authRecoveryLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        if (result.resultCode == android.app.Activity.RESULT_OK) {
-            // Re-trigger whatever failed? For now, just clearing the intent
-            viewModel.consumeAuthRecoveryIntent()
-        }
-    }
-
-    LaunchedEffect(uiState.authRecoveryIntent) {
-        uiState.authRecoveryIntent?.let { intent ->
-            authRecoveryLauncher.launch(intent)
         }
     }
 
@@ -306,22 +245,15 @@ fun BeatraxusApp(
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    Box(Modifier.fillMaxSize()) {
         NavHost(
-            navController    = navController,
-            startDestination = if (uiState.isFirstRun) "welcome" else Screen.Main.route,
-            enterTransition = {
-                fadeIn(animationSpec = tween(400, easing = FastOutSlowInEasing))
-            },
-            exitTransition = {
-                fadeOut(animationSpec = tween(400, easing = FastOutSlowInEasing))
-            }
+            navController = navController,
+            startDestination = if (uiState.isFirstRun) "welcome" else Screen.Main.route
         ) {
             composable(
                 "welcome",
                 exitTransition = {
-                    fadeOut(tween(600, easing = FastOutSlowInEasing)) +
-                            scaleOut(targetScale = 0.9f, animationSpec = tween(600, easing = FastOutSlowInEasing))
+                    fadeOut(tween(500)) + scaleOut(targetScale = 0.9f, animationSpec = tween(500))
                 }
             ) {
                 WelcomeScreen(
@@ -344,7 +276,7 @@ fun BeatraxusApp(
                     } else {
                         fadeIn(tween(400, easing = FastOutSlowInEasing)) +
                                 slideIntoContainer(
-                                    towards = AnimatedContentTransitionScope.SlideDirection.End, // Back from Right to Left
+                                    towards = AnimatedContentTransitionScope.SlideDirection.End, 
                                     animationSpec = tween(400, easing = FastOutSlowInEasing)
                                 )
                     }
@@ -352,7 +284,7 @@ fun BeatraxusApp(
                 exitTransition = {
                     fadeOut(tween(400, easing = FastOutSlowInEasing)) +
                             slideOutOfContainer(
-                                towards = AnimatedContentTransitionScope.SlideDirection.Start, // Forward to Right
+                                towards = AnimatedContentTransitionScope.SlideDirection.Start, 
                                 animationSpec = tween(400, easing = FastOutSlowInEasing)
                             )
                 },
@@ -394,12 +326,9 @@ fun BeatraxusApp(
             ) {
                 SettingsScreen(
                     viewModel = viewModel,
-                    downloadViewModel = downloadViewModel,
                     onBack    = { navController.popBackStack() },
                     onNavigateToDsp = { navController.navigate(Screen.Dsp.route) },
                     onRequestGDriveAccount = {
-                        // Sign out first to ensure the account picker is always shown,
-                        // allowing the user to select a different/new account.
                         googleSignInClient.signOut().addOnCompleteListener {
                             driveAccountLauncher.launch(googleSignInClient.signInIntent)
                         }
@@ -432,25 +361,23 @@ fun BeatraxusApp(
                 Screen.Download.route,
                 enterTransition = {
                     slideIntoContainer(
-                        towards = AnimatedContentTransitionScope.SlideDirection.Start,
+                        towards = AnimatedContentTransitionScope.SlideDirection.Up,
                         animationSpec = tween(400, easing = FastOutSlowInEasing)
                     ) + fadeIn(tween(400))
                 },
                 exitTransition = {
                     slideOutOfContainer(
-                        towards = AnimatedContentTransitionScope.SlideDirection.End,
+                        towards = AnimatedContentTransitionScope.SlideDirection.Down,
                         animationSpec = tween(400, easing = FastOutSlowInEasing)
                     ) + fadeOut(tween(400))
                 }
             ) {
                 DownloadScreen(
-                    viewModel = downloadViewModel,
-                    onBack = { navController.popBackStack() },
-                    onPickFolder = { viewModel.openDownloadFolderPicker() }
+                    onBack = {
+                        navController.popBackStack()
+                    }
                 )
             }
         }
     }
-
-    // Observe navigation backstack to determine the current screen
 }

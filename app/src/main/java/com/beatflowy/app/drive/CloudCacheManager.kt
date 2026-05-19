@@ -222,7 +222,7 @@ class CloudCacheManager(
                 }
             }
 
-            // Wait for data to be available at this position
+
             // MediaExtractor needs the beginning of the file to probe tracks.
             var attempts = 0
             val waitTimeout = if (position == 0L) 150 else 600 // Wait longer for initial probe

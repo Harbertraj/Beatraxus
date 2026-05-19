@@ -5,8 +5,10 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.media.AudioAttributes
@@ -48,6 +50,9 @@ import com.beatflowy.app.drive.DrivePlaybackHelper
 import com.beatflowy.app.model.SongSource
 import com.beatflowy.app.repository.DriveAccountRepository
 import android.net.Uri
+import coil.ImageLoader
+import coil.request.ImageRequest
+import coil.request.SuccessResult
 
 class AudioPlaybackService : Service() {
     private val binder = LocalBinder()
@@ -78,6 +83,17 @@ class AudioPlaybackService : Service() {
         }
     }
 
+    private val noisyReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == AudioManager.ACTION_AUDIO_BECOMING_NOISY) {
+                if (engine.playbackStateFlow.value.isPlaying) {
+                    engine.pause()
+                    updateNotification()
+                }
+            }
+        }
+    }
+
     private var lastSongId: String? = null
     private var currentAlbumArt: Bitmap? = null
     private var currentAlbumArtSongId: String? = null
@@ -96,6 +112,7 @@ class AudioPlaybackService : Service() {
         engine = AudioEngine(this, audioOutput, cloudCacheManager)
         refreshOutputRoute()
         audioManager.registerAudioDeviceCallback(audioDeviceCallback, null)
+        registerReceiver(noisyReceiver, IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY))
 
         mediaSession = MediaSessionCompat(this, "AudioPlaybackService").apply {
             setCallback(object : MediaSessionCompat.Callback() {
@@ -152,15 +169,28 @@ class AudioPlaybackService : Service() {
         val loaded = withContext(Dispatchers.IO) {
             val uri = song?.albumArtUri ?: return@withContext null
             try {
-                contentResolver.openInputStream(uri)?.use { input ->
-                    val original = BitmapFactory.decodeStream(input)
-                    if (original != null) {
-                        val size = 500
-                        val ratio = original.width.toFloat() / original.height.toFloat()
-                        val w = if (ratio > 1) size else (size * ratio).toInt()
-                        val h = if (ratio > 1) (size / ratio).toInt() else size
-                        Bitmap.createScaledBitmap(original, w, h, true)
+                if (uri.scheme?.startsWith("http") == true) {
+                    val loader = ImageLoader(this@AudioPlaybackService)
+                    val request = ImageRequest.Builder(this@AudioPlaybackService)
+                        .data(uri)
+                        .size(500)
+                        .allowHardware(false)
+                        .build()
+                    val result = loader.execute(request)
+                    if (result is SuccessResult) {
+                        (result.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
                     } else null
+                } else {
+                    contentResolver.openInputStream(uri)?.use { input ->
+                        val original = BitmapFactory.decodeStream(input)
+                        if (original != null) {
+                            val size = 500
+                            val ratio = original.width.toFloat() / original.height.toFloat()
+                            val w = if (ratio > 1) size else (size * ratio).toInt()
+                            val h = if (ratio > 1) (size / ratio).toInt() else size
+                            Bitmap.createScaledBitmap(original, w, h, true)
+                        } else null
+                    }
                 }
             } catch (e: Exception) {
                 null
@@ -288,22 +318,27 @@ class AudioPlaybackService : Service() {
         }
     }
 
+    private var resumeOnFocusGain = false
+
     private val audioFocusChangeListener = AudioManager.OnAudioFocusChangeListener { focusChange ->
         when (focusChange) {
             AudioManager.AUDIOFOCUS_LOSS -> {
                 if (engine.playbackStateFlow.value.isPlaying) {
+                    resumeOnFocusGain = false
                     togglePlayPause()
                 }
             }
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
                 if (engine.playbackStateFlow.value.isPlaying) {
+                    resumeOnFocusGain = true
                     engine.pause()
                 }
             }
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {}
             AudioManager.AUDIOFOCUS_GAIN -> {
-                if (!engine.playbackStateFlow.value.isPlaying && playlist.isNotEmpty()) {
+                if (resumeOnFocusGain && !engine.playbackStateFlow.value.isPlaying && playlist.isNotEmpty()) {
                     engine.resume()
+                    resumeOnFocusGain = false
                 }
             }
         }
@@ -346,6 +381,7 @@ class AudioPlaybackService : Service() {
         if (engine.playbackStateFlow.value.isPlaying) {
             engine.pause()
             abandonAudioFocus()
+            resumeOnFocusGain = false
         } else {
             if (requestAudioFocus()) {
                 val song = engine.playbackStateFlow.value.currentSong
@@ -438,8 +474,7 @@ class AudioPlaybackService : Service() {
             val intent = Intent(this, MainActivity::class.java)
             val pendingIntent = PendingIntent.getActivity(
                 this, 0, intent,
-                PendingIntent.FLAG_IMMUTABLE
-            )
+                PendingIntent.FLAG_IMMUTABLE)
 
             val notification = NotificationCompat.Builder(this, CHANNEL_ID)
                 .setContentTitle("Syncing Music...")
@@ -725,6 +760,9 @@ class AudioPlaybackService : Service() {
         }
         serviceScope.cancel()
         audioManager.unregisterAudioDeviceCallback(audioDeviceCallback)
+        try {
+            unregisterReceiver(noisyReceiver)
+        } catch (e: Exception) {}
         engine.release()
         mediaSession.release()
         abandonAudioFocus()

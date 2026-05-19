@@ -60,6 +60,7 @@ import android.net.Uri
 import androidx.palette.graphics.Palette
 import com.beatflowy.app.R
 import com.beatflowy.app.model.Song
+import com.beatflowy.app.model.SongSource
 import com.beatflowy.app.ui.components.WaveformSeekBar
 import com.beatflowy.app.ui.components.KaraokeLyricsView
 import android.graphics.RenderEffect as AndroidRenderEffect
@@ -986,44 +987,52 @@ private fun PipelineInfoRow(label: String, value: String) {
 
 @Composable
 fun TechnicalInfo(song: Song, uiState: com.beatflowy.app.model.PlayerUiState) {
-    // Show only song static info (original info) as requested
-    val format = song.format.lowercase()
-    val bitDepth = song.bitDepth
+    val rawFormat = song.format.lowercase()
+    val bitDepth = when {
+        rawFormat.contains("24") -> 24
+        rawFormat.contains("16") -> 16
+        song.bitDepth > 0 -> song.bitDepth
+        else -> 16
+    }
     val sampleRate = song.sampleRateHz
     val bitrate = song.bitrate
     
-    val durationMin = song.durationMs / 60000.0
-    val sizeMb = song.fileSizeBytes / (1024.0 * 1024.0)
-    val isLikelyLossyM4A = (format == "m4a" || format == "mp4" || format == "aac") && 
-        ((durationMin > 0 && (sizeMb / durationMin) < 2.3) || (bitrate > 0 && bitrate < 400000))
-
-    val isALAC = format.contains("alac") || ((format == "m4a" || format == "mp4") && !isLikelyLossyM4A)
-    val isLosslessFormat = format.contains("flac") || isALAC || format.contains("wav") || format.contains("dsd") || format.contains("aiff")
-    val isHiRes = (bitDepth >= 24 || sampleRate > 48000) && isLosslessFormat
+    val khz = String.format(Locale.US, "%.1f", sampleRate / 1000.0).removeSuffix(".0")
     
+    val accurateBitrate = if (bitrate > 0) {
+        bitrate.toLong()
+    } else if (song.durationMs > 0) {
+        (song.fileSizeBytes * 8 * 1000) / song.durationMs
+    } else 0L
+    val kbps = accurateBitrate / 1000
+
     Surface(shape = RoundedCornerShape(12.dp), color = Color.White.copy(alpha = 0.08f)) {
         val info = buildString {
-            if (bitDepth > 0) {
-                append("${bitDepth}BIT ")
-            }
-            
-            append("${String.format(Locale.US, "%.1f", sampleRate / 1000.0)}KHZ ")
-            
-            val displayBitrate: Long = if (bitrate > 0) {
-                bitrate.toLong() / 1000
-            } else if (song.durationMs > 0) {
-                (song.fileSizeBytes * 8) / song.durationMs
-            } else 0L
-            
-            if (displayBitrate > 0 && song.source.name == "LOCAL") {
-                append("${displayBitrate}KBPS ")
-            }
+            if (song.source == SongSource.GDRIVE) {
+                // 16BIT | 96KHZ | FLAC | GDRIVE
+                append("${bitDepth}BIT | ")
+                append("${khz}KHZ | ")
+                append("${rawFormat.uppercase(Locale.US)} | ")
+                append("GDRIVE")
+            } else {
+                // 16BIT | 1566KBPS | 96KHZ | ALAC
+                append("${bitDepth}BIT | ")
+                if (kbps > 0) {
+                    append("${kbps}KBPS | ")
+                }
+                append("${khz}KHZ")
 
-            val displayFormat = when {
-                isHiRes || isLosslessFormat -> format.uppercase(Locale.US)
-                else -> "${format.uppercase(Locale.US)} QUALITY"
+                val durationMin = song.durationMs / 60000.0
+                val sizeMb = song.fileSizeBytes / (1024.0 * 1024.0)
+                val isLikelyLossyM4A = (rawFormat == "m4a" || rawFormat == "mp4" || rawFormat == "aac") && 
+                    ((durationMin > 0 && (sizeMb / durationMin) < 2.3) || (bitrate > 0 && bitrate < 400000))
+                
+                val displayFormat = when {
+                    rawFormat.contains("alac") || ((rawFormat == "m4a" || rawFormat == "mp4") && !isLikelyLossyM4A) -> "ALAC"
+                    else -> rawFormat.uppercase(Locale.US)
+                }
+                append(" | $displayFormat")
             }
-            append(displayFormat)
         }
         Text(
             text = info,

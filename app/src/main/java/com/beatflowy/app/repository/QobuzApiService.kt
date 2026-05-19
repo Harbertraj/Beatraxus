@@ -6,13 +6,10 @@ import okhttp3.Cookie
 import okhttp3.CookieJar
 import okhttp3.HttpUrl
 import okhttp3.OkHttpClient
-import okhttp3.ResponseBody
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Response
 import retrofit2.http.GET
 import retrofit2.http.Query
-import retrofit2.http.Streaming
-import retrofit2.http.Url
 import java.util.concurrent.TimeUnit
 
 interface QobuzApiService {
@@ -27,16 +24,6 @@ interface QobuzApiService {
     suspend fun getAlbumTracks(
         @Query("album_id") albumId: String
     ): Response<QobuzResponse<QobuzSearchData>>
-
-    @GET("api/download-music")
-    suspend fun getDownloadUrl(
-        @Query("track_id") trackId: String,
-        @Query("quality") quality: Int
-    ): Response<QobuzResponse<QobuzDownloadData>>
-
-    @Streaming
-    @GET
-    suspend fun downloadFile(@Url url: String): Response<ResponseBody>
 
     companion object {
         const val BASE_URL = "https://qobuz.squid.wtf/"
@@ -166,10 +153,4 @@ data class QobuzImage(
     @SerializedName("small") val small: String?,
     @SerializedName("thumbnail") val thumbnail: String?,
     @SerializedName("large") val large: String?
-)
-
-data class QobuzDownloadData(
-    @SerializedName("url") val url: String?,
-    @SerializedName("mime_type") val mimeType: String?,
-    @SerializedName("quality") val quality: String?
 )

@@ -539,10 +539,9 @@ class AudioEngine(
                     logWarn("Audio output initialization failed")
                 }
 
-                output.start()
-
-                if (sessionId == currentSessionId.get()) {
-                    _playbackStateFlow.update { it.copy(isPlaying = true) }
+                // FIX: Only start output if we are actually in playing state
+                if (_playbackStateFlow.value.isPlaying) {
+                    output.start()
                 }
 
                 refreshDspPipeline(format)

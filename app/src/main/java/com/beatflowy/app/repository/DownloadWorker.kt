@@ -15,6 +15,8 @@ import com.beatflowy.app.model.DownloadQuality
 import com.beatflowy.app.model.DownloadSettings
 import com.beatflowy.app.model.DownloadStatus
 import com.beatflowy.app.model.FilenameTemplate
+import com.beatflowy.app.model.DownloadProgress
+import kotlinx.coroutines.flow.collect
 
 class DownloadWorker(
     context: Context,
@@ -71,18 +73,18 @@ class DownloadWorker(
                 item,
                 settings,
                 Uri.parse(destinationUri),
-                onFileDownloaded = { finalUri = it }
-            ).collect { progress ->
+                onFileDownloaded = { uri: Uri -> finalUri = uri }
+            ).collect { progress: DownloadProgress ->
                 when (progress) {
                     is DownloadProgress.InProgress -> {
-                        setProgress(workDataOf("progress" to progress.progress))
+                        this@DownloadWorker.setProgress(workDataOf("progress" to progress.progress))
                         notificationManager.notify(
                             notificationId,
                             createNotification(title, progress.progress)
                         )
                     }
                     is DownloadProgress.Failed -> {
-                        throw Exception(progress.error)
+                        throw java.lang.Exception(progress.error)
                     }
                     else -> {}
                 }

@@ -36,6 +36,7 @@ data class SearchResults(
 
 enum class FilenameTemplate(val label: String, val example: String) {
     ARTIST_TITLE("Artist - Title", "Coldplay - Yellow.flac"),
+    TITLE_ARTIST("Title - Artist", "Yellow - Coldplay.flac"),
     TITLE_ONLY("Title Only", "Yellow.flac"),
     ARTIST_ALBUM_TITLE("Artist - Album - Title", "Coldplay - A Rush of Blood - Yellow.flac")
 }
@@ -47,3 +48,9 @@ data class DownloadSettings(
     val overwriteExisting: Boolean = false,
     val downloadLocation: String? = null
 )
+
+sealed class DownloadProgress {
+    data class InProgress(val progress: Int) : DownloadProgress()
+    data class Failed(val error: String) : DownloadProgress()
+    object Completed : DownloadProgress()
+}

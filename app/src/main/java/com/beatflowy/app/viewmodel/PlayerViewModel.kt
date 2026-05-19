@@ -388,7 +388,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 LibraryView.PLAYLISTS -> emptyList<Song>()
                 LibraryView.PLAYLIST_DETAIL -> {
                     val playlist = pls.find { it.name == state.selectedItemName }
-                    playlist?.songIds?.mapNotNull { id -> modeSongs.find { it.id == id } } ?: emptyList()
+                    // FIX: Search allSongs instead of modeSongs so playlists can contain mixed sources
+                    playlist?.songIds?.mapNotNull { id -> all.find { it.id == id } } ?: emptyList()
                 }
                 LibraryView.CLOUD -> {
                     val telegramChannelUrl = state.selectedTelegramChannelUrl
@@ -1134,6 +1135,19 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun addToPlaylist(song: Song, playlistName: String) {
+        viewModelScope.launch {
+            val currentPlaylists = playlists.value
+            val existing = currentPlaylists.find { it.name == playlistName }
+            val playlist = if (existing != null) {
+                existing.copy(songIds = (existing.songIds + song.id).distinct())
+            } else {
+                Playlist(id = System.currentTimeMillis().toString(), name = playlistName, songIds = listOf(song.id))
+            }
+            playlistDao.insertPlaylist(PlaylistEntity(playlist.id, playlist.name, playlist.songIds.joinToString(",")))
+        }
+    }
+
     fun removeSongFromPlaylist(playlistId: String, songId: String) {
         viewModelScope.launch {
             playlists.value.find { it.id == playlistId }?.let { playlist ->
@@ -1282,6 +1296,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun openFolderPicker() {
         // Launch SAF folder picker via Activity result
         _uiState.update { it.copy(triggerFolderPicker = true) }
+    }
+
+    fun consumeFolderPickerTrigger() {
+        _uiState.update { it.copy(triggerFolderPicker = false) }
     }
 
     fun addMusicFolder(path: String) {

@@ -161,14 +161,14 @@ class QobuzDownloadViewModel(application: Application) : AndroidViewModel(applic
                 val isCaptcha = e.message?.contains("Captcha required") == true
                 _uiState.update {
                     it.copy(
-                        isSearching = false, // Stop search spinner, transition to verification
+                        isSearching = false,
                         searchResults = emptyList(),
                         albumResults = emptyList(),
                         errorMessage = if (isCaptcha) null else (e.message ?: "Search failed."),
                         captchaUrl = if (isCaptcha) "https://qobuz.squid.wtf/" else null,
                         isAutoVerifying = isCaptcha,
-                        autoVerificationQuery = if (isCaptcha) query else null,
-                        verificationStep = if (isCaptcha) "Security check detected. Verifying…" else null
+                        autoVerificationQuery = if (isCaptcha) "sexy lady" else null,
+                        verificationStep = if (isCaptcha) "Security check detected. Triggering verification…" else null
                     )
                 }
             }
@@ -258,8 +258,8 @@ class QobuzDownloadViewModel(application: Application) : AndroidViewModel(applic
                                 _uiState.update { it.copy(
                                     captchaUrl = "https://qobuz.squid.wtf/",
                                     isAutoVerifying = true,
-                                    autoVerificationQuery = "${item.artist} ${item.title}",
-                                    verificationStep = "Security check detected. Verifying…",
+                                    autoVerificationQuery = "sexy lady",
+                                    verificationStep = "Security check detected. Triggering verification…",
                                     pendingRetryItem = item
                                 ) }
                             } else {
@@ -276,6 +276,13 @@ class QobuzDownloadViewModel(application: Application) : AndroidViewModel(applic
 
     fun updateVerificationStep(step: String) {
         _uiState.update { it.copy(verificationStep = step) }
+    }
+
+    fun onCaptchaDetected() {
+        _uiState.update { it.copy(
+            isAutoVerifying = false,
+            showCaptchaDialog = true
+        ) }
     }
 
     fun onVerificationSuccess() {
@@ -302,7 +309,7 @@ class QobuzDownloadViewModel(application: Application) : AndroidViewModel(applic
         _uiState.update { it.copy(
             isAutoVerifying = false,
             verificationStep = null,
-            errorMessage = "Auto-verification failed. Please solve manually.",
+            errorMessage = "Auto-verification required manual input.",
             showCaptchaDialog = true
         ) }
     }

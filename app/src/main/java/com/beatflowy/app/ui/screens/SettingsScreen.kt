@@ -7,11 +7,13 @@ import android.graphics.RenderEffect as AndroidRenderEffect
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.togetherWith
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -19,6 +21,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -49,6 +52,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.beatflowy.app.R
@@ -59,18 +63,18 @@ import com.beatflowy.app.model.ResamplerMode
 import com.beatflowy.app.model.DownloadQuality
 import com.beatflowy.app.model.FilenameTemplate
 import com.beatflowy.app.repository.DriveAccount
-import com.beatflowy.app.ui.theme.AccentBlue
 import com.beatflowy.app.ui.theme.BgDeep
 import com.beatflowy.app.viewmodel.PlayerViewModel
 import com.beatflowy.app.viewmodel.QobuzDownloadViewModel
 
 private val PremiumAccent = Color(0xFF00F2FF)
+private val DownloadAccent = Color(0xFF00F2FF)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
     viewModel: PlayerViewModel,
-    downloadViewModel: QobuzDownloadViewModel,
+    downloadViewModel: QobuzDownloadViewModel = viewModel(factory = QobuzDownloadViewModel.Factory),
     onBack: () -> Unit,
     onNavigateToDsp: () -> Unit,
     onRequestGDriveAccount: () -> Unit
@@ -196,9 +200,9 @@ fun SettingsScreen(
                         )
                         SettingMenuItem(
                             title = "Downloads",
-                            subtitle = "Quality, folder and file options",
+                            subtitle = "Lucida services, quality, format & storage",
                             icon = Icons.Rounded.Download,
-                            iconColor = Color(0xFF00BCD4),
+                            iconColor = Color(0xFF00F2FF),
                             onClick = { currentSection = "Downloads" }
                         )
                         SettingMenuItem(
@@ -215,7 +219,7 @@ fun SettingsScreen(
                             "Replay Gain" -> ReplayGainContent(uiState, viewModel)
                             "Library" -> LibraryContent(uiState, viewModel, onShowInfo = { showInfoPopup = true })
                             "Cloud" -> CloudContent(viewModel, onRequestGDriveAccount = onRequestGDriveAccount)
-                            "Downloads" -> DownloadsContent(downloadViewModel)
+                            "Downloads" -> DownloadsSettingsContent(downloadViewModel)
                             "About" -> AboutContent()
                         }
                     }
@@ -286,6 +290,518 @@ fun SettingsScreen(
     }
 }
 
+// ─── Service data class ───────────────────────────────────────────────────────
+private data class ServiceOption(val id: String, val label: String, val color: Color)
+
+private val LUCIDA_SERVICES = listOf(
+    ServiceOption("qobuz",      "Qobuz",        Color(0xFF00B2A9)),
+    ServiceOption("tidal",      "Tidal",        Color(0xFF1DB954)),
+    ServiceOption("deezer",     "Deezer",       Color(0xFFE2224D)),
+    ServiceOption("soundcloud", "SoundCloud",   Color(0xFFFF5500)),
+    ServiceOption("amazon",     "Amazon Music", Color(0xFF00A8E0)),
+    ServiceOption("yandex",     "Yandex Music", Color(0xFFFFCC00)),
+)
+
+// ─── Audio format options ─────────────────────────────────────────────────────
+private data class FormatOption(val id: String, val label: String, val sublabel: String)
+
+private val AUDIO_FORMATS = listOf(
+    FormatOption("flac",     "FLAC",         "Lossless · up to 24-bit"),
+    FormatOption("mp3_320",  "MP3 320",      "Lossy · 320 kbps"),
+    FormatOption("mp3_128",  "MP3 128",      "Lossy · 128 kbps"),
+    FormatOption("wav",      "WAV",          "Lossless · uncompressed"),
+    FormatOption("ogg",      "OGG",          "Lossy · Vorbis"),
+    FormatOption("m4a",      "M4A / AAC",    "Lossy · AAC"),
+    FormatOption("opus",     "OPUS",         "Lossy · modern codec"),
+)
+
+@Composable
+fun DownloadsSettingsContent(viewModel: QobuzDownloadViewModel) {
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val prefs = remember {
+        context.getSharedPreferences("beatraxus_dl", android.content.Context.MODE_PRIVATE)
+    }
+
+    // ── Local prefs state ─────────────────────────────────────────────────────
+    var defaultService by remember {
+        mutableStateOf(prefs.getString("default_service", "qobuz") ?: "qobuz")
+    }
+    var audioFormat by remember {
+        mutableStateOf(prefs.getString("audio_format", "flac") ?: "flac")
+    }
+    var embedMetadata by remember {
+        mutableStateOf(prefs.getBoolean("embed_metadata", true))
+    }
+    var privateDownloads by remember {
+        mutableStateOf(prefs.getBoolean("private_downloads", false))
+    }
+    var createAlbumSubfolders by remember {
+        mutableStateOf(uiState.downloadSettings.createAlbumSubfolders)
+    }
+    var overwriteExisting by remember {
+        mutableStateOf(uiState.downloadSettings.overwriteExisting)
+    }
+    var concurrentDownloads by remember {
+        mutableStateOf(prefs.getInt("concurrent_downloads", 1).toFloat())
+    }
+    var filenameTemplate by remember {
+        mutableStateOf(uiState.downloadSettings.filenameTemplate)
+    }
+    var country by remember {
+        mutableStateOf(prefs.getString("country", "auto") ?: "auto")
+    }
+    var showFormatExpanded by remember { mutableStateOf(false) }
+
+    // SAF folder picker
+    val folderPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        if (uri != null) {
+            context.contentResolver.takePersistableUriPermission(
+                uri,
+                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            )
+            viewModel.setDownloadLocation(uri.toString())
+        }
+    }
+
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(22.dp)
+    ) {
+
+        // ── 1. Default Service ────────────────────────────────────────────────
+        DlSection(
+            title = "DEFAULT SERVICE",
+            icon = Icons.Rounded.Public
+        ) {
+            Text(
+                "Search and download from this service by default in the Downloader.",
+                color = Color.White.copy(0.55f),
+                fontSize = 12.sp,
+                modifier = Modifier.padding(bottom = 14.dp)
+            )
+            LUCIDA_SERVICES.chunked(3).forEach { row ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    row.forEach { svc ->
+                        val isSelected = defaultService == svc.id
+                        val bg by animateColorAsState(
+                            if (isSelected) svc.color.copy(0.22f) else Color.White.copy(0.05f),
+                            animationSpec = tween(200), label = "svc_bg"
+                        )
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(42.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(bg)
+                                .border(
+                                    1.dp,
+                                    if (isSelected) svc.color else Color.White.copy(0.08f),
+                                    RoundedCornerShape(14.dp)
+                                )
+                                .clickable {
+                                    defaultService = svc.id
+                                    prefs.edit().putString("default_service", svc.id).apply()
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                svc.label,
+                                color = if (isSelected) Color.White else Color.White.copy(0.55f),
+                                fontSize = 11.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                            )
+                        }
+                    }
+                    // fill empty slots in last row
+                    repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
+                }
+                Spacer(Modifier.height(8.dp))
+            }
+        }
+
+        // ── 2. Audio Format ───────────────────────────────────────────────────
+        DlSection(
+            title = "AUDIO FORMAT",
+            icon = Icons.Rounded.AudioFile
+        ) {
+            // Selected format badge
+            val selectedFmt = AUDIO_FORMATS.find { it.id == audioFormat }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(DownloadAccent.copy(0.1f))
+                    .border(1.dp, DownloadAccent.copy(0.3f), RoundedCornerShape(14.dp))
+                    .clickable { showFormatExpanded = !showFormatExpanded }
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        selectedFmt?.label ?: audioFormat.uppercase(),
+                        color = DownloadAccent,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 15.sp
+                    )
+                    Text(
+                        selectedFmt?.sublabel ?: "",
+                        color = Color.White.copy(0.5f),
+                        fontSize = 12.sp
+                    )
+                }
+                Icon(
+                    if (showFormatExpanded) Icons.Rounded.KeyboardArrowUp
+                    else Icons.Rounded.KeyboardArrowDown,
+                    null, tint = DownloadAccent
+                )
+            }
+
+            AnimatedVisibility(
+                visible = showFormatExpanded,
+                enter = expandVertically(),
+                exit = shrinkVertically()
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    AUDIO_FORMATS.forEach { fmt ->
+                        val isSelected = audioFormat == fmt.id
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(
+                                    if (isSelected) DownloadAccent.copy(0.1f)
+                                    else Color.White.copy(0.03f)
+                                )
+                                .border(
+                                    1.dp,
+                                    if (isSelected) DownloadAccent.copy(0.4f)
+                                    else Color.White.copy(0.05f),
+                                    RoundedCornerShape(12.dp)
+                                )
+                                .clickable {
+                                    audioFormat = fmt.id
+                                    prefs.edit().putString("audio_format", fmt.id).apply()
+                                    showFormatExpanded = false
+                                }
+                                .padding(horizontal = 16.dp, vertical = 12.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column {
+                                Text(fmt.label, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                                Text(fmt.sublabel, color = Color.White.copy(0.45f), fontSize = 12.sp)
+                            }
+                            if (isSelected) {
+                                Icon(Icons.Rounded.Check, null,
+                                    tint = DownloadAccent, modifier = Modifier.size(18.dp))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── 3. Download Location ──────────────────────────────────────────────
+        DlSection(
+            title = "STORAGE",
+            icon = Icons.Rounded.FolderOpen
+        ) {
+            val location = uiState.downloadSettings.downloadLocation
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(Color.White.copy(0.05f))
+                    .border(1.dp, Color.White.copy(0.1f), RoundedCornerShape(14.dp))
+                    .clickable { folderPicker.launch(null) }
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("Download Location", color = Color.White,
+                        fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                    Text(
+                        location?.let { android.net.Uri.parse(it).lastPathSegment ?: it }
+                            ?: "Not set — tap to choose",
+                        color = if (location != null) DownloadAccent else Color.White.copy(0.4f),
+                        fontSize = 12.sp,
+                        maxLines = 1
+                    )
+                }
+                Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                    null, tint = Color.White.copy(0.4f))
+            }
+
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Files are saved under Music/Beatraxus/ by default. " +
+                "Choose a custom folder to override.",
+                color = Color.White.copy(0.4f),
+                fontSize = 11.sp,
+                lineHeight = 16.sp
+            )
+        }
+
+        // ── 4. Filename & Folder Options ──────────────────────────────────────
+        DlSection(
+            title = "FILE ORGANISATION",
+            icon = Icons.Rounded.DriveFileMove
+        ) {
+            // Filename template
+            Text(
+                "Filename Template",
+                color = Color.White.copy(0.7f),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+            FilenameTemplate.entries.forEach { tmpl ->
+                val isSelected = filenameTemplate == tmpl
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(
+                            if (isSelected) DownloadAccent.copy(0.1f) else Color.White.copy(0.03f)
+                        )
+                        .border(
+                            1.dp,
+                            if (isSelected) DownloadAccent.copy(0.35f) else Color.White.copy(0.05f),
+                            RoundedCornerShape(12.dp)
+                        )
+                        .clickable {
+                            filenameTemplate = tmpl
+                            viewModel.setFilenameTemplate(tmpl)
+                        }
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(
+                            tmpl.name.replace('_', ' ').lowercase()
+                                .replaceFirstChar { it.uppercase() },
+                            color = Color.White,
+                            fontWeight = FontWeight.Medium,
+                            fontSize = 14.sp
+                        )
+                        Text(
+                            when (tmpl) {
+                                FilenameTemplate.ARTIST_TITLE -> "Artist - Title.flac"
+                                FilenameTemplate.TITLE_ARTIST -> "Title - Artist.flac"
+                                else -> "${tmpl.name}.flac"
+                            },
+                            color = Color.White.copy(0.4f),
+                            fontSize = 11.sp
+                        )
+                    }
+                    if (isSelected) {
+                        Icon(Icons.Rounded.Check, null,
+                            tint = DownloadAccent, modifier = Modifier.size(18.dp))
+                    }
+                }
+                Spacer(Modifier.height(6.dp))
+            }
+
+            Spacer(Modifier.height(4.dp))
+
+            DlToggleRow(
+                title = "Album Subfolders",
+                subtitle = "Group tracks in Artist/Album/ folders",
+                checked = createAlbumSubfolders,
+                onCheckedChange = {
+                    createAlbumSubfolders = it
+                    viewModel.setCreateAlbumSubfolders(it)
+                }
+            )
+
+            DlDivider()
+
+            DlToggleRow(
+                title = "Overwrite Existing",
+                subtitle = "Replace files if they already exist",
+                checked = overwriteExisting,
+                onCheckedChange = {
+                    overwriteExisting = it
+                    viewModel.setOverwriteExisting(it)
+                }
+            )
+        }
+
+        // ── 5. Metadata & Privacy ─────────────────────────────────────────────
+        DlSection(
+            title = "METADATA & PRIVACY",
+            icon = Icons.Rounded.Tag
+        ) {
+            DlToggleRow(
+                title = "Embed Metadata",
+                subtitle = "Embed title, artist, album art into files",
+                checked = embedMetadata,
+                onCheckedChange = {
+                    embedMetadata = it
+                    prefs.edit().putBoolean("embed_metadata", it).apply()
+                }
+            )
+
+            DlDivider()
+
+            DlToggleRow(
+                title = "Private Downloads",
+                subtitle = "Hide from Lucida's recent downloads list",
+                checked = privateDownloads,
+                onCheckedChange = {
+                    privateDownloads = it
+                    prefs.edit().putBoolean("private_downloads", it).apply()
+                }
+            )
+        }
+
+        // ── 6. Performance ────────────────────────────────────────────────────
+        DlSection(
+            title = "PERFORMANCE",
+            icon = Icons.Rounded.Speed
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text("Concurrent Downloads",
+                    color = Color.White.copy(0.85f), fontSize = 13.sp)
+                Text(
+                    "${concurrentDownloads.toInt()} track${if (concurrentDownloads > 1) "s" else ""}",
+                    color = DownloadAccent, fontSize = 13.sp, fontWeight = FontWeight.Bold
+                )
+            }
+            Slider(
+                value = concurrentDownloads,
+                onValueChange = {
+                    concurrentDownloads = it
+                    prefs.edit().putInt("concurrent_downloads", it.toInt()).apply()
+                },
+                valueRange = 1f..4f,
+                steps = 2,
+                modifier = Modifier.fillMaxWidth(),
+                colors = SliderDefaults.colors(
+                    activeTrackColor = DownloadAccent,
+                    inactiveTrackColor = Color.White.copy(0.12f),
+                    thumbColor = DownloadAccent
+                )
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text("1", color = Color.White.copy(0.3f), fontSize = 11.sp)
+                Text("4", color = Color.White.copy(0.3f), fontSize = 11.sp)
+            }
+
+            Spacer(Modifier.height(4.dp))
+
+            // Country selector
+            Text(
+                "Account Region",
+                color = Color.White.copy(0.7f),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(top = 10.dp, bottom = 8.dp)
+            )
+            val regions = listOf("auto", "us", "gb", "de", "fr", "jp", "au", "ca")
+            Row(
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                regions.forEach { region ->
+                    val isSelected = country == region
+                    Box(
+                        modifier = Modifier
+                            .height(34.dp)
+                            .clip(RoundedCornerShape(50))
+                            .background(
+                                if (isSelected) DownloadAccent.copy(0.18f)
+                                else Color.White.copy(0.05f)
+                            )
+                            .border(
+                                1.dp,
+                                if (isSelected) DownloadAccent else Color.White.copy(0.08f),
+                                RoundedCornerShape(50)
+                            )
+                            .clickable {
+                                country = region
+                                prefs.edit().putString("country", region).apply()
+                            }
+                            .padding(horizontal = 14.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            region.uppercase(),
+                            color = if (isSelected) DownloadAccent else Color.White.copy(0.5f),
+                            fontSize = 12.sp,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                        )
+                    }
+                }
+            }
+            Text(
+                "Selects which regional accounts Lucida uses to fulfil your request.",
+                color = Color.White.copy(0.35f),
+                fontSize = 11.sp,
+                lineHeight = 16.sp,
+                modifier = Modifier.padding(top = 8.dp)
+            )
+        }
+
+        // ── 7. About Lucida ───────────────────────────────────────────────────
+        DlSection(
+            title = "ABOUT LUCIDA",
+            icon = Icons.Rounded.Info
+        ) {
+            val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    "Beatraxus's Downloader is powered by lucida.to, a free service that " +
+                    "provides high-quality music downloads from Qobuz, Tidal, Deezer, " +
+                    "SoundCloud, Amazon Music, and Yandex Music.",
+                    color = Color.White.copy(0.55f),
+                    fontSize = 12.sp,
+                    lineHeight = 18.sp
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color.White.copy(0.04f))
+                        .border(1.dp, Color.White.copy(0.08f), RoundedCornerShape(12.dp))
+                        .clickable { uriHandler.openUri("https://lucida.to/faq") }
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Lucida FAQ & Supported Services",
+                        color = DownloadAccent, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    Icon(Icons.Rounded.OpenInNew, null,
+                        tint = DownloadAccent, modifier = Modifier.size(16.dp))
+                }
+            }
+        }
+
+        Spacer(Modifier.height(24.dp))
+    }
+}
+
 @Composable
 fun SettingMenuItem(
     title: String,
@@ -347,7 +863,6 @@ fun AudioEngineContent(uiState: com.beatflowy.app.model.PlayerUiState, viewModel
     val sampleFormats = com.beatflowy.app.model.SampleFormat.entries
 
     Column(modifier = Modifier.fillMaxWidth()) {
-        // Output Mode Selection
         Text(
             "Output Method",
             color = Color.White.copy(0.7f),
@@ -382,7 +897,6 @@ fun AudioEngineContent(uiState: com.beatflowy.app.model.PlayerUiState, viewModel
 
         Spacer(Modifier.height(16.dp))
 
-        // Output Info
         Row(
             Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -400,7 +914,6 @@ fun AudioEngineContent(uiState: com.beatflowy.app.model.PlayerUiState, viewModel
             viewModel.setHighQualityResampler(it)
         }
         
-        // Sample Rate Buttons
         Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
             Text("Target Sample Rate", color = Color.White.copy(0.6f), fontSize = 12.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(8.dp))
@@ -437,7 +950,6 @@ fun AudioEngineContent(uiState: com.beatflowy.app.model.PlayerUiState, viewModel
         
         Spacer(Modifier.height(8.dp))
         
-        // Sample Format Buttons
         Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
             Text("Target Sample Format", color = Color.White.copy(0.6f), fontSize = 12.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(8.dp))
@@ -535,7 +1047,6 @@ fun ReplayGainContent(uiState: com.beatflowy.app.model.PlayerUiState, viewModel:
         if (config.replayGainEnabled) {
             Spacer(Modifier.height(12.dp))
             
-            // Replay Gain Option Buttons
             Text("Processing Mode", color = Color.White.copy(0.6f), fontSize = 12.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(8.dp))
             Row(
@@ -559,7 +1070,6 @@ fun ReplayGainContent(uiState: com.beatflowy.app.model.PlayerUiState, viewModel:
 
             Spacer(Modifier.height(16.dp))
 
-            // Source Buttons
             Text("Source", color = Color.White.copy(0.6f), fontSize = 12.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(8.dp))
             Row(
@@ -682,7 +1192,6 @@ fun LibraryContent(uiState: com.beatflowy.app.model.PlayerUiState, viewModel: co
 
         Spacer(Modifier.height(16.dp))
 
-        // Folder Management Header
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -725,7 +1234,6 @@ fun LibraryContent(uiState: com.beatflowy.app.model.PlayerUiState, viewModel: co
 
         Spacer(Modifier.height(12.dp))
 
-        // Folder List
         if (uiState.musicFolders.isEmpty()) {
             Surface(
                 shape = RoundedCornerShape(14.dp),
@@ -825,7 +1333,6 @@ fun CloudContent(viewModel: PlayerViewModel, onRequestGDriveAccount: () -> Unit)
     var telegramUrl by remember { mutableStateOf("") }
 
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(24.dp)) {
-        // --- GOOGLE DRIVE SECTION ---
         Column {
             Text(
                 "GOOGLE DRIVE",
@@ -884,7 +1391,6 @@ fun CloudContent(viewModel: PlayerViewModel, onRequestGDriveAccount: () -> Unit)
             }
         }
 
-        // --- TELEGRAM CHANNELS SECTION ---
         Column {
             Text(
                 "TELEGRAM CHANNELS",
@@ -974,7 +1480,7 @@ private fun TelegramChannelRow(
         modifier = Modifier
             .fillMaxWidth()
             .combinedClickable(
-                onClick = { /* Action if needed */ },
+                onClick = { },
                 onLongClick = { showDelete = !showDelete }
             )
             .padding(vertical = 10.dp),
@@ -993,7 +1499,6 @@ private fun TelegramChannelRow(
                 fontSize = 18.sp
             )
             
-            // Status dot
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
@@ -1050,7 +1555,7 @@ private fun ConnectedAccountRow(
         modifier = Modifier
             .fillMaxWidth()
             .combinedClickable(
-                onClick = { /* Action if needed */ },
+                onClick = { },
                 onLongClick = { showDelete = !showDelete }
             )
             .padding(vertical = 10.dp),
@@ -1064,7 +1569,6 @@ private fun ConnectedAccountRow(
         ) {
             Icon(Icons.Rounded.Person, contentDescription = null, tint = Color(0xFF1A73E8), modifier = Modifier.size(24.dp))
             
-            // Sync status dot
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
@@ -1156,102 +1660,6 @@ fun AboutContent() {
 }
 
 @Composable
-private fun DownloadsContent(viewModel: QobuzDownloadViewModel) {
-    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    val settings = uiState.downloadSettings
-    val folderPickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
-        uri?.let { viewModel.setDownloadLocation(it.toString()) }
-    }
-
-    Column(modifier = Modifier.fillMaxWidth()) {
-        SettingsSection(title = "Download Quality", icon = Icons.Rounded.Download) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                listOf(DownloadQuality.HiRes24Bit, DownloadQuality.Lossless).forEach { quality ->
-                    val isSelected = settings.defaultQuality == quality
-                    FilterChip(
-                        selected = isSelected,
-                        onClick = { viewModel.setDefaultQuality(quality) },
-                        label = { Text(quality.label, color = if (isSelected) Color.Black else Color.White) },
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = PremiumAccent,
-                            containerColor = Color.White.copy(0.05f)
-                        ),
-                        border = null
-                    )
-                }
-            }
-            Text(
-                text = settings.defaultQuality.description,
-                color = Color.White.copy(0.5f),
-                fontSize = 12.sp,
-                modifier = Modifier.padding(top = 4.dp)
-            )
-        }
-
-        Spacer(Modifier.height(16.dp))
-
-        SettingsSection(title = "File Naming", icon = Icons.Rounded.DriveFileRenameOutline) {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilenameTemplate.entries.forEach { template ->
-                    val isSelected = settings.filenameTemplate == template
-                    FilterChip(
-                        selected = isSelected,
-                        onClick = { viewModel.setFilenameTemplate(template) },
-                        label = { Text(template.label, color = if (isSelected) Color.Black else Color.White) },
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = PremiumAccent,
-                            containerColor = Color.White.copy(0.05f)
-                        ),
-                        border = null
-                    )
-                    if (isSelected) {
-                        Text(
-                            text = template.example,
-                            color = Color.Cyan.copy(0.7f),
-                            fontSize = 12.sp,
-                            modifier = Modifier.padding(start = 8.dp)
-                        )
-                    }
-                }
-            }
-        }
-
-        Spacer(Modifier.height(16.dp))
-
-        SettingsSection(title = "Folder Options", icon = Icons.Rounded.Folder) {
-            DspToggleRow("Create album subfolders", settings.createAlbumSubfolders) {
-                viewModel.setCreateAlbumSubfolders(it)
-            }
-            DspToggleRow("Overwrite existing files", settings.overwriteExisting) {
-                viewModel.setOverwriteExisting(it)
-            }
-        }
-
-        Spacer(Modifier.height(16.dp))
-
-        SettingsSection(title = "Download Location", icon = Icons.Rounded.FolderOpen) {
-            Text(
-                text = settings.downloadLocation ?: "Not set",
-                color = if (settings.downloadLocation != null) Color.White else Color.White.copy(0.5f),
-                fontSize = 12.sp
-            )
-            Spacer(Modifier.height(8.dp))
-            Button(
-                onClick = { folderPickerLauncher.launch(null) },
-                colors = ButtonDefaults.buttonColors(containerColor = Color.Cyan),
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Text("Choose Folder", color = Color.Black, fontWeight = FontWeight.Bold)
-            }
-        }
-    }
-}
-
-@Composable
 fun FullScanPopup(progress: Float, count: Int, albums: Int, artists: Int) {
     Dialog(
         onDismissRequest = { },
@@ -1266,7 +1674,7 @@ fun FullScanPopup(progress: Float, count: Int, albums: Int, artists: Int) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth(0.85f)
-                    .heightIn(max = 300.dp) // Adjusted to be more compact like filter popup
+                    .heightIn(max = 300.dp)
                     .shadow(
                         elevation = 28.dp, 
                         shape = RoundedCornerShape(28.dp),
@@ -1352,7 +1760,6 @@ fun SettingsSection(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.fillMaxWidth()
         ) {
-            // Accent bar
             Box(
                 modifier = Modifier
                     .width(3.dp)
@@ -1488,72 +1895,95 @@ private fun DspSliderRow(
     }
 }
 
-private fun formatSampleRateLabel(sampleRate: Int): String {
-    if (sampleRate == 0) return "Auto"
-    return if (sampleRate % 1000 == 0) {
-        "${sampleRate / 1000} kHz"
-    } else {
-        String.format(Locale.getDefault(), "%.1f kHz", sampleRate / 1000f)
+@Composable
+private fun DlSection(
+    title: String,
+    icon: ImageVector,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    Column(Modifier.fillMaxWidth()) {
+        // Section header
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .width(3.dp).height(18.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(Brush.verticalGradient(
+                        listOf(DownloadAccent, Color(0xFF0066FF))
+                    ))
+            )
+            Spacer(Modifier.width(10.dp))
+            Icon(icon, null, tint = DownloadAccent, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(8.dp))
+            Text(
+                title,
+                color = Color.White,
+                fontWeight = FontWeight.ExtraBold,
+                fontSize = 11.sp,
+                letterSpacing = 1.sp
+            )
+        }
+        // Card
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(20.dp))
+                .background(Brush.verticalGradient(
+                    listOf(Color(0xFF131B2A).copy(0.92f), Color(0xFF0C1018).copy(0.95f))
+                ))
+                .border(
+                    1.dp,
+                    Brush.verticalGradient(
+                        listOf(DownloadAccent.copy(0.18f), Color.White.copy(0.04f))
+                    ),
+                    RoundedCornerShape(20.dp)
+                )
+                .padding(18.dp),
+            content = content
+        )
     }
 }
 
 @Composable
-private fun EqBandEditor(
-    band: ParametricEqBand,
-    enabled: Boolean,
-    onBandEnabledChange: (Boolean) -> Unit,
-    onFrequencyChange: (Float) -> Unit,
-    onGainChange: (Float) -> Unit,
-    onQChange: (Float) -> Unit
+private fun DlToggleRow(
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
 ) {
-    Surface(
-        color = Color.White.copy(alpha = 0.04f),
-        shape = RoundedCornerShape(14.dp),
-        modifier = Modifier.fillMaxWidth()
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Column(Modifier.padding(12.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("Band ${band.id + 1}", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                Switch(
-                    checked = band.enabled,
-                    onCheckedChange = onBandEnabledChange,
-                    enabled = enabled,
-                    colors = SwitchDefaults.colors(
-                        checkedThumbColor = PremiumAccent,
-                        checkedTrackColor = PremiumAccent.copy(alpha = 0.32f)
-                    )
-                )
-            }
-            DspSliderRow(
-                title = "Frequency",
-                value = band.frequencyHz,
-                range = 20f..20_000f,
-                enabled = enabled && band.enabled,
-                valueText = {
-                    if (it >= 1000f) String.format(Locale.getDefault(), "%.1f kHz", it / 1000f) else "${it.toInt()} Hz"
-                },
-                onValueChange = onFrequencyChange
-            )
-            DspSliderRow(
-                title = "Gain",
-                value = band.gainDb,
-                range = -12f..12f,
-                enabled = enabled && band.enabled,
-                valueText = { "${it.toInt()} dB" },
-                onValueChange = onGainChange
-            )
-            DspSliderRow(
-                title = "Q",
-                value = band.q,
-                range = 0.2f..8f,
-                enabled = enabled && band.enabled,
-                valueText = { String.format(Locale.getDefault(), "%.2f", it) },
-                onValueChange = onQChange
-            )
+        Column(Modifier.weight(1f)) {
+            Text(title, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+            Text(subtitle, color = Color.White.copy(0.45f), fontSize = 11.sp, lineHeight = 15.sp)
         }
+        Spacer(Modifier.width(12.dp))
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = DownloadAccent,
+                checkedTrackColor = DownloadAccent.copy(0.28f),
+                uncheckedThumbColor = Color.White.copy(0.6f),
+                uncheckedTrackColor = Color.White.copy(0.12f)
+            )
+        )
     }
+}
+
+@Composable
+private fun DlDivider() {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 12.dp)
+            .height(1.dp)
+            .background(Color.White.copy(0.06f))
+    )
 }
