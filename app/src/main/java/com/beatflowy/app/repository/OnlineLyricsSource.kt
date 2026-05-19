@@ -1,6 +1,8 @@
 package com.beatflowy.app.repository
 
+import android.util.Log
 import com.beatflowy.app.model.LrcLine
+import com.google.gson.annotations.SerializedName
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -27,15 +29,15 @@ interface LrcLibService {
 }
 
 data class LrcLibResponse(
-    val id: Int,
-    val name: String?,
-    val trackName: String?,
-    val artistName: String?,
-    val albumName: String?,
-    val duration: Int?,
-    val instrumental: Boolean,
-    val plainLyrics: String?,
-    val syncedLyrics: String?
+    @SerializedName("id") val id: Int,
+    @SerializedName("name") val name: String?,
+    @SerializedName("trackName") val trackName: String?,
+    @SerializedName("artistName") val artistName: String?,
+    @SerializedName("albumName") val albumName: String?,
+    @SerializedName("duration") val duration: Int?,
+    @SerializedName("instrumental") val instrumental: Boolean,
+    @SerializedName("plainLyrics") val plainLyrics: String?,
+    @SerializedName("syncedLyrics") val syncedLyrics: String?
 )
 
 class OnlineLyricsSource {
@@ -52,30 +54,44 @@ class OnlineLyricsSource {
         durationMs: Long
     ): LyricsResult? = withContext(Dispatchers.IO) {
         val durationSec = (durationMs / 1000).toInt()
-        
-        // 1. Try LrcLib precise get (often the best)
-        runCatching {
-            val response = lrcLibService.getLyrics(artist, title, album, durationSec)
-            if (isValidResponse(response)) {
-                return@withContext createResultFromResponse(response)
+
+        // ── 1. Precise get (exact metadata match by lrclib) ───────────────────────
+        if (durationSec > 0) {
+            runCatching {
+                val response = lrcLibService.getLyrics(artist, title, album, durationSec)
+                if (isValidResponse(response)) {
+                    val resDur = response.duration ?: 0
+                    // Accept only if duration is within 3s of actual song length
+                    if (abs(resDur - durationSec) <= 3) {
+                        return@withContext createResultFromResponse(response)
+                    }
+                }
             }
         }
 
-        // 2. Search LrcLib with scoring
+        // ── 2. Search with multi-result scoring ───────────────────────────────────
         runCatching {
-            val query = "$artist $title".take(100)
+            val query = buildString {
+                append(artist.take(40))
+                append(" ")
+                append(title.take(40))
+            }
             val searchResults = lrcLibService.searchLyrics(query)
-            
+
             val bestMatch = searchResults
                 .filter { isValidResponse(it) }
-                .map { res -> res to calculateScore(res, artist, title, album, durationSec) }
-                .filter { it.second >= 0.5 } // Minimum quality threshold
+                .mapNotNull { res ->
+                    val score = calculateScore(res, artist, title, album, durationSec)
+                    if (score >= 0.55) res to score else null   // raised threshold
+                }
                 .maxByOrNull { it.second }
                 ?.first
 
             if (bestMatch != null) {
                 return@withContext createResultFromResponse(bestMatch)
             }
+        }.onFailure { e ->
+            Log.e("OnlineLyricsSource", "Search failed: ${e.message}")
         }
 
         null
@@ -110,7 +126,9 @@ class OnlineLyricsSource {
     ): Double {
         // 1. Reject bad matches
         val resDuration = res.duration ?: 0
-        if (abs(resDuration - durationSec) > 5) return 0.0
+        // Reject if duration differs by more than 4s OR more than 3% of song length
+        val maxAllowedGap = maxOf(4, (durationSec * 0.03).toInt())
+        if (abs(resDuration - durationSec) > maxAllowedGap) return 0.0
         
         val titleSim = similarity(title, res.trackName ?: "")
         if (titleSim < 0.5) return 0.0

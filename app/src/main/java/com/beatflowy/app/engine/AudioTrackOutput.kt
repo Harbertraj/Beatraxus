@@ -22,7 +22,7 @@ class AudioTrackOutput(
 
     @Volatile
     private var audioTrack: AudioTrack? = null
-    
+
     private var sampleRate = 44_100
     private var targetSampleRate = 44_100
     private var sampleFormat = SampleFormat.AUTO
@@ -44,6 +44,10 @@ class AudioTrackOutput(
     private var ditherState = 0x1234ABCD
     private var lastThreadId = -1L
 
+    private val isMtkDevice = Build.HARDWARE.lowercase().contains("mt") || 
+                             Build.BOARD.lowercase().contains("mt") ||
+                             Build.MANUFACTURER.lowercase().contains("mediatek")
+
     fun setOutputMode(mode: OutputMode) {
         synchronized(stateLock) {
             selectedMode = mode
@@ -58,7 +62,7 @@ class AudioTrackOutput(
         outputDeviceName = deviceTypeLabel(device)
         supportedDirectRates = detectDirectRates()
         val maxDirectRate = supportedDirectRates.maxOrNull() ?: 48_000
-        val hiResSupported = supportedDirectRates.any { it > 48_000 } || Build.MANUFACTURER.contains("MTK", ignoreCase = true) || Build.HARDWARE.contains("mt", ignoreCase = true)
+        val hiResSupported = supportedDirectRates.any { it > 48_000 }
         val summary = if (hiResSupported) {
             "MTK HiFi / Direct PCM available on $outputDeviceName"
         } else {
@@ -80,7 +84,7 @@ class AudioTrackOutput(
 
     override fun init(sampleRate: Int, channels: Int, bitDepth: Int): Boolean = synchronized(stateLock) {
         refreshRouteState()
-        
+
         val channelConfig = when (channels) {
             1 -> AudioFormat.CHANNEL_OUT_MONO
             2 -> AudioFormat.CHANNEL_OUT_STEREO
@@ -91,45 +95,45 @@ class AudioTrackOutput(
             val supportedEncodings = listOf(
                 AudioFormat.ENCODING_PCM_FLOAT,
                 AudioFormat.ENCODING_PCM_32BIT,
-                AudioFormat.ENCODING_PCM_24BIT_PACKED
-            ).filter { enc -> 
+                AudioFormat.ENCODING_PCM_24BIT_PACKED,
+                AudioFormat.ENCODING_PCM_16BIT
+            ).filter { enc ->
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     isDirectPlaybackSupported(sampleRate, channelConfig, enc)
-                } else false
+                } else true // Assume supported on older if user forced HI_RES
             }
 
-            if (supportedEncodings.isNotEmpty()) {
+            // For MTK devices, we force HI_RES mode if selected, as API detection often fails
+            if (supportedEncodings.isNotEmpty() || sampleRate > 48000 || isMtkDevice) {
                 OutputMode.HI_RES
             } else {
-                if (sampleRate > 48000 && isDirectPlaybackSupported(sampleRate, channelConfig, AudioFormat.ENCODING_PCM_16BIT)) {
-                    OutputMode.HI_RES
-                } else {
-                    OutputMode.AAUDIO
-                }
+                OutputMode.AAUDIO
             }
         } else {
             OutputMode.AAUDIO
         }
 
         if (activeMode == OutputMode.AAUDIO) {
+            // AAudio path: use hardware native rate to avoid Android SRC
             this.sampleRate = getHardwareSampleRate()
             currentEncoding = AudioFormat.ENCODING_PCM_FLOAT
         } else {
+            // MTK HiFi path: use the exact target rate requested by the DSP pipeline
             this.sampleRate = resolveSupportedSampleRate(if (targetSampleRate > 0) targetSampleRate else sampleRate)
             currentEncoding = resolveBestEncoding(bitDepth, channelConfig)
         }
-        
+
         this.channels = channels
         currentBytesPerSample = bytesPerSample(currentEncoding)
 
         val minBuffer = AudioTrack.getMinBufferSize(this.sampleRate, channelConfig, currentEncoding)
-        val bufferSize = minBuffer * 3
+        val bufferSize = minBuffer * 8
         if (bufferSize <= 0) return false
 
         try {
             val oldTrack = audioTrack
             audioTrack = null // Disconnect immediately
-            
+
             oldTrack?.let {
                 try {
                     it.pause()
@@ -140,16 +144,10 @@ class AudioTrackOutput(
                     Log.e("AudioTrackOutput", "Error releasing old track", e)
                 }
             }
-            
+
             val audioAttributes = AudioAttributes.Builder()
                 .setUsage(AudioAttributes.USAGE_MEDIA)
-                .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).apply {
-                    if (activeMode == OutputMode.HI_RES) {
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                            setFlags(AudioAttributes.FLAG_HW_AV_SYNC)
-                        }
-                    }
-                }
+                .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
                 .build()
 
             val audioFormat = AudioFormat.Builder()
@@ -163,7 +161,7 @@ class AudioTrackOutput(
                 .setAudioFormat(audioFormat)
                 .setBufferSizeInBytes(bufferSize)
                 .setTransferMode(AudioTrack.MODE_STREAM)
-                .setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY)
+                .setPerformanceMode(AudioTrack.PERFORMANCE_MODE_NONE)
                 .build()
 
             if (audioTrack?.state != AudioTrack.STATE_INITIALIZED) {
@@ -192,6 +190,13 @@ class AudioTrackOutput(
         try {
             applyTrackVolume()
             track.play()
+        } catch (_: Exception) {}
+    }
+
+    override fun pause() {
+        val track = audioTrack
+        try {
+            track?.pause()
         } catch (_: Exception) {}
     }
 
@@ -310,23 +315,14 @@ class AudioTrackOutput(
             dvcEnabled = enabled
             dvcMode = DvcMode.entries.firstOrNull { it.name == mode } ?: DvcMode.DAC
             dvcLevel = level.coerceIn(0f, 1f)
-            
+
             applyTrackVolume()
         }
     }
 
     private fun applyTrackVolume() {
         val track = audioTrack ?: return
-        if (dvcEnabled) {
-            // Volume controlled by NativeDsp.setDvcLevel() — do not apply here to avoid double attenuation.
-            track.setVolume(1f)
-        } else {
-            // When DVC is OFF, the track volume follows system volume
-            val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-            val current = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
-            val vol = current.toFloat() / max.toFloat()
-            track.setVolume(vol)
-        }
+        track.setVolume(1.0f)
     }
 
     override fun setSampleFormat(format: SampleFormat) {
@@ -335,9 +331,20 @@ class AudioTrackOutput(
         }
     }
 
-    override fun outputSampleRate(): Int = synchronized(stateLock) {
-        if (activeMode == OutputMode.AAUDIO) getHardwareSampleRate() else sampleRate
-    }
+    /**
+     * Returns the actual initialized sample rate of the AudioTrack.
+     *
+     * Previously, this re-read the hardware property in AAudio mode, which returned a stale
+     * value during the window between mode-switch (AAudio <-> MTK HiFi) and the next init().
+     * Now we always return [sampleRate], which is set correctly by init() for both modes:
+     *   - AAudio:    set to getHardwareSampleRate()
+     *   - MTK HiFi:  set to resolveSupportedSampleRate(targetSampleRate)
+     *
+     * This makes resolveTargetSampleRate() in AudioEngine see the right output rate immediately
+     * after a mode toggle, allowing the DSP resampler to update without a full pipeline restart.
+     */
+    override fun outputSampleRate(): Int = synchronized(stateLock) { sampleRate }
+
     override fun outputBitDepth(): Int = synchronized(stateLock) { currentBytesPerSample * 8 }
 
     override fun outputPathLabel(): String = synchronized(stateLock) {
@@ -365,13 +372,13 @@ class AudioTrackOutput(
         }
 
         if (activeMode == OutputMode.HI_RES) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && isDirectPlaybackSupported(sampleRate, channelConfig, AudioFormat.ENCODING_PCM_32BIT)) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && (isDirectPlaybackSupported(sampleRate, channelConfig, AudioFormat.ENCODING_PCM_32BIT) || isMtkDevice)) {
                 return AudioFormat.ENCODING_PCM_32BIT
             }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && isDirectPlaybackSupported(sampleRate, channelConfig, AudioFormat.ENCODING_PCM_24BIT_PACKED)) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && (isDirectPlaybackSupported(sampleRate, channelConfig, AudioFormat.ENCODING_PCM_24BIT_PACKED) || isMtkDevice)) {
                 return AudioFormat.ENCODING_PCM_24BIT_PACKED
             }
-            if (isDirectPlaybackSupported(sampleRate, channelConfig, AudioFormat.ENCODING_PCM_FLOAT)) {
+            if (isDirectPlaybackSupported(sampleRate, channelConfig, AudioFormat.ENCODING_PCM_FLOAT) || isMtkDevice) {
                 return AudioFormat.ENCODING_PCM_FLOAT
             }
             return AudioFormat.ENCODING_PCM_16BIT
@@ -388,7 +395,7 @@ class AudioTrackOutput(
         val device = preferredDevice ?: resolvePreferredOutputDevice()
         val isBluetooth = device?.type in BLUETOOTH_TYPES
         val isUsb = device?.type == AudioDeviceInfo.TYPE_USB_DEVICE || device?.type == AudioDeviceInfo.TYPE_USB_HEADSET
-        
+
         if (isBluetooth) {
             return BLUETOOTH_RATE_CANDIDATES.minByOrNull { kotlin.math.abs(it - requestedRate) } ?: 48_000
         }
@@ -404,7 +411,7 @@ class AudioTrackOutput(
                     ?: directRates.first()
             }
         }
-        
+
         if (isUsb) {
             val directRates = detectDirectRates()
             return directRates.minByOrNull { kotlin.math.abs(it - requestedRate) } ?: requestedRate
@@ -415,13 +422,36 @@ class AudioTrackOutput(
 
     private fun detectDirectRates(): List<Int> {
         val channelMask = AudioFormat.CHANNEL_OUT_STEREO
-        val encodings = mutableListOf(AudioFormat.ENCODING_PCM_16BIT)
+        val encodings = mutableListOf(
+            AudioFormat.ENCODING_PCM_16BIT,
+            AudioFormat.ENCODING_PCM_FLOAT
+        )
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) encodings.add(AudioFormat.ENCODING_PCM_24BIT_PACKED)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) encodings.add(AudioFormat.ENCODING_PCM_32BIT)
 
-        return DIRECT_RATE_CANDIDATES.filter { rate ->
-            encodings.any { enc -> isDirectPlaybackSupported(rate, channelMask, enc) }
+        val isMtkDevice = Build.HARDWARE.lowercase().contains("mt") || 
+                         Build.BOARD.lowercase().contains("mt") ||
+                         Build.MANUFACTURER.lowercase().contains("mediatek")
+
+        val rates = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val supported = DIRECT_RATE_CANDIDATES.filter { rate ->
+                encodings.any { enc -> isDirectPlaybackSupported(rate, channelMask, enc) }
+            }
+            // If API reports nothing but we are in HI_RES mode OR it's a known MTK device, 
+            // assume common hi-res rates are supported. Many MTK devices support hi-res 
+            // via direct path but isDirectPlaybackSupported returns false.
+            if (supported.isEmpty() && (selectedMode == OutputMode.HI_RES || isMtkDevice)) {
+                DIRECT_RATE_CANDIDATES.filter { it <= 192000 }
+            } else {
+                supported
+            }
+        } else {
+            // Older devices: assume standard rates at least
+            if (isMtkDevice) DIRECT_RATE_CANDIDATES.filter { it <= 192000 }
+            else DIRECT_RATE_CANDIDATES.filter { it <= 96000 }
         }
+        
+        return if (rates.isEmpty()) listOf(44100, 48000) else rates
     }
 
     private fun isDirectPlaybackSupported(
@@ -434,10 +464,6 @@ class AudioTrackOutput(
             val attrBuilder = AudioAttributes.Builder()
                 .setUsage(AudioAttributes.USAGE_MEDIA)
                 .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-            
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                attrBuilder.setFlags(AudioAttributes.FLAG_HW_AV_SYNC)
-            }
 
             AudioTrack.isDirectPlaybackSupported(
                 AudioFormat.Builder()
@@ -556,7 +582,7 @@ class AudioTrackOutput(
 
     companion object {
         private const val PCM_24_MAX = 8_388_607f
-        private val DIRECT_RATE_CANDIDATES = listOf(44_100, 48_000, 88_200, 96_000, 176_400, 192_000)
+        private val DIRECT_RATE_CANDIDATES = listOf(44_100, 48_000, 88_200, 96_000, 176_400, 192_000, 352_800, 384_000)
         private val BLUETOOTH_RATE_CANDIDATES = listOf(44_100, 48_000)
         private val BLUETOOTH_TYPES = setOf(
             AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,

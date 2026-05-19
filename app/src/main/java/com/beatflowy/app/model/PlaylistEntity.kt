@@ -12,13 +12,15 @@ data class PlaylistEntity(
 
 @Entity(tableName = "favorites")
 data class FavoriteEntity(
-    @PrimaryKey val songId: String
+    @PrimaryKey val songId: String,
+    val accountEmail: String? = null // null for local, email for cloud
 )
 
 @Entity(tableName = "recently_played")
 data class RecentlyPlayedEntity(
     @PrimaryKey val songId: String,
-    val timestamp: Long
+    val timestamp: Long,
+    val accountEmail: String? = null // null for local, email for cloud
 )
 
 @Entity(tableName = "songs")
@@ -37,6 +39,11 @@ data class SongEntity(
     val albumArtUriString: String?,
     val year: Int,
     val genre: String,
+    val albumArtist: String? = null,
+    val composer: String? = null,
+    val trackNumber: Int? = null,
+    val discNumber: Int? = null,
+    val lyrics: String? = null,
     val folder: String,
     val dateAdded: Long,
     val replayGainTrackDb: Float?,

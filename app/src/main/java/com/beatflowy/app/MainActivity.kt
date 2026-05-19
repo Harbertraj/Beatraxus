@@ -31,14 +31,19 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import android.accounts.AccountManager
-import com.google.android.gms.common.AccountPicker
+import com.google.android.gms.auth.api.signin.GoogleSignIn
+import com.google.android.gms.auth.api.signin.GoogleSignInOptions
+import com.google.android.gms.common.api.ApiException
+import com.google.android.gms.common.api.Scope
+import com.google.api.services.drive.DriveScopes
 import com.beatflowy.app.repository.DriveAccount
 import com.beatflowy.app.service.AudioPlaybackService
 import com.beatflowy.app.ui.screens.MainScreen
 import com.beatflowy.app.ui.screens.SettingsScreen
 import com.beatflowy.app.ui.screens.WelcomeScreen
-import com.beatflowy.app.ui.components.VolumeKnobOverlay
+import com.beatflowy.app.ui.screens.DownloadScreen
 import com.beatflowy.app.ui.components.dsp.DspScreen
+import com.beatflowy.app.viewmodel.QobuzDownloadViewModel
 import androidx.compose.ui.Modifier
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
@@ -56,6 +61,10 @@ class MainActivity : ComponentActivity() {
 
     private val viewModel: PlayerViewModel by viewModels {
         PlayerViewModelFactory(application)
+    }
+
+    private val downloadViewModel: QobuzDownloadViewModel by viewModels {
+        QobuzDownloadViewModel.Factory
     }
 
     private var serviceBound = false
@@ -97,20 +106,6 @@ class MainActivity : ComponentActivity() {
         bindAudioService()
     }
 
-    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
-        return when (keyCode) {
-            KeyEvent.KEYCODE_VOLUME_UP -> {
-                viewModel.incrementVolume()
-                true
-            }
-            KeyEvent.KEYCODE_VOLUME_DOWN -> {
-                viewModel.decrementVolume()
-                true
-            }
-            else -> super.onKeyDown(keyCode, event)
-        }
-    }
-
     private var isFirstCreate = true
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -125,6 +120,7 @@ class MainActivity : ComponentActivity() {
             BeatraxusTheme {
                 BeatraxusApp(
                     viewModel = viewModel,
+                    downloadViewModel = downloadViewModel,
                     onRequestPermissions = { requestPermissions() }
                 )
             }
@@ -213,17 +209,33 @@ sealed class Screen(val route: String) {
     object Main      : Screen("main")
     object Settings  : Screen("settings")
     object Dsp       : Screen("dsp")
+    object Download  : Screen("download_screen")
 }
 
 @Composable
 fun BeatraxusApp(
     viewModel: PlayerViewModel,
+    downloadViewModel: QobuzDownloadViewModel,
     onRequestPermissions: () -> Unit
 ) {
     val navController = rememberNavController()
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val view = LocalView.current
     val context = view.context
+
+    val downloadFolderPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        uri?.let {
+            context.contentResolver.takePersistableUriPermission(
+                it,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            )
+            viewModel.setDownloadLocation(it.toString())
+            downloadViewModel.setDownloadLocation(it.toString())
+        }
+        viewModel.consumeDownloadFolderPickerTrigger()
+    }
 
     val folderPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree()
@@ -237,16 +249,60 @@ fun BeatraxusApp(
         }
     }
 
+    // Note: For Google Drive API, a Web Client ID is often required in requestIdToken
+    // to avoid ApiException 10 (DEVELOPER_ERROR). 
+    // Ensure you have registered your SHA-1 in the Google Cloud Console.
+    val driveSignInOptions = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+        .requestEmail()
+        .requestProfile()
+        .requestScopes(
+            Scope(DriveScopes.DRIVE_READONLY),
+            Scope(DriveScopes.DRIVE_METADATA_READONLY)
+        )
+        .build()
+
+    val googleSignInClient = GoogleSignIn.getClient(context, driveSignInOptions)
+
     val driveAccountLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val task = GoogleSignIn.getSignedInAccountFromIntent(result.data)
+        try {
+            val account = task.getResult(ApiException::class.java)
+            if (account != null && account.email != null) {
+                viewModel.addDriveAccount(
+                    DriveAccount(
+                        email = account.email!!,
+                        accountName = account.displayName ?: account.email!!,
+                        photoUrl = account.photoUrl?.toString()
+                    )
+                )
+            }
+        } catch (e: ApiException) {
+            Log.e("MainActivity", "Google Sign-In failed", e)
+        }
+    }
+
+    val authRecoveryLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == android.app.Activity.RESULT_OK) {
-            val accountName = result.data?.getStringExtra(AccountManager.KEY_ACCOUNT_NAME) ?: return@rememberLauncherForActivityResult
-            viewModel.addDriveAccount(DriveAccount(accountName, accountName, null))
+            // Re-trigger whatever failed? For now, just clearing the intent
+            viewModel.consumeAuthRecoveryIntent()
+        }
+    }
+
+    LaunchedEffect(uiState.authRecoveryIntent) {
+        uiState.authRecoveryIntent?.let { intent ->
+            authRecoveryLauncher.launch(intent)
         }
     }
 
     LaunchedEffect(uiState.triggerFolderPicker) {
         if (uiState.triggerFolderPicker) {
             folderPickerLauncher.launch(null)
+        }
+    }
+
+    LaunchedEffect(uiState.triggerDownloadFolderPicker) {
+        if (uiState.triggerDownloadFolderPicker) {
+            downloadFolderPickerLauncher.launch(null)
         }
     }
 
@@ -310,8 +366,9 @@ fun BeatraxusApp(
             ) {
                 MainScreen(
                     viewModel            = viewModel,
-                    onNavigateToSettings  = { navController.navigate(Screen.Settings.route) },
-                    onNavigateToDsp = { navController.navigate(Screen.Dsp.route) }
+                    onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
+                    onNavigateToDsp      = { navController.navigate(Screen.Dsp.route) },
+                    onNavigateToDownload = { navController.navigate(Screen.Download.route) }
                 )
             }
             composable(
@@ -337,16 +394,15 @@ fun BeatraxusApp(
             ) {
                 SettingsScreen(
                     viewModel = viewModel,
+                    downloadViewModel = downloadViewModel,
                     onBack    = { navController.popBackStack() },
                     onNavigateToDsp = { navController.navigate(Screen.Dsp.route) },
                     onRequestGDriveAccount = {
-                        driveAccountLauncher.launch(
-                            AccountPicker.newChooseAccountIntent(
-                                AccountPicker.AccountChooserOptions.Builder()
-                                    .setAllowableAccountsTypes(listOf("com.google"))
-                                    .build()
-                            )
-                        )
+                        // Sign out first to ensure the account picker is always shown,
+                        // allowing the user to select a different/new account.
+                        googleSignInClient.signOut().addOnCompleteListener {
+                            driveAccountLauncher.launch(googleSignInClient.signInIntent)
+                        }
                     }
                 )
             }
@@ -372,9 +428,28 @@ fun BeatraxusApp(
                     }
                 )
             }
+            composable(
+                Screen.Download.route,
+                enterTransition = {
+                    slideIntoContainer(
+                        towards = AnimatedContentTransitionScope.SlideDirection.Start,
+                        animationSpec = tween(400, easing = FastOutSlowInEasing)
+                    ) + fadeIn(tween(400))
+                },
+                exitTransition = {
+                    slideOutOfContainer(
+                        towards = AnimatedContentTransitionScope.SlideDirection.End,
+                        animationSpec = tween(400, easing = FastOutSlowInEasing)
+                    ) + fadeOut(tween(400))
+                }
+            ) {
+                DownloadScreen(
+                    viewModel = downloadViewModel,
+                    onBack = { navController.popBackStack() },
+                    onPickFolder = { viewModel.openDownloadFolderPicker() }
+                )
+            }
         }
-
-        VolumeKnobOverlay(viewModel)
     }
 
     // Observe navigation backstack to determine the current screen

@@ -99,6 +99,7 @@ fun NowPlayingScreen(
     onNavigateToAlbum: (String) -> Unit,
     onToggleLyrics: () -> Unit = {},
     onAdjustOffset: (Long) -> Unit = {},
+    onSetLyricsOffset: (Long) -> Unit = {},
     showPipelineOverlay: Boolean = false,
     onTogglePipeline: (Boolean) -> Unit = {},
     onSetSleepTimer: (Int, Boolean, Int) -> Unit = { _, _, _ -> },
@@ -410,6 +411,7 @@ fun NowPlayingScreen(
                                 lyricsSource = uiState.lyricsSource,
                                 onLineClick = onSeek,
                                 onAdjustOffset = onAdjustOffset,
+                                onSetOffset = onSetLyricsOffset,
                                 modifier = Modifier.fillMaxSize(),
                                 onSwipeDown = { onClose() }
                             )
@@ -728,19 +730,6 @@ fun NowPlayingScreen(
                     }
                 }
             }
-
-            AnimatedVisibility(
-                visible = showPipelineOverlay && !showQueue,
-                enter = fadeIn(tween(220)),
-                exit = fadeOut(tween(180))
-            ) {
-                AudioPipelineOverlay(
-                    song = song,
-                    uiState = uiState,
-                    onDismiss = { onTogglePipeline(false) },
-                    modifier = Modifier.fillMaxSize()
-                )
-            }
         }
 
         if (showSleepTimerSheet) {
@@ -902,7 +891,7 @@ fun AudioQualityBadge(
     }
 }
 
-private data class PipelineOverlayState(
+data class PipelineOverlayState(
     val codec: String,
     val bitrateLabel: String,
     val sampleRateLabel: String,
@@ -913,7 +902,7 @@ private data class PipelineOverlayState(
 )
 
 @Composable
-private fun AudioPipelineOverlay(
+fun AudioPipelineOverlay(
     song: Song,
     uiState: com.beatflowy.app.model.PlayerUiState,
     onDismiss: () -> Unit,
@@ -1026,7 +1015,7 @@ fun TechnicalInfo(song: Song, uiState: com.beatflowy.app.model.PlayerUiState) {
                 (song.fileSizeBytes * 8) / song.durationMs
             } else 0L
             
-            if (displayBitrate > 0) {
+            if (displayBitrate > 0 && song.source.name == "LOCAL") {
                 append("${displayBitrate}KBPS ")
             }
 
@@ -1200,7 +1189,7 @@ private fun fmtSleepTime(seconds: Int): String {
     return if (m > 0) "%d:%02d".format(m, s) else "%ds".format(s)
 }
 
-private fun buildPipelineOverlayState(
+fun buildPipelineOverlayState(
     song: Song,
     uiState: com.beatflowy.app.model.PlayerUiState
 ): PipelineOverlayState {
@@ -1285,14 +1274,14 @@ private fun SleepTimerSheet(
         onDismissRequest = onDismiss,
         containerColor = Color.Transparent,
         scrimColor = Color.Black.copy(alpha = 0.75f),
-        dragHandle = null,
-        windowInsets = WindowInsets(0)
+        dragHandle = null
     ) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(topStart = 42.dp, topEnd = 42.dp))
                 .background(Color(0xFF161414))
+                .windowInsetsPadding(WindowInsets(0.dp))
         ) {
             // Background Layer with full coverage
             AsyncImage(
@@ -1563,7 +1552,7 @@ fun PremiumSnappingSlider(
         // Track Progress
         Box(
             modifier = Modifier
-                .fillMaxWidth(animatedValue)
+                .fillMaxWidth(animatedValue.coerceIn(0f, 1f))
                 .fillMaxHeight()
                 .background(
                     Brush.horizontalGradient(

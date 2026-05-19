@@ -4,7 +4,7 @@ import android.net.Uri
 import com.beatflowy.app.model.OutputMode
 import com.beatflowy.app.repository.LyricsSource
 
-enum class SongSource { LOCAL, GDRIVE }
+enum class SongSource { LOCAL, GDRIVE, WEB, TELEGRAM }
 
 data class Song(
     val id: String,
@@ -21,6 +21,11 @@ data class Song(
     val albumArtUri: Uri? = null,
     val year: Int = 0,
     val genre: String = "Unknown",
+    val albumArtist: String? = null,
+    val composer: String? = null,
+    val trackNumber: Int? = null,
+    val discNumber: Int? = null,
+    val lyrics: String? = null,
     val folder: String = "",
     val dateAdded: Long = 0,
     val replayGainTrackDb: Float? = null,
@@ -30,7 +35,8 @@ data class Song(
     val isFavorite: Boolean = false,
     val source: SongSource = SongSource.LOCAL,
     val driveFileId: String? = null,
-    val driveAccountEmail: String? = null
+    val driveAccountEmail: String? = null,
+    val telegramChannelUrl: String? = null
 )
 
 data class Playlist(
@@ -59,6 +65,10 @@ enum class SortType {
 
 enum class ViewMode {
     LIST, GRID_2, GRID_3, GRID_4
+}
+
+enum class LibraryMode {
+    LOCAL, CLOUD, COMBINED
 }
 
 data class PlayerUiState(
@@ -91,6 +101,7 @@ data class PlayerUiState(
     val showQueue: Boolean = false,
     val upcomingSongs: List<Song> = emptyList(),
     val searchQuery: String = "",
+    val authRecoveryIntent: android.content.Intent? = null,
     val isMultiSelectMode: Boolean = false,
     val selectedSongIds: Set<String> = emptySet(),
     val sortType: SortType = SortType.NAME,
@@ -128,11 +139,18 @@ data class PlayerUiState(
     val sleepTimerPlayCount: Int = 0, // 0 means play count timer inactive
     val sleepTimerRemainingPlayCount: Int = 0,
     val musicFolders: List<String> = emptyList(),
+    val blockedFolders: List<String> = emptyList(),
+    val downloadLocation: String? = null,
     val triggerFolderPicker: Boolean = false,
+    val triggerDownloadFolderPicker: Boolean = false,
     val showVolumeOverlay: Boolean = false,
     val settingsIconX: Float = 0f,
-    val settingsIconY: Float = 0f
-) {
+    val settingsIconY: Float = 0f,
+    val selectedCloudEmail: String? = null,
+    val selectedTelegramChannelUrl: String? = null,
+    val libraryMode: LibraryMode = LibraryMode.LOCAL
+)
+{
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
         if (other !is PlayerUiState) return false
@@ -200,7 +218,13 @@ data class PlayerUiState(
                 sleepTimerPlayCount == other.sleepTimerPlayCount &&
                 sleepTimerRemainingPlayCount == other.sleepTimerRemainingPlayCount &&
                 musicFolders == other.musicFolders &&
-                triggerFolderPicker == other.triggerFolderPicker
+                blockedFolders == other.blockedFolders &&
+                downloadLocation == other.downloadLocation &&
+                triggerFolderPicker == other.triggerFolderPicker &&
+                triggerDownloadFolderPicker == other.triggerDownloadFolderPicker &&
+                selectedCloudEmail == other.selectedCloudEmail &&
+                selectedTelegramChannelUrl == other.selectedTelegramChannelUrl &&
+                libraryMode == other.libraryMode
     }
 
     override fun hashCode(): Int {
@@ -268,7 +292,13 @@ data class PlayerUiState(
         result = 31 * result + sleepTimerPlayCount
         result = 31 * result + sleepTimerRemainingPlayCount
         result = 31 * result + musicFolders.hashCode()
+        result = 31 * result + blockedFolders.hashCode()
+        result = 31 * result + (downloadLocation?.hashCode() ?: 0)
         result = 31 * result + triggerFolderPicker.hashCode()
+        result = 31 * result + triggerDownloadFolderPicker.hashCode()
+        result = 31 * result + (selectedCloudEmail?.hashCode() ?: 0)
+        result = 31 * result + (selectedTelegramChannelUrl?.hashCode() ?: 0)
+        result = 31 * result + libraryMode.hashCode()
         return result
     }
 }

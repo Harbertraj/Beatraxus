@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.beatflowy.app.model.Song
 import com.beatflowy.app.ui.theme.*
+import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 @Composable
@@ -130,6 +131,27 @@ fun SongListItem(
 
     val haptic = LocalHapticFeedback.current
 
+    // Quality determination logic
+    val rawFormat = song.format.lowercase()
+    val baseFormat = rawFormat.substringBefore(" ").trim()
+    val bitDepth = when {
+        rawFormat.contains("24") -> 24
+        rawFormat.contains("16") -> 16
+        song.bitDepth > 0 -> song.bitDepth
+        else -> 16
+    }
+    val sampleRate = song.sampleRateHz
+    val bitrate = song.bitrate
+    
+    val durationMin = song.durationMs / 60000.0
+    val sizeMb = song.fileSizeBytes / (1024.0 * 1024.0)
+    val isLikelyLossyM4A = (baseFormat == "m4a" || baseFormat == "mp4" || baseFormat == "aac") && 
+        ((durationMin > 0 && (sizeMb / durationMin) < 2.3) || (bitrate > 0 && bitrate < 400000))
+
+    val isALAC = baseFormat.contains("alac") || ((baseFormat == "m4a" || baseFormat == "mp4") && !isLikelyLossyM4A)
+    val isLosslessFormat = baseFormat.contains("flac") || isALAC || baseFormat.contains("wav") || baseFormat.contains("dsd") || baseFormat.contains("aiff")
+    val isHiRes = (bitDepth >= 24 || sampleRate > 48000) && isLosslessFormat
+
     Box(
         modifier = modifier
             .fillMaxWidth()
@@ -181,7 +203,7 @@ fun SongListItem(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center
                 ) {
-                    val formatColor = getFormatColor(song.format)
+                    val formatColor = getFormatColor(baseFormat)
                     Surface(
                         color = formatColor.copy(alpha = 0.15f),
                         shape = RoundedCornerShape(5.dp),
@@ -189,7 +211,7 @@ fun SongListItem(
                         modifier = Modifier.padding(bottom = 2.5.dp)
                     ) {
                         Text(
-                            text = song.format.uppercase(),
+                            text = if (isALAC) "ALAC" else baseFormat.uppercase(),
                             color = formatColor,
                             fontSize = 8.sp,
                             fontWeight = FontWeight.Black,
@@ -199,13 +221,13 @@ fun SongListItem(
                         )
                     }
                     Surface(
-                        color = Color.White.copy(alpha = 0.05f),
+                        color = if (isHiRes) Color(0xFFFFD54F).copy(alpha = 0.15f) else Color.White.copy(alpha = 0.05f),
                         shape = RoundedCornerShape(4.dp),
-                        border = BorderStroke(0.5.dp, Color.White.copy(alpha = 0.15f))
+                        border = BorderStroke(0.5.dp, if (isHiRes) Color(0xFFFFD54F).copy(alpha = 0.4f) else Color.White.copy(alpha = 0.15f))
                     ) {
                         Text(
-                            text = if (song.bitDepth > 0) "${song.bitDepth}BIT" else "16BIT",
-                            color = Color.White.copy(alpha = 0.8f),
+                            text = "${bitDepth}BIT",
+                            color = if (isHiRes) Color(0xFFFFD54F) else Color.White.copy(alpha = 0.8f),
                             fontSize = 7.5.sp,
                             fontWeight = FontWeight.Bold,
                             modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
@@ -237,26 +259,32 @@ fun SongListItem(
                         Icon(
                             Icons.Rounded.Badge, 
                             null, 
-                            tint = Color.Gray, 
+                            tint = if (isHiRes) Color(0xFFFFD54F).copy(0.7f) else if (isLosslessFormat) Color(0xFF4FC3F7).copy(0.7f) else Color.Gray, 
                             modifier = Modifier.size(10.dp)
                         )
                         Spacer(Modifier.width(3.dp))
                         Text(
                             text = buildString {
                                 append(formatDuration(song.durationMs))
-                                append(" | ")
-                                val khz = song.sampleRateHz / 1000.0
-                                if (khz == khz.toInt().toDouble()) {
-                                    append("${khz.toInt()}khz")
-                                } else {
-                                    append("${"%.1f".format(khz)}khz")
+                                
+                                if (sampleRate > 0) {
+                                    append(" | ")
+                                    val khz = sampleRate / 1000.0
+                                    if (khz == khz.toInt().toDouble()) {
+                                        append("${khz.toInt()}kHz")
+                                    } else {
+                                        append("${"%.1f".format(java.util.Locale.US, khz)}kHz")
+                                    }
                                 }
-                                if (song.bitrate > 0) {
-                                    append(" | ${song.bitrate / 1000} KBPS")
+
+                                if (isLosslessFormat && bitDepth > 0) {
+                                    append(" | ${bitDepth}bit")
+                                } else if (bitrate > 0) {
+                                    append(" | ${bitrate / 1000}kbps")
                                 }
                             },
                             fontSize = 11.sp,
-                            color = Color.Gray,
+                            color = if (isHiRes) Color(0xFFFFD54F).copy(0.7f) else if (isLosslessFormat) Color(0xFF4FC3F7).copy(0.7f) else Color.Gray,
                             fontWeight = FontWeight.Medium,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis

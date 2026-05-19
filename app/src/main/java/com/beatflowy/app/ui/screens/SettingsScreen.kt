@@ -1,9 +1,12 @@
 package com.beatflowy.app.ui.screens
 
+import java.util.Locale
 import android.graphics.Shader
 import android.os.Build
 import android.graphics.RenderEffect as AndroidRenderEffect
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.fadeIn
@@ -22,6 +25,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
@@ -52,10 +56,13 @@ import com.beatflowy.app.model.OutputMode
 import com.beatflowy.app.model.DvcMode
 import com.beatflowy.app.model.ParametricEqBand
 import com.beatflowy.app.model.ResamplerMode
+import com.beatflowy.app.model.DownloadQuality
+import com.beatflowy.app.model.FilenameTemplate
 import com.beatflowy.app.repository.DriveAccount
 import com.beatflowy.app.ui.theme.AccentBlue
 import com.beatflowy.app.ui.theme.BgDeep
 import com.beatflowy.app.viewmodel.PlayerViewModel
+import com.beatflowy.app.viewmodel.QobuzDownloadViewModel
 
 private val PremiumAccent = Color(0xFF00F2FF)
 
@@ -63,6 +70,7 @@ private val PremiumAccent = Color(0xFF00F2FF)
 @Composable
 fun SettingsScreen(
     viewModel: PlayerViewModel,
+    downloadViewModel: QobuzDownloadViewModel,
     onBack: () -> Unit,
     onNavigateToDsp: () -> Unit,
     onRequestGDriveAccount: () -> Unit
@@ -118,9 +126,9 @@ fun SettingsScreen(
                                 fontSize = if (currentSection == null) 22.sp else 16.sp,
                                 letterSpacing = 2.sp
                             )
-                            if (currentSection != null) {
+                            currentSection?.let { section ->
                                 Text(
-                                    text = currentSection!!.uppercase(),
+                                    text = section.uppercase(Locale.getDefault()),
                                     color = Color.White.copy(0.6f),
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.Bold,
@@ -180,11 +188,18 @@ fun SettingsScreen(
                             onClick = { currentSection = "Library" }
                         )
                         SettingMenuItem(
-                            title = "Google Cloud",
-                            subtitle = "Stream music from your cloud storage",
+                            title = "Cloud Account",
+                            subtitle = "Stream music from Cloud and Telegram",
                             icon = Icons.Rounded.Cloud,
                             iconColor = Color(0xFF1A73E8),
                             onClick = { currentSection = "Cloud" }
+                        )
+                        SettingMenuItem(
+                            title = "Downloads",
+                            subtitle = "Quality, folder and file options",
+                            icon = Icons.Rounded.Download,
+                            iconColor = Color(0xFF00BCD4),
+                            onClick = { currentSection = "Downloads" }
                         )
                         SettingMenuItem(
                             title = "About",
@@ -200,6 +215,7 @@ fun SettingsScreen(
                             "Replay Gain" -> ReplayGainContent(uiState, viewModel)
                             "Library" -> LibraryContent(uiState, viewModel, onShowInfo = { showInfoPopup = true })
                             "Cloud" -> CloudContent(viewModel, onRequestGDriveAccount = onRequestGDriveAccount)
+                            "Downloads" -> DownloadsContent(downloadViewModel)
                             "About" -> AboutContent()
                         }
                     }
@@ -573,7 +589,7 @@ fun ReplayGainContent(uiState: com.beatflowy.app.model.PlayerUiState, viewModel:
                 value = config.replayGainPreamp,
                 range = -15f..15f,
                 enabled = true,
-                valueText = { String.format("%.1f dB", it) },
+                valueText = { String.format(Locale.getDefault(), "%.1f dB", it) },
                 onValueChange = viewModel::setReplayGainPreamp
             )
         }
@@ -616,14 +632,15 @@ fun LibraryContent(uiState: com.beatflowy.app.model.PlayerUiState, viewModel: co
             }
         }
         
-        if (uiState.errorMessage != null && (uiState.errorMessage!!.contains("Added") || uiState.errorMessage!!.contains("No new"))) {
-            Text(
-                uiState.errorMessage!!,
-                color = PremiumAccent,
-                fontSize = 12.sp,
-                modifier = Modifier.padding(top = 8.dp, start = 4.dp)
-            )
-        }
+                val error = uiState.errorMessage
+                if (error != null && (error.contains("Added") || error.contains("No new"))) {
+                    Text(
+                        error,
+                        color = PremiumAccent,
+                        fontSize = 12.sp,
+                        modifier = Modifier.padding(top = 8.dp, start = 4.dp)
+                    )
+                }
 
         Spacer(Modifier.height(16.dp))
 
@@ -801,70 +818,220 @@ fun LibraryContent(uiState: com.beatflowy.app.model.PlayerUiState, viewModel: co
 
 @Composable
 fun CloudContent(viewModel: PlayerViewModel, onRequestGDriveAccount: () -> Unit) {
-    val accounts by viewModel.driveAccounts.collectAsStateWithLifecycle(initialValue = emptyList())
+    val driveAccounts by viewModel.driveAccounts.collectAsStateWithLifecycle(initialValue = emptyList())
+    val telegramChannels by viewModel.telegramChannels.collectAsStateWithLifecycle(initialValue = emptyList())
+    
+    var driveQuery by remember { mutableStateOf("") }
+    var telegramUrl by remember { mutableStateOf("") }
 
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Text(
-            "GOOGLE CLOUD",
-            style = MaterialTheme.typography.labelSmall,
-            color = Color.Gray,
-            letterSpacing = 1.sp,
-            modifier = Modifier.padding(bottom = 12.dp)
-        )
+    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(24.dp)) {
+        // --- GOOGLE DRIVE SECTION ---
+        Column {
+            Text(
+                "GOOGLE DRIVE",
+                style = MaterialTheme.typography.labelSmall,
+                color = Color.Gray,
+                letterSpacing = 1.sp,
+                modifier = Modifier.padding(bottom = 12.dp)
+            )
 
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(containerColor = Color(0xFF1A1A2E)),
-            shape = RoundedCornerShape(16.dp),
-            border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(0.08f))
-        ) {
-            Column {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(52.dp)
-                            .background(Color(0xFF1A73E8).copy(0.15f), RoundedCornerShape(12.dp)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            Icons.Rounded.Cloud,
-                            contentDescription = null,
-                            tint = Color(0xFF1A73E8),
-                            modifier = Modifier.size(28.dp)
-                        )
-                    }
-                    Spacer(Modifier.width(16.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("Google Cloud", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
-                        Text("Connect your account", color = Color.White.copy(0.5f), fontSize = 13.sp)
-                    }
-                    Button(
-                        onClick = onRequestGDriveAccount,
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1A73E8)),
-                        shape = RoundedCornerShape(50),
-                        contentPadding = PaddingValues(horizontal = 24.dp, vertical = 10.dp)
-                    ) {
-                        Text("Connect", color = Color.White, fontWeight = FontWeight.Bold)
-                    }
-                }
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF1A1A2E)),
+                shape = RoundedCornerShape(16.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(0.08f))
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    OutlinedTextField(
+                        value = driveQuery,
+                        onValueChange = { driveQuery = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        placeholder = { Text("Search or add account...", color = Color.Gray, fontSize = 14.sp) },
+                        leadingIcon = { Icon(Icons.Rounded.Cloud, null, tint = Color(0xFF1A73E8), modifier = Modifier.size(20.dp)) },
+                        trailingIcon = {
+                            TextButton(onClick = onRequestGDriveAccount) {
+                                Text("Add", color = Color(0xFF1A73E8), fontWeight = FontWeight.Bold)
+                            }
+                        },
+                        shape = RoundedCornerShape(12.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Color(0xFF1A73E8).copy(0.5f),
+                            unfocusedBorderColor = Color.White.copy(0.1f),
+                            focusedContainerColor = Color.Black.copy(0.2f),
+                            unfocusedContainerColor = Color.Black.copy(0.2f),
+                            cursorColor = Color(0xFF1A73E8)
+                        ),
+                        singleLine = true,
+                        textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 15.sp)
+                    )
 
-                if (accounts.isNotEmpty()) {
-                    HorizontalDivider(color = Color.White.copy(0.08f), thickness = 1.dp)
-                    accounts.forEach { account ->
-                        ConnectedAccountRow(
-                            account = account,
-                            onScan = { viewModel.scanDriveAccount(account.email) },
-                            onToggle = { enabled -> viewModel.toggleDriveAccountEnabled(account.email, enabled) },
-                            onRemove = { viewModel.removeDriveAccount(account.email) }
-                        )
+                    val filteredDrive = driveAccounts.filter { 
+                        it.email.contains(driveQuery, ignoreCase = true) || it.accountName.contains(driveQuery, ignoreCase = true) 
+                    }
+                    
+                    if (filteredDrive.isNotEmpty()) {
+                        Spacer(Modifier.height(12.dp))
+                        filteredDrive.forEach { account ->
+                            ConnectedAccountRow(
+                                account = account,
+                                onScan = { viewModel.scanDriveAccount(account.email) },
+                                onToggle = { enabled -> viewModel.toggleDriveAccountEnabled(account.email, enabled) },
+                                onRemove = { viewModel.removeDriveAccount(account.email) }
+                            )
+                        }
                     }
                 }
             }
+        }
+
+        // --- TELEGRAM CHANNELS SECTION ---
+        Column {
+            Text(
+                "TELEGRAM CHANNELS",
+                style = MaterialTheme.typography.labelSmall,
+                color = Color.Gray,
+                letterSpacing = 1.sp,
+                modifier = Modifier.padding(bottom = 12.dp)
+            )
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF1A1A2E)),
+                shape = RoundedCornerShape(16.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(0.08f))
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    OutlinedTextField(
+                        value = telegramUrl,
+                        onValueChange = { telegramUrl = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        placeholder = { Text("Channel URL or @username...", color = Color.Gray, fontSize = 14.sp) },
+                        leadingIcon = { 
+                            Box(
+                                modifier = Modifier.size(20.dp).background(Color(0xFF2AABEE), CircleShape),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.AutoMirrored.Rounded.Send, null, tint = Color.White, modifier = Modifier.size(12.dp))
+                            }
+                        },
+                        trailingIcon = {
+                            TextButton(
+                                onClick = { 
+                                    if (telegramUrl.isNotBlank()) {
+                                        viewModel.addTelegramChannel(telegramUrl)
+                                        telegramUrl = ""
+                                    }
+                                }
+                            ) {
+                                Text(if (telegramChannels.any { it.url.contains(telegramUrl, true) || it.name.contains(telegramUrl, true) }) "Search" else "Join", 
+                                     color = Color(0xFF2AABEE), fontWeight = FontWeight.Bold)
+                            }
+                        },
+                        shape = RoundedCornerShape(12.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Color(0xFF2AABEE).copy(0.5f),
+                            unfocusedBorderColor = Color.White.copy(0.1f),
+                            focusedContainerColor = Color.Black.copy(0.2f),
+                            unfocusedContainerColor = Color.Black.copy(0.2f),
+                            cursorColor = Color(0xFF2AABEE)
+                        ),
+                        singleLine = true,
+                        textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 15.sp)
+                    )
+
+                    val filteredTelegram = telegramChannels.filter {
+                        it.name.contains(telegramUrl, ignoreCase = true) || it.url.contains(telegramUrl, ignoreCase = true)
+                    }
+
+                    if (filteredTelegram.isNotEmpty()) {
+                        Spacer(Modifier.height(12.dp))
+                        filteredTelegram.forEach { channel ->
+                            TelegramChannelRow(
+                                channel = channel,
+                                onSync = { viewModel.syncTelegramChannel(channel.url) },
+                                onToggle = { enabled -> viewModel.toggleTelegramChannelEnabled(channel.url, enabled) },
+                                onRemove = { viewModel.removeTelegramChannel(channel.url) }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+private fun TelegramChannelRow(
+    channel: com.beatflowy.app.model.TelegramChannel,
+    onSync: () -> Unit,
+    onToggle: (Boolean) -> Unit,
+    onRemove: () -> Unit
+) {
+    var showDelete by remember { mutableStateOf(false) }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .combinedClickable(
+                onClick = { /* Action if needed */ },
+                onLongClick = { showDelete = !showDelete }
+            )
+            .padding(vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(44.dp)
+                .background(Color(0xFF2AABEE).copy(0.15f), CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = channel.name.take(1).uppercase(),
+                color = Color(0xFF2AABEE),
+                fontWeight = FontWeight.Bold,
+                fontSize = 18.sp
+            )
+            
+            // Status dot
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .size(12.dp)
+                    .background(Color(0xFF1A1A2E), CircleShape)
+                    .padding(2.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(if (channel.enabled) Color(0xFF4CAF50) else Color.Gray, CircleShape)
+                )
+            }
+        }
+        
+        Spacer(Modifier.width(16.dp))
+        
+        Column(modifier = Modifier.weight(1f)) {
+            Text(channel.name, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            Text("@${channel.url.substringAfterLast("/")}", color = Color.White.copy(0.5f), fontSize = 12.sp)
+        }
+        
+        if (showDelete) {
+            IconButton(onClick = onRemove) {
+                Icon(Icons.Rounded.Delete, "Remove", tint = Color.Red.copy(0.8f))
+            }
+        } else {
+            IconButton(onClick = onSync) {
+                Icon(Icons.Rounded.Sync, "Sync", tint = Color.White.copy(0.6f))
+            }
+            Switch(
+                checked = channel.enabled,
+                onCheckedChange = onToggle,
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = Color(0xFF2AABEE),
+                    checkedTrackColor = Color(0xFF2AABEE).copy(0.3f)
+                )
+            )
         }
     }
 }
@@ -883,51 +1050,59 @@ private fun ConnectedAccountRow(
         modifier = Modifier
             .fillMaxWidth()
             .combinedClickable(
-                onClick = { /* Could do something here */ },
+                onClick = { /* Action if needed */ },
                 onLongClick = { showDelete = !showDelete }
             )
-            .padding(12.dp),
+            .padding(vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
             modifier = Modifier
-                .size(40.dp)
-                .background(Color(0xFF1A73E8).copy(0.2f), CircleShape),
+                .size(44.dp)
+                .background(Color(0xFF1A73E8).copy(0.15f), CircleShape),
             contentAlignment = Alignment.Center
         ) {
-            Icon(Icons.Rounded.Person, contentDescription = null, tint = Color(0xFF1A73E8))
+            Icon(Icons.Rounded.Person, contentDescription = null, tint = Color(0xFF1A73E8), modifier = Modifier.size(24.dp))
+            
+            // Sync status dot
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .size(12.dp)
+                    .background(Color(0xFF1A1A2E), CircleShape)
+                    .padding(2.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(if (account.enabled) Color(0xFF4CAF50) else Color.Gray, CircleShape)
+                )
+            }
         }
-        Spacer(Modifier.width(12.dp))
+        
+        Spacer(Modifier.width(16.dp))
+        
         Column(modifier = Modifier.weight(1f)) {
-            Text(account.email, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-            Text(if (account.enabled) "Sync enabled" else "Sync disabled", color = Color.Gray, fontSize = 12.sp)
+            Text(account.accountName, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            Text(account.email, color = Color.White.copy(0.5f), fontSize = 12.sp)
         }
-        
-        IconButton(
-            onClick = onScan,
-            modifier = Modifier.size(36.dp)
-        ) {
-            Icon(Icons.Rounded.Sync, contentDescription = "Sync", tint = Color.White.copy(0.7f), modifier = Modifier.size(20.dp))
-        }
-        
-        Spacer(Modifier.width(8.dp))
-        
-        Switch(
-            checked = account.enabled,
-            onCheckedChange = onToggle,
-            colors = SwitchDefaults.colors(
-                checkedThumbColor = Color(0xFF1A73E8),
-                checkedTrackColor = Color(0xFF1A73E8).copy(alpha = 0.5f)
-            )
-        )
         
         if (showDelete) {
-            IconButton(
-                onClick = onRemove,
-                modifier = Modifier.size(32.dp)
-            ) {
-                Icon(Icons.Rounded.Delete, contentDescription = "Remove", tint = Color.Red.copy(0.6f), modifier = Modifier.size(18.dp))
+            IconButton(onClick = onRemove) {
+                Icon(Icons.Rounded.Delete, "Remove", tint = Color.Red.copy(0.8f))
             }
+        } else {
+            IconButton(onClick = onScan) {
+                Icon(Icons.Rounded.Sync, "Sync", tint = Color.White.copy(0.6f))
+            }
+            Switch(
+                checked = account.enabled,
+                onCheckedChange = onToggle,
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = Color(0xFF1A73E8),
+                    checkedTrackColor = Color(0xFF1A73E8).copy(0.3f)
+                )
+            )
         }
     }
 }
@@ -975,6 +1150,102 @@ fun AboutContent() {
                     tint = Color.White,
                     modifier = Modifier.size(28.dp)
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun DownloadsContent(viewModel: QobuzDownloadViewModel) {
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val settings = uiState.downloadSettings
+    val folderPickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        uri?.let { viewModel.setDownloadLocation(it.toString()) }
+    }
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        SettingsSection(title = "Download Quality", icon = Icons.Rounded.Download) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                listOf(DownloadQuality.HiRes24Bit, DownloadQuality.Lossless).forEach { quality ->
+                    val isSelected = settings.defaultQuality == quality
+                    FilterChip(
+                        selected = isSelected,
+                        onClick = { viewModel.setDefaultQuality(quality) },
+                        label = { Text(quality.label, color = if (isSelected) Color.Black else Color.White) },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = PremiumAccent,
+                            containerColor = Color.White.copy(0.05f)
+                        ),
+                        border = null
+                    )
+                }
+            }
+            Text(
+                text = settings.defaultQuality.description,
+                color = Color.White.copy(0.5f),
+                fontSize = 12.sp,
+                modifier = Modifier.padding(top = 4.dp)
+            )
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        SettingsSection(title = "File Naming", icon = Icons.Rounded.DriveFileRenameOutline) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilenameTemplate.entries.forEach { template ->
+                    val isSelected = settings.filenameTemplate == template
+                    FilterChip(
+                        selected = isSelected,
+                        onClick = { viewModel.setFilenameTemplate(template) },
+                        label = { Text(template.label, color = if (isSelected) Color.Black else Color.White) },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = PremiumAccent,
+                            containerColor = Color.White.copy(0.05f)
+                        ),
+                        border = null
+                    )
+                    if (isSelected) {
+                        Text(
+                            text = template.example,
+                            color = Color.Cyan.copy(0.7f),
+                            fontSize = 12.sp,
+                            modifier = Modifier.padding(start = 8.dp)
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        SettingsSection(title = "Folder Options", icon = Icons.Rounded.Folder) {
+            DspToggleRow("Create album subfolders", settings.createAlbumSubfolders) {
+                viewModel.setCreateAlbumSubfolders(it)
+            }
+            DspToggleRow("Overwrite existing files", settings.overwriteExisting) {
+                viewModel.setOverwriteExisting(it)
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        SettingsSection(title = "Download Location", icon = Icons.Rounded.FolderOpen) {
+            Text(
+                text = settings.downloadLocation ?: "Not set",
+                color = if (settings.downloadLocation != null) Color.White else Color.White.copy(0.5f),
+                fontSize = 12.sp
+            )
+            Spacer(Modifier.height(8.dp))
+            Button(
+                onClick = { folderPickerLauncher.launch(null) },
+                colors = ButtonDefaults.buttonColors(containerColor = Color.Cyan),
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text("Choose Folder", color = Color.Black, fontWeight = FontWeight.Bold)
             }
         }
     }
@@ -1222,7 +1493,7 @@ private fun formatSampleRateLabel(sampleRate: Int): String {
     return if (sampleRate % 1000 == 0) {
         "${sampleRate / 1000} kHz"
     } else {
-        String.format("%.1f kHz", sampleRate / 1000f)
+        String.format(Locale.getDefault(), "%.1f kHz", sampleRate / 1000f)
     }
 }
 
@@ -1263,7 +1534,7 @@ private fun EqBandEditor(
                 range = 20f..20_000f,
                 enabled = enabled && band.enabled,
                 valueText = {
-                    if (it >= 1000f) String.format("%.1f kHz", it / 1000f) else "${it.toInt()} Hz"
+                    if (it >= 1000f) String.format(Locale.getDefault(), "%.1f kHz", it / 1000f) else "${it.toInt()} Hz"
                 },
                 onValueChange = onFrequencyChange
             )
@@ -1280,7 +1551,7 @@ private fun EqBandEditor(
                 value = band.q,
                 range = 0.2f..8f,
                 enabled = enabled && band.enabled,
-                valueText = { String.format("%.2f", it) },
+                valueText = { String.format(Locale.getDefault(), "%.2f", it) },
                 onValueChange = onQChange
             )
         }

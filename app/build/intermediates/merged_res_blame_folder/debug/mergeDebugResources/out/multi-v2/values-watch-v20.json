@@ -1,10 +1,10 @@
 {
     "logs": [
         {
-            "outputFile": "com.beatflowy.app-mergeDebugResources-91:/values-watch-v20/values-watch-v20.xml",
+            "outputFile": "com.beatflowy.app-mergeDebugResources-88:/values-watch-v20/values-watch-v20.xml",
             "map": [
                 {
-                    "source": "C:\\Users\\prasa\\.gradle\\caches\\8.10.2\\transforms\\a35924b48a59a1e281fd736e63b420d2\\transformed\\play-services-auth-20.7.0\\res\\values-watch-v20\\values.xml",
+                    "source": "C:\\Users\\Haaj Mens\\.gradle\\caches\\8.10.2\\transforms\\5d73e09419f83b3fb5464ff711d92dcb\\transformed\\play-services-auth-21.2.0\\res\\values-watch-v20\\values.xml",
                     "from": {
                         "startLines": "4,5,6,7,8,9,10,11",
                         "startColumns": "0,0,0,0,0,0,0,0",
@@ -21,7 +21,7 @@
                     }
                 },
                 {
-                    "source": "C:\\Users\\prasa\\.gradle\\caches\\8.10.2\\transforms\\89e805c2e68a3b79ff5f04b9e5c369cc\\transformed\\appcompat-1.6.1\\res\\values-watch-v20\\values-watch-v20.xml",
+                    "source": "C:\\Users\\Haaj Mens\\.gradle\\caches\\8.10.2\\transforms\\89e805c2e68a3b79ff5f04b9e5c369cc\\transformed\\appcompat-1.6.1\\res\\values-watch-v20\\values-watch-v20.xml",
                     "from": {
                         "startLines": "2,5,8",
                         "startColumns": "4,4,4",

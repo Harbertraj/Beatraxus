@@ -1,6 +1,6 @@
 # Beatraxus
 
-Beatraxus is a high-performance Android music player designed for audiophiles. It features a custom audio engine built on Media3 ExoPlayer with integrated resampling and equalization capabilities.
+Beatraxus is a high-performance Android music player designed for audiophiles. It features a custom low-latency audio engine built on AudioTrack with integrated resampling and equalization capabilities.
 
 ## Screenshots
 
@@ -12,7 +12,7 @@ Beatraxus is a high-performance Android music player designed for audiophiles. I
 
 ## Features
 
-- **High-Resolution Audio Support**: Custom audio pipeline using `DefaultAudioSink` with float output via a custom `RenderersFactory`.
+- **High-Resolution Audio Support**: Custom audio pipeline using `AudioTrack` with float output for maximum fidelity.
 - **Real-time Resampling**: Adjustable resampling to match your output device's capabilities (Native vs Hi-Res).
 - **10-Band Equalizer**: Fine-tune your listening experience with precise gain control.
 - **Modern UI**: Built entirely with Jetpack Compose following Material 3 guidelines.
@@ -24,9 +24,9 @@ Beatraxus is a high-performance Android music player designed for audiophiles. I
 
 - **Language**: Kotlin
 - **UI Framework**: Jetpack Compose (Material 3)
-- **Audio Engine**: AndroidX Media3 (ExoPlayer)
-- **Audio Processing**: Custom `AudioProcessor` implementation for real-time effects.
-- **Architecture**: MVVM with StateFlow, Coroutines, and Opt-in for Unstable Media3 APIs.
+- **Audio Engine**: Custom `AudioTrack`-based engine with native decoding.
+- **Audio Processing**: Custom real-time DSP implementation for effects.
+- **Architecture**: MVVM with StateFlow and Coroutines.
 - **Min SDK**: 26 (Android 8.0)
 - **Target SDK**: 34 (Android 14)
 

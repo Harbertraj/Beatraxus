@@ -22,7 +22,8 @@ data class LyricsLoadResult(
     val lines: List<LrcLine>,
     val source: LyricsSource,
     val type: LyricsType = LyricsType.PLAIN,
-    val rawContent: String? = null
+    val rawContent: String? = null,
+    val syncOffset: Long = 0L
 )
 
 class LyricsRepository(private val context: Context, private val database: AppDatabase) {
@@ -33,16 +34,27 @@ class LyricsRepository(private val context: Context, private val database: AppDa
     
     private val cache = ConcurrentHashMap<String, LyricsLoadResult>()
 
-    suspend fun saveLyrics(songId: String, lyricsText: String) {
-        lyricsDao.insertLyrics(LyricsEntity(songId, lyricsText))
+    suspend fun saveLyrics(songId: String, lyricsText: String, offset: Long = 0L) {
+        lyricsDao.insertLyrics(LyricsEntity(songId, lyricsText, syncOffset = offset))
         // Update memory cache
         val lines = LrcParser.parse(lyricsText)
         cache[songId] = LyricsLoadResult(
             lines = lines,
             source = LyricsSource.CACHE,
             type = determineType(lyricsText),
-            rawContent = lyricsText
+            rawContent = lyricsText,
+            syncOffset = offset
         )
+    }
+
+    suspend fun updateSyncOffset(songId: String, offset: Long) {
+        val existing = lyricsDao.getLyrics(songId)
+        if (existing != null) {
+            lyricsDao.insertLyrics(existing.copy(syncOffset = offset))
+            cache[songId]?.let {
+                cache[songId] = it.copy(syncOffset = offset)
+            }
+        }
     }
 
     /**
@@ -55,48 +67,46 @@ class LyricsRepository(private val context: Context, private val database: AppDa
      */
     fun getLyrics(song: Song): Flow<LyricsState> = flow {
         emit(LyricsState.Loading)
-        
-        var fallback: LyricsLoadResult? = null
 
-        // 1. Memory & DB Cache check
+        var bestResult: LyricsLoadResult? = null
+
+        // ── 1. Memory & DB cache (instant, no I/O wait) ──────────────────────────
         val cached = getCachedLyrics(song)
-        if (cached != null) {
-            Log.d(TAG, "Using cached lyrics for ${song.title} from ${cached.source} (Type: ${cached.type})")
-            if (cached.type != LyricsType.PLAIN) {
-                emit(LyricsState.Success(cached))
+        if (cached != null && cached.type == LyricsType.WORD_BY_WORD) {
+            emit(LyricsState.Success(cached))
+            return@flow
+        }
+        if (cached != null) bestResult = cached
+
+        // ── 2. Embedded tag (always check — user may have tagged file since cache) ─
+        val embedded = fetchEmbedded(song)
+        if (embedded != null) {
+            if (embedded.type == LyricsType.WORD_BY_WORD || embedded.type == LyricsType.SYNCED) {
+                emit(LyricsState.Success(embedded))
                 return@flow
             }
-            fallback = cached
-        }
-
-        // 2. Embedded Check
-        if (fallback == null || fallback.source != LyricsSource.EMBEDDED) {
-            val embedded = fetchEmbedded(song)
-            if (embedded != null) {
-                Log.d(TAG, "Found embedded lyrics for ${song.title} (Type: ${embedded.type})")
-                if (embedded.type != LyricsType.PLAIN) {
-                    emit(LyricsState.Success(embedded))
-                    return@flow
-                }
-                fallback = embedded
+            // Keep embedded plain as best candidate over cache
+            if (bestResult == null || bestResult!!.type == LyricsType.PLAIN) {
+                bestResult = embedded
             }
         }
 
-        // 3. Online Check (Only if we don't have Synced yet)
+        // ── 3. Online (only if we still don't have synced lyrics) ─────────────────
         Log.d(TAG, "Searching online for ${song.title}...")
         val online = fetchOnline(song)
         if (online != null) {
-            Log.d(TAG, "Found online lyrics for ${song.title} (Type: ${online.type})")
-            if (online.type != LyricsType.PLAIN || fallback == null) {
+            if (online.type != LyricsType.PLAIN) {
                 emit(LyricsState.Success(online))
                 return@flow
             }
+            // Online plain is still better than nothing
+            if (bestResult == null) bestResult = online
         }
 
-        // 4. Fallback to Plain if nothing better found
-        if (fallback != null) {
-            Log.d(TAG, "Falling back to plain lyrics for ${song.title}")
-            emit(LyricsState.Success(fallback))
+        // ── 4. Best available fallback ─────────────────────────────────────────────
+        if (bestResult != null) {
+            Log.d(TAG, "Falling back to ${bestResult!!.type} lyrics for ${song.title}")
+            emit(LyricsState.Success(bestResult!!))
         } else {
             Log.e(TAG, "No lyrics found for ${song.title}")
             emit(LyricsState.Error("No lyrics found"))
@@ -112,12 +122,14 @@ class LyricsRepository(private val context: Context, private val database: AppDa
                 lines = LrcParser.parse(entity.lyrics),
                 source = LyricsSource.CACHE,
                 type = type,
-                rawContent = entity.lyrics
+                rawContent = entity.lyrics,
+                syncOffset = entity.syncOffset
             ).also { cache[song.id] = it }
         }
     }
 
     private suspend fun fetchEmbedded(song: Song): LyricsLoadResult? {
+        val existingOffset = lyricsDao.getLyrics(song.id)?.syncOffset ?: 0L
         val result = song.uri.path?.let { embeddedSource.getLyrics(it) }
             ?: embeddedSource.getLyrics(song.uri)
             
@@ -126,7 +138,8 @@ class LyricsRepository(private val context: Context, private val database: AppDa
                 lines = LrcParser.parse(it.content),
                 source = LyricsSource.EMBEDDED,
                 type = it.type,
-                rawContent = it.content
+                rawContent = it.content,
+                syncOffset = existingOffset
             ).also { res ->
                 cache[song.id] = res
                 // Cache embedded to DB if it's better than what we have or if we have nothing
@@ -136,6 +149,7 @@ class LyricsRepository(private val context: Context, private val database: AppDa
     }
 
     private suspend fun fetchOnline(song: Song): LyricsLoadResult? {
+        val existingOffset = lyricsDao.getLyrics(song.id)?.syncOffset ?: 0L
         val result = onlineSource.fetchLyrics(song.artist, song.title, song.album, song.durationMs)
         
         return result?.let {
@@ -143,7 +157,8 @@ class LyricsRepository(private val context: Context, private val database: AppDa
                 lines = LrcParser.parse(it.content),
                 source = LyricsSource.ONLINE,
                 type = it.type,
-                rawContent = it.content
+                rawContent = it.content,
+                syncOffset = existingOffset
             ).also { res ->
                 cache[song.id] = res
                 saveToDbIfBetter(song.id, res)
@@ -161,7 +176,7 @@ class LyricsRepository(private val context: Context, private val database: AppDa
 
         if (shouldUpdate) {
             newResult.rawContent?.let {
-                lyricsDao.insertLyrics(LyricsEntity(songId, it))
+                lyricsDao.insertLyrics(LyricsEntity(songId, it, syncOffset = newResult.syncOffset))
             }
         }
     }

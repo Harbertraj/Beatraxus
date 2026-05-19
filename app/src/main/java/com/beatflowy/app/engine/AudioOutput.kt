@@ -6,6 +6,7 @@ interface AudioOutput {
     fun setSampleFormat(format: com.beatflowy.app.model.SampleFormat)
     fun setDvcState(enabled: Boolean, mode: String, level: Float)
     fun start()
+    fun pause()
     fun stop()
     fun flush()
     fun write(data: FloatArray, offsetInSamples: Int, frameCount: Int): Int

@@ -1,7 +1,6 @@
 package com.beatflowy.app.engine
 
 import android.content.Context
-import android.net.Uri
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.util.Log
@@ -10,14 +9,20 @@ import com.arthenica.ffmpegkit.FFmpegKitConfig
 import com.arthenica.ffmpegkit.FFprobeKit
 import com.arthenica.ffmpegkit.ReturnCode
 import com.beatflowy.app.model.Song
+import com.beatflowy.app.model.SongSource
+import com.beatflowy.app.repository.DriveAccountRepository
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.io.File
 import java.io.FileInputStream
+import java.io.File
 import java.util.Locale
 
-internal class FfmpegAlacDecoder(private val context: Context) : AudioDecoder {
+internal class FfmpegAlacDecoder(
+    private val context: Context,
+    private val driveAccountRepository: DriveAccountRepository,
+    private val cloudCacheManager: com.beatflowy.app.drive.CloudCacheManager
+) : AudioDecoder {
 
     override suspend fun canDecode(song: Song): Boolean {
         val ext = song.uri.lastPathSegment?.substringAfterLast('.', "")?.lowercase(Locale.US).orEmpty()
@@ -31,7 +36,10 @@ internal class FfmpegAlacDecoder(private val context: Context) : AudioDecoder {
         sink: DecoderSink,
         control: DecoderControl
     ): DecodeResult = withContext(Dispatchers.IO) {
-        val format = probeFormat(request.song.uri) ?: return@withContext DecodeResult.Failed("ALAC probe failed")
+        val headers = resolveHeaders(request.song)
+        val format = probeFormat(request.song, headers) ?: return@withContext DecodeResult.Failed("ALAC probe failed")
+        
+        val inputSource = resolveInputSource(request.song)
         val outputFormat = PcmAudioFormat(
             sampleRate = format.sampleRate,
             channels = format.channels.coerceIn(1, 2),
@@ -44,16 +52,26 @@ internal class FfmpegAlacDecoder(private val context: Context) : AudioDecoder {
                 "channels=${outputFormat.channels}, bitDepth=${format.bitDepth}"
         )
 
-        // Only cleanup this specific pipe if it somehow existed, but FFmpegKit handles registration.
-        val inputSource = FFmpegKitConfig.getSafParameterForRead(context, request.song.uri)
         val pipePath = FFmpegKitConfig.registerNewFFmpegPipe(context)
         val args = buildList {
             add("-y")
             add("-nostdin")
             addAll(listOf("-v", "error"))
+
+            if (headers.isNotEmpty()) {
+                val headerStr = headers.map { "${it.key}: ${it.value}" }.joinToString("\r\n") + "\r\n"
+                add("-headers")
+                add(headerStr)
+            }
+
+            // Optimization for M4A/ALAC
+            addAll(listOf("-analyzeduration", "1000000"))
+            addAll(listOf("-probesize", "1000000"))
+
             if (request.startPositionMs > 0) {
                 addAll(listOf("-ss", formatSeekSeconds(request.startPositionMs)))
             }
+            
             addAll(listOf("-i", inputSource))
             addAll(
                 listOf(
@@ -97,14 +115,10 @@ internal class FfmpegAlacDecoder(private val context: Context) : AudioDecoder {
                     return@withContext DecodeResult.Seek(it)
                 }
 
-                // Read into buffer, keeping remainder in mind
                 val bytesToRead = byteBuffer.size - remainder
                 val bytesRead = input.read(byteBuffer, remainder, bytesToRead)
                 
                 if (bytesRead < 0) {
-                    if (remainder > 0) {
-                        // We have partial sample at the end of file, ignore it
-                    }
                     break
                 }
                 
@@ -115,7 +129,6 @@ internal class FfmpegAlacDecoder(private val context: Context) : AudioDecoder {
                     unpackFloats(byteBuffer, floatBuffer, sampleCount)
                     sink.write(floatBuffer, sampleCount)
                     
-                    // Move unused bytes to the beginning of buffer
                     remainder = totalBytes % FLOAT_SIZE_BYTES
                     if (remainder > 0) {
                         System.arraycopy(byteBuffer, sampleCount * FLOAT_SIZE_BYTES, byteBuffer, 0, remainder)
@@ -148,23 +161,56 @@ internal class FfmpegAlacDecoder(private val context: Context) : AudioDecoder {
         } finally {
             try {
                 input?.close()
-            } catch (_: Exception) {
-            }
+            } catch (_: Exception) {}
             try {
                 FFmpegKitConfig.closeFFmpegPipe(pipePath)
-            } catch (_: Exception) {
-            }
+            } catch (_: Exception) {}
         }
     }
 
-    private suspend fun probeFormat(uri: Uri): ProbedAlacFormat? = withContext(Dispatchers.IO) {
-        probeFormatWithFfprobe(uri)
-            ?: probeFormatWithExtractor(uri)
+    private suspend fun resolveHeaders(song: Song): Map<String, String> {
+        if (cloudCacheManager.getCachedFile(song) != null) return emptyMap()
+        
+        if (song.source == SongSource.GDRIVE) {
+            val headers = mutableMapOf<String, String>()
+            if (song.driveAccountEmail != null) {
+                val token = driveAccountRepository.getAccessToken(song.driveAccountEmail)
+                if (token != null) {
+                    headers["Authorization"] = "Bearer $token"
+                }
+            }
+            return headers
+        } else {
+            return emptyMap()
+        }
     }
 
-    private fun probeFormatWithFfprobe(uri: Uri): ProbedAlacFormat? {
+    private fun resolveInputSource(song: Song): String {
+        val cachedFile = cloudCacheManager.getCachedFile(song)
+        if (cachedFile != null) return cachedFile.absolutePath
+
+        return if (song.source == SongSource.GDRIVE) {
+            "https://www.googleapis.com/drive/v3/files/${song.driveFileId}?alt=media"
+        } else if (song.uri.scheme?.startsWith("http") == true) {
+            song.uri.toString()
+        } else {
+            // Force generate a fresh SAF parameter
+            FFmpegKitConfig.getSafParameterForRead(context, song.uri)
+        }
+    }
+
+    private suspend fun probeFormat(song: Song, headers: Map<String, String>): ProbedAlacFormat? = withContext(Dispatchers.IO) {
+        // Use MediaExtractor for probing as it's faster and doesn't interfere with FFmpeg SAF mappings
+        probeFormatWithExtractor(song, headers) ?: run {
+            // Fallback to FFprobe only if MediaExtractor fails, using a fresh SAF path
+            val inputSource = resolveInputSource(song)
+            probeFormatWithFfprobe(inputSource)
+        }
+    }
+
+    private fun probeFormatWithFfprobe(path: String): ProbedAlacFormat? {
         return try {
-            val mediaInfo = FFprobeKit.getMediaInformation(FFmpegKitConfig.getSafParameterForRead(context, uri))
+            val mediaInfo = FFprobeKit.getMediaInformation(path)
                 .mediaInformation ?: return null
 
             val audioStream = mediaInfo.streams
@@ -192,12 +238,33 @@ internal class FfmpegAlacDecoder(private val context: Context) : AudioDecoder {
         }
     }
 
-    private fun probeFormatWithExtractor(uri: Uri): ProbedAlacFormat? {
+    private fun probeFormatWithExtractor(song: Song, headers: Map<String, String>): ProbedAlacFormat? {
         val extractor = MediaExtractor()
         return try {
-            context.contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
-                extractor.setDataSource(pfd.fileDescriptor)
-            } ?: return null
+            val cachedFile = cloudCacheManager.getCachedFile(song)
+            if (cachedFile != null) {
+                extractor.setDataSource(cachedFile.absolutePath)
+            } else if (song.source != SongSource.LOCAL) {
+                val dataSource = cloudCacheManager.getDataSource(song)
+                if (dataSource != null) {
+                    extractor.setDataSource(dataSource)
+                } else {
+                    val url = if (song.source == SongSource.GDRIVE) {
+                        "https://www.googleapis.com/drive/v3/files/${song.driveFileId}?alt=media"
+                    } else {
+                        song.uri.toString()
+                    }
+                    extractor.setDataSource(url, headers)
+                }
+            } else {
+                try {
+                    extractor.setDataSource(context, song.uri, null)
+                } catch (e: Exception) {
+                    context.contentResolver.openFileDescriptor(song.uri, "r")?.use { pfd ->
+                        extractor.setDataSource(pfd.fileDescriptor)
+                    } ?: return null
+                }
+            }
 
             var best: MediaFormat? = null
             var bestPriority = Int.MIN_VALUE
@@ -283,25 +350,6 @@ internal class FfmpegAlacDecoder(private val context: Context) : AudioDecoder {
 
     private fun formatSeekSeconds(positionMs: Long): String =
         String.format(Locale.US, "%.3f", positionMs / 1000.0)
-
-    private fun cleanupStalePipes() {
-        runCatching {
-            val dir = File(context.cacheDir, "pipes")
-            if (!dir.exists()) return@runCatching
-            dir.listFiles()
-                ?.filter { it.name.startsWith("fk_pipe_") }
-                ?.forEach { it.delete() }
-        }
-    }
-
-    private fun cleanupStalePipe(pipePath: String) {
-        runCatching {
-            val file = File(pipePath)
-            if (file.exists() && file.isFile) {
-                file.delete()
-            }
-        }
-    }
 
     private data class ProbedAlacFormat(
         val codecName: String,

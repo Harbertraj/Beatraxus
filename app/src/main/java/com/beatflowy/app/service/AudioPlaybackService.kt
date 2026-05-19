@@ -29,6 +29,7 @@ import androidx.media.app.NotificationCompat.MediaStyle
 import com.beatflowy.app.MainActivity
 import com.beatflowy.app.R
 import com.beatflowy.app.engine.AudioEngine
+import com.beatflowy.app.engine.AudioState
 import com.beatflowy.app.model.OutputMode
 import com.beatflowy.app.engine.OutputRouteState
 import com.beatflowy.app.engine.AudioTrackOutput
@@ -42,19 +43,11 @@ import com.beatflowy.app.widget.MusicWidgetMedium
 import com.beatflowy.app.widget.MusicWidgetSmall
 import com.beatflowy.app.repository.DspPreferences
 import kotlinx.coroutines.*
-import androidx.media3.common.MediaItem
-import androidx.media3.common.Player
-import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.source.ProgressiveMediaSource
+import kotlinx.coroutines.flow.*
 import com.beatflowy.app.drive.DrivePlaybackHelper
 import com.beatflowy.app.model.SongSource
 import com.beatflowy.app.repository.DriveAccountRepository
 import android.net.Uri
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.combine
 
 class AudioPlaybackService : Service() {
     private val binder = LocalBinder()
@@ -63,6 +56,7 @@ class AudioPlaybackService : Service() {
     private lateinit var mediaSession: MediaSessionCompat
     private lateinit var audioManager: AudioManager
     private lateinit var dspPreferences: DspPreferences
+    private lateinit var cloudCacheManager: com.beatflowy.app.drive.CloudCacheManager
     private var audioFocusRequest: AudioFocusRequest? = null
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private val _outputRouteStateFlow = MutableStateFlow(OutputRouteState())
@@ -96,9 +90,10 @@ class AudioPlaybackService : Service() {
     override fun onCreate() {
         super.onCreate()
         dspPreferences = DspPreferences(this)
+        cloudCacheManager = com.beatflowy.app.drive.CloudCacheManager(this, driveAccountRepository)
         audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         audioOutput = AudioTrackOutput(this)
-        engine = AudioEngine(this, audioOutput)
+        engine = AudioEngine(this, audioOutput, cloudCacheManager)
         refreshOutputRoute()
         audioManager.registerAudioDeviceCallback(audioDeviceCallback, null)
 
@@ -270,45 +265,10 @@ class AudioPlaybackService : Service() {
     override fun onBind(intent: Intent): IBinder = binder
 
     private val driveAccountRepository by lazy { DriveAccountRepository(this) }
-    private var exoPlayer: ExoPlayer? = null
-    private var isUsingExoPlayer = false
-
-    private fun getExoPlayer(): ExoPlayer {
-        if (exoPlayer == null) {
-            exoPlayer = ExoPlayer.Builder(this).build().apply {
-                addListener(object : Player.Listener {
-                    override fun onPlaybackStateChanged(playbackState: Int) {
-                        if (playbackState == Player.STATE_ENDED) {
-                            handleCompletion()
-                        }
-                    }
-                })
-            }
-        }
-        return exoPlayer!!
-    }
 
     fun playDriveSong(song: Song) {
-        serviceScope.launch {
-            val email = song.driveAccountEmail ?: return@launch
-            val credential = driveAccountRepository.getCredential(email)
-            val driveUri = Uri.parse("https://www.googleapis.com/drive/v3/files/${song.driveFileId}?alt=media")
-            
-            isUsingExoPlayer = true
-            engine.stop()
-            
-            if (requestAudioFocus()) {
-                val player = getExoPlayer()
-                player.setMediaSource(
-                    ProgressiveMediaSource.Factory(DrivePlaybackHelper.buildDriveDataSourceFactory(credential))
-                        .createMediaSource(MediaItem.fromUri(driveUri))
-                )
-                player.prepare()
-                player.play()
-                
-                updateMediaSessionState()
-                updateNotification()
-            }
+        if (requestAudioFocus()) {
+            engine.play(song)
         }
     }
 
@@ -316,10 +276,15 @@ class AudioPlaybackService : Service() {
     val upcomingSongs: StateFlow<List<Song>> = _upcomingSongs.asStateFlow()
 
     private fun updateUpcomingSongs() {
-        if (playlist.isEmpty() || currentIndex >= playlist.size - 1) {
-            _upcomingSongs.value = emptyList()
+        val upcoming = if (playlist.isEmpty() || currentIndex >= playlist.size - 1) {
+            emptyList()
         } else {
-            _upcomingSongs.value = playlist.subList(currentIndex + 1, playlist.size)
+            playlist.subList(currentIndex + 1, (currentIndex + 6).coerceAtMost(playlist.size))
+        }
+        _upcomingSongs.value = upcoming
+        
+        serviceScope.launch {
+            cloudCacheManager.prepareCache(playlist.getOrNull(currentIndex), upcoming)
         }
     }
 
@@ -332,7 +297,7 @@ class AudioPlaybackService : Service() {
             }
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
                 if (engine.playbackStateFlow.value.isPlaying) {
-                    engine.stop()
+                    engine.pause()
                 }
             }
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {}
@@ -377,21 +342,9 @@ class AudioPlaybackService : Service() {
 
     fun togglePlayPause() {
         playbackJob?.cancel()
-        if (isUsingExoPlayer) {
-            val player = getExoPlayer()
-            if (player.isPlaying) {
-                player.pause()
-                abandonAudioFocus()
-            } else {
-                if (requestAudioFocus()) {
-                    player.play()
-                }
-            }
-            return
-        }
 
         if (engine.playbackStateFlow.value.isPlaying) {
-            engine.stop()
+            engine.pause()
             abandonAudioFocus()
         } else {
             if (requestAudioFocus()) {
@@ -414,13 +367,6 @@ class AudioPlaybackService : Service() {
         performTrackChange(-1)
     }
     
-    /**
-     * Proper track change system:
-     * 1. Cancel any pending playback requests.
-     * 2. Update the target index.
-     * 3. Update the UI title immediately via prepare().
-     * 4. Debounce (150ms) before starting actual playback.
-     */
     private fun performTrackChange(delta: Int) {
         if (playlist.isEmpty()) return
         
@@ -431,7 +377,6 @@ class AudioPlaybackService : Service() {
         
         val nextSong = playlist[currentIndex]
         
-        // Requirement: Update UI title immediately, but keep playing state as-is or false
         engine.prepare(nextSong)
         
         playbackJob = serviceScope.launch {
@@ -594,19 +539,40 @@ class AudioPlaybackService : Service() {
                 playlist.indexOf(songs[startIndex])
             } else 0
 
+            updateUpcomingSongs()
+
             if (playlist.isNotEmpty()) {
                 engine.play(playlist[currentIndex])
             }
-            updateUpcomingSongs()
         }
     }
 
-    val audioStateFlow get() = engine.audioStateFlow
-    val playbackStateFlow get() = engine.playbackStateFlow
+    private val _playbackStateFlow = MutableStateFlow(PlaybackState())
+    val playbackStateFlow: StateFlow<PlaybackState> = _playbackStateFlow.asStateFlow()
+
+    private val _audioStateFlow = MutableStateFlow(AudioState())
+    val audioStateFlow: StateFlow<AudioState> = _audioStateFlow.asStateFlow()
+
+    init {
+        serviceScope.launch {
+            engine.playbackStateFlow.collect { state ->
+                _playbackStateFlow.value = state
+            }
+        }
+        serviceScope.launch {
+            engine.audioStateFlow.collect { state ->
+                _audioStateFlow.value = state
+            }
+        }
+    }
     val currentPositionMs get() = engine.currentPositionMs()
 
     fun playSong(song: Song) {
         if (requestAudioFocus()) {
+            // Start caching in background but play immediately
+            serviceScope.launch {
+                cloudCacheManager.prepareCache(song, emptyList())
+            }
             engine.play(song)
         }
     }
@@ -629,7 +595,7 @@ class AudioPlaybackService : Service() {
     }
 
     private fun createNotification(): Notification {
-        val state = engine.playbackStateFlow.value
+        val state = _playbackStateFlow.value
         val song = state.currentSong
         
         val intent = Intent(this, MainActivity::class.java)
@@ -687,7 +653,7 @@ class AudioPlaybackService : Service() {
     }
 
     private fun updateMediaSessionState() {
-        val state = engine.playbackStateFlow.value
+        val state = _playbackStateFlow.value
         val song = state.currentSong
 
         if (song != null) {
@@ -716,7 +682,7 @@ class AudioPlaybackService : Service() {
             )
             .setState(
                 if (state.isPlaying) PlaybackStateCompat.STATE_PLAYING else PlaybackStateCompat.STATE_PAUSED,
-                engine.currentPositionMs(),
+                currentPositionMs,
                 1.0f
             )
             .build()
@@ -760,7 +726,6 @@ class AudioPlaybackService : Service() {
         serviceScope.cancel()
         audioManager.unregisterAudioDeviceCallback(audioDeviceCallback)
         engine.release()
-        exoPlayer?.release()
         mediaSession.release()
         abandonAudioFocus()
         super.onDestroy()

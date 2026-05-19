@@ -2,13 +2,20 @@ package com.beatflowy.app.ui.components
 
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -16,12 +23,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import com.beatflowy.app.model.LrcLine
 import com.beatflowy.app.model.WordTiming
 import com.beatflowy.app.repository.LyricsSource
@@ -38,6 +48,7 @@ fun KaraokeLyricsView(
     lyricsSource: LyricsSource?,
     onLineClick: (Long) -> Unit,
     onAdjustOffset: (Long) -> Unit,
+    onSetOffset: (Long) -> Unit = {},
     modifier: Modifier = Modifier,
     onSwipeDown: () -> Unit = {}
 ) {
@@ -46,13 +57,32 @@ fun KaraokeLyricsView(
     val isDragged by listState.interactionSource.collectIsDraggedAsState()
     var autoScrollEnabled by remember { mutableStateOf(true) }
     var containerHeight by remember { mutableStateOf(0) }
+    var showSyncControls by remember { mutableStateOf(false) }
+    var lastScrollTime by remember { mutableLongStateOf(0L) }
+    var isLongPressing by remember { mutableStateOf(false) }
+    var tempOffsetStr by remember { mutableStateOf("") }
 
     LaunchedEffect(isDragged) {
         if (isDragged) {
             autoScrollEnabled = false
+            showSyncControls = true
+            lastScrollTime = System.currentTimeMillis()
         } else {
-            delay(3000)
+            delay(1000)
+            if (System.currentTimeMillis() - lastScrollTime >= 1000) {
+                showSyncControls = false
+            }
+            delay(2000)
             autoScrollEnabled = true
+        }
+    }
+
+    LaunchedEffect(showSyncControls) {
+        if (showSyncControls) {
+            delay(1000)
+            if (!isDragged) {
+                showSyncControls = false
+            }
         }
     }
 
@@ -103,6 +133,111 @@ fun KaraokeLyricsView(
                         onClick = { onLineClick(line.startTime) }
                     )
                 }
+            }
+
+            // Offset adjustment controls
+            AnimatedVisibility(
+                visible = showSyncControls,
+                enter = fadeIn() + expandVertically(expandFrom = Alignment.Top),
+                exit = fadeOut() + shrinkVertically(shrinkTowards = Alignment.Top),
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 16.dp)
+            ) {
+                Surface(
+                    color = Color.Black.copy(alpha = 0.6f),
+                    shape = RoundedCornerShape(20.dp),
+                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.15f))
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        IconButton(onClick = {
+                            onAdjustOffset(-100)
+                            lastScrollTime = System.currentTimeMillis()
+                        }) {
+                            Icon(Icons.Rounded.Remove, "Decrease Offset", tint = Color.White)
+                        }
+
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier
+                                .padding(horizontal = 8.dp)
+                                .pointerInput(Unit) {
+                                    detectTapGestures(
+                                        onLongPress = {
+                                            tempOffsetStr = lyricsOffsetMs.toString()
+                                            isLongPressing = true
+                                        },
+                                        onTap = {
+                                            // Optional: just show/refresh the timer if tapped
+                                            lastScrollTime = System.currentTimeMillis()
+                                        }
+                                    )
+                                }
+                        ) {
+                            Text(
+                                text = "${if (lyricsOffsetMs >= 0) "+" else ""}${lyricsOffsetMs}ms",
+                                color = Color.White,
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "Sync",
+                                color = Color.White.copy(alpha = 0.5f),
+                                style = MaterialTheme.typography.labelSmall,
+                                fontSize = 10.sp
+                            )
+                        }
+
+                        IconButton(onClick = {
+                            onAdjustOffset(100)
+                            lastScrollTime = System.currentTimeMillis()
+                        }) {
+                            Icon(Icons.Rounded.Add, "Increase Offset", tint = Color.White)
+                        }
+                    }
+                }
+            }
+
+            if (isLongPressing) {
+                AlertDialog(
+                    onDismissRequest = { isLongPressing = false },
+                    title = { Text("Adjust Lyrics Offset") },
+                    text = {
+                        Column {
+                            Text("Enter offset in milliseconds (ms):")
+                            Spacer(Modifier.height(8.dp))
+                            OutlinedTextField(
+                                value = tempOffsetStr,
+                                onValueChange = {
+                                    if (it.isEmpty() || it == "-" || it.toLongOrNull() != null) {
+                                        tempOffsetStr = it
+                                    }
+                                },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            tempOffsetStr.toLongOrNull()?.let {
+                                onSetOffset(it)
+                            }
+                            isLongPressing = false
+                        }) {
+                            Text("Save")
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { isLongPressing = false }) {
+                            Text("Cancel")
+                        }
+                    }
+                )
             }
         }
     }

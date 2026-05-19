@@ -8,8 +8,10 @@ import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.google.api.client.googleapis.extensions.android.gms.auth.GoogleAccountCredential
 import com.google.api.services.drive.DriveScopes
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
 data class DriveAccount(
@@ -23,8 +25,11 @@ private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(na
 
 class DriveAccountRepository(private val context: Context) {
 
+    private data class CachedToken(val token: String, val expiry: Long)
+
     companion object {
         private val DRIVE_ACCOUNTS = stringSetPreferencesKey("drive_accounts")
+        private val tokenCache = java.util.concurrent.ConcurrentHashMap<String, CachedToken>()
     }
 
     val accounts: Flow<List<DriveAccount>> = context.dataStore.data.map { prefs ->
@@ -36,6 +41,25 @@ class DriveAccountRepository(private val context: Context) {
                 obj.optString("photo", ""),
                 obj.optBoolean("enabled", true)
             )
+        }
+    }
+
+    suspend fun getAccessToken(email: String): String? = withContext(Dispatchers.IO) {
+        val now = System.currentTimeMillis()
+        val cached = tokenCache[email]
+        if (cached != null && cached.expiry > now + 60_000) {
+            return@withContext cached.token
+        }
+
+        try {
+            val credential = getCredential(email)
+            val token = credential.token
+            if (token != null) {
+                tokenCache[email] = CachedToken(token, now + 3000_000) // ~50 mins
+            }
+            token
+        } catch (e: Exception) {
+            null
         }
     }
 
@@ -84,7 +108,9 @@ class DriveAccountRepository(private val context: Context) {
     }
 
     fun getCredential(email: String): GoogleAccountCredential {
-        return GoogleAccountCredential.usingOAuth2(context, listOf(DriveScopes.DRIVE_READONLY))
-            .also { it.selectedAccountName = email }
+        return GoogleAccountCredential.usingOAuth2(
+            context,
+            listOf(DriveScopes.DRIVE_READONLY, DriveScopes.DRIVE_METADATA_READONLY)
+        ).also { it.selectedAccountName = email }
     }
 }

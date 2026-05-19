@@ -41,10 +41,24 @@ interface LyricsDao {
     suspend fun insertLyrics(lyrics: LyricsEntity)
 }
 
-@Database(entities = [PlaylistEntity::class, FavoriteEntity::class, SongEntity::class, RecentlyPlayedEntity::class, LyricsEntity::class], version = 5)
+@Dao
+interface RecentlyPlayedDao {
+    @Query("SELECT * FROM recently_played ORDER BY timestamp DESC")
+    fun getAllRecentlyPlayed(): Flow<List<RecentlyPlayedEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun addRecentlyPlayed(item: RecentlyPlayedEntity)
+
+    @Query("DELETE FROM recently_played WHERE songId = :songId")
+    suspend fun removeRecentlyPlayed(songId: String)
+}
+
+@Database(entities = [PlaylistEntity::class, FavoriteEntity::class, SongEntity::class, RecentlyPlayedEntity::class, LyricsEntity::class, FolderEntity::class], version = 8)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun playlistDao(): PlaylistDao
     abstract fun favoriteDao(): FavoriteDao
     abstract fun songDao(): SongDao
     abstract fun lyricsDao(): LyricsDao
+    abstract fun folderDao(): FolderDao
+    abstract fun recentlyPlayedDao(): RecentlyPlayedDao
 }

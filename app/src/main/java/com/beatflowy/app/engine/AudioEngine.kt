@@ -21,8 +21,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
+import com.beatflowy.app.repository.DriveAccountRepository
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.atomic.AtomicBoolean
@@ -30,15 +31,19 @@ import java.util.concurrent.atomic.AtomicLong
 
 class AudioEngine(
     context: Context,
-    private val output: AudioOutput
+    private val output: AudioOutput,
+    private val cloudCacheManager: com.beatflowy.app.drive.CloudCacheManager
 ) {
     private val engineScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
     private val controlMutex = Mutex()
-    
+    private val driveAccountRepository = DriveAccountRepository(context)
+
     private val decoderFactory = DecoderFactory(
         context = context,
-        ffmpegAlacDecoder = FfmpegAlacDecoder(context),
-        mediaCodecDecoder = MediaCodecAudioDecoder(context)
+        driveAccountRepository = driveAccountRepository,
+        cloudCacheManager = cloudCacheManager,
+        ffmpegAlacDecoder = FfmpegAlacDecoder(context, driveAccountRepository, cloudCacheManager),
+        mediaCodecDecoder = MediaCodecAudioDecoder(context, driveAccountRepository, cloudCacheManager)
     )
 
     private val _audioStateFlow = MutableStateFlow(AudioState())
@@ -52,13 +57,13 @@ class AudioEngine(
 
     private var currentSong: Song? = null
     private var nextSong: Song? = null
-    
+
     private var currentSessionId = AtomicLong(0)
     private var activeSession: PlaybackSession? = null
     private var nextSession: PlaybackSession? = null
-    
+
     private var rendererJob: Job? = null
-    
+
     private var positionMs: Long = 0L
     private var underrunCount = 0
     @Volatile private var dspConfig: DspConfig = DspConfig()
@@ -85,13 +90,42 @@ class AudioEngine(
     fun play(song: Song) {
         engineScope.launch {
             controlMutex.withLock {
+                // Promotion logic: if we have this song preloaded as nextSession, promote it!
+                if (nextSession != null && nextSong?.id == song.id) {
+                    activeSession?.stop()
+                    activeSession = nextSession
+                    nextSession = null
+                    currentSong = song
+                    nextSong = null
+                    positionMs = 0L
+                    updateAudioStateForSong(song)
+                    _playbackStateFlow.update { it.copy(currentSong = song, isPlaying = true) }
+                    
+                    // Trigger output reconfiguration for the promoted session
+                    val fmt = activeSession?.pcmFormat
+                    if (fmt != null) {
+                        activeSession?.configure(fmt)
+                    } else {
+                        output.start()
+                    }
+                    return@withLock
+                }
+
+                // If we are already playing this song, just ensure it's playing
+                if (currentSong?.id == song.id && activeSession != null) {
+                    if (!_playbackStateFlow.value.isPlaying) {
+                        resume()
+                    }
+                    return@withLock
+                }
+
                 currentSong = song
                 nextSong = null
                 positionMs = 0L
                 updateAudioStateForSong(song)
-                
+
                 _playbackStateFlow.update { it.copy(currentSong = song, isPlaying = true) }
-                
+
                 stopSessionsInternal()
                 startSessionInternal(song, startPositionMs = 0L)
             }
@@ -104,11 +138,11 @@ class AudioEngine(
                 if (nextSong?.id == song.id) return@withLock
                 nextSong = song
                 nextSession?.stop()
-                
+
                 val sessionId = currentSessionId.incrementAndGet()
                 val session = PlaybackSession(sessionId, song, 0L)
                 nextSession = session
-                
+
                 engineScope.launch(Dispatchers.IO) {
                     session.run()
                 }
@@ -119,11 +153,29 @@ class AudioEngine(
     fun prepare(song: Song) {
         engineScope.launch {
             controlMutex.withLock {
+                if (currentSong?.id == song.id && (activeSession != null || nextSession != null)) return@withLock
+                
+                // If it's not already preloaded, clear and start preloading
+                if (nextSong?.id != song.id) {
+                    nextSession?.stop()
+                    nextSession = null
+                    nextSong = null
+                }
+                
+                // Stop current session if different
+                if (activeSession?.song?.id != song.id) {
+                    activeSession?.stop()
+                    activeSession = null
+                }
+
                 currentSong = song
                 positionMs = 0L
                 updateAudioStateForSong(song)
                 _playbackStateFlow.update { it.copy(currentSong = song, isPlaying = false) }
-                stopSessionsInternal()
+                
+                if (activeSession == null && nextSession == null) {
+                    preloadNext(song)
+                }
             }
         }
     }
@@ -149,10 +201,10 @@ class AudioEngine(
             controlMutex.withLock {
                 val song = currentSong ?: return@withLock
                 if (_playbackStateFlow.value.isPlaying) return@withLock
-                
+
                 // Set isPlaying = true EAGERLY to ensure UI responsiveness
                 _playbackStateFlow.update { it.copy(isPlaying = true) }
-                
+
                 if (activeSession == null) {
                     startSessionInternal(song, startPositionMs = currentPositionMs())
                 } else {
@@ -167,6 +219,15 @@ class AudioEngine(
             controlMutex.withLock {
                 stopSessionsInternal()
                 output.stop()
+                _playbackStateFlow.update { it.copy(isPlaying = false) }
+            }
+        }
+    }
+
+    fun pause() {
+        engineScope.launch {
+            controlMutex.withLock {
+                output.pause()
                 _playbackStateFlow.update { it.copy(isPlaying = false) }
             }
         }
@@ -219,20 +280,34 @@ class AudioEngine(
 
     fun updateDspConfig(config: DspConfig) {
         val oldConfig = dspConfig
-        val oldTargetRate = resolveTargetSampleRate(currentSong?.sampleRateHz ?: 44100, oldConfig)
+        val sourceSampleRate = currentSong?.sampleRateHz ?: 44100
+        val oldTargetRate = resolveTargetSampleRate(sourceSampleRate, oldConfig)
         dspConfig = config
-        val newTargetRate = resolveTargetSampleRate(currentSong?.sampleRateHz ?: 44100, config)
+        val newTargetRate = resolveTargetSampleRate(sourceSampleRate, config)
 
         output.setDvcState(
             enabled = config.dvcEnabled,
             mode = config.dvcMode.name,
             level = config.dvcLevel
         )
+
+        // When output mode or target rate changes, push the new target rate to the output
+        // object BEFORE calling reconfigureOutput(). This ensures that init() inside
+        // reconfigureOutput sees the correct targetSampleRate for the new mode, so the
+        // DSP resampler is rebuilt with the right in→out ratio in real time.
+        val outputModeChanged = oldConfig.outputMode != config.outputMode
+        if (outputModeChanged || oldTargetRate != newTargetRate) {
+            output.setTargetSampleRate(newTargetRate)
+            if (outputModeChanged && output is AudioTrackOutput) {
+                output.setOutputMode(config.outputMode)
+            }
+        }
+
         publishDspState()
 
         val structuralChange = oldTargetRate != newTargetRate ||
                 oldConfig.sampleFormat != config.sampleFormat ||
-                oldConfig.outputMode != config.outputMode ||
+                outputModeChanged ||
                 oldConfig.dvcEnabled != config.dvcEnabled
 
         // Always increment revision for ANY config change — this triggers
@@ -276,6 +351,11 @@ class AudioEngine(
                 continue
             }
 
+            if (!_playbackStateFlow.value.isPlaying) {
+                delay(10)
+                continue
+            }
+
             val sampleCount = session.ringBuffer.read(localBuffer, localBuffer.size)
             if (sampleCount > 0) {
                 val currentRevision = dspRevision.get()
@@ -283,15 +363,13 @@ class AudioEngine(
                     // Light update: push new parameter values to existing native DSP
                     session.dspPipeline.updateConfig(dspConfig)
                     appliedDspRevision = currentRevision
-                    // Note: refreshDspPipeline() is called by reconfigureOutput() 
-                    // only for structural changes (sample rate, mode changes)
                 }
-                
+
                 val processed = session.dspPipeline.process(localBuffer, sampleCount, format.channels, format.sampleRate)
                 val frames = processed.sampleCount / format.channels
                 var writtenFramesTotal = 0
-                
-                while (writtenFramesTotal < frames && engineScope.isActive && activeSession?.sessionId == session.sessionId && !isSeeking.get()) {
+
+                while (writtenFramesTotal < frames && engineScope.isActive && activeSession?.sessionId == session.sessionId && !isSeeking.get() && _playbackStateFlow.value.isPlaying) {
                     val written = output.write(
                         data = processed.data,
                         offsetInSamples = writtenFramesTotal * format.channels,
@@ -304,7 +382,7 @@ class AudioEngine(
                     }
                     writtenFramesTotal += written
                 }
-                
+
                 val newPos = session.currentRenderedPositionMs()
                 if (engineScope.isActive && activeSession?.sessionId == session.sessionId && !isSeeking.get()) {
                     this@AudioEngine.positionMs = newPos
@@ -312,7 +390,7 @@ class AudioEngine(
                 continue
             }
 
-            if (session.decoderCompleted && session.ringBuffer.isEmpty()) {
+            if (session.decoderCompleted && session.ringBuffer.isEmpty() && _playbackStateFlow.value.isPlaying) {
                 // TRACK COMPLETED - Transition to next if available
                 controlMutex.withLock {
                     if (activeSession?.sessionId == session.sessionId) {
@@ -321,15 +399,15 @@ class AudioEngine(
                             // Gapless transition
                             val oldFormat = session.pcmFormat
                             val newFormat = next.pcmFormat
-                            
+
                             activeSession = next
                             nextSession = null
                             currentSong = next.song
                             nextSong = null
-                            
+
                             val framesAtTransition = output.totalFramesWritten()
                             next.setStartFrameOffset(framesAtTransition)
-                            
+
                             if (oldFormat != newFormat) {
                                 // If formats differ, we MUST re-init output
                                 // This might cause a tiny gap but is necessary
@@ -363,13 +441,13 @@ class AudioEngine(
         @Volatile private var started = true
         var decoderCompleted = false
             private set
-            
+
         var pcmFormat: PcmAudioFormat? = null
             private set
         private var basePositionMs: Long = initialStartPositionMs
         private var startFrameOffset = 0L
         var dspPipeline = AudioDspPipeline.create(44_100, 44_100, 2, output.outputBitDepth(), this@AudioEngine.dspConfig, song)
-        
+
         fun setStartFrameOffset(offset: Long) {
             startFrameOffset = offset
         }
@@ -377,7 +455,7 @@ class AudioEngine(
         suspend fun run() {
             val decoder = decoderFactory.create(song)
             var decodeStartMs = initialStartPositionMs
-            
+
             while (isActive()) {
                 decoderCompleted = false
                 val result = decoder.decode(
@@ -398,6 +476,12 @@ class AudioEngine(
                     is DecodeResult.Failed -> {
                         logWarn("Decoder failed: ${result.reason ?: "unknown"}")
                         ringBuffer.close()
+                        controlMutex.withLock {
+                            if (activeSession?.sessionId == sessionId) {
+                                activeSession = null
+                                _playbackStateFlow.update { it.copy(isPlaying = false) }
+                            }
+                        }
                         return
                     }
                 }
@@ -434,17 +518,17 @@ class AudioEngine(
         override suspend fun configure(format: PcmAudioFormat) {
             val formatChanged = pcmFormat != format
             pcmFormat = format
-            
+
             if (activeSession?.sessionId == this.sessionId) {
                 if (formatChanged) {
                     ringBuffer.clear()
                     output.flush()
                     startFrameOffset = 0L
                 }
-                
+
                 val targetRate = resolveTargetSampleRate(format.sampleRate, dspConfig)
                 output.setTargetSampleRate(targetRate)
-                
+
                 if (dspConfig.outputMode == OutputMode.HI_RES) {
                     output.setSampleFormat(SampleFormat.FLOAT_32BIT)
                 } else {
@@ -454,13 +538,13 @@ class AudioEngine(
                 if (!output.init(format.sampleRate, format.channels, format.bitDepth)) {
                     logWarn("Audio output initialization failed")
                 }
-                
+
                 output.start()
-                
+
                 if (sessionId == currentSessionId.get()) {
                     _playbackStateFlow.update { it.copy(isPlaying = true) }
                 }
-                
+
                 refreshDspPipeline(format)
                 publishDspState(format)
             } else if (nextSession?.sessionId == this.sessionId) {
@@ -522,7 +606,8 @@ class AudioEngine(
     companion object {
         private const val TAG = "AudioEngine"
         private const val RING_BUFFER_SAMPLES = 262_144 // Increased for better pre-fetch
-        private const val RENDER_BATCH_SAMPLES = 1_024
+        // Change 1: RENDER_BATCH_SAMPLES changed from 1_024 to 4_096
+        private const val RENDER_BATCH_SAMPLES = 4_096
         private const val NO_SEEK_PENDING = -1L
 
         private fun framesToMs(frames: Long, sampleRate: Int): Long {
@@ -542,7 +627,7 @@ class AudioEngine(
                 format == "m4a" || format == "mp4" || format.contains("aac") -> "AAC"
                 format.contains("mpeg") || format.contains("mp3") -> "MP3"
                 format.contains("wav") -> "WAV"
-                format.contains("raw") || format.contains("pcm") -> "" 
+                format.contains("raw") || format.contains("pcm") -> ""
                 format.isBlank() -> ""
                 else -> format.uppercase()
             }
@@ -600,23 +685,24 @@ class AudioEngine(
             ResamplerMode.AUTO -> {
                 val nativeRate = AudioTrack.getNativeOutputSampleRate(AudioManager.STREAM_MUSIC)
                 if (config.outputMode == OutputMode.HI_RES) {
-                    // Use the source rate if it's higher than hardware native rate,
-                    // but only up to what the hardware actually supports.
-                    // Don't force upsampling beyond device capability.
+                    // MTK HiFi direct path: honour the source sample rate exactly up to 192kHz.
+                    // Do NOT downsample — the hardware driver handles any DAC-level conversion.
+                    // This is the same policy Poweramp uses: pass native source rate to the DAC.
                     when {
-                        inputRate <= nativeRate -> nativeRate          // e.g. 44.1k source -> 48k hardware
-                        inputRate <= 96000 -> inputRate                // e.g. 96k source -> 96k output
-                        inputRate <= 192000 -> inputRate               // e.g. 192k source -> 192k output
-                        else -> 192000                                 // Cap at 192kHz
+                        inputRate <= 0 -> nativeRate
+                        inputRate <= 384000 -> inputRate   // preserve exact source rate up to 384kHz
+                        else -> 384000                     // hard cap at 384kHz
                     }
                 } else {
-                    nativeRate  // AAudio always outputs at hardware native rate
+                    // AAudio path: use hardware native rate to avoid Android SRC.
+                    // For hi-res sources, the DSP resampler handles conversion to nativeRate.
+                    nativeRate
                 }
             }
-            ResamplerMode.SR_44100 -> 44100
-            ResamplerMode.SR_48000 -> 48000
-            ResamplerMode.SR_88200 -> 88200
-            ResamplerMode.SR_96000 -> 96000
+            ResamplerMode.SR_44100  -> 44100
+            ResamplerMode.SR_48000  -> 48000
+            ResamplerMode.SR_88200  -> 88200
+            ResamplerMode.SR_96000  -> 96000
             ResamplerMode.SR_176400 -> 176400
             ResamplerMode.SR_192000 -> 192000
         }

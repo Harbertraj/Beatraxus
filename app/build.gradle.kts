@@ -1,12 +1,19 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import com.android.build.api.variant.FilterConfiguration
 import com.android.build.api.dsl.ApplicationExtension
+import java.util.Properties
 
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("com.google.devtools.ksp")
     id("org.jetbrains.kotlin.plugin.compose")
+}
+
+val localProperties = Properties()
+val localPropertiesFile = rootProject.file("local.properties")
+if (localPropertiesFile.exists()) {
+    localProperties.load(localPropertiesFile.inputStream())
 }
 
 configure<ApplicationExtension> {
@@ -18,8 +25,8 @@ configure<ApplicationExtension> {
         applicationId = "com.beatflowy.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 5
-        versionName = "2.6.2-beta"
+        versionCode = 6
+        versionName = "2.7.5-stable"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -27,16 +34,32 @@ configure<ApplicationExtension> {
         }
     }
 
+    signingConfigs {
+        create("release") {
+            // Updated path to match the file named "key" in your "Beatraxus Key" folder
+            storeFile = file("../Beatraxus Key/key")
+            storePassword = localProperties.getProperty("RELEASE_STORE_PASSWORD")
+            keyAlias = localProperties.getProperty("RELEASE_KEY_ALIAS")
+            keyPassword = localProperties.getProperty("RELEASE_KEY_PASSWORD")
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
+            isShrinkResources = true
+            signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            
+            matchingFallbacks += listOf("debug", "release")
         }
         debug {
             isDebuggable = true
+            // Use the release signing config for debug builds to make SHA-1 fingerprints match
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 
@@ -54,16 +77,14 @@ configure<ApplicationExtension> {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-
-
     buildFeatures {
         compose = true
     }
 
     externalNativeBuild {
         cmake {
-            path = file("src/main/cpp/CMakeLists.txt")
             version = "3.22.1"
+            path = file("src/main/cpp/CMakeLists.txt")
         }
     }
 
@@ -97,7 +118,6 @@ androidComponents {
             val versionName = output.versionName.get()
             val abi = output.filters.find { it.filterType == FilterConfiguration.FilterType.ABI }?.identifier ?: "universal"
             
-            // Accessing outputFileName property via the implementation class as it's not yet in the public interface
             (output as? com.android.build.api.variant.impl.VariantOutputImpl)?.let { impl ->
                 impl.outputFileName.set("${appName}-v${versionName}-${abi}-${variantName}.apk")
             }
@@ -106,15 +126,11 @@ androidComponents {
 }
 
 dependencies {
-    // Kotlin
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.1")
-
-    // AndroidX Core
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.activity:activity-compose:1.10.0")
     implementation("com.google.android.material:material:1.12.0")
 
-    // Lifecycle
     val lifecycleVersion = "2.8.7"
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:$lifecycleVersion")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:$lifecycleVersion")
@@ -122,8 +138,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:$lifecycleVersion")
     implementation("androidx.lifecycle:lifecycle-service:$lifecycleVersion")
 
-    // Jetpack Compose BOM
-    val composeBom = platform("androidx.compose:compose-bom:2024.05.00")
+    val composeBom = platform("androidx.compose:compose-bom:2024.09.00")
     implementation(composeBom)
     androidTestImplementation(composeBom)
 
@@ -137,83 +152,50 @@ dependencies {
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.runtime:runtime")
 
-    // Navigation
     implementation("androidx.navigation:navigation-compose:2.8.5")
-
-
-    // Media (for MediaSessionCompat / NotificationCompat.MediaStyle)
     implementation("androidx.media:media:1.7.0")
-
-    // Coil for Image Loading
-    implementation("io.coil-kt:coil-compose:2.5.0")
-
-    // Palette
+    implementation("io.coil-kt:coil-compose:2.6.0")
     implementation("androidx.palette:palette-ktx:1.0.0")
 
-    // Retrofit
     val retrofitVersion = "2.9.0"
     implementation("com.squareup.retrofit2:retrofit:$retrofitVersion")
     implementation("com.squareup.retrofit2:converter-gson:$retrofitVersion")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
 
-    // Lottie
     implementation("com.airbnb.android:lottie-compose:6.3.0")
-
-    // Reorderable
     implementation("sh.calvin.reorderable:reorderable:2.3.2")
 
-    // Room
     val roomVersion = "2.7.0-alpha11"
     implementation("androidx.room:room-runtime:$roomVersion")
     implementation("androidx.room:room-ktx:$roomVersion")
     ksp("androidx.room:room-compiler:$roomVersion")
 
-    // Media3 / ExoPlayer
-    val media3Version = "1.2.1"
-    implementation("androidx.media3:media3-exoplayer:$media3Version")
-    implementation("androidx.media3:media3-ui:$media3Version")
-    implementation("androidx.media3:media3-session:$media3Version")
-    implementation("androidx.media3:media3-common:$media3Version")
-    implementation("androidx.media3:media3-datasource:$media3Version")
-    implementation("androidx.media3:media3-datasource-okhttp:$media3Version")
-    // For Kotlin use kapt or ksp. Let's see if ksp is available.
-    // If not, I'll use kapt. But first I need to check plugins.
-    // Actually, I'll just use the runtime for now if I can't add plugins easily.
-    // Wait, I can add plugins.
-
-    // Glance Widgets
     implementation("androidx.glance:glance-appwidget:1.1.1")
     implementation("androidx.glance:glance-material3:1.1.1")
-
-    // DataStore
     implementation("androidx.datastore:datastore-preferences:1.1.1")
 
-    // Native codec fallback for ALAC / M4A parsing and decode
+    implementation("androidx.work:work-runtime-ktx:2.9.0")
+
     implementation(files("libs/ffmpeg-kit-full-gpl-6.0-2.aar"))
     implementation("com.arthenica:smart-exception-java:0.2.1")
 
-    // Debug
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 
-    // Test
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
 
-    // Cast
     implementation("com.google.android.gms:play-services-cast-framework:21.4.0")
-
-    // Google Drive + Auth
-    implementation("com.google.android.gms:play-services-auth:20.7.0")
-    implementation("com.google.apis:google-api-services-drive:v3-rev20231128-2.0.0") {
+    implementation("com.google.android.gms:play-services-auth:21.2.0")
+    implementation("com.google.apis:google-api-services-drive:v3-rev20240903-2.0.0") {
         exclude(group = "org.apache.httpcomponents")
     }
-    implementation("com.google.api-client:google-api-client-android:2.2.0")
+    implementation("com.google.api-client:google-api-client-android:2.5.0")
+    implementation("com.google.http-client:google-http-client-android:1.45.0")
     implementation("com.google.oauth-client:google-oauth-client-jetty:1.34.1")
-
-    // Coroutines for Drive API calls
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.7.3")
+    implementation("net.jthink:jaudiotagger:3.0.1")
 }

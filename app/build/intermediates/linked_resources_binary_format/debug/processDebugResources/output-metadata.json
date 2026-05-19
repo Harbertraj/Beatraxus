@@ -8,6 +8,27 @@
   "variantName": "debug",
   "elements": [
     {
+      "type": "UNIVERSAL",
+      "filters": [],
+      "attributes": [],
+      "versionCode": 6,
+      "versionName": "2.7.5-stable",
+      "outputFile": "linked-resources-binary-format-universalDebug.ap_"
+    },
+    {
+      "type": "ONE_OF_MANY",
+      "filters": [
+        {
+          "filterType": "ABI",
+          "value": "armeabi-v7a"
+        }
+      ],
+      "attributes": [],
+      "versionCode": 6,
+      "versionName": "2.7.5-stable",
+      "outputFile": "linked-resources-binary-format-armeabi-v7aDebug.ap_"
+    },
+    {
       "type": "ONE_OF_MANY",
       "filters": [
         {
@@ -16,8 +37,8 @@
         }
       ],
       "attributes": [],
-      "versionCode": 5,
-      "versionName": "2.6.2-beta",
+      "versionCode": 6,
+      "versionName": "2.7.5-stable",
       "outputFile": "linked-resources-binary-format-arm64-v8aDebug.ap_"
     }
   ],

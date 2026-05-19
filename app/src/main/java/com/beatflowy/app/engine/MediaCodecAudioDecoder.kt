@@ -6,28 +6,75 @@ import android.media.MediaCodec
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.util.Log
+import com.beatflowy.app.model.Song
+import com.beatflowy.app.model.SongSource
+import com.beatflowy.app.repository.DriveAccountRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.io.File
 
-internal class MediaCodecAudioDecoder(private val context: Context) : AudioDecoder {
+internal class MediaCodecAudioDecoder(
+    private val context: Context,
+    private val driveAccountRepository: DriveAccountRepository,
+    private val cloudCacheManager: com.beatflowy.app.drive.CloudCacheManager
+) : AudioDecoder {
+    
     override suspend fun decode(
         request: PlaybackRequest,
         sink: DecoderSink,
         control: DecoderControl
     ): DecodeResult = withContext(Dispatchers.IO) {
-        val extractor = MediaExtractor()
+        var extractor = MediaExtractor()
         var codec: MediaCodec? = null
 
         try {
-            context.contentResolver.openFileDescriptor(request.song.uri, "r")?.use { pfd ->
-                extractor.setDataSource(pfd.fileDescriptor)
-            } ?: return@withContext DecodeResult.Failed("Unable to open source")
+            // 1. Setup Data Source
+            val cachedFile = cloudCacheManager.getCachedFile(request.song)
+            if (cachedFile != null) {
+                extractor.setDataSource(cachedFile.absolutePath)
+            } else if (request.song.source != SongSource.LOCAL) {
+                val dataSource = cloudCacheManager.getDataSource(request.song)
+                if (dataSource != null) {
+                    try {
+                        extractor.setDataSource(dataSource)
+                    } catch (e: Exception) {
+                        control.logWarn("DataSource failed, falling back to direct URL: ${e.message}")
+                        val (source, headers) = resolveSource(request.song)
+                        extractor.setDataSource(source, headers)
+                    }
+                } else {
+                    val (source, headers) = resolveSource(request.song)
+                    extractor.setDataSource(source, headers)
+                }
+            } else {
+                try {
+                    extractor.setDataSource(context, request.song.uri, null)
+                } catch (e: Exception) {
+                    context.contentResolver.openFileDescriptor(request.song.uri, "r")?.use { pfd ->
+                        extractor.setDataSource(pfd.fileDescriptor)
+                    } ?: throw e
+                }
+            }
 
-            val track = selectBestAudioTrack(extractor) ?: return@withContext DecodeResult.Failed("No audio track")
+            // 2. Select Track with retry
+            var track = selectBestAudioTrack(extractor)
+            if (track == null && request.song.source != SongSource.LOCAL && cachedFile == null) {
+                control.logWarn("Initial extraction failed, retrying with fresh extractor and direct URL...")
+                extractor.release()
+                extractor = MediaExtractor()
+                val (source, headers) = resolveSource(request.song)
+                extractor.setDataSource(source, headers)
+                track = selectBestAudioTrack(extractor)
+            }
+
+            if (track == null) {
+                return@withContext DecodeResult.Failed("No audio track found for ${request.song.title}")
+            }
+
+            // 3. Configure Codec
             extractor.selectTrack(track.index)
-
             codec = MediaCodec.createDecoderByType(track.mime)
             codec.configure(track.format, null, null, 0)
             codec.start()
@@ -42,6 +89,7 @@ internal class MediaCodecAudioDecoder(private val context: Context) : AudioDecod
             var floatBuffer = FloatArray(PCM_CHUNK_SAMPLES)
             var configured = false
 
+            // 4. Decode Loop
             while (control.isActive()) {
                 val pendingSeek = control.consumePendingSeekMs()
                 if (pendingSeek != null) {
@@ -72,6 +120,7 @@ internal class MediaCodecAudioDecoder(private val context: Context) : AudioDecod
                     }
                 } catch (e: Exception) {
                     control.logWarn("MediaCodec input error: ${e.message}")
+                    break
                 }
 
                 val timeoutUs = if (inputProgress) 0L else 5_000L
@@ -138,34 +187,47 @@ internal class MediaCodecAudioDecoder(private val context: Context) : AudioDecod
             }
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
-            Log.e(TAG, "MediaCodec decode failed", e)
+            Log.e(TAG, "MediaCodec decode failed for ${request.song.title}", e)
             return@withContext DecodeResult.Failed(e.message)
         } finally {
-            try {
-                codec?.stop()
-            } catch (_: Exception) {
-            }
-            try {
-                codec?.release()
-            } catch (_: Exception) {
-            }
-            try {
-                extractor.release()
-            } catch (_: Exception) {
-            }
+            try { codec?.stop() } catch (_: Exception) {}
+            try { codec?.release() } catch (_: Exception) {}
+            try { extractor.release() } catch (_: Exception) {}
         }
 
         if (control.isActive()) DecodeResult.Failed("Decoder loop exited prematurely")
         else DecodeResult.Failed("Playback stopped")
     }
 
+    private suspend fun resolveSource(song: Song): Pair<String, Map<String, String>> {
+        val cachedFile = cloudCacheManager.getCachedFile(song)
+        if (cachedFile != null) {
+            return cachedFile.absolutePath to emptyMap()
+        }
+
+        return if (song.source == SongSource.GDRIVE) {
+            val url = "https://www.googleapis.com/drive/v3/files/${song.driveFileId}?alt=media"
+            val headers = mutableMapOf<String, String>()
+            if (song.driveAccountEmail != null) {
+                val token = driveAccountRepository.getAccessToken(song.driveAccountEmail)
+                if (token != null) {
+                    headers["Authorization"] = "Bearer $token"
+                }
+            }
+            url to headers
+        } else {
+            song.uri.toString() to emptyMap()
+        }
+    }
+
     private fun selectBestAudioTrack(extractor: MediaExtractor): TrackSelection? {
-        val candidates = buildList {
-            for (index in 0 until extractor.trackCount) {
+        val candidates = mutableListOf<TrackSelection>()
+        for (index in 0 until extractor.trackCount) {
+            try {
                 val format = extractor.getTrackFormat(index)
                 val mime = format.getString(MediaFormat.KEY_MIME) ?: continue
                 if (mime.startsWith("audio/")) {
-                    add(
+                    candidates.add(
                         TrackSelection(
                             index = index,
                             format = format,
@@ -174,6 +236,8 @@ internal class MediaCodecAudioDecoder(private val context: Context) : AudioDecod
                         )
                     )
                 }
+            } catch (e: Exception) {
+                // Ignore tracks that fail to probe
             }
         }
         return candidates.maxByOrNull { it.priority }

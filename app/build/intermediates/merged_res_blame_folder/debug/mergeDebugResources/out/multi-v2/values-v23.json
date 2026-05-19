@@ -1,20 +1,10 @@
 {
     "logs": [
         {
-            "outputFile": "com.beatflowy.app-mergeDebugResources-91:/values-v23/values-v23.xml",
+            "outputFile": "com.beatflowy.app-mergeDebugResources-88:/values-v23/values-v23.xml",
             "map": [
                 {
-                    "source": "C:\\Users\\prasa\\.gradle\\caches\\8.10.2\\transforms\\689f0741234a8e2e0031950d18db52e0\\transformed\\work-runtime-2.7.1\\res\\values-v23\\values-v23.xml",
-                    "from": {
-                        "startLines": "2,3",
-                        "startColumns": "4,4",
-                        "startOffsets": "55,121",
-                        "endColumns": "65,62",
-                        "endOffsets": "116,179"
-                    }
-                },
-                {
-                    "source": "C:\\Users\\prasa\\.gradle\\caches\\8.10.2\\transforms\\8c94434d41992105b82e863af47c5758\\transformed\\material-1.12.0\\res\\values-v23\\values-v23.xml",
+                    "source": "C:\\Users\\Haaj Mens\\.gradle\\caches\\8.10.2\\transforms\\8c94434d41992105b82e863af47c5758\\transformed\\material-1.12.0\\res\\values-v23\\values-v23.xml",
                     "from": {
                         "startLines": "2,5,9,13,16,19,22,25,28,32",
                         "startColumns": "4,4,4,4,4,4,4,4,4,4",
@@ -33,7 +23,7 @@
                     }
                 },
                 {
-                    "source": "C:\\Users\\prasa\\.gradle\\caches\\8.10.2\\transforms\\89e805c2e68a3b79ff5f04b9e5c369cc\\transformed\\appcompat-1.6.1\\res\\values-v23\\values-v23.xml",
+                    "source": "C:\\Users\\Haaj Mens\\.gradle\\caches\\8.10.2\\transforms\\89e805c2e68a3b79ff5f04b9e5c369cc\\transformed\\appcompat-1.6.1\\res\\values-v23\\values-v23.xml",
                     "from": {
                         "startLines": "2,3,4,5,6,20,34,35,36,39,43,44,45,46",
                         "startColumns": "4,4,4,4,4,4,4,4,4,4,4,4,4,4",
@@ -52,7 +42,7 @@
                     }
                 },
                 {
-                    "source": "C:\\Users\\prasa\\.gradle\\caches\\8.10.2\\transforms\\254b0cce2cf19ad911ef256b67df02b7\\transformed\\cardview-1.0.0\\res\\values-v23\\values-v23.xml",
+                    "source": "C:\\Users\\Haaj Mens\\.gradle\\caches\\8.10.2\\transforms\\254b0cce2cf19ad911ef256b67df02b7\\transformed\\cardview-1.0.0\\res\\values-v23\\values-v23.xml",
                     "from": {
                         "startLines": "2",
                         "startColumns": "4",
@@ -71,7 +61,7 @@
                     }
                 },
                 {
-                    "source": "C:\\Users\\prasa\\.gradle\\caches\\8.10.2\\transforms\\b536db8dc48667e969e668479c22b3ca\\transformed\\glance-appwidget-1.1.1\\res\\values-v23\\values-v23.xml",
+                    "source": "C:\\Users\\Haaj Mens\\.gradle\\caches\\8.10.2\\transforms\\b536db8dc48667e969e668479c22b3ca\\transformed\\glance-appwidget-1.1.1\\res\\values-v23\\values-v23.xml",
                     "from": {
                         "startLines": "2",
                         "startColumns": "4",
@@ -85,6 +75,16 @@
                         "startOffsets": "184",
                         "endColumns": "55",
                         "endOffsets": "235"
+                    }
+                },
+                {
+                    "source": "C:\\Users\\Haaj Mens\\.gradle\\caches\\8.10.2\\transforms\\689f0741234a8e2e0031950d18db52e0\\transformed\\work-runtime-2.7.1\\res\\values-v23\\values-v23.xml",
+                    "from": {
+                        "startLines": "2,3",
+                        "startColumns": "4,4",
+                        "startOffsets": "55,121",
+                        "endColumns": "65,62",
+                        "endOffsets": "116,179"
                     }
                 }
             ]

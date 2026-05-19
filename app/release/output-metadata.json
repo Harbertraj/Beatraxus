@@ -1,0 +1,67 @@
+{
+  "version": 3,
+  "artifactType": {
+    "type": "APK",
+    "kind": "Directory"
+  },
+  "applicationId": "com.beatflowy.app",
+  "variantName": "release",
+  "elements": [
+    {
+      "type": "UNIVERSAL",
+      "filters": [],
+      "attributes": [],
+      "versionCode": 5,
+      "versionName": "2.6.2-beta",
+      "outputFile": "Beatraxus-v2.6.2-beta-universal-release.apk"
+    },
+    {
+      "type": "ONE_OF_MANY",
+      "filters": [
+        {
+          "filterType": "ABI",
+          "value": "armeabi-v7a"
+        }
+      ],
+      "attributes": [],
+      "versionCode": 5,
+      "versionName": "2.6.2-beta",
+      "outputFile": "Beatraxus-v2.6.2-beta-armeabi-v7a-release.apk"
+    },
+    {
+      "type": "ONE_OF_MANY",
+      "filters": [
+        {
+          "filterType": "ABI",
+          "value": "arm64-v8a"
+        }
+      ],
+      "attributes": [],
+      "versionCode": 5,
+      "versionName": "2.6.2-beta",
+      "outputFile": "Beatraxus-v2.6.2-beta-arm64-v8a-release.apk"
+    }
+  ],
+  "elementType": "File",
+  "baselineProfiles": [
+    {
+      "minApi": 28,
+      "maxApi": 30,
+      "baselineProfiles": [
+        "baselineProfiles/1/Beatraxus-v2.6.2-beta-universal-release.dm",
+        "baselineProfiles/1/Beatraxus-v2.6.2-beta-armeabi-v7a-release.dm",
+        "baselineProfiles/1/Beatraxus-v2.6.2-beta-arm64-v8a-release.dm"
+      ]
+    },
+    {
+      "minApi": 31,
+      "maxApi": 2147483647,
+      "baselineProfiles": [
+        "baselineProfiles/0/Beatraxus-v2.6.2-beta-universal-release.dm",
+        "baselineProfiles/0/Beatraxus-v2.6.2-beta-armeabi-v7a-release.dm",
+        "baselineProfiles/0/Beatraxus-v2.6.2-beta-arm64-v8a-release.dm"
+      ]
+    }
+  ],
+  "minSdkVersionForDexing": 26
+}

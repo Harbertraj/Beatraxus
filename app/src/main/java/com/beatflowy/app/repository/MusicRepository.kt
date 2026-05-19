@@ -14,6 +14,7 @@ import com.arthenica.ffmpegkit.FFmpegKitConfig
 import com.arthenica.ffmpegkit.FFprobeKit
 import com.arthenica.ffmpegkit.ReturnCode
 import com.beatflowy.app.model.Song
+import com.beatflowy.app.model.SongSource
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import org.json.JSONObject
@@ -28,6 +29,8 @@ class MusicRepository(private val context: Context) {
     @OptIn(ExperimentalCoroutinesApi::class)
     suspend fun scanAudioFiles(
         fullScan: Boolean = true,
+        targetPath: String? = null,
+        excludedPaths: List<String> = emptyList(),
         onProgress: (count: Int, albumCount: Int, artistCount: Int, progress: Float) -> Unit
     ): List<Song> = withContext(Dispatchers.IO) {
         onProgress(0, 0, 0, 0f)
@@ -54,12 +57,26 @@ class MusicRepository(private val context: Context) {
             }
         }.toTypedArray()
 
-        val selection  = "${MediaStore.Audio.Media.DURATION} > 5000"
+        val selection = StringBuilder("${MediaStore.Audio.Media.DURATION} > 5000")
+        val selectionArgs = mutableListOf<String>()
+
+        if (targetPath != null) {
+            val normalizedTarget = if (targetPath.endsWith("/")) targetPath else "$targetPath/"
+            selection.append(" AND ${MediaStore.Audio.Media.DATA} LIKE ?")
+            selectionArgs.add("$normalizedTarget%")
+        }
+
+        excludedPaths.forEach { path ->
+            val normalizedExcluded = if (path.endsWith("/")) path else "$path/"
+            selection.append(" AND ${MediaStore.Audio.Media.DATA} NOT LIKE ?")
+            selectionArgs.add("$normalizedExcluded%")
+        }
+
         val sortOrder  = "${MediaStore.Audio.Media.TITLE} ASC"
 
         val rawById = linkedMapOf<Long, RawSongData>()
 
-        context.contentResolver.query(collection, projection, selection, null, sortOrder)?.use { c ->
+        context.contentResolver.query(collection, projection, selection.toString(), if (selectionArgs.isEmpty()) null else selectionArgs.toTypedArray(), sortOrder)?.use { c ->
             val idCol      = c.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
             val titleCol   = c.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE)
             val artistCol  = c.getColumnIndexOrThrow(MediaStore.Audio.Media.ARTIST)
@@ -130,12 +147,21 @@ class MusicRepository(private val context: Context) {
                     )
                     var albumArtUri: Uri = fallbackAlbumArt
                     var replayGain = ReplayGainMetadata()
+                    var albumArtist: String? = null
+                    var trackNumber: Int? = null
+                    var discNumber: Int? = null
+                    var composer: String? = null
 
                     if (shouldReadRetriever) {
                         val retriever = MediaMetadataRetriever()
                         try {
                             retriever.setDataSource(context, uri)
                             
+                            albumArtist = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUMARTIST)
+                            trackNumber = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CD_TRACK_NUMBER)?.toIntOrNull()
+                            discNumber = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DISC_NUMBER)?.toIntOrNull()
+                            composer = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_COMPOSER)
+
                             if (genre == "Unknown") {
                                 genre = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_GENRE) ?: "Unknown"
                             }
@@ -275,7 +301,12 @@ class MusicRepository(private val context: Context) {
                         replayGainTrackDb = replayGain.trackGainDb,
                         replayGainAlbumDb = replayGain.albumGainDb,
                         replayGainTrackPeak = replayGain.trackPeak,
-                        replayGainAlbumPeak = replayGain.albumPeak
+                        replayGainAlbumPeak = replayGain.albumPeak,
+                        albumArtist = albumArtist,
+                        trackNumber = trackNumber,
+                        discNumber = discNumber,
+                        composer = composer,
+                        source = SongSource.LOCAL
                     ))
                 }
             }
@@ -621,6 +652,16 @@ class MusicRepository(private val context: Context) {
         return null
     }
 
+    fun normalizePath(path: String): String {
+        return try {
+            val file = File(path)
+            file.canonicalPath
+        } catch (e: Exception) {
+            path.trimEnd('/')
+        }
+    }
+
+    // Deprecated: Moving to Room-based folder management
     fun getMusicFolders(): List<String> {
         val prefs = context.getSharedPreferences("beatraxus", Context.MODE_PRIVATE)
         val foldersJson = prefs.getString("music_folders", null) ?: return emptyList()
