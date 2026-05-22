@@ -89,6 +89,9 @@ configure<ApplicationExtension> {
     }
 
     packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
             excludes += "/META-INF/DEPENDENCIES"
@@ -154,6 +157,13 @@ dependencies {
 
     implementation("androidx.navigation:navigation-compose:2.8.5")
     implementation("androidx.media:media:1.7.0")
+    
+    val media3Version = "1.5.0"
+    implementation("androidx.media3:media3-exoplayer:$media3Version")
+    implementation("androidx.media3:media3-common:$media3Version")
+    implementation("androidx.media3:media3-session:$media3Version")
+    implementation("androidx.media3:media3-ui:$media3Version")
+
     implementation("io.coil-kt:coil-compose:2.6.0")
     implementation("androidx.palette:palette-ktx:1.0.0")
 

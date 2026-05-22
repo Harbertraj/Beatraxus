@@ -28,15 +28,19 @@ object LrcParser {
                 lastIndex = matcher.end()
             }
 
-            if (timeMatches.isEmpty()) continue
-
-            // 2. Extract content and word timings
             val content = trimmedLine.substring(lastIndex).trim()
             val wordTimings = parseWordTimings(content)
             val cleanText = content.replace(WORD_TIME_PATTERN.toRegex(), "").trim()
 
-            for (startTime in timeMatches) {
-                lines.add(LrcLine(startTime, cleanText, wordTimings.takeIf { it.isNotEmpty() }))
+            when {
+                timeMatches.isNotEmpty() -> {
+                    for (startTime in timeMatches) {
+                        lines.add(LrcLine(startTime, cleanText, wordTimings.takeIf { it.isNotEmpty() }))
+                    }
+                }
+                wordTimings.isNotEmpty() -> {
+                    lines.add(LrcLine(wordTimings.first().startTime, cleanText, wordTimings))
+                }
             }
         }
 
@@ -57,7 +61,6 @@ object LrcParser {
             
             // Deduplicate: If multiple lines have same startTime, merge them or keep last
             if (result.isNotEmpty() && result.last().startTime == current.startTime) {
-                // Skip or merge? Usually skip duplicates in LRC
                 continue
             }
             
@@ -82,22 +85,18 @@ object LrcParser {
     private fun parseWordTimings(text: String): List<WordTiming> {
         val timings = mutableListOf<WordTiming>()
         val matcher = WORD_TIME_PATTERN.matcher(text)
-        
-        val temp = mutableListOf<Pair<Long, Int>>() // Time to Start Index of text
+        val tags = mutableListOf<Pair<Long, Int>>() // time to word start index
+
         while (matcher.find()) {
-            temp.add(parseTime(matcher.group(1), matcher.group(2), matcher.group(3)) to matcher.end())
+            tags.add(parseTime(matcher.group(1), matcher.group(2), matcher.group(3)) to matcher.end())
         }
 
-        for (i in temp.indices) {
-            val (startTime, textStart) = temp[i]
-            val nextTagStart = if (i < temp.size - 1) {
-                val nextMatcher = WORD_TIME_PATTERN.matcher(text)
-                if (nextMatcher.find(textStart)) nextMatcher.start() else text.length
-            } else text.length
-            
-            val wordText = text.substring(textStart, nextTagStart).trim()
-            val duration = if (i < temp.size - 1) {
-                (temp[i + 1].first - startTime).coerceAtLeast(0L)
+        for (i in tags.indices) {
+            val (startTime, wordStart) = tags[i]
+            val nextWordStart = if (i < tags.lastIndex) tags[i + 1].second else text.length
+            val wordText = text.substring(wordStart, nextWordStart).trim()
+            val duration = if (i < tags.lastIndex) {
+                (tags[i + 1].first - startTime).coerceAtLeast(0L)
             } else 500L
 
             if (wordText.isNotEmpty()) {

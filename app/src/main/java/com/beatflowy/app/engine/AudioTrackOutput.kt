@@ -219,11 +219,13 @@ class AudioTrackOutput(
         val track = audioTrack
         try {
             track?.let {
+                val wasPlaying = it.playState == AudioTrack.PLAYSTATE_PLAYING
                 it.pause()
                 it.flush()
                 playbackHeadOffset = getAbsolutePlaybackHeadPosition()
                 totalFramesWritten = 0L
-                if (it.state == AudioTrack.STATE_INITIALIZED) {
+                // Resume if track was playing before flush
+                if (wasPlaying && it.state == AudioTrack.STATE_INITIALIZED) {
                     it.play()
                 }
             }

@@ -239,12 +239,19 @@ class AudioEngine(
         activeSession = null
         nextSession?.stop()
         nextSession = null
+        isSeeking.set(false)
     }
 
     fun seekTo(positionMs: Long) {
+        Log.d("AudioEngine", "seekTo requested: $positionMs ms")
         this.positionMs = positionMs
-        isSeeking.set(true)
-        activeSession?.requestSeek(positionMs)
+        val session = activeSession
+        if (session != null) {
+            isSeeking.set(true)
+            session.requestSeek(positionMs)
+        } else {
+            isSeeking.set(false)
+        }
     }
 
     fun setShuffleMode(enabled: Boolean) {
@@ -369,7 +376,7 @@ class AudioEngine(
                 val frames = processed.sampleCount / format.channels
                 var writtenFramesTotal = 0
 
-                while (writtenFramesTotal < frames && engineScope.isActive && activeSession?.sessionId == session.sessionId && !isSeeking.get() && _playbackStateFlow.value.isPlaying) {
+                while (writtenFramesTotal < frames && engineScope.isActive && activeSession?.sessionId == session.sessionId && _playbackStateFlow.value.isPlaying) {
                     val written = output.write(
                         data = processed.data,
                         offsetInSamples = writtenFramesTotal * format.channels,
@@ -439,6 +446,7 @@ class AudioEngine(
         val ringBuffer = FloatRingBuffer(RING_BUFFER_SAMPLES)
         private val pendingSeekMs = AtomicLong(NO_SEEK_PENDING)
         @Volatile private var started = true
+        private var seekListener: (() -> Unit)? = null
         var decoderCompleted = false
             private set
 
@@ -452,38 +460,58 @@ class AudioEngine(
             startFrameOffset = offset
         }
 
+        fun requestSeek(positionMs: Long) {
+            pendingSeekMs.set(positionMs)
+            this@AudioEngine.positionMs = positionMs
+            ringBuffer.clear() // Unblock decoder if it's waiting on a full buffer
+            seekListener?.invoke()
+        }
+
+        override fun setSeekListener(listener: () -> Unit) {
+            seekListener = listener
+        }
+
         suspend fun run() {
             val decoder = decoderFactory.create(song)
             var decodeStartMs = initialStartPositionMs
 
-            while (isActive()) {
-                decoderCompleted = false
-                val result = decoder.decode(
-                    request = PlaybackRequest(song = song, startPositionMs = decodeStartMs),
-                    sink = this,
-                    control = this
-                )
+            try {
+                while (isActive()) {
+                    decoderCompleted = false
+                    val result = decoder.decode(
+                        request = PlaybackRequest(song = song, startPositionMs = decodeStartMs),
+                        sink = this,
+                        control = this
+                    )
 
-                when (result) {
-                    DecodeResult.Ended -> {
-                        decoderCompleted = true
-                        return
-                    }
-                    is DecodeResult.Seek -> {
-                        notifySeek(result.positionMs)
-                        decodeStartMs = result.positionMs
-                    }
-                    is DecodeResult.Failed -> {
-                        logWarn("Decoder failed: ${result.reason ?: "unknown"}")
-                        ringBuffer.close()
-                        controlMutex.withLock {
-                            if (activeSession?.sessionId == sessionId) {
-                                activeSession = null
-                                _playbackStateFlow.update { it.copy(isPlaying = false) }
-                            }
+                    when (result) {
+                        DecodeResult.Ended -> {
+                            decoderCompleted = true
+                            return
                         }
-                        return
+
+                        is DecodeResult.Seek -> {
+                            notifySeek(result.positionMs)
+                            decodeStartMs = result.positionMs
+                        }
+
+                        is DecodeResult.Failed -> {
+                            logWarn("Decoder failed: ${result.reason ?: "unknown"}")
+                            ringBuffer.close()
+                            controlMutex.withLock {
+                                if (activeSession?.sessionId == sessionId) {
+                                    activeSession = null
+                                    _playbackStateFlow.update { it.copy(isPlaying = false) }
+                                }
+                            }
+                            return
+                        }
                     }
+                }
+            } finally {
+                // Ensure isSeeking is cleared if session ends
+                if (activeSession?.sessionId == sessionId) {
+                    isSeeking.set(false)
                 }
             }
         }
@@ -491,11 +519,6 @@ class AudioEngine(
         fun stop() {
             started = false
             ringBuffer.close()
-        }
-
-        fun requestSeek(positionMs: Long) {
-            pendingSeekMs.set(positionMs)
-            this@AudioEngine.positionMs = positionMs
         }
 
         fun currentRenderedPositionMs(): Long {
@@ -560,12 +583,17 @@ class AudioEngine(
             return started && (activeSession?.sessionId == sessionId || nextSession?.sessionId == sessionId)
         }
 
+        override fun isSeekPending(): Boolean {
+            return pendingSeekMs.get() != NO_SEEK_PENDING
+        }
+
         override fun consumePendingSeekMs(): Long? {
             val requested = pendingSeekMs.getAndSet(NO_SEEK_PENDING)
             return if (requested == NO_SEEK_PENDING) null else requested
         }
 
         override fun notifySeek(positionMs: Long) {
+            Log.d("AudioEngine", "notifySeek: $positionMs ms")
             performSeek(positionMs)
             isSeeking.set(false)
         }
@@ -579,10 +607,13 @@ class AudioEngine(
         }
 
         fun performSeek(positionMs: Long) {
+            Log.d("AudioEngine", "performSeek: $positionMs ms")
             basePositionMs = positionMs
             decoderCompleted = false
             ringBuffer.clear()
             output.flush()
+            dspPipeline.flush()
+            startFrameOffset = 0L
             this@AudioEngine.positionMs = positionMs
         }
 
@@ -605,8 +636,7 @@ class AudioEngine(
     companion object {
         private const val TAG = "AudioEngine"
         private const val RING_BUFFER_SAMPLES = 262_144 // Increased for better pre-fetch
-        // Change 1: RENDER_BATCH_SAMPLES changed from 1_024 to 4_096
-        private const val RENDER_BATCH_SAMPLES = 4_096
+        private const val RENDER_BATCH_SAMPLES = 1_024
         private const val NO_SEEK_PENDING = -1L
 
         private fun framesToMs(frames: Long, sampleRate: Int): Long {

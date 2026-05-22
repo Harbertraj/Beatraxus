@@ -91,6 +91,11 @@
     @com.google.api.client.util.Key <fields>;
 }
 
+# Resolve missing classes from Apache HttpClient used by Google API Client
+-dontwarn javax.naming.**
+-dontwarn org.ietf.jgss.**
+-dontwarn org.apache.http.**
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ANDROIDX LIBRARIES

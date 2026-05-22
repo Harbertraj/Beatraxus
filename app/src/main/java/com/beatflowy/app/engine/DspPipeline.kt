@@ -27,6 +27,7 @@ internal data class DspProcessResult(
 internal interface DspProcessor {
     fun process(input: DspProcessResult, channels: Int): DspProcessResult
     fun updateConfig(config: DspConfig) {}
+    fun flush() {}
 }
 
 internal class AudioDspPipeline(
@@ -42,6 +43,10 @@ internal class AudioDspPipeline(
 
     fun updateConfig(config: DspConfig) {
         processors.forEach { it.updateConfig(config) }
+    }
+
+    fun flush() {
+        processors.forEach { it.flush() }
     }
 
     /**
@@ -90,6 +95,11 @@ private class StereoBiquad(
 ) {
     private var z1L = 0.0; private var z2L = 0.0
     private var z1R = 0.0; private var z2R = 0.0
+
+    fun flush() {
+        z1L = 0.0; z2L = 0.0
+        z1R = 0.0; z2R = 0.0
+    }
 
     fun processLeft(sample: Float): Float {
         val s = sample.toDouble()
@@ -290,6 +300,14 @@ private class NativeDspProcessor(
         updateNativeConfig(config, native)
     }
 
+    override fun flush() {
+        native.init(inputSampleRate.toFloat(), channels)
+        if (inputSampleRate != outputSampleRate) {
+            native.initResampler(inputSampleRate.toFloat(), channels, outputSampleRate.toFloat())
+        }
+        updateNativeConfig(config, native)
+    }
+
     override fun process(input: DspProcessResult, channels: Int): DspProcessResult {
         if (inputSampleRate == outputSampleRate) {
             native.process(input.data, input.sampleCount / channels)
@@ -341,6 +359,10 @@ private class SoftClipLimiterProcessor(private val threshold: Float) : DspProces
 
 private class DvcVolumeProcessor(private var targetGain: Float) : DspProcessor {
     private var currentGain = -1f // Initialize on first use
+
+    override fun flush() {
+        currentGain = -1f
+    }
 
     override fun updateConfig(config: DspConfig) {
         this.targetGain = config.dvcLevel
@@ -421,6 +443,10 @@ private class FilterChainProcessor(
     private var filters: List<StereoBiquad>,
     private val sampleRate: Int
 ) : DspProcessor {
+    override fun flush() {
+        filters.forEach { it.flush() }
+    }
+
     override fun updateConfig(config: DspConfig) {
         val effectiveEqBands = if (config.eqEnabled) {
             if (config.autoEqEnabled && config.autoEqProfile != null) {
@@ -525,6 +551,13 @@ private class ReverbProcessor(
     private var leftIndex = 0
     private var rightIndex = 0
 
+    override fun flush() {
+        leftBuffer.fill(0f)
+        rightBuffer.fill(0f)
+        leftIndex = 0
+        rightIndex = 0
+    }
+
     override fun process(input: DspProcessResult, channels: Int): DspProcessResult {
         if (channels < 2) return input
         val data = if (input.data.size == input.sampleCount) input.data else input.data.copyOf(input.sampleCount)
@@ -565,6 +598,12 @@ private abstract class StreamingResamplerProcessor(
     private var sourcePosition = 0.0
     private var history = FloatArray(0)
     private var historyFrameCount = 0
+
+    override fun flush() {
+        sourcePosition = 0.0
+        historyFrameCount = 0
+        history = FloatArray(0)
+    }
 
     override fun process(input: DspProcessResult, channels: Int): DspProcessResult {
         if (input.sampleRate == outputSampleRate || input.sampleCount <= 0) return input

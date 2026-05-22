@@ -1143,10 +1143,10 @@ fun LibraryContent(uiState: com.beatflowy.app.model.PlayerUiState, viewModel: co
         }
         
                 val error = uiState.errorMessage
-                if (error != null && (error.contains("Added") || error.contains("No new"))) {
+                if (error != null) {
                     Text(
                         error,
-                        color = PremiumAccent,
+                        color = if (error.contains("failed", ignoreCase = true)) Color.Red else PremiumAccent,
                         fontSize = 12.sp,
                         modifier = Modifier.padding(top = 8.dp, start = 4.dp)
                     )

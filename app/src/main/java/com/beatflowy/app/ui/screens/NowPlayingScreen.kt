@@ -111,6 +111,9 @@ fun NowPlayingScreen(
     val showLyrics = uiState.showLyrics
     var showSleepTimerSheet by remember { mutableStateOf(false) }
 
+    // Key ensures derived state (progress calc) resets on song change
+    val songChangeKey = song.id to (durationMs)
+
     var badgeVisible by remember(song.id) { mutableStateOf(false) }
     LaunchedEffect(song.id) {
         delay(200)
@@ -528,8 +531,9 @@ fun NowPlayingScreen(
                                     enter = fadeIn(tween(600)) + expandHorizontally(tween(600)),
                                     exit = fadeOut(tween(600)) + shrinkHorizontally(tween(600))
                                 ) {
-                                    val progress = if (durationMs > 0) (progressMs().toFloat() / durationMs) else 0f
-                                    var seekTarget by remember(song.id) { mutableStateOf<Float?>(null) }
+                                    val progress = if (durationMs > 0) {
+                                        (progressMs().toFloat() / durationMs).coerceIn(0f, 1f)
+                                    } else 0f
                                     
                                     val seekHeight by animateDpAsState(
                                         targetValue = 40.dp,
@@ -538,12 +542,9 @@ fun NowPlayingScreen(
                                     )
 
                                     WaveformSeekBar(
-                                        progress = seekTarget ?: progress,
-                                        onProgressChange = { 
-                                            seekTarget = it
-                                        },
+                                        progress = progress,
+                                        onProgressChange = { },
                                         onProgressFinished = {
-                                            seekTarget = null // Clear immediately to show current track progress
                                             onSeek((it * durationMs).toLong())
                                         },
                                         modifier = Modifier
@@ -575,8 +576,9 @@ fun NowPlayingScreen(
                                 enter = expandVertically(tween(600)) + fadeIn(tween(600)),
                                 exit = shrinkVertically(tween(600)) + fadeOut(tween(600))
                             ) {
-                                val progress = if (durationMs > 0) (progressMs().toFloat() / durationMs) else 0f
-                                var seekTarget by remember(song.id) { mutableStateOf<Float?>(null) }
+                                val progress = if (durationMs > 0) {
+                                    (progressMs().toFloat() / durationMs).coerceIn(0f, 1f)
+                                } else 0f
                                 
                                 val seekHeight by animateDpAsState(
                                     targetValue = if (showLyrics) 40.dp else 44.dp,
@@ -587,12 +589,9 @@ fun NowPlayingScreen(
                                 Column {
                                     Spacer(Modifier.height(18.dp))
                                     WaveformSeekBar(
-                                        progress = seekTarget ?: progress,
-                                        onProgressChange = { 
-                                            seekTarget = it
-                                        },
+                                        progress = progress,
+                                        onProgressChange = { },
                                         onProgressFinished = {
-                                            seekTarget = null // Clear immediately to show current track progress
                                             onSeek((it * durationMs).toLong())
                                         },
                                         modifier = Modifier

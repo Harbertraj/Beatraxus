@@ -10,6 +10,7 @@ import com.google.api.client.googleapis.extensions.android.gms.auth.UserRecovera
 import com.google.api.client.json.gson.GsonFactory
 import com.google.api.services.drive.Drive
 import com.google.api.services.drive.DriveScopes
+import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -32,10 +33,7 @@ class DriveLibraryScanner(private val context: Context) {
         )
 
         fun buildDriveQuery(): String {
-            val extensionClauses = AUDIO_EXTENSIONS.joinToString(" or ") { ext ->
-                "name contains '$ext'"
-            }
-            return "(mimeType contains 'audio/' or $extensionClauses) and trashed = false"
+            return "mimeType contains 'audio/' and trashed = false"
         }
 
         private val SUPPORTED_EXTENSIONS = AUDIO_EXTENSIONS.toHashSet()
@@ -55,8 +53,6 @@ class DriveLibraryScanner(private val context: Context) {
             do {
                 val result = driveService.files().list()
                     .setQ(query)
-                    .setSupportsAllDrives(true)
-                    .setIncludeItemsFromAllDrives(true)
                     .setFields("nextPageToken, files(id, name, mimeType, size, modifiedTime, owners, thumbnailLink)")
                     .setPageSize(1000)
                     .apply { if (pageToken != null) setPageToken(pageToken) }
@@ -87,15 +83,15 @@ class DriveLibraryScanner(private val context: Context) {
         withContext(Dispatchers.IO) {
             val songs = mutableListOf<Song>()
             try {
+                Log.d("DriveScanner", "Starting scan for account: ${credential.selectedAccountName}")
                 val driveService = buildDriveService(credential)
                 val query = buildDriveQuery()
+                Log.d("DriveScanner", "Query: $query")
                 var pageToken: String? = null
 
                 while (true) {
                     val result = driveService.files().list()
                         .setQ(query)
-                        .setSupportsAllDrives(true)
-                        .setIncludeItemsFromAllDrives(true)
                         .setFields("nextPageToken, files(id, name, mimeType, size, modifiedTime, owners, thumbnailLink)")
                         .setPageSize(1000)
                         .apply { if (pageToken != null) setPageToken(pageToken) }
@@ -106,24 +102,30 @@ class DriveLibraryScanner(private val context: Context) {
                         ?.map { file -> file.toSong(credential.selectedAccountName) }
                         ?: emptyList()
 
+                    Log.d("DriveScanner", "Found ${pageSongs.size} songs in this page")
                     songs.addAll(pageSongs)
                     pageToken = result.nextPageToken
                     if (pageToken == null) break
                 }
+                Log.d("DriveScanner", "Scan complete. Total songs: ${songs.size}")
+            } catch (e: UserRecoverableAuthIOException) {
+                Log.e("DriveScanner", "User recoverable auth error", e)
+                DrivePlaybackHelper.authRecoveryFlow.tryEmit(e.intent)
+                throw e
             } catch (e: Exception) {
-                e.printStackTrace()
+                Log.e("DriveScanner", "Drive scan fatal error: ${e.message}", e)
+                throw e
             }
             songs
         }
 
-    private fun buildDriveService(credential: GoogleAccountCredential): Drive =
-        Drive.Builder(
-            AndroidHttp.newCompatibleTransport(),
-            GsonFactory.getDefaultInstance(),
-            credential
-        )
+    private fun buildDriveService(credential: GoogleAccountCredential): Drive {
+        val transport = com.google.api.client.http.javanet.NetHttpTransport()
+        val jsonFactory = GsonFactory.getDefaultInstance()
+        return Drive.Builder(transport, jsonFactory, credential)
             .setApplicationName("Beatraxus")
             .build()
+    }
 
     private fun com.google.api.services.drive.model.File.toSong(accountEmail: String?): Song {
         val ext = name.substringAfterLast('.', "").uppercase()

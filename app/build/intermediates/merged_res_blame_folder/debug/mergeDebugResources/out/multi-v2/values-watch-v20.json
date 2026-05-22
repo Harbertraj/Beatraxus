@@ -1,7 +1,7 @@
 {
     "logs": [
         {
-            "outputFile": "com.beatflowy.app-mergeDebugResources-88:/values-watch-v20/values-watch-v20.xml",
+            "outputFile": "com.beatflowy.app-mergeDebugResources-91:/values-watch-v20/values-watch-v20.xml",
             "map": [
                 {
                     "source": "C:\\Users\\Haaj Mens\\.gradle\\caches\\8.10.2\\transforms\\5d73e09419f83b3fb5464ff711d92dcb\\transformed\\play-services-auth-21.2.0\\res\\values-watch-v20\\values.xml",

@@ -7,6 +7,7 @@ import android.util.Log
 import com.arthenica.ffmpegkit.FFmpegKit
 import com.arthenica.ffmpegkit.FFmpegKitConfig
 import com.arthenica.ffmpegkit.FFprobeKit
+import com.arthenica.ffmpegkit.MediaInformationJsonParser
 import com.arthenica.ffmpegkit.ReturnCode
 import com.beatflowy.app.model.Song
 import com.beatflowy.app.model.SongSource
@@ -64,9 +65,10 @@ internal class FfmpegAlacDecoder(
                 add(headerStr)
             }
 
-            // Optimization for M4A/ALAC
-            addAll(listOf("-analyzeduration", "1000000"))
-            addAll(listOf("-probesize", "1000000"))
+            // Optimization for M4A/ALAC and Cloud
+            addAll(listOf("-analyzeduration", "5000000"))
+            addAll(listOf("-probesize", "5000000"))
+            addAll(listOf("-timeout", "10000000")) // 10s timeout for network
 
             if (request.startPositionMs > 0) {
                 addAll(listOf("-ss", formatSeekSeconds(request.startPositionMs)))
@@ -98,6 +100,10 @@ internal class FfmpegAlacDecoder(
             null
         )
 
+        control.setSeekListener {
+            session.cancel()
+        }
+
         var input: FileInputStream? = null
         try {
             input = waitForPipeOpen(pipePath) ?: run {
@@ -110,9 +116,10 @@ internal class FfmpegAlacDecoder(
             var remainder = 0
 
             while (control.isActive()) {
-                control.consumePendingSeekMs()?.let {
+                val pendingSeek = control.consumePendingSeekMs()
+                if (pendingSeek != null) {
                     session.cancel()
-                    return@withContext DecodeResult.Seek(it)
+                    return@withContext DecodeResult.Seek(pendingSeek)
                 }
 
                 val bytesToRead = byteBuffer.size - remainder
@@ -179,6 +186,9 @@ internal class FfmpegAlacDecoder(
                     headers["Authorization"] = "Bearer $token"
                 }
             }
+            // Add User-Agent and connection headers for better reliability with Google Drive
+            headers["User-Agent"] = "Beatflowy/1.0"
+            headers["Connection"] = "keep-alive"
             return headers
         } else {
             return emptyMap()
@@ -200,18 +210,31 @@ internal class FfmpegAlacDecoder(
     }
 
     private suspend fun probeFormat(song: Song, headers: Map<String, String>): ProbedAlacFormat? = withContext(Dispatchers.IO) {
-        // Use MediaExtractor for probing as it's faster and doesn't interfere with FFmpeg SAF mappings
-        probeFormatWithExtractor(song, headers) ?: run {
-            // Fallback to FFprobe only if MediaExtractor fails, using a fresh SAF path
-            val inputSource = resolveInputSource(song)
-            probeFormatWithFfprobe(inputSource)
-        }
+        // 1. Try MediaExtractor first (local or cached)
+        val extracted = probeFormatWithExtractor(song, headers)
+        if (extracted != null) return@withContext extracted
+
+        // 2. Fallback to FFprobe for cloud/complex sources
+        val inputSource = resolveInputSource(song)
+        probeFormatWithFfprobe(inputSource, headers)
     }
 
-    private fun probeFormatWithFfprobe(path: String): ProbedAlacFormat? {
+    private fun probeFormatWithFfprobe(path: String, headers: Map<String, String>): ProbedAlacFormat? {
         return try {
-            val mediaInfo = FFprobeKit.getMediaInformation(path)
-                .mediaInformation ?: return null
+            val mediaInfo = if (headers.isEmpty()) {
+                val session = FFprobeKit.getMediaInformation(path)
+                session.mediaInformation
+            } else {
+                val headerStr = headers.map { "${it.key}: ${it.value}" }.joinToString("\r\n") + "\r\n"
+                val args = arrayOf("-v", "error", "-headers", headerStr, "-show_format", "-show_streams", "-print_format", "json", "-i", path)
+                val session = FFprobeKit.executeWithArguments(args)
+                MediaInformationJsonParser.from(session.output)
+            }
+            
+            if (mediaInfo == null) {
+                Log.w(TAG, "FFprobe did not return media information.")
+                return null
+            }
 
             val audioStream = mediaInfo.streams
                 ?.firstOrNull { it.type.equals("audio", ignoreCase = true) }
@@ -245,7 +268,7 @@ internal class FfmpegAlacDecoder(
             if (cachedFile != null) {
                 extractor.setDataSource(cachedFile.absolutePath)
             } else if (song.source != SongSource.LOCAL) {
-                val dataSource = cloudCacheManager.getDataSource(song)
+                val dataSource = cloudCacheManager.getDataSource(song) { false }
                 if (dataSource != null) {
                     extractor.setDataSource(dataSource)
                 } else {

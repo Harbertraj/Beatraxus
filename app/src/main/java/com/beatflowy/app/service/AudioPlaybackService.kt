@@ -296,11 +296,7 @@ class AudioPlaybackService : Service() {
 
     private val driveAccountRepository by lazy { DriveAccountRepository(this) }
 
-    fun playDriveSong(song: Song) {
-        if (requestAudioFocus()) {
-            engine.play(song)
-        }
-    }
+
 
     private val _upcomingSongs = MutableStateFlow<List<Song>>(emptyList())
     val upcomingSongs: StateFlow<List<Song>> = _upcomingSongs.asStateFlow()
@@ -315,6 +311,11 @@ class AudioPlaybackService : Service() {
         
         serviceScope.launch {
             cloudCacheManager.prepareCache(playlist.getOrNull(currentIndex), upcoming)
+        }
+
+        // Enable gapless transition in engine
+        upcoming.firstOrNull()?.let { nextSong ->
+            engine.preloadNext(nextSong)
         }
     }
 
@@ -604,10 +605,10 @@ class AudioPlaybackService : Service() {
 
     fun playSong(song: Song) {
         if (requestAudioFocus()) {
-            // Start caching in background but play immediately
-            serviceScope.launch {
-                cloudCacheManager.prepareCache(song, emptyList())
-            }
+            originalPlaylist = listOf(song)
+            playlist = listOf(song)
+            currentIndex = 0
+            updateUpcomingSongs()
             engine.play(song)
         }
     }

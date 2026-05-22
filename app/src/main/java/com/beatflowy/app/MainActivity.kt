@@ -3,6 +3,7 @@ package com.beatflowy.app
 import android.Manifest
 import android.app.Activity
 import android.content.ComponentName
+
 import android.content.Intent
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
@@ -11,6 +12,7 @@ import android.os.Bundle
 import android.os.IBinder
 import android.util.Log
 import androidx.activity.ComponentActivity
+
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -18,12 +20,14 @@ import androidx.activity.viewModels
 import androidx.compose.animation.*
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
+
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.core.content.ContextCompat
+
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
@@ -32,12 +36,14 @@ import com.google.android.gms.auth.api.signin.GoogleSignInOptions
 import com.google.android.gms.common.api.ApiException
 import com.google.android.gms.common.api.Scope
 import com.google.api.services.drive.DriveScopes
+
 import com.beatflowy.app.repository.DriveAccount
 import com.beatflowy.app.service.AudioPlaybackService
 import com.beatflowy.app.ui.screens.MainScreen
 import com.beatflowy.app.ui.screens.SettingsScreen
 import com.beatflowy.app.ui.screens.WelcomeScreen
 import com.beatflowy.app.ui.screens.DownloadScreen
+
 import com.beatflowy.app.ui.components.dsp.DspScreen
 import androidx.compose.ui.Modifier
 import androidx.compose.runtime.getValue
@@ -111,8 +117,13 @@ class MainActivity : ComponentActivity() {
             }
         }
         
-        // Immediate check to start loading if possible
-        window.decorView.post { checkAndRequestPermissions() }
+        // Immediate check to start loading if possible, but skip on first run to avoid nagging the user
+        // before they click the "Enter the Flow" button.
+        window.decorView.post {
+            if (!viewModel.uiState.value.isFirstRun) {
+                checkAndRequestPermissions()
+            }
+        }
     }
 
     override fun onStop() {
@@ -145,6 +156,13 @@ class MainActivity : ComponentActivity() {
             Manifest.permission.READ_EXTERNAL_STORAGE
         }
 
+        // If already granted, just trigger library load and return
+        if (ContextCompat.checkSelfPermission(this, essentialPermission) == PackageManager.PERMISSION_GRANTED) {
+            viewModel.loadLibrary()
+            onPermissionGranted()
+            return
+        }
+
         val permissions = mutableListOf(essentialPermission)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             permissions.add(Manifest.permission.POST_NOTIFICATIONS)
@@ -166,7 +184,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 }
-
 sealed class Screen(val route: String) {
     object Main      : Screen("main")
     object Settings  : Screen("settings")
@@ -230,6 +247,13 @@ fun BeatraxusApp(
             } catch (e: ApiException) {
                 Log.e("MainActivity", "Google sign in failed", e)
             }
+        }
+    }
+
+    LaunchedEffect(uiState.authRecoveryIntent) {
+        uiState.authRecoveryIntent?.let { intent ->
+            driveAccountLauncher.launch(intent)
+            viewModel.consumeAuthRecoveryIntent()
         }
     }
 
@@ -375,6 +399,9 @@ fun BeatraxusApp(
                 DownloadScreen(
                     onBack = {
                         navController.popBackStack()
+                    },
+                    onNavigateToSettings = {
+                        navController.navigate(Screen.Settings.route)
                     }
                 )
             }

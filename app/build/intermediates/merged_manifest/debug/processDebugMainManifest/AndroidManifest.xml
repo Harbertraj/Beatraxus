@@ -53,7 +53,7 @@
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:debuggable="true"
         android:enableOnBackInvokedCallback="true"
-        android:extractNativeLibs="false"
+        android:extractNativeLibs="true"
         android:fullBackupContent="@xml/backup_rules"
         android:hardwareAccelerated="true"
         android:icon="@mipmap/ic_launcher"

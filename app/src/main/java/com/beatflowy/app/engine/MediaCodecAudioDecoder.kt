@@ -35,7 +35,7 @@ internal class MediaCodecAudioDecoder(
             if (cachedFile != null) {
                 extractor.setDataSource(cachedFile.absolutePath)
             } else if (request.song.source != SongSource.LOCAL) {
-                val dataSource = cloudCacheManager.getDataSource(request.song)
+                val dataSource = cloudCacheManager.getDataSource(request.song) { control.isSeekPending() }
                 if (dataSource != null) {
                     try {
                         extractor.setDataSource(dataSource)
@@ -96,9 +96,10 @@ internal class MediaCodecAudioDecoder(
                     try {
                         extractor.seekTo(pendingSeek * 1000, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
                         codec.flush()
-                        control.notifySeek(pendingSeek)
                     } catch (e: Exception) {
                         control.logWarn("Seek failed: ${e.message}")
+                    } finally {
+                        control.notifySeek(pendingSeek)
                     }
                     continue
                 }

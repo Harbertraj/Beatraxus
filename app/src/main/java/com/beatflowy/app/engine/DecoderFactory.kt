@@ -54,7 +54,7 @@ internal class DecoderFactory(
             if (cachedFile != null) {
                 extractor.setDataSource(cachedFile.absolutePath)
             } else if (song.source != com.beatflowy.app.model.SongSource.LOCAL) {
-                val dataSource = cloudCacheManager.getDataSource(song)
+                val dataSource = cloudCacheManager.getDataSource(song) { false }
                 if (dataSource != null) {
                     extractor.setDataSource(dataSource)
                 } else {

@@ -72,7 +72,7 @@ class LyricsRepository(private val context: Context, private val database: AppDa
 
         // ── 1. Memory & DB cache (instant, no I/O wait) ──────────────────────────
         val cached = getCachedLyrics(song)
-        if (cached != null && cached.type == LyricsType.WORD_BY_WORD) {
+        if (cached != null && (cached.type == LyricsType.WORD_BY_WORD || cached.type == LyricsType.SYNCED)) {
             emit(LyricsState.Success(cached))
             return@flow
         }
@@ -85,21 +85,19 @@ class LyricsRepository(private val context: Context, private val database: AppDa
                 emit(LyricsState.Success(embedded))
                 return@flow
             }
-            // Keep embedded plain as best candidate over cache
-            if (bestResult == null || bestResult!!.type == LyricsType.PLAIN) {
+            if (bestResult == null || bestResult.type == LyricsType.PLAIN) {
                 bestResult = embedded
             }
         }
 
-        // ── 3. Online (only if we still don't have synced lyrics) ─────────────────
+        // ── 3. Online (only if we still don't have better synced lyrics) ─────────
         Log.d(TAG, "Searching online for ${song.title}...")
         val online = fetchOnline(song)
         if (online != null) {
-            if (online.type != LyricsType.PLAIN) {
+            if (online.type == LyricsType.WORD_BY_WORD || online.type == LyricsType.SYNCED) {
                 emit(LyricsState.Success(online))
                 return@flow
             }
-            // Online plain is still better than nothing
             if (bestResult == null) bestResult = online
         }
 

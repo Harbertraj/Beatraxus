@@ -105,7 +105,7 @@
 54        android:debuggable="true"
 55        android:enableOnBackInvokedCallback="true"
 55-->D:\Beatraxus\app\src\main\AndroidManifest.xml:39:9-51
-56        android:extractNativeLibs="false"
+56        android:extractNativeLibs="true"
 57        android:fullBackupContent="@xml/backup_rules"
 57-->D:\Beatraxus\app\src\main\AndroidManifest.xml:31:9-54
 58        android:hardwareAccelerated="true"

@@ -6,12 +6,7 @@ import android.util.Log
 import com.beatflowy.app.model.Song
 import com.beatflowy.app.model.SongSource
 import com.beatflowy.app.repository.DriveAccountRepository
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import okhttp3.OkHttpClient
@@ -19,6 +14,7 @@ import okhttp3.Request
 import java.io.File
 import java.io.FileOutputStream
 import java.io.RandomAccessFile
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
@@ -30,8 +26,12 @@ class CloudCacheManager(
     private val TAG = "CloudCacheManager"
     private val cacheDir = File(context.cacheDir, "cloud_cache").apply { mkdirs() }
     private val downloadScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-    private val activeDownloads = mutableMapOf<String, Job>()
+    
+    // Use ConcurrentHashMap for thread-safe access from media threads
+    private val activeDownloads = ConcurrentHashMap<String, Job>()
     private val mutex = Mutex()
+    private val MAX_CACHE_SIZE = 1024L * 1024L * 1024L // 1GB
+    
     private val okHttpClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
@@ -40,12 +40,15 @@ class CloudCacheManager(
     fun getCachedFile(song: Song): File? {
         if (!song.isCloud()) return null
         val file = File(cacheDir, "${song.id}.cache")
-        return if (file.exists() && file.length() > 0) file else null
+        return if (file.exists() && file.length() > 0) {
+            file.setLastModified(System.currentTimeMillis())
+            file
+        } else null
     }
 
-    fun getDataSource(song: Song): MediaDataSource? {
+    fun getDataSource(song: Song, isSeekPending: () -> Boolean = { false }): MediaDataSource? {
         if (!song.isCloud()) return null
-        return StreamingCacheDataSource(song)
+        return StreamingCacheDataSource(song, isSeekPending)
     }
 
     private fun getCachedFileById(id: String): File? {
@@ -60,34 +63,62 @@ class CloudCacheManager(
             if (it.isCloud()) keepIds.add(it.id) 
         }
 
+        // 1. Cancel downloads for songs no longer in 'keepIds'
         val toCancel = activeDownloads.keys - keepIds
         toCancel.forEach { id ->
             activeDownloads[id]?.cancel()
             activeDownloads.remove(id)
         }
 
-        val files = cacheDir.listFiles() ?: emptyArray()
-        files.forEach { file ->
-            val name = file.name
-            val id = when {
-                name.endsWith(".cache") -> name.removeSuffix(".cache")
-                name.endsWith(".tmp") -> name.removeSuffix(".tmp")
-                else -> null
-            }
-            if (id != null && id !in keepIds) {
-                file.delete()
+        // 2. Start downloads for 'keepIds' if not already cached
+        // Prioritize current song
+        currentSong?.let { song ->
+            if (song.isCloud() && getCachedFileById(song.id) == null && !activeDownloads.containsKey(song.id)) {
+                startDownload(song)
             }
         }
 
-        keepIds.forEach { id ->
-            if (getCachedFileById(id) == null && !activeDownloads.containsKey(id)) {
-                val song = (upcomingSongs + listOfNotNull(currentSong)).find { it.id == id }
-                if (song != null) {
-                    activeDownloads[id] = downloadScope.launch {
-                        downloadSong(song)
-                        mutex.withLock { activeDownloads.remove(id) }
-                    }
-                }
+        // Then upcoming songs
+        upcomingSongs.take(5).forEach { song ->
+            if (song.isCloud() && getCachedFileById(song.id) == null && !activeDownloads.containsKey(song.id)) {
+                startDownload(song)
+            }
+        }
+
+        // 3. Cleanup old cache files if limit exceeded (LRU)
+        cleanupCache(keepIds)
+    }
+
+    private fun cleanupCache(keepIds: Set<String>) {
+        val files = cacheDir.listFiles() ?: return
+        val cacheFiles = files.filter { it.name.endsWith(".cache") }
+        var totalSize = cacheFiles.sumOf { it.length() }
+        
+        if (totalSize <= MAX_CACHE_SIZE) return
+
+        // Sort by last modified (oldest first)
+        val sortedFiles = cacheFiles.sortedBy { it.lastModified() }
+
+        for (file in sortedFiles) {
+            val id = file.name.removeSuffix(".cache")
+            if (id in keepIds) continue
+            
+            val fileSize = file.length()
+            if (file.delete()) {
+                totalSize -= fileSize
+                if (totalSize <= MAX_CACHE_SIZE * 0.7) break // Clean up until we reach 70% of max
+            }
+        }
+    }
+
+    private fun startDownload(song: Song) {
+        val id = song.id
+        activeDownloads[id] = downloadScope.launch {
+            try {
+                downloadSong(song)
+            } finally {
+                // Ensure job is always removed, even on error or cancellation
+                activeDownloads.remove(id)
             }
         }
     }
@@ -128,7 +159,6 @@ class CloudCacheManager(
 
                 if (tempFile.exists() && tempFile.length() > 0) {
                     tempFile.renameTo(finalFile)
-                    Log.d(TAG, "Cached song: ${song.title}")
                 }
             }
         } catch (e: Exception) {
@@ -147,41 +177,44 @@ class CloudCacheManager(
         }
     }
 
-    private inner class StreamingCacheDataSource(private val song: Song) : MediaDataSource() {
+    private inner class StreamingCacheDataSource(
+        private val song: Song,
+        private val isSeekPending: () -> Boolean
+    ) : MediaDataSource() {
         private var raf: RandomAccessFile? = null
         private var size: Long = -1L
         private var currentRafPath: String? = null
         private val lock = ReentrantLock()
+        private var accessToken: String? = null
+        private var tokenFetched = false
+
+        private fun getOrFetchToken(): String? {
+            if (isSeekPending()) return null
+            if (tokenFetched) return accessToken
+            if (song.source == SongSource.GDRIVE && song.driveAccountEmail != null) {
+                accessToken = runBlocking { driveAccountRepository.getAccessToken(song.driveAccountEmail) }
+            }
+            tokenFetched = true
+            return accessToken
+        }
 
         override fun getSize(): Long = lock.withLock {
+            if (isSeekPending()) return -1
             if (size != -1L) return size
-            
-            // 1. Try song object
             if (song.fileSizeBytes > 0) {
                 size = song.fileSizeBytes
                 return size
             }
-            
-            // 2. Try cache file
             val cacheFile = getCachedFile(song)
             if (cacheFile != null) {
                 size = cacheFile.length()
                 return size
             }
-            
-            // 3. Try to get size from download in progress
-            val tmpFile = File(cacheDir, "${song.id}.tmp")
-            
-            // 4. Try network HEAD or GET to find Content-Length
             try {
-                val url = resolveDownloadUrl(song) ?: return 0
+                val url = resolveDownloadUrl(song) ?: return -1
                 val requestBuilder = Request.Builder().url(url)
-                
-                // If it's a Drive song, headers are needed
-                if (song.source == SongSource.GDRIVE && song.driveAccountEmail != null) {
-                    val token = runBlocking { driveAccountRepository.getAccessToken(song.driveAccountEmail) }
-                    if (token != null) requestBuilder.header("Authorization", "Bearer $token")
-                }
+                val token = getOrFetchToken()
+                if (token != null) requestBuilder.header("Authorization", "Bearer $token")
 
                 okHttpClient.newCall(requestBuilder.head().build()).execute().use { response ->
                     if (response.isSuccessful) {
@@ -192,41 +225,26 @@ class CloudCacheManager(
                         }
                     }
                 }
-            } catch (e: Exception) {
-                Log.w(TAG, "Failed to get size via HEAD for ${song.title}, error: ${e.message}")
-            }
-            
-            // 5. If we still don't know the size, return a huge value to keep MediaExtractor happy 
-            // during initial probe, but this is risky. Let's return 0 and rely on the retry logic in Decoder.
-            return 0
+            } catch (e: Exception) { }
+            return -1
         }
 
         override fun readAt(position: Long, buffer: ByteArray, offset: Int, size: Int): Int = lock.withLock {
+            if (isSeekPending()) return -1
             val totalSize = getSize()
             if (totalSize > 0 && position >= totalSize) return -1
             
-            val cacheFile = getCachedFile(song)
-            if (cacheFile != null) {
-                return readFromFile(cacheFile, position, buffer, offset, size)
-            }
+            getCachedFile(song)?.let { return readFromFile(it, position, buffer, offset, size) }
 
             val tmpFile = File(cacheDir, "${song.id}.tmp")
-            
             if (!tmpFile.exists() && !activeDownloads.containsKey(song.id)) {
-                downloadScope.launch {
-                    mutex.withLock {
-                        if (!activeDownloads.containsKey(song.id)) {
-                            activeDownloads[song.id] = downloadScope.launch { downloadSong(song) }
-                        }
-                    }
-                }
+                startDownload(song)
             }
 
-
-            // MediaExtractor needs the beginning of the file to probe tracks.
             var attempts = 0
-            val waitTimeout = if (position == 0L) 150 else 600 // Wait longer for initial probe
+            val waitTimeout = if (position == 0L) 200 else 100 
             while (position + size > tmpFile.length() && activeDownloads.containsKey(song.id) && attempts < waitTimeout) {
+                if (isSeekPending()) return -1
                 try {
                     lock.unlock()
                     Thread.sleep(100)
@@ -238,12 +256,9 @@ class CloudCacheManager(
             if (tmpFile.exists() && position < tmpFile.length()) {
                 val available = (tmpFile.length() - position).toInt()
                 val toRead = if (available < size) available else size
-                if (toRead > 0) {
-                    return readFromFile(tmpFile, position, buffer, offset, toRead)
-                }
+                if (toRead > 0) return readFromFile(tmpFile, position, buffer, offset, toRead)
             }
 
-            // Fallback to direct network read if cache is lagging
             return readFromNetwork(position, buffer, offset, size)
         }
 
@@ -256,40 +271,41 @@ class CloudCacheManager(
                 }
                 raf?.seek(position)
                 return raf?.read(buffer, offset, size) ?: -1
-            } catch (e: Exception) {
-                return -1
-            }
+            } catch (e: Exception) { return -1 }
         }
 
         private fun readFromNetwork(position: Long, buffer: ByteArray, offset: Int, size: Int): Int {
             try {
                 val url = resolveDownloadUrl(song) ?: return -1
+                // Optimization: Request slightly more to reduce number of requests
+                val fetchSize = if (size < 131072) 131072 else size 
+                val endPos = if (size > 0) position + fetchSize - 1 else position + 1024*1024
+
                 val requestBuilder = Request.Builder()
                     .url(url)
-                    .header("Range", "bytes=$position-${position + size - 1}")
+                    .header("Range", "bytes=$position-$endPos")
                 
-                if (song.source == SongSource.GDRIVE && song.driveAccountEmail != null) {
-                    val token = runBlocking { driveAccountRepository.getAccessToken(song.driveAccountEmail) }
-                    if (token != null) requestBuilder.header("Authorization", "Bearer $token")
-                }
+                val token = getOrFetchToken()
+                if (token != null) requestBuilder.header("Authorization", "Bearer $token")
 
                 okHttpClient.newCall(requestBuilder.build()).execute().use { response ->
                     if (!response.isSuccessful) return -1
                     val body = response.body ?: return -1
-                    val bytes = body.bytes()
-                    val bytesToCopy = if (bytes.size < size) bytes.size else size
-                    System.arraycopy(bytes, 0, buffer, offset, bytesToCopy)
-                    return bytesToCopy
+                    val inputStream = body.byteStream()
+                    
+                    var totalRead = 0
+                    while (totalRead < size) {
+                        val read = inputStream.read(buffer, offset + totalRead, size - totalRead)
+                        if (read == -1) break
+                        totalRead += read
+                    }
+                    return if (totalRead == 0) -1 else totalRead
                 }
-            } catch (e: Exception) {
-                return -1
-            }
+            } catch (e: Exception) { return -1 }
         }
 
         override fun close() = lock.withLock {
-            try {
-                raf?.close()
-            } catch (e: Exception) {}
+            try { raf?.close() } catch (e: Exception) {}
             raf = null
             currentRafPath = null
         }

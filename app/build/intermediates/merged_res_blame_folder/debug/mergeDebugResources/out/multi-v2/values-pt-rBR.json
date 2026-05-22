@@ -1,7 +1,7 @@
 {
     "logs": [
         {
-            "outputFile": "com.beatflowy.app-mergeDebugResources-88:/values-pt-rBR/values-pt-rBR.xml",
+            "outputFile": "com.beatflowy.app-mergeDebugResources-91:/values-pt-rBR/values-pt-rBR.xml",
             "map": [
                 {
                     "source": "C:\\Users\\Haaj Mens\\.gradle\\caches\\8.10.2\\transforms\\b0418609444f5775bcaeb91096ca530e\\transformed\\play-services-cast-21.4.0\\res\\values-pt-rBR\\values.xml",

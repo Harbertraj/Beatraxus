@@ -31,7 +31,18 @@ fun WaveformSeekBar(
     seed: Int = 0
 ) {
     var draggingProgress by remember(seed) { mutableStateOf<Float?>(null) }
-    val displayProgress = draggingProgress ?: progress
+    
+    // Smooth transition from dragging to actual progress
+    var lastSeekTarget by remember(seed) { mutableStateOf<Float?>(null) }
+    
+    LaunchedEffect(progress) {
+        // Once the actual progress moves close to where we seeked, stop showing the "target"
+        if (lastSeekTarget != null && abs(progress - lastSeekTarget!!) < 0.01f) {
+            lastSeekTarget = null
+        }
+    }
+
+    val displayProgress = draggingProgress ?: lastSeekTarget ?: progress
 
     val currentOnProgressChange by rememberUpdatedState(onProgressChange)
     val currentOnProgressFinished by rememberUpdatedState(onProgressFinished)
@@ -66,6 +77,7 @@ fun WaveformSeekBar(
                     
                     val finalProgress = (lastPos / width).coerceIn(0f, 1f)
                     draggingProgress = null
+                    lastSeekTarget = finalProgress
                     currentOnProgressFinished(finalProgress)
                 }
             }

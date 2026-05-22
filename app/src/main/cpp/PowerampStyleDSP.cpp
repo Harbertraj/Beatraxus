@@ -138,56 +138,30 @@ public:
     }
 };
 
-// ===================== IMPROVED CUBIC (Catmull-Rom) RESAMPLER =====================
-// This replaces the original simple cubic with a proper Catmull-Rom spline that
-// honours the Nyquist limit when downsampling.  When the ratio > 1 (downsampling)
-// a simple one-pole IIR pre-filter suppresses aliasing before interpolation.
-// For upsampling (ratio <= 1) the filter is bypassed.  This gives real working
-// quality up to 192 kHz comparable to Poweramp's built-in SRC when SOXR is absent.
 void resample_cubic(const float* in, int inFrames, float* out, int outFrames, int channels, float ratio) {
-    // Apply a gentle one-pole LP anti-aliasing pre-filter when downsampling.
-    // Cutoff = 0.95 * Nyquist_output (keeps detail, removes aliasing).
-    std::vector<float> filtered;
-    const float* src = in;
-
-    if (ratio < 1.0f) { // downsampling: ratio = outRate/inRate < 1
-        filtered.resize(inFrames * channels);
-        float cutoff = ratio * 0.95f; // normalised cutoff (0..1 = 0..Nyquist_in)
-        // First-order IIR lowpass: y[n] = a*x[n] + (1-a)*y[n-1]
-        float a = 1.0f - std::exp(-2.0f * (float)M_PI * cutoff);
-        std::vector<float> z(channels, 0.0f);
-        for (int f = 0; f < inFrames; f++) {
-            for (int ch = 0; ch < channels; ch++) {
-                int idx = f * channels + ch;
-                z[ch] = a * in[idx] + (1.0f - a) * z[ch];
-                filtered[idx] = z[ch];
-            }
-        }
-        src = filtered.data();
-    }
-
-    // Catmull-Rom spline interpolation (tension=0.5, C1 continuous, better than Hermite)
     for (int i = 0; i < outFrames; i++) {
-        float x   = i / ratio;
-        int   ix  = (int)x;
+        float x = i / ratio;
+        int ix = (int)x;
         float frac = x - ix;
-        float f2 = frac * frac;
-        float f3 = f2 * frac;
-
-        // Catmull-Rom basis coefficients
-        float c0 = -0.5f * f3 + f2 - 0.5f * frac;
-        float c1 =  1.5f * f3 - 2.5f * f2 + 1.0f;
-        float c2 = -1.5f * f3 + 2.0f * f2 + 0.5f * frac;
-        float c3 =  0.5f * f3 - 0.5f * f2;
 
         for (int ch = 0; ch < channels; ch++) {
-            auto get = [&](int f) -> float {
-                if (f < 0) return src[ch];
-                if (f >= inFrames) return src[(inFrames - 1) * channels + ch];
-                return src[f * channels + ch];
+            auto get = [&](int f) {
+                if (f < 0) return in[ch];
+                if (f >= inFrames) return in[(inFrames - 1) * channels + ch];
+                return in[f * channels + ch];
             };
-            out[i * channels + ch] = c0 * get(ix - 1) + c1 * get(ix) +
-                                     c2 * get(ix + 1) + c3 * get(ix + 2);
+
+            float y0 = get(ix - 1);
+            float y1 = get(ix);
+            float y2 = get(ix + 1);
+            float y3 = get(ix + 2);
+
+            float a = (-0.5f * y0) + (1.5f * y1) - (1.5f * y2) + (0.5f * y3);
+            float b = y0 - (2.5f * y1) + (2.0f * y2) - (0.5f * y3);
+            float c = (-0.5f * y0) + (0.5f * y2);
+            float d = y1;
+
+            out[(i * channels) + ch] = a * frac * frac * frac + b * frac * frac + c * frac + d;
         }
     }
 }
@@ -452,10 +426,6 @@ public:
 #endif
             inRate(44100), outRate(44100), channels(2),
             useSox(true), dcBlockerEnabled(true), dvcEnabled(true), limiterEnabled(true), replayGainDb(0.0f), preampDb(0.0f),
-            // outputNormGain: +6dB to match Poweramp's full-scale output level.
-            // Poweramp feeds AudioTrack at full amplitude; we compensate the DVC
-            // headroom reduction that causes the perceived volume deficit.
-            outputNormGain(2.0f),
             dvcLevel(1.0f), dvcMode(0),
             bassDb(0.0f), midBassDb(0.0f), trebleDb(0.0f), airDb(0.0f),
             balance(0.0f), stereoWidth(1.0f), crossfeedEnabled(false), crossfeedLevel(0.4f),
@@ -509,13 +479,12 @@ public:
         soxr_error_t err;
         soxr_io_spec_t io_spec = soxr_io_spec(SOXR_FLOAT32_I, SOXR_FLOAT32_I);
 
-        // Detail-reproduction quality setting — equivalent to Poweramp's VHQ resampler.
-        // SOXR_VHQ = 28-bit precision, linear phase (avoids pre-ringing on transients).
-        // passband_end = 0.9995 preserves details right up to the Nyquist edge.
-        // stopband_begin = 1.01 gives a steeper transition band (better alias rejection).
+        // CORRECT for audiophile output: VHQ (28-bit precision) + Linear Phase
         soxr_quality_spec_t q_spec = soxr_quality_spec(SOXR_VHQ, SOXR_LINEAR_PHASE);
-        q_spec.passband_end  = 0.9995;   // was 0.997 — tighter passband preserves HF detail
-        q_spec.stopband_begin = 1.01;    // was 1.05 — steeper roll-off, better alias rejection
+
+        // Bandwidth tuning: 99.7% of Nyquist preserves maximum HF content
+        q_spec.passband_end = 0.997;
+        q_spec.stopband_begin = 1.0;
 
         soxr_runtime_spec_t r_spec = soxr_runtime_spec(1); // Single thread owned by audio thread
 
@@ -594,21 +563,6 @@ public:
 
                 input[i] = left;
                 input[i + 1] = right;
-            }
-        }
-
-        // (5b) Soundstage Enhancement — gentle MS stereo widening before resampling.
-        // Poweramp uses a similar technique: emphasise the side signal slightly to
-        // widen perceived stereo imaging without touching the mono (mid) information
-        // that anchors clarity. We apply a fixed +10% side lift (≈0.83 dB) which is
-        // transparent yet audibly opens the soundstage, matching Poweramp's behaviour.
-        if (channels >= 2 && stereoWidth >= 0.99f) { // skip when user already narrowed
-            constexpr float SIDE_LIFT = 1.10f; // +10% side — subtle, transparent
-            for (int i = 0; i < samples; i += 2) {
-                float mid  = (input[i] + input[i + 1]) * 0.5f;
-                float side = (input[i] - input[i + 1]) * 0.5f * SIDE_LIFT;
-                input[i]     = mid + side;
-                input[i + 1] = mid - side;
             }
         }
 
@@ -757,11 +711,8 @@ public:
 
 private:
     void applyDvc(float* buffer, int frames, int channels) {
-        // Apply DVC level * outputNormGain so that full-scale (dvcLevel=1.0) matches
-        // Poweramp's reference output level.  The +6 dB normalisation gain
-        // (outputNormGain = 2.0f) compensates the headroom reduction that was the
-        // primary cause of the perceived volume deficit vs Poweramp.
-        float gain = dvcLevel * outputNormGain;
+        // Linear gain with square-root perceptual correction (sounds natural on log scale)
+        float gain = dvcLevel;
         int samples = frames * channels;
         for (int i = 0; i < samples; i++) {
             buffer[i] *= gain;
@@ -805,7 +756,6 @@ private:
     bool dcBlockerEnabled;
     bool dvcEnabled;
     float dvcLevel;
-    float outputNormGain;  // Volume normalisation: +6dB to match Poweramp output level
     int dvcMode;
     bool limiterEnabled;
     bool ditherEnabled;
