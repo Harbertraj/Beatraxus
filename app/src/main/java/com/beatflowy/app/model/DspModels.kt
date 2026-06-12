@@ -2,12 +2,29 @@ package com.beatflowy.app.model
 
 import kotlin.math.abs
 
+enum class EqBandType(val displayName: String, val nativeValue: Int) {
+    PEAKING("Peaking", 0),
+    LOW_SHELF("Low Shelf", 1),
+    HIGH_SHELF("High Shelf", 2),
+    LOW_PASS("Low Pass", 3),
+    HIGH_PASS("High Pass", 4),
+    NOTCH("Notch", 5),
+    BAND_PASS("Band Pass", 6),
+    ALL_PASS("All Pass", 7)
+}
+
+enum class EqPhaseMode(val displayName: String, val nativeValue: Int) {
+    MINIMUM_PHASE("Minimum Phase", 0),   // zero-latency biquad IIR
+    LINEAR_PHASE("Linear Phase", 1)      // FIR convolution, symmetric — adds latency
+}
+
 data class ParametricEqBand(
     val id: Int,
     val enabled: Boolean = true,
     val frequencyHz: Float,
     val gainDb: Float = 0f,
-    val q: Float = 1.0f
+    val q: Float = 1.0f,
+    val type: EqBandType = EqBandType.PEAKING
 )
 
 data class AutoEqProfileSummary(
@@ -26,7 +43,8 @@ data class AutoEqProfile(
 
 data class SavedEqPreset(
     val name: String,
-    val bands: List<ParametricEqBand>
+    val bands: List<ParametricEqBand>,
+    val preampDb: Float = 0f
 )
 
 enum class SampleFormat(val displayName: String) {
@@ -40,6 +58,21 @@ enum class SampleFormat(val displayName: String) {
 enum class ResamplerType(val displayName: String) {
     SW("SW"),
     SOXR("SOXR")
+}
+
+enum class SoxrQuality(val displayName: String, val nativeValue: Int) {
+    QUICK("Quick", 0),
+    LOW("Low", 1),
+    MEDIUM("Medium", 2),
+    HIGH("High", 3),
+    VERY_HIGH("Very High", 4)
+}
+
+enum class DitherType(val displayName: String, val nativeValue: Int) {
+    NONE("None", 0),
+    TPDF("TPDF", 1),          // Triangular PDF — standard, flat noise spectrum
+    SHAPED("Shaped", 2),       // Noise-shaped — psychoacoustically optimized (pushes noise to 15–20kHz)
+    HIGHPASS("High-Pass", 3)   // Simple HP-filtered TPDF — lighter than shaped
 }
 
 enum class ResamplerMode(val displayName: String, val rate: Int) {
@@ -70,18 +103,21 @@ enum class ReplayGainSource(val displayName: String) {
 
 enum class OutputMode(val title: String, val subtitle: String) {
     AAUDIO("AAudio", "Default low-latency Android path"),
-    HI_RES("MTK HiFi", "Direct high-resolution path");
+    HI_RES("MTK HiFi", "Direct high-resolution path"),
+    MMAP_EXCLUSIVE("MMAP Exclusive", "Ultra-low latency kernel bypass via AAudio MMAP");
 
     companion object {
         fun fromName(value: String?): OutputMode {
-            return entries.firstOrNull { it.name == value } ?: AAUDIO
+            return entries.firstOrNull { it.name == value } ?: HI_RES
         }
     }
 }
 
 data class DspConfig(
-    val outputMode: OutputMode = OutputMode.AAUDIO,
+    val outputMode: OutputMode = OutputMode.HI_RES,
     val highQualityResampler: Boolean = true,
+    val soxrQuality: SoxrQuality = SoxrQuality.HIGH,
+    val float64Enabled: Boolean = false,
     val resamplerMode: ResamplerMode = ResamplerMode.AUTO,
     val resamplerCutoffRatio: Float = 0.97f,
     val sampleFormat: SampleFormat = SampleFormat.AUTO,
@@ -89,10 +125,10 @@ data class DspConfig(
     val preampDb: Float = 0f,
     val eqEnabled: Boolean = false,
     val eqBands: List<ParametricEqBand> = defaultEqBands(),
+    val eqMasterGainDb: Float = 0f,
+    val eqPhaseMode: EqPhaseMode = EqPhaseMode.MINIMUM_PHASE,
     val autoEqEnabled: Boolean = false,
     val autoEqProfile: AutoEqProfile? = null,
-    val bassEnabled: Boolean = false,
-    val bassDb: Float = 0f,
     val midBassEnabled: Boolean = false,
     val midBassDb: Float = 0f,
     val trebleEnabled: Boolean = false,
@@ -127,21 +163,47 @@ data class DspConfig(
     val dvcMode: DvcMode = DvcMode.DAC,
     val dvcLevel: Float = 1f,
 
+    // USB
+    val usbExclusiveEnabled: Boolean = false,
+    val bitPerfectEnabled: Boolean = false,
+
+    // Bit-Perfect Unbypass
+    val bitPerfectUnbypassEq: Boolean = false,
+    val bitPerfectUnbypassResample: Boolean = false,
+    val bitPerfectUnbypassSoxr: Boolean = false,
+    val bitPerfectUnbypassReverb: Boolean = false,
+    val bitPerfectUnbypassDithering: Boolean = false,
+    val bitPerfectUnbypassFloat64: Boolean = false,
+    val bitPerfectUnbypassLimiter: Boolean = false,
+
+    // MMAP — enabled state is derived from outputMode == MMAP_EXCLUSIVE
+    // mmapExclusiveEnabled field removed to avoid dual source-of-truth conflict
+    val mmapRequestedBufferSizeFrames: Int = 96,  // ~2ms at 48kHz
+
     // Limiter
-    val limiterEnabled: Boolean = true
+    val limiterEnabled: Boolean = true,
+    val limiterThresholdDb: Float = -0.3f,
+    val limiterAttackMs: Float = 0.3f,
+    val limiterReleaseMs: Float = 50f,
+
+    // Dither
+    val ditherEnabled: Boolean = false,
+    val ditherType: DitherType = DitherType.TPDF,
+    val settingsLocked: Boolean = false
 ) {
     fun activeEffects(): List<String> = buildList {
         if (outputMode == OutputMode.HI_RES) add("MTK HiFi")
-        add(if (highQualityResampler) "SOXR" else "Cubic")
+        if (outputMode == OutputMode.MMAP_EXCLUSIVE) add("MMAP Exclusive")
+        add(if (highQualityResampler) "SOXR ${soxrQuality.displayName}" else "Cubic")
         if (preampEnabled && abs(preampDb) > 0.05f) add("Preamp")
         if (eqEnabled) {
+            if (abs(eqMasterGainDb) > 0.05f) add("EQ Gain")
             if (autoEqEnabled && autoEqProfile != null && autoEqProfile.bands.isNotEmpty()) {
                 add("AutoEQ")
             } else if (eqBands.any { it.enabled && abs(it.gainDb) > 0.05f }) {
-                add("EQ")
+                add(if (eqPhaseMode == EqPhaseMode.LINEAR_PHASE) "EQ (LP)" else "EQ")
             }
         }
-        if (bassEnabled && abs(bassDb) > 0.05f) add("Bass")
         if (midBassEnabled && abs(midBassDb) > 0.05f) add("Mid Bass")
         if (trebleEnabled && abs(trebleDb) > 0.05f) add("Treble")
         if (airEnabled && abs(airDb) > 0.05f) add("Air")
@@ -152,7 +214,11 @@ data class DspConfig(
         if (reverbEnabled && reverbAmount > 0.01f) add("Reverb")
         if (replayGainEnabled) add("Replay Gain")
         if (dvcEnabled) add("DVC")
+        if (usbExclusiveEnabled) add("USB Direct")
+        if (bitPerfectEnabled) add("Bit-Perfect")
+        if (float64Enabled) add("Float64")
         if (limiterEnabled) add("Limiter")
+        if (ditherEnabled && ditherType != DitherType.NONE) add(ditherType.displayName)
     }
 }
 
@@ -173,7 +239,8 @@ fun defaultEqBands(): List<ParametricEqBand> {
             enabled = true,
             frequencyHz = freq,
             gainDb = 0f,
-            q = 1.0f
+            q = 1.41f, // Q=1.41 is standard for 1-octave spacing to minimize overlap/muffling
+            type = EqBandType.PEAKING // All peaking is standard for graphic EQ
         )
     }
 }

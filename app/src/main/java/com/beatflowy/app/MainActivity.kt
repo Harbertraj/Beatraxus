@@ -349,7 +349,7 @@ fun BeatraxusApp(
                 }
             ) {
                 SettingsScreen(
-                    viewModel = viewModel,
+                    playerViewModel = viewModel,
                     onBack    = { navController.popBackStack() },
                     onNavigateToDsp = { navController.navigate(Screen.Dsp.route) },
                     onRequestGDriveAccount = {

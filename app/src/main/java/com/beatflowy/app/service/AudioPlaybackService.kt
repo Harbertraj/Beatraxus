@@ -305,7 +305,7 @@ class AudioPlaybackService : Service() {
         val upcoming = if (playlist.isEmpty() || currentIndex >= playlist.size - 1) {
             emptyList()
         } else {
-            playlist.subList(currentIndex + 1, (currentIndex + 6).coerceAtMost(playlist.size))
+            playlist.subList(currentIndex + 1, playlist.size)
         }
         _upcomingSongs.value = upcoming
         
@@ -480,7 +480,7 @@ class AudioPlaybackService : Service() {
             val notification = NotificationCompat.Builder(this, CHANNEL_ID)
                 .setContentTitle("Syncing Music...")
                 .setContentText("Found $count songs so far")
-                .setSmallIcon(R.drawable.app_icon_fg)
+                .setSmallIcon(R.mipmap.ic_launcher)
                 .setProgress(100, (progress * 100).toInt(), false)
                 .setOngoing(true)
                 .setContentIntent(pendingIntent)
@@ -653,7 +653,7 @@ class AudioPlaybackService : Service() {
         }
 
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.drawable.app_icon_fg)
+            .setSmallIcon(R.mipmap.ic_launcher)
             .setContentIntent(pendingIntent)
             .setOngoing(state.isPlaying)
             .setPriority(NotificationCompat.PRIORITY_LOW)

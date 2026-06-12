@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.GenericShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -51,6 +52,20 @@ import androidx.compose.ui.window.PopupProperties
 import com.beatflowy.app.ui.theme.AccentBlue
 import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
+
+// ─── Glassmorphism modifier (restored to fix build) ───────────────────────────
+
+fun Modifier.glassIconBackground(
+    backgroundColor: Color = Color.White.copy(alpha = 0.12f),
+    shape: Shape = CircleShape,
+    borderColor: Color = Color.White.copy(alpha = 0.12f)
+): Modifier =
+    this
+        .background(backgroundColor, shape)
+        .then(
+            if (borderColor.alpha > 0f) Modifier.border(1.dp, borderColor, shape)
+            else Modifier
+        )
 
 /**
  * Full-screen dimming scrim + bubble-shaped menu positioned relative to [anchorBounds].
@@ -94,7 +109,7 @@ fun GlassMenuPopup(
             val maxHpx = with(density) { maxHeight.toPx() }
             val hasAnchor = anchorBounds.width > 1f && anchorBounds.height > 1f
             val anchorCx = if (hasAnchor) anchorBounds.center.x else maxWpx / 2f
-            
+
             val showAbove = hasAnchor && anchorBounds.top > maxHpx * 0.6f
 
             var menuLeftPx = anchorCx - cardWpx / 2f
@@ -148,7 +163,7 @@ fun GlassMenuPopup(
             val arrowHeight = 14.dp
             val cornerRadius = 26.dp
             val arrowCxRelativeToCard = anchorCx - menuLeftPx
-            
+
             val bubbleShape = remember(density, arrowCxRelativeToCard, showAbove) {
                 GenericShape { size, _ ->
                     val cr = with(density) { cornerRadius.toPx() }
@@ -162,7 +177,7 @@ fun GlassMenuPopup(
                         lineTo(acx - 6f, 6f)
                         quadraticTo(acx, 0f, acx + 6f, 6f)
                         lineTo(acx + aw / 2f, ah)
-                        
+
                         lineTo(size.width - cr, ah)
                         arcTo(Rect(size.width - 2 * cr, ah, size.width, ah + 2 * cr), 270f, 90f, false)
                         lineTo(size.width, size.height - cr)
@@ -177,12 +192,12 @@ fun GlassMenuPopup(
                         arcTo(Rect(size.width - 2 * cr, 0f, size.width, 2 * cr), 270f, 90f, false)
                         lineTo(size.width, size.height - ah - cr)
                         arcTo(Rect(size.width - 2 * cr, size.height - ah - 2 * cr, size.width, size.height - ah), 0f, 90f, false)
-                        
+
                         lineTo(acx + aw / 2f, size.height - ah)
                         lineTo(acx + 6f, size.height - 6f)
                         quadraticTo(acx, size.height, acx - 6f, size.height - 6f)
                         lineTo(acx - aw / 2f, size.height - ah)
-                        
+
                         lineTo(cr, size.height - ah)
                         arcTo(Rect(0f, size.height - ah - 2 * cr, 2 * cr, size.height - ah), 90f, 90f, false)
                         lineTo(0f, cr)

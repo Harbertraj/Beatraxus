@@ -52,5 +52,8 @@ data class SongEntity(
     val replayGainAlbumPeak: Float?,
     val source: String = "LOCAL",
     val driveFileId: String? = null,
-    val driveAccountEmail: String? = null
+    val driveAccountEmail: String? = null,
+    val telegramChannelUrl: String? = null,
+    val isEnriched: Boolean = false,
+    val lastSyncTimestamp: Long = 0L
 )

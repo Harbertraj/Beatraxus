@@ -9,6 +9,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -268,6 +269,9 @@ fun MainScreen(
     var showSortMenu   by remember { mutableStateOf(false) }
     var sortMenuAnchor by remember { mutableStateOf(Rect.Zero) }
     var selectedSongForOptions by remember { mutableStateOf<com.beatflowy.app.model.Song?>(null) }
+    var showPlaylistDialog by remember { mutableStateOf(false) }
+    var playlistDialogSong by remember { mutableStateOf<com.beatflowy.app.model.Song?>(null) }
+    var playlistToDelete by remember { mutableStateOf<com.beatflowy.app.model.Playlist?>(null) }
     var showPipelineOverlay by remember { mutableStateOf(false) }
     var showDrawer by rememberSaveable { mutableStateOf(false) }
     var showCastPopup by remember { mutableStateOf(false) }
@@ -506,13 +510,13 @@ fun MainScreen(
                                     onClick = { 
                                         showDrawer = !showDrawer
                                     },
-                                    modifier = Modifier.align(Alignment.CenterStart).size(48.dp)
+                                    modifier = Modifier.align(Alignment.CenterStart).size(42.dp)
                                 ) {
                                     Icon(
                                         imageVector = if (showDrawer) Icons.AutoMirrored.Rounded.ArrowBack else Icons.Rounded.Menu,
                                         contentDescription = null,
                                         tint = Color.White.copy(0.8f),
-                                        modifier = Modifier.size(32.dp)
+                                        modifier = Modifier.size(26.dp)
                                     )
                                 }
 
@@ -548,11 +552,11 @@ fun MainScreen(
                                         ) {
                                             Box(
                                                 modifier = Modifier
-                                                    .size(28.dp)
+                                                    .size(24.dp)
                                                     .background(viewAccentColor.copy(alpha = 0.15f), CircleShape),
                                                 contentAlignment = Alignment.Center
                                             ) {
-                                                Icon(titleIcon, null, tint = viewAccentColor, modifier = Modifier.size(18.dp))
+                                                Icon(titleIcon, null, tint = viewAccentColor, modifier = Modifier.size(15.dp))
                                             }
                                             Spacer(Modifier.width(10.dp))
                                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -587,7 +591,11 @@ fun MainScreen(
                                 ) {
                                     if (uiState.isMultiSelectMode) {
                                         Row(verticalAlignment = Alignment.CenterVertically) {
-                                            IconButton(onClick = { viewModel.addSelectedToPlaylist("My Playlist") }) {
+                                            IconButton(onClick = {
+                                                // Open playlist selection for multi-select
+                                                playlistDialogSong = null
+                                                showPlaylistDialog = true
+                                            }) {
                                                 Icon(Icons.AutoMirrored.Rounded.PlaylistAdd, null, tint = Color.White)
                                             }
                                             IconButton(onClick = { viewModel.deleteSelectedSongs() }) {
@@ -597,25 +605,27 @@ fun MainScreen(
                                                 Icon(Icons.Rounded.Close, null, tint = Color.White)
                                             }
                                         }
-                                    } else if (!isTitleTouchingSettings) {
+                                    } else {
+                                        val searchBgColor by animateColorAsState(
+                                            targetValue = if (uiState.isSearchActive) AccentBlue.copy(0.15f) else Color.White.copy(0.08f),
+                                            label = "searchBg"
+                                        )
                                         IconButton(
-                                            onClick = onNavigateToDownload,
+                                            onClick = {
+                                                val nextActive = !uiState.isSearchActive
+                                                viewModel.setSearchActive(nextActive)
+                                            },
                                             modifier = Modifier
-                                                .size(48.dp)
-                                                .onGloballyPositioned {
-                                                    settingsLeft = it.boundsInRoot().left
-                                                    val center = it.boundsInRoot().center
-                                                    viewModel.setSettingsIconPosition(center.x, center.y)
-                                                }
+                                                .size(42.dp)
+                                                .background(searchBgColor, CircleShape)
+                                                .border(1.dp, if (uiState.isSearchActive) AccentBlue.copy(0.4f) else Color.White.copy(0.1f), CircleShape)
                                         ) {
-                                            Box {
-                                                Icon(
-                                                    Icons.Rounded.FileDownload,
-                                                    contentDescription = "Download",
-                                                    tint = Color.White.copy(0.8f),
-                                                    modifier = Modifier.size(30.dp)
-                                                )
-                                            }
+                                            Icon(
+                                                if (uiState.isSearchActive) Icons.Rounded.Close else Icons.Rounded.Search,
+                                                null,
+                                                tint = if (uiState.isSearchActive) AccentBlue else Color.White.copy(0.9f),
+                                                modifier = Modifier.size(24.dp)
+                                            )
                                         }
                                     }
                                 }
@@ -741,10 +751,10 @@ fun MainScreen(
                                             ) {
                                                 Row(
                                                     verticalAlignment = Alignment.CenterVertically,
-                                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
                                                 ) {
                                                     Box(
-                                                        modifier = Modifier.size(28.dp).background(Color.White.copy(0.1f), CircleShape),
+                                                        modifier = Modifier.size(28.dp).glassIconBackground(shape = CircleShape),
                                                         contentAlignment = Alignment.Center
                                                     ) {
                                                         Icon(Icons.Rounded.PlayArrow, null, tint = Color.White, modifier = Modifier.size(20.dp))
@@ -755,12 +765,12 @@ fun MainScreen(
                                                         exit = fadeOut() + shrinkHorizontally()
                                                     ) {
                                                         Row(verticalAlignment = Alignment.CenterVertically) {
-                                                            Spacer(Modifier.width(8.dp))
+                                                            Spacer(Modifier.width(10.dp))
                                                             Text(
                                                                 text = "Shuffle All",
                                                                 color = Color.White,
-                                                                fontSize = 14.sp,
-                                                                fontWeight = FontWeight.Bold,
+                                                                fontSize = 15.sp,
+                                                                fontWeight = FontWeight.ExtraBold,
                                                                 maxLines = 1
                                                             )
                                                         }
@@ -782,20 +792,19 @@ fun MainScreen(
                                                 IconButton(
                                                     onClick = { showSortMenu = true },
                                                     modifier = Modifier
-                                                        .size(48.dp)
-                                                        .background(sortIconBgColor, CircleShape)
-                                                        .border(
-                                                            width = if (showSortMenu) 1.dp else 0.dp,
-                                                            color = if (showSortMenu) Color.White.copy(0.15f) else Color.Transparent,
-                                                            shape = CircleShape
+                                                        .size(46.dp)
+                                                        .glassIconBackground(
+                                                            backgroundColor = sortIconBgColor,
+                                                            shape = CircleShape,
+                                                            borderColor = if (showSortMenu) Color.White.copy(alpha = 0.2f) else Color.Transparent
                                                         )
                                                 ) {
                                                     Icon(
                                                         Icons.AutoMirrored.Rounded.Sort,
                                                         null,
-                                                        tint = if (showSortMenu) AccentBlue else Color.White.copy(0.7f),
+                                                        tint = if (showSortMenu) AccentBlue else Color.White.copy(0.85f),
                                                         modifier = Modifier
-                                                            .size(24.dp)
+                                                            .size(23.dp)
                                                             .onGloballyPositioned { sortMenuAnchor = it.boundsInRoot() }
                                                     )
                                                 }
@@ -806,40 +815,6 @@ fun MainScreen(
                                                     viewModel = viewModel,
                                                     uiState = uiState
                                                 )
-                                            }
-                                        }
-
-                                        Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                                            val searchIconBgColor by animateColorAsState(
-                                                targetValue = if (uiState.isSearchActive) Color.White.copy(0.25f) else Color.Transparent,
-                                                animationSpec = tween(500),
-                                                label = "searchIconBgColor"
-                                            )
-                                            IconButton(
-                                                onClick = {
-                                                    val nextActive = !uiState.isSearchActive
-                                                    viewModel.setSearchActive(nextActive)
-                                                },
-                                                modifier = Modifier
-                                                    .size(36.dp)
-                                                    .background(searchIconBgColor, CircleShape)
-                                            ) {
-                                                AnimatedContent(
-                                                    targetState = uiState.isSearchActive,
-                                                    transitionSpec = {
-                                                        (fadeIn(tween(300)) + scaleIn(initialScale = 0.5f)).togetherWith(
-                                                            fadeOut(tween(300)) + scaleOut(targetScale = 0.5f)
-                                                        )
-                                                    },
-                                                    label = "searchIconAnimation"
-                                                ) { active ->
-                                                    Icon(
-                                                        if (active) Icons.Rounded.Close else Icons.Rounded.Search,
-                                                        null,
-                                                        tint = if (active) AccentBlue else Color.White.copy(0.7f),
-                                                        modifier = Modifier.size(24.dp)
-                                                    )
-                                                }
                                             }
                                         }
 
@@ -854,20 +829,19 @@ fun MainScreen(
                                             IconButton(
                                                 onClick = { showCastPopup = true },
                                                 modifier = Modifier
-                                                    .size(40.dp)
-                                                    .background(castIconBgColor, CircleShape)
-                                                    .border(
-                                                        width = if (showCastPopup) 1.dp else 0.dp,
-                                                        color = if (showCastPopup) Color.White.copy(0.15f) else Color.Transparent,
-                                                        shape = CircleShape
+                                                    .size(46.dp)
+                                                    .glassIconBackground(
+                                                        backgroundColor = castIconBgColor,
+                                                        shape = CircleShape,
+                                                        borderColor = if (showCastPopup) Color.White.copy(alpha = 0.2f) else Color.Transparent
                                                     )
                                             ) {
                                                 Icon(
                                                     Icons.Rounded.Cast,
                                                     null,
-                                                    tint = if (showCastPopup || com.beatflowy.app.cast.CastManager.isConnected) AccentBlue else Color.White.copy(0.7f),
+                                                    tint = if (showCastPopup || com.beatflowy.app.cast.CastManager.isConnected) AccentBlue else Color.White.copy(0.85f),
                                                     modifier = Modifier
-                                                        .size(24.dp)
+                                                        .size(23.dp)
                                                         .onGloballyPositioned {
                                                             castIconBounds = it.boundsInRoot()
                                                         }
@@ -894,20 +868,19 @@ fun MainScreen(
                                             IconButton(
                                                 onClick = { showCloudPopup = true },
                                                 modifier = Modifier
-                                                    .size(40.dp)
-                                                    .background(cloudIconBgColor, CircleShape)
-                                                    .border(
-                                                        width = if (showCloudPopup) 1.dp else 0.dp,
-                                                        color = if (showCloudPopup) Color.White.copy(0.15f) else Color.Transparent,
-                                                        shape = CircleShape
+                                                    .size(46.dp)
+                                                    .glassIconBackground(
+                                                        backgroundColor = cloudIconBgColor,
+                                                        shape = CircleShape,
+                                                        borderColor = if (showCloudPopup) Color.White.copy(alpha = 0.2f) else Color.Transparent
                                                     )
                                             ) {
                                                 Icon(
                                                     Icons.Rounded.Cloud,
                                                     null,
-                                                    tint = if (showCloudPopup) AccentBlue else Color.White.copy(0.7f),
+                                                    tint = if (showCloudPopup) AccentBlue else Color.White.copy(0.85f),
                                                     modifier = Modifier
-                                                        .size(24.dp)
+                                                        .size(23.dp)
                                                         .onGloballyPositioned {
                                                             cloudIconBounds = it.boundsInRoot()
                                                         }
@@ -929,6 +902,9 @@ fun MainScreen(
                                                 },
                                                 onRefreshAccount = { email ->
                                                     viewModel.scanDriveAccount(email)
+                                                },
+                                                onSyncTelegramChannel = { url ->
+                                                    viewModel.syncTelegramChannel(url)
                                                 }
                                             )
                                         }
@@ -946,18 +922,17 @@ fun MainScreen(
                                             IconButton(
                                                 onClick = { showLayoutDensitySlider = true },
                                                 modifier = Modifier
-                                                    .size(40.dp)
-                                                    .background(sliderIconBgColor, CircleShape)
-                                                    .border(
-                                                        width = if (showLayoutDensitySlider) 1.dp else 0.dp,
-                                                        color = if (showLayoutDensitySlider) Color.White.copy(0.15f) else Color.Transparent,
-                                                        shape = CircleShape
+                                                    .size(46.dp)
+                                                    .glassIconBackground(
+                                                        backgroundColor = sliderIconBgColor,
+                                                        shape = CircleShape,
+                                                        borderColor = if (showLayoutDensitySlider) Color.White.copy(alpha = 0.2f) else Color.Transparent
                                                     )
                                             ) {
                                                 Icon(
                                                     Icons.Rounded.GridView,
                                                     null,
-                                                    tint = if (showLayoutDensitySlider) AccentBlue else Color.White.copy(0.7f),
+                                                    tint = if (showLayoutDensitySlider) AccentBlue else Color.White.copy(0.85f),
                                                     modifier = Modifier
                                                         .size(22.dp)
                                                         .onGloballyPositioned {
@@ -1689,7 +1664,11 @@ fun MainScreen(
                                                                 Text("No playlists yet", color = TextMuted, fontSize = 18.sp)
                                                                 Spacer(Modifier.height(4.dp))
                                                                 Button(
-                                                                    onClick = { viewModel.createPlaylist("My Playlist") },
+                                                                    onClick = {
+                                                                        // Open playlist dialog to prompt for name
+                                                                        playlistDialogSong = null
+                                                                        showPlaylistDialog = true
+                                                                    },
                                                                     colors = ButtonDefaults.buttonColors(containerColor = AccentBlue)
                                                                 ) {
                                                                     Text("Create Playlist", color = Color.Black)
@@ -1705,8 +1684,19 @@ fun MainScreen(
                                                         ) {
                                                             items(playlists, key = { it.name }) { playlist ->
                                                                 Box(Modifier.animateItem()) {
-                                                                    LibraryGridItem(playlist.name, "${playlist.songIds.size} songs", null) {
-                                                                        viewModel.setLibraryView(LibraryView.PLAYLIST_DETAIL, playlist.name)
+                                                                    Box(
+                                                                        modifier = Modifier.combinedClickable(
+                                                                            onClick = {
+                                                                                viewModel.setLibraryView(LibraryView.PLAYLIST_DETAIL, playlist.name)
+                                                                            },
+                                                                            onLongClick = {
+                                                                                playlistToDelete = playlist
+                                                                            }
+                                                                        )
+                                                                    ) {
+                                                                        LibraryGridItem(playlist.name, "${playlist.songIds.size} songs", null) {
+                                                                            viewModel.setLibraryView(LibraryView.PLAYLIST_DETAIL, playlist.name)
+                                                                        }
                                                                     }
                                                                 }
                                                             }
@@ -1912,7 +1902,7 @@ fun MainScreen(
                                                                 }
                                                             } else {
                                                                 LazyVerticalGrid(
-                                                                    columns = GridCells.Fixed(trackLayoutDensity.coerceIn(1, 5)),
+                                                                    columns = GridCells.Fixed(trackLayoutDensity.coerceIn(1, 6)),
                                                                     contentPadding = PaddingValues(16.dp, 8.dp, 16.dp, 120.dp),
                                                                     horizontalArrangement = Arrangement.spacedBy(if (trackLayoutDensity >= 3) 8.dp else 16.dp),
                                                                     verticalArrangement = Arrangement.spacedBy(if (trackLayoutDensity >= 3) 8.dp else 16.dp)
@@ -1957,7 +1947,19 @@ fun MainScreen(
                                                 .height(64.dp)
                                                 .shadow(16.dp, RoundedCornerShape(20.dp))
                                                 .clip(RoundedCornerShape(20.dp))
-                                                .clickable { showFullPlayer = true }
+                                                .combinedClickable(
+                                                    onClick = { showFullPlayer = true },
+                                                    onLongClick = {
+                                                        uiState.currentSong?.let { current ->
+                                                            val index = songs.indexOfFirst { it.id == current.id }
+                                                            if (index >= 0) {
+                                                                scope.launch {
+                                                                    listState.animateScrollToItem(index)
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                )
                                                 .pointerInput(Unit) {
                                                     var totalX = 0f
                                                     detectHorizontalDragGestures(
@@ -2191,7 +2193,7 @@ fun MainScreen(
                             )
                         }
 
-                        selectedSongForOptions?.let { song ->
+                                selectedSongForOptions?.let { song ->
                             SongOptionsSheet(
                                 song = song,
                                 currentPlayingSong = uiState.currentSong,
@@ -2204,9 +2206,12 @@ fun MainScreen(
                                     viewModel.addToQueue(song)
                                     selectedSongForOptions = null
                                 },
-                                onAddToPlaylist = {
-                                    selectedSongForOptions = null
-                                },
+                                        onAddToPlaylist = {
+                                            // Open playlist selection for single song
+                                            playlistDialogSong = song
+                                            showPlaylistDialog = true
+                                            selectedSongForOptions = null
+                                        },
                                 onInfo = {
                                     selectedSongForOptions = null
                                 },
@@ -2233,6 +2238,93 @@ fun MainScreen(
                                 }
                             )
                         }
+                    }
+                }
+            }
+        }
+
+        if (showPlaylistDialog) {
+            PlaylistSelectionDialog(
+                playlists = playlists,
+                onDismiss = {
+                    showPlaylistDialog = false
+                    playlistDialogSong = null
+                },
+                onSelect = { playlist ->
+                    if (playlistDialogSong != null) {
+                        viewModel.addSongToPlaylist(playlist.name, playlistDialogSong!!.id)
+                    } else {
+                        viewModel.addSelectedToPlaylist(playlist.name)
+                    }
+                    showPlaylistDialog = false
+                    playlistDialogSong = null
+                },
+                onCreateNew = { name ->
+                    viewModel.createPlaylist(name)
+                    if (playlistDialogSong != null) {
+                        viewModel.addSongToPlaylist(name, playlistDialogSong!!.id)
+                    } else {
+                        viewModel.addSelectedToPlaylist(name)
+                    }
+                    showPlaylistDialog = false
+                    playlistDialogSong = null
+                }
+            )
+        }
+
+        if (playlistToDelete != null) {
+            AlertDialog(
+                onDismissRequest = { playlistToDelete = null },
+                title = { Text("Delete Playlist?") },
+                text = { Text("Are you sure you want to delete '${playlistToDelete?.name}'? This action cannot be undone.") },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            playlistToDelete?.let { viewModel.deletePlaylist(it.id) }
+                            playlistToDelete = null
+                        },
+                        colors = ButtonDefaults.textButtonColors(contentColor = Color.Red)
+                    ) {
+                        Text("Delete")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { playlistToDelete = null }) {
+                        Text("Cancel")
+                    }
+                },
+                containerColor = Color(0xFF1A1A1A),
+                titleContentColor = Color.White,
+                textContentColor = Color.White.copy(0.7f)
+            )
+        }
+
+        // Floating Add button on Playlists view to create new playlists
+        if (uiState.currentView == LibraryView.PLAYLISTS && drawerProgress == 0f && !showFullPlayer) {
+            val isMiniPlayerVisible = uiState.currentSong != null
+            val bottomPadding by animateDpAsState(
+                targetValue = if (isMiniPlayerVisible) 80.dp else 16.dp,
+                label = "fab_bottom_padding"
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(bottom = bottomPadding, end = 16.dp),
+                contentAlignment = Alignment.BottomEnd
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(28.dp),
+                    color = AccentBlue,
+                    tonalElevation = 6.dp,
+                    modifier = Modifier
+                        .size(56.dp)
+                        .clickable {
+                            playlistDialogSong = null
+                            showPlaylistDialog = true
+                        }
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(Icons.Rounded.Add, null, tint = Color.Black, modifier = Modifier.size(28.dp))
                     }
                 }
             }
@@ -2273,6 +2365,7 @@ fun MainScreen(
                 },
                 onSetLibraryMode = { mode -> viewModel.setLibraryMode(mode) },
                 onNavigateToSettings = onNavigateToSettings,
+                onNavigateToDownload = onNavigateToDownload,
                 onClose = { showDrawer = false }
             )
         }
@@ -2430,7 +2523,8 @@ fun CloudDrivePopup(
     telegramChannels: List<com.beatflowy.app.model.TelegramChannel>,
     onSelectAccount: (String?) -> Unit,
     onSelectTelegramChannel: (String) -> Unit,
-    onRefreshAccount: (String) -> Unit
+    onRefreshAccount: (String) -> Unit,
+    onSyncTelegramChannel: (String) -> Unit
 ) {
     val enabledAccounts = remember(accounts) { accounts.filter { it.enabled } }
 
@@ -2536,14 +2630,27 @@ fun CloudDrivePopup(
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            channel.name.first().uppercaseChar().toString(),
+                            channel.name.firstOrNull()?.uppercaseChar()?.toString() ?: "",
                             color = Color(0xFF2AABEE),
                             fontSize = 9.sp,
                             fontWeight = FontWeight.Bold
                         )
                     }
                     Spacer(Modifier.width(12.dp))
-                    Text("@${channel.name}", color = Color.White, fontSize = 14.sp)
+                    Text(
+                        channel.name,
+                        color = Color.White,
+                        fontSize = 14.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                    IconButton(
+                        onClick = { onSyncTelegramChannel(channel.url) },
+                        modifier = Modifier.size(24.dp)
+                    ) {
+                        Icon(Icons.Rounded.Sync, null, tint = Color(0xFF2AABEE), modifier = Modifier.size(16.dp))
+                    }
                 }
             }
         }
@@ -2974,6 +3081,7 @@ fun SlideDrawerMenu(
     onSelectView: (LibraryView) -> Unit,
     onSetLibraryMode: (LibraryMode) -> Unit,
     onNavigateToSettings: () -> Unit,
+    onNavigateToDownload: () -> Unit,
     onClose: () -> Unit
 ) {
     val infiniteTransition = rememberInfiniteTransition(label = "menuBackground")
@@ -3196,6 +3304,18 @@ fun SlideDrawerMenu(
                     ) {
                         Box(contentAlignment = Alignment.Center) {
                             Icon(Icons.Rounded.ColorLens, null, tint = Color.White.copy(0.7f), modifier = Modifier.size(22.dp))
+                        }
+                    }
+                    Surface(
+                        color = Color.White.copy(0.08f),
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(52.dp)
+                            .clickable { onNavigateToDownload(); onClose() }
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(Icons.Rounded.FileDownload, null, tint = Color.White.copy(0.7f), modifier = Modifier.size(22.dp))
                         }
                     }
                     Surface(

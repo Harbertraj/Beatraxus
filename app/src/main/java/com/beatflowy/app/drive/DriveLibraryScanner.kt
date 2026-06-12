@@ -131,8 +131,7 @@ class DriveLibraryScanner(private val context: Context) {
         val ext = name.substringAfterLast('.', "").uppercase()
         val title = name.substringBeforeLast('.')
         
-        // M4A in cloud is often ALAC as per user report, so we label it as such to aid routing
-        val formatLabel = if (ext == "M4A") "ALAC" else ext.ifEmpty { "AUDIO" }
+        val formatLabel = ext.ifEmpty { "AUDIO" }
         
         val artUri = if (!thumbnailLink.isNullOrBlank()) {
             val highResThumb = if (thumbnailLink.contains("=s220")) {
@@ -156,6 +155,7 @@ class DriveLibraryScanner(private val context: Context) {
             fileSizeBytes = size?.toLong() ?: 0L,
             dateAdded = modifiedTime?.value ?: 0L,
             source = SongSource.GDRIVE,
+            folder = accountEmail?.lowercase() ?: "GDRIVE",
             driveFileId = id,
             driveAccountEmail = accountEmail?.lowercase()
         )

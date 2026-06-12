@@ -4,19 +4,9 @@ import com.beatflowy.app.model.DspConfig
 import com.beatflowy.app.model.ParametricEqBand
 import com.beatflowy.app.model.ReplayGainOption
 import com.beatflowy.app.model.ReplayGainSource
-import com.beatflowy.app.model.ResamplerType
 import com.beatflowy.app.model.Song
-import kotlin.math.PI
 import kotlin.math.abs
-import kotlin.math.cos
-import kotlin.math.max
-import kotlin.math.min
 import kotlin.math.pow
-import kotlin.math.roundToInt
-import kotlin.math.sin
-import kotlin.math.sqrt
-
-import kotlin.math.*
 
 internal data class DspProcessResult(
     val data: FloatArray,
@@ -31,9 +21,23 @@ internal interface DspProcessor {
 }
 
 internal class AudioDspPipeline(
-    private val processors: List<DspProcessor>
+    private val processors: List<DspProcessor>,
+    private val config: DspConfig,
+    private val outputSampleRate: Int
 ) {
     fun process(data: FloatArray, sampleCount: Int, channels: Int, sampleRate: Int): DspProcessResult {
+        val isBitPerfect = config.bitPerfectEnabled
+        val anyUnbypassed = config.bitPerfectUnbypassEq || config.bitPerfectUnbypassResample ||
+                config.bitPerfectUnbypassSoxr || config.bitPerfectUnbypassReverb ||
+                config.bitPerfectUnbypassDithering || config.bitPerfectUnbypassFloat64 ||
+                config.bitPerfectUnbypassLimiter
+
+        // FIX: Only bypass if sample rates match. If we are outputting to a higher rate (e.g. forced by AudioTrack HI_RES),
+        // we MUST resample even in Bit-Perfect mode, otherwise the song will play at the wrong speed (e.g. 2x).
+        if (isBitPerfect && !anyUnbypassed && sampleRate == outputSampleRate) {
+            return DspProcessResult(data = data, sampleCount = sampleCount, sampleRate = sampleRate)
+        }
+
         var current = DspProcessResult(data = data, sampleCount = sampleCount, sampleRate = sampleRate)
         processors.forEach { processor ->
             current = processor.process(current, channels)
@@ -49,19 +53,6 @@ internal class AudioDspPipeline(
         processors.forEach { it.flush() }
     }
 
-    /**
-     * DSP Processing Order for Native Engine:
-     * (1) ReplayGain (Track/Album gain + Preamp offset)
-     * (2) Preamp (Global preamp)
-     * (3) Parametric EQ / AutoEQ bands (32 bands max)
-     * (4) Tone controls (Bass, Mid Bass, Treble, Air)
-     * (5) Stereo Spatial (Balance and Stereo Width expansion)
-     * (6) Reverb (Room, Hall, Plate, Cathedral presets)
-     * (7) DVC volume scaling (Digital Volume Control)
-     * (8) Limiter (Soft-knee cubic clipping + Peak protection)
-     * (9) Dither (TPDF dither if outputBitDepth < 32)
-     * (10) SoXR Resampling (High-quality Sinc resampling to target hardware rate)
-     */
     companion object {
         fun create(
             inputSampleRate: Int,
@@ -74,152 +65,119 @@ internal class AudioDspPipeline(
             val processors = mutableListOf<DspProcessor>()
             val effectiveInputRate = inputSampleRate.coerceAtLeast(8_000)
 
-            // NATIVE ENGINE (Handles ReplayGain, Preamp, Tone, EQ, Spatial, Crossfeed, Reverb, Resampling, Volume, Limiter, Dither)
-            // Note: Legacy pipeline had a hardcoded -6dB baseHeadroom which was incorrectly reducing volume.
             processors += NativeDspProcessor(config, effectiveInputRate, outputSampleRate, channels, outputBitDepth, song)
 
-            return AudioDspPipeline(processors)
-        }
-
-        private fun dbToLinear(db: Float): Float = 10f.pow(db / 20f)
-    }
-}
-
-/**
- * High-precision Biquad filter using Double for internal state to prevent 
- * coefficient quantization noise and instability at low frequencies.
- */
-private class StereoBiquad(
-    private val b0: Double, private val b1: Double, private val b2: Double,
-    private val a1: Double, private val a2: Double
-) {
-    private var z1L = 0.0; private var z2L = 0.0
-    private var z1R = 0.0; private var z2R = 0.0
-
-    fun flush() {
-        z1L = 0.0; z2L = 0.0
-        z1R = 0.0; z2R = 0.0
-    }
-
-    fun processLeft(sample: Float): Float {
-        val s = sample.toDouble()
-        val out = s * b0 + z1L
-        z1L = s * b1 + z2L - a1 * out
-        z2L = s * b2 - a2 * out
-        return out.toFloat()
-    }
-
-    fun processRight(sample: Float): Float {
-        val s = sample.toDouble()
-        val out = s * b0 + z1R
-        z1R = s * b1 + z2R - a1 * out
-        z2R = s * b2 - a2 * out
-        return out.toFloat()
-    }
-
-    companion object {
-        private fun normalize(b0: Double, b1: Double, b2: Double, a0: Double, a1: Double, a2: Double) =
-            StereoBiquad(b0 / a0, b1 / a0, b2 / a0, a1 / a0, a2 / a0)
-
-        fun peaking(sr: Int, band: ParametricEqBand): StereoBiquad {
-            val a = 10.0.pow(band.gainDb.toDouble() / 40.0)
-            val w0 = 2.0 * PI * band.frequencyHz.toDouble() / sr
-            val alpha = sin(w0) / (2.0 * band.q.toDouble().coerceAtLeast(0.1))
-            val cosW0 = cos(w0)
-            return normalize(1.0 + alpha * a, -2.0 * cosW0, 1.0 - alpha * a, 1.0 + alpha / a, -2.0 * cosW0, 1.0 - alpha / a)
-        }
-
-        fun lowShelf(sr: Int, freq: Float, gain: Float, slope: Float): StereoBiquad {
-            val a = 10.0.pow(gain.toDouble() / 40.0)
-            val w0 = 2.0 * PI * freq.toDouble() / sr
-            val alpha = sin(w0) / 2.0 * sqrt((a + 1.0 / a) * (1.0 / slope.toDouble() - 1.0) + 2.0)
-            val cosW0 = cos(w0)
-            return normalize(
-                a * ((a + 1.0) - (a - 1.0) * cosW0 + 2.0 * sqrt(a) * alpha),
-                2.0 * a * ((a - 1.0) - (a + 1.0) * cosW0),
-                a * ((a + 1.0) - (a - 1.0) * cosW0 - 2.0 * sqrt(a) * alpha),
-                (a + 1.0) + (a - 1.0) * cosW0 + 2.0 * sqrt(a) * alpha,
-                -2.0 * ((a - 1.0) + (a + 1.0) * cosW0),
-                (a + 1.0) + (a - 1.0) * cosW0 - 2.0 * sqrt(a) * alpha
-            )
-        }
-
-        fun highShelf(sr: Int, freq: Float, gain: Float, slope: Float): StereoBiquad {
-            val a = 10.0.pow(gain.toDouble() / 40.0)
-            val w0 = 2.0 * PI * freq.toDouble() / sr
-            val alpha = sin(w0) / 2.0 * sqrt((a + 1.0 / a) * (1.0 / slope.toDouble() - 1.0) + 2.0)
-            val cosW0 = cos(w0)
-            return normalize(
-                a * ((a + 1.0) + (a - 1.0) * cosW0 + 2.0 * sqrt(a) * alpha),
-                -2.0 * a * ((a - 1.0) + (a + 1.0) * cosW0),
-                a * ((a + 1.0) + (a - 1.0) * cosW0 - 2.0 * sqrt(a) * alpha),
-                (a + 1.0) - (a - 1.0) * cosW0 + 2.0 * sqrt(a) * alpha,
-                2.0 * ((a - 1.0) - (a + 1.0) * cosW0),
-                (a + 1.0) - (a - 1.0) * cosW0 - 2.0 * sqrt(a) * alpha
-            )
+            return AudioDspPipeline(processors, config, outputSampleRate)
         }
     }
 }
-
 
 private class NativeDspProcessor(
-    private val config: DspConfig,
+    config: DspConfig,
     private val inputSampleRate: Int,
     private val outputSampleRate: Int,
     private val channels: Int,
     private val outputBitDepth: Int,
     private val song: Song?
 ) : DspProcessor {
-    private val defaultEqFreqs = listOf(31.25f, 62.5f, 125f, 250f, 500f, 1000f, 2000f, 4000f, 8000f, 16000f)
+    private var currentConfig = config
+
+    // Tone smoothing state to avoid audible artifacts when changing tone knobs
+    @Volatile
+    private var toneTargetMidBass = if (config.midBassEnabled) config.midBassDb else 0f
+    @Volatile
+    private var toneTargetTreble = if (config.trebleEnabled) config.trebleDb else 0f
+    @Volatile
+    private var toneTargetAir = if (config.airEnabled) config.airDb else 0f
+
+    private var toneCurrentMidBass = toneTargetMidBass
+    private var toneCurrentTreble = toneTargetTreble
+    private var toneCurrentAir = toneTargetAir
+    private var previousMidBassEnabled = config.midBassEnabled
+    private var previousTrebleEnabled = config.trebleEnabled
+    private var previousAirEnabled = config.airEnabled
+    private var isFirstConfig = true
+
+    // Fraction of the remaining difference to apply per audio buffer (0..1)
+    private val toneSmoothingFactor = 0.25f
+    private val toneSnapThreshold = 0.001f
 
     private val native = NativeDsp().also { dsp ->
-        // Initialize core engine
         dsp.init(inputSampleRate.toFloat(), channels)
-
-        // Sample Rate
         if (inputSampleRate != outputSampleRate) {
             dsp.initResampler(inputSampleRate.toFloat(), channels, outputSampleRate.toFloat())
         }
-
         dsp.setBitDepth(outputBitDepth)
-        
-        // Initial config sync
-        updateNativeConfig(config, dsp)
+        updateNativeConfig(currentConfig, dsp)
     }
 
     private fun updateNativeConfig(cfg: DspConfig, dsp: NativeDsp) {
-        // DC Blocker
-        dsp.setDcBlocker(cfg.dcBlockerEnabled)
+        val isBP = cfg.bitPerfectEnabled
 
-        // Replay Gain
+        // DC Blocker is typically not unbypassed, but usually kept for safety. 
+        // For strict bit-perfect, we should disable it unless specifically bypassed (though not in user's list)
+        dsp.setDcBlocker(if (isBP) false else cfg.dcBlockerEnabled)
+
         val rg = ReplayGainState.from(cfg, song)
-        dsp.setReplayGain(rg.gainDb)
+        // Replay gain is not in the unbypass list, so we bypass it in Bit-Perfect mode
+        dsp.setReplayGain(if (isBP) 0f else rg.gainDb)
 
-        // DVC (Digital Volume Control)
-        dsp.setDvc(cfg.dvcEnabled)
-        dsp.setDvcLevel(cfg.dvcLevel)
+        dsp.setDvc(if (isBP) false else cfg.dvcEnabled)
+        dsp.setDvcLevel(if (isBP) 1f else cfg.dvcLevel)
         dsp.setDvcMode(cfg.dvcMode.ordinal)
         
-        // Resampler type
-        dsp.setHighQualityResampler(cfg.highQualityResampler)
-        dsp.setCutoffRatio(cfg.resamplerCutoffRatio)
+        val resampleActive = !isBP || cfg.bitPerfectUnbypassResample
+        val soxrActive = !isBP || cfg.bitPerfectUnbypassSoxr
         
-        // Respect module enabled flags for tone controls
-        dsp.setTone(
-            if (cfg.bassEnabled) cfg.bassDb else 0f,
-            if (cfg.midBassEnabled) cfg.midBassDb else 0f,
-            if (cfg.trebleEnabled) cfg.trebleDb else 0f,
-            if (cfg.airEnabled) cfg.airDb else 0f
-        )
+        dsp.setHighQualityResampler(if (soxrActive) cfg.highQualityResampler else false)
+        if (cfg.highQualityResampler && soxrActive) {
+            dsp.setSoxrQuality(cfg.soxrQuality.nativeValue)
+        }
+        dsp.setFloat64(if (isBP) cfg.bitPerfectUnbypassFloat64 else cfg.float64Enabled)
+        dsp.setCutoffRatio(if (resampleActive) cfg.resamplerCutoffRatio else 0.999f)
+        
+        // Tone knobs - not in unbypass list
+        val targetMidBass = if (!isBP && cfg.midBassEnabled) cfg.midBassDb else 0f
+        val targetTreble = if (!isBP && cfg.trebleEnabled) cfg.trebleDb else 0f
+        val targetAir = if (!isBP && cfg.airEnabled) cfg.airDb else 0f
+
+        val midBassToggled = cfg.midBassEnabled != previousMidBassEnabled
+        val trebleToggled = cfg.trebleEnabled != previousTrebleEnabled
+        val airToggled = cfg.airEnabled != previousAirEnabled
+
+        toneTargetMidBass = targetMidBass
+        toneTargetTreble = targetTreble
+        toneTargetAir = targetAir
+
+        var forceApplyTone = isFirstConfig
+        if (midBassToggled) {
+            toneCurrentMidBass = targetMidBass
+            previousMidBassEnabled = cfg.midBassEnabled
+            forceApplyTone = true
+        }
+        if (trebleToggled) {
+            toneCurrentTreble = targetTreble
+            previousTrebleEnabled = cfg.trebleEnabled
+            forceApplyTone = true
+        }
+        if (airToggled) {
+            toneCurrentAir = targetAir
+            previousAirEnabled = cfg.airEnabled
+            forceApplyTone = true
+        }
+
+        if (forceApplyTone) {
+            dsp.setTone(toneCurrentMidBass, toneCurrentTreble, toneCurrentAir)
+            isFirstConfig = false
+        }
 
         dsp.setSpatial(
-            if (cfg.balanceEnabled) cfg.balance else 0f,
-            if (cfg.stereoExpansionEnabled) cfg.stereoWidth else 1f
+            if (!isBP && cfg.balanceEnabled) cfg.balance else 0f,
+            if (!isBP && cfg.stereoExpansionEnabled) cfg.stereoWidth else 1f
         )
 
-        dsp.setCrossfeed(cfg.crossfeedEnabled, cfg.crossfeedLevel)
+        dsp.setCrossfeed(if (!isBP) cfg.crossfeedEnabled else false, cfg.crossfeedLevel)
 
-        // Reverb - Refined Presets
         data class ReverbParams(val type: Int, val room: Float, val damp: Float, val width: Float, val delay: Float)
         val params = when (cfg.reverbPreset) {
             "ROOM" ->       ReverbParams(1, 0.45f, 0.40f, 0.60f, 15f)
@@ -231,7 +189,8 @@ private class NativeDspProcessor(
             else ->         ReverbParams(0, cfg.reverbRoomSize, cfg.reverbDamping, cfg.reverbWidth, cfg.reverbPredelayMs)
         }
         
-        if (!cfg.reverbEnabled) {
+        val reverbUnbypassed = !isBP || cfg.bitPerfectUnbypassReverb
+        if (!cfg.reverbEnabled || !reverbUnbypassed) {
             dsp.setReverb(0.0f)
             dsp.muteReverb()
         } else {
@@ -242,62 +201,108 @@ private class NativeDspProcessor(
         dsp.setReverbWidth(params.width)
         dsp.setReverbPredelay(params.delay)
 
-        // Limiter
-        dsp.setLimiter(cfg.limiterEnabled)
+        val limiterUnbypassed = !isBP || cfg.bitPerfectUnbypassLimiter
+        dsp.setLimiter(cfg.limiterEnabled && limiterUnbypassed)
+        dsp.setLimiterParams(cfg.limiterThresholdDb, cfg.limiterAttackMs, cfg.limiterReleaseMs)
 
-        // Dither
-        dsp.setDither(outputBitDepth < 32, outputBitDepth)
+        val ditherUnbypassed = !isBP || cfg.bitPerfectUnbypassDithering
+        val shouldDither = cfg.ditherEnabled && ditherUnbypassed &&
+            cfg.ditherType != com.beatflowy.app.model.DitherType.NONE &&
+            outputBitDepth < 32
+        dsp.setDither(shouldDither, outputBitDepth)
+        dsp.setDitherType(cfg.ditherType.nativeValue)
 
         applyEqBands(cfg, dsp)
     }
 
     private fun applyEqBands(config: DspConfig, dsp: NativeDsp) {
-        // Always apply preamp — it must not depend on EQ enabled state
-        // AutoEQ preamp offset is required to prevent clipping (AutoEQ project spec)
-        val autoEqPreamp = if (config.eqEnabled && config.autoEqEnabled && config.autoEqProfile != null) {
+        val isBP = config.bitPerfectEnabled
+        val eqUnbypassed = !isBP || config.bitPerfectUnbypassEq
+        val effectiveEqEnabled = config.eqEnabled && eqUnbypassed
+
+        dsp.setEqEnabled(effectiveEqEnabled)
+        dsp.setEqPhaseMode(config.eqPhaseMode == com.beatflowy.app.model.EqPhaseMode.LINEAR_PHASE)
+
+        val autoEqPreamp = if (effectiveEqEnabled && config.autoEqEnabled && config.autoEqProfile != null) {
             config.autoEqProfile.preampDb
         } else 0f
 
-        // Compensation for Reverb volume buildup (Heuristic: -3dB at max reverb)
-        val reverbCompensation = if (config.reverbEnabled) -3.0f * config.reverbAmount else 0f
+        val reverbUnbypassed = !isBP || config.bitPerfectUnbypassReverb
+        val reverbCompensation = if (config.reverbEnabled && reverbUnbypassed) -2.0f * config.reverbAmount else 0f
 
-        val totalPreamp = (if (config.preampEnabled) config.preampDb else 0f) + autoEqPreamp + reverbCompensation
+        // Headroom management to prevent distortion from both EQ and Tone knobs
+        val bands = if (effectiveEqEnabled) {
+            if (config.autoEqEnabled && config.autoEqProfile != null) config.autoEqProfile.bands else config.eqBands
+        } else emptyList()
+
+        // FIX: Only consider enabled bands for headroom calculation
+        val maxEqBoost = bands.filter { it.enabled }.maxOfOrNull { it.gainDb }?.coerceAtLeast(0f) ?: 0f
+
+        val manualPreamp = if (!isBP && config.preampEnabled) config.preampDb else 0f
+        val eqMasterGain = if (effectiveEqEnabled) config.eqMasterGainDb else 0f
+
+        // Only Equalizer bands contribute to automatic headroom reduction.
+        // Tone knobs (Bass/Treble) are excluded from the main 'excess' calculation 
+        // to prevent confusing volume shifts when the user tunes them.
+        val totalConfiguredBoost = manualPreamp + autoEqPreamp + eqMasterGain + maxEqBoost
+        
+        val targetHeadroomThreshold = 9.0f // Increased to 9dB for even more output power
+
+        val excess = (totalConfiguredBoost - targetHeadroomThreshold).coerceAtLeast(0f)
+        val appliedEqMasterGain = if (excess > 0f) {
+            eqMasterGain - excess
+        } else eqMasterGain
+
+        // For tone knobs, we apply a very minimal constant headroom reduction 
+        // only if any boost knob is active. This avoids the "dipping" sensation.
+        val maxToneBoost = listOf(
+            if (config.midBassEnabled) config.midBassDb else 0f,
+            if (config.trebleEnabled) config.trebleDb else 0f,
+            if (config.airEnabled) config.airDb else 0f
+        ).maxOrNull()?.coerceAtLeast(0f) ?: 0f
+        
+        // Very light compensation for tone knobs (max 1.5dB drop at full 12dB boost)
+        val toneHeadroom = if (maxToneBoost > 0.1f) (maxToneBoost * 0.125f).coerceAtMost(1.5f) else 0f
+
+        val totalPreamp = manualPreamp + autoEqPreamp + reverbCompensation + appliedEqMasterGain - toneHeadroom
+
         dsp.setPreamp(totalPreamp)
 
         if (!config.eqEnabled) {
-            // Zero all bands but preamp is still applied above
-            repeat(32) { i -> dsp.setBand(i, 1000f, 0f, 1f) }
+            repeat(32) { i -> dsp.setBand(i, 1000f, 0f, 1f, 0) }
             return
         }
 
         val bandsToApply: List<ParametricEqBand> = if (config.autoEqEnabled && config.autoEqProfile != null) {
-            // AutoEQ overrides manual EQ completely
             config.autoEqProfile.bands
         } else {
             config.eqBands
         }
 
-        // Apply bands
         bandsToApply.forEachIndexed { index, band ->
-            dsp.setBand(
-                index = index,
-                frequency = band.frequencyHz,
-                gainDb = if (band.enabled) band.gainDb else 0f,
-                q = band.q
-            )
+            if (index < 32) {
+                dsp.setBand(
+                    index = index,
+                    frequency = band.frequencyHz,
+                    gainDb = if (band.enabled) band.gainDb else 0f,
+                    q = band.q,
+                    type = band.type.nativeValue
+                )
+            }
         }
 
-        // Zero out any remaining band slots
-        for (i in bandsToApply.size until 32) {
-            dsp.setBand(i, 1000f, 0f, 1f)
+        if (bandsToApply.size < 32) {
+            for (i in bandsToApply.size until 32) {
+                dsp.setBand(i, 1000f, 0f, 1f, 0)
+            }
         }
     }
 
     private var outputBuffer = FloatArray(0)
-    private var resultBuffer = FloatArray(0)
 
     override fun updateConfig(config: DspConfig) {
-        updateNativeConfig(config, native)
+        currentConfig = config
+        updateNativeConfig(currentConfig, native)
     }
 
     override fun flush() {
@@ -305,16 +310,18 @@ private class NativeDspProcessor(
         if (inputSampleRate != outputSampleRate) {
             native.initResampler(inputSampleRate.toFloat(), channels, outputSampleRate.toFloat())
         }
-        updateNativeConfig(config, native)
+        updateNativeConfig(currentConfig, native)
     }
 
     override fun process(input: DspProcessResult, channels: Int): DspProcessResult {
+        // Smooth tone targets towards current values each buffer to avoid clicks/noise
+        smoothToneAndApply(native)
+
         if (inputSampleRate == outputSampleRate) {
             native.process(input.data, input.sampleCount / channels)
             return input
         }
 
-        // Calculate max possible output size with 20% headroom for resampling jitter
         val ratio = outputSampleRate.toFloat() / inputSampleRate.toFloat()
         val maxFrames = (input.sampleCount / channels * ratio * 1.2f).toInt() + 128
         val requiredSize = maxFrames * channels
@@ -322,69 +329,67 @@ private class NativeDspProcessor(
         if (outputBuffer.size < requiredSize) {
             outputBuffer = FloatArray(requiredSize)
         }
-        if (resultBuffer.size < requiredSize) {
-            resultBuffer = FloatArray(requiredSize)
-        }
 
         val outFrames = native.processResampled(input.data, input.sampleCount / channels, outputBuffer)
         val outSamples = outFrames * channels
 
-        // Copy into stable result buffer instead of allocating new FloatArray
-        outputBuffer.copyInto(resultBuffer, 0, 0, outSamples)
-        
         return DspProcessResult(
-            data = resultBuffer,
+            data = outputBuffer,
             sampleCount = outSamples,
             sampleRate = outputSampleRate
         )
     }
-}
 
-private class SoftClipLimiterProcessor(private val threshold: Float) : DspProcessor {
-    override fun process(input: DspProcessResult, channels: Int): DspProcessResult {
-        val data = input.data
-        for (i in 0 until input.sampleCount) {
-            val s = data[i]
-            val absS = abs(s)
-            if (absS > threshold) {
-                // Soft knee cubic clipping
-                val over = (absS - threshold) / (1.0f - threshold)
-                val shape = over - (over.pow(3) / 3.0f)
-                data[i] = sign(s) * (threshold + shape * (1.0f - threshold))
+    private fun smoothToneAndApply(dsp: NativeDsp) {
+        var changed = false
+        synchronized(this) {
+            // Mid-bass knob 1
+            changed = smoothToneParameter(
+                ::toneTargetMidBass,
+                ::toneCurrentMidBass,
+                { toneCurrentMidBass = it }
+            ) || changed
+
+            // Treble knob 2
+            changed = smoothToneParameter(
+                ::toneTargetTreble,
+                ::toneCurrentTreble,
+                { toneCurrentTreble = it }
+            ) || changed
+
+            // Air knob 3
+            changed = smoothToneParameter(
+                ::toneTargetAir,
+                ::toneCurrentAir,
+                { toneCurrentAir = it }
+            ) || changed
+
+            if (changed) {
+                dsp.setTone(toneCurrentMidBass, toneCurrentTreble, toneCurrentAir)
             }
         }
-        return input
-    }
-}
-
-private class DvcVolumeProcessor(private var targetGain: Float) : DspProcessor {
-    private var currentGain = -1f // Initialize on first use
-
-    override fun flush() {
-        currentGain = -1f
     }
 
-    override fun updateConfig(config: DspConfig) {
-        this.targetGain = config.dvcLevel
-    }
+    private inline fun smoothToneParameter(
+        getTarget: () -> Float,
+        getCurrent: () -> Float,
+        setCurrent: (Float) -> Unit
+    ): Boolean {
+        val target = getTarget()
+        val current = getCurrent()
+        val difference = target - current
 
-    override fun process(input: DspProcessResult, channels: Int): DspProcessResult {
-        if (currentGain < 0f) currentGain = targetGain
-        val data = input.data
-        if (abs(currentGain - targetGain) < 0.0001f) {
-            for (i in 0 until input.sampleCount) data[i] *= targetGain
+        return if (kotlin.math.abs(difference) <= toneSnapThreshold) {
+            if (current != target) {
+                setCurrent(target)
+                true
+            } else false
         } else {
-            // Smooth ramping to prevent clicks
-            val step = (targetGain - currentGain) / input.sampleCount
-            for (i in 0 until input.sampleCount) {
-                currentGain += step
-                data[i] *= currentGain
-            }
+            setCurrent(current + difference * toneSmoothingFactor)
+            true
         }
-        return input
     }
 }
-
 
 private data class ReplayGainState(
     val gainDb: Float = 0f,
@@ -407,7 +412,7 @@ private data class ReplayGainState(
             val safeLimit = if (peak > 0f) (1f / peak).coerceAtMost(1f) else 1f
             return if (config.replayGainOption == ReplayGainOption.APPLY_GAIN_PREVENT_CLIPPING && linearGain > safeLimit) {
                 ReplayGainState(
-                    gainDb = 20f * kotlin.math.log10(safeLimit),
+                    gainDb = 20f * kotlin.math.log10(safeLimit.toDouble()).toFloat(),
                     preventClipping = true,
                     limit = safeLimit
                 )
@@ -421,324 +426,3 @@ private data class ReplayGainState(
         }
     }
 }
-
-private class GainProcessor(private var gain: Float) : DspProcessor {
-    override fun updateConfig(config: DspConfig) {
-        // We can't easily distinguish which GainProcessor this is (Preamp or ReplayGain)
-        // without more state, but in legacy mode create(), we add Preamp then ReplayGain.
-        // For simplicity, we'll let AudioEngine handle structural changes if needed,
-        // but real-time preamp updates are better handled by specific processors.
-    }
-
-    override fun process(input: DspProcessResult, channels: Int): DspProcessResult {
-        val data = if (input.data.size == input.sampleCount) input.data else input.data.copyOf(input.sampleCount)
-        for (index in 0 until input.sampleCount) {
-            data[index] *= gain
-        }
-        return input.copy(data = data)
-    }
-}
-
-private class FilterChainProcessor(
-    private var filters: List<StereoBiquad>,
-    private val sampleRate: Int
-) : DspProcessor {
-    override fun flush() {
-        filters.forEach { it.flush() }
-    }
-
-    override fun updateConfig(config: DspConfig) {
-        val effectiveEqBands = if (config.eqEnabled) {
-            if (config.autoEqEnabled && config.autoEqProfile != null) {
-                config.autoEqProfile.bands
-            } else {
-                config.eqBands
-            }
-        } else {
-            emptyList()
-        }
-
-        val newFilters = mutableListOf<StereoBiquad>()
-        effectiveEqBands.forEach { band ->
-            if (band.enabled && abs(band.gainDb) > 0.01f) {
-                newFilters += StereoBiquad.peaking(sampleRate, band)
-            }
-        }
-
-        if (config.bassEnabled && abs(config.bassDb) > 0.01f) {
-            newFilters += StereoBiquad.lowShelf(sampleRate, 105f, config.bassDb, 0.7f)
-        }
-        if (config.trebleEnabled && abs(config.trebleDb) > 0.01f) {
-            newFilters += StereoBiquad.highShelf(sampleRate, 8_000f, config.trebleDb, 0.7f)
-        }
-        
-        filters = newFilters
-    }
-
-    override fun process(input: DspProcessResult, channels: Int): DspProcessResult {
-        val data = if (input.data.size == input.sampleCount) input.data else input.data.copyOf(input.sampleCount)
-        val frameCount = input.sampleCount / channels
-        for (frame in 0 until frameCount) {
-            val offset = frame * channels
-            var left = data[offset]
-            var right = if (channels > 1) data[offset + 1] else left
-            filters.forEach { filter ->
-                left = filter.processLeft(left)
-                right = filter.processRight(right)
-            }
-            data[offset] = left
-            if (channels > 1) data[offset + 1] = right
-        }
-        return input.copy(data = data)
-    }
-}
-
-private class BalanceProcessor(private var balance: Float) : DspProcessor {
-    private var leftGain = if (balance > 0f) 1f - balance else 1f
-    private var rightGain = if (balance < 0f) 1f + balance else 1f
-
-    override fun updateConfig(config: DspConfig) {
-        this.balance = if (config.balanceEnabled) config.balance else 0f
-        this.leftGain = if (balance > 0f) 1f - balance else 1f
-        this.rightGain = if (balance < 0f) 1f + balance else 1f
-    }
-
-    override fun process(input: DspProcessResult, channels: Int): DspProcessResult {
-        if (channels < 2) return input
-        val data = if (input.data.size == input.sampleCount) input.data else input.data.copyOf(input.sampleCount)
-        val frameCount = input.sampleCount / channels
-        for (frame in 0 until frameCount) {
-            val offset = frame * channels
-            data[offset] *= leftGain
-            data[offset + 1] *= rightGain
-        }
-        return input.copy(data = data)
-    }
-}
-
-private class StereoWidthProcessor(private var width: Float) : DspProcessor {
-    override fun updateConfig(config: DspConfig) {
-        this.width = if (config.stereoExpansionEnabled) config.stereoWidth else 1f
-    }
-
-    override fun process(input: DspProcessResult, channels: Int): DspProcessResult {
-        if (channels < 2) return input
-        val data = if (input.data.size == input.sampleCount) input.data else input.data.copyOf(input.sampleCount)
-        val frameCount = input.sampleCount / channels
-        for (frame in 0 until frameCount) {
-            val offset = frame * channels
-            val left = data[offset]
-            val right = data[offset + 1]
-            val mid = (left + right) * 0.5f
-            val side = (left - right) * 0.5f * width
-            data[offset] = mid + side
-            data[offset + 1] = mid - side
-        }
-        return input.copy(data = data)
-    }
-}
-
-private class ReverbProcessor(
-    sampleRate: Int,
-    amount: Float
-) : DspProcessor {
-    private val wet = amount.coerceIn(0f, 1f) * 0.35f
-    private val feedback = 0.12f + (amount.coerceIn(0f, 1f) * 0.42f)
-    private val leftDelay = max(1, (sampleRate * (0.021f + amount * 0.036f)).roundToInt())
-    private val rightDelay = max(1, (sampleRate * (0.029f + amount * 0.041f)).roundToInt())
-    private val leftBuffer = FloatArray(leftDelay)
-    private val rightBuffer = FloatArray(rightDelay)
-    private var leftIndex = 0
-    private var rightIndex = 0
-
-    override fun flush() {
-        leftBuffer.fill(0f)
-        rightBuffer.fill(0f)
-        leftIndex = 0
-        rightIndex = 0
-    }
-
-    override fun process(input: DspProcessResult, channels: Int): DspProcessResult {
-        if (channels < 2) return input
-        val data = if (input.data.size == input.sampleCount) input.data else input.data.copyOf(input.sampleCount)
-        val frameCount = input.sampleCount / channels
-        for (frame in 0 until frameCount) {
-            val offset = frame * channels
-            val dryL = data[offset]
-            val dryR = data[offset + 1]
-            val delayedL = leftBuffer[leftIndex]
-            val delayedR = rightBuffer[rightIndex]
-            leftBuffer[leftIndex] = dryL + delayedR * feedback
-            rightBuffer[rightIndex] = dryR + delayedL * feedback
-            leftIndex = (leftIndex + 1) % leftBuffer.size
-            rightIndex = (rightIndex + 1) % rightBuffer.size
-            data[offset] = dryL * (1f - wet) + delayedL * wet
-            data[offset + 1] = dryR * (1f - wet) + delayedR * wet
-        }
-        return input.copy(data = data)
-    }
-}
-
-private class LimiterProcessor(private val limit: Float) : DspProcessor {
-    override fun process(input: DspProcessResult, channels: Int): DspProcessResult {
-        val data = if (input.data.size == input.sampleCount) input.data else input.data.copyOf(input.sampleCount)
-        for (index in 0 until input.sampleCount) {
-            data[index] = data[index].coerceIn(-limit, limit)
-        }
-        return input.copy(data = data)
-    }
-}
-
-private abstract class StreamingResamplerProcessor(
-    private val inputSampleRate: Int,
-    private val outputSampleRate: Int
-) : DspProcessor {
-    private val ratio = inputSampleRate.toDouble() / outputSampleRate.toDouble()
-    private val historyFrames = 64
-    private var sourcePosition = 0.0
-    private var history = FloatArray(0)
-    private var historyFrameCount = 0
-
-    override fun flush() {
-        sourcePosition = 0.0
-        historyFrameCount = 0
-        history = FloatArray(0)
-    }
-
-    override fun process(input: DspProcessResult, channels: Int): DspProcessResult {
-        if (input.sampleRate == outputSampleRate || input.sampleCount <= 0) return input
-        val inputFrames = input.sampleCount / channels
-        val combinedFrames = historyFrameCount + inputFrames
-        val combined = FloatArray(combinedFrames * channels)
-        if (historyFrameCount > 0) {
-            System.arraycopy(history, 0, combined, 0, historyFrameCount * channels)
-        }
-        System.arraycopy(input.data, 0, combined, historyFrameCount * channels, input.sampleCount)
-
-        val outputFrames = max(0, ((combinedFrames - 1 - sourcePosition) / ratio).toInt() + 1)
-        val output = FloatArray(outputFrames * channels)
-        var outFrame = 0
-        while (outFrame < outputFrames) {
-            val source = sourcePosition + outFrame * ratio
-            if (source > combinedFrames - 1) break
-            val base = source.toInt()
-            val fraction = source - base
-            for (channel in 0 until channels) {
-                output[outFrame * channels + channel] = sample(combined, combinedFrames, channels, channel, base, fraction)
-            }
-            outFrame++
-        }
-
-        sourcePosition += outFrame * ratio
-        val trimFrames = sourcePosition.toInt().coerceAtMost(combinedFrames)
-        sourcePosition -= trimFrames
-        val remainingFrames = (combinedFrames - trimFrames).coerceAtMost(historyFrames)
-        history = FloatArray(remainingFrames * channels)
-        if (remainingFrames > 0) {
-            System.arraycopy(
-                combined,
-                (combinedFrames - remainingFrames) * channels,
-                history,
-                0,
-                remainingFrames * channels
-            )
-        }
-        historyFrameCount = remainingFrames
-
-        return DspProcessResult(output, outFrame * channels, outputSampleRate)
-    }
-
-    protected abstract fun sample(
-        data: FloatArray,
-        frameCount: Int,
-        channels: Int,
-        channel: Int,
-        baseIndex: Int,
-        fraction: Double
-    ): Float
-}
-
-private class LinearResamplerProcessor(
-    inputSampleRate: Int,
-    outputSampleRate: Int
-) : StreamingResamplerProcessor(inputSampleRate, outputSampleRate) {
-    override fun sample(
-        data: FloatArray,
-        frameCount: Int,
-        channels: Int,
-        channel: Int,
-        baseIndex: Int,
-        fraction: Double
-    ): Float {
-        val safeBase = baseIndex.coerceIn(0, frameCount - 1)
-        val next = min(safeBase + 1, frameCount - 1)
-        val a = data[safeBase * channels + channel]
-        val b = data[next * channels + channel]
-        return (a + ((b - a) * fraction)).toFloat()
-    }
-}
-
-private class WindowedSincResamplerProcessor(
-    inputSampleRate: Int,
-    outputSampleRate: Int,
-    private var cutoffRatio: Float
-) : StreamingResamplerProcessor(inputSampleRate, outputSampleRate) {
-    private val taps = 32
-    private val phases = 512
-    private val ratio = outputSampleRate.toDouble() / inputSampleRate.toDouble()
-    private var filterTable = buildFilterTable(cutoffRatio)
-
-    override fun updateConfig(config: DspConfig) {
-        if (abs(this.cutoffRatio - config.resamplerCutoffRatio) > 0.001f) {
-            this.cutoffRatio = config.resamplerCutoffRatio
-            this.filterTable = buildFilterTable(this.cutoffRatio)
-        }
-    }
-
-    override fun sample(
-        data: FloatArray,
-        frameCount: Int,
-        channels: Int,
-        channel: Int,
-        baseIndex: Int,
-        fraction: Double
-    ): Float {
-        val phaseIndex = (fraction * phases).toInt().coerceIn(0, phases - 1)
-        val kernel = filterTable[phaseIndex]
-        val start = baseIndex - taps / 2 + 1
-        var sum = 0.0
-        for (tap in 0 until taps) {
-            val frame = (start + tap).coerceIn(0, frameCount - 1)
-            sum += data[frame * channels + channel] * kernel[tap]
-        }
-        return sum.toFloat()
-    }
-
-    private fun buildFilterTable(cutoffRatio: Float): Array<DoubleArray> {
-        val normalizedCutoff = if (ratio >= 1.0) 0.5 * cutoffRatio else 0.5 * ratio * cutoffRatio
-        return Array(phases) { phase ->
-            val frac = phase.toDouble() / phases
-            val kernel = DoubleArray(taps)
-            var sum = 0.0
-            for (tap in 0 until taps) {
-                val distance = tap - taps / 2 + 1 - frac
-                val sinc = if (distance == 0.0) {
-                    2.0 * normalizedCutoff
-                } else {
-                    sin(2.0 * PI * normalizedCutoff * distance) / (PI * distance)
-                }
-                val window = 0.42 -
-                    0.5 * cos((2.0 * PI * tap) / (taps - 1)) +
-                    0.08 * cos((4.0 * PI * tap) / (taps - 1))
-                kernel[tap] = sinc * window
-                sum += kernel[tap]
-            }
-            if (sum != 0.0) {
-                for (tap in 0 until taps) kernel[tap] /= sum
-            }
-            kernel
-        }
-    }
-}
-
-

@@ -25,6 +25,10 @@
 -keep class com.beatflowy.app.BeatraxusApplication { *; }
 -keep class com.beatflowy.app.viewmodel.** { *; }
 
+# Kotlin Coroutines
+-keep class kotlinx.coroutines.** { *; }
+-keep class kotlin.coroutines.** { *; }
+-dontwarn kotlinx.coroutines.**
 
 # ══════════════════════════════════════════════════════════════════════════════
 # RETROFIT + OKHTTP + GSON
@@ -36,6 +40,7 @@
 -keepclassmembers interface * {
     @retrofit2.http.* <methods>;
 }
+-keep class retrofit2.KotlinExtensions* { *; }
 
 -keep class okhttp3.** { *; }
 -dontwarn okhttp3.**
@@ -45,6 +50,13 @@
 -keep class com.google.gson.reflect.TypeToken { *; }
 -keepclassmembers class * {
     @com.google.gson.annotations.SerializedName <fields>;
+}
+
+# Retrofit Kotlin Coroutine Support
+-keepnames class kotlinx.coroutines.internal.MainDispatcherFactory {}
+-keepnames class kotlinx.coroutines.CoroutineExceptionHandler {}
+-keepclassmembers class kotlinx.coroutines.** {
+    volatile <fields>;
 }
 
 
@@ -66,6 +78,14 @@
 -keep class androidx.mediarouter.** { *; }
 
 -dontwarn com.google.android.gms.cast.**
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# JAudioTagger (Embedded Lyrics)
+# ══════════════════════════════════════════════════════════════════════════════
+
+-keep class org.jaudiotagger.** { *; }
+-dontwarn org.jaudiotagger.**
 
 
 # ══════════════════════════════════════════════════════════════════════════════

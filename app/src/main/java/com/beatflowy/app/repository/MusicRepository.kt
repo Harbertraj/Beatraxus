@@ -698,6 +698,7 @@ class MusicRepository(private val context: Context) {
         val current = getMusicFolders().toMutableList()
         if (current.remove(uri)) {
             saveMusicFolders(current)
+            addBlockedFolder(uri)
         }
     }
 
@@ -706,5 +707,37 @@ class MusicRepository(private val context: Context) {
         val array = org.json.JSONArray()
         folders.forEach { array.put(it) }
         prefs.edit().putString("music_folders", array.toString()).apply()
+    }
+
+    fun getBlockedFolders(): List<String> {
+        val prefs = context.getSharedPreferences("beatraxus", Context.MODE_PRIVATE)
+        val foldersJson = prefs.getString("blocked_folders", null) ?: return emptyList()
+        return try {
+            val array = org.json.JSONArray(foldersJson)
+            List(array.length()) { array.getString(it) }
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    fun addBlockedFolder(uri: String) {
+        val current = getBlockedFolders().toMutableSet()
+        if (current.add(uri)) {
+            saveBlockedFolders(current.toList())
+        }
+    }
+
+    fun removeBlockedFolder(uri: String) {
+        val current = getBlockedFolders().toMutableList()
+        if (current.remove(uri)) {
+            saveBlockedFolders(current)
+        }
+    }
+
+    private fun saveBlockedFolders(folders: List<String>) {
+        val prefs = context.getSharedPreferences("beatraxus", Context.MODE_PRIVATE)
+        val array = org.json.JSONArray()
+        folders.forEach { array.put(it) }
+        prefs.edit().putString("blocked_folders", array.toString()).apply()
     }
 }

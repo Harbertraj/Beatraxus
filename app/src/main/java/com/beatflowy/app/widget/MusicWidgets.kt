@@ -428,7 +428,24 @@ private suspend fun getImageProvider(context: Context, uriString: String): Image
                         val h = if (ratio > 1) (maxSize / ratio).toInt() else maxSize
                         Bitmap.createScaledBitmap(bitmap, w, h, true)
                     } else bitmap
-                    ImageProvider(scaled)
+
+                    // Create a cheap blur by downscaling and upscaling, then darken for background effect
+                    try {
+                        val downW = (scaled.width / 10).coerceAtLeast(1)
+                        val downH = (scaled.height / 10).coerceAtLeast(1)
+                        val down = Bitmap.createScaledBitmap(scaled, downW, downH, true)
+                        val blurred = Bitmap.createScaledBitmap(down, scaled.width, scaled.height, true)
+
+                        val mutable = blurred.copy(Bitmap.Config.ARGB_8888, true)
+                        val canvas = android.graphics.Canvas(mutable)
+                        val paint = android.graphics.Paint()
+                        paint.color = android.graphics.Color.argb((0.45f * 255).toInt(), 0, 0, 0)
+                        canvas.drawRect(0f, 0f, mutable.width.toFloat(), mutable.height.toFloat(), paint)
+
+                        ImageProvider(mutable)
+                    } catch (e: Exception) {
+                        ImageProvider(scaled)
+                    }
                 } else ImageProvider(R.drawable.ic_album_placeholder)
             } ?: ImageProvider(R.drawable.ic_album_placeholder)
             

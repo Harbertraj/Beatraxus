@@ -18,12 +18,16 @@ import com.beatflowy.app.R
 import com.beatflowy.app.model.Song
 import com.beatflowy.app.ui.theme.BgHighlight
 
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ColorMatrix
+
 @Composable
 fun AlbumArtImage(
     song: Song,
     size: Dp,
     modifier: Modifier = Modifier,
-    cornerRadius: Dp = 8.dp
+    cornerRadius: Dp = 8.dp,
+    grayscale: Boolean = false
 ) {
     AsyncImage(
         model = ImageRequest.Builder(LocalContext.current)
@@ -36,6 +40,7 @@ fun AlbumArtImage(
             .size(size)
             .clip(RoundedCornerShape(cornerRadius))
             .background(BgHighlight),
-        contentScale = ContentScale.Crop
+        contentScale = ContentScale.Crop,
+        colorFilter = if (grayscale) ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(0f) }) else null
     )
 }

@@ -36,7 +36,9 @@ data class Song(
     val source: SongSource = SongSource.LOCAL,
     val driveFileId: String? = null,
     val driveAccountEmail: String? = null,
-    val telegramChannelUrl: String? = null
+    val telegramChannelUrl: String? = null,
+    val isEnriched: Boolean = false,
+    val lastSyncTimestamp: Long = 0L
 )
 
 data class Playlist(
@@ -71,6 +73,14 @@ enum class LibraryMode {
     LOCAL, CLOUD, COMBINED
 }
 
+enum class NetworkType {
+    WIFI_ONLY, WIFI_MOBILE, MOBILE_ONLY, ASK_MOBILE
+}
+
+enum class SyncQuality {
+    LOW, MEDIUM, HIGH
+}
+
 data class PlayerUiState(
     val currentSong: Song? = null,
     val isPlaying: Boolean = false,
@@ -80,9 +90,11 @@ data class PlayerUiState(
     val outputSampleRate: Int = 44_100,
     val outputBitDepth: Int = 16,
     val outputDevice: String = AudioOutputDevice.SPEAKER.displayName,
-    val outputMode: String = OutputMode.AAUDIO.name,
+    val outputMode: String = OutputMode.HI_RES.name,
     val hiResDirectSupported: Boolean = false,
     val hiResCapabilitySummary: String = "Direct hi-res not available on this route",
+    val usbExclusiveActive: Boolean = false,
+    val usbDeviceName: String = "",
     val isLoadingLibrary: Boolean = false,
     val isScanning: Boolean = false,
     val isFullScanning: Boolean = false,
@@ -116,6 +128,7 @@ data class PlayerUiState(
     val pipelineResamplerEnabled: Boolean = false,
     val pipelineResamplerType: String = "SW",
     val pipelineActiveEffects: List<String> = emptyList(),
+    val isOnline: Boolean = true,
     val pipelineSummary: String = "",
     val autoEqProfileName: String? = null,
     val dsp: DspUiState = DspUiState(),
@@ -148,7 +161,15 @@ data class PlayerUiState(
     val settingsIconY: Float = 0f,
     val selectedCloudEmail: String? = null,
     val selectedTelegramChannelUrl: String? = null,
-    val libraryMode: LibraryMode = LibraryMode.LOCAL
+    val libraryMode: LibraryMode = LibraryMode.LOCAL,
+    // Sync Settings
+    val metadataNetworkType: NetworkType = NetworkType.WIFI_ONLY,
+    val dataSaverEnabled: Boolean = false,
+    val artworkEnrichmentEnabled: Boolean = true,
+    val syncQuality: SyncQuality = SyncQuality.MEDIUM,
+    val backgroundSyncEnabled: Boolean = true,
+    val isEnrichmentPaused: Boolean = false,
+    val enrichmentStatus: String? = null
 )
 {
     override fun equals(other: Any?): Boolean {
@@ -165,6 +186,8 @@ data class PlayerUiState(
                 outputMode == other.outputMode &&
                 hiResDirectSupported == other.hiResDirectSupported &&
                 hiResCapabilitySummary == other.hiResCapabilitySummary &&
+                usbExclusiveActive == other.usbExclusiveActive &&
+                usbDeviceName == other.usbDeviceName &&
                 isLoadingLibrary == other.isLoadingLibrary &&
                 isScanning == other.isScanning &&
                 scanProgress == other.scanProgress &&
@@ -224,7 +247,14 @@ data class PlayerUiState(
                 triggerDownloadFolderPicker == other.triggerDownloadFolderPicker &&
                 selectedCloudEmail == other.selectedCloudEmail &&
                 selectedTelegramChannelUrl == other.selectedTelegramChannelUrl &&
-                libraryMode == other.libraryMode
+                libraryMode == other.libraryMode &&
+                metadataNetworkType == other.metadataNetworkType &&
+                dataSaverEnabled == other.dataSaverEnabled &&
+                artworkEnrichmentEnabled == other.artworkEnrichmentEnabled &&
+                syncQuality == other.syncQuality &&
+                backgroundSyncEnabled == other.backgroundSyncEnabled &&
+                isEnrichmentPaused == other.isEnrichmentPaused &&
+                enrichmentStatus == other.enrichmentStatus
     }
 
     override fun hashCode(): Int {
@@ -239,6 +269,8 @@ data class PlayerUiState(
         result = 31 * result + outputMode.hashCode()
         result = 31 * result + hiResDirectSupported.hashCode()
         result = 31 * result + hiResCapabilitySummary.hashCode()
+        result = 31 * result + usbExclusiveActive.hashCode()
+        result = 31 * result + usbDeviceName.hashCode()
         result = 31 * result + isLoadingLibrary.hashCode()
         result = 31 * result + isScanning.hashCode()
         result = 31 * result + scanProgress.hashCode()
@@ -299,6 +331,13 @@ data class PlayerUiState(
         result = 31 * result + (selectedCloudEmail?.hashCode() ?: 0)
         result = 31 * result + (selectedTelegramChannelUrl?.hashCode() ?: 0)
         result = 31 * result + libraryMode.hashCode()
+        result = 31 * result + metadataNetworkType.hashCode()
+        result = 31 * result + dataSaverEnabled.hashCode()
+        result = 31 * result + artworkEnrichmentEnabled.hashCode()
+        result = 31 * result + syncQuality.hashCode()
+        result = 31 * result + backgroundSyncEnabled.hashCode()
+        result = 31 * result + isEnrichmentPaused.hashCode()
+        result = 31 * result + (enrichmentStatus?.hashCode() ?: 0)
         return result
     }
 }

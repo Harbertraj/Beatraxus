@@ -13,9 +13,13 @@ import com.beatflowy.app.model.Song
 import com.beatflowy.app.model.SongSource
 import com.beatflowy.app.repository.DriveAccountRepository
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.FileInputStream
+import java.io.FileOutputStream
 import java.io.File
 import java.util.Locale
 
@@ -28,7 +32,8 @@ internal class FfmpegAlacDecoder(
     override suspend fun canDecode(song: Song): Boolean {
         val ext = song.uri.lastPathSegment?.substringAfterLast('.', "")?.lowercase(Locale.US).orEmpty()
         if (song.format.equals("ALAC", ignoreCase = true)) return true
-        if (ext in setOf("alac", "m4a", "mp4", "caf")) return true
+        if (song.format.equals("WAV", ignoreCase = true)) return true
+        if (ext in setOf("alac", "m4a", "mp4", "caf", "wav", "bwf")) return true
         return false
     }
 
@@ -38,7 +43,7 @@ internal class FfmpegAlacDecoder(
         control: DecoderControl
     ): DecodeResult = withContext(Dispatchers.IO) {
         val headers = resolveHeaders(request.song)
-        val format = probeFormat(request.song, headers) ?: return@withContext DecodeResult.Failed("ALAC probe failed")
+        val format = probeFormat(request.song, headers) ?: return@withContext DecodeResult.Failed("Format probe failed (ALAC/WAV)")
         
         val inputSource = resolveInputSource(request.song)
         val outputFormat = PcmAudioFormat(
@@ -54,27 +59,40 @@ internal class FfmpegAlacDecoder(
         )
 
         val pipePath = FFmpegKitConfig.registerNewFFmpegPipe(context)
+        Log.d(TAG, "FFmpeg output pipe registered at: $pipePath")
+
+        val inputPipePath = if (request.song.source != SongSource.LOCAL && cloudCacheManager.getCachedFile(request.song) == null) {
+            FFmpegKitConfig.registerNewFFmpegPipe(context)
+        } else null
+        if (inputPipePath != null) Log.d(TAG, "FFmpeg input pipe registered at: $inputPipePath")
+
+        val effectiveInputSource = inputPipePath ?: inputSource
+
         val args = buildList {
             add("-y")
             add("-nostdin")
-            addAll(listOf("-v", "error"))
+            addAll(listOf("-v", "info")) 
 
-            if (headers.isNotEmpty()) {
+            if (headers.isNotEmpty() && inputPipePath == null) {
                 val headerStr = headers.map { "${it.key}: ${it.value}" }.joinToString("\r\n") + "\r\n"
                 add("-headers")
                 add(headerStr)
             }
 
-            // Optimization for M4A/ALAC and Cloud
-            addAll(listOf("-analyzeduration", "5000000"))
-            addAll(listOf("-probesize", "5000000"))
-            addAll(listOf("-timeout", "10000000")) // 10s timeout for network
+            if (effectiveInputSource.startsWith("http") && inputPipePath == null) {
+                // Use only options known to be widely supported by FFmpeg for streaming
+                addAll(listOf("-reconnect_at_eof", "1"))
+                addAll(listOf("-reconnect_delay_max", "2"))
+            }
+
+            addAll(listOf("-analyzeduration", "2000000"))
+            addAll(listOf("-probesize", "2000000"))
 
             if (request.startPositionMs > 0) {
                 addAll(listOf("-ss", formatSeekSeconds(request.startPositionMs)))
             }
             
-            addAll(listOf("-i", inputSource))
+            addAll(listOf("-i", effectiveInputSource))
             addAll(
                 listOf(
                     "-map", "0:a:0",
@@ -90,51 +108,95 @@ internal class FfmpegAlacDecoder(
             )
         }.toTypedArray()
 
+        Log.d(TAG, "FFmpeg args: ${args.joinToString(" ")}")
+
         val completion = CompletableDeferred<Int>()
         val session = FFmpegKit.executeWithArgumentsAsync(
             args,
             { finished ->
+                Log.d(TAG, "FFmpeg session finished with code: ${finished.returnCode}")
                 completion.complete(finished.returnCode?.value ?: -1)
             },
-            { log -> Log.d(TAG, "ffmpeg: ${log.message}") },
+            { log -> Log.v(TAG, "ffmpeg: ${log.message}") },
             null
         )
 
+        // Launch input feeder if using pipe
+        if (inputPipePath != null) {
+            CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    val dataSource = cloudCacheManager.getDataSource(request.song) { control.isSeekPending() } ?: return@launch
+                    val output = FileOutputStream(inputPipePath)
+                    val buffer = ByteArray(65536)
+                    var pos = 0L
+                    while (control.isActive() && !session.state.name.equals("COMPLETED", true)) {
+                        val read = dataSource.readAt(pos, buffer, 0, buffer.size)
+                        if (read <= 0) break
+                        output.write(buffer, 0, read)
+                        pos += read
+                    }
+                    output.close()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Input pipe feeder failed", e)
+                }
+            }
+        }
+
         control.setSeekListener {
+            Log.d(TAG, "FFmpeg session cancelled due to seek")
             session.cancel()
         }
 
         var input: FileInputStream? = null
         try {
-            input = waitForPipeOpen(pipePath) ?: run {
+            // Increased timeout for slow cloud connections
+            input = waitForPipeOpen(pipePath, timeoutMs = 10000) ?: run {
+                Log.e(TAG, "FFmpeg pipe failed to open after 10s")
                 session.cancel()
-                return@withContext DecodeResult.Failed("Unable to open ffmpeg pipe")
+                return@withContext DecodeResult.Failed("Unable to open ffmpeg pipe (timeout)")
             }
+
+            Log.d(TAG, "FFmpeg pipe opened successfully, starting read loop")
 
             val byteBuffer = ByteArray(BYTES_PER_BATCH)
             val floatBuffer = FloatArray(FLOATS_PER_BATCH)
             var remainder = 0
+            var totalSamplesWritten = 0L
 
             while (control.isActive()) {
                 val pendingSeek = control.consumePendingSeekMs()
                 if (pendingSeek != null) {
+                    Log.d(TAG, "Seek requested during decode: $pendingSeek ms")
                     session.cancel()
                     return@withContext DecodeResult.Seek(pendingSeek)
                 }
 
                 val bytesToRead = byteBuffer.size - remainder
-                val bytesRead = input.read(byteBuffer, remainder, bytesToRead)
+                val bytesRead = try {
+                    // Reverting to blocking read as available() is unreliable for pipes
+                    input.read(byteBuffer, remainder, bytesToRead)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Pipe read failed: ${e.message}")
+                    -1
+                }
                 
                 if (bytesRead < 0) {
+                    Log.d(TAG, "FFmpeg pipe reached EOF or was closed")
                     break
                 }
                 
+                if (bytesRead == 0) {
+                    kotlinx.coroutines.delay(5)
+                    continue
+                }
+
                 val totalBytes = remainder + bytesRead
                 val sampleCount = totalBytes / FLOAT_SIZE_BYTES
                 
                 if (sampleCount > 0) {
                     unpackFloats(byteBuffer, floatBuffer, sampleCount)
                     sink.write(floatBuffer, sampleCount)
+                    totalSamplesWritten += sampleCount
                     
                     remainder = totalBytes % FLOAT_SIZE_BYTES
                     if (remainder > 0) {
@@ -142,28 +204,28 @@ internal class FfmpegAlacDecoder(
                     }
                 } else {
                     remainder = totalBytes
-                    if (bytesRead == 0) {
-                        kotlinx.coroutines.delay(10)
-                    }
                 }
             }
+
+            Log.d(TAG, "Decode loop finished. Total samples written: $totalSamplesWritten")
 
             if (!control.isActive()) {
                 session.cancel()
                 return@withContext DecodeResult.Failed("Playback stopped")
             }
 
-            val code = completion.await()
-            return@withContext if (ReturnCode.isSuccess(ReturnCode(code))) {
+            val code = withTimeoutOrNull(2000) { completion.await() } ?: -1
+            return@withContext if (ReturnCode.isSuccess(ReturnCode(code)) || code == 0) {
                 DecodeResult.Ended
             } else {
                 if (!control.isActive()) return@withContext DecodeResult.Failed("Playback stopped")
-                control.logWarn("ffmpeg session failed: code=$code logs=${session.allLogsAsString}")
-                DecodeResult.Failed("ffmpeg exit code=$code")
+                val logs = session.allLogsAsString
+                control.logWarn("ffmpeg session failed: code=$code logs=$logs")
+                DecodeResult.Failed("ffmpeg error (code $code)")
             }
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
-            Log.e(TAG, "ALAC decode failed", e)
+            Log.e(TAG, "Lossless decode failed", e)
             DecodeResult.Failed(e.message)
         } finally {
             try {
@@ -172,27 +234,35 @@ internal class FfmpegAlacDecoder(
             try {
                 FFmpegKitConfig.closeFFmpegPipe(pipePath)
             } catch (_: Exception) {}
+            if (inputPipePath != null) {
+                try {
+                    FFmpegKitConfig.closeFFmpegPipe(inputPipePath)
+                } catch (_: Exception) {}
+            }
         }
     }
 
     private suspend fun resolveHeaders(song: Song): Map<String, String> {
         if (cloudCacheManager.getCachedFile(song) != null) return emptyMap()
         
+        val headers = mutableMapOf<String, String>()
+        
+        // Always provide a User-Agent for cloud sources
+        if (song.source != SongSource.LOCAL) {
+            headers["User-Agent"] = "Beatflowy/2.8"
+            headers["Connection"] = "keep-alive"
+        }
+
         if (song.source == SongSource.GDRIVE) {
-            val headers = mutableMapOf<String, String>()
             if (song.driveAccountEmail != null) {
                 val token = driveAccountRepository.getAccessToken(song.driveAccountEmail)
                 if (token != null) {
                     headers["Authorization"] = "Bearer $token"
                 }
             }
-            // Add User-Agent and connection headers for better reliability with Google Drive
-            headers["User-Agent"] = "Beatflowy/1.0"
-            headers["Connection"] = "keep-alive"
-            return headers
-        } else {
-            return emptyMap()
         }
+        
+        return headers
     }
 
     private fun resolveInputSource(song: Song): String {
@@ -211,10 +281,21 @@ internal class FfmpegAlacDecoder(
 
     private suspend fun probeFormat(song: Song, headers: Map<String, String>): ProbedAlacFormat? = withContext(Dispatchers.IO) {
         // 1. Try MediaExtractor first (local or cached)
+        // MediaExtractor is significantly faster than FFprobe as it can use our StreamingCacheDataSource
         val extracted = probeFormatWithExtractor(song, headers)
         if (extracted != null) return@withContext extracted
 
-        // 2. Fallback to FFprobe for cloud/complex sources
+        // 2. Trust Song metadata if we have it (to avoid slow FFprobe fallback)
+        if (song.sampleRateHz > 8000 && song.bitDepth > 0) {
+            return@withContext ProbedAlacFormat(
+                codecName = song.format,
+                sampleRate = song.sampleRateHz,
+                channels = 2, // Assumption, but safe for 99% of music
+                bitDepth = song.bitDepth
+            )
+        }
+
+        // 3. Fallback to FFprobe for cloud/complex sources only if absolutely necessary
         val inputSource = resolveInputSource(song)
         probeFormatWithFfprobe(inputSource, headers)
     }
@@ -228,7 +309,18 @@ internal class FfmpegAlacDecoder(
                 val headerStr = headers.map { "${it.key}: ${it.value}" }.joinToString("\r\n") + "\r\n"
                 val args = arrayOf("-v", "error", "-headers", headerStr, "-show_format", "-show_streams", "-print_format", "json", "-i", path)
                 val session = FFprobeKit.executeWithArguments(args)
-                MediaInformationJsonParser.from(session.output)
+                val output = session.output
+                if (output.isNullOrBlank()) {
+                    Log.w(TAG, "FFprobe output is empty for $path")
+                    return null
+                }
+                // Try to find the start of JSON in case of warnings
+                val jsonStart = output.indexOf('{')
+                if (jsonStart == -1) {
+                    Log.w(TAG, "FFprobe output does not contain JSON: $output")
+                    return null
+                }
+                MediaInformationJsonParser.from(output.substring(jsonStart))
             }
             
             if (mediaInfo == null) {
@@ -358,14 +450,13 @@ internal class FfmpegAlacDecoder(
         }
     }
 
-    private suspend fun waitForPipeOpen(pipePath: String): FileInputStream? = withContext(Dispatchers.IO) {
-        repeat(20) { attempt ->
+    private suspend fun waitForPipeOpen(pipePath: String, timeoutMs: Long = 2000): FileInputStream? = withContext(Dispatchers.IO) {
+        val start = System.currentTimeMillis()
+        while (System.currentTimeMillis() - start < timeoutMs) {
             try {
                 return@withContext FileInputStream(pipePath)
             } catch (_: Exception) {
-                if (attempt < 19) {
-                    kotlinx.coroutines.delay(25)
-                }
+                kotlinx.coroutines.delay(25)
             }
         }
         null

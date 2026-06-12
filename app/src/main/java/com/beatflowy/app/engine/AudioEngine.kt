@@ -119,6 +119,9 @@ class AudioEngine(
                     return@withLock
                 }
 
+                // STOP FIRST to avoid overwriting positionMs in stopSessionsInternal
+                stopSessionsInternal()
+
                 currentSong = song
                 nextSong = null
                 positionMs = 0L
@@ -126,7 +129,6 @@ class AudioEngine(
 
                 _playbackStateFlow.update { it.copy(currentSong = song, isPlaying = true) }
 
-                stopSessionsInternal()
                 startSessionInternal(song, startPositionMs = 0L)
             }
         }
@@ -298,11 +300,20 @@ class AudioEngine(
             level = config.dvcLevel
         )
 
-        // When output mode or target rate changes, push the new target rate to the output
-        // object BEFORE calling reconfigureOutput(). This ensures that init() inside
-        // reconfigureOutput sees the correct targetSampleRate for the new mode, so the
-        // DSP resampler is rebuilt with the right in→out ratio in real time.
+        // Forward USB Exclusive Mode to output layer
+        output.setUsbExclusiveMode(config.usbExclusiveEnabled)
+        output.setBitPerfectMode(config.bitPerfectEnabled)
+        
+        // Forward MMAP Exclusive Mode
+        output.setMmapExclusiveMode(
+            enabled = config.outputMode == OutputMode.MMAP_EXCLUSIVE,
+            requestedBufferFrames = config.mmapRequestedBufferSizeFrames
+        )
+
         val outputModeChanged = oldConfig.outputMode != config.outputMode
+        val usbExclusiveChanged = oldConfig.usbExclusiveEnabled != config.usbExclusiveEnabled
+        val bitPerfectChanged = oldConfig.bitPerfectEnabled != config.bitPerfectEnabled
+        val soxrQualityChanged = oldConfig.soxrQuality != config.soxrQuality
         if (outputModeChanged || oldTargetRate != newTargetRate) {
             output.setTargetSampleRate(newTargetRate)
             if (outputModeChanged && output is AudioTrackOutput) {
@@ -315,14 +326,14 @@ class AudioEngine(
         val structuralChange = oldTargetRate != newTargetRate ||
                 oldConfig.sampleFormat != config.sampleFormat ||
                 outputModeChanged ||
+                usbExclusiveChanged ||
+                bitPerfectChanged ||
                 oldConfig.dvcEnabled != config.dvcEnabled
 
-        // Always increment revision for ANY config change — this triggers
-        // updateConfig() in renderLoop for parameters like reverb, EQ, tone.
         dspRevision.incrementAndGet()
 
         if (structuralChange) {
-            reconfigureOutput()  // Handles refreshDspPipeline for structural changes
+            reconfigureOutput()
         }
     }
 
@@ -412,14 +423,15 @@ class AudioEngine(
                             currentSong = next.song
                             nextSong = null
 
-                            val framesAtTransition = output.totalFramesWritten()
-                            next.setStartFrameOffset(framesAtTransition)
-
                             if (oldFormat != newFormat) {
                                 // If formats differ, we MUST re-init output
                                 // This might cause a tiny gap but is necessary
                                 next.configure(newFormat!!)
                             }
+                            // Capture AFTER configure() so totalFramesWritten reflects
+                            // any reset that output.init() may have performed inside configure()
+                            val framesAtTransition = output.totalFramesWritten()
+                            next.setStartFrameOffset(framesAtTransition)
 
                             updateAudioStateForSong(currentSong!!)
                             _playbackStateFlow.update { it.copy(currentSong = currentSong) }
@@ -453,7 +465,7 @@ class AudioEngine(
         var pcmFormat: PcmAudioFormat? = null
             private set
         private var basePositionMs: Long = initialStartPositionMs
-        private var startFrameOffset = 0L
+        private var startFrameOffset = output.playbackPositionFrames()
         var dspPipeline = AudioDspPipeline.create(44_100, 44_100, 2, output.outputBitDepth(), this@AudioEngine.dspConfig, song)
 
         fun setStartFrameOffset(offset: Long) {
@@ -509,10 +521,9 @@ class AudioEngine(
                     }
                 }
             } finally {
-                // Ensure isSeeking is cleared if session ends
-                if (activeSession?.sessionId == sessionId) {
-                    isSeeking.set(false)
-                }
+                // Always clear isSeeking unconditionally — if this session is ending,
+                // any pending seek is dead regardless of whether it's still activeSession
+                isSeeking.set(false)
             }
         }
 
@@ -529,6 +540,12 @@ class AudioEngine(
 
         fun requestOutputRestart() {
             val format = pcmFormat ?: return
+            
+            // Capture current position synchronously before launching reconfiguration.
+            // This ensures playback progress is preserved when output is re-initialized.
+            basePositionMs = currentRenderedPositionMs()
+            startFrameOffset = output.playbackPositionFrames()
+
             engineScope.launch {
                 try {
                     configure(format)
@@ -546,7 +563,6 @@ class AudioEngine(
                 if (formatChanged) {
                     ringBuffer.clear()
                     output.flush()
-                    startFrameOffset = 0L
                 }
 
                 val targetRate = resolveTargetSampleRate(format.sampleRate, dspConfig)
@@ -561,6 +577,9 @@ class AudioEngine(
                 if (!output.init(format.sampleRate, format.channels, format.bitDepth)) {
                     logWarn("Audio output initialization failed")
                 }
+                
+                // Hardware position was just reset by init(), so we reset our offset to match.
+                startFrameOffset = output.playbackPositionFrames()
 
                 // FIX: Only start output if we are actually in playing state
                 if (_playbackStateFlow.value.isPlaying) {
@@ -570,6 +589,7 @@ class AudioEngine(
                 refreshDspPipeline(format)
                 publishDspState(format)
             } else if (nextSession?.sessionId == this.sessionId) {
+                pcmFormat = format
                 // For preloaded session, we just prepare the DSP
                 refreshDspPipeline(format)
             }
@@ -710,6 +730,9 @@ class AudioEngine(
     }
 
     private fun resolveTargetSampleRate(inputRate: Int, config: DspConfig): Int {
+        // Bit-Perfect: always pass source rate unchanged, unless resampler is unbypassed
+        if (config.bitPerfectEnabled && !config.bitPerfectUnbypassResample) return inputRate
+
         return when (config.resamplerMode) {
             ResamplerMode.AUTO -> {
                 val nativeRate = AudioTrack.getNativeOutputSampleRate(AudioManager.STREAM_MUSIC)

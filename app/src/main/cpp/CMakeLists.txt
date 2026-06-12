@@ -27,10 +27,11 @@ target_compile_definitions(beatraxus_dsp PRIVATE HAVE_SOXR=1)
 # Android log
 find_library(log-lib log)
 
-# ✅ Link SOXR
+# ✅ Link AAudio and SOXR
 target_link_libraries(
     beatraxus_dsp
     ${log-lib}
     android
+    aaudio
     soxr
 )

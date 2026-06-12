@@ -1,10 +1,7 @@
 package com.beatflowy.app.ui.components
 
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -15,8 +12,7 @@ import androidx.compose.material.icons.rounded.AllInclusive
 import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.material3.Icon
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -25,6 +21,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.dp
 import com.beatflowy.app.model.LibraryMode
+import kotlinx.coroutines.launch
 
 @Composable
 fun LibraryModeSelector(
@@ -38,6 +35,24 @@ fun LibraryModeSelector(
     // Unique color for this component: Sunset Amber / Gold
     val componentColor = Color(0xFFFFB300) 
 
+    val jellyScaleX = remember { Animatable(1f) }
+    val jellyScaleY = remember { Animatable(1f) }
+
+    LaunchedEffect(selectedIndex) {
+        if (selectedIndex >= 0) {
+            launch {
+                // Initial squash/stretch
+                jellyScaleX.animateTo(1.25f, spring(stiffness = Spring.StiffnessMedium))
+                // Bounce back to normal
+                jellyScaleX.animateTo(1f, spring(dampingRatio = 0.4f, stiffness = Spring.StiffnessLow))
+            }
+            launch {
+                jellyScaleY.animateTo(0.75f, spring(stiffness = Spring.StiffnessMedium))
+                jellyScaleY.animateTo(1f, spring(dampingRatio = 0.4f, stiffness = Spring.StiffnessLow))
+            }
+        }
+    }
+
     BoxWithConstraints(
         modifier = modifier
             .height(44.dp)
@@ -49,9 +64,13 @@ fun LibraryModeSelector(
         val maxWidth = maxWidth
         val itemWidth = maxWidth / 3
         
+        // Jelly effect: Bouncy spring for offset
         val indicatorOffset by animateDpAsState(
             targetValue = itemWidth * selectedIndex,
-            animationSpec = spring(dampingRatio = 0.75f, stiffness = Spring.StiffnessMediumLow),
+            animationSpec = spring(
+                dampingRatio = 0.6f, 
+                stiffness = 300f 
+            ),
             label = "indicatorOffset"
         )
 
@@ -61,6 +80,11 @@ fun LibraryModeSelector(
                 .offset(x = indicatorOffset)
                 .width(itemWidth)
                 .fillMaxHeight()
+                .graphicsLayer {
+                    scaleX = jellyScaleX.value
+                    scaleY = jellyScaleY.value
+                    transformOrigin = androidx.compose.ui.graphics.TransformOrigin.Center
+                }
                 .clip(RoundedCornerShape(18.dp))
                 .background(
                     Brush.horizontalGradient(
@@ -69,6 +93,8 @@ fun LibraryModeSelector(
                 )
                 .border(1.dp, componentColor.copy(0.5f), RoundedCornerShape(18.dp))
         )
+
+
 
         Row(modifier = Modifier.fillMaxSize()) {
             modes.forEach { mode ->

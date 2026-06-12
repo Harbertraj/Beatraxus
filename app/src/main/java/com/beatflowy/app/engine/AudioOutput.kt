@@ -5,6 +5,11 @@ interface AudioOutput {
     fun setTargetSampleRate(sampleRate: Int)
     fun setSampleFormat(format: com.beatflowy.app.model.SampleFormat)
     fun setDvcState(enabled: Boolean, mode: String, level: Float)
+    fun setUsbExclusiveMode(enabled: Boolean)
+    fun setBitPerfectMode(enabled: Boolean)
+    fun setMmapExclusiveMode(enabled: Boolean, requestedBufferFrames: Int)
+    fun isMmapActive(): Boolean
+    fun mmapActualBufferFrames(): Int
     fun start()
     fun pause()
     fun stop()

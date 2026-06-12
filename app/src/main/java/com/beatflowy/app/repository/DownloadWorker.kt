@@ -16,6 +16,7 @@ import com.beatflowy.app.model.DownloadSettings
 import com.beatflowy.app.model.DownloadStatus
 import com.beatflowy.app.model.FilenameTemplate
 import com.beatflowy.app.model.DownloadProgress
+import com.beatflowy.app.R
 import kotlinx.coroutines.flow.collect
 
 class DownloadWorker(
@@ -121,7 +122,7 @@ class DownloadWorker(
     private fun createNotification(title: String, progress: Int) =
         NotificationCompat.Builder(applicationContext, "downloads")
             .setContentTitle("Downloading $title")
-            .setSmallIcon(android.R.drawable.stat_sys_download)
+            .setSmallIcon(R.mipmap.ic_launcher)
             .setOngoing(true)
             .setProgress(100, progress, false)
             .build()
@@ -130,7 +131,7 @@ class DownloadWorker(
         val notification = NotificationCompat.Builder(applicationContext, "downloads")
             .setContentTitle("Download Complete")
             .setContentText(title)
-            .setSmallIcon(android.R.drawable.stat_sys_download_done)
+            .setSmallIcon(R.mipmap.ic_launcher)
             .build()
         notificationManager.notify(id + 1, notification)
     }

@@ -44,8 +44,8 @@ class NativeDsp {
         if (nativeHandle != 0L) nSetDvcMode(nativeHandle, mode)
     }
 
-    fun setTone(bass: Float, midBass: Float, treble: Float, air: Float) {
-        if (nativeHandle != 0L) nSetTone(nativeHandle, bass, midBass, treble, air)
+    fun setTone(midBass: Float, treble: Float, air: Float) {
+        if (nativeHandle != 0L) nSetTone(nativeHandle, midBass, treble, air)
     }
 
     fun setSpatial(balance: Float, widen: Float) {
@@ -80,16 +80,36 @@ class NativeDsp {
         if (nativeHandle != 0L) nMuteReverb(nativeHandle)
     }
 
-    fun setBand(index: Int, frequency: Float, gainDb: Float, q: Float) {
-        if (nativeHandle != 0L) nSetBand(nativeHandle, index, frequency, gainDb, q)
+    fun setBand(index: Int, frequency: Float, gainDb: Float, q: Float, type: Int = 0) {
+        if (nativeHandle != 0L) nSetBand(nativeHandle, index, frequency, gainDb, q, type)
+    }
+
+    fun setEqPhaseMode(linearPhase: Boolean) {
+        if (nativeHandle != 0L) nSetEqPhaseMode(nativeHandle, linearPhase)
+    }
+
+    fun setEqEnabled(enabled: Boolean) {
+        if (nativeHandle != 0L) nSetEqEnabled(nativeHandle, enabled)
     }
 
     fun setHighQualityResampler(enabled: Boolean) {
         if (nativeHandle != 0L) nSetHighQualityResampler(nativeHandle, enabled)
     }
 
+    fun setSoxrQuality(quality: Int) {
+        if (nativeHandle != 0L) nSetSoxrQuality(nativeHandle, quality)
+    }
+
+    fun setFloat64(enabled: Boolean) {
+        if (nativeHandle != 0L) nSetFloat64(nativeHandle, enabled)
+    }
+
     fun setLimiter(enabled: Boolean) {
         if (nativeHandle != 0L) nSetLimiter(nativeHandle, enabled)
+    }
+
+    fun setLimiterParams(thresholdDb: Float, attackMs: Float, releaseMs: Float) {
+        if (nativeHandle != 0L) nSetLimiterParams(nativeHandle, thresholdDb, attackMs, releaseMs)
     }
 
     fun setBitDepth(bitDepth: Int) {
@@ -98,6 +118,10 @@ class NativeDsp {
 
     fun setDither(enabled: Boolean, bitDepth: Int) {
         if (nativeHandle != 0L) nSetDither(nativeHandle, enabled, bitDepth)
+    }
+
+    fun setDitherType(type: Int) {
+        if (nativeHandle != 0L) nSetDitherType(nativeHandle, type)
     }
 
     fun setCutoffRatio(ratio: Float) {
@@ -136,7 +160,7 @@ class NativeDsp {
     private external fun nSetDvc(handle: Long, enabled: Boolean)
     private external fun nSetDvcLevel(handle: Long, level: Float)
     private external fun nSetDvcMode(handle: Long, mode: Int)
-    private external fun nSetTone(handle: Long, bass: Float, midBass: Float, treble: Float, air: Float)
+    private external fun nSetTone(handle: Long, midBass: Float, treble: Float, air: Float)
     private external fun nSetSpatial(handle: Long, balance: Float, widen: Float)
     private external fun nSetCrossfeed(handle: Long, enabled: Boolean, level: Float)
     private external fun nSetReverb(handle: Long, amount: Float)
@@ -145,11 +169,17 @@ class NativeDsp {
     private external fun nSetReverbWidth(handle: Long, width: Float)
     private external fun nSetReverbParams(handle: Long, roomSize: Float, damping: Float)
     private external fun nMuteReverb(handle: Long)
-    private external fun nSetBand(handle: Long, index: Int, frequency: Float, gainDb: Float, q: Float)
+    private external fun nSetBand(handle: Long, index: Int, frequency: Float, gainDb: Float, q: Float, type: Int)
+    private external fun nSetEqPhaseMode(handle: Long, linearPhase: Boolean)
+    private external fun nSetEqEnabled(handle: Long, enabled: Boolean)
     private external fun nSetHighQualityResampler(handle: Long, enabled: Boolean)
+    private external fun nSetSoxrQuality(handle: Long, quality: Int)
+    private external fun nSetFloat64(handle: Long, enabled: Boolean)
     private external fun nSetLimiter(handle: Long, enabled: Boolean)
+    private external fun nSetLimiterParams(handle: Long, thresholdDb: Float, attackMs: Float, releaseMs: Float)
     private external fun nSetBitDepth(handle: Long, bitDepth: Int)
     private external fun nSetDither(handle: Long, enabled: Boolean, bitDepth: Int)
+    private external fun nSetDitherType(handle: Long, type: Int)
     private external fun nSetCutoffRatio(handle: Long, ratio: Float)
     private external fun nProcess(handle: Long, data: FloatArray, frames: Int)
     private external fun nProcessResampled(handle: Long, input: FloatArray, inFrames: Int, output: FloatArray): Int

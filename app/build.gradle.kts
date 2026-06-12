@@ -25,8 +25,8 @@ configure<ApplicationExtension> {
         applicationId = "com.beatflowy.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 6
-        versionName = "2.7.5-stable"
+        versionCode = 7
+        versionName = "2.8.3-beta"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -41,6 +41,8 @@ configure<ApplicationExtension> {
             storePassword = localProperties.getProperty("RELEASE_STORE_PASSWORD")
             keyAlias = localProperties.getProperty("RELEASE_KEY_ALIAS")
             keyPassword = localProperties.getProperty("RELEASE_KEY_PASSWORD")
+            enableV1Signing = true
+            enableV2Signing = true
         }
     }
 
@@ -90,7 +92,7 @@ configure<ApplicationExtension> {
 
     packaging {
         jniLibs {
-            useLegacyPackaging = true
+            useLegacyPackaging = false
         }
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
@@ -98,6 +100,7 @@ configure<ApplicationExtension> {
             excludes += "/META-INF/LICENSE*"
             excludes += "/META-INF/NOTICE*"
             excludes += "/META-INF/INDEX.LIST"
+            excludes += "META-INF/*.kotlin_module"
         }
     }
 }
@@ -119,7 +122,7 @@ androidComponents {
             val appName = "Beatraxus"
             val variantName = variant.name
             val versionName = output.versionName.get()
-            val abi = output.filters.find { it.filterType == FilterConfiguration.FilterType.ABI }?.identifier ?: "universal"
+            val abi = output.filters.find { it.filterType == com.android.build.api.variant.FilterConfiguration.FilterType.ABI }?.identifier ?: "universal"
             
             (output as? com.android.build.api.variant.impl.VariantOutputImpl)?.let { impl ->
                 impl.outputFileName.set("${appName}-v${versionName}-${abi}-${variantName}.apk")

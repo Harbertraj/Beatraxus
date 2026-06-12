@@ -16,8 +16,8 @@
         }
       ],
       "attributes": [],
-      "versionCode": 6,
-      "versionName": "2.7.5-stable",
+      "versionCode": 7,
+      "versionName": "2.8.3-beta",
       "outputFile": "linked-resources-binary-format-arm64-v8aDebug.ap_"
     }
   ],

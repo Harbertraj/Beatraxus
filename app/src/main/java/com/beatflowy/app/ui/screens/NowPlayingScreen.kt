@@ -22,6 +22,7 @@ import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.snapshots.SnapshotStateMap
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -63,6 +64,7 @@ import com.beatflowy.app.model.Song
 import com.beatflowy.app.model.SongSource
 import com.beatflowy.app.ui.components.WaveformSeekBar
 import com.beatflowy.app.ui.components.KaraokeLyricsView
+import com.beatflowy.app.ui.components.PremiumSwitch
 import android.graphics.RenderEffect as AndroidRenderEffect
 import android.graphics.Shader
 import android.os.Build
@@ -110,6 +112,33 @@ fun NowPlayingScreen(
     val showQueue = uiState.showQueue
     val showLyrics = uiState.showLyrics
     var showSleepTimerSheet by remember { mutableStateOf(false) }
+
+    val context = LocalContext.current
+    val dominantColorsCache = remember { mutableStateMapOf<String, Color>() }
+    val currentDominantColor = dominantColorsCache[song.id] ?: Color(0xFF2C2C2C)
+    
+    LaunchedEffect(song.id, song.albumArtUri) {
+        if (dominantColorsCache.containsKey(song.id)) return@LaunchedEffect
+        
+        val loader = ImageLoader(context)
+        val request = ImageRequest.Builder(context)
+            .data(song.albumArtUri)
+            .allowHardware(false)
+            .size(100, 100)
+            .build()
+            
+        val result = (loader.execute(request) as? SuccessResult)?.drawable
+        val bitmap = (result as? BitmapDrawable)?.bitmap
+        if (bitmap != null) {
+            Palette.from(bitmap).generate { palette ->
+                val color = palette?.vibrantSwatch?.rgb
+                    ?: palette?.dominantSwatch?.rgb
+                if (color != null) {
+                    dominantColorsCache[song.id] = Color(color)
+                }
+            }
+        }
+    }
 
     // Key ensures derived state (progress calc) resets on song change
     val songChangeKey = song.id to (durationMs)
@@ -328,7 +357,8 @@ fun NowPlayingScreen(
                         onPlayFromQueue = {
                             onPlayFromQueue(it)
                         },
-                        onClose = onToggleQueue
+                        onClose = onToggleQueue,
+                        dominantColor = currentDominantColor
                     )
                 } else {
                     Spacer(Modifier.height(8.dp))
@@ -339,72 +369,83 @@ fun NowPlayingScreen(
                             .weight(1f),
                         contentAlignment = Alignment.Center
                     ) {
-                        androidx.compose.animation.AnimatedVisibility(
-                            visible = !showLyrics,
-                            enter = fadeIn(tween(400)),
-                            exit = fadeOut(tween(400))
+                        val albumArtAlpha by animateFloatAsState(
+                            targetValue = if (showLyrics) 0f else 1f,
+                            animationSpec = tween(600),
+                            label = "albumArtAlpha"
+                        )
+                        val albumArtScale by animateFloatAsState(
+                            targetValue = if (showLyrics) 0.85f else 1f,
+                            animationSpec = tween(600),
+                            label = "albumArtScale"
+                        )
+                        
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth(1.15f)
+                                .aspectRatio(1f)
+                                .graphicsLayer {
+                                    alpha = albumArtAlpha
+                                    scaleX = albumArtScale
+                                    scaleY = albumArtScale
+                                    // Use pointerInteropFilter or similar if we want to disable clicks when hidden
+                                }
                         ) {
-                            val context = LocalContext.current
-                            Box(
+                            Surface(
                                 modifier = Modifier
-                                    .fillMaxWidth(1.15f)
-                                    .aspectRatio(1f)
+                                    .fillMaxSize()
+                                    .shadow(24.dp, RoundedCornerShape(28.dp)),
+                                shape = RoundedCornerShape(28.dp),
+                                color = Color(0xFF12121A),
+                                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.14f))
                             ) {
-                                Surface(
+                                Box(
                                     modifier = Modifier
                                         .fillMaxSize()
-                                        .shadow(24.dp, RoundedCornerShape(28.dp)),
-                                    shape = RoundedCornerShape(28.dp),
-                                    color = Color(0xFF12121A),
-                                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.14f))
+                                        .background(
+                                            Brush.linearGradient(
+                                                colors = listOf(
+                                                    Color.White.copy(alpha = 0.06f),
+                                                    Color.Black.copy(alpha = 0.16f)
+                                                )
+                                            )
+                                        )
                                 ) {
+                                    AsyncImage(
+                                        model = ImageRequest.Builder(LocalContext.current)
+                                            .data(song.albumArtUri)
+                                            .diskCachePolicy(CachePolicy.ENABLED)
+                                            .memoryCachePolicy(CachePolicy.ENABLED)
+                                            .build(),
+                                        contentDescription = null,
+                                        placeholder = painterResource(R.drawable.ic_album_placeholder),
+                                        error = painterResource(R.drawable.ic_album_placeholder),
+                                        fallback = painterResource(R.drawable.ic_album_placeholder),
+                                        modifier = Modifier.fillMaxSize(),
+                                        contentScale = ContentScale.Crop
+                                        // Removed crossfade(true) as it sometimes causes flicker during manual transitions
+                                    )
                                     Box(
                                         modifier = Modifier
                                             .fillMaxSize()
                                             .background(
-                                                Brush.linearGradient(
+                                                Brush.verticalGradient(
                                                     colors = listOf(
-                                                        Color.White.copy(alpha = 0.06f),
-                                                        Color.Black.copy(alpha = 0.16f)
+                                                        Color.White.copy(alpha = 0.02f),
+                                                        Color.Transparent,
+                                                        Color.Black.copy(alpha = 0.08f)
                                                     )
                                                 )
                                             )
-                                    ) {
-                                        AsyncImage(
-                                            model = ImageRequest.Builder(context)
-                                                .data(song.albumArtUri)
-                                                .diskCachePolicy(CachePolicy.ENABLED)
-                                                .memoryCachePolicy(CachePolicy.ENABLED)
-                                                .build(),
-                                            contentDescription = null,
-                                            placeholder = painterResource(R.drawable.ic_album_placeholder),
-                                            error = painterResource(R.drawable.ic_album_placeholder),
-                                            fallback = painterResource(R.drawable.ic_album_placeholder),
-                                            modifier = Modifier.fillMaxSize(),
-                                            contentScale = ContentScale.Crop
-                                        )
-                                        Box(
-                                            modifier = Modifier
-                                                .fillMaxSize()
-                                                .background(
-                                                    Brush.verticalGradient(
-                                                        colors = listOf(
-                                                            Color.White.copy(alpha = 0.02f),
-                                                            Color.Transparent,
-                                                            Color.Black.copy(alpha = 0.08f)
-                                                        )
-                                                    )
-                                                )
-                                        )
-                                    }
+                                    )
                                 }
                             }
                         }
 
                         androidx.compose.animation.AnimatedVisibility(
                             visible = showLyrics,
-                            enter = fadeIn(tween(400)),
-                            exit = fadeOut(tween(400))
+                            enter = fadeIn(tween(600)) + scaleIn(initialScale = 1.1f, animationSpec = tween(600)),
+                            exit = fadeOut(tween(600)) + scaleOut(targetScale = 1.1f, animationSpec = tween(600))
                         ) {
                             KaraokeLyricsView(
                                 lyrics = uiState.lyrics,
@@ -476,6 +517,7 @@ fun NowPlayingScreen(
                                 )
                             }
 
+
                             // Dynamic Middle Content
                             Box(
                                 modifier = Modifier
@@ -489,6 +531,7 @@ fun NowPlayingScreen(
                                     exit = fadeOut(tween(600)) + shrinkHorizontally(tween(600))
                                 ) {
                                     Column(
+                                        modifier = Modifier.fillMaxWidth(),
                                         horizontalAlignment = Alignment.CenterHorizontally,
                                         verticalArrangement = Arrangement.Center
                                     ) {
@@ -496,7 +539,8 @@ fun NowPlayingScreen(
                                             text = song.title,
                                             style = MaterialTheme.typography.headlineSmall.copy(
                                                 fontWeight = FontWeight.Bold,
-                                                fontSize = 26.sp
+                                                fontSize = 26.sp,
+                                                platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false)
                                             ),
                                             color = Color.White,
                                             textAlign = TextAlign.Center,
@@ -504,7 +548,7 @@ fun NowPlayingScreen(
                                             overflow = TextOverflow.Ellipsis
                                         )
                                         val titleSpacerHeight by animateDpAsState(
-                                            targetValue = if (showLyrics) 2.dp else 5.dp,
+                                            targetValue = 0.dp,
                                             animationSpec = tween(600),
                                             label = "titleSpacerHeight"
                                         )
@@ -513,15 +557,19 @@ fun NowPlayingScreen(
                                             text = "${song.artist} • ${song.album}",
                                             style = MaterialTheme.typography.titleMedium.copy(
                                                 fontSize = 16.sp,
-                                                color = Color.White.copy(alpha = 0.6f)
+                                                color = Color.White.copy(alpha = 0.6f),
+                                                lineHeight = 24.sp,
+                                                platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false)
                                             ),
                                             textAlign = TextAlign.Center,
                                             maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                            modifier = Modifier.clickable { 
-                                                onNavigateToAlbum(song.album)
-                                                onClose()
-                                            }
+                                            modifier = Modifier
+                                                .offset(y = (3).dp)
+                                                .basicMarquee(iterations = Int.MAX_VALUE)
+                                                .clickable { 
+                                                    onNavigateToAlbum(song.album)
+                                                    onClose()
+                                                }
                                         )
                                     }
                                 }
@@ -1053,31 +1101,20 @@ fun QueueView(
     onRemoveFromQueue: (String) -> Unit,
     onMove: (Int, Int) -> Unit,
     onPlayFromQueue: (String) -> Unit,
-    onClose: () -> Unit
+    onClose: () -> Unit,
+    dominantColor: Color
 ) {
     val context = LocalContext.current
-    var dominantColor by remember { mutableStateOf(Color(0xFF2C2C2C)) }
     
-    LaunchedEffect(currentSong.albumArtUri) {
-        val loader = ImageLoader(context)
-        val request = ImageRequest.Builder(context)
-            .data(currentSong.albumArtUri)
-            .allowHardware(false)
-            .build()
-            
-        val result = (loader.execute(request) as? SuccessResult)?.drawable
-        val bitmap = (result as? BitmapDrawable)?.bitmap
-        if (bitmap != null) {
-            Palette.from(bitmap).generate { palette ->
-                palette?.vibrantSwatch?.rgb?.let { dominantColor = Color(it) }
-                    ?: palette?.dominantSwatch?.rgb?.let { dominantColor = Color(it) }
-            }
-        }
-    }
-
-    val cardColor = dominantColor.copy(alpha = 0.95f)
-    val isLight = remember(dominantColor) {
-        val luminance = 0.299 * dominantColor.red + 0.587 * dominantColor.green + 0.114 * dominantColor.blue
+    val animatedDominantColor by animateColorAsState(
+        targetValue = dominantColor,
+        animationSpec = tween(500),
+        label = "dominantColor"
+    )
+    
+    val cardColor = animatedDominantColor.copy(alpha = 0.95f)
+    val isLight = remember(animatedDominantColor) {
+        val luminance = 0.299 * animatedDominantColor.red + 0.587 * animatedDominantColor.green + 0.114 * animatedDominantColor.blue
         luminance > 0.5
     }
     val textColor = if (isLight) Color.Black else Color.White
@@ -1115,9 +1152,9 @@ fun QueueView(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Surface(
-                color = dominantColor.copy(alpha = 0.2f),
+                color = animatedDominantColor.copy(alpha = 0.2f),
                 shape = RoundedCornerShape(14.dp),
-                border = BorderStroke(1.dp, dominantColor.copy(alpha = 0.3f))
+                border = BorderStroke(1.dp, animatedDominantColor.copy(alpha = 0.3f))
             ) {
                 Text(
                     "NEXT UP",
@@ -1128,9 +1165,9 @@ fun QueueView(
             }
             
             Surface(
-                color = dominantColor.copy(alpha = 0.2f),
+                color = animatedDominantColor.copy(alpha = 0.2f),
                 shape = RoundedCornerShape(14.dp),
-                border = BorderStroke(1.dp, dominantColor.copy(alpha = 0.3f))
+                border = BorderStroke(1.dp, animatedDominantColor.copy(alpha = 0.3f))
             ) {
                 Text(
                     "${upcomingSongs.size} SONGS",
@@ -1155,7 +1192,7 @@ fun QueueView(
                     Surface(
                         modifier = Modifier.fillMaxWidth().clickable { onPlayFromQueue(song.id) },
                         shape = RoundedCornerShape(18.dp),
-                        color = if (isDragging) dominantColor.copy(alpha = 0.35f) else dominantColor.copy(alpha = 0.15f),
+                        color = if (isDragging) animatedDominantColor.copy(alpha = 0.35f) else animatedDominantColor.copy(alpha = 0.15f),
                         border = BorderStroke(1.dp, Color.White.copy(alpha = if (isDragging) 0.15f else 0.05f))
                     ) {
                         Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1435,16 +1472,9 @@ private fun SleepTimerSheet(
                             fontSize = 13.sp
                         )
                     }
-                    Switch(
+                    PremiumSwitch(
                         checked = endOfTrack,
-                        onCheckedChange = { endOfTrack = it },
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = Color(0xFFFFB2AD),
-                            checkedTrackColor = Color(0xFFFFB2AD).copy(0.3f),
-                            uncheckedThumbColor = Color.White.copy(0.4f),
-                            uncheckedTrackColor = Color.White.copy(0.08f),
-                            uncheckedBorderColor = Color.Transparent
-                        )
+                        onCheckedChange = { endOfTrack = it }
                     )
                 }
 

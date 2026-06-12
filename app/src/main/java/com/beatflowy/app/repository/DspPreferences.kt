@@ -18,8 +18,22 @@ class DspPreferences(private val context: Context) {
 
     val dspConfig: Flow<DspConfig> = dataStore.data.map { preferences ->
         DspConfig(
-            outputMode = OutputMode.valueOf(preferences[OUTPUT_MODE] ?: OutputMode.AAUDIO.name),
+            outputMode = OutputMode.fromName(preferences[OUTPUT_MODE]),
+            usbExclusiveEnabled = preferences[USB_EXCLUSIVE_ENABLED] ?: false,
+            bitPerfectEnabled = preferences[BIT_PERFECT_ENABLED] ?: false,
+            bitPerfectUnbypassEq = preferences[BIT_PERFECT_UNBYPASS_EQ] ?: false,
+            bitPerfectUnbypassResample = preferences[BIT_PERFECT_UNBYPASS_RESAMPLE] ?: false,
+            bitPerfectUnbypassSoxr = preferences[BIT_PERFECT_UNBYPASS_SOXR] ?: false,
+            bitPerfectUnbypassReverb = preferences[BIT_PERFECT_UNBYPASS_REVERB] ?: false,
+            bitPerfectUnbypassDithering = preferences[BIT_PERFECT_UNBYPASS_DITHERING] ?: false,
+            bitPerfectUnbypassFloat64 = preferences[BIT_PERFECT_UNBYPASS_FLOAT64] ?: false,
+            bitPerfectUnbypassLimiter = preferences[BIT_PERFECT_UNBYPASS_LIMITER] ?: false,
+            mmapRequestedBufferSizeFrames = preferences[MMAP_BUFFER_FRAMES] ?: 96,
             highQualityResampler = preferences[HIGH_QUALITY_RESAMPLER] ?: true,
+            soxrQuality = runCatching {
+                SoxrQuality.valueOf(preferences[SOXR_QUALITY] ?: SoxrQuality.HIGH.name)
+            }.getOrDefault(SoxrQuality.HIGH),
+            float64Enabled = preferences[FLOAT64_ENABLED] ?: false,
             resamplerMode = ResamplerMode.valueOf(preferences[RESAMPLER_MODE] ?: ResamplerMode.AUTO.name),
             resamplerCutoffRatio = preferences[RESAMPLER_CUTOFF] ?: 0.97f,
             sampleFormat = SampleFormat.valueOf(preferences[SAMPLE_FORMAT] ?: SampleFormat.AUTO.name),
@@ -27,10 +41,11 @@ class DspPreferences(private val context: Context) {
             preampDb = preferences[PREAMP_DB] ?: 0f,
             eqEnabled = preferences[EQ_ENABLED] ?: false,
             eqBands = deserializeBands(preferences[EQ_BANDS]),
+            eqPhaseMode = runCatching {
+                EqPhaseMode.valueOf(preferences[EQ_PHASE_MODE] ?: EqPhaseMode.MINIMUM_PHASE.name)
+            }.getOrDefault(EqPhaseMode.MINIMUM_PHASE),
             autoEqEnabled = preferences[AUTO_EQ_ENABLED] ?: false,
             autoEqProfile = deserializeAutoEqProfile(preferences[AUTO_EQ_PROFILE]),
-            bassEnabled = preferences[BASS_ENABLED] ?: false,
-            bassDb = preferences[BASS_DB] ?: 0f,
             midBassEnabled = preferences[MID_BASS_ENABLED] ?: false,
             midBassDb = preferences[MID_BASS_DB] ?: 0f,
             trebleEnabled = preferences[TREBLE_ENABLED] ?: false,
@@ -59,14 +74,35 @@ class DspPreferences(private val context: Context) {
             dvcEnabled = preferences[DVC_ENABLED] ?: true,
             dvcBluetoothEnabled = preferences[DVC_BT_ENABLED] ?: false,
             dvcMode = DvcMode.valueOf(preferences[DVC_MODE] ?: DvcMode.DAC.name),
-            dvcLevel = preferences[DVC_LEVEL] ?: 1f
+            dvcLevel = preferences[DVC_LEVEL] ?: 1f,
+            ditherEnabled = preferences[DITHER_ENABLED] ?: false,
+            ditherType = runCatching {
+                DitherType.valueOf(preferences[DITHER_TYPE] ?: DitherType.TPDF.name)
+            }.getOrDefault(DitherType.TPDF),
+            limiterEnabled = preferences[LIMITER_ENABLED] ?: true,
+            limiterThresholdDb = preferences[LIMITER_THRESHOLD_DB] ?: -0.3f,
+            limiterAttackMs = preferences[LIMITER_ATTACK_MS] ?: 0.3f,
+            limiterReleaseMs = preferences[LIMITER_RELEASE_MS] ?: 50f,
+            settingsLocked = preferences[SETTINGS_LOCKED] ?: false
         )
     }
 
     suspend fun saveConfig(config: DspConfig) {
         dataStore.edit { preferences ->
             preferences[OUTPUT_MODE] = config.outputMode.name
+            preferences[USB_EXCLUSIVE_ENABLED] = config.usbExclusiveEnabled
+            preferences[BIT_PERFECT_ENABLED] = config.bitPerfectEnabled
+            preferences[BIT_PERFECT_UNBYPASS_EQ] = config.bitPerfectUnbypassEq
+            preferences[BIT_PERFECT_UNBYPASS_RESAMPLE] = config.bitPerfectUnbypassResample
+            preferences[BIT_PERFECT_UNBYPASS_SOXR] = config.bitPerfectUnbypassSoxr
+            preferences[BIT_PERFECT_UNBYPASS_REVERB] = config.bitPerfectUnbypassReverb
+            preferences[BIT_PERFECT_UNBYPASS_DITHERING] = config.bitPerfectUnbypassDithering
+            preferences[BIT_PERFECT_UNBYPASS_FLOAT64] = config.bitPerfectUnbypassFloat64
+            preferences[BIT_PERFECT_UNBYPASS_LIMITER] = config.bitPerfectUnbypassLimiter
+            preferences[MMAP_BUFFER_FRAMES] = config.mmapRequestedBufferSizeFrames
             preferences[HIGH_QUALITY_RESAMPLER] = config.highQualityResampler
+            preferences[SOXR_QUALITY] = config.soxrQuality.name
+            preferences[FLOAT64_ENABLED] = config.float64Enabled
             preferences[RESAMPLER_MODE] = config.resamplerMode.name
             preferences[RESAMPLER_CUTOFF] = config.resamplerCutoffRatio
             preferences[SAMPLE_FORMAT] = config.sampleFormat.name
@@ -74,10 +110,9 @@ class DspPreferences(private val context: Context) {
             preferences[PREAMP_DB] = config.preampDb
             preferences[EQ_ENABLED] = config.eqEnabled
             preferences[EQ_BANDS] = serializeBands(config.eqBands)
+            preferences[EQ_PHASE_MODE] = config.eqPhaseMode.name
             preferences[AUTO_EQ_ENABLED] = config.autoEqEnabled
             preferences[AUTO_EQ_PROFILE] = serializeAutoEqProfile(config.autoEqProfile)
-            preferences[BASS_ENABLED] = config.bassEnabled
-            preferences[BASS_DB] = config.bassDb
             preferences[MID_BASS_ENABLED] = config.midBassEnabled
             preferences[MID_BASS_DB] = config.midBassDb
             preferences[TREBLE_ENABLED] = config.trebleEnabled
@@ -107,6 +142,13 @@ class DspPreferences(private val context: Context) {
             preferences[DVC_BT_ENABLED] = config.dvcBluetoothEnabled
             preferences[DVC_MODE] = config.dvcMode.name
             preferences[DVC_LEVEL] = config.dvcLevel
+            preferences[DITHER_ENABLED] = config.ditherEnabled
+            preferences[DITHER_TYPE] = config.ditherType.name
+            preferences[LIMITER_ENABLED] = config.limiterEnabled
+            preferences[LIMITER_THRESHOLD_DB] = config.limiterThresholdDb
+            preferences[LIMITER_ATTACK_MS] = config.limiterAttackMs
+            preferences[LIMITER_RELEASE_MS] = config.limiterReleaseMs
+            preferences[SETTINGS_LOCKED] = config.settingsLocked
         }
     }
 
@@ -119,6 +161,7 @@ class DspPreferences(private val context: Context) {
             obj.put("freq", band.frequencyHz)
             obj.put("gain", band.gainDb)
             obj.put("q", band.q)
+            obj.put("type", band.type.name)
             array.put(obj)
         }
         return array.toString()
@@ -135,7 +178,10 @@ class DspPreferences(private val context: Context) {
                     enabled = obj.getBoolean("enabled"),
                     frequencyHz = obj.getDouble("freq").toFloat(),
                     gainDb = obj.getDouble("gain").toFloat(),
-                    q = obj.getDouble("q").toFloat()
+                    q = obj.getDouble("q").toFloat(),
+                    type = runCatching {
+                        EqBandType.valueOf(obj.optString("type", EqBandType.PEAKING.name))
+                    }.getOrDefault(EqBandType.PEAKING)
                 )
             }
             // Migration: Only truncate if it's the specific old default pattern (32 bands, all 1k)
@@ -174,6 +220,18 @@ class DspPreferences(private val context: Context) {
 
     companion object {
         private val OUTPUT_MODE = stringPreferencesKey("output_mode")
+        private val USB_EXCLUSIVE_ENABLED = booleanPreferencesKey("usb_exclusive_enabled")
+        private val BIT_PERFECT_ENABLED = booleanPreferencesKey("bit_perfect_enabled")
+        private val BIT_PERFECT_UNBYPASS_EQ = booleanPreferencesKey("bit_perfect_unbypass_eq")
+        private val BIT_PERFECT_UNBYPASS_RESAMPLE = booleanPreferencesKey("bit_perfect_unbypass_resample")
+        private val BIT_PERFECT_UNBYPASS_SOXR = booleanPreferencesKey("bit_perfect_unbypass_soxr")
+        private val BIT_PERFECT_UNBYPASS_REVERB = booleanPreferencesKey("bit_perfect_unbypass_reverb")
+        private val BIT_PERFECT_UNBYPASS_DITHERING = booleanPreferencesKey("bit_perfect_unbypass_dithering")
+        private val BIT_PERFECT_UNBYPASS_FLOAT64 = booleanPreferencesKey("bit_perfect_unbypass_float64")
+        private val BIT_PERFECT_UNBYPASS_LIMITER = booleanPreferencesKey("bit_perfect_unbypass_limiter")
+        private val MMAP_BUFFER_FRAMES = intPreferencesKey("mmap_buffer_frames")
+        private val SOXR_QUALITY = stringPreferencesKey("soxr_quality")
+        private val FLOAT64_ENABLED = booleanPreferencesKey("float64_enabled")
         private val HIGH_QUALITY_RESAMPLER = booleanPreferencesKey("high_quality_resampler")
         private val RESAMPLER_MODE = stringPreferencesKey("resampler_mode")
         private val RESAMPLER_CUTOFF = floatPreferencesKey("resampler_cutoff")
@@ -182,10 +240,9 @@ class DspPreferences(private val context: Context) {
         private val PREAMP_DB = floatPreferencesKey("preamp_db")
         private val EQ_ENABLED = booleanPreferencesKey("eq_enabled")
         private val EQ_BANDS = stringPreferencesKey("eq_bands")
+        private val EQ_PHASE_MODE = stringPreferencesKey("eq_phase_mode")
         private val AUTO_EQ_ENABLED = booleanPreferencesKey("auto_eq_enabled")
         private val AUTO_EQ_PROFILE = stringPreferencesKey("auto_eq_profile")
-        private val BASS_ENABLED = booleanPreferencesKey("bass_enabled")
-        private val BASS_DB = floatPreferencesKey("bass_db")
         private val MID_BASS_ENABLED = booleanPreferencesKey("mid_bass_enabled")
         private val MID_BASS_DB = floatPreferencesKey("mid_bass_db")
         private val TREBLE_ENABLED = booleanPreferencesKey("treble_enabled")
@@ -215,5 +272,12 @@ class DspPreferences(private val context: Context) {
         private val DVC_BT_ENABLED = booleanPreferencesKey("dvc_bt_enabled")
         private val DVC_MODE = stringPreferencesKey("dvc_mode")
         private val DVC_LEVEL = floatPreferencesKey("dvc_level")
+        private val DITHER_ENABLED = booleanPreferencesKey("dither_enabled")
+        private val DITHER_TYPE = stringPreferencesKey("dither_type")
+        private val LIMITER_ENABLED = booleanPreferencesKey("limiter_enabled")
+        private val LIMITER_THRESHOLD_DB = floatPreferencesKey("limiter_threshold_db")
+        private val LIMITER_ATTACK_MS = floatPreferencesKey("limiter_attack_ms")
+        private val LIMITER_RELEASE_MS = floatPreferencesKey("limiter_release_ms")
+        private val SETTINGS_LOCKED = booleanPreferencesKey("settings_locked")
     }
 }

@@ -242,12 +242,12 @@ class CloudCacheManager(
             }
 
             var attempts = 0
-            val waitTimeout = if (position == 0L) 200 else 100 
+            val waitTimeout = if (position == 0L) 10 else 5 // Reduced from 200/100 to 10/5 (1s/0.5s max wait)
             while (position + size > tmpFile.length() && activeDownloads.containsKey(song.id) && attempts < waitTimeout) {
                 if (isSeekPending()) return -1
                 try {
                     lock.unlock()
-                    Thread.sleep(100)
+                    Thread.sleep(50) // Reduced from 100ms
                     lock.lock()
                 } catch (e: Exception) {}
                 attempts++

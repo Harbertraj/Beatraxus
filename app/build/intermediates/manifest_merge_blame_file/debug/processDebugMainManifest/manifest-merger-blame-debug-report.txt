@@ -1,8 +1,8 @@
 1<?xml version="1.0" encoding="utf-8"?>
 2<manifest xmlns:android="http://schemas.android.com/apk/res/android"
 3    package="com.beatflowy.app"
-4    android:versionCode="6"
-5    android:versionName="2.7.5-stable" >
+4    android:versionCode="7"
+5    android:versionName="2.8.3-beta" >
 6
 7    <uses-sdk
 8        android:minSdkVersion="26"
@@ -93,7 +93,7 @@
 47-->[androidx.core:core:1.15.0] C:\Users\Haaj Mens\.gradle\caches\8.10.2\transforms\62a7dda7d9653b274435def6f8ee9870\transformed\core-1.15.0\AndroidManifest.xml:26:22-94
 48
 49    <application
-49-->D:\Beatraxus\app\src\main\AndroidManifest.xml:27:5-115:19
+49-->D:\Beatraxus\app\src\main\AndroidManifest.xml:27:5-117:19
 50        android:name="com.beatflowy.app.BeatraxusApplication"
 50-->D:\Beatraxus\app\src\main\AndroidManifest.xml:28:9-45
 51        android:allowBackup="true"
@@ -106,6 +106,7 @@
 55        android:enableOnBackInvokedCallback="true"
 55-->D:\Beatraxus\app\src\main\AndroidManifest.xml:39:9-51
 56        android:extractNativeLibs="true"
+56-->D:\Beatraxus\app\src\main\AndroidManifest.xml:42:9-41
 57        android:fullBackupContent="@xml/backup_rules"
 57-->D:\Beatraxus\app\src\main\AndroidManifest.xml:31:9-54
 58        android:hardwareAccelerated="true"
@@ -128,63 +129,63 @@
 67        android:usesCleartextTraffic="true" >
 67-->D:\Beatraxus\app\src\main\AndroidManifest.xml:41:9-44
 68        <meta-data
-68-->D:\Beatraxus\app\src\main\AndroidManifest.xml:44:9-46:69
+68-->D:\Beatraxus\app\src\main\AndroidManifest.xml:46:9-48:69
 69            android:name="com.google.android.gms.cast.framework.OPTIONS_PROVIDER_CLASS_NAME"
-69-->D:\Beatraxus\app\src\main\AndroidManifest.xml:45:13-93
+69-->D:\Beatraxus\app\src\main\AndroidManifest.xml:47:13-93
 70            android:value="com.beatflowy.app.CastOptionsProvider" />
-70-->D:\Beatraxus\app\src\main\AndroidManifest.xml:46:13-66
+70-->D:\Beatraxus\app\src\main\AndroidManifest.xml:48:13-66
 71
 72        <activity
-72-->D:\Beatraxus\app\src\main\AndroidManifest.xml:48:9-51:47
+72-->D:\Beatraxus\app\src\main\AndroidManifest.xml:50:9-53:47
 73            android:name="com.google.android.gms.cast.framework.media.widget.ExpandedControllerActivity"
-73-->D:\Beatraxus\app\src\main\AndroidManifest.xml:49:13-105
+73-->D:\Beatraxus\app\src\main\AndroidManifest.xml:51:13-105
 74            android:launchMode="singleTask"
-74-->D:\Beatraxus\app\src\main\AndroidManifest.xml:51:13-44
+74-->D:\Beatraxus\app\src\main\AndroidManifest.xml:53:13-44
 75            android:theme="@style/Theme.AppCompat" />
-75-->D:\Beatraxus\app\src\main\AndroidManifest.xml:50:13-51
+75-->D:\Beatraxus\app\src\main\AndroidManifest.xml:52:13-51
 76        <activity
-76-->D:\Beatraxus\app\src\main\AndroidManifest.xml:53:9-62:20
+76-->D:\Beatraxus\app\src\main\AndroidManifest.xml:55:9-64:20
 77            android:name="com.beatflowy.app.MainActivity"
-77-->D:\Beatraxus\app\src\main\AndroidManifest.xml:54:13-41
+77-->D:\Beatraxus\app\src\main\AndroidManifest.xml:56:13-41
 78            android:exported="true"
-78-->D:\Beatraxus\app\src\main\AndroidManifest.xml:55:13-36
+78-->D:\Beatraxus\app\src\main\AndroidManifest.xml:57:13-36
 79            android:screenOrientation="portrait"
-79-->D:\Beatraxus\app\src\main\AndroidManifest.xml:57:13-49
+79-->D:\Beatraxus\app\src\main\AndroidManifest.xml:59:13-49
 80            android:windowSoftInputMode="adjustResize" >
-80-->D:\Beatraxus\app\src\main\AndroidManifest.xml:56:13-55
+80-->D:\Beatraxus\app\src\main\AndroidManifest.xml:58:13-55
 81            <intent-filter>
-81-->D:\Beatraxus\app\src\main\AndroidManifest.xml:58:13-61:29
+81-->D:\Beatraxus\app\src\main\AndroidManifest.xml:60:13-63:29
 82                <action android:name="android.intent.action.MAIN" />
-82-->D:\Beatraxus\app\src\main\AndroidManifest.xml:59:17-69
-82-->D:\Beatraxus\app\src\main\AndroidManifest.xml:59:25-66
+82-->D:\Beatraxus\app\src\main\AndroidManifest.xml:61:17-69
+82-->D:\Beatraxus\app\src\main\AndroidManifest.xml:61:25-66
 83
 84                <category android:name="android.intent.category.LAUNCHER" />
-84-->D:\Beatraxus\app\src\main\AndroidManifest.xml:60:17-77
-84-->D:\Beatraxus\app\src\main\AndroidManifest.xml:60:27-74
+84-->D:\Beatraxus\app\src\main\AndroidManifest.xml:62:17-77
+84-->D:\Beatraxus\app\src\main\AndroidManifest.xml:62:27-74
 85            </intent-filter>
 86        </activity>
 87
 88        <service
-88-->D:\Beatraxus\app\src\main\AndroidManifest.xml:64:9-72:19
+88-->D:\Beatraxus\app\src\main\AndroidManifest.xml:66:9-74:19
 89            android:name="com.beatflowy.app.service.AudioPlaybackService"
-89-->D:\Beatraxus\app\src\main\AndroidManifest.xml:65:13-57
+89-->D:\Beatraxus\app\src\main\AndroidManifest.xml:67:13-57
 90            android:exported="false"
-90-->D:\Beatraxus\app\src\main\AndroidManifest.xml:66:13-37
+90-->D:\Beatraxus\app\src\main\AndroidManifest.xml:68:13-37
 91            android:foregroundServiceType="mediaPlayback"
-91-->D:\Beatraxus\app\src\main\AndroidManifest.xml:67:13-58
+91-->D:\Beatraxus\app\src\main\AndroidManifest.xml:69:13-58
 92            android:stopWithTask="false" >
-92-->D:\Beatraxus\app\src\main\AndroidManifest.xml:68:13-41
+92-->D:\Beatraxus\app\src\main\AndroidManifest.xml:70:13-41
 93            <intent-filter>
-93-->D:\Beatraxus\app\src\main\AndroidManifest.xml:69:13-71:29
+93-->D:\Beatraxus\app\src\main\AndroidManifest.xml:71:13-73:29
 94                <action android:name="android.intent.action.MEDIA_BUTTON" />
-94-->D:\Beatraxus\app\src\main\AndroidManifest.xml:70:17-77
-94-->D:\Beatraxus\app\src\main\AndroidManifest.xml:70:25-74
+94-->D:\Beatraxus\app\src\main\AndroidManifest.xml:72:17-77
+94-->D:\Beatraxus\app\src\main\AndroidManifest.xml:72:25-74
 95            </intent-filter>
 96        </service>
 97        <service
-97-->D:\Beatraxus\app\src\main\AndroidManifest.xml:74:9-77:34
+97-->D:\Beatraxus\app\src\main\AndroidManifest.xml:76:9-79:34
 98            android:name="androidx.work.impl.foreground.SystemForegroundService"
-98-->D:\Beatraxus\app\src\main\AndroidManifest.xml:75:13-81
+98-->D:\Beatraxus\app\src\main\AndroidManifest.xml:77:13-81
 99            android:directBootAware="false"
 99-->[androidx.work:work-runtime:2.9.0] C:\Users\Haaj Mens\.gradle\caches\8.10.2\transforms\62eb17f52c1ed336c50c64a9e03e3785\transformed\work-runtime-2.9.0\AndroidManifest.xml:55:13-44
 100            android:enabled="@bool/enable_system_foreground_service_default"
@@ -192,73 +193,73 @@
 101            android:exported="false"
 101-->[androidx.work:work-runtime:2.9.0] C:\Users\Haaj Mens\.gradle\caches\8.10.2\transforms\62eb17f52c1ed336c50c64a9e03e3785\transformed\work-runtime-2.9.0\AndroidManifest.xml:57:13-37
 102            android:foregroundServiceType="dataSync" />
-102-->D:\Beatraxus\app\src\main\AndroidManifest.xml:76:13-53
+102-->D:\Beatraxus\app\src\main\AndroidManifest.xml:78:13-53
 103
 104        <receiver
-104-->D:\Beatraxus\app\src\main\AndroidManifest.xml:79:9-89:20
+104-->D:\Beatraxus\app\src\main\AndroidManifest.xml:81:9-91:20
 105            android:name="com.beatflowy.app.widget.MusicWidgetSmallReceiver"
-105-->D:\Beatraxus\app\src\main\AndroidManifest.xml:80:13-60
+105-->D:\Beatraxus\app\src\main\AndroidManifest.xml:82:13-60
 106            android:exported="true"
-106-->D:\Beatraxus\app\src\main\AndroidManifest.xml:81:13-36
+106-->D:\Beatraxus\app\src\main\AndroidManifest.xml:83:13-36
 107            android:label="Music Widget Small" >
-107-->D:\Beatraxus\app\src\main\AndroidManifest.xml:82:13-47
+107-->D:\Beatraxus\app\src\main\AndroidManifest.xml:84:13-47
 108            <intent-filter>
-108-->D:\Beatraxus\app\src\main\AndroidManifest.xml:83:13-85:29
+108-->D:\Beatraxus\app\src\main\AndroidManifest.xml:85:13-87:29
 109                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
-109-->D:\Beatraxus\app\src\main\AndroidManifest.xml:84:17-84
-109-->D:\Beatraxus\app\src\main\AndroidManifest.xml:84:25-81
+109-->D:\Beatraxus\app\src\main\AndroidManifest.xml:86:17-84
+109-->D:\Beatraxus\app\src\main\AndroidManifest.xml:86:25-81
 110            </intent-filter>
 111
 112            <meta-data
-112-->D:\Beatraxus\app\src\main\AndroidManifest.xml:86:13-88:61
+112-->D:\Beatraxus\app\src\main\AndroidManifest.xml:88:13-90:61
 113                android:name="android.appwidget.provider"
-113-->D:\Beatraxus\app\src\main\AndroidManifest.xml:87:17-58
+113-->D:\Beatraxus\app\src\main\AndroidManifest.xml:89:17-58
 114                android:resource="@xml/widget_info_small" />
-114-->D:\Beatraxus\app\src\main\AndroidManifest.xml:88:17-58
+114-->D:\Beatraxus\app\src\main\AndroidManifest.xml:90:17-58
 115        </receiver>
 116        <receiver
-116-->D:\Beatraxus\app\src\main\AndroidManifest.xml:91:9-101:20
+116-->D:\Beatraxus\app\src\main\AndroidManifest.xml:93:9-103:20
 117            android:name="com.beatflowy.app.widget.MusicWidgetLargeReceiver"
-117-->D:\Beatraxus\app\src\main\AndroidManifest.xml:92:13-60
+117-->D:\Beatraxus\app\src\main\AndroidManifest.xml:94:13-60
 118            android:exported="true"
-118-->D:\Beatraxus\app\src\main\AndroidManifest.xml:93:13-36
+118-->D:\Beatraxus\app\src\main\AndroidManifest.xml:95:13-36
 119            android:label="Music Widget Large" >
-119-->D:\Beatraxus\app\src\main\AndroidManifest.xml:94:13-47
+119-->D:\Beatraxus\app\src\main\AndroidManifest.xml:96:13-47
 120            <intent-filter>
-120-->D:\Beatraxus\app\src\main\AndroidManifest.xml:83:13-85:29
+120-->D:\Beatraxus\app\src\main\AndroidManifest.xml:85:13-87:29
 121                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
-121-->D:\Beatraxus\app\src\main\AndroidManifest.xml:84:17-84
-121-->D:\Beatraxus\app\src\main\AndroidManifest.xml:84:25-81
+121-->D:\Beatraxus\app\src\main\AndroidManifest.xml:86:17-84
+121-->D:\Beatraxus\app\src\main\AndroidManifest.xml:86:25-81
 122            </intent-filter>
 123
 124            <meta-data
-124-->D:\Beatraxus\app\src\main\AndroidManifest.xml:86:13-88:61
+124-->D:\Beatraxus\app\src\main\AndroidManifest.xml:88:13-90:61
 125                android:name="android.appwidget.provider"
-125-->D:\Beatraxus\app\src\main\AndroidManifest.xml:87:17-58
+125-->D:\Beatraxus\app\src\main\AndroidManifest.xml:89:17-58
 126                android:resource="@xml/widget_info_large" />
-126-->D:\Beatraxus\app\src\main\AndroidManifest.xml:88:17-58
+126-->D:\Beatraxus\app\src\main\AndroidManifest.xml:90:17-58
 127        </receiver>
 128        <receiver
-128-->D:\Beatraxus\app\src\main\AndroidManifest.xml:103:9-113:20
+128-->D:\Beatraxus\app\src\main\AndroidManifest.xml:105:9-115:20
 129            android:name="com.beatflowy.app.widget.MusicWidgetMediumReceiver"
-129-->D:\Beatraxus\app\src\main\AndroidManifest.xml:104:13-61
+129-->D:\Beatraxus\app\src\main\AndroidManifest.xml:106:13-61
 130            android:exported="true"
-130-->D:\Beatraxus\app\src\main\AndroidManifest.xml:105:13-36
+130-->D:\Beatraxus\app\src\main\AndroidManifest.xml:107:13-36
 131            android:label="Music Widget Medium" >
-131-->D:\Beatraxus\app\src\main\AndroidManifest.xml:106:13-48
+131-->D:\Beatraxus\app\src\main\AndroidManifest.xml:108:13-48
 132            <intent-filter>
-132-->D:\Beatraxus\app\src\main\AndroidManifest.xml:83:13-85:29
+132-->D:\Beatraxus\app\src\main\AndroidManifest.xml:85:13-87:29
 133                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
-133-->D:\Beatraxus\app\src\main\AndroidManifest.xml:84:17-84
-133-->D:\Beatraxus\app\src\main\AndroidManifest.xml:84:25-81
+133-->D:\Beatraxus\app\src\main\AndroidManifest.xml:86:17-84
+133-->D:\Beatraxus\app\src\main\AndroidManifest.xml:86:25-81
 134            </intent-filter>
 135
 136            <meta-data
-136-->D:\Beatraxus\app\src\main\AndroidManifest.xml:86:13-88:61
+136-->D:\Beatraxus\app\src\main\AndroidManifest.xml:88:13-90:61
 137                android:name="android.appwidget.provider"
-137-->D:\Beatraxus\app\src\main\AndroidManifest.xml:87:17-58
+137-->D:\Beatraxus\app\src\main\AndroidManifest.xml:89:17-58
 138                android:resource="@xml/widget_info_medium" />
-138-->D:\Beatraxus\app\src\main\AndroidManifest.xml:88:17-58
+138-->D:\Beatraxus\app\src\main\AndroidManifest.xml:90:17-58
 139        </receiver>
 140        <receiver
 140-->[com.google.android.gms:play-services-cast-framework:21.4.0] C:\Users\Haaj Mens\.gradle\caches\8.10.2\transforms\a6bbd6d50e5c9e1a48e896aa830ea93e\transformed\play-services-cast-framework-21.4.0\AndroidManifest.xml:19:9-21:40

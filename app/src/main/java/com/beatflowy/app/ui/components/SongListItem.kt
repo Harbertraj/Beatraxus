@@ -99,7 +99,6 @@ fun EmptyLibraryView() {
     }
 }
 
-@Composable
 private fun getFormatColor(format: String): Color {
     return when (format.lowercase()) {
         "flac" -> Color(0xFF00E5FF) // Cyan
@@ -122,8 +121,11 @@ fun SongListItem(
     isMultiSelectMode: Boolean = false,
     isSelected: Boolean = false,
     onMoreClick: (() -> Unit)? = null,
-    isCompact: Boolean = false
+    isCompact: Boolean = false,
+    isOnline: Boolean = true
 ) {
+    val isAvailable = song.source == SongSource.LOCAL || isOnline
+    
     val bgAlpha by animateFloatAsState(
         targetValue   = if (isPlaying || isSelected) 1f else 0f,
         animationSpec = tween(300),
@@ -161,6 +163,9 @@ fun SongListItem(
                 // Use graphicsLayer for clipping to improve scrolling performance
                 clip = true
                 shape = RoundedCornerShape(10.dp)
+                if (!isAvailable) {
+                    alpha = 0.6f
+                }
             }
             .drawBehind {
                 if (bgAlpha > 0f) {
@@ -171,7 +176,7 @@ fun SongListItem(
                 }
             }
             .combinedClickable(
-                onClick = onClick,
+                onClick = { if (isAvailable || isMultiSelectMode) onClick() },
                 onLongClick = {
                     if (onMoreClick != null) {
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -204,7 +209,7 @@ fun SongListItem(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center
                 ) {
-                    val formatColor = getFormatColor(baseFormat)
+                    val formatColor = if (isAvailable) getFormatColor(baseFormat) else Color.Gray
                     Surface(
                         color = formatColor.copy(alpha = 0.15f),
                         shape = RoundedCornerShape(5.dp),
@@ -221,14 +226,15 @@ fun SongListItem(
                             overflow = TextOverflow.Visible
                         )
                     }
+                    val bitDepthColor = if (!isAvailable) Color.Gray else if (isHiRes) Color(0xFFFFD54F) else Color.White.copy(alpha = 0.8f)
                     Surface(
-                        color = if (isHiRes) Color(0xFFFFD54F).copy(alpha = 0.15f) else Color.White.copy(alpha = 0.05f),
+                        color = bitDepthColor.copy(alpha = 0.15f),
                         shape = RoundedCornerShape(4.dp),
-                        border = BorderStroke(0.5.dp, if (isHiRes) Color(0xFFFFD54F).copy(alpha = 0.4f) else Color.White.copy(alpha = 0.15f))
+                        border = BorderStroke(0.5.dp, bitDepthColor.copy(alpha = 0.15f))
                     ) {
                         Text(
                             text = "${bitDepth}BIT",
-                            color = if (isHiRes) Color(0xFFFFD54F) else Color.White.copy(alpha = 0.8f),
+                            color = bitDepthColor,
                             fontSize = 7.5.sp,
                             fontWeight = FontWeight.Bold,
                             modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
@@ -241,15 +247,22 @@ fun SongListItem(
             AlbumArtImage(
                 song = song,
                 size = if (isCompact) 44.dp else 60.dp,
-                modifier = Modifier.padding(vertical = 2.dp)
+                modifier = Modifier
+                    .padding(vertical = 2.dp)
+                    .graphicsLayer {
+                        if (!isAvailable) {
+                            alpha = 0.8f
+                        }
+                    },
+                grayscale = !isAvailable
             )
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(song.title, fontSize = if (isCompact) 14.sp else 17.sp,
                     fontWeight = FontWeight.Bold,
-                    color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    color = if (isAvailable) Color.White else Color.Gray, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 
-                Text("${song.artist} • ${song.album}", fontSize = if (isCompact) 12.sp else 13.sp, color = Color.LightGray,
+                Text("${song.artist} • ${song.album}", fontSize = if (isCompact) 12.sp else 13.sp, color = if (isAvailable) Color.LightGray else Color.Gray.copy(0.7f),
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
                 
                 if (!isCompact) {
@@ -257,10 +270,11 @@ fun SongListItem(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.padding(top = 1.dp)
                     ) {
+                        val badgeColor = if (!isAvailable) Color.Gray else if (isHiRes) Color(0xFFFFD54F).copy(0.7f) else if (isLosslessFormat) Color(0xFF4FC3F7).copy(0.7f) else Color.Gray
                         Icon(
                             Icons.Rounded.Badge, 
                             null, 
-                            tint = if (isHiRes) Color(0xFFFFD54F).copy(0.7f) else if (isLosslessFormat) Color(0xFF4FC3F7).copy(0.7f) else Color.Gray, 
+                            tint = badgeColor, 
                             modifier = Modifier.size(10.dp)
                         )
                         Spacer(Modifier.width(3.dp))
@@ -295,7 +309,7 @@ fun SongListItem(
                                 }
                             },
                             fontSize = 11.sp,
-                            color = if (isHiRes) Color(0xFFFFD54F).copy(0.7f) else if (isLosslessFormat) Color(0xFF4FC3F7).copy(0.7f) else Color.Gray,
+                            color = badgeColor,
                             fontWeight = FontWeight.Medium,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis

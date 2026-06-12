@@ -248,6 +248,7 @@ internal class MediaCodecAudioDecoder(
         val lower = mime.lowercase()
         return when {
             lower.contains("flac") -> 110
+            lower.contains("alac") -> 108
             lower.contains("opus") -> 105
             lower.contains("vorbis") -> 100
             lower.contains("mpeg") || lower.contains("mp3") -> 95

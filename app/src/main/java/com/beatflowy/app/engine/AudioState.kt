@@ -35,12 +35,22 @@ enum class RepeatMode {
 }
 
 data class OutputRouteState(
-    val selectedMode: OutputMode = OutputMode.AAUDIO,
-    val activeMode: OutputMode = OutputMode.AAUDIO,
+    val selectedMode: OutputMode = OutputMode.HI_RES,
+    val activeMode: OutputMode = OutputMode.HI_RES,
     val outputDevice: String = "Speaker",
     val hiResDirectSupported: Boolean = false,
     val capabilitySummary: String = "Direct playback unavailable on this route",
-    val maxSupportedSampleRate: Int = 48_000
+    val maxSupportedSampleRate: Int = 48_000,
+    val usbExclusiveActive: Boolean = false,
+    val usbDeviceName: String = "",
+    val usbSupportedRates: List<Int> = emptyList(),
+    val usbSupportedBitDepths: List<Int> = emptyList(),
+
+    // MMAP
+    val mmapSupported: Boolean = false,
+    val mmapExclusiveActive: Boolean = false,
+    val mmapActualBufferFrames: Int = 0,
+    val mmapActualLatencyMs: Float = 0f
 )
 
 enum class OutputDeviceType(val displayName: String) {
