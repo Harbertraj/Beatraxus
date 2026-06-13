@@ -41,6 +41,24 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.zIndex
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import android.content.ContentValues
+import android.media.MediaScannerConnection
+import android.provider.MediaStore
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.Response
+import java.io.File
+import java.io.FileOutputStream
+import java.io.InputStream
+import java.io.OutputStream
 import com.beatflowy.app.ui.theme.*
 import kotlinx.coroutines.delay
 
@@ -48,10 +66,17 @@ private data class ActiveDownload(
     val id: Long,
     val title: String,
     var progress: Int = 0,
-    var status: String = "Queued"
+    var status: String = "Queued",
+    val isInternal: Boolean = false
 )
 
-private fun getStealthScript(defaultService: String, audioFormat: String): String {
+private fun getStealthScript(
+    defaultService: String,
+    audioFormat: String,
+    country: String,
+    embedMetadata: Boolean,
+    privateDownloads: Boolean
+): String {
     return """
 (function() {
     document.documentElement.style.backgroundColor = '#07070D';
@@ -182,7 +207,11 @@ private fun getStealthScript(defaultService: String, audioFormat: String): Strin
         // Apply default service if on home page and not selected
         if (window.location.pathname === '/' || window.location.pathname === '') {
             const service = '$defaultService'.toLowerCase();
-            const serviceBtn = document.querySelector('button[aria-label*="' + service + '" i], img[alt*="' + service + '" i]?.closest("button")');
+            let serviceBtn = document.querySelector('button[aria-label*="' + service + '" i]');
+            if (!serviceBtn) {
+                const img = document.querySelector('img[alt*="' + service + '" i]');
+                if (img) serviceBtn = img.closest("button");
+            }
             if (serviceBtn && !serviceBtn.classList.contains('active')) {
                 serviceBtn.click();
             }
@@ -201,6 +230,35 @@ private fun getStealthScript(defaultService: String, audioFormat: String): Strin
                     break;
                 }
             }
+        }
+
+        // Apply country
+        const country = '$country'.toLowerCase();
+        if (country !== 'auto') {
+            const countrySelect = document.querySelector('select[name="country"], select[aria-label*="country" i]');
+            if (countrySelect) {
+                for (let i = 0; i < countrySelect.options.length; i++) {
+                    if (countrySelect.options[i].value.toLowerCase() === country) {
+                        if (countrySelect.selectedIndex !== i) {
+                            countrySelect.selectedIndex = i;
+                            countrySelect.dispatchEvent(new Event('change', { bubbles: true }));
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Apply metadata and privacy
+        const embedMetadata = $embedMetadata;
+        const privateDownloads = $privateDownloads;
+        const metadataToggle = document.querySelector('input[name="metadata"], input[aria-label*="metadata" i]');
+        if (metadataToggle && metadataToggle.checked !== embedMetadata) {
+            metadataToggle.click();
+        }
+        const privateToggle = document.querySelector('input[name="private"], input[aria-label*="private" i]');
+        if (privateToggle && privateToggle.checked !== privateDownloads) {
+            privateToggle.click();
         }
     }
 
@@ -291,15 +349,41 @@ fun DownloadScreen(onBack: () -> Unit, onNavigateToSettings: () -> Unit) {
     val context = LocalContext.current
     
     val dlPrefs = remember { context.getSharedPreferences("beatraxus_dl", Context.MODE_PRIVATE) }
-    val defaultService = dlPrefs.getString("default_service", "qobuz") ?: "qobuz"
-    val audioFormat = dlPrefs.getString("audio_format", "flac") ?: "flac"
     
+    var defaultService by remember { mutableStateOf(dlPrefs.getString("default_service", "qobuz") ?: "qobuz") }
+    var audioFormat by remember { mutableStateOf(dlPrefs.getString("audio_format", "flac") ?: "flac") }
+    var country by remember { mutableStateOf(dlPrefs.getString("country", "auto") ?: "auto") }
+    var embedMetadata by remember { mutableStateOf(dlPrefs.getBoolean("embed_metadata", true)) }
+    var privateDownloads by remember { mutableStateOf(dlPrefs.getBoolean("private_downloads", false)) }
+    
+    val lifecycleOwner = LocalLifecycleOwner.current
     val isOnline = remember { mutableStateOf(checkConnectivity(context)) }
+    val scope = rememberCoroutineScope()
     var isWebReady by remember { mutableStateOf(false) }
     var hasConnectionError by remember { mutableStateOf(!isOnline.value) }
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
     var activeDownloads by remember { mutableStateOf(listOf<ActiveDownload>()) }
     var showDownloadPanel by remember { mutableStateOf(false) }
+
+    // Re-read settings when screen is resumed
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                defaultService = dlPrefs.getString("default_service", "qobuz") ?: "qobuz"
+                audioFormat = dlPrefs.getString("audio_format", "flac") ?: "flac"
+                country = dlPrefs.getString("country", "auto") ?: "auto"
+                embedMetadata = dlPrefs.getBoolean("embed_metadata", true)
+                privateDownloads = dlPrefs.getBoolean("private_downloads", false)
+                
+                webViewRef?.evaluateJavascript(
+                    getStealthScript(defaultService, audioFormat, country, embedMetadata, privateDownloads), 
+                    null
+                )
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     var isLeaving by remember { mutableStateOf(false) }
     val handleBack: () -> Unit = {
@@ -358,11 +442,11 @@ fun DownloadScreen(onBack: () -> Unit, onNavigateToSettings: () -> Unit) {
     }
 
     LaunchedEffect(activeDownloads) {
-        while (activeDownloads.any { it.status == "Downloading" || it.status == "Queued" }) {
+        while (activeDownloads.any { !it.isInternal && (it.status == "Downloading" || it.status == "Queued") }) {
             delay(1200)
             val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
             activeDownloads = activeDownloads.map { dl ->
-                if (dl.status.contains("Completed") || dl.status.contains("Failed")) return@map dl
+                if (dl.isInternal || dl.status.contains("Completed") || dl.status.contains("Failed")) return@map dl
                 val cursor = dm.query(DownloadManager.Query().setFilterById(dl.id))
                 if (cursor != null && cursor.moveToFirst()) {
                     val bytes = cursor.getLong(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR))
@@ -445,30 +529,144 @@ fun DownloadScreen(onBack: () -> Unit, onNavigateToSettings: () -> Unit) {
                             userAgentString = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Mobile Safari/537.36"
                         }
                         setDownloadListener { url, userAgent, contentDisp, mime, _ ->
-                            try {
-                                var fileName = URLUtil.guessFileName(url, contentDisp, mime)
-                                fileName = fileName.replace("lucida", "Music", ignoreCase = true)
-                                
-                                val request = DownloadManager.Request(Uri.parse(url)).apply {
-                                    setMimeType(mime)
-                                    addRequestHeader("User-Agent", userAgent)
-                                    addRequestHeader("Cookie", CookieManager.getInstance().getCookie(url))
-                                    setTitle(fileName)
-                                    setDescription("Downloading $fileName via Music Engine")
-                                    setDestinationInExternalPublicDir(Environment.DIRECTORY_MUSIC, "Beatraxus/$fileName")
-                                    setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                                        setRequiresCharging(false)
-                                        setAllowedOverMetered(true)
-                                        setAllowedOverRoaming(true)
+                            val currentWebViewUrl = webViewRef?.url ?: "https://lucida.to/"
+                            val activeUserAgent = webViewRef?.settings?.userAgentString ?: userAgent
+                            val cookie = CookieManager.getInstance().getCookie(url)
+                            
+                            scope.launch(Dispatchers.IO) {
+                                val fileName = URLUtil.guessFileName(url, contentDisp, mime) ?: "music_track_${System.currentTimeMillis()}.flac"
+                                val cleanFileName = fileName.replace("lucida", "Music", ignoreCase = true)
+                                val internalId = System.currentTimeMillis()
+
+                                try {
+                                    withContext(Dispatchers.Main) {
+                                        activeDownloads = activeDownloads + ActiveDownload(
+                                            id = internalId,
+                                            title = cleanFileName.replace(Regex("\\..*$"), ""),
+                                            progress = 0,
+                                            status = "Downloading",
+                                            isInternal = true
+                                        )
+                                        showDownloadPanel = true
+                                        Toast.makeText(context, "Fetching track data...", Toast.LENGTH_SHORT).show()
+                                    }
+                                    
+                                    val client = OkHttpClient.Builder()
+                                        .connectTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+                                        .readTimeout(120, java.util.concurrent.TimeUnit.SECONDS)
+                                        .writeTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+                                        .followRedirects(true)
+                                        .followSslRedirects(true)
+                                        .retryOnConnectionFailure(true)
+                                        .build()
+                                        
+                                    val request = Request.Builder()
+                                        .url(url)
+                                        .header("User-Agent", activeUserAgent)
+                                        .apply { if (!cookie.isNullOrBlank()) header("Cookie", cookie) }
+                                        .header("Referer", currentWebViewUrl)
+                                        .header("Accept", "*/*")
+                                        .header("Connection", "keep-alive")
+                                        .build()
+
+                                    var response: Response? = null
+                                    var lastCode = 0
+                                    var attempts = 0
+                                    
+                                    while (attempts < 3) {
+                                        val call = client.newCall(request)
+                                        val resp = call.execute()
+                                        lastCode = resp.code
+                                        
+                                        if (resp.isSuccessful) {
+                                            response = resp
+                                            break
+                                        }
+                                        
+                                        resp.close()
+                                        if (lastCode != 408 && lastCode != 503 && lastCode != 504) break
+                                        
+                                        attempts++
+                                        if (attempts < 3) delay(2000L * attempts)
+                                    }
+
+                                    val finalResponse = response ?: throw Exception("Server Error $lastCode")
+
+                                    finalResponse.use { resp ->
+                                        val body = resp.body ?: throw Exception("Empty response from server")
+                                        val totalBytes = body.contentLength()
+                                        
+                                        // Use MediaStore to save the file securely on all Android versions
+                                        val contentValues = ContentValues().apply {
+                                            put(MediaStore.Audio.Media.DISPLAY_NAME, cleanFileName)
+                                            put(MediaStore.Audio.Media.MIME_TYPE, response.header("Content-Type") ?: mime)
+                                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                                                put(MediaStore.Audio.Media.RELATIVE_PATH, "${Environment.DIRECTORY_MUSIC}/Beatraxus")
+                                                put(MediaStore.Audio.Media.IS_PENDING, 1)
+                                            }
+                                        }
+
+                                        val resolver = context.contentResolver
+                                        val collection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                                            MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+                                        } else {
+                                            MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+                                        }
+
+                                        val uri = resolver.insert(collection, contentValues) ?: throw Exception("Failed to create MediaStore record")
+
+                                        try {
+                                            resolver.openOutputStream(uri)?.use { output ->
+                                                body.byteStream().use { input ->
+                                                    val buffer = ByteArray(16384)
+                                                    var bytesRead: Int
+                                                    var downloadedBytes = 0L
+                                                    var lastUpdate = 0L
+
+                                                    while (input.read(buffer).also { bytesRead = it } != -1) {
+                                                        output.write(buffer, 0, bytesRead)
+                                                        downloadedBytes += bytesRead
+                                                        
+                                                        val now = System.currentTimeMillis()
+                                                        if (now - lastUpdate > 800) {
+                                                            val progress = if (totalBytes > 0) ((downloadedBytes * 100) / totalBytes).toInt() else -1
+                                                            withContext(Dispatchers.Main) {
+                                                                activeDownloads = activeDownloads.map {
+                                                                    if (it.id == internalId) it.copy(progress = if (progress >= 0) progress else it.progress) else it
+                                                                }
+                                                            }
+                                                            lastUpdate = now
+                                                        }
+                                                    }
+                                                }
+                                            }
+
+                                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                                                contentValues.clear()
+                                                contentValues.put(MediaStore.Audio.Media.IS_PENDING, 0)
+                                                resolver.update(uri, contentValues, null, null)
+                                            }
+
+                                            withContext(Dispatchers.Main) {
+                                                activeDownloads = activeDownloads.map {
+                                                    if (it.id == internalId) it.copy(progress = 100, status = "Completed") else it
+                                                }
+                                                Toast.makeText(context, "Saved to Music/Beatraxus", Toast.LENGTH_LONG).show()
+                                            }
+                                        } catch (e: Exception) {
+                                            resolver.delete(uri, null, null)
+                                            throw e
+                                        }
+                                    }
+                                } catch (e: Exception) {
+                                    android.util.Log.e("DownloadScreen", "Internal download failed", e)
+                                    withContext(Dispatchers.Main) {
+                                        activeDownloads = activeDownloads.map { dl ->
+                                            if (dl.id == internalId) dl.copy(status = "Failed: ${e.message}") else dl
+                                        }
+                                        Toast.makeText(context, "Download failed: ${e.message}", Toast.LENGTH_SHORT).show()
                                     }
                                 }
-                                val id = (ctx.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager).enqueue(request)
-                                activeDownloads = activeDownloads + ActiveDownload(id, fileName.replace(Regex("\\..*$"), ""))
-                                showDownloadPanel = true
-                                Toast.makeText(ctx, "Download Started: $fileName", Toast.LENGTH_SHORT).show()
-                            } catch (e: Exception) { 
-                                Toast.makeText(ctx, "Download Error: ${e.message}", Toast.LENGTH_SHORT).show() 
                             }
                         }
                         webViewClient = object : WebViewClient() {
@@ -478,12 +676,12 @@ fun DownloadScreen(onBack: () -> Unit, onNavigateToSettings: () -> Unit) {
                             }
                             
                             override fun onPageCommitVisible(view: WebView?, url: String?) {
-                                view?.evaluateJavascript(getStealthScript(defaultService, audioFormat), null)
+                                view?.evaluateJavascript(getStealthScript(defaultService, audioFormat, country, embedMetadata, privateDownloads), null)
                             }
 
                             override fun onPageFinished(view: WebView?, url: String?) {
                                 if (!hasConnectionError) {
-                                    view?.evaluateJavascript(getStealthScript(defaultService, audioFormat)) {
+                                    view?.evaluateJavascript(getStealthScript(defaultService, audioFormat, country, embedMetadata, privateDownloads)) {
                                         view.postDelayed({
                                             isWebReady = true 
                                         }, 800)

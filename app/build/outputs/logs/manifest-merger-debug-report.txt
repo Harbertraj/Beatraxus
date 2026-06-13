@@ -319,7 +319,7 @@ MERGED from [androidx.versionedparcelable:versionedparcelable:1.1.1] C:\Users\Ha
 	tools:targetApi
 		ADDED from D:\Beatraxus\app\src\main\AndroidManifest.xml:43:9-29
 	android:allowBackup
-		ADDED from D:\Beatraxus\app\src\main\AndroidManifest.xml:29:9-35
+		ADDED from D:\Beatraxus\app\src\main\AndroidManifest.xml:29:9-36
 	android:theme
 		ADDED from D:\Beatraxus\app\src\main\AndroidManifest.xml:36:9-47
 	android:enableOnBackInvokedCallback

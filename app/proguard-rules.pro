@@ -24,6 +24,7 @@
 # Application / ViewModel / top-level classes
 -keep class com.beatflowy.app.BeatraxusApplication { *; }
 -keep class com.beatflowy.app.viewmodel.** { *; }
+-keep class com.beatflowy.app.utils.** { *; }
 
 # Kotlin Coroutines
 -keep class kotlinx.coroutines.** { *; }

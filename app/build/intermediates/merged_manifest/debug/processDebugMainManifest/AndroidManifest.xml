@@ -48,7 +48,7 @@
 
     <application
         android:name="com.beatflowy.app.BeatraxusApplication"
-        android:allowBackup="true"
+        android:allowBackup="false"
         android:appComponentFactory="androidx.core.app.CoreComponentFactory"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:debuggable="true"

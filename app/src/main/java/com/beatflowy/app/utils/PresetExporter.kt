@@ -4,22 +4,23 @@ import com.beatflowy.app.model.ParametricEqBand
 import com.beatflowy.app.model.SavedEqPreset
 import com.beatflowy.app.model.EqBandType
 import com.google.gson.Gson
+import com.google.gson.annotations.SerializedName
 import com.google.gson.reflect.TypeToken
 
 data class JsonPreset(
-    val name: String,
-    val preamp: Float,
-    val parametric: Boolean,
-    val bands: List<JsonBand>
+    @SerializedName("name") val name: String,
+    @SerializedName("preamp") val preamp: Float,
+    @SerializedName("parametric") val parametric: Boolean,
+    @SerializedName("bands") val bands: List<JsonBand>
 )
 
 data class JsonBand(
-    val type: Int,
-    val channels: Int = 0,
-    val frequency: Int,
-    val q: Float,
-    val gain: Float,
-    val color: Int = 0
+    @SerializedName("type") val type: Int,
+    @SerializedName("channels") val channels: Int = 0,
+    @SerializedName("frequency") val frequency: Int,
+    @SerializedName("q") val q: Float,
+    @SerializedName("gain") val gain: Float,
+    @SerializedName("color") val color: Int = 0
 )
 
 object PresetExporter {

@@ -22,17 +22,25 @@ internal class DecoderFactory(
                       song.source == com.beatflowy.app.model.SongSource.WEB ||
                       song.source == com.beatflowy.app.model.SongSource.TELEGRAM
 
-        val isAlac = format.contains("alac") || song.title.contains("alac", ignoreCase = true)
+        val durationMin = song.durationMs / 60000.0
+        val sizeMb = song.fileSizeBytes / (1024.0 * 1024.0)
+        val isLikelyLossyM4A = (format == "m4a" || format == "mp4" || format == "aac") && 
+            ((durationMin > 0 && (sizeMb / durationMin) < 2.3) || (song.bitrate in 1..400000))
+
+        val isAlac = format.contains("alac") || 
+                    ((format == "m4a" || format == "mp4") && !isLikelyLossyM4A) ||
+                    song.title.contains("alac", ignoreCase = true)
+
         val isM4A = format == "m4a" || format == "mp4"
         val isWav = format.contains("wav")
         val isLossless = isAlac || isWav || format.contains("flac") || format.contains("dsd") || format.contains("aiff")
 
         // 1. Cloud routing
         if (isCloud) {
-            // FFmpeg is much more robust for WAV and ALAC (especially over network/pipes)
-            // Local MediaCodec often fails or has glitches with lossless over MediaDataSource
-            if (isWav || isAlac) {
-                Log.i(TAG, "Routing Cloud Lossless (${if (isWav) "WAV" else "ALAC"}) to FFmpeg: ${song.title}")
+            // FFmpeg is much more robust for ALAC and WAV (especially over network)
+            // Local MediaCodec often fails or has glitches with lossless formats over MediaDataSource
+            if (isAlac || isWav) {
+                Log.i(TAG, "Routing Cloud Lossless (${if (isAlac) "ALAC" else "WAV"}) to FFmpeg: ${song.title}")
                 return ffmpegAlacDecoder
             }
 

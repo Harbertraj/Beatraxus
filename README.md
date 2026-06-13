@@ -5,20 +5,30 @@ Beatraxus is a high-performance Android music player designed for audiophiles. I
 ## Screenshots
 
 <p align="center">
-  <img src="screenshots/main_screen.png" width="32%" />
-  <img src="screenshots/now_playing_screen.png" width="32%" />
-  <img src="screenshots/settings_screen.png" width="32%" />
+  <img src="screenshots/main.png" width="32%" />
+  <img src="screenshots/now_playing.png" width="32%" />
+  <img src="screenshots/queue.png" width="32%" />
+</p>
+<p align="center">
+  <img src="screenshots/settings.png" width="32%" />
+  <img src="screenshots/dsp.png" width="32%" />
+  <img src="screenshots/eq.png" width="32%" />
+</p>
+<p align="center">
+  <img src="screenshots/reverb.png" width="32%" />
+  <img src="screenshots/mastering.png" width="32%" />
 </p>
 
 ## Features
 
-- **High-Resolution Audio Support**: Custom audio pipeline using `AudioTrack` with float output for maximum fidelity.
-- **Real-time Resampling**: Adjustable resampling to match your output device's capabilities (Native vs Hi-Res).
-- **10-Band Equalizer**: Fine-tune your listening experience with precise gain control.
-- **Modern UI**: Built entirely with Jetpack Compose following Material 3 guidelines.
-- **Compact Playback Controls**: A refined, space-efficient Now Playing section with rotating album art and smooth animations.
-- **Dynamic Theme**: Dark-centric aesthetic with vibrant accents (Accent Red & Accent Blue).
-- **Audio Info Bar**: Real-time display of input/output sample rates, bit depth, and active output device.
+- **Bit-Perfect Mode**: Bypasses the Android audio mixer and all DSP for untouched, bit-perfect audio delivery to your hardware.
+- **USB Direct Output**: Support for external USB DACs with direct hardware access, bypassing system limitations.
+- **Advanced DSP Engine**: Custom real-time processing chain including a 10-band Equalizer, Reverb Engine, Crossfeed, and Mastering tools.
+- **High-Resolution Support**: Native playback support for FLAC, ALAC, WAV, and more at up to 32-bit/384kHz+.
+- **Auto-EQ Integration**: Search and apply optimized EQ profiles for over 4,000 headphone models from the AutoEQ database.
+- **Modern UI**: A sleek, dark-centric interface built with Jetpack Compose, featuring glass-morphism and dynamic album art backgrounds.
+- **Cloud & Telegram Streaming**: Stream your music directly from Google Drive or Telegram channels.
+- **Integrated Downloader**: High-quality music downloads powered by Lucida services (Qobuz, Tidal, Deezer, etc.).
 
 ## Technical Details
 

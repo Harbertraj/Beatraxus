@@ -20,6 +20,8 @@ import java.io.FileOutputStream
 import java.io.RandomAccessFile
 import java.net.HttpURLConnection
 import java.net.URL
+import com.arthenica.ffmpegkit.FFmpegKit
+import com.arthenica.ffmpegkit.FFmpegKitConfig
 import com.arthenica.ffmpegkit.FFprobeKit
 import com.arthenica.ffmpegkit.ReturnCode
 import org.json.JSONObject
@@ -113,7 +115,7 @@ class MetadataExtractor(private val context: Context) {
             
             // Re-enabled WAV Footer for end-of-file tags
             if (isWav && song.fileSizeBytes > headerSize) {
-                val footerSize = 1024_000L
+                val footerSize = 2048_000L // Increased to 2MB for large ID3 tags
                 val start = (song.fileSizeBytes - footerSize).coerceAtLeast(0L)
                 downloadPart(song.driveFileId, tempFile, credential, "bytes=$start-${song.fileSizeBytes - 1}", start)
             }
@@ -130,6 +132,14 @@ class MetadataExtractor(private val context: Context) {
                 
                 if (updatedSong.albumArtUri == null && isWav && fetchArt && artworkEnabled) {
                     updatedSong = updatedSong.copy(albumArtUri = extractWavArtManual(tempFile, song.id))
+                }
+
+                if (updatedSong.albumArtUri == null && fetchArt && artworkEnabled && (isWav || updatedSong.format == "ALAC")) {
+                    // FFmpeg fallback for complex containers or missing headers
+                    val ffmpegArt = extractEmbeddedArtWithFfmpeg(song.id, tempFile)
+                    if (ffmpegArt != null) {
+                        updatedSong = updatedSong.copy(albumArtUri = ffmpegArt)
+                    }
                 }
 
                 val title = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_TITLE)
@@ -187,6 +197,18 @@ class MetadataExtractor(private val context: Context) {
                         bitrate = if (updatedSong.bitrate <= 0) header.bitRateAsNumber.toInt() * 1000 else updatedSong.bitrate,
                         sampleRateHz = if (updatedSong.sampleRateHz <= 0) header.sampleRateAsNumber else updatedSong.sampleRateHz
                     )
+
+                    // ALAC detection for M4A/MP4 containers
+                    val format = updatedSong.format.uppercase()
+                    if (format == "M4A" || format == "MP4" || format == "AUDIO") {
+                        val encoding = header.encodingType?.uppercase() ?: ""
+                        if (encoding.contains("ALAC") || header.javaClass.simpleName.contains("Mp4", ignoreCase = true)) {
+                            // If it's Mp4 and bitrate is high, it's likely ALAC
+                            if (encoding.contains("ALAC") || updatedSong.bitrate > 500000) {
+                                updatedSong = updatedSong.copy(format = "ALAC")
+                            }
+                        }
+                    }
                 }
             } catch (e: Exception) {
                 updatedSong = extractMetadataWithFFprobe(updatedSong, tempFile)
@@ -291,11 +313,20 @@ class MetadataExtractor(private val context: Context) {
             val bitrate = formatJson?.optString("bit_rate")?.toIntOrNull() ?: 0
             val sampleRate = audioStream?.optString("sample_rate")?.toIntOrNull() ?: 0
             val duration = (formatJson?.optString("duration")?.toDoubleOrNull() ?: 0.0) * 1000.0
+            val codecName = audioStream?.optString("codec_name")?.lowercase()
             
+            val isAlac = codecName == "alac"
+            val isWav = codecName?.contains("pcm") == true || codecName?.contains("wav") == true
+
             return song.copy(
                 title = tags?.optString("title") ?: tags?.optString("TITLE") ?: song.title,
                 artist = tags?.optString("artist") ?: tags?.optString("ARTIST") ?: song.artist,
                 album = tags?.optString("album") ?: tags?.optString("ALBUM") ?: song.album,
+                format = when {
+                    isAlac -> "ALAC"
+                    isWav -> "WAV"
+                    else -> song.format
+                },
                 bitrate = if (song.bitrate <= 0) bitrate else song.bitrate,
                 sampleRateHz = if (song.sampleRateHz <= 0) sampleRate else song.sampleRateHz,
                 durationMs = if (song.durationMs <= 0) duration.toLong() else song.durationMs
@@ -324,7 +355,7 @@ class MetadataExtractor(private val context: Context) {
                 val chunkSize = readLittleEndianInt(raf).toLong().and(0xFFFFFFFFL)
                 
                 if (chunkId == "ID3 " || chunkId == "id3 ") {
-                    if (chunkSize > 0 && chunkSize < (fileLen - raf.filePointer)) {
+                    if (chunkSize > 0 && chunkSize <= (fileLen - raf.filePointer)) {
                         val bytes = ByteArray(chunkSize.toInt())
                         raf.readFully(bytes)
                         extractApicFromId3(bytes)?.let { art ->
@@ -332,7 +363,7 @@ class MetadataExtractor(private val context: Context) {
                         }
                     } else break
                 } else if (chunkId == "DISP") {
-                    if (chunkSize > 4 && chunkSize < (fileLen - raf.filePointer)) {
+                    if (chunkSize > 4 && chunkSize <= (fileLen - raf.filePointer)) {
                         raf.skipBytes(4)
                         val bytes = ByteArray((chunkSize - 4).toInt())
                         raf.readFully(bytes)
@@ -340,8 +371,24 @@ class MetadataExtractor(private val context: Context) {
                             return cacheEmbeddedAlbumArt(songId, bytes)
                         }
                     } else break
+                } else if (chunkId == "LIST") {
+                    // Handle LIST INFO or LIST adtl chunks that might contain ID3
+                    if (chunkSize >= 4 && chunkSize <= (fileLen - raf.filePointer)) {
+                        val listType = readFourCc(raf)
+                        if (listType == "INFO" || listType == "adtl" || listType == "ID3 ") {
+                             // Deep scan within LIST if it's small enough, otherwise skip
+                             if (chunkSize < 1024_000) {
+                                 // We just skip for now and let FFmpeg handle it if it's complex
+                                 raf.seek(raf.filePointer + chunkSize - 4)
+                             } else {
+                                 raf.seek(raf.filePointer + chunkSize - 4)
+                             }
+                        } else {
+                            raf.seek(raf.filePointer + chunkSize - 4)
+                        }
+                    } else break
                 } else {
-                    if (chunkSize > 0 && chunkSize < (fileLen - raf.filePointer)) {
+                    if (chunkSize >= 0 && chunkSize <= (fileLen - raf.filePointer)) {
                         raf.seek(raf.filePointer + chunkSize)
                     } else break
                 }
@@ -352,6 +399,25 @@ class MetadataExtractor(private val context: Context) {
             return null
         } finally {
             try { raf?.close() } catch (e: Exception) {}
+        }
+    }
+
+    private fun extractEmbeddedArtWithFfmpeg(songId: String, file: File): Uri? {
+        val outputFile = File(File(context.cacheDir, "embedded_album_art").apply { mkdirs() }, "cloud_ffmpeg_$songId.jpg")
+        val session = FFmpegKit.executeWithArguments(
+            arrayOf(
+                "-y",
+                "-v", "error",
+                "-i", file.absolutePath,
+                "-map", "0:v:0",
+                "-frames:v", "1",
+                outputFile.absolutePath
+            )
+        )
+        return if (ReturnCode.isSuccess(session.returnCode) && outputFile.exists() && outputFile.length() > 0L) {
+            Uri.fromFile(outputFile)
+        } else {
+            null
         }
     }
 

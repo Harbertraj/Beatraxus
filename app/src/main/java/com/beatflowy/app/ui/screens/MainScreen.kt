@@ -1198,24 +1198,6 @@ fun MainScreen(
                                                                         StatItem(Icons.Rounded.Album, albumCount.toString(), "Albums", Color(0xFFB2FF59))
                                                                         StatItem(Icons.Rounded.Person, artistCount.toString(), "Artists", Color(0xFF7C4DFF))
                                                                     }
-                                                                    
-                                                                    Spacer(Modifier.height(16.dp))
-                                                                    
-                                                                    Button(
-                                                                        onClick = { showSyncConfirm = true },
-                                                                        colors = ButtonDefaults.buttonColors(
-                                                                            containerColor = Color(0xFF1A73E8).copy(0.15f),
-                                                                            contentColor = Color(0xFF1A73E8)
-                                                                        ),
-                                                                        shape = RoundedCornerShape(12.dp),
-                                                                        border = BorderStroke(1.dp, Color(0xFF1A73E8).copy(0.3f)),
-                                                                        modifier = Modifier.height(36.dp),
-                                                                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 0.dp)
-                                                                    ) {
-                                                                        Icon(Icons.Rounded.Sync, null, modifier = Modifier.size(16.dp))
-                                                                        Spacer(Modifier.width(8.dp))
-                                                                        Text("Sync Library", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                                                    }
                                                                 }
                                                             }
                                                             itemsIndexed(songs, key={_,s->s.id}) { index, song ->
@@ -2591,13 +2573,28 @@ fun CloudDrivePopup(
                             overflow = TextOverflow.Ellipsis
                         )
                     }
-                    IconButton(
-                        onClick = { 
-                            onRefreshAccount(account.email)
-                        },
-                        modifier = Modifier.size(24.dp)
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(AccentBlue.copy(alpha = 0.12f))
+                            .clickable { onRefreshAccount(account.email) }
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
                     ) {
-                        Icon(Icons.Rounded.Refresh, null, tint = AccentBlue, modifier = Modifier.size(16.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Rounded.Sync, 
+                                null, 
+                                tint = AccentBlue, 
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text(
+                                "Sync", 
+                                color = AccentBlue, 
+                                fontSize = 11.sp, 
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
                 }
             }
@@ -2645,11 +2642,28 @@ fun CloudDrivePopup(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f)
                     )
-                    IconButton(
-                        onClick = { onSyncTelegramChannel(channel.url) },
-                        modifier = Modifier.size(24.dp)
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(0xFF2AABEE).copy(alpha = 0.12f))
+                            .clickable { onSyncTelegramChannel(channel.url) }
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
                     ) {
-                        Icon(Icons.Rounded.Sync, null, tint = Color(0xFF2AABEE), modifier = Modifier.size(16.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Rounded.Sync, 
+                                null, 
+                                tint = Color(0xFF2AABEE), 
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text(
+                                "Sync", 
+                                color = Color(0xFF2AABEE), 
+                                fontSize = 11.sp, 
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
                 }
             }

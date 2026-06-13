@@ -96,8 +96,8 @@
 49-->D:\Beatraxus\app\src\main\AndroidManifest.xml:27:5-117:19
 50        android:name="com.beatflowy.app.BeatraxusApplication"
 50-->D:\Beatraxus\app\src\main\AndroidManifest.xml:28:9-45
-51        android:allowBackup="true"
-51-->D:\Beatraxus\app\src\main\AndroidManifest.xml:29:9-35
+51        android:allowBackup="false"
+51-->D:\Beatraxus\app\src\main\AndroidManifest.xml:29:9-36
 52        android:appComponentFactory="androidx.core.app.CoreComponentFactory"
 52-->[androidx.core:core:1.15.0] C:\Users\Haaj Mens\.gradle\caches\8.10.2\transforms\62a7dda7d9653b274435def6f8ee9870\transformed\core-1.15.0\AndroidManifest.xml:28:18-86
 53        android:dataExtractionRules="@xml/data_extraction_rules"

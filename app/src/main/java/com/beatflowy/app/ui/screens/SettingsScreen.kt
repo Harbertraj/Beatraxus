@@ -49,7 +49,11 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -100,7 +104,12 @@ fun SettingsScreen(
     var currentSection by remember { mutableStateOf<String?>(null) }
     var editingValue by remember { mutableStateOf<EditingValue?>(null) }
 
+    var lastBackClickTime by remember { mutableStateOf(0L) }
     BackHandler {
+        val currentTime = System.currentTimeMillis()
+        if (currentTime - lastBackClickTime < 500) return@BackHandler
+        lastBackClickTime = currentTime
+
         if (currentSection != null) currentSection = null else onBack()
     }
 
@@ -159,7 +168,12 @@ fun SettingsScreen(
                         }
                     },
                     navigationIcon = {
+                        var lastClickTime by remember { mutableStateOf(0L) }
                         IconButton(onClick = {
+                            val currentTime = System.currentTimeMillis()
+                            if (currentTime - lastClickTime < 500) return@IconButton
+                            lastClickTime = currentTime
+
                             if (currentSection != null) currentSection = null else onBack()
                         }) {
                             Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back", tint = Color.White)
@@ -209,8 +223,8 @@ fun SettingsScreen(
                             onClick = { currentSection = "Library" }
                         )
                         SettingMenuItem(
-                            title = "Cloud Account",
-                            subtitle = "Stream music from Cloud and Telegram (admin only)",
+                            title = "Cloud Account (Admin Only)",
+                            subtitle = "Stream music from Cloud and Telegram",
                             icon = Icons.Rounded.Cloud,
                             iconColor = Color(0xFF1A73E8),
                             onClick = { currentSection = "Cloud" }
@@ -2612,6 +2626,182 @@ private fun ConnectedAccountRow(
 }
 
 @Composable
+private fun parseMarkdown(text: String): AnnotatedString {
+    val parts = text.split("**")
+    return buildAnnotatedString {
+        parts.forEachIndexed { index, part ->
+            if (index % 2 == 1) {
+                withStyle(style = SpanStyle(fontWeight = FontWeight.Bold, color = Color.White)) {
+                    append(part)
+                }
+            } else {
+                append(part)
+            }
+        }
+    }
+}
+
+@Composable
+private fun WhatsNewSection(title: String, items: List<Pair<String, List<String>>>) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(title, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+        items.forEach { (subTitle, bulletPoints) ->
+            if (subTitle.isNotEmpty()) {
+                Text(subTitle, color = Color.White.copy(0.8f), fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+            }
+            bulletPoints.forEach { point ->
+                Row(modifier = Modifier.padding(start = 8.dp)) {
+                    Text("• ", color = PremiumAccent)
+                    Text(
+                        text = parseMarkdown(point),
+                        color = Color.White.copy(0.7f),
+                        fontSize = 13.sp,
+                        lineHeight = 18.sp
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun WhatsNewCard() {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = Color.White.copy(alpha = 0.03f)
+        ),
+        border = BorderStroke(
+            1.dp,
+            Color.White.copy(0.08f)
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .glassIconBackground(
+                            backgroundColor = PremiumAccent.copy(alpha = 0.15f),
+                            shape = RoundedCornerShape(10.dp),
+                            borderColor = PremiumAccent.copy(alpha = 0.25f)
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Rounded.NewReleases, null, tint = PremiumAccent, modifier = Modifier.size(20.dp))
+                }
+                Text(
+                    "WHAT'S NEW",
+                    color = Color.White,
+                    fontWeight = FontWeight.ExtraBold,
+                    fontSize = 14.sp,
+                    letterSpacing = 1.2.sp
+                )
+            }
+
+            Text(
+                "All notable updates and improvements to Beatraxus are documented here.",
+                color = Color.White.copy(0.6f),
+                fontSize = 12.sp
+            )
+
+            HorizontalDivider(color = Color.White.copy(0.08f))
+
+            Text(
+                "[June 2026 Update] - June 2026",
+                color = PremiumAccent,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Bold
+            )
+
+            WhatsNewSection(
+                title = "🚀 Added",
+                items = listOf(
+                    "🎵 Audio Features" to listOf(
+                        "Added **Bit-Perfect Mode** for untouched, high-fidelity audio playback",
+                        "Added **USB Direct Output** support for external DACs",
+                        "Added **Dithering** for improved audio precision and playback quality"
+                    ),
+                    "🎚️ Equalizer" to listOf(
+                        "Added **EQ Export & Import** functionality",
+                        "Redesigned the **Equalizer UI** for a cleaner and improved experience"
+                    ),
+                    "☁️ Cloud & Metadata" to listOf(
+                        "Added **Metadata Settings** for better cloud sync customization"
+                    )
+                )
+            )
+
+            WhatsNewSection(
+                title = "⚡ Improved",
+                items = listOf(
+                    "🎧 Audio Processing" to listOf(
+                        "Improved **Peak Limiter** for cleaner playback and better distortion control",
+                        "Enhanced **ReplayGain** for more accurate and consistent volume normalization"
+                    ),
+                    "🖥️ UI & Performance" to listOf(
+                        "Enhanced **overall UI smoothness**",
+                        "Improved **app responsiveness and performance**",
+                        "General optimization improvements for a smoother experience"
+                    )
+                )
+            )
+
+            WhatsNewSection(
+                title = "⚠️ Known Issues",
+                items = listOf(
+                    "❗ Widget Sync Issue" to listOf(
+                        "Widgets may not sync properly with the app in certain situations"
+                    )
+                )
+            )
+
+            WhatsNewSection(
+                title = "🔮 Coming Soon",
+                items = listOf(
+                    "" to listOf(
+                        "🎼 **Built-in Hi-Res Song Download Support**",
+                        "☁️ **MEGA Cloud Integration**",
+                        "More **audio enhancements, performance optimizations, and ecosystem improvements**"
+                    )
+                )
+            )
+
+            HorizontalDivider(color = Color.White.copy(0.08f))
+
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    "❤️ Thank You",
+                    color = Color.White,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    "Your feedback helps shape Beatraxus into a smarter, smoother, and more powerful music experience.",
+                    color = Color.White.copy(0.6f),
+                    fontSize = 12.sp,
+                    lineHeight = 18.sp
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "⭐ If you enjoy Beatraxus, consider starring the repository and sharing your feedback!",
+                    color = PremiumAccent.copy(0.8f),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+        }
+    }
+}
+
+@Composable
 fun AboutContent() {
     val context = LocalContext.current
     val uriHandler = LocalUriHandler.current
@@ -2621,7 +2811,9 @@ fun AboutContent() {
         "Unknown"
     }
 
-    Column(modifier = Modifier.fillMaxWidth()) {
+    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        WhatsNewCard()
+
         Box(
             modifier = Modifier
                 .fillMaxWidth()

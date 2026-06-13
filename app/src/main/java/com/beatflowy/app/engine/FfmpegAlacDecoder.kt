@@ -13,13 +13,10 @@ import com.beatflowy.app.model.Song
 import com.beatflowy.app.model.SongSource
 import com.beatflowy.app.repository.DriveAccountRepository
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.FileInputStream
-import java.io.FileOutputStream
 import java.io.File
 import java.util.Locale
 
@@ -61,28 +58,39 @@ internal class FfmpegAlacDecoder(
         val pipePath = FFmpegKitConfig.registerNewFFmpegPipe(context)
         Log.d(TAG, "FFmpeg output pipe registered at: $pipePath")
 
-        val inputPipePath = if (request.song.source != SongSource.LOCAL && cloudCacheManager.getCachedFile(request.song) == null) {
-            FFmpegKitConfig.registerNewFFmpegPipe(context)
-        } else null
-        if (inputPipePath != null) Log.d(TAG, "FFmpeg input pipe registered at: $inputPipePath")
 
-        val effectiveInputSource = inputPipePath ?: inputSource
+        // Determine demuxer to help FFmpeg with pipes or extension-less cache files
+        val demuxerHint = when {
+            format.codecName.contains("alac", ignoreCase = true) || 
+            request.song.format.equals("ALAC", ignoreCase = true) ||
+            request.song.format.equals("M4A", ignoreCase = true) -> "mov"
+            
+            format.codecName.contains("wav", ignoreCase = true) || 
+            format.codecName.contains("pcm", ignoreCase = true) ||
+            request.song.format.equals("WAV", ignoreCase = true) -> "wav"
+            
+            else -> null
+        }
 
         val args = buildList {
             add("-y")
             add("-nostdin")
             addAll(listOf("-v", "info")) 
 
-            if (headers.isNotEmpty() && inputPipePath == null) {
+            if (headers.isNotEmpty()) {
                 val headerStr = headers.map { "${it.key}: ${it.value}" }.joinToString("\r\n") + "\r\n"
                 add("-headers")
                 add(headerStr)
             }
 
-            if (effectiveInputSource.startsWith("http") && inputPipePath == null) {
+            if (inputSource.startsWith("http")) {
                 // Use only options known to be widely supported by FFmpeg for streaming
                 addAll(listOf("-reconnect_at_eof", "1"))
                 addAll(listOf("-reconnect_delay_max", "2"))
+            }
+
+            if (demuxerHint != null) {
+                addAll(listOf("-f", demuxerHint))
             }
 
             addAll(listOf("-analyzeduration", "2000000"))
@@ -92,7 +100,7 @@ internal class FfmpegAlacDecoder(
                 addAll(listOf("-ss", formatSeekSeconds(request.startPositionMs)))
             }
             
-            addAll(listOf("-i", effectiveInputSource))
+            addAll(listOf("-i", inputSource))
             addAll(
                 listOf(
                     "-map", "0:a:0",
@@ -120,27 +128,6 @@ internal class FfmpegAlacDecoder(
             { log -> Log.v(TAG, "ffmpeg: ${log.message}") },
             null
         )
-
-        // Launch input feeder if using pipe
-        if (inputPipePath != null) {
-            CoroutineScope(Dispatchers.IO).launch {
-                try {
-                    val dataSource = cloudCacheManager.getDataSource(request.song) { control.isSeekPending() } ?: return@launch
-                    val output = FileOutputStream(inputPipePath)
-                    val buffer = ByteArray(65536)
-                    var pos = 0L
-                    while (control.isActive() && !session.state.name.equals("COMPLETED", true)) {
-                        val read = dataSource.readAt(pos, buffer, 0, buffer.size)
-                        if (read <= 0) break
-                        output.write(buffer, 0, read)
-                        pos += read
-                    }
-                    output.close()
-                } catch (e: Exception) {
-                    Log.e(TAG, "Input pipe feeder failed", e)
-                }
-            }
-        }
 
         control.setSeekListener {
             Log.d(TAG, "FFmpeg session cancelled due to seek")
@@ -234,11 +221,6 @@ internal class FfmpegAlacDecoder(
             try {
                 FFmpegKitConfig.closeFFmpegPipe(pipePath)
             } catch (_: Exception) {}
-            if (inputPipePath != null) {
-                try {
-                    FFmpegKitConfig.closeFFmpegPipe(inputPipePath)
-                } catch (_: Exception) {}
-            }
         }
     }
 

@@ -88,8 +88,10 @@ fun DspScreen(
                         writer.write(exportJson)
                     }
                 }
+                android.widget.Toast.makeText(context, "Presets exported successfully", android.widget.Toast.LENGTH_SHORT).show()
             } catch (e: Exception) {
                 e.printStackTrace()
+                android.widget.Toast.makeText(context, "Export failed: ${e.localizedMessage}", android.widget.Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -102,13 +104,18 @@ fun DspScreen(
                 context.contentResolver.openInputStream(it)?.use { inputStream ->
                     InputStreamReader(inputStream).use { reader ->
                         val json = reader.readText()
-                        PresetExporter.parseJson(json)?.let { presets ->
+                        val presets = PresetExporter.parseJson(json)
+                        if (presets != null && presets.isNotEmpty()) {
                             viewModel.importEqPresets(presets)
+                            android.widget.Toast.makeText(context, "Imported ${presets.size} preset(s)", android.widget.Toast.LENGTH_SHORT).show()
+                        } else {
+                            android.widget.Toast.makeText(context, "No valid presets found in file", android.widget.Toast.LENGTH_LONG).show()
                         }
                     }
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
+                android.widget.Toast.makeText(context, "Import failed: ${e.localizedMessage}", android.widget.Toast.LENGTH_LONG).show()
             }
         }
     }
