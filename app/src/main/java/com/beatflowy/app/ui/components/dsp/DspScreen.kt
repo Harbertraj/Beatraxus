@@ -1937,7 +1937,8 @@ private fun PremiumSoundStageCard(
             Box(
                 modifier = Modifier
                     .size(140.dp)
-                    .clip(CircleShape),
+                    .clip(CircleShape)
+                    .graphicsLayer { alpha = if (config.spatialAudioEnabled) 1f else 0.4f },
                 contentAlignment = Alignment.Center
             ) {
                 // Background Glow
@@ -2007,23 +2008,24 @@ private fun PremiumSoundStageCard(
                 val cardAngleRad = (nodeTemplate.az - 90f) * PI.toFloat() / 180f
 
                 // Premium Dot
-                Box(
-                    modifier = Modifier
-                        .size(11.dp)
-                        .graphicsLayer {
-                            translationX = dotRadius * cos(dotAngleRad)
-                            translationY = dotRadius * sin(dotAngleRad)
-                            alpha = if (config.spatialAudioEnabled) 1f else 0.5f
-                        }
-                        .background(nodeTemplate.color, CircleShape)
-                        .border(1.5.dp, Color.White.copy(0.4f), CircleShape)
-                        .shadow(
-                            if (config.spatialAudioEnabled) 14.dp else 0.dp,
-                            CircleShape,
-                            ambientColor = nodeTemplate.color,
-                            spotColor = nodeTemplate.color
-                        )
-                )
+                if (config.spatialAudioEnabled) {
+                    Box(
+                        modifier = Modifier
+                            .size(11.dp)
+                            .graphicsLayer {
+                                translationX = dotRadius * cos(dotAngleRad)
+                                translationY = dotRadius * sin(dotAngleRad)
+                            }
+                            .background(nodeTemplate.color, CircleShape)
+                            .border(1.5.dp, Color.White.copy(0.4f), CircleShape)
+                            .shadow(
+                                14.dp,
+                                CircleShape,
+                                ambientColor = nodeTemplate.color,
+                                spotColor = nodeTemplate.color
+                            )
+                    )
+                }
 
                 // Premium Info Card (Static position)
                 val isSelected = config.soundStageSelectedNode == nodeTemplate.name
