@@ -9,4 +9,6 @@ interface LibraryRepository {
     fun getArtists(): Flow<List<Triple<String, String, android.net.Uri?>>>
     fun getYears(): Flow<List<Triple<String, String, android.net.Uri?>>>
     fun getGenres(): Flow<List<Triple<String, String, android.net.Uri?>>>
+    fun getMoods(): Flow<List<Triple<String, String, android.net.Uri?>>>
+    fun getLanguages(): Flow<List<Triple<String, String, android.net.Uri?>>>
 }

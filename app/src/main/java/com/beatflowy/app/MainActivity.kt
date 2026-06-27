@@ -42,7 +42,6 @@ import com.beatflowy.app.service.AudioPlaybackService
 import com.beatflowy.app.ui.screens.MainScreen
 import com.beatflowy.app.ui.screens.SettingsScreen
 import com.beatflowy.app.ui.screens.WelcomeScreen
-import com.beatflowy.app.ui.screens.DownloadScreen
 
 import com.beatflowy.app.ui.components.dsp.DspScreen
 import androidx.compose.ui.Modifier
@@ -102,11 +101,12 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        com.beatflowy.app.cast.CastManager.initialize(this)
         frameJankMonitor = FrameJankMonitor("BeatraxusFrameMonitor")
         
         // Enable edge-to-edge
         WindowCompat.setDecorFitsSystemWindows(window, false)
+
+        handleIntent(intent)
 
         setContent {
             BeatraxusTheme {
@@ -120,8 +120,31 @@ class MainActivity : ComponentActivity() {
         // Immediate check to start loading if possible, but skip on first run to avoid nagging the user
         // before they click the "Enter the Flow" button.
         window.decorView.post {
+            com.beatflowy.app.cast.CastManager.initialize(this@MainActivity)
             if (!viewModel.uiState.value.isFirstRun) {
                 checkAndRequestPermissions()
+            }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleIntent(intent)
+    }
+
+    private fun handleIntent(intent: Intent?) {
+        if (intent?.getBooleanExtra("open_now_playing", false) == true) {
+            viewModel.setShowFullPlayer(true)
+        }
+        
+        // Handle Last.fm auth callback
+        if (intent?.action == Intent.ACTION_VIEW) {
+            val uri = intent.data
+            if (uri != null && uri.scheme == "beatflowy" && uri.host == "lastfm") {
+                val token = uri.getQueryParameter("token")
+                if (token != null) {
+                    viewModel.fetchLastFmSession(token)
+                }
             }
         }
     }
@@ -188,7 +211,6 @@ sealed class Screen(val route: String) {
     object Main      : Screen("main")
     object Settings  : Screen("settings")
     object Dsp       : Screen("dsp")
-    object Download  : Screen("download")
 }
 
 @Composable
@@ -200,19 +222,6 @@ fun BeatraxusApp(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val view = LocalView.current
     val context = view.context
-
-    val downloadFolderPickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocumentTree()
-    ) { uri ->
-        uri?.let {
-            context.contentResolver.takePersistableUriPermission(
-                it,
-                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-            )
-            viewModel.setDownloadLocation(it.toString())
-        }
-        viewModel.consumeDownloadFolderPickerTrigger()
-    }
 
     val folderPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree()
@@ -260,12 +269,6 @@ fun BeatraxusApp(
     LaunchedEffect(uiState.triggerFolderPicker) {
         if (uiState.triggerFolderPicker) {
             folderPickerLauncher.launch(null)
-        }
-    }
-
-    LaunchedEffect(uiState.triggerDownloadFolderPicker) {
-        if (uiState.triggerDownloadFolderPicker) {
-            downloadFolderPickerLauncher.launch(null)
         }
     }
 
@@ -323,8 +326,7 @@ fun BeatraxusApp(
                 MainScreen(
                     viewModel            = viewModel,
                     onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
-                    onNavigateToDsp      = { navController.navigate(Screen.Dsp.route) },
-                    onNavigateToDownload = { navController.navigate(Screen.Download.route) }
+                    onNavigateToDsp      = { navController.navigate(Screen.Dsp.route) }
                 )
             }
             composable(
@@ -378,30 +380,6 @@ fun BeatraxusApp(
                     viewModel = viewModel,
                     onBack = {
                         navController.popBackStack()
-                    }
-                )
-            }
-            composable(
-                Screen.Download.route,
-                enterTransition = {
-                    slideIntoContainer(
-                        towards = AnimatedContentTransitionScope.SlideDirection.Up,
-                        animationSpec = tween(400, easing = FastOutSlowInEasing)
-                    ) + fadeIn(tween(400))
-                },
-                exitTransition = {
-                    slideOutOfContainer(
-                        towards = AnimatedContentTransitionScope.SlideDirection.Down,
-                        animationSpec = tween(400, easing = FastOutSlowInEasing)
-                    ) + fadeOut(tween(400))
-                }
-            ) {
-                DownloadScreen(
-                    onBack = {
-                        navController.popBackStack()
-                    },
-                    onNavigateToSettings = {
-                        navController.navigate(Screen.Settings.route)
                     }
                 )
             }

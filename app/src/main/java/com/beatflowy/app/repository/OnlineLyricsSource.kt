@@ -41,8 +41,18 @@ data class LrcLibResponse(
 )
 
 class OnlineLyricsSource {
+    private val client = okhttp3.OkHttpClient.Builder()
+        .addInterceptor { chain ->
+            val request = chain.request().newBuilder()
+                .header("User-Agent", "Beatraxus Music Player (https://github.com/beatflowy/beatraxus)")
+                .build()
+            chain.proceed(request)
+        }
+        .build()
+
     private val lrcLibService = Retrofit.Builder()
         .baseUrl("https://lrclib.net/")
+        .client(client)
         .addConverterFactory(GsonConverterFactory.create())
         .build()
         .create(LrcLibService::class.java)
@@ -54,6 +64,7 @@ class OnlineLyricsSource {
         durationMs: Long
     ): LyricsResult? = withContext(Dispatchers.IO) {
         val durationSec = (durationMs / 1000).toInt()
+        var bestResult: LyricsResult? = null
 
         // ── 1. Precise get (exact metadata match by lrclib) ───────────────────────
         if (durationSec > 0) {
@@ -63,7 +74,11 @@ class OnlineLyricsSource {
                     val resDur = response.duration ?: 0
                     // Accept only if duration is within 3s of actual song length
                     if (abs(resDur - durationSec) <= 3) {
-                        return@withContext createResultFromResponse(response)
+                        val result = createResultFromResponse(response)
+                        if (result.type == LyricsType.WORD_BY_WORD) {
+                            return@withContext result // Found best type, return immediately
+                        }
+                        bestResult = result
                     }
                 }
             }
@@ -88,13 +103,17 @@ class OnlineLyricsSource {
                 ?.first
 
             if (bestMatch != null) {
-                return@withContext createResultFromResponse(bestMatch)
+                val searchResult = createResultFromResponse(bestMatch)
+                // Use search result if it's better than precise match or if precise match failed
+                if (bestResult == null || searchResult.type.ordinal > bestResult!!.type.ordinal) {
+                    return@withContext searchResult
+                }
             }
         }.onFailure { e ->
             Log.e("OnlineLyricsSource", "Search failed: ${e.message}")
         }
 
-        null
+        bestResult
     }
 
     private fun isValidResponse(res: LrcLibResponse): Boolean {
@@ -142,10 +161,10 @@ class OnlineLyricsSource {
         // Weights: Title (40%), Artist (30%), Album (10%), Duration (20%)
         var totalScore = (titleSim * 0.4) + (artistSim * 0.3) + (albumSim * 0.1) + (durationScore * 0.2)
 
-        // Priority bonus for better types
+        // Priority bonus for better types (STRICT PRIORITY: ELRC > LRC > PLAIN)
         if (!res.syncedLyrics.isNullOrBlank()) {
             val isWordByWord = res.syncedLyrics.contains(Regex("<\\d+:\\d+[.:]\\d+>"))
-            totalScore += if (isWordByWord) 0.1 else 0.05
+            totalScore += if (isWordByWord) 0.5 else 0.2
         }
 
         return totalScore

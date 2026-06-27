@@ -56,7 +56,7 @@ enum class AudioOutputDevice(val displayName: String) {
 }
 
 enum class LibraryView {
-    ALL_SONGS, ALBUMS, ARTISTS, FOLDERS, YEARS, GENRES, FAVORITES, RECENTLY_PLAYED, RECENTLY_ADDED,
+    HOME, ALL_SONGS, ALBUMS, ARTISTS, FOLDERS, YEARS, GENRES, FAVORITES, RECENTLY_PLAYED, RECENTLY_ADDED,
     ALBUM_DETAIL, ARTIST_DETAIL, FOLDER_DETAIL, YEAR_DETAIL, GENRE_DETAIL, PLAYLISTS, PLAYLIST_DETAIL,
     CLOUD
 }
@@ -107,7 +107,7 @@ data class PlayerUiState(
     val errorMessage: String? = null,
     val shuffleMode: Boolean = false,
     val repeatMode: Int = 0, // 0: Off, 1: One, 2: All
-    val currentView: LibraryView = LibraryView.ALL_SONGS,
+    val currentView: LibraryView = LibraryView.HOME,
     val selectedItemName: String? = null, // For Album name, Artist name etc.
     val showFullPlayer: Boolean = false,
     val showQueue: Boolean = false,
@@ -115,7 +115,7 @@ data class PlayerUiState(
     val searchQuery: String = "",
     val authRecoveryIntent: android.content.Intent? = null,
     val isMultiSelectMode: Boolean = false,
-    val selectedSongIds: Set<String> = emptySet(),
+    val selectedIds: Set<String> = emptySet(),
     val sortType: SortType = SortType.NAME,
     val isAscending: Boolean = true,
     val viewMode: ViewMode = ViewMode.LIST,
@@ -153,15 +153,17 @@ data class PlayerUiState(
     val sleepTimerRemainingPlayCount: Int = 0,
     val musicFolders: List<String> = emptyList(),
     val blockedFolders: List<String> = emptyList(),
-    val downloadLocation: String? = null,
     val triggerFolderPicker: Boolean = false,
-    val triggerDownloadFolderPicker: Boolean = false,
+    val showScanOptions: Boolean = false,
     val showVolumeOverlay: Boolean = false,
     val settingsIconX: Float = 0f,
     val settingsIconY: Float = 0f,
     val selectedCloudEmail: String? = null,
     val selectedTelegramChannelUrl: String? = null,
     val libraryMode: LibraryMode = LibraryMode.LOCAL,
+    // Last.fm
+    val lastFmUsername: String? = null,
+    val scrobblingEnabled: Boolean = true,
     // Sync Settings
     val metadataNetworkType: NetworkType = NetworkType.WIFI_ONLY,
     val dataSaverEnabled: Boolean = false,
@@ -205,7 +207,7 @@ data class PlayerUiState(
                 upcomingSongs == other.upcomingSongs &&
                 searchQuery == other.searchQuery &&
                 isMultiSelectMode == other.isMultiSelectMode &&
-                selectedSongIds == other.selectedSongIds &&
+                selectedIds == other.selectedIds &&
                 sortType == other.sortType &&
                 isAscending == other.isAscending &&
                 viewMode == other.viewMode &&
@@ -242,12 +244,13 @@ data class PlayerUiState(
                 sleepTimerRemainingPlayCount == other.sleepTimerRemainingPlayCount &&
                 musicFolders == other.musicFolders &&
                 blockedFolders == other.blockedFolders &&
-                downloadLocation == other.downloadLocation &&
                 triggerFolderPicker == other.triggerFolderPicker &&
-                triggerDownloadFolderPicker == other.triggerDownloadFolderPicker &&
+                showScanOptions == other.showScanOptions &&
                 selectedCloudEmail == other.selectedCloudEmail &&
                 selectedTelegramChannelUrl == other.selectedTelegramChannelUrl &&
                 libraryMode == other.libraryMode &&
+                lastFmUsername == other.lastFmUsername &&
+                scrobblingEnabled == other.scrobblingEnabled &&
                 metadataNetworkType == other.metadataNetworkType &&
                 dataSaverEnabled == other.dataSaverEnabled &&
                 artworkEnrichmentEnabled == other.artworkEnrichmentEnabled &&
@@ -288,7 +291,7 @@ data class PlayerUiState(
         result = 31 * result + upcomingSongs.hashCode()
         result = 31 * result + searchQuery.hashCode()
         result = 31 * result + isMultiSelectMode.hashCode()
-        result = 31 * result + selectedSongIds.hashCode()
+        result = 31 * result + selectedIds.hashCode()
         result = 31 * result + sortType.hashCode()
         result = 31 * result + isAscending.hashCode()
         result = 31 * result + viewMode.hashCode()
@@ -325,12 +328,13 @@ data class PlayerUiState(
         result = 31 * result + sleepTimerRemainingPlayCount
         result = 31 * result + musicFolders.hashCode()
         result = 31 * result + blockedFolders.hashCode()
-        result = 31 * result + (downloadLocation?.hashCode() ?: 0)
         result = 31 * result + triggerFolderPicker.hashCode()
-        result = 31 * result + triggerDownloadFolderPicker.hashCode()
+        result = 31 * result + showScanOptions.hashCode()
         result = 31 * result + (selectedCloudEmail?.hashCode() ?: 0)
         result = 31 * result + (selectedTelegramChannelUrl?.hashCode() ?: 0)
         result = 31 * result + libraryMode.hashCode()
+        result = 31 * result + (lastFmUsername?.hashCode() ?: 0)
+        result = 31 * result + scrobblingEnabled.hashCode()
         result = 31 * result + metadataNetworkType.hashCode()
         result = 31 * result + dataSaverEnabled.hashCode()
         result = 31 * result + artworkEnrichmentEnabled.hashCode()

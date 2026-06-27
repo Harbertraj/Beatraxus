@@ -61,9 +61,17 @@ class MusicRepository(private val context: Context) {
         val selectionArgs = mutableListOf<String>()
 
         if (targetPath != null) {
-            val normalizedTarget = if (targetPath.endsWith("/")) targetPath else "$targetPath/"
-            selection.append(" AND ${MediaStore.Audio.Media.DATA} LIKE ?")
-            selectionArgs.add("$normalizedTarget%")
+            val resolvedPath = if (targetPath.startsWith("content://")) {
+                resolveUriToPath(targetPath)
+            } else {
+                targetPath
+            }
+            
+            if (resolvedPath != null) {
+                val normalizedTarget = if (resolvedPath.endsWith("/")) resolvedPath else "$resolvedPath/"
+                selection.append(" AND ${MediaStore.Audio.Media.DATA} LIKE ?")
+                selectionArgs.add("$normalizedTarget%")
+            }
         }
 
         excludedPaths.forEach { path ->
@@ -151,6 +159,7 @@ class MusicRepository(private val context: Context) {
                     var trackNumber: Int? = null
                     var discNumber: Int? = null
                     var composer: String? = null
+                    var lyrics: String? = null
 
                     if (shouldReadRetriever) {
                         val retriever = MediaMetadataRetriever()
@@ -161,6 +170,8 @@ class MusicRepository(private val context: Context) {
                             trackNumber = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CD_TRACK_NUMBER)?.toIntOrNull()
                             discNumber = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DISC_NUMBER)?.toIntOrNull()
                             composer = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_COMPOSER)
+                            // METADATA_KEY_LYRIC = 23
+                            lyrics = retriever.extractMetadata(23)
 
                             if (genre == "Unknown") {
                                 genre = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_GENRE) ?: "Unknown"
@@ -306,6 +317,7 @@ class MusicRepository(private val context: Context) {
                         trackNumber = trackNumber,
                         discNumber = discNumber,
                         composer = composer,
+                        lyrics = lyrics,
                         source = SongSource.LOCAL
                     ))
                 }
@@ -364,7 +376,7 @@ class MusicRepository(private val context: Context) {
     }
 
     private fun cacheEmbeddedAlbumArt(mediaStoreId: Long, albumId: Long, bytes: ByteArray, forceRefresh: Boolean = false): Uri {
-        val dir = File(context.cacheDir, "embedded_album_art").apply { mkdirs() }
+        val dir = File(context.filesDir, "embedded_album_art").apply { mkdirs() }
         val f = File(dir, "$mediaStoreId.jpg")
         
         if (!forceRefresh && f.exists() && f.length() > 0) return Uri.fromFile(f)
@@ -425,7 +437,7 @@ class MusicRepository(private val context: Context) {
     }
 
     private fun extractEmbeddedArtWithFfmpeg(mediaStoreId: Long, uri: Uri): Uri? {
-        val outputFile = File(File(context.cacheDir, "embedded_album_art").apply { mkdirs() }, "$mediaStoreId-ffmpeg.jpg")
+        val outputFile = File(File(context.filesDir, "embedded_album_art").apply { mkdirs() }, "$mediaStoreId-ffmpeg.jpg")
         val inputSource = FFmpegKitConfig.getSafParameterForRead(context, uri)
         val session = FFmpegKit.executeWithArguments(
             arrayOf(
@@ -659,6 +671,27 @@ class MusicRepository(private val context: Context) {
         } catch (e: Exception) {
             path.trimEnd('/')
         }
+    }
+
+    private fun resolveUriToPath(uriString: String): String? {
+        val uri = Uri.parse(uriString)
+        if ("com.android.externalstorage.documents" == uri.authority) {
+            val docId = try {
+                // For tree URIs, the document ID is in the last segment
+                uri.pathSegments.last()
+            } catch (e: Exception) {
+                return null
+            }
+            val split = docId.split(":")
+            val type = split[0]
+            if ("primary".equals(type, ignoreCase = true)) {
+                return "/storage/emulated/0/" + if (split.size > 1) split[1] else ""
+            } else {
+                // Non-primary storage (SD cards)
+                return "/storage/$type/" + if (split.size > 1) split[1] else ""
+            }
+        }
+        return null
     }
 
     // Deprecated: Moving to Room-based folder management

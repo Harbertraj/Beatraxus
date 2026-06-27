@@ -3,6 +3,7 @@ package com.beatflowy.app.ui.components
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -20,8 +21,12 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -37,6 +42,7 @@ import com.beatflowy.app.model.WordTiming
 import com.beatflowy.app.repository.LyricsSource
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 
 @Composable
 fun KaraokeLyricsView(
@@ -58,29 +64,20 @@ fun KaraokeLyricsView(
     var autoScrollEnabled by remember { mutableStateOf(true) }
     var containerHeight by remember { mutableStateOf(0) }
     var showSyncControls by remember { mutableStateOf(false) }
-    var lastScrollTime by remember { mutableLongStateOf(0L) }
+    var lastInteractionTime by remember { mutableLongStateOf(0L) }
     var isLongPressing by remember { mutableStateOf(false) }
     var tempOffsetStr by remember { mutableStateOf("") }
 
+    // Logic to re-enable auto-scroll after manual interaction
     LaunchedEffect(isDragged) {
         if (isDragged) {
             autoScrollEnabled = false
             showSyncControls = true
-            lastScrollTime = System.currentTimeMillis()
+            lastInteractionTime = System.currentTimeMillis()
         } else {
-            delay(1000)
-            if (System.currentTimeMillis() - lastScrollTime >= 1000) {
-                showSyncControls = false
-            }
-            delay(2000)
-            autoScrollEnabled = true
-        }
-    }
-
-    LaunchedEffect(showSyncControls) {
-        if (showSyncControls) {
-            delay(1000)
-            if (!isDragged) {
+            delay(3000)
+            if (System.currentTimeMillis() - lastInteractionTime >= 3000) {
+                autoScrollEnabled = true
                 showSyncControls = false
             }
         }
@@ -89,8 +86,9 @@ fun KaraokeLyricsView(
     LaunchedEffect(currentIndex, autoScrollEnabled, containerHeight) {
         if (autoScrollEnabled && currentIndex in lyrics.indices && containerHeight > 0) {
             scope.launch {
-                val offset = -(containerHeight / 3) // Center position adjustment
-                listState.animateScrollToItem(index = currentIndex, scrollOffset = offset)
+                // Centering: Active line at ~8% from the top (moved even higher up)
+                val offset = (containerHeight * 0.08f).toInt()
+                listState.animateScrollToItem(index = currentIndex, scrollOffset = -offset)
             }
         }
     }
@@ -99,6 +97,21 @@ fun KaraokeLyricsView(
         modifier = modifier
             .fillMaxSize()
             .onGloballyPositioned { containerHeight = it.size.height }
+            .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
+            .drawWithContent {
+                drawContent()
+                // Premium Fading Edges
+                val colors = listOf(Color.Transparent, Color.Black, Color.Black, Color.Transparent)
+                val stops = floatArrayOf(0f, 0.15f, 0.85f, 1f)
+                drawRect(
+                    brush = Brush.verticalGradient(
+                        colorStops = stops.zip(colors).toTypedArray(),
+                        startY = 0f,
+                        endY = size.height
+                    ),
+                    blendMode = BlendMode.DstIn
+                )
+            }
     ) {
         if (isLoading && lyrics.isEmpty()) {
             CircularProgressIndicator(
@@ -106,172 +119,217 @@ fun KaraokeLyricsView(
                 color = Color.White.copy(alpha = 0.5f)
             )
         } else if (lyrics.isEmpty()) {
-            Text(
-                "No lyrics available",
+            Column(
                 modifier = Modifier.align(Alignment.Center),
-                color = Color.White.copy(alpha = 0.4f),
-                style = MaterialTheme.typography.bodyLarge
-            )
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    "No lyrics found",
+                    color = Color.White.copy(alpha = 0.4f),
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold
+                )
+                if (lyricsSource == null) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "Tap to search online",
+                        color = Color.White.copy(alpha = 0.25f),
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+            }
         } else {
             LazyColumn(
                 state = listState,
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(top = 100.dp, bottom = 400.dp, start = 24.dp, end = 24.dp),
+                // Reduced top padding to allow lyrics to move higher up the screen
+                contentPadding = PaddingValues(top = 40.dp, bottom = 450.dp, start = 32.dp, end = 32.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
                 horizontalAlignment = Alignment.Start
             ) {
                 itemsIndexed(lyrics, key = { _, line -> line.startTime }) { index, line ->
                     val isCurrent = index == currentIndex
-                    // Calculate precise progress within this specific line
+                    val distance = abs(index - currentIndex)
+                    
+                    // Progressive blur and fade for non-active lines
+                    val lineAlpha = when {
+                        isCurrent -> 1.0f
+                        distance == 1 -> 0.45f
+                        distance == 2 -> 0.25f
+                        else -> 0.12f
+                    }
+
                     val lineProgress = if (isCurrent) {
                         (currentProgressMs + lyricsOffsetMs - line.startTime).coerceAtLeast(0)
                     } else 0L
 
-                    AppleMusicLyricLine(
+                    SyncedLyricLine(
                         line = line,
                         isCurrent = isCurrent,
                         progressInLine = lineProgress,
-                        onClick = { onLineClick(line.startTime) }
+                        targetAlpha = lineAlpha,
+                        isWordByWord = line.wordTimings != null,
+                        onClick = { 
+                            onLineClick(line.startTime)
+                            lastInteractionTime = System.currentTimeMillis()
+                        }
                     )
                 }
             }
 
-            // Offset adjustment controls
+            // Enhanced Sync Controls
             AnimatedVisibility(
                 visible = showSyncControls,
-                enter = fadeIn() + expandVertically(expandFrom = Alignment.Top),
-                exit = fadeOut() + shrinkVertically(shrinkTowards = Alignment.Top),
+                enter = fadeIn() + slideInVertically { -it },
+                exit = fadeOut() + slideOutVertically { -it },
                 modifier = Modifier
                     .align(Alignment.TopCenter)
-                    .padding(top = 16.dp)
+                    .padding(top = 24.dp)
             ) {
                 Surface(
-                    color = Color.Black.copy(alpha = 0.6f),
-                    shape = RoundedCornerShape(20.dp),
-                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.15f))
+                    color = Color.White.copy(alpha = 0.12f),
+                    shape = RoundedCornerShape(24.dp),
+                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.1f)),
+                    modifier = Modifier.clip(RoundedCornerShape(24.dp))
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
                     ) {
                         IconButton(onClick = {
                             onAdjustOffset(-100)
-                            lastScrollTime = System.currentTimeMillis()
+                            lastInteractionTime = System.currentTimeMillis()
                         }) {
-                            Icon(Icons.Rounded.Remove, "Decrease Offset", tint = Color.White)
+                            Icon(Icons.Rounded.Remove, "Earlier", tint = Color.White)
                         }
 
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             modifier = Modifier
-                                .padding(horizontal = 8.dp)
-                                .pointerInput(Unit) {
-                                    detectTapGestures(
-                                        onLongPress = {
-                                            tempOffsetStr = lyricsOffsetMs.toString()
-                                            isLongPressing = true
-                                        },
-                                        onTap = {
-                                            // Optional: just show/refresh the timer if tapped
-                                            lastScrollTime = System.currentTimeMillis()
-                                        }
-                                    )
+                                .padding(horizontal = 16.dp)
+                                .clickable { 
+                                    tempOffsetStr = lyricsOffsetMs.toString()
+                                    isLongPressing = true 
                                 }
                         ) {
                             Text(
                                 text = "${if (lyricsOffsetMs >= 0) "+" else ""}${lyricsOffsetMs}ms",
                                 color = Color.White,
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.Bold
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.Black
                             )
                             Text(
-                                text = "Sync",
+                                text = "SYNC OFFSET",
                                 color = Color.White.copy(alpha = 0.5f),
                                 style = MaterialTheme.typography.labelSmall,
-                                fontSize = 10.sp
+                                fontSize = 9.sp,
+                                letterSpacing = 1.sp
                             )
                         }
 
                         IconButton(onClick = {
                             onAdjustOffset(100)
-                            lastScrollTime = System.currentTimeMillis()
+                            lastInteractionTime = System.currentTimeMillis()
                         }) {
-                            Icon(Icons.Rounded.Add, "Increase Offset", tint = Color.White)
+                            Icon(Icons.Rounded.Add, "Later", tint = Color.White)
                         }
                     }
                 }
             }
-
-            if (isLongPressing) {
-                AlertDialog(
-                    onDismissRequest = { isLongPressing = false },
-                    title = { Text("Adjust Lyrics Offset") },
-                    text = {
-                        Column {
-                            Text("Enter offset in milliseconds (ms):")
-                            Spacer(Modifier.height(8.dp))
-                            OutlinedTextField(
-                                value = tempOffsetStr,
-                                onValueChange = {
-                                    if (it.isEmpty() || it == "-" || it.toLongOrNull() != null) {
-                                        tempOffsetStr = it
-                                    }
-                                },
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                singleLine = true,
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                        }
-                    },
-                    confirmButton = {
-                        TextButton(onClick = {
-                            tempOffsetStr.toLongOrNull()?.let {
-                                onSetOffset(it)
-                            }
-                            isLongPressing = false
-                        }) {
-                            Text("Save")
-                        }
-                    },
-                    dismissButton = {
-                        TextButton(onClick = { isLongPressing = false }) {
-                            Text("Cancel")
-                        }
+        }
+        
+        // Manual offset entry dialog
+        if (isLongPressing) {
+            AlertDialog(
+                onDismissRequest = { isLongPressing = false },
+                title = { Text("Manual Sync Adjustment") },
+                text = {
+                    Column {
+                        Text("Enter offset (ms). Positive values delay lyrics, negative values speed them up.")
+                        Spacer(Modifier.height(16.dp))
+                        OutlinedTextField(
+                            value = tempOffsetStr,
+                            onValueChange = {
+                                if (it.isEmpty() || it == "-" || it.toLongOrNull() != null) {
+                                    tempOffsetStr = it
+                                }
+                            },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("Offset (ms)") }
+                        )
                     }
-                )
-            }
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        tempOffsetStr.toLongOrNull()?.let { onSetOffset(it) }
+                        isLongPressing = false
+                    }) {
+                        Text("Save Offset")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { isLongPressing = false }) {
+                        Text("Cancel")
+                    }
+                }
+            )
         }
     }
 }
 
 @Composable
-fun AppleMusicLyricLine(
+fun SyncedLyricLine(
     line: LrcLine,
     isCurrent: Boolean,
     progressInLine: Long,
+    targetAlpha: Float,
+    isWordByWord: Boolean,
     onClick: () -> Unit
 ) {
-    val scale by animateFloatAsState(
-        targetValue = if (isCurrent) 1.12f else 1.0f,
-        animationSpec = spring(dampingRatio = 0.7f, stiffness = Spring.StiffnessLow),
-        label = "scale"
+    val animatedAlpha by animateFloatAsState(
+        targetValue = targetAlpha, 
+        animationSpec = tween(durationMillis = 600),
+        label = "alpha"
     )
     
-    val opacity by animateFloatAsState(
-        targetValue = if (isCurrent) 1.0f else 0.4f,
-        animationSpec = tween(400),
-        label = "opacity"
+    // Bouncy scale for the active line
+    val animatedScale by animateFloatAsState(
+        targetValue = if (isCurrent) 1.06f else 1.0f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioLowBouncy,
+            stiffness = Spring.StiffnessLow
+        ),
+        label = "lineScale"
     )
+
+    // Generate word timings if they don't exist to support word-by-word highlighting
+    val words = remember(line.text, line.wordTimings, line.duration) {
+        line.wordTimings ?: run {
+            val wordsList = line.text.split(Regex("\\s+")).filter { it.isNotBlank() }
+            if (wordsList.isEmpty()) return@run emptyList<WordTiming>()
+            
+            val totalDuration = if (line.duration > 0) line.duration else 3000L
+            val wordDuration = totalDuration / wordsList.size
+            wordsList.mapIndexed { index, text ->
+                WordTiming(
+                    startTime = line.startTime + (index * wordDuration),
+                    duration = wordDuration,
+                    text = text
+                )
+            }
+        }
+    }
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 12.dp)
             .graphicsLayer {
-                scaleX = scale
-                scaleY = scale
-                alpha = opacity
-                // Apply a slight tilt/perspective if current
-                rotationX = if (isCurrent) -2f else 0f 
+                alpha = animatedAlpha
+                scaleX = animatedScale
+                scaleY = animatedScale
+                transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0.5f)
             }
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
@@ -279,22 +337,22 @@ fun AppleMusicLyricLine(
                 onClick = onClick
             )
     ) {
-        if (line.wordTimings != null && isCurrent) {
-            // Optimized Word-by-word rendering with gradient highlight
-            WordByWordFlow(
-                wordTimings = line.wordTimings,
+        if (isCurrent && words.isNotEmpty()) {
+            BouncyWordByWordFlow(
+                wordTimings = words,
                 progressInLine = progressInLine,
-                lineStartTime = line.startTime
+                lineStartTime = line.startTime,
+                isWordByWord = isWordByWord
             )
         } else {
-            // Standard smooth line highlight (fallback)
             Text(
                 text = line.text,
                 style = MaterialTheme.typography.headlineMedium.copy(
                     fontWeight = FontWeight.ExtraBold,
-                    fontSize = 30.sp,
-                    lineHeight = 38.sp,
-                    textAlign = TextAlign.Start
+                    fontSize = 24.sp,
+                    lineHeight = 30.sp,
+                    textAlign = TextAlign.Start,
+                    letterSpacing = (-0.5).sp
                 ),
                 color = Color.White
             )
@@ -304,55 +362,69 @@ fun AppleMusicLyricLine(
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun WordByWordFlow(
+fun BouncyWordByWordFlow(
     wordTimings: List<WordTiming>,
     progressInLine: Long,
-    lineStartTime: Long
+    lineStartTime: Long,
+    isWordByWord: Boolean
 ) {
     val baseStyle = MaterialTheme.typography.headlineMedium.copy(
         fontWeight = FontWeight.ExtraBold,
-        fontSize = 30.sp,
-        lineHeight = 38.sp
+        fontSize = 24.sp,
+        lineHeight = 30.sp,
+        letterSpacing = (-0.5).sp
     )
 
     FlowRow(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.Start
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         wordTimings.forEach { word ->
-            // Use precise timestamps from the model
-            val relativeStartTime = word.startTime - lineStartTime
-            val wordDuration = word.duration
+            val relativeStartTime = (word.startTime - lineStartTime).coerceAtLeast(0)
             
-            // Calculate word-level completion (0.0 -> 1.0)
-            val wordProgress = if (wordDuration > 0) {
-                ((progressInLine - relativeStartTime).toFloat() / wordDuration).coerceIn(0f, 1f)
-            } else {
-                if (progressInLine >= relativeStartTime) 1f else 0f
-            }
+            // For LRC (not word-by-word), we highlight the whole line immediately
+            val isWordActive = if (isWordByWord) progressInLine >= relativeStartTime else true
+            
+            val wordAlpha by animateFloatAsState(
+                targetValue = if (isWordActive) 1f else 0.35f,
+                animationSpec = tween(durationMillis = 250),
+                label = "wordAlpha"
+            )
+            
+            val wordScale by animateFloatAsState(
+                targetValue = if (isWordActive) 1.05f else 1.0f,
+                animationSpec = spring(
+                    dampingRatio = Spring.DampingRatioMediumBouncy,
+                    stiffness = Spring.StiffnessLow
+                ),
+                label = "wordScale"
+            )
 
-            // High-quality Gradient Highlight Effect
-            // As the word is sung, it lights up from left to right
-            val brush = if (wordProgress > 0f && wordProgress < 1f) {
+            // Letter by letter flow animation using a brush gradient (only for ELRC)
+            val wordDuration = word.duration.coerceAtLeast(1L)
+            val wordProgress = ((progressInLine - relativeStartTime).toFloat() / wordDuration).coerceIn(0f, 1f)
+
+            val brush = if (isWordByWord && isWordActive && wordProgress < 1f) {
                 Brush.horizontalGradient(
                     0.0f to Color.White,
                     wordProgress to Color.White,
-                    (wordProgress + 0.15f).coerceAtMost(1f) to Color.White.copy(alpha = 0.4f),
-                    1.0f to Color.White.copy(alpha = 0.4f)
+                    (wordProgress + 0.15f).coerceAtMost(1f) to Color.White.copy(alpha = 0.35f),
+                    1.0f to Color.White.copy(alpha = 0.35f)
                 )
             } else null
 
-            val textColor = when {
-                wordProgress >= 1f -> Color.White
-                wordProgress <= 0f -> Color.White.copy(alpha = 0.4f)
-                else -> Color.Unspecified // Use brush
-            }
-
             Text(
-                text = word.text + " ",
+                text = word.text,
                 style = if (brush != null) baseStyle.copy(brush = brush) else baseStyle,
-                color = textColor,
-                modifier = Modifier.padding(bottom = 4.dp)
+                color = if (brush != null) Color.Unspecified else Color.White,
+                modifier = Modifier
+                    .padding(bottom = 6.dp)
+                    .graphicsLayer {
+                        alpha = wordAlpha
+                        scaleX = wordScale
+                        scaleY = wordScale
+                        transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0.5f)
+                    }
             )
         }
     }

@@ -26,11 +26,22 @@ configure<ApplicationExtension> {
         minSdk = 26
         targetSdk = 35
         versionCode = 7
-        versionName = "2.8.3-beta"
+        versionName = "2.8.5-beta"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
             useSupportLibrary = true
+        }
+
+        val defaultLastFmKey = "16833738f9c418a1755341a988a11a2d"
+        val defaultLastFmSecret = "cb3217f1db1b98825f96c1aee6918c53"
+        buildConfigField("String", "LASTFM_API_KEY", "\"${localProperties.getProperty("LASTFM_API_KEY") ?: defaultLastFmKey}\"")
+        buildConfigField("String", "LASTFM_SECRET", "\"${localProperties.getProperty("LASTFM_SECRET") ?: defaultLastFmSecret}\"")
+
+        externalNativeBuild {
+            cmake {
+                arguments += listOf("-DALSOFT_ENABLE_MODULES=OFF")
+            }
         }
     }
 
@@ -81,11 +92,16 @@ configure<ApplicationExtension> {
 
     buildFeatures {
         compose = true
+        buildConfig = true
+    }
+
+    androidResources {
+        noCompress += "tflite"
     }
 
     externalNativeBuild {
         cmake {
-            version = "3.22.1"
+            version = "3.31.0"
             path = file("src/main/cpp/CMakeLists.txt")
         }
     }
@@ -203,6 +219,12 @@ dependencies {
 
     implementation("com.google.android.gms:play-services-cast-framework:21.4.0")
     implementation("com.google.android.gms:play-services-auth:21.2.0")
+    
+    // TensorFlow Lite
+    implementation("org.tensorflow:tensorflow-lite:2.16.1")
+    implementation("org.tensorflow:tensorflow-lite-support:0.4.4")
+    implementation("org.tensorflow:tensorflow-lite-select-tf-ops:2.16.1")
+
     implementation("com.google.apis:google-api-services-drive:v3-rev20240903-2.0.0") {
         exclude(group = "org.apache.httpcomponents")
     }

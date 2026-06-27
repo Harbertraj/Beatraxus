@@ -1,12 +1,13 @@
 package com.beatflowy.app.engine
 
 interface AudioOutput {
-    fun init(sampleRate: Int, channels: Int, bitDepth: Int): Boolean
+    fun init(sampleRate: Int, channels: Int, bitDepth: Int, isDoP: Boolean = false): Boolean
     fun setTargetSampleRate(sampleRate: Int)
     fun setSampleFormat(format: com.beatflowy.app.model.SampleFormat)
     fun setDvcState(enabled: Boolean, mode: String, level: Float)
     fun setUsbExclusiveMode(enabled: Boolean)
     fun setBitPerfectMode(enabled: Boolean)
+    fun setBufferConfig(bufferFrames: Int, bufferCount: Int, postFadeFrames: Int)
     fun setMmapExclusiveMode(enabled: Boolean, requestedBufferFrames: Int)
     fun isMmapActive(): Boolean
     fun mmapActualBufferFrames(): Int
@@ -15,6 +16,7 @@ interface AudioOutput {
     fun stop()
     fun flush()
     fun write(data: FloatArray, offsetInSamples: Int, frameCount: Int): Int
+    fun writeInt(data: IntArray, offsetInSamples: Int, frameCount: Int): Int
     fun playbackPositionFrames(): Long
     fun totalFramesWritten(): Long
     fun outputSampleRate(): Int

@@ -351,6 +351,6 @@ internal class MediaCodecAudioDecoder(
 
     companion object {
         private const val TAG = "MediaCodecDecoder"
-        private const val PCM_CHUNK_SAMPLES = 32_768
+        private const val PCM_CHUNK_SAMPLES = 131_072 // Increased for multi-channel/high-res buffers
     }
 }

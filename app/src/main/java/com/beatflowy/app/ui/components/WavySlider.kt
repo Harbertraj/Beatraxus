@@ -75,7 +75,7 @@ fun WavySlider(
             val path = Path()
             path.moveTo(0f, centerY)
 
-            val step = 2f
+            val step = 4f // Increased step for 120Hz performance
             for (x in 0..progressWidth.toInt() step step.toInt()) {
                 val xFloat = x.toFloat()
                 // Wavy formula: sin((x / wavelength) * 2PI + phase) * amplitude

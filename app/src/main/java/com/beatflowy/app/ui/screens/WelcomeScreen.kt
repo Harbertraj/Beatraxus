@@ -6,6 +6,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -35,6 +36,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.TextStyle
@@ -57,31 +59,28 @@ fun WelcomeScreen(
     onFinish: () -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    var showScanning by remember { mutableStateOf(false) }
     var startAnimation by remember { mutableStateOf(false) }
     var hasStartedScanning by remember { mutableStateOf(false) }
+    var isFinished by remember { mutableStateOf(false) }
 
     // Automatically transition to scanning screen based on state
-    LaunchedEffect(uiState.isScanning, uiState.permissionDenied) {
-        if (uiState.isScanning) {
-            showScanning = true
+    LaunchedEffect(uiState.isScanning, uiState.scanProgress) {
+        if (uiState.isScanning || uiState.scanProgress > 0f) {
             hasStartedScanning = true
-        } else if (uiState.permissionDenied) {
-            // If permission denied, we might want to stay on first screen to let them try again
-            showScanning = false
         }
     }
 
     // Effect to navigate when scanning finishes
-    LaunchedEffect(hasStartedScanning, uiState.isScanning) {
-        if (hasStartedScanning && !uiState.isScanning) {
+    LaunchedEffect(hasStartedScanning, uiState.isScanning, uiState.scanProgress) {
+        if (hasStartedScanning && !uiState.isScanning && uiState.scanProgress >= 0.99f) {
+            isFinished = true
             // Give a small delay so user can see 100% for a moment
-            delay(500)
+            delay(1000)
             onFinish()
         }
     }
 
-    // Concept: "Music Awakening" Animations
+    // ... (rest of the animations)
     val infiniteTransition = rememberInfiniteTransition(label = "musicAwakening")
     
     // 1. Background Gradient Pulse
@@ -104,6 +103,28 @@ fun WelcomeScreen(
             repeatMode = RepeatMode.Restart
         ),
         label = "floatDrift"
+    )
+
+    // 3. Title Shimmer
+    val titleShimmer by infiniteTransition.animateFloat(
+        initialValue = -500f,
+        targetValue = 1000f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(3000, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "titleShimmer"
+    )
+
+    // 4. Button Highlight Sweep
+    val buttonHighlightSweep by infiniteTransition.animateFloat(
+        initialValue = -1000f,
+        targetValue = 1000f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(4000, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "buttonHighlight"
     )
 
     // Sequential Entry Timings
@@ -148,6 +169,17 @@ fun WelcomeScreen(
         // 0. Premium Background Glows
         PremiumGlows(infiniteTransition)
 
+        // Step 2: Subtle Grain/Noise Overlay
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            repeat(1000) {
+                drawCircle(
+                    color = Color.White.copy(alpha = 0.03f),
+                    radius = 1.dp.toPx(),
+                    center = Offset(Random.nextFloat() * size.width, Random.nextFloat() * size.height)
+                )
+            }
+        }
+
         // 1. Smooth Waveform Background (Liquid feel)
         WaveformBackground(infiniteTransition)
 
@@ -176,477 +208,612 @@ fun WelcomeScreen(
         )
 
         AnimatedContent(
-            targetState = showScanning,
+            targetState = when {
+                uiState.isScanning || isFinished -> 2
+                uiState.showScanOptions -> 1
+                else -> 0
+            },
             transitionSpec = {
                 fadeIn(tween(800)) togetherWith fadeOut(tween(800))
             },
             label = "screenState"
-        ) { isScanning ->
-            if (!isScanning) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = 32.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center
-                ) {
-                    val welcomeColumnScope = this
-                    // Title Group
-                    Box(contentAlignment = Alignment.Center) {
-                        welcomeColumnScope.AnimatedVisibility(
-                            visible = showTitle,
-                            enter = fadeIn(animationSpec = spring(stiffness = Spring.StiffnessLow)) +
-                                    slideInVertically(
-                                        initialOffsetY = { -200 },
-                                        animationSpec = spring(
-                                            dampingRatio = Spring.DampingRatioMediumBouncy,
-                                            stiffness = Spring.StiffnessLow
+        ) { state ->
+            when (state) {
+                0 -> {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 32.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        val welcomeColumnScope = this
+                        // Title Group
+                        Box(contentAlignment = Alignment.Center) {
+                            welcomeColumnScope.AnimatedVisibility(
+                                visible = showTitle,
+                                enter = fadeIn(animationSpec = spring(stiffness = Spring.StiffnessLow)) +
+                                        slideInVertically(
+                                            initialOffsetY = { -200 },
+                                            animationSpec = spring(
+                                                dampingRatio = Spring.DampingRatioMediumBouncy,
+                                                stiffness = Spring.StiffnessLow
+                                            )
+                                        )
+                            ) {
+                                val breathingScale by infiniteTransition.animateFloat(
+                                    initialValue = 1f,
+                                    targetValue = 1.02f,
+                                    animationSpec = infiniteRepeatable(
+                                        animation = tween(3000, easing = EaseInOutSine),
+                                        repeatMode = RepeatMode.Reverse
+                                    ),
+                                    label = "scale"
+                                )
+
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    modifier = Modifier.graphicsLayer {
+                                        scaleX = breathingScale
+                                        scaleY = breathingScale
+                                    }
+                                ) {
+                                    Text(
+                                        text = "Welcome, Audiophile",
+                                        style = TextStyle(
+                                            brush = Brush.linearGradient(
+                                                colors = listOf(
+                                                    Color.White,
+                                                    Color.White.copy(alpha = 0.3f),
+                                                    Color.White
+                                                ),
+                                                start = Offset(titleShimmer, 0f),
+                                                end = Offset(titleShimmer + 200f, 200f)
+                                            ),
+                                            fontSize = 28.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            letterSpacing = 0.08.sp
                                         )
                                     )
-                        ) {
-                            val breathingScale by infiniteTransition.animateFloat(
-                                initialValue = 1f,
-                                targetValue = 1.02f,
-                                animationSpec = infiniteRepeatable(
-                                    animation = tween(3000, easing = EaseInOutSine),
-                                    repeatMode = RepeatMode.Reverse
-                                ),
-                                label = "scale"
-                            )
 
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                modifier = Modifier.graphicsLayer {
-                                    scaleX = breathingScale
-                                    scaleY = breathingScale
-                                }
-                            ) {
-                                Text(
-                                    text = "Welcome, Audiophile",
-                                    style = TextStyle(
-                                        color = Color.White,
-                                        fontSize = 28.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        letterSpacing = 0.08.sp
-                                    )
-                                )
-
-                                Text(
-                                    text = "Music Awakens",
-                                    style = TextStyle(
-                                        brush = Brush.linearGradient(
-                                            colors = listOf(Color(0xFFBDC3C7), Color(0xFF7C4DFF))
+                                    Text(
+                                        text = "Music Awakens",
+                                        style = TextStyle(
+                                            brush = Brush.linearGradient(
+                                                colors = listOf(Color(0xFFBDC3C7), Color(0xFF7C4DFF)),
+                                                start = Offset(0f, gradientShift * 100f),
+                                                end = Offset(100f, 100f - gradientShift * 100f)
+                                            ),
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.Light,
+                                            letterSpacing = 8.sp
                                         ),
-                                        fontSize = 14.sp,
-                                        fontWeight = FontWeight.Light,
-                                        letterSpacing = 6.sp
-                                    ),
-                                    modifier = Modifier.padding(top = 8.dp).alpha(0.8f)
-                                )
+                                        modifier = Modifier.padding(top = 8.dp).alpha(0.8f)
+                                    )
+                                }
                             }
                         }
-                    }
 
-                    Spacer(modifier = Modifier.height(80.dp))
+                        Spacer(modifier = Modifier.height(80.dp))
 
-                    // Thunder Electric Effect with Bigger Circle Background and Popping Icons
-                    Box(
-                        modifier = Modifier
-                            .size(240.dp)
-                            .offset(y = 20.dp), // Move down a little
-                        contentAlignment = Alignment.Center
-                    ) {
-                        val thunderPulse by infiniteTransition.animateFloat(
-                            initialValue = 0.95f,
-                            targetValue = 1.05f,
-                            animationSpec = infiniteRepeatable(
-                                animation = tween(150, easing = LinearEasing),
-                                repeatMode = RepeatMode.Reverse
-                            ),
-                            label = "thunderPulse"
-                        )
-                        
-                        val thunderAlpha by infiniteTransition.animateFloat(
-                            initialValue = 0.6f,
-                            targetValue = 1f,
-                            animationSpec = infiniteRepeatable(
-                                animation = tween(100, easing = LinearEasing),
-                                repeatMode = RepeatMode.Reverse
-                            ),
-                            label = "thunderAlpha"
-                        )
-
-                        val auraPulse by infiniteTransition.animateFloat(
-                            initialValue = 1f,
-                            targetValue = 1.08f,
-                            animationSpec = infiniteRepeatable(
-                                animation = tween(2000, easing = EaseInOutSine),
-                                repeatMode = RepeatMode.Reverse
-                            ),
-                            label = "auraPulse"
-                        )
-
-                        // Launching animation values
-                        val iconScale by animateFloatAsState(
-                            targetValue = if (startAnimation) 1f else 0f,
-                            animationSpec = spring(
-                                dampingRatio = Spring.DampingRatioMediumBouncy,
-                                stiffness = Spring.StiffnessLow
-                            ),
-                            label = "iconLaunchScale"
-                        )
-
-                        val iconAlpha by animateFloatAsState(
-                            targetValue = if (startAnimation) 1f else 0f,
-                            animationSpec = tween(1000),
-                            label = "iconLaunchAlpha"
-                        )
-
-                        // 1. Bigger Circle Background (Aura)
+                        // Thunder Electric Effect with Bigger Circle Background and Popping Icons
                         Box(
                             modifier = Modifier
-                                .size(220.dp)
-                                .graphicsLayer {
-                                    scaleX = iconScale * auraPulse
-                                    scaleY = iconScale * auraPulse
-                                    alpha = iconAlpha * 0.25f
-                                }
-                                .background(
-                                    Brush.radialGradient(
-                                        colors = listOf(Color.White.copy(alpha = 0.15f), Color.Transparent)
-                                    ),
-                                    CircleShape
-                                )
-                                .border(1.2.dp, Color.White.copy(alpha = 0.25f), CircleShape)
-                        )
-
-                        // 2. Central Popping Icons
-                        if (startAnimation) {
-                            CentralPopIcons(infiniteTransition, iconAlpha)
-                        }
-
-                        // 3. Glow behind thunder
-                        Box(
-                            modifier = Modifier
-                                .size(110.dp)
-                                .graphicsLayer { 
-                                    scaleX = (thunderPulse * 1.7f) * iconScale
-                                    scaleY = (thunderPulse * 1.7f) * iconScale
-                                    alpha = (thunderAlpha * 0.45f) * iconAlpha
-                                }
-                                .background(Color(0xFF7C4DFF).copy(alpha = 0.5f), CircleShape)
-                                .blur(40.dp)
-                        )
-
-                        // 4. Main Thunder Icon with Shape
-                        Box(
-                            modifier = Modifier
-                                .size(140.dp)
-                                .graphicsLayer {
-                                    scaleX = thunderPulse * iconScale * thunderHitScale.value
-                                    scaleY = thunderPulse * iconScale * thunderHitScale.value
-                                    alpha = thunderAlpha * iconAlpha
-                                    shadowElevation = 30f
-                                }
-                                .background(Color.White.copy(alpha = 0.15f), CircleShape)
-                                .border(1.5.dp, Color.White.copy(alpha = 0.3f), CircleShape),
+                                .size(240.dp)
+                                .offset(y = 20.dp), // Move down a little
                             contentAlignment = Alignment.Center
                         ) {
-                            Icon(
-                                imageVector = Icons.Rounded.FlashOn,
-                                contentDescription = null,
-                                tint = Color.White,
-                                modifier = Modifier.size(90.dp)
-                            )
-                        }
-                    }
-
-                    // Centered Question Text (Typewriter Animation)
-                    Box(
-                        modifier = Modifier
-                            .height(180.dp)
-                            .fillMaxWidth(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        var showQuestion by remember { mutableStateOf(false) }
-                        LaunchedEffect(startAnimation) {
-                            if (startAnimation) {
-                                delay(1000) // Start after thunder is fully visible
-                                showQuestion = true
-                            }
-                        }
-
-                        if (showQuestion) {
-                            TypewriterText(
-                                text = "Why did it take so long to install me?",
-                                style = TextStyle(
-                                    color = Color.White.copy(alpha = 0.5f),
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.Light,
-                                    letterSpacing = 1.2.sp
+                            val thunderPulse by infiniteTransition.animateFloat(
+                                initialValue = 0.95f,
+                                targetValue = 1.05f,
+                                animationSpec = infiniteRepeatable(
+                                    animation = tween(150, easing = LinearEasing),
+                                    repeatMode = RepeatMode.Reverse
                                 ),
-                                delayMillis = 25L
+                                label = "thunderPulse"
                             )
-                        }
-                    }
+                            
+                            val thunderAlpha by infiniteTransition.animateFloat(
+                                initialValue = 0.6f,
+                                targetValue = 1f,
+                                animationSpec = infiniteRepeatable(
+                                    animation = tween(100, easing = LinearEasing),
+                                    repeatMode = RepeatMode.Reverse
+                                ),
+                                label = "thunderAlpha"
+                            )
 
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        val phrasesColumnScope = this
-                        // Music-themed animated phrases
-                        var musicPhraseIndex by remember { mutableIntStateOf(0) }
-                        val musicPhrases = listOf(
-                            "Feel the Rhythm", "Hear the Soul", "Deep Bass Awaits",
-                            "Crystal Clear Sound", "Your Music, Evolved",
-                            "You are Magic", "Sonic Bliss", "Pure Audio"
-                        )
-
-                        LaunchedEffect(showTitle) {
-                            if (showTitle) {
-                                while (true) {
-                                    delay(1000)
-                                    musicPhraseIndex = (musicPhraseIndex + 1) % musicPhrases.size
-                                }
-                            }
-                        }
-
-                        phrasesColumnScope.AnimatedVisibility(
-                            visible = showTitle,
-                            enter = fadeIn(animationSpec = spring(stiffness = Spring.StiffnessLow)) +
-                                    expandVertically(animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy)),
-                            modifier = Modifier.padding(bottom = 24.dp)
-                        ) {
-                            AnimatedContent(
-                                targetState = musicPhrases[musicPhraseIndex],
-                                transitionSpec = {
-                                    (slideInVertically(animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy)) { it } + fadeIn()).togetherWith(
-                                        slideOutVertically(animationSpec = spring()) { -it } + fadeOut()
-                                    )
-                                },
-                                label = "musicPhrase"
-                            ) { phrase ->
-                                Text(
-                                    text = phrase.uppercase(),
-                                    style = TextStyle(
-                                        color = Color(0xFF7C4DFF),
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        letterSpacing = 4.sp
-                                    ),
-                                    modifier = Modifier.alpha(0.7f)
-                                )
-                            }
-                        }
-
-                        // Premium Start Button
-                        phrasesColumnScope.AnimatedVisibility(
-                            visible = showButton,
-                            enter = fadeIn(animationSpec = spring(stiffness = Spring.StiffnessVeryLow)) +
-                                    scaleIn(
-                                        initialScale = 0.7f,
-                                        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow)
-                                    ) +
-                                    slideInVertically(
-                                        initialOffsetY = { 300 },
-                                        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow)
-                                    )
-                        ) {
-                            val buttonGlowAlpha by infiniteTransition.animateFloat(
-                                initialValue = 0.5f,
-                                targetValue = 0.9f,
+                            val auraPulse by infiniteTransition.animateFloat(
+                                initialValue = 1f,
+                                targetValue = 1.08f,
                                 animationSpec = infiniteRepeatable(
                                     animation = tween(2000, easing = EaseInOutSine),
                                     repeatMode = RepeatMode.Reverse
                                 ),
-                                label = "buttonGlow"
+                                label = "auraPulse"
                             )
 
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                if (uiState.permissionDenied) {
+                            // Launching animation values
+                            val iconScale by animateFloatAsState(
+                                targetValue = if (startAnimation) 1f else 0f,
+                                animationSpec = spring(
+                                    dampingRatio = Spring.DampingRatioMediumBouncy,
+                                    stiffness = Spring.StiffnessLow
+                                ),
+                                label = "iconLaunchScale"
+                            )
+
+                            val iconAlpha by animateFloatAsState(
+                                targetValue = if (startAnimation) 1f else 0f,
+                                animationSpec = tween(1000),
+                                label = "iconLaunchAlpha"
+                            )
+
+                            // 1. Bigger Circle Background (Aura)
+                            Box(
+                                modifier = Modifier
+                                    .size(220.dp)
+                                    .graphicsLayer {
+                                        scaleX = iconScale * auraPulse
+                                        scaleY = iconScale * auraPulse
+                                        alpha = iconAlpha * 0.25f
+                                    }
+                                    .background(
+                                        Brush.radialGradient(
+                                            colors = listOf(Color.White.copy(alpha = 0.15f), Color.Transparent)
+                                        ),
+                                        CircleShape
+                                    )
+                                    .border(1.2.dp, Color.White.copy(alpha = 0.25f), CircleShape)
+                            )
+
+                            // 2. Central Popping Icons
+                            if (startAnimation) {
+                                CentralPopIcons(infiniteTransition, iconAlpha)
+                            }
+
+                            // 3. Glow behind thunder
+                            Box(
+                                modifier = Modifier
+                                    .size(110.dp)
+                                    .graphicsLayer { 
+                                        scaleX = (thunderPulse * 1.7f) * iconScale
+                                        scaleY = (thunderPulse * 1.7f) * iconScale
+                                        alpha = (thunderAlpha * 0.45f) * iconAlpha
+                                    }
+                                    .background(Color(0xFF7C4DFF).copy(alpha = 0.5f), CircleShape)
+                                    .blur(40.dp)
+                            )
+
+                            // 4. Main Thunder Icon with Shape
+                            Box(
+                                modifier = Modifier
+                                    .size(140.dp)
+                                    .graphicsLayer {
+                                        scaleX = thunderPulse * iconScale * thunderHitScale.value
+                                        scaleY = thunderPulse * iconScale * thunderHitScale.value
+                                        alpha = thunderAlpha * iconAlpha
+                                        shadowElevation = 30f
+                                    }
+                                    .background(Color.White.copy(alpha = 0.15f), CircleShape)
+                                    .border(1.5.dp, Color.White.copy(alpha = 0.3f), CircleShape),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.FlashOn,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(90.dp)
+                                )
+                            }
+                        }
+
+                        // Centered Question Text (Typewriter Animation)
+                        Box(
+                            modifier = Modifier
+                                .height(180.dp)
+                                .fillMaxWidth(),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            var showQuestion by remember { mutableStateOf(false) }
+                            LaunchedEffect(startAnimation) {
+                                if (startAnimation) {
+                                    delay(1000) // Start after thunder is fully visible
+                                    showQuestion = true
+                                }
+                            }
+
+                            if (showQuestion) {
+                                TypewriterText(
+                                    text = "Why did it take so long to install me?",
+                                    style = TextStyle(
+                                        color = Color.White.copy(alpha = 0.5f),
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Light,
+                                        letterSpacing = 1.2.sp
+                                    ),
+                                    delayMillis = 25L
+                                )
+                            }
+                        }
+
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            val phrasesColumnScope = this
+                            // Music-themed animated phrases
+                            var musicPhraseIndex by remember { mutableIntStateOf(0) }
+                            val musicPhrases = listOf(
+                                "Feel the Rhythm", "Hear the Soul", "Deep Bass Awaits",
+                                "Crystal Clear Sound", "Your Music, Evolved",
+                                "You are Magic", "Sonic Bliss", "Pure Audio"
+                            )
+
+                            LaunchedEffect(showTitle) {
+                                if (showTitle) {
+                                    while (true) {
+                                        delay(1000)
+                                        musicPhraseIndex = (musicPhraseIndex + 1) % musicPhrases.size
+                                    }
+                                }
+                            }
+
+                            phrasesColumnScope.AnimatedVisibility(
+                                visible = showTitle,
+                                enter = fadeIn(animationSpec = spring(stiffness = Spring.StiffnessLow)) +
+                                        expandVertically(animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy)),
+                                modifier = Modifier.padding(bottom = 24.dp)
+                            ) {
+                                AnimatedContent(
+                                    targetState = musicPhrases[musicPhraseIndex],
+                                    transitionSpec = {
+                                        (slideInVertically(animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy)) { it } + fadeIn()).togetherWith(
+                                            slideOutVertically(animationSpec = spring()) { -it } + fadeOut()
+                                        )
+                                    },
+                                    label = "musicPhrase"
+                                ) { phrase ->
                                     Text(
-                                        "Permissions are required to sync your library",
-                                        color = Color(0xFFFF5252),
-                                        fontSize = 12.sp,
-                                        modifier = Modifier.padding(bottom = 8.dp)
+                                        text = phrase.uppercase(),
+                                        style = TextStyle(
+                                            color = Color(0xFF7C4DFF),
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            letterSpacing = 4.sp
+                                        ),
+                                        modifier = Modifier.alpha(0.7f)
                                     )
                                 }
-                                Box(
-                                    modifier = Modifier
-                                        .graphicsLayer {
-                                            shadowElevation = 20f
-                                            shape = RoundedCornerShape(32.dp)
-                                            clip = true
-                                        }
-                                        .background(
-                                            Brush.horizontalGradient(
-                                                listOf(Color(0xFF1E88E5), Color(0xFF7C4DFF))
-                                            )
+                            }
+
+                            // Premium Start Button
+                            phrasesColumnScope.AnimatedVisibility(
+                                visible = showButton,
+                                enter = fadeIn(animationSpec = spring(stiffness = Spring.StiffnessVeryLow)) +
+                                        scaleIn(
+                                            initialScale = 0.7f,
+                                            animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow)
+                                        ) +
+                                        slideInVertically(
+                                            initialOffsetY = { 300 },
+                                            animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow)
                                         )
-                                        .clickable(
-                                            interactionSource = remember { MutableInteractionSource() },
-                                            indication = null,
-                                            onClick = {
-                                                if (!uiState.isScanning) {
-                                                    showScanning = true
-                                                    onEnterFlow()
-                                                }
+                            ) {
+                                val buttonGlowAlpha by infiniteTransition.animateFloat(
+                                    initialValue = 0.5f,
+                                    targetValue = 0.9f,
+                                    animationSpec = infiniteRepeatable(
+                                        animation = tween(2000, easing = EaseInOutSine),
+                                        repeatMode = RepeatMode.Reverse
+                                    ),
+                                    label = "buttonGlow"
+                                )
+
+                                val buttonInteractionSource = remember { MutableInteractionSource() }
+                                val isButtonPressed by buttonInteractionSource.collectIsPressedAsState()
+                                val buttonScale by animateFloatAsState(
+                                    targetValue = if (isButtonPressed) 0.96f else 1f,
+                                    label = "buttonScale"
+                                )
+
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    if (uiState.permissionDenied) {
+                                        Text(
+                                            "Permissions are required to sync your library",
+                                            color = Color(0xFFFF5252),
+                                            fontSize = 12.sp,
+                                            modifier = Modifier.padding(bottom = 8.dp)
+                                        )
+                                    }
+                                    Box(
+                                        modifier = Modifier
+                                            .graphicsLayer {
+                                                scaleX = buttonScale
+                                                scaleY = buttonScale
                                             }
+                                            .shadow(20.dp, RoundedCornerShape(32.dp), spotColor = Color(0xFF7C4DFF))
+                                            .clip(RoundedCornerShape(32.dp))
+                                            .background(
+                                                Brush.horizontalGradient(
+                                                    listOf(Color(0xFF1E88E5), Color(0xFF7C4DFF))
+                                                )
+                                            )
+                                            .clickable(
+                                                interactionSource = buttonInteractionSource,
+                                                indication = null,
+                                                onClick = {
+                                                    if (!uiState.isScanning) {
+                                                        onEnterFlow()
+                                                    }
+                                                }
+                                            )
+                                            .alpha(buttonGlowAlpha)
+                                            .padding(horizontal = 48.dp, vertical = 20.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        // Step 3: Highlight Sweep
+                                        Canvas(modifier = Modifier.matchParentSize()) {
+                                            drawRect(
+                                                brush = Brush.linearGradient(
+                                                    colors = listOf(
+                                                        Color.Transparent,
+                                                        Color.White.copy(alpha = 0.2f),
+                                                        Color.Transparent
+                                                    ),
+                                                    start = Offset(buttonHighlightSweep, 0f),
+                                                    end = Offset(buttonHighlightSweep + 100f, size.height)
+                                                )
+                                            )
+                                        }
+
+                                        Text(
+                                            if (uiState.permissionDenied) "GRANT PERMISSION" else "ENTER THE FLOW",
+                                            color = Color.White,
+                                            fontSize = 15.sp,
+                                            fontWeight = FontWeight.Black,
+                                            letterSpacing = 2.5.sp
                                         )
-                                        .alpha(buttonGlowAlpha)
-                                        .padding(horizontal = 48.dp, vertical = 20.dp),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text(
-                                        if (uiState.permissionDenied) "GRANT PERMISSION" else "ENTER THE FLOW",
-                                        color = Color.White,
-                                        fontSize = 15.sp,
-                                        fontWeight = FontWeight.Black,
-                                        letterSpacing = 2.5.sp
-                                    )
+                                    }
                                 }
                             }
                         }
                     }
                 }
-            } else {
-                // Scanning Screen (Second Screen of Welcome) - Remastered with Glass Effect
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color.Black.copy(alpha = 0.4f)), // Darken background slightly
-                    contentAlignment = Alignment.Center
-                ) {
-                    Box(
+                1 -> {
+                    // Choice Screen
+                    Column(
                         modifier = Modifier
-                            .fillMaxWidth(0.88f)
-                            .wrapContentHeight()
-                            .padding(20.dp)
-                            .shadow(
-                                elevation = 40.dp,
-                                shape = RoundedCornerShape(32.dp),
-                                clip = false,
-                                ambientColor = Color.Black,
-                                spotColor = Color(0xFF7C4DFF).copy(alpha = 0.5f)
-                            )
-                            .clip(RoundedCornerShape(32.dp))
-                            .background(
-                                Brush.verticalGradient(
-                                    colors = listOf(
-                                        Color.White.copy(alpha = 0.08f),
-                                        Color.White.copy(alpha = 0.02f)
-                                    )
-                                )
-                            )
-                            .border(
-                                width = 1.5.dp,
-                                brush = Brush.linearGradient(
-                                    colors = listOf(
-                                        Color.White.copy(alpha = 0.25f),
-                                        Color.Transparent,
-                                        Color.White.copy(alpha = 0.1f)
-                                    )
-                                ),
-                                shape = RoundedCornerShape(32.dp)
-                            )
+                            .fillMaxSize()
+                            .padding(horizontal = 32.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
                     ) {
-                        // Glass Blur Layer
-                        Box(
-                            modifier = Modifier
-                                .matchParentSize()
-                                .background(Color(0xCC121217)) // Dark shade for glass depth
-                                .blur(60.dp) // Soften the background depth
+                        Text(
+                            "Setup Your Library",
+                            style = TextStyle(
+                                color = Color.White,
+                                fontSize = 28.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        )
+                        
+                        Text(
+                            "How would you like to scan your music?",
+                            style = TextStyle(
+                                color = Color.White.copy(alpha = 0.6f),
+                                fontSize = 14.sp
+                            ),
+                            modifier = Modifier.padding(top = 8.dp, bottom = 48.dp)
                         )
 
-                        Column(
-                            modifier = Modifier
-                                .padding(vertical = 44.dp, horizontal = 28.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            // Animated Pulse for the "Syncing" text
-                            val syncPulse by infiniteTransition.animateFloat(
-                                initialValue = 0.7f,
-                                targetValue = 1f,
-                                animationSpec = infiniteRepeatable(
-                                    animation = tween(1500, easing = EaseInOutSine),
-                                    repeatMode = RepeatMode.Reverse
-                                ),
-                                label = "syncPulse"
-                            )
+                        // Full Scan Option
+                        ScanOptionCard(
+                            title = "FULL SCAN",
+                            description = "Scan all compatible audio files from your device storage.",
+                            icon = Icons.Rounded.Search,
+                            color = Color(0xFF7C4DFF),
+                            onClick = { viewModel.startFullScan() }
+                        )
 
-                            Text(
-                                "Syncing Music...",
-                                color = Color.White,
-                                fontWeight = FontWeight.Black,
-                                fontSize = 26.sp,
-                                letterSpacing = 0.5.sp,
-                                modifier = Modifier.alpha(syncPulse)
-                            )
+                        Spacer(modifier = Modifier.height(24.dp))
 
-                            Spacer(Modifier.height(40.dp))
-
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceEvenly,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                WelcomeStatItem(
-                                    Icons.Rounded.MusicNote,
-                                    uiState.scanCount.toString(),
-                                    "Songs",
-                                    Color(0xFFFF4081)
-                                )
-                                WelcomeStatItem(
-                                    Icons.Rounded.Album,
-                                    uiState.albumCount.toString(),
-                                    "Albums",
-                                    Color(0xFFB2FF59)
-                                )
-                                WelcomeStatItem(
-                                    Icons.Rounded.Person,
-                                    uiState.artistCount.toString(),
-                                    "Artists",
-                                    Color(0xFF7C4DFF)
-                                )
+                        // Add Folder Option
+                        ScanOptionCard(
+                            title = "ADD FOLDER TO SCAN",
+                            description = "Pick specific folders to include in your library.",
+                            icon = Icons.Rounded.CreateNewFolder,
+                            color = Color(0xFF1E88E5),
+                            onClick = { viewModel.openFolderPicker() }
+                        )
+                        
+                        if (uiState.musicFolders.isNotEmpty()) {
+                            Spacer(modifier = Modifier.height(24.dp))
+                            
+                            // List of added folders with remove option
+                            uiState.musicFolders.forEach { folder ->
+                                val folderName = folder.substringAfterLast("/")
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 4.dp)
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(Color.White.copy(alpha = 0.05f))
+                                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        Icons.Rounded.Folder,
+                                        contentDescription = null,
+                                        tint = Color(0xFF1E88E5),
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Text(
+                                        text = folderName,
+                                        color = Color.White.copy(alpha = 0.8f),
+                                        fontSize = 14.sp,
+                                        modifier = Modifier.weight(1f),
+                                        maxLines = 1
+                                    )
+                                    IconButton(
+                                        onClick = { viewModel.removeMusicFolder(folder) },
+                                        modifier = Modifier.size(24.dp)
+                                    ) {
+                                        Icon(
+                                            Icons.Rounded.Close,
+                                            contentDescription = "Remove",
+                                            tint = Color.White.copy(alpha = 0.5f),
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
                             }
+                            
+                            Spacer(modifier = Modifier.height(24.dp))
+                            
+                            Button(
+                                onClick = { viewModel.startAddedFoldersScan() },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(alpha = 0.1f)),
+                                shape = RoundedCornerShape(16.dp),
+                                modifier = Modifier.fillMaxWidth().height(56.dp)
+                            ) {
+                                Icon(Icons.Rounded.PlayArrow, contentDescription = null, tint = Color.White)
+                                Spacer(Modifier.width(8.dp))
+                                Text("SCAN ${uiState.musicFolders.size} FOLDERS", color = Color.White, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                }
+                else -> {
+                    // Scanning Screen (Second Screen of Welcome) - Remastered with Glass Effect
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color.Black.copy(alpha = 0.4f)), // Darken background slightly
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth(0.88f)
+                                .wrapContentHeight()
+                                .padding(20.dp)
+                                .shadow(
+                                    elevation = 40.dp,
+                                    shape = RoundedCornerShape(32.dp),
+                                    clip = false,
+                                    ambientColor = Color.Black,
+                                    spotColor = Color(0xFF7C4DFF).copy(alpha = 0.5f)
+                                )
+                                .clip(RoundedCornerShape(32.dp))
+                                .background(
+                                    Brush.verticalGradient(
+                                        colors = listOf(
+                                            Color.White.copy(alpha = 0.08f),
+                                            Color.White.copy(alpha = 0.02f)
+                                        )
+                                    )
+                                )
+                                .border(
+                                    width = 1.5.dp,
+                                    brush = Brush.linearGradient(
+                                        colors = listOf(
+                                            Color.White.copy(alpha = 0.25f),
+                                            Color.Transparent,
+                                            Color.White.copy(alpha = 0.1f)
+                                        )
+                                    ),
+                                    shape = RoundedCornerShape(32.dp)
+                                )
+                        ) {
+                            // Glass Blur Layer
+                            Box(
+                                modifier = Modifier
+                                    .matchParentSize()
+                                    .background(Color(0xCC121217)) // Dark shade for glass depth
+                                    .blur(60.dp) // Soften the background depth
+                            )
 
-                            Spacer(Modifier.height(44.dp))
+                            Column(
+                                modifier = Modifier
+                                    .padding(vertical = 44.dp, horizontal = 28.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                // Animated Pulse for the "Syncing" text
+                                val syncPulse by infiniteTransition.animateFloat(
+                                    initialValue = 0.7f,
+                                    targetValue = 1f,
+                                    animationSpec = infiniteRepeatable(
+                                        animation = tween(1500, easing = EaseInOutSine),
+                                        repeatMode = RepeatMode.Reverse
+                                    ),
+                                    label = "syncPulse"
+                                )
 
-                            // Glow effect behind progress bar
-                            Box(contentAlignment = Alignment.Center) {
+                                Text(
+                                    uiState.errorMessage ?: "Syncing Music...",
+                                    color = Color.White,
+                                    fontWeight = FontWeight.Black,
+                                    fontSize = 20.sp,
+                                    letterSpacing = 0.5.sp,
+                                    modifier = Modifier.alpha(syncPulse)
+                                )
+
+                                Spacer(Modifier.height(40.dp))
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceEvenly,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    WelcomeStatItem(
+                                        Icons.Rounded.MusicNote,
+                                        uiState.scanCount.toString(),
+                                        "Songs",
+                                        Color(0xFFFF4081)
+                                    )
+                                    WelcomeStatItem(
+                                        Icons.Rounded.Album,
+                                        uiState.albumCount.toString(),
+                                        "Albums",
+                                        Color(0xFFB2FF59)
+                                    )
+                                    WelcomeStatItem(
+                                        Icons.Rounded.Person,
+                                        uiState.artistCount.toString(),
+                                        "Artists",
+                                        Color(0xFF7C4DFF)
+                                    )
+                                }
+
+                                Spacer(Modifier.height(44.dp))
+
+                                // Premium Animated Progress Bar
                                 Box(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .height(14.dp)
-                                        .blur(15.dp)
-                                        .background(AccentBlue.copy(alpha = 0.2f), CircleShape)
-                                )
-                                
-                                LinearProgressIndicator(
-                                    progress = { uiState.scanProgress },
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(10.dp)
-                                        .clip(CircleShape),
-                                    color = AccentBlue,
-                                    trackColor = Color.White.copy(0.08f)
+                                        .height(16.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    LinearProgressIndicator(
+                                        progress = { uiState.scanProgress },
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(6.dp)
+                                            .clip(CircleShape),
+                                        color = Color(0xFFD4A24C),
+                                        trackColor = Color.White.copy(alpha = 0.1f)
+                                    )
+                                }
+
+                                Spacer(Modifier.height(20.dp))
+
+                                Text(
+                                    "${(uiState.scanProgress * 100).toInt()}%",
+                                    color = Color(0xFFD4A24C),
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.Black
                                 )
                             }
-
-                            Spacer(Modifier.height(20.dp))
-
-                            Text(
-                                "${(uiState.scanProgress * 100).toInt()}%",
-                                color = AccentBlue,
-                                fontSize = 18.sp,
-                                fontWeight = FontWeight.Black,
-                                style = TextStyle(
-                                    shadow = androidx.compose.ui.graphics.Shadow(
-                                        color = AccentBlue.copy(alpha = 0.5f),
-                                        blurRadius = 10f
-                                    )
-                                )
-                            )
                         }
                     }
                 }
@@ -921,7 +1088,7 @@ fun TypewriterText(
     text: String,
     style: TextStyle,
     modifier: Modifier = Modifier,
-    delayMillis: Long = 50L
+    delayMillis: Long = 25L
 ) {
     var textToDisplay by remember { mutableStateOf("") }
     
@@ -933,11 +1100,106 @@ fun TypewriterText(
         }
     }
 
-    Text(
-        text = textToDisplay,
-        style = style,
-        modifier = modifier
+    val infiniteTransition = rememberInfiniteTransition(label = "cursor")
+    val cursorAlpha by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(500),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "cursorAlpha"
     )
+
+    Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            text = textToDisplay,
+            style = style
+        )
+        if (textToDisplay.length < text.length) {
+            Text(
+                text = "|",
+                style = style.copy(fontWeight = FontWeight.Bold),
+                modifier = Modifier.alpha(cursorAlpha)
+            )
+        }
+    }
+}
+
+@Composable
+fun ScanOptionCard(
+    title: String,
+    description: String,
+    icon: ImageVector,
+    color: Color,
+    onClick: () -> Unit
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(if (isPressed) 0.98f else 1f, label = "scale")
+    val borderAlpha by animateFloatAsState(if (isPressed) 0.6f else 0.15f, label = "border")
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
+            .clip(RoundedCornerShape(24.dp))
+            .background(Color.White.copy(alpha = 0.05f))
+            .border(
+                width = 1.dp,
+                brush = Brush.linearGradient(
+                    colors = listOf(
+                        Color.White.copy(alpha = borderAlpha),
+                        Color.White.copy(alpha = borderAlpha * 0.3f)
+                    )
+                ),
+                shape = RoundedCornerShape(24.dp)
+            )
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = onClick
+            )
+            .padding(24.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .size(56.dp)
+                    .clip(CircleShape)
+                    .background(color.copy(alpha = 0.15f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(icon, contentDescription = null, tint = color, modifier = Modifier.size(28.dp))
+            }
+            
+            Spacer(modifier = Modifier.width(20.dp))
+            
+            Column {
+                Text(
+                    text = title,
+                    style = TextStyle(
+                        color = Color.White,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        letterSpacing = 1.sp
+                    )
+                )
+                Text(
+                    text = description,
+                    style = TextStyle(
+                        color = Color.White.copy(alpha = 0.5f),
+                        fontSize = 12.sp,
+                        lineHeight = 18.sp
+                    ),
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
+        }
+    }
 }
 
 @Composable

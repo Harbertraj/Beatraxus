@@ -26,9 +26,9 @@ fun AlbumsView(
         ) {
             items(albums, key = { it.first + it.second }) { album ->
                 Box(Modifier.animateItem()) {
-                    LibraryGridItem(album.first, album.second, album.third) {
+                    LibraryGridItem(album.first, album.second, album.third, onClick = {
                         onAlbumClick(album.first)
-                    }
+                    })
                 }
             }
         }

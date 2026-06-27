@@ -36,7 +36,8 @@ internal data class PcmAudioFormat(
     val sampleRate: Int,
     val channels: Int,
     val bitDepth: Int,
-    val codec: String? = null
+    val codec: String? = null,
+    val isDoP: Boolean = false
 )
 
 internal sealed interface DecodeResult {

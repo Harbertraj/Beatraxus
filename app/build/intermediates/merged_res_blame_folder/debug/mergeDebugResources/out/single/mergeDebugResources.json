@@ -16,12 +16,12 @@
         "source": "C:\\Users\\Haaj Mens\\.gradle\\daemon\\8.10.2\\com.beatflowy.app-main-95:\\mipmap-hdpi\\new_launcher_round.png"
     },
     {
-        "merged": "C:\\Users\\Haaj Mens\\.gradle\\daemon\\8.10.2\\com.beatflowy.app-debug-93:\\raw_music_wave.json.flat",
-        "source": "C:\\Users\\Haaj Mens\\.gradle\\daemon\\8.10.2\\com.beatflowy.app-main-95:\\raw\\music_wave.json"
-    },
-    {
         "merged": "C:\\Users\\Haaj Mens\\.gradle\\daemon\\8.10.2\\com.beatflowy.app-debug-93:\\drawable_ic_launcher_background.xml.flat",
         "source": "C:\\Users\\Haaj Mens\\.gradle\\daemon\\8.10.2\\com.beatflowy.app-main-95:\\drawable\\ic_launcher_background.xml"
+    },
+    {
+        "merged": "C:\\Users\\Haaj Mens\\.gradle\\daemon\\8.10.2\\com.beatflowy.app-debug-93:\\raw_music_wave.json.flat",
+        "source": "C:\\Users\\Haaj Mens\\.gradle\\daemon\\8.10.2\\com.beatflowy.app-main-95:\\raw\\music_wave.json"
     },
     {
         "merged": "C:\\Users\\Haaj Mens\\.gradle\\daemon\\8.10.2\\com.beatflowy.app-debug-93:\\mipmap-xxxhdpi_new_launcher_round.png.flat",
@@ -156,10 +156,6 @@
         "source": "C:\\Users\\Haaj Mens\\.gradle\\daemon\\8.10.2\\com.beatflowy.app-main-95:\\mipmap-xxhdpi\\ic_launcher_monochrome.png"
     },
     {
-        "merged": "com.beatflowy.app-debug-93:/xml_backup_rules.xml.flat",
-        "source": "com.beatflowy.app-main-95:/xml/backup_rules.xml"
-    },
-    {
         "merged": "C:\\Users\\Haaj Mens\\.gradle\\daemon\\8.10.2\\com.beatflowy.app-debug-93:\\layout_glance_default_layout.xml.flat",
         "source": "C:\\Users\\Haaj Mens\\.gradle\\daemon\\8.10.2\\com.beatflowy.app-main-95:\\layout\\glance_default_layout.xml"
     },
@@ -236,10 +232,6 @@
         "source": "C:\\Users\\Haaj Mens\\.gradle\\daemon\\8.10.2\\com.beatflowy.app-main-95:\\mipmap-mdpi\\ic_launcher.png"
     },
     {
-        "merged": "com.beatflowy.app-debug-93:/xml_data_extraction_rules.xml.flat",
-        "source": "com.beatflowy.app-main-95:/xml/data_extraction_rules.xml"
-    },
-    {
         "merged": "C:\\Users\\Haaj Mens\\.gradle\\daemon\\8.10.2\\com.beatflowy.app-debug-93:\\mipmap-mdpi_new_launcher_round.png.flat",
         "source": "C:\\Users\\Haaj Mens\\.gradle\\daemon\\8.10.2\\com.beatflowy.app-main-95:\\mipmap-mdpi\\new_launcher_round.png"
     },
@@ -266,6 +258,10 @@
     {
         "merged": "C:\\Users\\Haaj Mens\\.gradle\\daemon\\8.10.2\\com.beatflowy.app-debug-93:\\xml_widget_info_large.xml.flat",
         "source": "C:\\Users\\Haaj Mens\\.gradle\\daemon\\8.10.2\\com.beatflowy.app-main-95:\\xml\\widget_info_large.xml"
+    },
+    {
+        "merged": "com.beatflowy.app-debug-93:/drawable_ic_album_default.xml.flat",
+        "source": "com.beatflowy.app-main-95:/drawable/ic_album_default.xml"
     },
     {
         "merged": "C:\\Users\\Haaj Mens\\.gradle\\daemon\\8.10.2\\com.beatflowy.app-debug-93:\\mipmap-xxxhdpi_new_launcher.png.flat",

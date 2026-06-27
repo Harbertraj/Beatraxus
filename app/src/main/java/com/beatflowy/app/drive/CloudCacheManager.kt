@@ -89,6 +89,15 @@ class CloudCacheManager(
         cleanupCache(keepIds)
     }
 
+    fun clearFullCache() {
+        try {
+            cacheDir.deleteRecursively()
+            cacheDir.mkdirs()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to clear cloud cache", e)
+        }
+    }
+
     private fun cleanupCache(keepIds: Set<String>) {
         val files = cacheDir.listFiles() ?: return
         val cacheFiles = files.filter { it.name.endsWith(".cache") }

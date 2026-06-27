@@ -185,7 +185,7 @@ class AutoEqApiService(private val context: Context) {
     }
 
     private fun getFromDiskCache(key: String): AutoEqProfile? {
-        val cacheFile = File(context.cacheDir, "autoeq/$key.json")
+        val cacheFile = File(context.filesDir, "autoeq/$key.json")
         if (!cacheFile.exists()) return null
         
         // 7 days TTL
@@ -221,7 +221,7 @@ class AutoEqApiService(private val context: Context) {
 
     private fun saveToDiskCache(key: String, profile: AutoEqProfile) {
         try {
-            val dir = File(context.cacheDir, "autoeq")
+            val dir = File(context.filesDir, "autoeq")
             if (!dir.exists()) dir.mkdirs()
             
             val json = JSONObject().apply {

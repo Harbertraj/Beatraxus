@@ -36,6 +36,14 @@ class NativeDsp {
         if (nativeHandle != 0L) nSetDvc(nativeHandle, enabled)
     }
 
+    fun setRmsDvc(enabled: Boolean) {
+        if (nativeHandle != 0L) nSetRmsDvc(nativeHandle, enabled)
+    }
+
+    fun setRmsLeveler(enabled: Boolean) {
+        if (nativeHandle != 0L) nSetRmsLeveler(nativeHandle, enabled)
+    }
+
     fun setDvcLevel(level: Float) {
         if (nativeHandle != 0L) nSetDvcLevel(nativeHandle, level)
     }
@@ -50,6 +58,26 @@ class NativeDsp {
 
     fun setSpatial(balance: Float, widen: Float) {
         if (nativeHandle != 0L) nSetSpatial(nativeHandle, balance, widen)
+    }
+
+    fun setSpatialEnabled(enabled: Boolean) {
+        if (nativeHandle != 0L) nSetSpatialEnabled(nativeHandle, enabled)
+    }
+
+    fun setSpatialIntensity(intensity: Float) {
+        if (nativeHandle != 0L) nSetSpatialIntensity(nativeHandle, intensity)
+    }
+
+    fun setSoundStageNodePosition(bandIdx: Int, azimuth: Float, elevation: Float, distance: Float) {
+        if (nativeHandle != 0L) nSetSoundStageNodePosition(nativeHandle, bandIdx, azimuth, elevation, distance)
+    }
+
+    fun setSoundStageWidth(width: Float) {
+        if (nativeHandle != 0L) nSetSoundStageWidth(nativeHandle, width)
+    }
+
+    fun setSoundStageCenterLock(amount: Float) {
+        if (nativeHandle != 0L) nSetSoundStageCenterLock(nativeHandle, amount)
     }
 
     fun setCrossfeed(enabled: Boolean, level: Float) {
@@ -92,6 +120,42 @@ class NativeDsp {
         if (nativeHandle != 0L) nSetEqEnabled(nativeHandle, enabled)
     }
 
+    fun setHeadroomManagement(enabled: Boolean) {
+        if (nativeHandle != 0L) nSetHeadroomManagement(nativeHandle, enabled)
+    }
+
+    fun setNoHeadroomGain(enabled: Boolean) {
+        if (nativeHandle != 0L) nSetNoHeadroomGain(nativeHandle, enabled)
+    }
+
+    fun getHeadroomDb(): Float {
+        return if (nativeHandle != 0L) nGetHeadroomDb(nativeHandle) else 0.0f
+    }
+
+    fun getEqLatencyFrames(): Int {
+        return if (nativeHandle != 0L) nGetEqLatencyFrames(nativeHandle) else 0
+    }
+
+    fun setAiEqEnabled(enabled: Boolean) {
+        if (nativeHandle != 0L) nSetAiEqEnabled(nativeHandle, enabled)
+    }
+
+    fun setAiBand(index: Int, frequency: Float, gainDb: Float, q: Float, type: Int = 0) {
+        if (nativeHandle != 0L) nSetAiBand(nativeHandle, index, frequency, gainDb, q, type)
+    }
+
+    fun setSimBand(index: Int, frequency: Float, gainDb: Float, q: Float, type: Int = 0) {
+        if (nativeHandle != 0L) nSetSimBand(nativeHandle, index, frequency, gainDb, q, type)
+    }
+
+    fun setSimEqEnabled(enabled: Boolean) {
+        if (nativeHandle != 0L) nSetSimEqEnabled(nativeHandle, enabled)
+    }
+
+    fun setHardwareVolume(enabled: Boolean) {
+        if (nativeHandle != 0L) nSetHardwareVolume(nativeHandle, enabled)
+    }
+
     fun setHighQualityResampler(enabled: Boolean) {
         if (nativeHandle != 0L) nSetHighQualityResampler(nativeHandle, enabled)
     }
@@ -102,6 +166,14 @@ class NativeDsp {
 
     fun setFloat64(enabled: Boolean) {
         if (nativeHandle != 0L) nSetFloat64(nativeHandle, enabled)
+    }
+
+    fun setMono(enabled: Boolean) {
+        if (nativeHandle != 0L) nSetMono(nativeHandle, enabled)
+    }
+
+    fun setSoftLimiter(enabled: Boolean) {
+        if (nativeHandle != 0L) nSetSoftLimiter(nativeHandle, enabled)
     }
 
     fun setLimiter(enabled: Boolean) {
@@ -128,6 +200,18 @@ class NativeDsp {
         if (nativeHandle != 0L) nSetCutoffRatio(nativeHandle, ratio)
     }
 
+    fun packDoP(dsdBits: ByteArray, pcmOutput: IntArray, frames: Int, channels: Int, alternateMarker: Boolean) {
+        nPackDoP(dsdBits, pcmOutput, frames, channels, alternateMarker)
+    }
+
+    fun dsdToPcm(dsdBits: ByteArray, pcmOutput: FloatArray, frames: Int, channels: Int) {
+        nDsdToPcm(dsdBits, pcmOutput, frames, channels)
+    }
+
+    fun setSpeed(speed: Float, preservePitch: Boolean) {
+        if (nativeHandle != 0L) nSetSpeed(nativeHandle, speed, preservePitch)
+    }
+
     fun process(data: FloatArray, frames: Int) {
         if (nativeHandle != 0L) nProcess(nativeHandle, data, frames)
     }
@@ -137,6 +221,18 @@ class NativeDsp {
             nProcessResampled(nativeHandle, input, inFrames, output)
         } else 0
     }
+
+    suspend fun extractFeatures(context: android.content.Context, uri: android.net.Uri, seconds: Int): AudioFeatures? = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        val pfd = context.contentResolver.openFileDescriptor(uri, "r") ?: return@withContext null
+        try {
+            val fd = pfd.fd
+            nExtractFeatures(fd, seconds)
+        } finally {
+            pfd.close()
+        }
+    }
+
+    private external fun nExtractFeatures(fd: Int, seconds: Int): AudioFeatures?
 
     fun release() {
         if (nativeHandle != 0L) {
@@ -158,10 +254,17 @@ class NativeDsp {
     private external fun nSetReplayGain(handle: Long, db: Float)
     private external fun nSetVolume(handle: Long, volume: Float)
     private external fun nSetDvc(handle: Long, enabled: Boolean)
+    private external fun nSetRmsDvc(handle: Long, enabled: Boolean)
+    private external fun nSetRmsLeveler(handle: Long, enabled: Boolean)
     private external fun nSetDvcLevel(handle: Long, level: Float)
     private external fun nSetDvcMode(handle: Long, mode: Int)
     private external fun nSetTone(handle: Long, midBass: Float, treble: Float, air: Float)
     private external fun nSetSpatial(handle: Long, balance: Float, widen: Float)
+    private external fun nSetSpatialEnabled(handle: Long, enabled: Boolean)
+    private external fun nSetSpatialIntensity(handle: Long, intensity: Float)
+    private external fun nSetSoundStageNodePosition(handle: Long, bandIdx: Int, az: Float, el: Float, dist: Float)
+    private external fun nSetSoundStageWidth(handle: Long, width: Float)
+    private external fun nSetSoundStageCenterLock(handle: Long, amount: Float)
     private external fun nSetCrossfeed(handle: Long, enabled: Boolean, level: Float)
     private external fun nSetReverb(handle: Long, amount: Float)
     private external fun nSetReverbType(handle: Long, type: Int)
@@ -170,17 +273,31 @@ class NativeDsp {
     private external fun nSetReverbParams(handle: Long, roomSize: Float, damping: Float)
     private external fun nMuteReverb(handle: Long)
     private external fun nSetBand(handle: Long, index: Int, frequency: Float, gainDb: Float, q: Float, type: Int)
+    private external fun nSetAiBand(handle: Long, index: Int, frequency: Float, gainDb: Float, q: Float, type: Int)
+    private external fun nSetSimBand(handle: Long, index: Int, frequency: Float, gainDb: Float, q: Float, type: Int)
     private external fun nSetEqPhaseMode(handle: Long, linearPhase: Boolean)
     private external fun nSetEqEnabled(handle: Long, enabled: Boolean)
+    private external fun nSetAiEqEnabled(handle: Long, enabled: Boolean)
+    private external fun nSetSimEqEnabled(handle: Long, enabled: Boolean)
+    private external fun nSetHardwareVolume(handle: Long, enabled: Boolean)
+    private external fun nSetHeadroomManagement(handle: Long, enabled: Boolean)
+    private external fun nSetNoHeadroomGain(handle: Long, enabled: Boolean)
+    private external fun nGetHeadroomDb(handle: Long): Float
+    private external fun nGetEqLatencyFrames(handle: Long): Int
     private external fun nSetHighQualityResampler(handle: Long, enabled: Boolean)
     private external fun nSetSoxrQuality(handle: Long, quality: Int)
     private external fun nSetFloat64(handle: Long, enabled: Boolean)
+    private external fun nSetMono(handle: Long, enabled: Boolean)
+    private external fun nSetSoftLimiter(handle: Long, enabled: Boolean)
     private external fun nSetLimiter(handle: Long, enabled: Boolean)
     private external fun nSetLimiterParams(handle: Long, thresholdDb: Float, attackMs: Float, releaseMs: Float)
     private external fun nSetBitDepth(handle: Long, bitDepth: Int)
     private external fun nSetDither(handle: Long, enabled: Boolean, bitDepth: Int)
     private external fun nSetDitherType(handle: Long, type: Int)
     private external fun nSetCutoffRatio(handle: Long, ratio: Float)
+    private external fun nPackDoP(dsd: ByteArray, pcm: IntArray, frames: Int, channels: Int, alt: Boolean)
+    private external fun nDsdToPcm(dsd: ByteArray, pcm: FloatArray, frames: Int, channels: Int)
+    private external fun nSetSpeed(handle: Long, speed: Float, preservePitch: Boolean)
     private external fun nProcess(handle: Long, data: FloatArray, frames: Int)
     private external fun nProcessResampled(handle: Long, input: FloatArray, inFrames: Int, output: FloatArray): Int
 }

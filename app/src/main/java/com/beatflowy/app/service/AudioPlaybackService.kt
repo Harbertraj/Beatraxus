@@ -19,6 +19,7 @@ import android.media.AudioManager
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
+import android.os.SystemClock
 import android.util.Log
 import android.support.v4.media.session.MediaSessionCompat
 import android.support.v4.media.session.PlaybackStateCompat
@@ -53,6 +54,7 @@ import android.net.Uri
 import coil.ImageLoader
 import coil.request.ImageRequest
 import coil.request.SuccessResult
+import coil.request.CachePolicy
 
 class AudioPlaybackService : Service() {
     private val binder = LocalBinder()
@@ -72,6 +74,24 @@ class AudioPlaybackService : Service() {
     private var originalPlaylist: List<Song> = emptyList()
     private var playlist: List<Song> = emptyList()
     private var currentIndex: Int = -1
+
+    fun getPlaylist(): List<Song> = playlist
+    fun getOriginalPlaylist(): List<Song> = originalPlaylist
+    fun getCurrentIndex(): Int = currentIndex
+
+    fun restorePlaylist(playlist: List<Song>, originalPlaylist: List<Song>, currentIndex: Int, positionMs: Long) {
+        if (this.playlist.isNotEmpty()) return
+        
+        this.playlist = playlist
+        this.originalPlaylist = originalPlaylist
+        this.currentIndex = currentIndex
+        if (currentIndex in playlist.indices) {
+            engine.prepare(playlist[currentIndex], positionMs)
+        }
+        updateUpcomingSongs()
+        updateNotification()
+        saveState()
+    }
 
     private val audioDeviceCallback = object : AudioDeviceCallback() {
         override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>) {
@@ -105,11 +125,16 @@ class AudioPlaybackService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        val prefs = getSharedPreferences("beatraxus", Context.MODE_PRIVATE)
+        prefs.registerOnSharedPreferenceChangeListener(prefListener)
+        scrobblingEnabled = prefs.getBoolean("scrobbling_enabled", true)
+
         dspPreferences = DspPreferences(this)
         cloudCacheManager = com.beatflowy.app.drive.CloudCacheManager(this, driveAccountRepository)
         audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         audioOutput = AudioTrackOutput(this)
-        engine = AudioEngine(this, audioOutput, cloudCacheManager)
+        val database = (application as com.beatflowy.app.BeatraxusApplication).database
+        engine = AudioEngine(this, audioOutput, cloudCacheManager, database)
         refreshOutputRoute()
         audioManager.registerAudioDeviceCallback(audioDeviceCallback, null)
         registerReceiver(noisyReceiver, IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY))
@@ -141,12 +166,36 @@ class AudioPlaybackService : Service() {
         }
 
         serviceScope.launch {
+            lastFmRepository.sessionKey.collect { key ->
+                Log.d("AudioPlaybackService", "Last.fm Session Key updated: $key")
+                lastFmSessionKey = key
+            }
+        }
+
+        serviceScope.launch {
+            val prefs = getSharedPreferences("beatraxus", Context.MODE_PRIVATE)
+            // Use a flow to listen to preference changes or just poll/initialize
+            scrobblingEnabled = prefs.getBoolean("scrobbling_enabled", true)
+            Log.d("AudioPlaybackService", "Scrobbling enabled: $scrobblingEnabled")
+        }
+
+        serviceScope.launch {
             engine.playbackStateFlow
                 .collectLatest { state ->
                     val songChanged = state.currentSong?.id != lastSongId
                     
                     if (songChanged) {
+                        // Scrobble previous song if needed before resetting
+                        handleScrobble(lastSongId, state.currentSong?.id)
+
                         lastSongId = state.currentSong?.id
+                        currentAlbumArt = null
+                        currentAlbumArtSongId = null
+                        
+                        currentSongStartTime = System.currentTimeMillis() / 1000
+                        currentSongPlaybackTimeMs = 0
+                        lastProgressUpdateTime = System.currentTimeMillis()
+                        isScrobbled = false
                         
                         // Preload next song for gapless playback
                         getNextSong()?.let { engine.preloadNext(it) }
@@ -156,12 +205,61 @@ class AudioPlaybackService : Service() {
                             loadAlbumArt(state.currentSong)
                             updateNotification()
                         }
+
+                        // Update Now Playing on Last.fm
+                        val sessionKey = lastFmSessionKey
+                        if (scrobblingEnabled && sessionKey != null && state.currentSong != null) {
+                            serviceScope.launch(Dispatchers.IO) {
+                                lastFmRepository.updateNowPlaying(
+                                    artist = state.currentSong.artist,
+                                    track = state.currentSong.title,
+                                    album = state.currentSong.album,
+                                    durationMs = state.currentSong.durationMs,
+                                    sessionKey = sessionKey
+                                )
+                            }
+                        }
+                    }
+
+                    if (state.isPlaying) {
+                        val now = System.currentTimeMillis()
+                        if (lastProgressUpdateTime > 0) {
+                            currentSongPlaybackTimeMs += (now - lastProgressUpdateTime)
+                        }
+                        lastProgressUpdateTime = now
+                        
+                        // Check for scrobble threshold (50% or 4 mins)
+                        val song = state.currentSong
+                        if (scrobblingEnabled && !isScrobbled && lastFmSessionKey != null && song != null && song.durationMs > 30000) {
+                            val threshold = minOf(song.durationMs / 2, 240000L)
+                            if (currentSongPlaybackTimeMs >= threshold) {
+                                isScrobbled = true
+                                val sessionKey = lastFmSessionKey!!
+                                serviceScope.launch(Dispatchers.IO) {
+                                    lastFmRepository.scrobble(
+                                        artist = song.artist,
+                                        track = song.title,
+                                        album = song.album,
+                                        timestamp = currentSongStartTime,
+                                        durationMs = song.durationMs,
+                                        sessionKey = sessionKey
+                                    )
+                                }
+                            }
+                        }
+                    } else {
+                        lastProgressUpdateTime = 0
                     }
 
                     updateAllWidgets(state)
-                    if (!songChanged) updateNotification()
+                    updateNotification()
                 }
         }
+    }
+
+    private fun handleScrobble(oldSongId: String?, newSongId: String?) {
+        // Implementation can be expanded if we want to scrobble on track end specifically,
+        // but we already do it at 50% threshold above which is Last.fm standard.
     }
 
     private suspend fun loadAlbumArt(song: Song?) {
@@ -199,9 +297,26 @@ class AudioPlaybackService : Service() {
         if (loaded != null) {
             currentAlbumArt = loaded
             currentAlbumArtSongId = song?.id
-        } else if (song == null) {
+        } else {
             currentAlbumArt = null
-            currentAlbumArtSongId = null
+            currentAlbumArtSongId = song?.id
+        }
+    }
+
+    private fun preloadArtwork(song: Song) {
+        val uri = song.albumArtUri ?: return
+        serviceScope.launch(Dispatchers.IO) {
+            try {
+                // Preload using Coil for remote/all uris to ensure it's in cache for UI
+                val request = ImageRequest.Builder(this@AudioPlaybackService)
+                    .data(uri)
+                    .diskCachePolicy(CachePolicy.ENABLED)
+                    .memoryCachePolicy(CachePolicy.ENABLED)
+                    .build()
+                ImageLoader(this@AudioPlaybackService).enqueue(request)
+            } catch (e: Exception) {
+                // Ignore preloading errors
+            }
         }
     }
 
@@ -295,6 +410,20 @@ class AudioPlaybackService : Service() {
     override fun onBind(intent: Intent): IBinder = binder
 
     private val driveAccountRepository by lazy { DriveAccountRepository(this) }
+    private val lastFmRepository by lazy { com.beatflowy.app.repository.lastfm.LastFmRepository(this) }
+
+    private var currentSongStartTime: Long = 0
+    private var currentSongPlaybackTimeMs: Long = 0
+    private var lastProgressUpdateTime: Long = 0
+    private var isScrobbled = false
+    private var lastFmSessionKey: String? = null
+    private var scrobblingEnabled = true
+
+    private val prefListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { prefs, key ->
+        if (key == "scrobbling_enabled") {
+            scrobblingEnabled = prefs.getBoolean(key, true)
+        }
+    }
 
 
 
@@ -316,6 +445,7 @@ class AudioPlaybackService : Service() {
         // Enable gapless transition in engine
         upcoming.firstOrNull()?.let { nextSong ->
             engine.preloadNext(nextSong)
+            preloadArtwork(nextSong)
         }
     }
 
@@ -383,6 +513,7 @@ class AudioPlaybackService : Service() {
             engine.pause()
             abandonAudioFocus()
             resumeOnFocusGain = false
+            saveState()
         } else {
             if (requestAudioFocus()) {
                 val song = engine.playbackStateFlow.value.currentSong
@@ -415,6 +546,7 @@ class AudioPlaybackService : Service() {
         val nextSong = playlist[currentIndex]
         
         engine.prepare(nextSong)
+        saveState()
         
         playbackJob = serviceScope.launch {
             delay(150) // Debounce for rapid presses
@@ -427,6 +559,7 @@ class AudioPlaybackService : Service() {
 
     fun seekTo(pos: Long) {
         engine.seekTo(pos)
+        updateNotification()
     }
 
     fun updateDspConfig(config: DspConfig) {
@@ -434,6 +567,7 @@ class AudioPlaybackService : Service() {
     }
 
     fun setOutputMode(mode: OutputMode) {
+        if (_outputRouteStateFlow.value.selectedMode == mode) return
         audioOutput.setOutputMode(mode)
         refreshOutputRoute(reconfigure = true)
     }
@@ -443,14 +577,23 @@ class AudioPlaybackService : Service() {
         
         val currentSong = engine.playbackStateFlow.value.currentSong
         if (enabled) {
-            playlist = playlist.shuffled()
-            currentIndex = playlist.indexOf(currentSong)
+            val shuffled = playlist.shuffled().toMutableList()
+            if (currentSong != null) {
+                val idx = shuffled.indexOfFirst { it.id == currentSong.id }
+                if (idx != -1) {
+                    val removed = shuffled.removeAt(idx)
+                    shuffled.add(0, removed)
+                }
+            }
+            playlist = shuffled
+            currentIndex = 0
         } else {
             playlist = originalPlaylist
-            currentIndex = playlist.indexOf(currentSong)
+            currentIndex = playlist.indexOfFirst { it.id == currentSong?.id }.coerceAtLeast(0)
         }
         updateUpcomingSongs()
         engine.setShuffleMode(enabled)
+        saveState()
     }
 
     fun toggleShuffle() {
@@ -509,6 +652,7 @@ class AudioPlaybackService : Service() {
                 currentIndex--
             }
             updateUpcomingSongs()
+            saveState()
         }
     }
     
@@ -527,6 +671,7 @@ class AudioPlaybackService : Service() {
             currentIndex++
         }
         updateUpcomingSongs()
+        saveState()
     }
 
     fun moveInUpcomingQueue(from: Int, to: Int) {
@@ -557,6 +702,7 @@ class AudioPlaybackService : Service() {
         newList.add(currentIndex + 1, song)
         playlist = newList
         updateUpcomingSongs()
+        saveState()
     }
 
     fun addToQueue(song: Song) {
@@ -565,21 +711,35 @@ class AudioPlaybackService : Service() {
         newList.add(song)
         playlist = newList
         updateUpcomingSongs()
+        saveState()
     }
     
     fun playList(songs: List<Song>, startIndex: Int) {
         if (requestAudioFocus()) {
             originalPlaylist = songs
-            playlist = if (engine.playbackStateFlow.value.shuffleMode) songs.shuffled() else songs
-            currentIndex = if (startIndex in songs.indices) {
-                playlist.indexOf(songs[startIndex])
-            } else 0
+            if (engine.playbackStateFlow.value.shuffleMode) {
+                val shuffled = songs.shuffled().toMutableList()
+                val selectedSong = songs.getOrNull(startIndex)
+                if (selectedSong != null) {
+                    val idx = shuffled.indexOfFirst { it.id == selectedSong.id }
+                    if (idx != -1) {
+                        val removed = shuffled.removeAt(idx)
+                        shuffled.add(0, removed)
+                    }
+                }
+                playlist = shuffled
+                currentIndex = 0
+            } else {
+                playlist = songs
+                currentIndex = if (startIndex in songs.indices) startIndex else 0
+            }
 
             updateUpcomingSongs()
 
             if (playlist.isNotEmpty()) {
                 engine.play(playlist[currentIndex])
             }
+            saveState()
         }
     }
 
@@ -613,6 +773,14 @@ class AudioPlaybackService : Service() {
         }
     }
 
+    fun prepareSong(song: Song, position: Long) {
+        originalPlaylist = listOf(song)
+        playlist = listOf(song)
+        currentIndex = 0
+        updateUpcomingSongs()
+        engine.prepare(song, position)
+    }
+
     fun stopSong() {
         engine.stop()
         abandonAudioFocus()
@@ -634,7 +802,10 @@ class AudioPlaybackService : Service() {
         val state = _playbackStateFlow.value
         val song = state.currentSong
         
-        val intent = Intent(this, MainActivity::class.java)
+        val intent = Intent(this, MainActivity::class.java).apply {
+            putExtra("open_now_playing", true)
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
         val pendingIntent = PendingIntent.getActivity(
             this, 0, intent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
@@ -671,7 +842,7 @@ class AudioPlaybackService : Service() {
             if (currentAlbumArt != null) {
                 builder.setLargeIcon(currentAlbumArt)
             } else {
-                builder.setLargeIcon(BitmapFactory.decodeResource(resources, R.drawable.ic_album_placeholder))
+                builder.setLargeIcon(BitmapFactory.decodeResource(resources, R.drawable.ic_album_default))
             }
         } else {
             builder.setContentTitle("Beatraxus")
@@ -719,7 +890,8 @@ class AudioPlaybackService : Service() {
             .setState(
                 if (state.isPlaying) PlaybackStateCompat.STATE_PLAYING else PlaybackStateCompat.STATE_PAUSED,
                 currentPositionMs,
-                1.0f
+                if (state.isPlaying) 1.0f else 0.0f,
+                SystemClock.elapsedRealtime()
             )
             .build()
         mediaSession.setPlaybackState(playbackState)
@@ -754,11 +926,47 @@ class AudioPlaybackService : Service() {
         }
     }
 
+    private fun saveState() {
+        val prefs = getSharedPreferences("beatraxus", Context.MODE_PRIVATE)
+        val currentSong = playlist.getOrNull(currentIndex)
+        prefs.edit().apply {
+            if (playlist.isNotEmpty()) {
+                putString("last_queue_ids", playlist.joinToString(",") { it.id })
+                putString("last_original_queue_ids", originalPlaylist.joinToString(",") { it.id })
+                putInt("last_queue_index", currentIndex)
+            }
+            if (currentSong != null) {
+                putString("last_song_id", currentSong.id)
+                putLong("last_song_pos", engine.currentPositionMs())
+            }
+            apply()
+        }
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        saveState()
+        // If we are not playing, we can clear the cache when the task is removed (app swiped away)
+        if (!engine.playbackStateFlow.value.isPlaying) {
+            cloudCacheManager.clearFullCache()
+            stopSelf()
+        }
+    }
+
     override fun onDestroy() {
+        val prefs = getSharedPreferences("beatraxus", Context.MODE_PRIVATE)
+        prefs.unregisterOnSharedPreferenceChangeListener(prefListener)
+
         val finalState = engine.playbackStateFlow.value.copy(isPlaying = false)
         CoroutineScope(Dispatchers.Default + SupervisorJob()).launch {
             updateAllWidgets(finalState)
         }
+        
+        // Ensure cloud cache is cleared on destroy if we are not just restarting
+        if (!engine.playbackStateFlow.value.isPlaying) {
+            cloudCacheManager.clearFullCache()
+        }
+
         serviceScope.cancel()
         audioManager.unregisterAudioDeviceCallback(audioDeviceCallback)
         try {

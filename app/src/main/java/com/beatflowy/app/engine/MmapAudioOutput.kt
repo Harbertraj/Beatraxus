@@ -17,8 +17,8 @@ internal class MmapAudioOutput {
         System.loadLibrary("beatraxus_dsp")
     }
 
-    fun init(sampleRate: Int, channels: Int, requestedBufferFrames: Int): Boolean {
-        nativeHandle = nMmapCreate(sampleRate, channels, requestedBufferFrames)
+    fun init(sampleRate: Int, channels: Int, requestedBufferFrames: Int, format: Int = 2): Boolean {
+        nativeHandle = nMmapCreate(sampleRate, channels, requestedBufferFrames, format)
         return nativeHandle != 0L
     }
 
@@ -46,6 +46,13 @@ internal class MmapAudioOutput {
         return written
     }
 
+    fun writeInt(data: IntArray, offsetInSamples: Int, frameCount: Int): Int {
+        if (nativeHandle == 0L) return 0
+        val written = nMmapWriteInt(nativeHandle, data, offsetInSamples, frameCount)
+        if (written > 0) framesWritten += written
+        return written
+    }
+
     fun playbackPositionFrames(): Long {
         if (nativeHandle == 0L) return 0L
         return nMmapGetPlaybackPosition(nativeHandle)
@@ -56,6 +63,10 @@ internal class MmapAudioOutput {
     fun mmapActualBufferFrames(): Int {
         if (nativeHandle == 0L) return 0
         return nMmapGetBufferFrames(nativeHandle)
+    }
+
+    fun setBufferConfig(bufferFrames: Int, bufferCount: Int, postFadeFrames: Int) {
+        if (nativeHandle != 0L) nMmapSetBufferConfig(nativeHandle, bufferFrames, bufferCount, postFadeFrames)
     }
 
     fun estimatedLatencyMs(): Int {
@@ -78,17 +89,19 @@ internal class MmapAudioOutput {
     protected fun finalize() { release() }
 
     // JNI
-    private external fun nMmapCreate(sampleRate: Int, channels: Int, bufferFrames: Int): Long
+    private external fun nMmapCreate(sampleRate: Int, channels: Int, bufferFrames: Int, format: Int): Long
     private external fun nMmapDestroy(handle: Long)
     private external fun nMmapStart(handle: Long)
     private external fun nMmapPause(handle: Long)
     private external fun nMmapStop(handle: Long)
     private external fun nMmapFlush(handle: Long)
     private external fun nMmapWrite(handle: Long, data: FloatArray, offsetInSamples: Int, frameCount: Int): Int
+    private external fun nMmapWriteInt(handle: Long, data: IntArray, offsetInSamples: Int, frameCount: Int): Int
     private external fun nMmapGetPlaybackPosition(handle: Long): Long
     private external fun nMmapGetBufferFrames(handle: Long): Int
     private external fun nMmapGetLatencyMs(handle: Long): Int
     private external fun nMmapGetSampleRate(handle: Long): Int
+    private external fun nMmapSetBufferConfig(handle: Long, bufferFrames: Int, bufferCount: Int, postFadeFrames: Int)
 
     companion object {
         private const val TAG = "MmapAudioOutput"

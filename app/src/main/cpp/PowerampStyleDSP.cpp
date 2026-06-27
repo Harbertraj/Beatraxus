@@ -5,12 +5,21 @@
 #include <map>
 #include <string>
 #include <atomic>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
 #include <jni.h>
 #ifdef HAVE_SOXR
 #include <soxr.h>
 #endif
 #include <android/log.h>
 #include <aaudio/AAudio.h>
+#include <media/NdkMediaExtractor.h>
+#include <media/NdkMediaCodec.h>
+#include <media/NdkMediaFormat.h>
+#ifdef __ARM_NEON
+#include <arm_neon.h>
+#endif
 
 #define LOG_TAG "BeatraxusDSP"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -19,25 +28,104 @@
 #define M_PI 3.14159265358979323846
 #endif
 
+// ===================== DSD / DoP UTILS =====================
+
+struct DsfHeader {
+    char id[4]; // "DSD "
+    uint64_t size;
+    uint64_t totalSize;
+    uint64_t metadataPointer;
+};
+
+struct DsfFormatChunk {
+    char id[4]; // "fmt "
+    uint64_t size;
+    uint32_t version;
+    uint32_t formatId;
+    uint32_t channelType;
+    uint32_t channelCount;
+    uint32_t sampleRate;
+    uint32_t bitsPerSample;
+    uint64_t sampleCount;
+    uint32_t blockSize;
+    uint32_t reserved;
+};
+
+class DsdProcessor {
+public:
+    // Packs 16 bits of DSD into a 24-bit PCM sample with DoP markers
+    // DSD bits are expected in 16-bit units.
+    static void packDoP(const uint8_t* dsd, int32_t* pcmInt, int frames, int channels, bool alternateMarker) {
+        for (int f = 0; f < frames; f++) {
+            for (int c = 0; c < channels; c++) {
+                uint8_t marker = alternateMarker ? 0x05 : 0xFA;
+                int32_t packed = (marker << 24) | (dsd[(f * channels + c) * 2] << 16) | (dsd[(f * channels + c) * 2 + 1] << 8);
+                pcmInt[f * channels + c] = packed; // real integer sample, not reinterpreted
+            }
+            alternateMarker = !alternateMarker;
+        }
+    }
+
+    static void dsdToPcm(const uint8_t* dsd, float* pcm, int frames, int channels) {
+        // Bug 2 Fix: Real decimation with 32-tap windowed-sinc FIR
+        // Each PCM sample is produced from one DSD byte per channel (8:1 decimation).
+        // This takes DSD64 (2.8MHz) to DXD (352.8kHz).
+        static const float fir[32] = {
+            -0.0016f, -0.0022f, -0.0020f, 0.0000f, 0.0042f, 0.0104f, 0.0183f, 0.0270f,
+            0.0355f, 0.0426f, 0.0475f, 0.0496f, 0.0487f, 0.0448f, 0.0384f, 0.0302f,
+            0.0211f, 0.0121f, 0.0041f, -0.0023f, -0.0066f, -0.0087f, -0.0089f, -0.0076f,
+            -0.0054f, -0.0030f, -0.0010f, 0.0003f, 0.0009f, 0.0010f, 0.0007f, 0.0004f
+        };
+
+        for (int f = 0; f < frames; f++) {
+            for (int c = 0; c < channels; c++) {
+                float sum = 0;
+                // Look back up to 4 bytes (32 bits) for this channel to apply the 32-tap FIR
+                for (int b_off = 0; b_off < 4; b_off++) {
+                    int idx = f - b_off;
+                    // 0xAA (10101010) is silence in DSD
+                    uint8_t b = (idx >= 0) ? dsd[idx * channels + c] : 0xAA;
+                    for (int bit = 0; bit < 8; bit++) {
+                        float impulse = (b & (1 << (7 - bit))) ? 1.0f : -1.0f;
+                        sum += impulse * fir[b_off * 8 + bit];
+                    }
+                }
+                pcm[f * channels + c] = sum;
+            }
+        }
+    }
+};
+
 // ===================== DITHER PROCESSOR =====================
 class DitherProcessor {
-    uint32_t lcgStateA_L, lcgStateA_R, lcgStateB_L, lcgStateB_R;
-    double lastDitherErr[2] = {0.0, 0.0};
-    double lastNoise[2] = {0.0, 0.0};
+    std::vector<uint32_t> lcgStateA, lcgStateB;
+    std::vector<double> lastDitherErr;
+    std::vector<double> lastNoise;
     int type = 1; // 1 = TPDF
     int bitDepth = 16;
     bool enabled = false;
 
 public:
-    DitherProcessor() { reset(); }
+    DitherProcessor() { init(2); }
+
+    void init(int channels) {
+        lcgStateA.assign(channels, 0x1234ABCD);
+        lcgStateB.assign(channels, 0xDEADBEEF);
+        for(int i=0; i<channels; i++) {
+            lcgStateA[i] += i * 0x777;
+            lcgStateB[i] += i * 0x333;
+        }
+        lastDitherErr.assign(channels, 0.0);
+        lastNoise.assign(channels, 0.0);
+    }
 
     void reset() {
-        lcgStateA_L = 0x1234ABCD;
-        lcgStateA_R = 0x5678EF01;
-        lcgStateB_L = 0xDEADBEEF;
-        lcgStateB_R = 0xCAFEBABE;
-        std::fill(std::begin(lastDitherErr), std::end(lastDitherErr), 0.0);
-        std::fill(std::begin(lastNoise), std::end(lastNoise), 0.0);
+        for(size_t i=0; i<lcgStateA.size(); i++) {
+            lcgStateA[i] = 0x1234ABCD + (uint32_t)i * 0x777;
+            lcgStateB[i] = 0xDEADBEEF + (uint32_t)i * 0x333;
+        }
+        std::fill(lastDitherErr.begin(), lastDitherErr.end(), 0.0);
+        std::fill(lastNoise.begin(), lastNoise.end(), 0.0);
     }
 
     void setEnabled(bool e, int bd) {
@@ -62,39 +150,35 @@ public:
     template<typename T>
     void process(T* data, int frames, int channels) {
         if (!enabled || type == 0 || bitDepth >= 32) return;
+        if (lcgStateA.size() < (size_t)channels) init(channels);
 
         double scale = 1.0 / (double)(1LL << (bitDepth - 1));
 
         for (int f = 0; f < frames; f++) {
-            for (int c = 0; c < std::min(channels, 2); c++) {
-                uint32_t* stateA = (c == 0) ? &lcgStateA_L : &lcgStateA_R;
-                uint32_t* stateB = (c == 0) ? &lcgStateB_L : &lcgStateB_R;
+            for (int c = 0; c < channels; c++) {
+                uint32_t& stateA = lcgStateA[c];
+                uint32_t& stateB = lcgStateB[c];
 
-                // Generator A — Knuth LCG
-                *stateA = 1664525u * (*stateA) + 1013904223u;
-                double r1 = ((*stateA) >> 16) * (1.0 / 65536.0);
+                stateA = 1664525u * stateA + 1013904223u;
+                double r1 = (stateA >> 16) * (1.0 / 65536.0);
+                stateB = 22695477u * stateB + 1u;
+                double r2 = (stateB >> 16) * (1.0 / 65536.0);
 
-                // Generator B — Numerical Recipes
-                *stateB = 22695477u * (*stateB) + 1u;
-                double r2 = ((*stateB) >> 16) * (1.0 / 65536.0);
-
-                double noise = r1 - r2; // TPDF
-
+                double noise = r1 - r2;
                 int idx = f * channels + c;
                 double input = static_cast<double>(data[idx]);
 
-                if (type == 2) { // SHAPED (Professional error-feedback 1st-order)
+                if (type == 2) {
                     input += -0.9 * lastDitherErr[c];
                     double dithered = input + noise * scale;
-                    // Mock quantization for error calculation
                     double quantized = std::floor(dithered / scale + 0.5) * scale;
                     lastDitherErr[c] = quantized - input;
                     data[idx] = static_cast<T>(quantized);
-                } else if (type == 3) { // HIGHPASS
+                } else if (type == 3) {
                     double hpNoise = noise - 0.5 * lastNoise[c];
                     lastNoise[c] = noise;
                     data[idx] = static_cast<T>(input + hpNoise * scale);
-                } else { // TPDF
+                } else {
                     data[idx] = static_cast<T>(input + noise * scale);
                 }
             }
@@ -281,6 +365,16 @@ struct BiquadState {
         freq = f; gain = g; q = q_val;
         update(sr);
     }
+    void setLowPass(double sr, float f, float g, float q_val) {
+        filterType = EqBandType::LOW_PASS;
+        freq = f; gain = g; q = q_val;
+        update(sr);
+    }
+    void setHighPass(double sr, float f, float g, float q_val) {
+        filterType = EqBandType::HIGH_PASS;
+        freq = f; gain = g; q = q_val;
+        update(sr);
+    }
 
     std::complex<double> response(double f, double sr) {
         if (!enabled) return 1.0;
@@ -298,19 +392,73 @@ class EqEngine {
     static constexpr int FFT_SIZE = 8192;
     static constexpr int HOP_SIZE = FFT_SIZE - FIR_LEN + 1;
 
-    std::array<BiquadState, 32> bands;
-    bool enabled = false;
-    bool linearPhase = false;
-    std::atomic<bool> dirty{false};
-    float lastSr = 48000;
+    // 1.2: Double buffered band states for lock-free read/write
+    std::array<BiquadState, 32> bands[2];
+    std::atomic<int> activeBandsIdx{0};
+
+    std::atomic<bool> enabled{false};
+    std::atomic<bool> linearPhase{false};
+    std::atomic<float> lastSr{48000};
 
     // FIR state
-    std::vector<double> firFreq;
+    // 1.1: Double buffered coefficients
+    std::vector<double> firFreq[2];
+    std::atomic<int> activeFirIdx{0};
+
     std::vector<double> overlapL, overlapR;
     kiss_fft_state fftForward, fftInverse;
 
     // Internal buffers to avoid allocations in audio thread
     std::vector<std::complex<double>> specL, specR, timeL, timeR;
+
+    // 1.1: Pre-allocated scratch buffers for recomputeFir (Worker thread ONLY)
+    std::vector<std::complex<double>> scratchH, scratchImp, scratchFirComplex, scratchFreqComplex;
+    std::vector<double> scratchFir;
+
+    // Worker thread components
+    std::thread workerThread;
+    std::mutex workerMutex;
+    std::condition_variable workerCv;
+    std::atomic<bool> workerExit{false};
+    std::atomic<bool> recomputeRequested{false};
+    std::atomic<double> autoHeadroomGain{1.0};
+
+    void workerLoop() {
+        while (!workerExit) {
+            {
+                std::unique_lock<std::mutex> lock(workerMutex);
+                workerCv.wait(lock, [this] { return recomputeRequested.load() || workerExit.load(); });
+                if (workerExit) break;
+                recomputeRequested = false;
+            }
+            if (linearPhase) recomputeFir();
+
+            // 2.7: Compute headroom
+            double peakDb = computePeakGainDb(lastSr.load());
+            double autoHeadroomDb = (peakDb > 0.0) ? -peakDb : 0.0;
+            autoHeadroomGain.store(std::pow(10.0, autoHeadroomDb / 20.0), std::memory_order_release);
+        }
+    }
+
+    double computePeakGainDb(int sampleRate) {
+        const int kProbePoints = 256;
+        double peakLinear = 0.0;
+        int bandsIdx = activeBandsIdx.load(std::memory_order_acquire);
+        auto& currentBands = bands[bandsIdx];
+
+        for (int i = 0; i < kProbePoints; ++i) {
+            double t = (double)i / (kProbePoints - 1);
+            double freq = 20.0 * std::pow((sampleRate / 2.0) / 20.0, t); // 20 Hz .. Nyquist
+
+            std::complex<double> response(1.0, 0.0);
+            for (auto& band : currentBands) {
+                if (!band.enabled) continue;
+                response *= band.response(freq, sampleRate);
+            }
+            peakLinear = std::max(peakLinear, std::abs(response));
+        }
+        return 20.0 * std::log10(std::max(peakLinear, 1e-6));
+    }
 
 public:
     EqEngine() {
@@ -320,113 +468,208 @@ public:
         overlapR.resize(FFT_SIZE, 0.0);
         specL.resize(FFT_SIZE); specR.resize(FFT_SIZE);
         timeL.resize(FFT_SIZE); timeR.resize(FFT_SIZE);
+
+        scratchH.resize(FFT_SIZE);
+        scratchImp.resize(FFT_SIZE);
+        scratchFir.resize(FFT_SIZE);
+        scratchFirComplex.resize(FFT_SIZE);
+        scratchFreqComplex.resize(FFT_SIZE);
+
+        firFreq[0].assign(FFT_SIZE * 2, 0.0);
+        firFreq[1].assign(FFT_SIZE * 2, 0.0);
+
+        workerThread = std::thread(&EqEngine::workerLoop, this);
+    }
+
+    ~EqEngine() {
+        workerExit = true;
+        workerCv.notify_all();
+        if (workerThread.joinable()) workerThread.join();
     }
 
     void setEnabled(bool e) { enabled = e; }
-    void setPhaseMode(bool lp) { if (linearPhase != lp) { linearPhase = lp; dirty = true; } }
+    void setPhaseMode(bool lp) {
+        if (linearPhase != lp) {
+            linearPhase = lp;
+            recomputeRequested = true;
+            workerCv.notify_one();
+        }
+    }
 
     void setBand(int idx, float f, float g, float q, int type) {
         if (idx < 0 || idx >= 32) return;
-        bands[idx].freq = f;
-        bands[idx].gain = g;
-        bands[idx].q = q;
-        bands[idx].filterType = (EqBandType)type;
-        bands[idx].enabled = (type > 2 || std::abs(g) > 0.001f);
-        bands[idx].update(lastSr);
-        dirty = true;
+
+        int currentActive = activeBandsIdx.load(std::memory_order_acquire);
+        int stagingIdx = 1 - currentActive;
+
+        // Copy current state to staging
+        bands[stagingIdx] = bands[currentActive];
+
+        bands[stagingIdx][idx].freq = f;
+        bands[stagingIdx][idx].gain = g;
+        bands[stagingIdx][idx].q = q;
+        bands[stagingIdx][idx].filterType = (EqBandType)type;
+        bands[stagingIdx][idx].enabled = (type > 2 || std::abs(g) > 0.001f);
+        bands[stagingIdx][idx].update(lastSr.load());
+
+        activeBandsIdx.store(stagingIdx, std::memory_order_release);
+
+        recomputeRequested = true;
+        workerCv.notify_one();
     }
 
     void init(float sr) {
         lastSr = sr;
-        for (auto& b : bands) b.update(sr);
-        dirty = true;
+        int currentActive = activeBandsIdx.load(std::memory_order_acquire);
+        int stagingIdx = 1 - currentActive;
+
+        bands[stagingIdx] = bands[currentActive];
+        for (auto& b : bands[stagingIdx]) b.update(sr);
+
+        activeBandsIdx.store(stagingIdx, std::memory_order_release);
+
+        recomputeRequested = true;
+        workerCv.notify_one();
     }
 
     template<typename T>
     void process(T* buf, int frames, int channels) {
-        if (!enabled) return;
-        if (dirty.exchange(false)) {
-            if (linearPhase) recomputeFir();
-        }
+        if (!enabled.load(std::memory_order_relaxed)) return;
 
-        if (linearPhase) processFir(buf, frames, channels);
+        if (linearPhase.load(std::memory_order_relaxed)) processFir(buf, frames, channels);
         else processIir(buf, frames, channels);
     }
 
     int getLatencyFrames() const {
-        return linearPhase ? (FIR_LEN / 2) : 0;
+        return linearPhase.load(std::memory_order_relaxed) ? (FIR_LEN / 2) : 0;
+    }
+
+    double getAutoHeadroomGain() const {
+        return autoHeadroomGain.load(std::memory_order_acquire);
     }
 
     void flush() {
-        for (auto& b : bands) { b.z1_l = b.z2_l = b.z1_r = b.z2_r = 0.0; }
+        for (int i = 0; i < 2; i++) {
+            for (auto& b : bands[i]) { b.z1_l = b.z2_l = b.z1_r = b.z2_r = 0.0; }
+        }
         std::fill(overlapL.begin(), overlapL.end(), 0.0);
         std::fill(overlapR.begin(), overlapR.end(), 0.0);
     }
 
 private:
     void recomputeFir() {
-        std::vector<std::complex<double>> H(FFT_SIZE);
+        int bandsIdx = activeBandsIdx.load(std::memory_order_acquire);
+        auto& currentBands = bands[bandsIdx];
+        float sr = lastSr.load();
+
         for (int i = 0; i <= FFT_SIZE / 2; ++i) {
-            double f = (double)i * lastSr / FFT_SIZE;
+            double f = (double)i * sr / FFT_SIZE;
             double mag = 1.0;
-            for (auto& b : bands) {
+            for (auto& b : currentBands) {
                 if (b.enabled) {
-                    std::complex<double> resp = b.response(f, lastSr);
+                    std::complex<double> resp = b.response(f, sr);
                     mag *= std::abs(resp);
                 }
             }
-            // Symmetric zero-phase response evaluation
-            H[i] = std::complex<double>(mag, 0.0);
-            if (i > 0 && i < FFT_SIZE / 2) H[FFT_SIZE - i] = std::complex<double>(mag, 0.0);
+            scratchH[i] = std::complex<double>(mag, 0.0);
+            if (i > 0 && i < FFT_SIZE / 2) scratchH[FFT_SIZE - i] = std::complex<double>(mag, 0.0);
         }
 
-        std::vector<std::complex<double>> imp(FFT_SIZE);
-        kiss_fft(fftInverse, H.data(), imp.data());
+        kiss_fft(fftInverse, scratchH.data(), scratchImp.data());
 
-        // Shift and window to create a causal linear-phase FIR
-        std::vector<double> fir(FFT_SIZE, 0.0);
         int half = FIR_LEN / 2;
+        std::fill(scratchFir.begin(), scratchFir.end(), 0.0);
         for (int i = 0; i < FIR_LEN; ++i) {
-            // imp[0] is the peak of the zero-phase IR. We shift it to make it causal.
             int idx = (i - half + FFT_SIZE) % FFT_SIZE;
             double w = 0.5 * (1.0 - std::cos(2.0 * M_PI * i / (FIR_LEN - 1))); // Hann window
-            fir[i] = imp[idx].real() * w;
+            scratchFir[i] = scratchImp[idx].real() * w;
         }
 
-        // Zero-pad to FFT size and get frequency response for OLA multiplication
-        std::vector<std::complex<double>> firComplex(FFT_SIZE, 0.0);
-        for (int i = 0; i < FIR_LEN; ++i) firComplex[i] = fir[i];
+        std::fill(scratchFirComplex.begin(), scratchFirComplex.end(), 0.0);
+        for (int i = 0; i < FIR_LEN; ++i) scratchFirComplex[i] = scratchFir[i];
 
-        std::vector<std::complex<double>> firFreqComplex(FFT_SIZE);
-        kiss_fft(fftForward, firComplex.data(), firFreqComplex.data());
+        kiss_fft(fftForward, scratchFirComplex.data(), scratchFreqComplex.data());
 
-        // Store interleaved real/imag for the audio thread
-        this->firFreq.resize(FFT_SIZE * 2);
+        int stagingFirIdx = 1 - activeFirIdx.load(std::memory_order_acquire);
         for(int i=0; i<FFT_SIZE; ++i) {
-            this->firFreq[i*2] = firFreqComplex[i].real();
-            this->firFreq[i*2+1] = firFreqComplex[i].imag();
+            firFreq[stagingFirIdx][i*2] = scratchFreqComplex[i].real();
+            firFreq[stagingFirIdx][i*2+1] = scratchFreqComplex[i].imag();
         }
+        activeFirIdx.store(stagingFirIdx, std::memory_order_release);
     }
 
     template<typename T>
     void processIir(T* buf, int frames, int channels) {
-        if (channels >= 2) {
+        int bandsIdx = activeBandsIdx.load(std::memory_order_acquire);
+        auto& currentBands = bands[bandsIdx];
+        if (channels == 2) {
+#if defined(__ARM_NEON)
+            if (std::is_same<T, float>::value) {
+                // NEON optimization for 32-bit floats
+                for (int f = 0; f < frames; f++) {
+                    float32x2_t lr = vld1_f32((float*)&buf[f * 2]);
+                    for (auto& b : currentBands) {
+                        if (!b.enabled) continue;
+                        float32x2_t z1 = {(float)b.z1_l, (float)b.z1_r};
+                        float32x2_t z2 = {(float)b.z2_l, (float)b.z2_r};
+
+                        float32x2_t out = vadd_f32(vmul_n_f32(lr, (float)b.b0), z1);
+                        z1 = vsub_f32(vadd_f32(vmul_n_f32(lr, (float)b.b1), z2), vmul_n_f32(out, (float)b.a1));
+                        z2 = vsub_f32(vmul_n_f32(lr, (float)b.b2), vmul_n_f32(out, (float)b.a2));
+
+                        lr = out;
+                        b.z1_l = (double)vget_lane_f32(z1, 0); b.z1_r = (double)vget_lane_f32(z1, 1);
+                        b.z2_l = (double)vget_lane_f32(z2, 0); b.z2_r = (double)vget_lane_f32(z2, 1);
+                    }
+                    vst1_f32((float*)&buf[f * 2], lr);
+                }
+                return;
+            }
+#if defined(__aarch64__)
+            if (std::is_same<T, double>::value) {
+                // NEON optimization for 64-bit doubles (AArch64 ONLY)
+                for (int f = 0; f < frames; f++) {
+                    float64x2_t lr = vld1q_f64((double*)&buf[f * 2]);
+                    for (auto& b : currentBands) {
+                        if (!b.enabled) continue;
+                        float64x2_t z1 = {b.z1_l, b.z1_r};
+                        float64x2_t z2 = {b.z2_l, b.z2_r};
+
+                        float64x2_t out = vaddq_f64(vmulq_n_f64(lr, b.b0), z1);
+                        z1 = vsubq_f64(vaddq_f64(vmulq_n_f64(lr, b.b1), z2), vmulq_n_f64(out, b.a1));
+                        z2 = vsubq_f64(vmulq_n_f64(lr, b.b2), vmulq_n_f64(out, b.a2));
+
+                        lr = out;
+                        b.z1_l = vgetq_lane_f64(z1, 0); b.z1_r = vgetq_lane_f64(z1, 1);
+                        b.z2_l = vgetq_lane_f64(z2, 0); b.z2_r = vgetq_lane_f64(z2, 1);
+                    }
+                    vst1q_f64((double*)&buf[f * 2], lr);
+                }
+                return;
+            }
+#endif
+#endif
             for (int f = 0; f < frames; f++) {
-                double l = buf[f * 2], r = buf[f * 2 + 1];
-                for (auto& b : bands) if (b.enabled) b.process(l, r);
+                double l = (double)buf[f * 2], r = (double)buf[f * 2 + 1];
+                for (auto& b : currentBands) if (b.enabled) b.process(l, r);
                 buf[f * 2] = (T)l; buf[f * 2 + 1] = (T)r;
             }
         } else {
             for (int f = 0; f < frames; f++) {
-                double s = buf[f], dummy = 0.0;
-                for (auto& b : bands) if (b.enabled) b.process(s, dummy);
-                buf[f] = (T)s;
+                // Process at least the first channel, or more if we have state.
+                // For now, only process the first 2 channels properly to avoid corruption.
+                double l = (double)buf[f * channels], r = (channels > 1) ? (double)buf[f * channels + 1] : 0.0;
+                for (auto& b : currentBands) if (b.enabled) b.process(l, r);
+                buf[f * channels] = (T)l;
+                if (channels > 1) buf[f * channels + 1] = (T)r;
             }
         }
     }
 
     template<typename T>
     void processFir(T* buf, int frames, int channels) {
+        int firIdx = activeFirIdx.load(std::memory_order_acquire);
+        const auto& currentFir = firFreq[firIdx];
         int processed = 0;
         while (processed < frames) {
             int take = std::min(frames - processed, HOP_SIZE);
@@ -435,12 +678,12 @@ private:
             std::fill(timeR.begin(), timeR.end(), 0.0);
             if (channels >= 2) {
                 for (int i = 0; i < take; i++) {
-                    timeL[i] = (double)buf[(processed + i) * 2];
-                    timeR[i] = (double)buf[(processed + i) * 2 + 1];
+                    timeL[i] = (double)buf[(processed + i) * channels];
+                    timeR[i] = (double)buf[(processed + i) * channels + 1];
                 }
             } else {
                 for (int i = 0; i < take; i++) {
-                    timeL[i] = (double)buf[processed + i];
+                    timeL[i] = (double)buf[(processed + i) * channels];
                 }
             }
 
@@ -448,7 +691,7 @@ private:
             if (channels >= 2) kiss_fft(fftForward, timeR.data(), specR.data());
 
             for (int i = 0; i < FFT_SIZE; i++) {
-                std::complex<double> f(firFreq[i*2], firFreq[i*2+1]);
+                std::complex<double> f(currentFir[i*2], currentFir[i*2+1]);
                 specL[i] *= f;
                 if (channels >= 2) specR[i] *= f;
             }
@@ -458,16 +701,15 @@ private:
 
             if (channels >= 2) {
                 for (int i = 0; i < take; i++) {
-                    buf[(processed + i) * 2] = (T)(timeL[i].real() + overlapL[i]);
-                    buf[(processed + i) * 2 + 1] = (T)(timeR[i].real() + overlapR[i]);
+                    buf[(processed + i) * channels] = (T)(timeL[i].real() + overlapL[i]);
+                    buf[(processed + i) * channels + 1] = (T)(timeR[i].real() + overlapR[i]);
                 }
             } else {
                 for (int i = 0; i < take; i++) {
-                    buf[processed + i] = (T)(timeL[i].real() + overlapL[i]);
+                    buf[(processed + i) * channels] = (T)(timeL[i].real() + overlapL[i]);
                 }
             }
 
-            // Update overlap: shift and add the tails from current FFT convolution
             for (int i = 0; i < FFT_SIZE - take; i++) {
                 overlapL[i] = (i + take < FFT_SIZE ? overlapL[i + take] : 0.0) + timeL[i + take].real();
                 if (channels >= 2) {
@@ -482,108 +724,96 @@ private:
 
 // ===================== DSP UTILITIES =====================
 
+// ===================== LOOKAHEAD LIMITER (Transparent, Soft-Knee) =====================
 class LookaheadLimiter {
     std::vector<double> delayBuffer;
     size_t delaySize = 0;
     size_t writePos = 0;
-    double gainReduction = 1.0;
-    double threshold = 0.98;
-    double attackCoeff = 0.9;
-    double releaseCoeff = 0.9999;
-    double kneeWidthDb = 6.0;
+    double gainEnvelope = 1.0;
+    double ceiling = 0.891; // -1 dBFS
+    double releaseCoeff = 0.0;
+    double attackCoeff = 0.0;
     int currentSampleRate = 48000;
+    int currentChannels = 2;
 
 public:
-    void init(int sampleRate) {
+    void init(int sampleRate, int channels) {
         currentSampleRate = sampleRate;
-        // Increased look-ahead delay to 20ms. This is critical for Bass.
-        // 20ms is longer than a full cycle of 50Hz, preventing waveform distortion ("iraichal").
-        delaySize = (size_t)std::max(1.0, std::ceil(0.020 * (double)sampleRate));
-        delayBuffer.assign(delaySize * 2, 0.0);
+        currentChannels = channels;
+        // 20ms look-ahead delay for musical peak protection
+        delaySize = (size_t)std::max(1, (int)std::ceil(0.020 * sampleRate));
+        delayBuffer.assign(delaySize * channels, 0.0);
         writePos = 0;
-        gainReduction = 1.0;
+        gainEnvelope = 1.0;
+
+        // Default release/attack
+        releaseCoeff = std::exp(-1.0 / (0.100 * sampleRate));
+        attackCoeff = std::exp(-1.0 / (0.0005 * sampleRate));
     }
 
     void setParams(double thresholdDb, double attackMs, double releaseMs) {
-        threshold = std::pow(10.0, thresholdDb / 20.0);
-        kneeWidthDb = 12.0; // Very soft knee for transparent limiting
-        // g(t) = target + (g(t-1) - target) * exp(-1 / (tau * fs))
-        if (attackMs > 0)
-            attackCoeff = std::exp(-1.0 / (attackMs * 0.001 * currentSampleRate));
-        else
-            attackCoeff = 0.0;
+        ceiling = std::pow(10.0, thresholdDb / 20.0);
 
-        if (releaseMs > 0)
-            releaseCoeff = std::exp(-1.0 / (releaseMs * 0.001 * currentSampleRate));
-        else
-            releaseCoeff = 0.0;
+        // Guard against 0 or negative ms, which would blow up the exp() below
+        double safeAttackMs = std::max(0.01, attackMs);
+        double safeReleaseMs = std::max(1.0, releaseMs);
+
+        attackCoeff = std::exp(-1.0 / (safeAttackMs / 1000.0 * currentSampleRate));
+        releaseCoeff = std::exp(-1.0 / (safeReleaseMs / 1000.0 * currentSampleRate));
     }
 
     template<typename T>
-    void process(T* buffer, int frames, int channels) {
-        if (channels != 2 || delaySize == 0) return;
+    void process(T* data, int frames, int channels) {
+        if (delaySize == 0) return;
 
-        double currentThreshold = threshold;
-        double currentAttack = attackCoeff;
-        double currentRelease = releaseCoeff;
+        for (int i = 0; i < frames; i++) {
+            T maxPeak = 0;
+            for (int c = 0; c < channels; c++) {
+                T s = std::abs(data[i * channels + c]);
+                if (s > maxPeak) maxPeak = s;
+            }
 
-        for (int f = 0; f < frames; f++) {
-            // 1. Peak detection (absolute peak of both channels)
-            double lIn = (double)buffer[f * 2];
-            double rIn = (double)buffer[f * 2 + 1];
-            double peak = std::max(std::abs(lIn), std::abs(rIn));
-
-            // 2. Gain Computer with 6dB Soft-Knee
+            // 1. Required gain to hit ceiling
             double targetGain = 1.0;
-            if (peak > 1e-9) {
-                double peakDb = 20.0 * std::log10(peak);
-                double thresholdDb = 20.0 * std::log10(currentThreshold);
+            if (maxPeak > 1e-6) {
+                // Soft-knee (quadratic) 6dB width
+                // Transition starts at -7dB, ends at -1dB
+                double peakDb = 20.0 * std::log10((double)maxPeak + 1e-9);
+                double ceilingDb = 20.0 * std::log10(ceiling);
+                double kneeDb = 6.0;
 
-                double lowerKnee = thresholdDb - kneeWidthDb / 2.0;
-                double upperKnee = thresholdDb + kneeWidthDb / 2.0;
-
-                if (peakDb > lowerKnee) {
-                    if (peakDb < upperKnee) {
-                        // Soft-knee: quadratic interpolation in log domain
-                        double diff = peakDb - lowerKnee;
-                        double reductionDb = (diff * diff) / (2.0 * kneeWidthDb);
-                        targetGain = std::pow(10.0, -reductionDb / 20.0);
-                    } else {
-                        // Hard limiting: scale peak to threshold ceiling
-                        targetGain = currentThreshold / peak;
-                    }
+                if (peakDb > ceilingDb + kneeDb / 2.0) {
+                    targetGain = std::pow(10.0, (ceilingDb - peakDb) / 20.0);
+                } else if (peakDb > ceilingDb - kneeDb / 2.0) {
+                    // Quadratic knee formula
+                    double diff = peakDb - (ceilingDb - kneeDb / 2.0);
+                    double reductionDb = (diff * diff) / (2.0 * kneeDb);
+                    targetGain = std::pow(10.0, -reductionDb / 20.0);
                 }
             }
 
-            // 3. Smoothing (Attack/Release)
-            // If targetGain is lower than current, we are in the attack phase
-            if (targetGain < gainReduction) {
-                // ATTACK: Move fast to prevent clipping
-                gainReduction = targetGain + (gainReduction - targetGain) * currentAttack;
+            // 2. Envelope follower (Adjustable Attack, Adjustable Release)
+            if (targetGain < gainEnvelope) {
+                gainEnvelope = targetGain + (gainEnvelope - targetGain) * attackCoeff;
             } else {
-                // RELEASE: Move slowly back to 1.0
-                gainReduction = targetGain + (gainReduction - targetGain) * currentRelease;
+                gainEnvelope = targetGain + (gainEnvelope - targetGain) * releaseCoeff;
             }
 
-            // 4. Apply gain reduction to the DELAYED signal (Look-ahead)
-            double delayedL = delayBuffer[writePos * 2];
-            double delayedR = delayBuffer[writePos * 2 + 1];
-
-            // Store current input in the look-ahead circular buffer
-            delayBuffer[writePos * 2] = lIn;
-            delayBuffer[writePos * 2 + 1] = rIn;
+            // 3. Apply gain to delayed signal
+            for (int c = 0; c < channels; c++) {
+                size_t readPos = writePos * channels + c;
+                T delayedSample = (T)delayBuffer[readPos];
+                delayBuffer[readPos] = (double)data[i * channels + c];
+                data[i * channels + c] = delayedSample * (T)gainEnvelope;
+            }
             writePos = (writePos + 1) % delaySize;
-
-            // Output delayed sample multiplied by smoothed gain
-            buffer[f * 2] = (T)(delayedL * gainReduction);
-            buffer[f * 2 + 1] = (T)(delayedR * gainReduction);
         }
     }
 
     void reset() {
         std::fill(delayBuffer.begin(), delayBuffer.end(), 0.0);
         writePos = 0;
-        gainReduction = 1.0;
+        gainEnvelope = 1.0;
     }
 };
 
@@ -612,17 +842,27 @@ void resample_cubic(const float* in, int inFrames, float* out, int outFrames, in
 }
 
 class DcBlocker {
-    double x1_l, x1_r, y1_l, y1_r;
+    std::vector<double> x1, y1;
     double R;
 public:
-    DcBlocker() : x1_l(0), x1_r(0), y1_l(0), y1_r(0), R(0.999) {}
-    void init(int sampleRate) { R = 1.0 - (2.0 * M_PI * 5.0 / sampleRate); }
+    DcBlocker() : R(0.999) { init(48000, 2); }
+    void reset() { std::fill(x1.begin(), x1.end(), 0.0); std::fill(y1.begin(), y1.end(), 0.0); }
+    void init(int sampleRate, int channels) {
+        R = 1.0 - (2.0 * M_PI * 5.0 / sampleRate);
+        x1.assign(channels, 0.0);
+        y1.assign(channels, 0.0);
+    }
     template<typename T>
-    inline void process(T& l, T& r) {
-        double y_l = (double)l - x1_l + R * y1_l;
-        x1_l = (double)l; y1_l = y_l; l = (T)y_l;
-        double y_r = (double)r - x1_r + R * y1_r;
-        x1_r = (double)r; y1_r = y_r; r = (T)y_r;
+    void process(T* buffer, int frames, int channels) {
+        if (x1.size() < (size_t)channels) init(48000, channels);
+        for (int f = 0; f < frames; f++) {
+            for (int c = 0; c < channels; c++) {
+                double in = (double)buffer[f * channels + c];
+                double out = in - x1[c] + R * y1[c];
+                x1[c] = in; y1[c] = out;
+                buffer[f * channels + c] = (T)out;
+            }
+        }
     }
 };
 
@@ -660,6 +900,118 @@ public:
         delayIdx = (delayIdx + 1) % DELAY_SAMPLES;
         l = (T)(in_l * direct + dR * blend);
         r = (T)(in_r * direct + dL * blend);
+    }
+};
+
+// ===================== SOUND STAGE ENGINE (3D Spatialization) =====================
+class SoundStageEngine {
+    std::vector<double> delayBufL, delayBufR;
+    size_t delaySize = 0, writePos = 0;
+    double azimuthDeg = 0.0;       // 0-360, 0 = front
+    double elevationDeg = 0.0;     // -90 to +90
+    double distanceM = 2.0;        // meters
+    double widthAmount = 1.0;
+    double centerLockAmount = 0.0; // 0 = off, 1 = full mid/side lock
+    double airAbsorbState = 0.0;   // 1-pole lowpass state for distance darkening
+    double intensity = 0.0;        // 0 = bypass
+    int currentSampleRate = 48000;
+
+public:
+    void init(int sampleRate) {
+        currentSampleRate = sampleRate;
+        delaySize = (size_t)std::ceil(0.0008 * sampleRate) + 4; // max ITD ~0.8ms
+        delayBufL.assign(delaySize, 0.0);
+        delayBufR.assign(delaySize, 0.0);
+        writePos = 0;
+        airAbsorbState = 0.0;
+    }
+
+    void setIntensity(double value) { intensity = std::clamp(value, 0.0, 1.0); }
+    void setPosition(double az, double el, double dist) {
+        azimuthDeg = az; elevationDeg = el; distanceM = std::max(0.3, dist);
+    }
+    void setWidth(double w) { widthAmount = w; }
+    void setCenterLock(double amount) { centerLockAmount = std::clamp(amount, 0.0, 1.0); }
+
+    void process(double& left, double& right) {
+        if (intensity <= 0.0001) return;
+
+        // 1. Mid/Side split
+        double mid = (left + right) * 0.5;
+        double side = (left - right) * 0.5;
+
+        // 2. Width applies to the side signal only
+        side *= widthAmount;
+
+        // 3. Azimuth -> ITD/ILD on the side component (the part that actually carries position)
+        double azRad = azimuthDeg * M_PI / 180.0;
+        double itdSamples = std::sin(azRad) * 0.0008 * currentSampleRate; // signed, +right / -left
+        double ildL = 1.0 - std::max(0.0, std::sin(azRad)) * 0.3;
+        double ildR = 1.0 - std::max(0.0, -std::sin(azRad)) * 0.3;
+
+        delayBufL[writePos] = side;
+        delayBufR[writePos] = side;
+        double readPos = (double)writePos - std::abs(itdSamples);
+        if (readPos < 0) readPos += (double)delaySize;
+        size_t r0 = (size_t)readPos % delaySize;
+        double delayedSide = (itdSamples >= 0) ? delayBufL[r0] : delayBufR[r0];
+
+        double sideL = (itdSamples >= 0) ? side : delayedSide;
+        double sideR = (itdSamples >= 0) ? delayedSide : side;
+        sideL *= ildL; sideR *= ildR;
+        writePos = (writePos + 1) % delaySize;
+
+        // 4. Distance: inverse falloff + air-absorption darkening
+        double distGain = 1.0 / (1.0 + (distanceM - 1.0) * 0.15);
+        double absorbCoeff = std::clamp(1.0 - (distanceM / 15.0), 0.2, 0.95);
+        airAbsorbState = airAbsorbState * (1.0 - absorbCoeff) + mid * absorbCoeff;
+
+        // 5. Elevation: cheap presence-band tilt
+        double elevTilt = 1.0 + (elevationDeg / 90.0) * 0.15;
+
+        // 6. Recombine, with center-lock keeping `mid` un-positioned
+        double positionedMid = mid * (1.0 - centerLockAmount) + airAbsorbState * centerLockAmount;
+        double outL = (positionedMid + sideL) * distGain * elevTilt;
+        double outR = (positionedMid - sideR) * distGain * elevTilt;
+
+        // 7. Blend based on intensity
+        left = left * (1.0 - intensity) + outL * intensity;
+        right = right * (1.0 - intensity) + outR * intensity;
+    }
+};
+
+struct BandSplitter {
+    double lp1State[2] = {0,0}, lp2State[2] = {0,0}, lp3State[2] = {0,0}, lp4State[2] = {0,0};
+    double a1, a2, a3, a4;
+
+    void init(int sampleRate) {
+        a1 = computeOnePoleCoeff(150.0, (double)sampleRate);
+        a2 = computeOnePoleCoeff(400.0, (double)sampleRate);
+        a3 = computeOnePoleCoeff(1000.0, (double)sampleRate);
+        a4 = computeOnePoleCoeff(3000.0, (double)sampleRate);
+        reset();
+    }
+    void reset() {
+        for(int i=0; i<2; i++) lp1State[i] = lp2State[i] = lp3State[i] = lp4State[i] = 0.0;
+    }
+    double computeOnePoleCoeff(double hz, double sr) { return exp(-2.0 * M_PI * hz / sr); }
+
+    void split(double in, int ch, double bands[5]) {
+        double& s1 = lp1State[ch % 2];
+        double& s2 = lp2State[ch % 2];
+        double& s3 = lp3State[ch % 2];
+        double& s4 = lp4State[ch % 2];
+
+        s1 = in * (1.0 - a1) + s1 * a1;
+        double r1 = in - s1;
+        s2 = r1 * (1.0 - a2) + s2 * a2;
+        double r2 = r1 - s2;
+        s3 = r2 * (1.0 - a3) + s3 * a3;
+        double r3 = r2 - s3;
+        s4 = r3 * (1.0 - a4) + s4 * a4;
+        double r4 = r3 - s4;
+
+        bands[0] = s1; bands[1] = s2; bands[2] = s3; bands[3] = s4; bands[4] = r4;
     }
 };
 
@@ -758,18 +1110,72 @@ public:
     }
 };
 
+class TempoProcessor {
+    int sampleRate = 48000;
+    int channels = 2;
+    float speed = 1.0f;
+    std::vector<float> overlapBuffer;
+    int overlapSamples = 0;
+    static constexpr int CHUNK_MS = 30; // 30ms chunks for OLA
+public:
+    void init(int sr, int ch) {
+        sampleRate = sr; channels = ch;
+        int chunkSize = sr * CHUNK_MS / 1000;
+        overlapSamples = chunkSize / 4;
+        overlapBuffer.assign(overlapSamples * ch, 0.0f);
+    }
+    void setSpeed(float s) { speed = s; }
+
+    int process(float* input, int inFrames, float* output, int maxOutFrames) {
+        if (std::abs(speed - 1.0f) < 0.01f) {
+            int frames = std::min(inFrames, maxOutFrames);
+            std::copy(input, input + frames * channels, output);
+            return frames;
+        }
+
+        int chunkSize = sampleRate * CHUNK_MS / 1000;
+        int hopOut = chunkSize - overlapSamples;
+        int hopIn  = (int)(hopOut * speed);
+        int outFrames = 0, inPos = 0;
+        bool firstChunk = true;
+
+        while (inPos + chunkSize <= inFrames && outFrames + chunkSize <= maxOutFrames) {
+            for (int i = 0; i < chunkSize; i++) {
+                for (int c = 0; c < channels; c++) {
+                    float sample = input[(inPos + i) * channels + c];
+                    if (i < overlapSamples && !firstChunk) {
+                        float fadeIn = (float)i / overlapSamples;
+                        float prevTail = overlapBuffer[i * channels + c];
+                        output[(outFrames + i) * channels + c] = sample * fadeIn + prevTail * (1.0f - fadeIn);
+                    } else {
+                        output[(outFrames + i) * channels + c] = sample;
+                    }
+                }
+            }
+            for (int i = 0; i < overlapSamples; i++)
+                for (int c = 0; c < channels; c++)
+                    overlapBuffer[i * channels + c] = input[(inPos + chunkSize - overlapSamples + i) * channels + c];
+
+            outFrames += hopOut;
+            inPos += hopIn;
+            firstChunk = false;
+        }
+        return outFrames;
+    }
+};
+
 // ===================== MMAP AUDIO OUTPUT =====================
 class MmapStream {
     AAudioStream* stream = nullptr;
     int32_t channels = 2;
     int32_t sampleRate = 48000;
 public:
-    MmapStream(int sr, int ch, int bufferFrames) {
+    MmapStream(int sr, int ch, int bufferFrames, aaudio_format_t format = AAUDIO_FORMAT_PCM_FLOAT) {
         AAudioStreamBuilder* builder;
         AAudio_createStreamBuilder(&builder);
         AAudioStreamBuilder_setSampleRate(builder, sr);
         AAudioStreamBuilder_setChannelCount(builder, ch);
-        AAudioStreamBuilder_setFormat(builder, AAUDIO_FORMAT_PCM_FLOAT);
+        AAudioStreamBuilder_setFormat(builder, format);
         AAudioStreamBuilder_setSharingMode(builder, AAUDIO_SHARING_MODE_EXCLUSIVE);
         AAudioStreamBuilder_setPerformanceMode(builder, AAUDIO_PERFORMANCE_MODE_LOW_LATENCY);
 
@@ -800,9 +1206,10 @@ public:
     void pause() { if (stream) AAudioStream_requestPause(stream); }
     void stop() { if (stream) AAudioStream_requestStop(stream); }
     void flush() { if (stream) AAudioStream_requestFlush(stream); }
-    int write(float* data, int offset, int frames) {
+    int write(void* data, int offset, int frames) {
         if (!stream) return 0;
-        aaudio_result_t result = AAudioStream_write(stream, data + offset, frames, 10000000LL); // 10ms timeout
+        int elementSize = (AAudioStream_getFormat(stream) == AAUDIO_FORMAT_PCM_FLOAT) ? sizeof(float) : sizeof(int32_t);
+        aaudio_result_t result = AAudioStream_write(stream, (uint8_t*)data + (offset * channels * elementSize), frames, 10000000LL); // 10ms timeout
         if (result < 0) return 0;
         return (int)result;
     }
@@ -819,6 +1226,11 @@ public:
         // Approximation
         return 0; // Latency calculation needs more state
     }
+    void setBufferConfig(int bufferFrames, int bufferCount, int postFadeFrames) {
+        if (stream) {
+            AAudioStream_setBufferSizeInFrames(stream, bufferFrames);
+        }
+    }
 };
 
 // ===================== DSP ENGINE =====================
@@ -829,15 +1241,19 @@ public:
             soxr_handle(nullptr),
 #endif
             inRate(44100), outRate(44100), channels(2),
-            useSox(true), dcBlockerEnabled(true), dvcEnabled(true), limiterEnabled(true), replayGainDb(0.0f), preampDb(0.0f),
+            useSox(true), dcBlockerEnabled(true), monoEnabled(false), dvcEnabled(true), rmsDvcEnabled(true), rmsLevelerEnabled(true), limiterEnabled(true), replayGainDb(0.0f), preampDb(0.0f),
             dvcLevel(1.0f), dvcMode(0),
             midBassDb(0.0f), trebleDb(0.0f), airDb(0.0f),
             balance(0.0f), stereoWidth(1.0f), crossfeedEnabled(false), crossfeedLevel(0.4f),
             reverbAmount(0.0f),
             reverbType(0), reverbPredelayMs(0.0f), reverbWidth(1.0f),
             reverbDamping(0.5f), reverbRoomSize(0.5f),
+            soundStageEnabled(false),
             bitDepth(16), cutoffRatio(0.97f),
-            soxrQuality(3), float64Enabled(false) {
+            soxrQuality(3), float64Enabled(false),
+            headroomManagementEnabled(true),
+            noHeadroomGainEnabled(false),
+            hardwareVolumeEnabled(false) {
         bandDbs.fill(0.0f);
         bandQs.fill(1.0f);
         bandFreqs.fill(1000.0f);
@@ -861,17 +1277,39 @@ public:
 #endif
         ) return;
         inRate = inR; outRate = outR; channels = ch;
-        dcBlocker.init(inRate); reverb.init(inRate); crossfeed.init(inRate);
-        limiter.init(inRate);
+        // Pre-compute DVC ramp coefficient once — avoids exp() on audio thread
+        // 8ms time constant — perceptually smooth, matches Poweramp's volume feel
+        dvcRampCoeff = 1.0 - std::exp(-1.0 / (0.008 * inRate));
+
+        // Leveler coefficients (Hybrid Algorithm)
+        // 50ms RMS window
+        rmsEnvCoeff = 1.0 - std::exp(-1.0 / (0.050 * inRate));
+        // 500ms attack, 1500ms release
+        levelerAttackCoeff = 1.0 - std::exp(-1.0 / (0.500 * inRate));
+        levelerReleaseCoeff = 1.0 - std::exp(-1.0 / (1.500 * inRate));
+
+        dcBlocker.init(inRate, channels); reverb.init(inRate); crossfeed.init(inRate);
+        for(int i=0; i<5; i++) soundStages[i].init(inRate);
+        splitter.init(inRate);
+        limiter.init(inRate, channels);
+        dither.init(channels);
         limiter.setParams((double)limiterThresholdDb, (double)limiterAttackMs, (double)limiterReleaseMs);
         eq.init((float)inRate);
+        tempo.init(inRate, channels);
         updateFilters(); updateSoxr();
     }
+
+    float playbackSpeed = 1.0f;
+    bool preservePitch = true;
+    TempoProcessor tempo;
 
     void updateSoxr() {
 #ifdef HAVE_SOXR
         if (soxr_handle) { soxr_delete(soxr_handle); soxr_handle = nullptr; }
-        if (inRate == outRate) return;
+        double effectiveInRate = inRate;
+        if (!preservePitch) effectiveInRate *= playbackSpeed;
+        if (effectiveInRate == (double)outRate) return;
+
         soxr_error_t err; soxr_io_spec_t io_spec = soxr_io_spec(SOXR_FLOAT32_I, SOXR_FLOAT32_I);
         unsigned long recipe;
         switch (soxrQuality) {
@@ -881,7 +1319,7 @@ public:
         soxr_quality_spec_t q_spec = soxr_quality_spec(recipe, SOXR_LINEAR_PHASE);
         q_spec.passband_end = 0.997; q_spec.stopband_begin = 1.0;
         soxr_runtime_spec_t r_spec = soxr_runtime_spec(1);
-        soxr_handle = soxr_create((double)inRate, (double)outRate, (unsigned)channels, &err, &io_spec, &q_spec, &r_spec);
+        soxr_handle = soxr_create(effectiveInRate, (double)outRate, (unsigned)channels, &err, &io_spec, &q_spec, &r_spec);
 #endif
     }
 
@@ -926,9 +1364,7 @@ public:
             }
         }
 
-        if (dcBlockerEnabled && channels >= 2) {
-            for (int i = 0; i < samples; i += 2) dcBlocker.process(input[i], input[i + 1]);
-        }
+        if (dcBlockerEnabled && channels >= 1) dcBlocker.process(input, inFrames, channels);
         if (replayGainDb != 0.0f) {
             T gain = (T)std::pow(10.0, (double)replayGainDb / 20.0);
             for (int i = 0; i < samples; i++) input[i] *= gain;
@@ -938,13 +1374,31 @@ public:
             for (int i = 0; i < samples; i++) input[i] *= gain;
         }
 
-        // EQ
-        // EqEngine handles both IIR and FIR
-        eq.process(input, inFrames, channels);
+    // 2.7: Headroom Management (Applied BEFORE EQ)
+    if (headroomManagementEnabled && !(noHeadroomGainEnabled && !dvcEnabled)) {
+        T g = (T)eq.getAutoHeadroomGain();
+        T aiG = (T)aiEq.getAutoHeadroomGain();
+        T simG = (T)simEq.getAutoHeadroomGain();
+        if (aiG < g) g = aiG;
+        if (simG < g) g = simG;
+
+        if (g < (T)0.999) {
+            for (int i = 0; i < samples; i++) input[i] *= g;
+        }
+    }
+
+    // AI EQ
+    aiEq.process(input, inFrames, channels);
+
+    // Simulation EQ (Phase 3.5)
+    simEq.process(input, inFrames, channels);
+
+    // EQ
+    eq.process(input, inFrames, channels);
 
         if (channels >= 2) {
-            for (int i = 0; i < samples; i += 2) {
-                T& l = input[i]; T& r = input[i + 1];
+            for (int f = 0; f < inFrames; f++) {
+                T& l = input[f * channels]; T& r = input[f * channels + 1];
                 for (int t = 0; t < 3; t++) toneFilters[t].process(l, r);
             }
         } else {
@@ -953,16 +1407,42 @@ public:
                 for (int t = 0; t < 3; t++) toneFilters[t].process(s, dummy);
             }
         }
+
+        // --- Mono Downmix ---
+        if (monoEnabled && channels >= 2) {
+            for (int f = 0; f < inFrames; f++) {
+                T mono = (input[f * channels] + input[f * channels + 1]) * (T)0.5;
+                input[f * channels] = input[f * channels + 1] = mono;
+            }
+        }
         if (channels >= 2) {
-            for (int i = 0; i < samples; i += 2) {
-                T mid = (input[i] + input[i + 1]) * (T)0.5; T side = (input[i] - input[i + 1]) * (T)0.5;
+            for (int f = 0; f < inFrames; f++) {
+                int lIdx = f * channels, rIdx = f * channels + 1;
+                T mid = (input[lIdx] + input[rIdx]) * (T)0.5; T side = (input[lIdx] - input[rIdx]) * (T)0.5;
                 side *= (T)stereoWidth; T left = mid + side; T right = mid - side;
                 if (balance > 0.0f) left *= (T)(1.0f - balance); else if (balance < 0.0f) right *= (T)(1.0f + balance);
-                input[i] = left; input[i + 1] = right;
+                input[lIdx] = left; input[rIdx] = right;
             }
         }
         if (crossfeedEnabled && channels >= 2) {
-            for (int i = 0; i < samples; i += 2) crossfeed.process(input[i], input[i + 1], crossfeedLevel);
+            for (int f = 0; f < inFrames; f++) crossfeed.process(input[f * channels], input[f * channels + 1], crossfeedLevel);
+        }
+        if (soundStageEnabled && channels >= 2) {
+            for (int f = 0; f < inFrames; f++) {
+                int lIdx = f * channels, rIdx = f * channels + 1;
+                double l = (double)input[lIdx], r = (double)input[rIdx];
+                double lBands[5], rBands[5];
+                splitter.split(l, 0, lBands);
+                splitter.split(r, 1, rBands);
+
+                double sumL = 0, sumR = 0;
+                for(int b=0; b<5; b++) {
+                    double bL = lBands[b], bR = rBands[b];
+                    soundStages[b].process(bL, bR);
+                    sumL += bL; sumR += bR;
+                }
+                input[lIdx] = (T)sumL; input[rIdx] = (T)sumR;
+            }
         }
         if (reverbAmount > 0.001f) {
             int predelaySamples = (int)(reverbPredelayMs * inRate / 1000.0f);
@@ -972,8 +1452,54 @@ public:
             }
         }
         if (dvcEnabled) {
-            T gain = (T)dvcLevel;
-            for (int i = 0; i < samples; i++) input[i] *= gain;
+            // Target RMS: 0.12 (-18.4 dBFS)
+            const double targetRms = 0.12;
+            const double maxBoost = 2.0;       // +6dB
+            const double maxAttenuation = 0.5; // -6dB
+
+            for (int i = 0; i < samples; i += channels) {
+                double levelerGainToApply = 1.0;
+
+                if (rmsDvcEnabled) {
+                    // Compute current frame RMS
+                    double sumSq = 0;
+                    for (int c = 0; c < channels; c++) sumSq += (double)input[i + c] * (double)input[i + c];
+                    double frameRms = std::sqrt(sumSq / channels);
+
+                    // Update RMS envelope (50ms window)
+                    levelerRmsEnvelope += (frameRms - levelerRmsEnvelope) * rmsEnvCoeff;
+
+                    // Compute required gain
+                    double targetGain = 1.0;
+                    if (levelerRmsEnvelope > 1e-6) {
+                        targetGain = targetRms / levelerRmsEnvelope;
+                    }
+                    targetGain = std::clamp(targetGain, maxAttenuation, maxBoost);
+
+                    // Smooth gain change (500ms attack, 1500ms release)
+                    double levelerCoeff = (targetGain < levelerGain) ? levelerAttackCoeff : levelerReleaseCoeff;
+                    levelerGain += (targetGain - levelerGain) * levelerCoeff;
+
+                    if (rmsLevelerEnabled) {
+                        levelerGainToApply = levelerGain;
+                    }
+                }
+
+                // Apply Leveler gain AND User Volume (DVC Level)
+                // Use perceptual ramp for user volume
+                dvcCurrentLevel += (dvcLevel - dvcCurrentLevel) * dvcRampCoeff;
+                T totalGain = (T)(levelerGainToApply * dvcCurrentLevel);
+
+                for (int c = 0; c < channels; c++) input[i + c] *= totalGain;
+            }
+            // Snap user volume if close enough
+            if (std::abs(dvcCurrentLevel - dvcLevel) < 1e-7) dvcCurrentLevel = dvcLevel;
+        }
+        if (softLimiterEnabled) {
+            float softClipThreshold = std::pow(10.0f, limiterThresholdDb / 20.0f);
+            for (int i = 0; i < samples; i++) {
+                input[i] = std::tanh(input[i] / softClipThreshold) * softClipThreshold;
+            }
         }
         if (limiterEnabled) limiter.process(input, inFrames, channels);
         dither.process(input, inFrames, channels);
@@ -981,35 +1507,76 @@ public:
 
     void process(float* input, int inFrames, float* output, int& outFrames) {
         processInPlace(input, inFrames);
-        if (inRate != outRate) {
-            int expectedOutFrames = (int)((float)inFrames * outRate / inRate);
-            tempBuffer.resize(expectedOutFrames * channels + 256);
+
+        float* effectiveInput = input;
+        int effectiveInFrames = inFrames;
+
+        if (preservePitch && std::abs(playbackSpeed - 1.0f) > 0.01f) {
+            // Tempo processing changes frame count
+            int maxOut = (int)(inFrames / playbackSpeed * 1.5f) + 1024;
+            tempoBuffer.resize(maxOut * channels);
+            effectiveInFrames = tempo.process(input, inFrames, tempoBuffer.data(), maxOut);
+            effectiveInput = tempoBuffer.data();
+        }
+
+        if (inRate != outRate || (!preservePitch && std::abs(playbackSpeed - 1.0f) > 0.01f)) {
+            double effectiveInRate = inRate;
+            if (!preservePitch) effectiveInRate *= playbackSpeed;
+
+            int expectedOutFrames = (int)((float)effectiveInFrames * outRate / effectiveInRate);
+            resampleBuffer.resize(expectedOutFrames * channels + 256);
 #ifdef HAVE_SOXR
             if (useSox && soxr_handle) {
                 size_t idone, odone;
-                soxr_process(soxr_handle, input, (size_t)inFrames, &idone, tempBuffer.data(), (size_t)expectedOutFrames, &odone);
+                soxr_process(soxr_handle, effectiveInput, (size_t)effectiveInFrames, &idone, resampleBuffer.data(), (size_t)expectedOutFrames, &odone);
                 outFrames = (int)odone;
             } else {
 #else
             {
 #endif
-                float ratio = (float)outRate / inRate;
-                resample_cubic(input, inFrames, tempBuffer.data(), expectedOutFrames, channels, ratio);
+                float ratio = (float)outRate / effectiveInRate;
+                resample_cubic(effectiveInput, effectiveInFrames, resampleBuffer.data(), expectedOutFrames, channels, ratio);
                 outFrames = expectedOutFrames;
             }
-            std::copy(tempBuffer.begin(), tempBuffer.begin() + (outFrames * channels), output);
+            std::copy(resampleBuffer.begin(), resampleBuffer.begin() + (outFrames * channels), output);
         } else {
-            std::copy(input, input + (inFrames * channels), output);
-            outFrames = inFrames;
+            std::copy(effectiveInput, effectiveInput + (effectiveInFrames * channels), output);
+            outFrames = effectiveInFrames;
         }
     }
 
     void setReplayGain(float db) { replayGainDb = db; }
     void setPreamp(float db) { preampDb = db; }
-    void setVolume(float v) { dvcLevel = std::clamp(v, 0.0f, 1.0f); }
+    void setVolume(float v) {
+        if (hardwareVolumeEnabled) {
+            dvcLevel = 1.0f;
+        } else {
+            dvcLevel = std::clamp(v, 0.0f, 1.0f);
+        }
+    }
     void setDcBlocker(bool enabled) { dcBlockerEnabled = enabled; }
+    void setMono(bool enabled) { monoEnabled = enabled; }
     void setDvc(bool enabled) { dvcEnabled = enabled; }
-    void setDvcLevel(float level) { dvcLevel = std::clamp(level, 0.0f, 1.0f); }
+    void setRmsDvc(bool enabled) { rmsDvcEnabled = enabled; }
+    void setRmsLeveler(bool enabled) { rmsLevelerEnabled = enabled; }
+    void setDvcLevel(float level) {
+        if (hardwareVolumeEnabled) {
+            dvcLevel = 1.0;
+        } else {
+            dvcLevel = std::clamp((double)level, 0.0, 1.0);
+        }
+        // Snap if within 0.1% linear — avoids ramping from power-on state
+        if (std::abs(dvcCurrentLevel - dvcLevel) < 0.001) {
+            dvcCurrentLevel = dvcLevel;
+        }
+    }
+    void setHardwareVolume(bool enabled) {
+        hardwareVolumeEnabled = enabled;
+        if (enabled) {
+            dvcLevel = 1.0;
+            dvcCurrentLevel = 1.0;
+        }
+    }
     void setDvcMode(int mode) { dvcMode = mode; }
     void setSpatial(float b, float w) { balance = b; stereoWidth = w; }
     void setCrossfeed(bool enabled, float level) { crossfeedEnabled = enabled; crossfeedLevel = std::clamp(level, 0.0f, 1.0f); }
@@ -1026,7 +1593,23 @@ public:
     void setReverbParams(float roomSize, float damping) {
         reverbRoomSize = roomSize; reverbDamping = damping; reverb.setRoomSize(roomSize); reverb.setDamping(damping);
     }
-    void setLimiter(bool enabled) { limiterEnabled = enabled; }
+    void setSpatialEnabled(bool enabled) { soundStageEnabled = enabled; if(!enabled) splitter.reset(); }
+    void setSpatialIntensity(float intensity) {
+        for(int i=0; i<5; i++) soundStages[i].setIntensity((double)intensity);
+    }
+    void setSoundStageNodePosition(int bandIdx, float az, float el, float dist) {
+        if(bandIdx >= 0 && bandIdx < 5) soundStages[bandIdx].setPosition(az, el, dist);
+    }
+    void setSoundStageWidth(float w) { for(int i=0; i<5; i++) soundStages[i].setWidth(w); }
+    void setSoundStageCenterLock(float amount) { for(int i=0; i<5; i++) soundStages[i].setCenterLock(amount); }
+    void setLimiter(bool enabled) {
+        limiterEnabled = enabled;
+        if (enabled) softLimiterEnabled = false;
+    }
+    void setSoftLimiter(bool enabled) {
+        softLimiterEnabled = enabled;
+        if (enabled) limiterEnabled = false;
+    }
     void setLimiterParams(float thresholdDb, float attackMs, float releaseMs) {
         limiterThresholdDb = thresholdDb;
         limiterAttackMs = attackMs;
@@ -1049,10 +1632,44 @@ public:
     }
     void setEqEnabled(bool enabled) { eq.setEnabled(enabled); }
     void setEqPhaseMode(bool linearPhase) { eq.setPhaseMode(linearPhase); }
+    void setHeadroomManagement(bool enabled) { headroomManagementEnabled = enabled; }
+    void setNoHeadroomGain(bool enabled) { noHeadroomGainEnabled = enabled; }
+    float getAutoHeadroomDb() {
+        double g = eq.getAutoHeadroomGain();
+        double aiG = aiEq.getAutoHeadroomGain();
+        double simG = simEq.getAutoHeadroomGain();
+        if (aiG < g) g = aiG;
+        if (simG < g) g = simG;
+        return (float)(20.0 * std::log10(std::max(g, 1e-6)));
+    }
+
+    void setAiBand(int index, float freq, float gainDb, float Q, int type) {
+        aiEq.setBand(index, freq, gainDb, Q, type);
+    }
+    void setAiEqEnabled(bool enabled) { aiEq.setEnabled(enabled); }
+
+    void setSimBand(int index, float freq, float gainDb, float Q, int type) {
+        simEq.setBand(index, freq, gainDb, Q, type);
+    }
+    void setSimEqEnabled(bool enabled) { simEq.setEnabled(enabled); }
+
     void setUseSox(bool use) { if (useSox != use) { useSox = use; updateSoxr(); } }
     void setCutoffRatio(float ratio) { if (fabsf(cutoffRatio - ratio) > 0.001f) { cutoffRatio = ratio; updateSoxr(); } }
     void setSoxrQuality(int quality) { if (soxrQuality != quality) { soxrQuality = quality; updateSoxr(); } }
     void setFloat64Mode(bool enabled) { float64Enabled = enabled; }
+    void setSpeed(float speed, bool pitchCorrection) {
+        if (playbackSpeed != speed || preservePitch != pitchCorrection) {
+            playbackSpeed = std::clamp(speed, 0.5f, 2.0f);
+            preservePitch = pitchCorrection;
+            updateSoxr();
+        }
+    }
+    int getEqLatencyFrames() const {
+        int l = eq.getLatencyFrames();
+        int al = aiEq.getLatencyFrames();
+        int sl = simEq.getLatencyFrames();
+        return l + al + sl;
+    }
 
 private:
     std::array<float, 32> bandDbs, bandQs, bandFreqs;
@@ -1068,28 +1685,318 @@ private:
 #ifdef HAVE_SOXR
     soxr_t soxr_handle;
 #endif
-    int inRate, outRate, channels; bool useSox; DcBlocker dcBlocker; bool dcBlockerEnabled;
-    bool dvcEnabled; float dvcLevel; int dvcMode; bool limiterEnabled;
+    int inRate, outRate, channels;
+    bool useSox;
+    bool dcBlockerEnabled;
+    DcBlocker dcBlocker;
+    bool dvcEnabled; bool rmsDvcEnabled; bool rmsLevelerEnabled; double dvcLevel; double dvcCurrentLevel = 1.0; int dvcMode;
+    // Pre-computed ramp coefficient (computed once on init, not per buffer)
+    double dvcRampCoeff = 0.0;
+    bool limiterEnabled, softLimiterEnabled = false;
     float limiterThresholdDb = -0.2f, limiterAttackMs = 5.0f, limiterReleaseMs = 100.0f;
     float cutoffRatio; int soxrQuality;
     bool float64Enabled;
+    bool headroomManagementEnabled;
+    bool noHeadroomGainEnabled;
+    bool hardwareVolumeEnabled;
+    bool monoEnabled;
+
+    // RMS Leveler State
+    double levelerGain = 1.0;
+    double levelerRmsEnvelope = 0.0;
+    double levelerAttackCoeff = 0.0;
+    double levelerReleaseCoeff = 0.0;
+    double rmsEnvCoeff = 0.0;
     DitherProcessor dither;
     float replayGainDb, preampDb; float midBassDb, trebleDb, airDb;
     EqEngine eq;
+    EqEngine aiEq; // New AI EQ Engine
+    EqEngine simEq; // Headphone simulation EQ (Phase 3.5)
     BiquadState toneFilters[3]; LookaheadLimiter limiter; Bs2b crossfeed;
+    SoundStageEngine soundStages[5];
+    BandSplitter splitter;
+    bool soundStageEnabled;
     bool crossfeedEnabled; float crossfeedLevel; Freeverb reverb; float reverbAmount; int reverbType;
     float reverbPredelayMs; float reverbWidth; float reverbDamping; float reverbRoomSize;
-    float balance, stereoWidth; int bitDepth;
+    float balance, stereoWidth;    int bitDepth;
 
     // Tone smoothing targets and current values to avoid coefficient jumps
     std::atomic<float> toneTargetMidBass{0.0f}, toneTargetTreble{0.0f}, toneTargetAir{0.0f};
     float toneCurrentMidBass = 0.0f, toneCurrentTreble = 0.0f, toneCurrentAir = 0.0f;
     float toneSmoothingFactor = 0.12f; // per-buffer interpolation
 
-    std::vector<float> tempBuffer; std::vector<double> doubleBuffer;
+    std::vector<float> tempoBuffer, resampleBuffer; std::vector<double> doubleBuffer;
+};
+
+// ===================== AUDIO ANALYZER (Offline) =====================
+#include <unistd.h>
+#include <sys/types.h>
+
+struct AnalysisResults {
+    float lufs;
+    float rms;
+    float peak;
+    float dynamicRange;
+    float bassScore;
+    float midScore;
+    float trebleScore;
+    float stereoWidth;
+    float tempoBpm;
+    std::vector<float> spectralData; // For TFLite input
+};
+
+class AudioAnalyzer {
+    // K-weighting filters for LUFS (ITU-R BS.1770)
+    BiquadState preFilter;
+    BiquadState rlFilter;
+    double sampleRate = 44100;
+
+public:
+    AudioAnalyzer(double sr) : sampleRate(sr) {
+        // High-shelf pre-filter
+        preFilter.setHighShelf(sr, 1500.0, 4.0, 0.707);
+        // High-pass RL filter
+        rlFilter.setHighPass(sr, 100.0, 0.0, 0.707);
+    }
+
+    AnalysisResults analyze(float* buffer, int frames, int channels) {
+        AnalysisResults res = {};
+        if (frames <= 0 || channels <= 0) return res;
+
+        double sumSq[2] = {0, 0};
+        float peak = 0;
+        double sideEnergy = 0;
+
+        // LUFS state
+        double lufsSum[2] = {0, 0};
+
+        // Spectral state
+        int fftSize = 2048;
+        kiss_fft_state fft;
+        kiss_fft_alloc(fft, fftSize, 0);
+        std::vector<std::complex<double>> in(fftSize), out(fftSize);
+
+        double bassEnergy = 0, midEnergy = 0, trebleEnergy = 0;
+        int fftCount = 0;
+        std::vector<double> magSum(fftSize / 2, 0.0);
+
+        std::vector<double> flux;
+        double lastEnergy = 0;
+
+        for (int f = 0; f < frames; f++) {
+            float l = buffer[f * channels];
+            float r = (channels >= 2) ? buffer[f * channels + 1] : l;
+
+            peak = std::max({peak, std::abs(l), std::abs(r)});
+            sumSq[0] += (double)l * l;
+            sumSq[1] += (double)r * r;
+            sideEnergy += (double)(l - r) * (l - r);
+
+            // Apply LUFS K-weighting
+            double fl = (double)l, fr = (double)r;
+            preFilter.process(fl, fr);
+            rlFilter.process(fl, fr);
+            lufsSum[0] += fl * fl;
+            lufsSum[1] += fr * fr;
+
+            // Spectral analysis (on windowed blocks)
+            if (f % fftSize == 0 && f + fftSize <= frames) {
+                for (int i = 0; i < fftSize; i++) {
+                    double w = 0.5 * (1.0 - std::cos(2.0 * M_PI * i / (fftSize - 1)));
+                    in[i] = std::complex<double>((buffer[(f + i) * channels] + ((channels >= 2) ? buffer[(f + i) * channels + 1] : 0)) * 0.5 * w, 0.0);
+                }
+                kiss_fft(fft, in.data(), out.data());
+
+                double currentEnergy = 0;
+                for (int i = 0; i < fftSize / 2; i++) {
+                    double freq = (double)i * sampleRate / fftSize;
+                    double mag = std::abs(out[i]);
+                    currentEnergy += mag;
+                    magSum[i] += mag;
+                    if (freq < 250) bassEnergy += mag;
+                    else if (freq < 4000) midEnergy += mag;
+                    else trebleEnergy += mag;
+                }
+                flux.push_back(std::max(0.0, currentEnergy - lastEnergy));
+                lastEnergy = currentEnergy;
+                fftCount++;
+            }
+        }
+
+        float totalSamples = (float)frames * channels;
+        res.rms = (float)std::sqrt((sumSq[0] + sumSq[1]) / (totalSamples + 1e-10));
+        res.peak = peak;
+        res.stereoWidth = (float)(sideEnergy / (sumSq[0] + sumSq[1] + 1e-10));
+
+        // LUFS Calculation (Simplified ITU-R BS.1770)
+        double meanSqL = lufsSum[0] / frames;
+        double meanSqR = lufsSum[1] / frames;
+        // Channel weighting: G_i = 1.0 for L, R
+        res.lufs = (float)(-0.691 + 10.0 * std::log10(meanSqL + meanSqR + 1e-10));
+
+        if (fftCount > 0) {
+            double total = bassEnergy + midEnergy + trebleEnergy + 1e-10;
+            res.bassScore = (float)(bassEnergy / total);
+            res.midScore = (float)(midEnergy / total);
+            res.trebleScore = (float)(trebleEnergy / total);
+
+            // AI Feature Bucketing
+            res.spectralData.assign(128, 0.0f);
+            int binsPerBucket = std::max(1, (int)(magSum.size() / 128));
+            for (int b = 0; b < 128; b++) {
+                double sum = 0;
+                for (int i = 0; i < binsPerBucket && (b * binsPerBucket + i) < (int)magSum.size(); i++)
+                    sum += magSum[b * binsPerBucket + i];
+                res.spectralData[b] = (float)(sum / binsPerBucket / std::max(1, fftCount));
+            }
+        } else {
+            res.spectralData.assign(128, 0.0f);
+        }
+        return res;
+    }
 };
 
 extern "C" {
+JNIEXPORT jobject JNICALL Java_com_beatflowy_app_engine_NativeDsp_nExtractFeatures(JNIEnv* env, jobject thiz, jint fd, jint seconds) {
+    // Check if it's a DSF file first
+    char magic[4];
+    lseek(fd, 0, SEEK_SET);
+    if (read(fd, magic, 4) == 4 && memcmp(magic, "DSD ", 4) == 0) {
+        // Basic DSF metadata extraction
+        DsfFormatChunk fmt = {};
+        lseek(fd, 28, SEEK_SET); // Skip DSD header to get to fmt chunk
+        read(fd, &fmt, sizeof(DsfFormatChunk));
+
+        jclass featuresClass = env->FindClass("com/beatflowy/app/engine/AudioFeatures");
+        jmethodID constructor = env->GetMethodID(featuresClass, "<init>", "(FFFFFFFFF[F)V");
+        jfloatArray spectralData = env->NewFloatArray(128);
+        float dummy[128] = {0};
+        env->SetFloatArrayRegion(spectralData, 0, 128, dummy);
+
+        return env->NewObject(featuresClass, constructor,
+            -10.0f, // LUFS (dummy for DSD)
+            0.1f,   // RMS
+            1.0f,   // Peak
+            20.0f,  // DR
+            0.3f,   // Bass
+            0.3f,   // Mid
+            0.3f,   // Treble
+            1.0f,   // Stereo
+            120.0f, // Tempo
+            spectralData
+        );
+    }
+
+    AMediaExtractor* ex = AMediaExtractor_new();
+    if (AMediaExtractor_setDataSourceFd(ex, fd, 0, 0x7FFFFFFFFFFFFFFFL) != AMEDIA_OK) {
+        AMediaExtractor_delete(ex);
+        return nullptr;
+    }
+
+    AMediaCodec* codec = nullptr;
+    int trackIdx = -1;
+    for (int i = 0; i < AMediaExtractor_getTrackCount(ex); i++) {
+        AMediaFormat* format = AMediaExtractor_getTrackFormat(ex, i);
+        const char* mime;
+        if (AMediaFormat_getString(format, AMEDIAFORMAT_KEY_MIME, &mime)) {
+            if (strncmp(mime, "audio/", 6) == 0) {
+                trackIdx = i;
+                codec = AMediaCodec_createDecoderByType(mime);
+                AMediaCodec_configure(codec, format, nullptr, nullptr, 0);
+                AMediaExtractor_selectTrack(ex, i);
+                AMediaFormat_delete(format);
+                break;
+            }
+        }
+        AMediaFormat_delete(format);
+    }
+
+    if (!codec) {
+        AMediaExtractor_delete(ex);
+        return nullptr;
+    }
+
+    AMediaCodec_start(codec);
+
+    std::vector<float> pcm;
+    bool sawInputEOS = false, sawOutputEOS = false;
+    int sampleRate = 44100, channels = 2;
+
+    AMediaFormat* format = AMediaCodec_getOutputFormat(codec);
+    AMediaFormat_getInt32(format, AMEDIAFORMAT_KEY_SAMPLE_RATE, &sampleRate);
+    AMediaFormat_getInt32(format, AMEDIAFORMAT_KEY_CHANNEL_COUNT, &channels);
+    AMediaFormat_delete(format);
+
+    int64_t maxSamples = (int64_t)seconds * sampleRate * channels;
+    if (maxSamples <= 0) maxSamples = 30 * sampleRate * channels;
+
+    while (!sawOutputEOS && pcm.size() < maxSamples) {
+        if (!sawInputEOS) {
+            ssize_t inputIdx = AMediaCodec_dequeueInputBuffer(codec, 2000);
+            if (inputIdx >= 0) {
+                size_t inputSize;
+                uint8_t* inputBuf = AMediaCodec_getInputBuffer(codec, inputIdx, &inputSize);
+                ssize_t sampleSize = AMediaExtractor_readSampleData(ex, inputBuf, inputSize);
+                if (sampleSize < 0) {
+                    AMediaCodec_queueInputBuffer(codec, inputIdx, 0, 0, 0, AMEDIACODEC_BUFFER_FLAG_END_OF_STREAM);
+                    sawInputEOS = true;
+                } else {
+                    AMediaCodec_queueInputBuffer(codec, inputIdx, 0, sampleSize, AMediaExtractor_getSampleTime(ex), 0);
+                    AMediaExtractor_advance(ex);
+                }
+            }
+        }
+
+        AMediaCodecBufferInfo info;
+        ssize_t outputIdx = AMediaCodec_dequeueOutputBuffer(codec, &info, 2000);
+        if (outputIdx >= 0) {
+            if (info.flags & AMEDIACODEC_BUFFER_FLAG_END_OF_STREAM) sawOutputEOS = true;
+            size_t outputSize;
+            uint8_t* outputBuf = AMediaCodec_getOutputBuffer(codec, outputIdx, &outputSize);
+            int16_t* s16 = (int16_t*)(outputBuf + info.offset);
+            int count = info.size / sizeof(int16_t);
+            for (int i = 0; i < count; i++) pcm.push_back(s16[i] / 32768.0f);
+            AMediaCodec_releaseOutputBuffer(codec, outputIdx, false);
+        } else if (outputIdx == AMEDIACODEC_INFO_OUTPUT_FORMAT_CHANGED) {
+            AMediaFormat* newFormat = AMediaCodec_getOutputFormat(codec);
+            AMediaFormat_getInt32(newFormat, AMEDIAFORMAT_KEY_SAMPLE_RATE, &sampleRate);
+            AMediaFormat_getInt32(newFormat, AMEDIAFORMAT_KEY_CHANNEL_COUNT, &channels);
+            AMediaFormat_delete(newFormat);
+        }
+    }
+
+    AMediaCodec_stop(codec); AMediaCodec_delete(codec); AMediaExtractor_delete(ex);
+
+    AudioAnalyzer analyzer(sampleRate);
+    AnalysisResults res = analyzer.analyze(pcm.data(), pcm.size() / channels, channels);
+
+    jclass featuresClass = env->FindClass("com/beatflowy/app/engine/AudioFeatures");
+    jmethodID constructor = env->GetMethodID(featuresClass, "<init>", "(FFFFFFFFF[F)V");
+    jfloatArray spectralData = env->NewFloatArray(res.spectralData.size());
+    env->SetFloatArrayRegion(spectralData, 0, res.spectralData.size(), res.spectralData.data());
+
+    return env->NewObject(featuresClass, constructor,
+        res.lufs, res.rms, res.peak, res.dynamicRange, res.bassScore, res.midScore, res.trebleScore,
+        res.stereoWidth, res.tempoBpm, spectralData
+    );
+}
+
+JNIEXPORT void JNICALL Java_com_beatflowy_app_engine_NativeDsp_nPackDoP(JNIEnv* env, jobject thiz, jbyteArray dsd, jintArray pcm, jint frames, jint channels, jboolean alt) {
+    jbyte* dsdData = env->GetByteArrayElements(dsd, nullptr);
+    jint* pcmData = env->GetIntArrayElements(pcm, nullptr);
+    DsdProcessor::packDoP((const uint8_t*)dsdData, (int32_t*)pcmData, frames, channels, alt);
+    env->ReleaseByteArrayElements(dsd, dsdData, JNI_ABORT);
+    env->ReleaseIntArrayElements(pcm, pcmData, 0);
+}
+
+JNIEXPORT void JNICALL Java_com_beatflowy_app_engine_NativeDsp_nDsdToPcm(JNIEnv* env, jobject thiz, jbyteArray dsd, jfloatArray pcm, jint frames, jint channels) {
+    jbyte* dsdData = env->GetByteArrayElements(dsd, nullptr);
+    jfloat* pcmData = env->GetFloatArrayElements(pcm, nullptr);
+    DsdProcessor::dsdToPcm((const uint8_t*)dsdData, pcmData, frames, channels);
+    env->ReleaseByteArrayElements(dsd, dsdData, JNI_ABORT);
+    env->ReleaseFloatArrayElements(pcm, pcmData, 0);
+}
+
 JNIEXPORT jlong JNICALL Java_com_beatflowy_app_engine_NativeDsp_nCreate(JNIEnv* env, jobject thiz) { return (jlong)new DSP(); }
 JNIEXPORT void JNICALL Java_com_beatflowy_app_engine_NativeDsp_nDestroy(JNIEnv* env, jobject thiz, jlong handle) { if (handle) delete (DSP*)handle; }
 JNIEXPORT void JNICALL Java_com_beatflowy_app_engine_NativeDsp_nInitResampler(JNIEnv* env, jobject thiz, jlong handle, jfloat inputSR, jint channels, jfloat targetSR) { if (handle) ((DSP*)handle)->init((int)inputSR, (int)targetSR, channels); }
@@ -1098,11 +2005,34 @@ JNIEXPORT void JNICALL Java_com_beatflowy_app_engine_NativeDsp_nSetTone(JNIEnv* 
 JNIEXPORT void JNICALL Java_com_beatflowy_app_engine_NativeDsp_nSetBand(JNIEnv* env, jobject thiz, jlong handle, jint index, jfloat freq, jfloat gainDb, jfloat Q, jint type) { if (handle) ((DSP*)handle)->setBand(index, freq, gainDb, Q, type); }
 JNIEXPORT void JNICALL Java_com_beatflowy_app_engine_NativeDsp_nSetEqEnabled(JNIEnv* env, jobject thiz, jlong handle, jboolean enabled) { if (handle) ((DSP*)handle)->setEqEnabled(enabled); }
 JNIEXPORT void JNICALL Java_com_beatflowy_app_engine_NativeDsp_nSetEqPhaseMode(JNIEnv* env, jobject thiz, jlong handle, jboolean linearPhase) { if (handle) ((DSP*)handle)->setEqPhaseMode(linearPhase); }
+JNIEXPORT void JNICALL Java_com_beatflowy_app_engine_NativeDsp_nSetHeadroomManagement(JNIEnv* env, jobject thiz, jlong handle, jboolean enabled) { if (handle) ((DSP*)handle)->setHeadroomManagement(enabled); }
+JNIEXPORT void JNICALL Java_com_beatflowy_app_engine_NativeDsp_nSetNoHeadroomGain(JNIEnv* env, jobject thiz, jlong handle, jboolean enabled) { if (handle) ((DSP*)handle)->setNoHeadroomGain(enabled); }
+JNIEXPORT jfloat JNICALL Java_com_beatflowy_app_engine_NativeDsp_nGetHeadroomDb(JNIEnv* env, jobject thiz, jlong handle) { return handle ? ((DSP*)handle)->getAutoHeadroomDb() : 0.0f; }
+JNIEXPORT jint JNICALL Java_com_beatflowy_app_engine_NativeDsp_nGetEqLatencyFrames(JNIEnv* env, jobject thiz, jlong handle) { return handle ? ((DSP*)handle)->getEqLatencyFrames() : 0; }
+
+JNIEXPORT void JNICALL Java_com_beatflowy_app_engine_NativeDsp_nSetAiBand(JNIEnv* env, jobject thiz, jlong handle, jint index, jfloat freq, jfloat gainDb, jfloat Q, jint type) {
+    if (handle) ((DSP*)handle)->setAiBand(index, freq, gainDb, Q, type);
+}
+JNIEXPORT void JNICALL Java_com_beatflowy_app_engine_NativeDsp_nSetAiEqEnabled(JNIEnv* env, jobject thiz, jlong handle, jboolean enabled) {
+    if (handle) ((DSP*)handle)->setAiEqEnabled(enabled);
+}
+JNIEXPORT void JNICALL Java_com_beatflowy_app_engine_NativeDsp_nSetSimBand(JNIEnv* env, jobject thiz, jlong handle, jint index, jfloat freq, jfloat gainDb, jfloat Q, jint type) {
+    if (handle) ((DSP*)handle)->setSimBand(index, freq, gainDb, Q, type);
+}
+JNIEXPORT void JNICALL Java_com_beatflowy_app_engine_NativeDsp_nSetSimEqEnabled(JNIEnv* env, jobject thiz, jlong handle, jboolean enabled) {
+    if (handle) ((DSP*)handle)->setSimEqEnabled(enabled);
+}
+JNIEXPORT void JNICALL Java_com_beatflowy_app_engine_NativeDsp_nSetHardwareVolume(JNIEnv* env, jobject thiz, jlong handle, jboolean enabled) {
+    if (handle) ((DSP*)handle)->setHardwareVolume(enabled);
+}
+
 JNIEXPORT void JNICALL Java_com_beatflowy_app_engine_NativeDsp_nSetHighQualityResampler(JNIEnv* env, jobject thiz, jlong handle, jboolean enabled) { if (handle) ((DSP*)handle)->setUseSox(enabled); }
 JNIEXPORT void JNICALL Java_com_beatflowy_app_engine_NativeDsp_nSetPreamp(JNIEnv* env, jobject thiz, jlong handle, jfloat db) { if (handle) ((DSP*)handle)->setPreamp(db); }
 JNIEXPORT void JNICALL Java_com_beatflowy_app_engine_NativeDsp_nSetDcBlocker(JNIEnv* env, jobject thiz, jlong handle, jboolean enabled) { if (handle) ((DSP*)handle)->setDcBlocker(enabled); }
 JNIEXPORT void JNICALL Java_com_beatflowy_app_engine_NativeDsp_nSetReplayGain(JNIEnv* env, jobject thiz, jlong handle, jfloat db) { if (handle) ((DSP*)handle)->setReplayGain(db); }
 JNIEXPORT void JNICALL Java_com_beatflowy_app_engine_NativeDsp_nSetDvc(JNIEnv* env, jobject thiz, jlong handle, jboolean enabled) { if (handle) ((DSP*)handle)->setDvc(enabled); }
+JNIEXPORT void JNICALL Java_com_beatflowy_app_engine_NativeDsp_nSetRmsDvc(JNIEnv* env, jobject thiz, jlong handle, jboolean enabled) { if (handle) ((DSP*)handle)->setRmsDvc(enabled); }
+JNIEXPORT void JNICALL Java_com_beatflowy_app_engine_NativeDsp_nSetRmsLeveler(JNIEnv* env, jobject thiz, jlong handle, jboolean enabled) { if (handle) ((DSP*)handle)->setRmsLeveler(enabled); }
 JNIEXPORT void JNICALL Java_com_beatflowy_app_engine_NativeDsp_nSetDvcLevel(JNIEnv* env, jobject thiz, jlong handle, jfloat level) { if (handle) ((DSP*)handle)->setDvcLevel(level); }
 JNIEXPORT void JNICALL Java_com_beatflowy_app_engine_NativeDsp_nSetDvcMode(JNIEnv* env, jobject thiz, jlong handle, jint mode) { if (handle) ((DSP*)handle)->setDvcMode(mode); }
 JNIEXPORT void JNICALL Java_com_beatflowy_app_engine_NativeDsp_nSetBitDepth(JNIEnv* env, jobject thiz, jlong handle, jint bitDepth) { if (handle) ((DSP*)handle)->setBitDepth(bitDepth); }
@@ -1119,6 +2049,21 @@ JNIEXPORT void JNICALL Java_com_beatflowy_app_engine_NativeDsp_nProcess(JNIEnv* 
     if (!handle) return; jfloat* body = env->GetFloatArrayElements(data, 0); ((DSP*)handle)->processInPlace(body, frames); env->ReleaseFloatArrayElements(data, body, 0);
 }
 JNIEXPORT void JNICALL Java_com_beatflowy_app_engine_NativeDsp_nSetSpatial(JNIEnv* env, jobject thiz, jlong handle, jfloat balance, jfloat widen) { if (handle) ((DSP*)handle)->setSpatial(balance, widen); }
+JNIEXPORT void JNICALL Java_com_beatflowy_app_engine_NativeDsp_nSetSpatialEnabled(JNIEnv* env, jobject thiz, jlong handle, jboolean enabled) {
+    if (handle) ((DSP*)handle)->setSpatialEnabled(enabled);
+}
+JNIEXPORT void JNICALL Java_com_beatflowy_app_engine_NativeDsp_nSetSpatialIntensity(JNIEnv* env, jobject thiz, jlong handle, jfloat intensity) {
+    if (handle) ((DSP*)handle)->setSpatialIntensity(intensity);
+}
+JNIEXPORT void JNICALL Java_com_beatflowy_app_engine_NativeDsp_nSetSoundStageNodePosition(JNIEnv* env, jobject thiz, jlong handle, jint bandIdx, jfloat az, jfloat el, jfloat dist) {
+    if (handle) ((DSP*)handle)->setSoundStageNodePosition(bandIdx, az, el, dist);
+}
+JNIEXPORT void JNICALL Java_com_beatflowy_app_engine_NativeDsp_nSetSoundStageWidth(JNIEnv* env, jobject thiz, jlong handle, jfloat width) {
+    if (handle) ((DSP*)handle)->setSoundStageWidth(width);
+}
+JNIEXPORT void JNICALL Java_com_beatflowy_app_engine_NativeDsp_nSetSoundStageCenterLock(JNIEnv* env, jobject thiz, jlong handle, jfloat amount) {
+    if (handle) ((DSP*)handle)->setSoundStageCenterLock(amount);
+}
 JNIEXPORT void JNICALL Java_com_beatflowy_app_engine_NativeDsp_nSetReverb(JNIEnv* env, jobject thiz, jlong handle, jfloat amount) { if (handle) ((DSP*)handle)->setReverb(amount); }
 JNIEXPORT void JNICALL Java_com_beatflowy_app_engine_NativeDsp_nSetReverbType(JNIEnv* env, jobject thiz, jlong handle, jint type) { if (handle) ((DSP*)handle)->setReverbType(type); }
 JNIEXPORT void JNICALL Java_com_beatflowy_app_engine_NativeDsp_nSetReverbPredelay(JNIEnv* env, jobject thiz, jlong handle, jfloat ms) { if (handle) ((DSP*)handle)->setReverbPredelay(ms); }
@@ -1126,16 +2071,23 @@ JNIEXPORT void JNICALL Java_com_beatflowy_app_engine_NativeDsp_nSetReverbWidth(J
 JNIEXPORT void JNICALL Java_com_beatflowy_app_engine_NativeDsp_nSetReverbParams(JNIEnv* env, jobject thiz, jlong handle, jfloat roomSize, jfloat damping) { if (handle) ((DSP*)handle)->setReverbParams(roomSize, damping); }
 JNIEXPORT void JNICALL Java_com_beatflowy_app_engine_NativeDsp_nMuteReverb(JNIEnv* env, jobject thiz, jlong handle) { if (handle) ((DSP*)handle)->muteReverb(); }
 JNIEXPORT void JNICALL Java_com_beatflowy_app_engine_NativeDsp_nSetLimiter(JNIEnv* env, jobject thiz, jlong handle, jboolean enabled) { if (handle) ((DSP*)handle)->setLimiter(enabled); }
+JNIEXPORT void JNICALL Java_com_beatflowy_app_engine_NativeDsp_nSetSoftLimiter(JNIEnv* env, jobject thiz, jlong handle, jboolean enabled) { if (handle) ((DSP*)handle)->setSoftLimiter(enabled); }
 JNIEXPORT void JNICALL Java_com_beatflowy_app_engine_NativeDsp_nSetLimiterParams(JNIEnv* env, jobject thiz, jlong handle, jfloat thresholdDb, jfloat attackMs, jfloat releaseMs) {
     if (handle) ((DSP*)handle)->setLimiterParams(thresholdDb, attackMs, releaseMs);
+}
+JNIEXPORT void JNICALL Java_com_beatflowy_app_engine_NativeDsp_nSetSpeed(JNIEnv* env, jobject thiz, jlong handle, jfloat speed, jboolean preservePitch) {
+    if (handle) ((DSP*)handle)->setSpeed(speed, preservePitch);
+}
+JNIEXPORT void JNICALL Java_com_beatflowy_app_engine_NativeDsp_nSetMono(JNIEnv* env, jobject thiz, jlong handle, jboolean enabled) {
+    if (handle) ((DSP*)handle)->setMono(enabled);
 }
 JNIEXPORT void JNICALL Java_com_beatflowy_app_engine_NativeDsp_nSetCutoffRatio(JNIEnv* env, jobject thiz, jlong handle, jfloat ratio) { if (handle) ((DSP*)handle)->setCutoffRatio(ratio); }
 JNIEXPORT void JNICALL Java_com_beatflowy_app_engine_NativeDsp_nSetSoxrQuality(JNIEnv* env, jobject thiz, jlong handle, jint quality) { if (handle) ((DSP*)handle)->setSoxrQuality(quality); }
 JNIEXPORT void JNICALL Java_com_beatflowy_app_engine_NativeDsp_nSetFloat64(JNIEnv* env, jobject thiz, jlong handle, jboolean enabled) { if (handle) ((DSP*)handle)->setFloat64Mode(enabled); }
 
 // MMAP Audio Output JNI
-JNIEXPORT jlong JNICALL Java_com_beatflowy_app_engine_MmapAudioOutput_nMmapCreate(JNIEnv* env, jobject thiz, jint sampleRate, jint channels, jint bufferFrames) {
-    return (jlong)new MmapStream(sampleRate, channels, bufferFrames);
+JNIEXPORT jlong JNICALL Java_com_beatflowy_app_engine_MmapAudioOutput_nMmapCreate(JNIEnv* env, jobject thiz, jint sampleRate, jint channels, jint bufferFrames, jint format) {
+    return (jlong)new MmapStream(sampleRate, channels, bufferFrames, (aaudio_format_t)format);
 }
 JNIEXPORT void JNICALL Java_com_beatflowy_app_engine_MmapAudioOutput_nMmapDestroy(JNIEnv* env, jobject thiz, jlong handle) {
     if (handle) delete (MmapStream*)handle;
@@ -1159,6 +2111,13 @@ JNIEXPORT jint JNICALL Java_com_beatflowy_app_engine_MmapAudioOutput_nMmapWrite(
     env->ReleaseFloatArrayElements(data, body, JNI_ABORT);
     return written;
 }
+JNIEXPORT jint JNICALL Java_com_beatflowy_app_engine_MmapAudioOutput_nMmapWriteInt(JNIEnv* env, jobject thiz, jlong handle, jintArray data, jint offset, jint frames) {
+    if (!handle) return 0;
+    jint* body = env->GetIntArrayElements(data, nullptr);
+    int written = ((MmapStream*)handle)->write(body, offset, frames);
+    env->ReleaseIntArrayElements(data, body, JNI_ABORT);
+    return written;
+}
 JNIEXPORT jlong JNICALL Java_com_beatflowy_app_engine_MmapAudioOutput_nMmapGetPlaybackPosition(JNIEnv* env, jobject thiz, jlong handle) {
     return handle ? (jlong)((MmapStream*)handle)->getPosition() : 0;
 }
@@ -1170,5 +2129,8 @@ JNIEXPORT jint JNICALL Java_com_beatflowy_app_engine_MmapAudioOutput_nMmapGetLat
 }
 JNIEXPORT jint JNICALL Java_com_beatflowy_app_engine_MmapAudioOutput_nMmapGetSampleRate(JNIEnv* env, jobject thiz, jlong handle) {
     return handle ? ((MmapStream*)handle)->getSampleRate() : 48000;
+}
+JNIEXPORT void JNICALL Java_com_beatflowy_app_engine_MmapAudioOutput_nMmapSetBufferConfig(JNIEnv* env, jobject thiz, jlong handle, jint bufferFrames, jint bufferCount, jint postFadeFrames) {
+    if (handle) ((MmapStream*)handle)->setBufferConfig(bufferFrames, bufferCount, postFadeFrames);
 }
 }

@@ -3489,6 +3489,7 @@ drawable glance_switch_thumb_on_to_off
 drawable glance_switch_track
 drawable googleg_disabled_color_18
 drawable googleg_standard_color_18
+drawable ic_album_default
 drawable ic_album_placeholder
 drawable ic_arrow_back_black_24
 drawable ic_audiotrack_dark

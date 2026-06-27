@@ -51,6 +51,10 @@ class AudioTrackOutput(
     private var mmapOutput: MmapAudioOutput? = null
     private var usingMmap: Boolean = false
 
+    private var bufferFrames: Int = 0
+    private var bufferCount: Int = 2
+    private var postFadeFrames: Int = 0
+
     // ── USB Direct Mode ────────────────────────────────────────────────────────
     @Volatile private var usbExclusiveEnabled = false
     @Volatile private var bitPerfectEnabled = false
@@ -185,16 +189,19 @@ class AudioTrackOutput(
         )
     }
 
-    override fun init(sampleRate: Int, channels: Int, bitDepth: Int): Boolean = synchronized(stateLock) {
+    override fun init(sampleRate: Int, channels: Int, bitDepth: Int, isDoP: Boolean): Boolean = synchronized(stateLock) {
         release()
 
         // Attempt MMAP exclusive first if requested
         if (mmapExclusiveRequested) {
             val mmap = MmapAudioOutput()
+            // Bug 1 Fix: Select I32 format for DoP/DSD
+            val format = if (isDoP) 4 else 2 // 4 = AAUDIO_FORMAT_PCM_I32, 2 = AAUDIO_FORMAT_PCM_FLOAT
             val mmapOk = mmap.init(
                 sampleRate = sampleRate,
                 channels = channels,
-                requestedBufferFrames = mmapRequestedBufferFrames
+                requestedBufferFrames = mmapRequestedBufferFrames,
+                format = format
             )
             if (mmapOk) {
                 mmapOutput = mmap
@@ -227,7 +234,10 @@ class AudioTrackOutput(
         val channelConfig = when (channels) {
             1 -> AudioFormat.CHANNEL_OUT_MONO
             2 -> AudioFormat.CHANNEL_OUT_STEREO
-            else -> AudioFormat.CHANNEL_OUT_STEREO
+            4 -> AudioFormat.CHANNEL_OUT_QUAD
+            6 -> AudioFormat.CHANNEL_OUT_5POINT1
+            8 -> AudioFormat.CHANNEL_OUT_7POINT1
+            else -> if (channels > 2) AudioFormat.CHANNEL_OUT_5POINT1 else AudioFormat.CHANNEL_OUT_STEREO
         }
 
         // ── Resolve active mode ────────────────────────────────────────────────
@@ -290,7 +300,11 @@ class AudioTrackOutput(
         if (pcm32Buffer.size < needed32) pcm32Buffer = ByteArray(needed32)
 
         val minBuffer = AudioTrack.getMinBufferSize(this.sampleRate, channelConfig, currentEncoding)
-        val bufferSize = minBuffer * 8
+        val bufferSize = if (this.bufferFrames > 0) {
+            this.bufferFrames * channels * currentBytesPerSample * this.bufferCount
+        } else {
+            minBuffer * 8
+        }
         if (bufferSize <= 0) return false
 
         try {
@@ -334,6 +348,11 @@ class AudioTrackOutput(
             if (audioTrack?.state != AudioTrack.STATE_INITIALIZED) {
                 audioTrack?.release()
                 audioTrack = null
+                // Fallback to stereo if multi-channel initialization failed
+                if (channels > 2) {
+                    Log.w(TAG, "Multi-channel ($channels) initialization failed, falling back to stereo")
+                    return init(sampleRate, 2, bitDepth, isDoP)
+                }
                 return false
             }
 
@@ -516,6 +535,58 @@ class AudioTrackOutput(
         } catch (_: Exception) { 0 }
     }
 
+    override fun writeInt(data: IntArray, offsetInSamples: Int, frameCount: Int): Int {
+        if (lastThreadId != Thread.currentThread().id) {
+            Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO)
+            lastThreadId = Thread.currentThread().id
+        }
+
+        val (mmap, track, isMmap) = synchronized(stateLock) {
+            Triple(mmapOutput, audioTrack, usingMmap)
+        }
+
+        if (isMmap && mmap != null) {
+            return mmap.writeInt(data, offsetInSamples, frameCount)
+        }
+
+        if (track == null) return 0
+        val sampleCount = frameCount * channels
+
+        // For DoP, we expect the output format to be PCM_24 or PCM_32
+        return try {
+            val writtenFrames = when (currentEncoding) {
+                AudioFormat.ENCODING_PCM_24BIT_PACKED -> {
+                    // Pack IntArray (24-bit in 32-bit int) into ByteArray
+                    var outIndex = 0
+                    for (i in 0 until sampleCount) {
+                        val sample = data[offsetInSamples + i]
+                        pcm24Buffer[outIndex++] = (sample and 0xFF).toByte()
+                        pcm24Buffer[outIndex++] = ((sample shr 8) and 0xFF).toByte()
+                        pcm24Buffer[outIndex++] = ((sample shr 16) and 0xFF).toByte()
+                    }
+                    val writtenBytes = track.write(pcm24Buffer, 0, sampleCount * 3, AudioTrack.WRITE_BLOCKING)
+                    if (writtenBytes > 0) writtenBytes / (channels * 3) else writtenBytes
+                }
+                AudioFormat.ENCODING_PCM_32BIT -> {
+                    // Pack IntArray (32-bit) into ByteArray to avoid ambiguous/missing IntArray overload
+                    var outIndex = 0
+                    for (i in 0 until sampleCount) {
+                        val sample = data[offsetInSamples + i]
+                        pcm32Buffer[outIndex++] = (sample and 0xFF).toByte()
+                        pcm32Buffer[outIndex++] = ((sample shr 8) and 0xFF).toByte()
+                        pcm32Buffer[outIndex++] = ((sample shr 16) and 0xFF).toByte()
+                        pcm32Buffer[outIndex++] = ((sample shr 24) and 0xFF).toByte()
+                    }
+                    val writtenBytes = track.write(pcm32Buffer, 0, sampleCount * 4, AudioTrack.WRITE_BLOCKING)
+                    if (writtenBytes > 0) writtenBytes / (channels * 4) else writtenBytes
+                }
+                else -> 0 // DoP not supported on 16-bit or Float paths
+            }
+            if (writtenFrames > 0) totalFramesWritten += writtenFrames.toLong()
+            writtenFrames
+        } catch (_: Exception) { 0 }
+    }
+
     override fun playbackPositionFrames(): Long {
         if (usingMmap) return mmapOutput?.playbackPositionFrames() ?: 0L
         return (getAbsolutePlaybackHeadPosition() - playbackHeadOffset).coerceAtLeast(0L)
@@ -589,6 +660,13 @@ class AudioTrackOutput(
     override fun setMmapExclusiveMode(enabled: Boolean, requestedBufferFrames: Int) {
         mmapExclusiveRequested = enabled
         mmapRequestedBufferFrames = requestedBufferFrames
+    }
+
+    override fun setBufferConfig(bufferFrames: Int, bufferCount: Int, postFadeFrames: Int) {
+        this.bufferFrames = bufferFrames
+        this.bufferCount = bufferCount
+        this.postFadeFrames = postFadeFrames
+        mmapOutput?.setBufferConfig(bufferFrames, bufferCount, postFadeFrames)
     }
 
     override fun isMmapActive(): Boolean = usingMmap

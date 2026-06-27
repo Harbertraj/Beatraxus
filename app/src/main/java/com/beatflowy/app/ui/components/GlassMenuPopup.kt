@@ -248,22 +248,37 @@ private fun MenuCard(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .shadow(22.dp, cardShape)
+            .shadow(
+                elevation = 24.dp,
+                shape = cardShape,
+                ambientColor = Color.Black,
+                spotColor = AccentBlue.copy(0.2f)
+            )
             .clip(cardShape)
-            .background(Color(0xF21A1A22))
+            .background(
+                brush = Brush.verticalGradient(
+                    listOf(
+                        Color(0xF21C1C26),
+                        Color(0xF2121218)
+                    )
+                )
+            )
             .border(
                 width = 1.dp,
                 brush = Brush.verticalGradient(
                     listOf(
-                        AccentBlue.copy(alpha = 0.32f),
-                        Color.White.copy(alpha = 0.07f)
+                        Color.White.copy(alpha = 0.25f),
+                        Color.White.copy(alpha = 0.05f),
+                        AccentBlue.copy(alpha = 0.15f)
                     )
                 ),
                 shape = cardShape
             )
             .padding(
-                top = if (isArrowAtTop) arrowHeight + 4.dp else 4.dp,
-                bottom = if (!isArrowAtTop) arrowHeight + 4.dp else 4.dp
+                top = if (isArrowAtTop) arrowHeight + 8.dp else 8.dp,
+                bottom = if (!isArrowAtTop) arrowHeight + 8.dp else 8.dp,
+                start = 4.dp,
+                end = 4.dp
             )
             .graphicsLayer {
                 this.scaleX = scale

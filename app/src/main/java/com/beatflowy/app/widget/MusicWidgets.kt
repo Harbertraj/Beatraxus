@@ -407,7 +407,7 @@ private var lastAlbumArtUri: String? = null
 private var lastImageProvider: ImageProvider? = null
 
 private suspend fun getImageProvider(context: Context, uriString: String): ImageProvider {
-    if (uriString.isEmpty()) return ImageProvider(R.drawable.ic_album_placeholder)
+    if (uriString.isEmpty()) return ImageProvider(R.drawable.ic_album_default)
     
     synchronized(MusicWidgetKeys) {
         if (uriString == lastAlbumArtUri && lastImageProvider != null) {
@@ -446,8 +446,8 @@ private suspend fun getImageProvider(context: Context, uriString: String): Image
                     } catch (e: Exception) {
                         ImageProvider(scaled)
                     }
-                } else ImageProvider(R.drawable.ic_album_placeholder)
-            } ?: ImageProvider(R.drawable.ic_album_placeholder)
+                } else ImageProvider(R.drawable.ic_album_default)
+            } ?: ImageProvider(R.drawable.ic_album_default)
             
             synchronized(MusicWidgetKeys) {
                 lastAlbumArtUri = uriString
@@ -455,7 +455,7 @@ private suspend fun getImageProvider(context: Context, uriString: String): Image
             }
             result
         } catch (e: Exception) {
-            ImageProvider(R.drawable.ic_album_placeholder)
+            ImageProvider(R.drawable.ic_album_default)
         }
     }
 }

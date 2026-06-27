@@ -30,7 +30,8 @@ data class ParametricEqBand(
 data class AutoEqProfileSummary(
     val name: String,
     val relativePath: String,
-    val source: String = ""
+    val source: String = "",
+    val bands: List<ParametricEqBand> = emptyList()
 )
 
 data class AutoEqProfile(
@@ -45,6 +46,12 @@ data class SavedEqPreset(
     val name: String,
     val bands: List<ParametricEqBand>,
     val preampDb: Float = 0f
+)
+
+data class SoundStageNodePosition(
+    val azimuth: Float = 0f,
+    val elevation: Float = 0f,
+    val distance: Float = 2.0f
 )
 
 enum class SampleFormat(val displayName: String) {
@@ -113,13 +120,20 @@ enum class OutputMode(val title: String, val subtitle: String) {
     }
 }
 
+enum class HrtfMode(val displayName: String) {
+    NATURAL_BALANCED("Natural (Balanced)"),
+    NATURAL_WIDE("Natural (Wide)"),
+    CINEMATIC("Cinematic"),
+    STUDIO("Studio (Reference)")
+}
+
 data class DspConfig(
     val outputMode: OutputMode = OutputMode.HI_RES,
     val highQualityResampler: Boolean = true,
     val soxrQuality: SoxrQuality = SoxrQuality.HIGH,
     val float64Enabled: Boolean = false,
     val resamplerMode: ResamplerMode = ResamplerMode.AUTO,
-    val resamplerCutoffRatio: Float = 0.97f,
+    val resamplerCutoffRatio: Float = 0.99f,
     val sampleFormat: SampleFormat = SampleFormat.AUTO,
     val preampEnabled: Boolean = false,
     val preampDb: Float = 0f,
@@ -129,19 +143,36 @@ data class DspConfig(
     val eqPhaseMode: EqPhaseMode = EqPhaseMode.MINIMUM_PHASE,
     val autoEqEnabled: Boolean = false,
     val autoEqProfile: AutoEqProfile? = null,
+    val aiEqEnabled: Boolean = false, // New AI EQ
     val midBassEnabled: Boolean = false,
     val midBassDb: Float = 0f,
     val trebleEnabled: Boolean = false,
     val trebleDb: Float = 0f,
     val airEnabled: Boolean = false,
     val airDb: Float = 0f,
-    val dcBlockerEnabled: Boolean = true,
+    val dcBlockerEnabled: Boolean = false,
     val balanceEnabled: Boolean = false,
     val balance: Float = 0f,
     val stereoExpansionEnabled: Boolean = false,
     val stereoWidth: Float = 1f,
     val crossfeedEnabled: Boolean = false,
     val crossfeedLevel: Float = 0.4f,
+    val spatialAudioEnabled: Boolean = false,
+    val spatialAudioIntensity: Float = 0.6f,
+    val soundStageSelectedNode: String = "Vocals",
+    val soundStageNodePositions: Map<String, SoundStageNodePosition> = mapOf(
+        "Vocals" to SoundStageNodePosition(0f, 0f, 2.0f),
+        "Drums" to SoundStageNodePosition(45f, 0f, 2.8f),
+        "Keys" to SoundStageNodePosition(90f, 0f, 1.8f),
+        "Lead Guitar" to SoundStageNodePosition(135f, 0f, 2.3f),
+        "Ambience" to SoundStageNodePosition(180f, 0f, 3.5f),
+        "Backing Vocals" to SoundStageNodePosition(225f, 0f, 2.5f),
+        "Bass" to SoundStageNodePosition(270f, 0f, 2.2f),
+        "Guitar" to SoundStageNodePosition(315f, 0f, 2.6f)
+    ),
+    val soundStageWidth: Float = 1.0f,
+    val soundStageCenterLock: Float = 0f,
+    val hrtfMode: HrtfMode = HrtfMode.NATURAL_BALANCED,
     val reverbEnabled: Boolean = false,
     val reverbAmount: Float = 0f,
     val reverbPreset: String = "FLAT",
@@ -149,6 +180,7 @@ data class DspConfig(
     val reverbWidth: Float = 1.0f,
     val reverbDamping: Float = 0.5f,
     val reverbRoomSize: Float = 0.5f,
+    val reverbDecay: Float = 0.5f,
     val reverbPredelayMix: Float = 0.62f,
     
     // Replay Gain
@@ -160,12 +192,16 @@ data class DspConfig(
     // DVC (Direct Volume Control)
     val dvcEnabled: Boolean = true,
     val dvcBluetoothEnabled: Boolean = false,
+    val rmsDvcEnabled: Boolean = false,
+    val rmsLevelerEnabled: Boolean = false,
     val dvcMode: DvcMode = DvcMode.DAC,
     val dvcLevel: Float = 1f,
+    val compensateDvcVolumeEnabled: Boolean = false,
 
     // USB
     val usbExclusiveEnabled: Boolean = false,
     val bitPerfectEnabled: Boolean = false,
+    val monoEnabled: Boolean = false,
 
     // Bit-Perfect Unbypass
     val bitPerfectUnbypassEq: Boolean = false,
@@ -178,18 +214,46 @@ data class DspConfig(
 
     // MMAP — enabled state is derived from outputMode == MMAP_EXCLUSIVE
     // mmapExclusiveEnabled field removed to avoid dual source-of-truth conflict
-    val mmapRequestedBufferSizeFrames: Int = 96,  // ~2ms at 48kHz
+    val outputBufferMs: Int = 50,
+    val outputBufferCount: Int = 2,
+    val postFadeBufferMs: Int = 0,
+    val mmapRequestedBufferSizeFrames: Int = 512,  // Safer default for high-load DSP (Atmos/Hi-Res)
 
     // Limiter
+    val softLimiterEnabled: Boolean = false,
     val limiterEnabled: Boolean = true,
-    val limiterThresholdDb: Float = -0.3f,
-    val limiterAttackMs: Float = 0.3f,
-    val limiterReleaseMs: Float = 50f,
+    val limiterThresholdDb: Float = -1.0f,   // More headroom before knee engages
+    val limiterAttackMs: Float = 0.5f,        // Slightly longer — avoids transient shaving
+    val limiterReleaseMs: Float = 80f,        // Longer release = no micro-pumping
 
     // Dither
-    val ditherEnabled: Boolean = false,
-    val ditherType: DitherType = DitherType.TPDF,
-    val settingsLocked: Boolean = false
+    val ditherEnabled: Boolean = true,
+    val ditherType: DitherType = DitherType.SHAPED,
+    val settingsLocked: Boolean = false,
+
+    // Phase 2.1: Tempo/Speed
+    val playbackSpeed: Float = 1.0f,
+    val preservePitch: Boolean = true,
+
+    // Phase 2.2: Crossfade
+    val crossfadeDurationS: Int = 0,
+
+    // Phase 2.7: Headroom Management
+    val headroomManagementEnabled: Boolean = true,
+    val noHeadroomGainEnabled: Boolean = false,
+
+    // Phase 3.4: Hardware Volume
+    val hardwareVolumeEnabled: Boolean = false,
+
+    // Phase 3.5: Headphone Simulation
+    val headphoneSimulationEnabled: Boolean = false,
+    val headphoneSimulationProfile: AutoEqProfile? = null,
+
+    // Phase 3.1: Custom USB Driver (Decision Point)
+    val customUsbDriverEnabled: Boolean = false,
+
+    // Phase 4.2: A/B Bypass
+    val bypassAll: Boolean = false
 ) {
     fun activeEffects(): List<String> = buildList {
         if (outputMode == OutputMode.HI_RES) add("MTK HiFi")
@@ -211,13 +275,17 @@ data class DspConfig(
         if (balanceEnabled && abs(balance) > 0.01f) add("Balance")
         if (stereoExpansionEnabled && abs(stereoWidth - 1f) > 0.01f) add("Stereo")
         if (crossfeedEnabled) add("Crossfeed")
+        if (spatialAudioEnabled) add("Spatial")
         if (reverbEnabled && reverbAmount > 0.01f) add("Reverb")
-        if (replayGainEnabled) add("Replay Gain")
         if (dvcEnabled) add("DVC")
         if (usbExclusiveEnabled) add("USB Direct")
+        if (aiEqEnabled) add("AI EQ")
+        if (headphoneSimulationEnabled) add("Sim")
         if (bitPerfectEnabled) add("Bit-Perfect")
+        if (monoEnabled) add("Mono")
         if (float64Enabled) add("Float64")
         if (limiterEnabled) add("Limiter")
+        if (noHeadroomGainEnabled) add("No Headroom Gain")
         if (ditherEnabled && ditherType != DitherType.NONE) add(ditherType.displayName)
     }
 }
@@ -228,7 +296,12 @@ data class DspUiState(
     val autoEqQuery: String = "",
     val autoEqLoading: Boolean = false,
     val autoEqError: String? = null,
-    val autoEqResults: List<AutoEqProfileSummary> = emptyList()
+    val autoEqResults: List<AutoEqProfileSummary> = emptyList(),
+    val currentHeadroomDb: Float = 0f,
+    val currentLatencyFrames: Int = 0,
+    val currentDitherType: String = "None",
+    val currentEqMode: String = "IIR",
+    val activeOutputDeviceLabel: String = "This Device"
 )
 
 fun defaultEqBands(): List<ParametricEqBand> {

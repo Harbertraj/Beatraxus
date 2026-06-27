@@ -10,6 +10,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
 
 enum class LyricsSource {
@@ -31,6 +32,7 @@ class LyricsRepository(private val context: Context, private val database: AppDa
     private val embeddedSource = EmbeddedLyricsSource(context)
     private val onlineSource = OnlineLyricsSource()
     private val lyricsDao = database.lyricsDao()
+    private val songDao = database.songDao()
     
     private val cache = ConcurrentHashMap<String, LyricsLoadResult>()
 
@@ -69,6 +71,22 @@ class LyricsRepository(private val context: Context, private val database: AppDa
         emit(LyricsState.Loading)
 
         var bestResult: LyricsLoadResult? = null
+
+        // ── 0. Song metadata (pre-extracted during scan/enrichment) ──────────────
+        if (!song.lyrics.isNullOrBlank()) {
+            val type = determineType(song.lyrics)
+            val res = LyricsLoadResult(
+                lines = LrcParser.parse(song.lyrics),
+                source = LyricsSource.EMBEDDED,
+                type = type,
+                rawContent = song.lyrics
+            )
+            if (type == LyricsType.WORD_BY_WORD || type == LyricsType.SYNCED) {
+                emit(LyricsState.Success(res))
+                return@flow
+            }
+            bestResult = res
+        }
 
         // ── 1. Memory & DB cache (instant, no I/O wait) ──────────────────────────
         val cached = getCachedLyrics(song)
@@ -150,17 +168,42 @@ class LyricsRepository(private val context: Context, private val database: AppDa
         val existingOffset = lyricsDao.getLyrics(song.id)?.syncOffset ?: 0L
         val result = onlineSource.fetchLyrics(song.artist, song.title, song.album, song.durationMs)
         
-        return result?.let {
-            LyricsLoadResult(
-                lines = LrcParser.parse(it.content),
-                source = LyricsSource.ONLINE,
-                type = it.type,
-                rawContent = it.content,
-                syncOffset = existingOffset
-            ).also { res ->
-                cache[song.id] = res
-                saveToDbIfBetter(song.id, res)
-            }
+        if (result == null) return null
+
+        val res = LyricsLoadResult(
+            lines = LrcParser.parse(result.content),
+            source = LyricsSource.ONLINE,
+            type = result.type,
+            rawContent = result.content,
+            syncOffset = existingOffset
+        )
+
+        cache[song.id] = res
+        saveToDbIfBetter(song.id, res)
+        
+        // Auto-save to file metadata if we fetched online lyrics
+        // and the song doesn't already have them in its metadata
+        if (song.lyrics.isNullOrBlank()) {
+            embeddedSource.saveLyrics(song.uri, result.content)
+            // Also update the songs table so the app knows it now has lyrics
+            songDao.updateLyrics(song.id, result.content)
+        }
+        
+        return res
+    }
+
+    suspend fun preloadLyrics(songs: List<Song>) = withContext(Dispatchers.IO) {
+        for (song in songs) {
+            // Check if already in cache (memory or DB)
+            if (cache.containsKey(song.id)) continue
+            if (lyricsDao.getLyrics(song.id) != null) continue
+            
+            // Check if it has metadata lyrics already
+            if (!song.lyrics.isNullOrBlank()) continue
+            
+            // If not, try to fetch online and cache/save
+            Log.d(TAG, "Preloading lyrics for ${song.title}...")
+            fetchOnline(song)
         }
     }
 

@@ -11,9 +11,11 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.EaseInOutCubic
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
@@ -47,12 +49,19 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInParent
+import kotlinx.coroutines.launch
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -70,14 +79,13 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import com.beatflowy.app.BuildConfig
 import com.beatflowy.app.ui.components.PremiumSwitch
 import com.beatflowy.app.ui.components.glassIconBackground
 import com.beatflowy.app.model.OutputMode
 import com.beatflowy.app.model.DvcMode
 import com.beatflowy.app.model.ParametricEqBand
 import com.beatflowy.app.model.ResamplerMode
-import com.beatflowy.app.model.DownloadQuality
-import com.beatflowy.app.model.FilenameTemplate
 import com.beatflowy.app.model.SoxrQuality
 import com.beatflowy.app.model.DitherType
 import com.beatflowy.app.model.PlayerUiState
@@ -85,24 +93,36 @@ import com.beatflowy.app.model.SoxrQuality as SoxrQualityEnum
 import com.beatflowy.app.repository.DriveAccount
 import com.beatflowy.app.ui.theme.BgDeep
 import com.beatflowy.app.viewmodel.PlayerViewModel
-import com.beatflowy.app.viewmodel.QobuzDownloadViewModel
 
-private val PremiumAccent = Color(0xFF00F2FF)
-private val DownloadAccent = Color(0xFF00F2FF)
+private val PremiumAccent = Color(0xFFD4A24C)
+private val PrimaryCyan = Color(0xFFD4A24C)
+private val SecondaryCyan = Color(0xFFB8860B)
+private val TextWhite = Color(0xFFF4F6F8)
+private val SecondaryText = Color(0xFFAAB3BC)
+private val BgColor = Color(0xFF0A0A0C)
+private val CardSurface = Color(0xFF15161A)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
     playerViewModel: PlayerViewModel,
-    downloadViewModel: QobuzDownloadViewModel = viewModel(factory = QobuzDownloadViewModel.Factory),
     onBack: () -> Unit,
     onNavigateToDsp: () -> Unit,
     onRequestGDriveAccount: () -> Unit
 ) {
     val uiState by playerViewModel.uiState.collectAsStateWithLifecycle()
     var showInfoPopup by remember { mutableStateOf(false) }
-    var currentSection by remember { mutableStateOf<String?>(null) }
+    val sectionStack = remember { mutableStateListOf<String>() }
+    val currentSection = sectionStack.lastOrNull()
     var editingValue by remember { mutableStateOf<EditingValue?>(null) }
+
+    val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        uri?.let { playerViewModel.exportSettings(it) }
+    }
+
+    val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        uri?.let { playerViewModel.importSettings(it) }
+    }
 
     var lastBackClickTime by remember { mutableStateOf(0L) }
     BackHandler {
@@ -110,7 +130,7 @@ fun SettingsScreen(
         if (currentTime - lastBackClickTime < 500) return@BackHandler
         lastBackClickTime = currentTime
 
-        if (currentSection != null) currentSection = null else onBack()
+        if (sectionStack.isNotEmpty()) sectionStack.removeAt(sectionStack.size - 1) else onBack()
     }
 
     val blurEffect = remember {
@@ -119,7 +139,8 @@ fun SettingsScreen(
         } else null
     }
 
-    Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+    val bgGradient = Brush.verticalGradient(listOf(Color(0xFF0A0A0C), Color(0xFF14110C)))
+    Box(modifier = Modifier.fillMaxSize().background(bgGradient)) {
         if (uiState.currentSong?.albumArtUri != null) {
             Box(Modifier.fillMaxSize()) {
                 AsyncImage(
@@ -143,131 +164,161 @@ fun SettingsScreen(
         }
 
         Scaffold(
+            modifier = Modifier.blur(if (uiState.isFullScanning) 20.dp else 0.dp),
             containerColor = Color.Transparent,
             topBar = {
                 CenterAlignedTopAppBar(
-                    colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = Color.Transparent),
+                    colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
+                        containerColor = Color.Transparent,
+                        scrolledContainerColor = Color.Transparent
+                    ),
                     title = {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(
-                                text = "SETTINGS",
-                                color = Color.White,
-                                fontWeight = FontWeight.Black,
-                                fontSize = if (currentSection == null) 22.sp else 16.sp,
-                                letterSpacing = 2.sp
-                            )
-                            currentSection?.let { section ->
-                                Text(
-                                    text = section.uppercase(Locale.getDefault()),
-                                    color = Color.White.copy(0.6f),
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    letterSpacing = 1.sp
+                        Text(
+                            text = (currentSection ?: "SETTINGS").uppercase(Locale.getDefault()),
+                            color = TextWhite,
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = if (currentSection == null) 24.sp else 18.sp,
+                            letterSpacing = if (currentSection == null) (-0.2).sp else 1.5.sp,
+                            modifier = Modifier.animateContentSize()
+                        )
+                    },
+                    navigationIcon = {
+                        var lastClickTime by remember { mutableLongStateOf(0L) }
+                        IconButton(
+                            onClick = {
+                                val currentTime = System.currentTimeMillis()
+                                if (currentTime - lastClickTime < 500) return@IconButton
+                                lastClickTime = currentTime
+                                if (sectionStack.isNotEmpty()) sectionStack.removeAt(sectionStack.size - 1) else onBack()
+                            },
+                            modifier = Modifier.padding(start = 8.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .glassIconBackground(
+                                        backgroundColor = Color.White.copy(alpha = 0.07f),
+                                        shape = CircleShape,
+                                        borderColor = Color.White.copy(alpha = 0.12f)
+                                    ),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    Icons.AutoMirrored.Rounded.ArrowBack,
+                                    "Back",
+                                    tint = TextWhite,
+                                    modifier = Modifier.size(18.dp)
                                 )
                             }
                         }
                     },
-                    navigationIcon = {
-                        var lastClickTime by remember { mutableStateOf(0L) }
-                        IconButton(onClick = {
-                            val currentTime = System.currentTimeMillis()
-                            if (currentTime - lastClickTime < 500) return@IconButton
-                            lastClickTime = currentTime
-
-                            if (currentSection != null) currentSection = null else onBack()
-                        }) {
-                            Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back", tint = Color.White)
-                        }
+                    actions = {
+                        // Empty balancing spacer for perfect centering
+                        Spacer(Modifier.width(50.dp))
                     }
                 )
             }
-        ) { padding ->
+        )
+{ padding ->
             Crossfade(
                 targetState = currentSection,
                 modifier = Modifier.padding(padding),
+                animationSpec = tween(220, easing = EaseInOutCubic),
                 label = "settings_transition"
             ) { section ->
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
                         .verticalScroll(rememberScrollState())
-                        .padding(horizontal = 20.dp, vertical = 12.dp)
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                    if (section == null) {
-                        SettingMenuItem(
-                            title = "Audio Engine",
-                            subtitle = "Configure output, sample rates, Limiter, Resampler, Dither...",
-                            icon = Icons.Rounded.GraphicEq,
-                            iconColor = Color(0xFF4CAF50),
-                            onClick = { currentSection = "Audio Engine" }
-                        )
-                        SettingMenuItem(
-                            title = "DSP Enhancements",
-                            subtitle = "USB Direct, Bit-Perfect and DVC",
-                            icon = Icons.Rounded.Tune,
-                            iconColor = Color(0xFFFF9800),
-                            onClick = { currentSection = "DSP Enhancements" }
-                        )
-                        SettingMenuItem(
-                            title = "Replay Gain",
-                            subtitle = "Normalize volume across tracks",
-                            icon = Icons.AutoMirrored.Rounded.VolumeUp,
-                            iconColor = Color(0xFF2196F3),
-                            onClick = { currentSection = "Replay Gain" }
-                        )
-                        SettingMenuItem(
-                            title = "Library",
-                            subtitle = "Manage music folders and scanning",
-                            icon = Icons.Rounded.AudioFile,
-                            iconColor = Color(0xFFE91E63),
-                            onClick = { currentSection = "Library" }
-                        )
-                        SettingMenuItem(
-                            title = "Cloud Account (Admin Only)",
-                            subtitle = "Stream music from Cloud and Telegram",
-                            icon = Icons.Rounded.Cloud,
-                            iconColor = Color(0xFF1A73E8),
-                            onClick = { currentSection = "Cloud" }
-                        )
-                        SettingMenuItem(
-                            title = "Metadata Sync",
-                            subtitle = "Enrichment rules, network and data saver",
-                            icon = Icons.Rounded.Sync,
-                            iconColor = Color(0xFF00BCD4),
-                            onClick = { currentSection = "Metadata Sync" }
-                        )
-                        SettingMenuItem(
-                            title = "Downloads",
-                            subtitle = "Lucida services, quality, format & storage",
-                            icon = Icons.Rounded.Download,
-                            iconColor = Color(0xFF00F2FF),
-                            onClick = { currentSection = "Downloads" }
-                        )
-                        SettingMenuItem(
-                            title = "About",
-                            subtitle = "App version and information",
-                            icon = Icons.Rounded.Info,
-                            iconColor = Color(0xFF9C27B0),
-                            onClick = { currentSection = "About" }
-                        )
-                    } else {
-                        when (section) {
-                            "Audio Engine" -> AudioEngineContent(uiState, playerViewModel, onEditValue = { editingValue = it })
-                            "DSP Enhancements" -> DspEnhancementsContent(uiState, playerViewModel, onEditValue = { editingValue = it })
-                            "Replay Gain" -> ReplayGainContent(uiState, playerViewModel)
-                            "Library" -> LibraryContent(uiState, playerViewModel, onShowInfo = { showInfoPopup = true })
-                            "Cloud" -> CloudContent(playerViewModel, onRequestGDriveAccount = onRequestGDriveAccount)
-                            "Metadata Sync" -> MetadataSyncContent(uiState, playerViewModel)
-                            "Downloads" -> DownloadsSettingsContent(downloadViewModel)
-                            "About" -> AboutContent()
+                        if (section == null) {
+                            SettingMenuItem(
+                                title = "Audio Engine",
+                                subtitle = "Configure output, sample rates, Resampler, Dither...",
+                                icon = Icons.Rounded.GraphicEq,
+                                iconColor = Color(0xFF4CAF50),
+                                onClick = { sectionStack.add("Audio Engine") }
+                            )
+                            SettingMenuItem(
+                                title = "DSP Enhancements",
+                                subtitle = "USB Direct, Bit-Perfect, DVC, Limiter",
+                                icon = Icons.Rounded.Tune,
+                                iconColor = Color(0xFFFF9800),
+                                onClick = { sectionStack.add("DSP Enhancements") }
+                            )
+                            SettingMenuItem(
+                                title = "Replay Gain",
+                                subtitle = "Normalize volume across tracks",
+                                icon = Icons.AutoMirrored.Rounded.VolumeUp,
+                                iconColor = Color(0xFF2196F3),
+                                onClick = { sectionStack.add("Replay Gain") }
+                            )
+                            SettingMenuItem(
+                                title = "Library",
+                                subtitle = "Manage music folders and scanning",
+                                icon = Icons.Rounded.AudioFile,
+                                iconColor = Color(0xFFE91E63),
+                                onClick = { sectionStack.add("Library") }
+                            )
+                            SettingMenuItem(
+                                title = "Cloud Account (Admin Only)",
+                                subtitle = "Cloud, Telegram and Metadata Sync",
+                                icon = Icons.Rounded.Cloud,
+                                iconColor = Color(0xFF1A73E8),
+                                onClick = { sectionStack.add("Cloud") }
+                            )
+                            SettingMenuItem(
+                                title = "Last.fm",
+                                subtitle = "Scrobble your music and sync data",
+                                icon = Icons.Rounded.MusicNote,
+                                iconColor = Color(0xFFD32F2F),
+                                onClick = { sectionStack.add("Last.fm") }
+                            )
+                            SettingMenuItem(
+                                title = "Backup & Restore",
+                                subtitle = "Export/Import settings and assign to devices",
+                                icon = Icons.Rounded.Backup,
+                                iconColor = Color(0xFF4CAF50),
+                                onClick = { sectionStack.add("Backup & Restore") }
+                            )
+                            SettingMenuItem(
+                                title = "About",
+                                subtitle = "App version and information",
+                                icon = Icons.Rounded.Info,
+                                iconColor = Color(0xFF9C27B0),
+                                onClick = { sectionStack.add("About") }
+                            )
+                        } else {
+                            when (section) {
+                                "Audio Engine" -> AudioEngineContent(uiState, playerViewModel, onEditValue = { editingValue = it })
+                                "DSP Enhancements" -> DspEnhancementsContent(uiState, playerViewModel, onEditValue = { editingValue = it })
+                                "Replay Gain" -> ReplayGainContent(uiState, playerViewModel)
+                                "Library" -> LibraryContent(uiState, playerViewModel, onShowInfo = { showInfoPopup = true })
+                                "Cloud" -> CloudContent(uiState, playerViewModel, onRequestGDriveAccount = onRequestGDriveAccount, onNavigateToGDriveSettings = { sectionStack.add("GDrive Settings") })
+                                "GDrive Settings" -> MetadataSyncContent(uiState, playerViewModel)
+                                "Last.fm" -> LastFmContent(uiState, playerViewModel)
+                                "About" -> AboutContent()
+                                "Backup & Restore" -> BackupRestoreContent(
+                                    playerViewModel = playerViewModel,
+                                    onExport = { exportLauncher.launch("beatflowy_backup.json") },
+                                    onImport = { importLauncher.launch("application/json") }
+                                )
+                            }
                         }
                     }
                 }
             }
-        }
 
         if (uiState.isFullScanning) {
-            FullScanPopup(uiState.scanProgress, uiState.scanCount, uiState.albumCount, uiState.artistCount)
+            FullScanPopup(
+                progress = uiState.scanProgress,
+                count = uiState.scanCount,
+                albums = uiState.albumCount,
+                artists = uiState.artistCount,
+                onDismiss = { playerViewModel.cancelScan() }
+            )
         }
 
         if (showInfoPopup) {
@@ -303,13 +354,13 @@ fun SettingsScreen(
                                 ),
                                 RoundedCornerShape(24.dp)
                             )
-                            .padding(28.dp),
+                            .padding(20.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Box(
                                 modifier = Modifier
-                                    .size(52.dp)
+                                    .size(44.dp)
                                     .shadow(12.dp, CircleShape, ambientColor = PremiumAccent.copy(0.3f), spotColor = PremiumAccent.copy(0.3f))
                                     .clip(CircleShape)
                                     .background(Brush.radialGradient(listOf(PremiumAccent.copy(0.22f), Color.Transparent))),
@@ -319,40 +370,40 @@ fun SettingsScreen(
                                     Icons.Rounded.Info,
                                     contentDescription = null,
                                     tint = PremiumAccent,
-                                    modifier = Modifier.size(26.dp)
+                                    modifier = Modifier.size(22.dp)
                                 )
                             }
-                            Spacer(Modifier.height(18.dp))
+                            Spacer(Modifier.height(14.dp))
                             Text(
                                 "Original Quality Art",
                                 color = Color.White,
-                                fontSize = 18.sp,
+                                fontSize = 16.sp,
                                 fontWeight = FontWeight.Bold,
                                 letterSpacing = 0.2.sp
                             )
-                            Spacer(Modifier.height(12.dp))
+                            Spacer(Modifier.height(8.dp))
                             Text(
                                 "If you enable this, the app will store high-resolution album art which increases storage usage.",
                                 color = Color.White.copy(0.65f),
-                                fontSize = 13.sp,
+                                fontSize = 12.sp,
                                 textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                                lineHeight = 20.sp
+                                lineHeight = 18.sp
                             )
-                            Spacer(Modifier.height(24.dp))
+                            Spacer(Modifier.height(20.dp))
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clip(RoundedCornerShape(14.dp))
+                                    .clip(RoundedCornerShape(12.dp))
                                     .background(
                                         Brush.horizontalGradient(
                                             listOf(PremiumAccent.copy(0.9f), Color(0xFF0066FF).copy(0.85f))
                                         )
                                     )
                                     .clickable { showInfoPopup = false }
-                                    .padding(vertical = 14.dp),
+                                    .padding(vertical = 12.dp),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Text("Got it", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                Text("Got it", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 13.sp)
                             }
                         }
                     }
@@ -372,517 +423,6 @@ fun SettingsScreen(
     }
 }
 
-// ─── Service data class ───────────────────────────────────────────────────────
-private data class ServiceOption(val id: String, val label: String, val color: Color)
-
-private val LUCIDA_SERVICES = listOf(
-    ServiceOption("qobuz",      "Qobuz",        Color(0xFF00B2A9)),
-    ServiceOption("tidal",      "Tidal",        Color(0xFF1DB954)),
-    ServiceOption("deezer",     "Deezer",       Color(0xFFE2224D)),
-    ServiceOption("soundcloud", "SoundCloud",   Color(0xFFFF5500)),
-    ServiceOption("amazon",     "Amazon Music", Color(0xFF00A8E0)),
-    ServiceOption("yandex",     "Yandex Music", Color(0xFFFFCC00)),
-)
-
-// ─── Audio format options ─────────────────────────────────────────────────────
-private data class FormatOption(val id: String, val label: String, val sublabel: String)
-
-private val AUDIO_FORMATS = listOf(
-    FormatOption("flac",     "FLAC",         "Lossless · up to 24-bit"),
-    FormatOption("mp3_320",  "MP3 320",      "Lossy · 320 kbps"),
-    FormatOption("mp3_128",  "MP3 128",      "Lossy · 128 kbps"),
-    FormatOption("wav",      "WAV",          "Lossless · uncompressed"),
-    FormatOption("ogg",      "OGG",          "Lossy · Vorbis"),
-    FormatOption("m4a",      "M4A / AAC",    "Lossy · AAC"),
-    FormatOption("opus",     "OPUS",         "Lossy · modern codec"),
-)
-
-@Composable
-fun DownloadsSettingsContent(viewModel: QobuzDownloadViewModel) {
-    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    val context = LocalContext.current
-    val prefs = remember {
-        context.getSharedPreferences("beatraxus_dl", android.content.Context.MODE_PRIVATE)
-    }
-
-    // ── Local prefs state ─────────────────────────────────────────────────────
-    var defaultService by remember {
-        mutableStateOf(prefs.getString("default_service", "qobuz") ?: "qobuz")
-    }
-    var audioFormat by remember {
-        mutableStateOf(prefs.getString("audio_format", "flac") ?: "flac")
-    }
-    var embedMetadata by remember {
-        mutableStateOf(prefs.getBoolean("embed_metadata", true))
-    }
-    var privateDownloads by remember {
-        mutableStateOf(prefs.getBoolean("private_downloads", false))
-    }
-    var createAlbumSubfolders by remember {
-        mutableStateOf(uiState.downloadSettings.createAlbumSubfolders)
-    }
-    var overwriteExisting by remember {
-        mutableStateOf(uiState.downloadSettings.overwriteExisting)
-    }
-    var concurrentDownloads by remember {
-        mutableStateOf(prefs.getInt("concurrent_downloads", 1).toFloat())
-    }
-    var filenameTemplate by remember {
-        mutableStateOf(uiState.downloadSettings.filenameTemplate)
-    }
-    var country by remember {
-        mutableStateOf(prefs.getString("country", "auto") ?: "auto")
-    }
-    var showFormatExpanded by remember { mutableStateOf(false) }
-
-    // SAF folder picker
-    val folderPicker = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenDocumentTree()
-    ) { uri ->
-        if (uri != null) {
-            context.contentResolver.takePersistableUriPermission(
-                uri,
-                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
-                        android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-            )
-            viewModel.setDownloadLocation(uri.toString())
-        }
-    }
-
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(22.dp)
-    ) {
-
-        // ── 1. Default Service ────────────────────────────────────────────────
-        DlSection(
-            title = "DEFAULT SERVICE",
-            icon = Icons.Rounded.Public
-        ) {
-            Text(
-                "Search and download from this service by default in the Downloader.",
-                color = Color.White.copy(0.55f),
-                fontSize = 12.sp,
-                modifier = Modifier.padding(bottom = 14.dp)
-            )
-            LUCIDA_SERVICES.chunked(3).forEach { row ->
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    row.forEach { svc ->
-                        val isSelected = defaultService == svc.id
-                        val bg by animateColorAsState(
-                            if (isSelected) svc.color.copy(0.22f) else Color.White.copy(0.05f),
-                            animationSpec = tween(200), label = "svc_bg"
-                        )
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(42.dp)
-                                .clip(RoundedCornerShape(14.dp))
-                                .background(bg)
-                                .border(
-                                    1.dp,
-                                    if (isSelected) svc.color else Color.White.copy(0.08f),
-                                    RoundedCornerShape(14.dp)
-                                )
-                                .clickable {
-                                    defaultService = svc.id
-                                    prefs.edit().putString("default_service", svc.id).apply()
-                                },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                svc.label,
-                                color = if (isSelected) Color.White else Color.White.copy(0.55f),
-                                fontSize = 11.sp,
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
-                            )
-                        }
-                    }
-                    // fill empty slots in last row
-                    repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
-                }
-                Spacer(Modifier.height(8.dp))
-            }
-        }
-
-        // ── 2. Audio Format ───────────────────────────────────────────────────
-        DlSection(
-            title = "AUDIO FORMAT",
-            icon = Icons.Rounded.AudioFile
-        ) {
-            // Selected format badge
-            val selectedFmt = AUDIO_FORMATS.find { it.id == audioFormat }
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(DownloadAccent.copy(0.1f))
-                    .border(1.dp, DownloadAccent.copy(0.3f), RoundedCornerShape(14.dp))
-                    .clickable { showFormatExpanded = !showFormatExpanded }
-                    .padding(horizontal = 16.dp, vertical = 14.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column {
-                    Text(
-                        selectedFmt?.label ?: audioFormat.uppercase(),
-                        color = DownloadAccent,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp
-                    )
-                    Text(
-                        selectedFmt?.sublabel ?: "",
-                        color = Color.White.copy(0.5f),
-                        fontSize = 12.sp
-                    )
-                }
-                Icon(
-                    if (showFormatExpanded) Icons.Rounded.KeyboardArrowUp
-                    else Icons.Rounded.KeyboardArrowDown,
-                    null, tint = DownloadAccent
-                )
-            }
-
-            AnimatedVisibility(
-                visible = showFormatExpanded,
-                enter = expandVertically(),
-                exit = shrinkVertically()
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    AUDIO_FORMATS.forEach { fmt ->
-                        val isSelected = audioFormat == fmt.id
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(
-                                    if (isSelected) DownloadAccent.copy(0.1f)
-                                    else Color.White.copy(0.03f)
-                                )
-                                .border(
-                                    1.dp,
-                                    if (isSelected) DownloadAccent.copy(0.4f)
-                                    else Color.White.copy(0.05f),
-                                    RoundedCornerShape(12.dp)
-                                )
-                                .clickable {
-                                    audioFormat = fmt.id
-                                    prefs.edit().putString("audio_format", fmt.id).apply()
-                                    showFormatExpanded = false
-                                }
-                                .padding(horizontal = 16.dp, vertical = 12.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column {
-                                Text(fmt.label, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-                                Text(fmt.sublabel, color = Color.White.copy(0.45f), fontSize = 12.sp)
-                            }
-                            if (isSelected) {
-                                Icon(Icons.Rounded.Check, null,
-                                    tint = DownloadAccent, modifier = Modifier.size(18.dp))
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // ── 3. Download Location ──────────────────────────────────────────────
-        DlSection(
-            title = "STORAGE",
-            icon = Icons.Rounded.FolderOpen
-        ) {
-            val location = uiState.downloadSettings.downloadLocation
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(Color.White.copy(0.05f))
-                    .border(1.dp, Color.White.copy(0.1f), RoundedCornerShape(14.dp))
-                    .clickable { folderPicker.launch(null) }
-                    .padding(horizontal = 16.dp, vertical = 14.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text("Download Location", color = Color.White,
-                        fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-                    Text(
-                        location?.let { android.net.Uri.parse(it).lastPathSegment ?: it }
-                            ?: "Not set — tap to choose",
-                        color = if (location != null) DownloadAccent else Color.White.copy(0.4f),
-                        fontSize = 12.sp,
-                        maxLines = 1
-                    )
-                }
-                Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight,
-                    null, tint = Color.White.copy(0.4f))
-            }
-
-            Spacer(Modifier.height(4.dp))
-            Text(
-                "Files are saved under Music/Beatraxus/ by default. " +
-                        "Choose a custom folder to override.",
-                color = Color.White.copy(0.4f),
-                fontSize = 11.sp,
-                lineHeight = 16.sp
-            )
-        }
-
-        // ── 4. Filename & Folder Options ──────────────────────────────────────
-        DlSection(
-            title = "FILE ORGANISATION",
-            icon = Icons.Rounded.DriveFileMove
-        ) {
-            // Filename template
-            Text(
-                "Filename Template",
-                color = Color.White.copy(0.7f),
-                fontSize = 12.sp,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.padding(bottom = 8.dp)
-            )
-            FilenameTemplate.entries.forEach { tmpl ->
-                val isSelected = filenameTemplate == tmpl
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(
-                            if (isSelected) DownloadAccent.copy(0.1f) else Color.White.copy(0.03f)
-                        )
-                        .border(
-                            1.dp,
-                            if (isSelected) DownloadAccent.copy(0.35f) else Color.White.copy(0.05f),
-                            RoundedCornerShape(12.dp)
-                        )
-                        .clickable {
-                            filenameTemplate = tmpl
-                            viewModel.setFilenameTemplate(tmpl)
-                        }
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column {
-                        Text(
-                            tmpl.name.replace('_', ' ').lowercase()
-                                .replaceFirstChar { it.uppercase() },
-                            color = Color.White,
-                            fontWeight = FontWeight.Medium,
-                            fontSize = 14.sp
-                        )
-                        Text(
-                            when (tmpl) {
-                                FilenameTemplate.ARTIST_TITLE -> "Artist - Title.flac"
-                                FilenameTemplate.TITLE_ARTIST -> "Title - Artist.flac"
-                                else -> "${tmpl.name}.flac"
-                            },
-                            color = Color.White.copy(0.4f),
-                            fontSize = 11.sp
-                        )
-                    }
-                    if (isSelected) {
-                        Icon(Icons.Rounded.Check, null,
-                            tint = DownloadAccent, modifier = Modifier.size(18.dp))
-                    }
-                }
-                Spacer(Modifier.height(6.dp))
-            }
-
-            Spacer(Modifier.height(4.dp))
-
-            DlToggleRow(
-                title = "Album Subfolders",
-                subtitle = "Group tracks in Artist/Album/ folders",
-                checked = createAlbumSubfolders,
-                onCheckedChange = {
-                    createAlbumSubfolders = it
-                    viewModel.setCreateAlbumSubfolders(it)
-                }
-            )
-
-            DlDivider()
-
-            DlToggleRow(
-                title = "Overwrite Existing",
-                subtitle = "Replace files if they already exist",
-                checked = overwriteExisting,
-                onCheckedChange = {
-                    overwriteExisting = it
-                    viewModel.setOverwriteExisting(it)
-                }
-            )
-        }
-
-        // ── 5. Metadata & Privacy ─────────────────────────────────────────────
-        DlSection(
-            title = "METADATA & PRIVACY",
-            icon = Icons.Rounded.Tag
-        ) {
-            DlToggleRow(
-                title = "Embed Metadata",
-                subtitle = "Embed title, artist, album art into files",
-                checked = embedMetadata,
-                onCheckedChange = {
-                    embedMetadata = it
-                    prefs.edit().putBoolean("embed_metadata", it).apply()
-                }
-            )
-
-            DlDivider()
-
-            DlToggleRow(
-                title = "Private Downloads",
-                subtitle = "Hide from Lucida's recent downloads list",
-                checked = privateDownloads,
-                onCheckedChange = {
-                    privateDownloads = it
-                    prefs.edit().putBoolean("private_downloads", it).apply()
-                }
-            )
-        }
-
-        // ── 6. Performance ────────────────────────────────────────────────────
-        DlSection(
-            title = "PERFORMANCE",
-            icon = Icons.Rounded.Speed
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text("Concurrent Downloads",
-                    color = Color.White.copy(0.85f), fontSize = 13.sp)
-                Text(
-                    "${concurrentDownloads.toInt()} track${if (concurrentDownloads > 1) "s" else ""}",
-                    color = DownloadAccent, fontSize = 13.sp, fontWeight = FontWeight.Bold
-                )
-            }
-            Slider(
-                value = concurrentDownloads,
-                onValueChange = {
-                    concurrentDownloads = it
-                    prefs.edit().putInt("concurrent_downloads", it.toInt()).apply()
-                },
-                valueRange = 1f..4f,
-                steps = 2,
-                modifier = Modifier.fillMaxWidth(),
-                colors = SliderDefaults.colors(
-                    activeTrackColor = DownloadAccent,
-                    inactiveTrackColor = Color.White.copy(0.12f),
-                    thumbColor = DownloadAccent
-                )
-            )
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text("1", color = Color.White.copy(0.3f), fontSize = 11.sp)
-                Text("4", color = Color.White.copy(0.3f), fontSize = 11.sp)
-            }
-
-            Spacer(Modifier.height(4.dp))
-
-            // Country selector
-            Text(
-                "Account Region",
-                color = Color.White.copy(0.7f),
-                fontSize = 12.sp,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.padding(top = 10.dp, bottom = 8.dp)
-            )
-            val regions = listOf("auto", "us", "gb", "de", "fr", "jp", "au", "ca")
-            Row(
-                modifier = Modifier.horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                regions.forEach { region ->
-                    val isSelected = country == region
-                    Box(
-                        modifier = Modifier
-                            .height(34.dp)
-                            .clip(RoundedCornerShape(50))
-                            .background(
-                                if (isSelected) DownloadAccent.copy(0.18f)
-                                else Color.White.copy(0.05f)
-                            )
-                            .border(
-                                1.dp,
-                                if (isSelected) DownloadAccent else Color.White.copy(0.08f),
-                                RoundedCornerShape(50)
-                            )
-                            .clickable {
-                                country = region
-                                prefs.edit().putString("country", region).apply()
-                            }
-                            .padding(horizontal = 14.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            region.uppercase(),
-                            color = if (isSelected) DownloadAccent else Color.White.copy(0.5f),
-                            fontSize = 12.sp,
-                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
-                        )
-                    }
-                }
-            }
-            Text(
-                "Selects which regional accounts Lucida uses to fulfil your request.",
-                color = Color.White.copy(0.35f),
-                fontSize = 11.sp,
-                lineHeight = 16.sp,
-                modifier = Modifier.padding(top = 8.dp)
-            )
-        }
-
-        // ── 7. About Lucida ───────────────────────────────────────────────────
-        DlSection(
-            title = "ABOUT LUCIDA",
-            icon = Icons.Rounded.Info
-        ) {
-            val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(
-                    "Beatraxus's Downloader is powered by lucida.to, a free service that " +
-                            "provides high-quality music downloads from Qobuz, Tidal, Deezer, " +
-                            "SoundCloud, Amazon Music, and Yandex Music.",
-                    color = Color.White.copy(0.55f),
-                    fontSize = 12.sp,
-                    lineHeight = 18.sp
-                )
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(Color.White.copy(0.04f))
-                        .border(1.dp, Color.White.copy(0.08f), RoundedCornerShape(12.dp))
-                        .clickable { uriHandler.openUri("https://lucida.to/faq") }
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("Lucida FAQ & Supported Services",
-                        color = DownloadAccent, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                    Icon(Icons.Rounded.OpenInNew, null,
-                        tint = DownloadAccent, modifier = Modifier.size(16.dp))
-                }
-            }
-        }
-
-        Spacer(Modifier.height(24.dp))
-    }
-}
 
 data class EditingValue(
     val label: String,
@@ -944,6 +484,76 @@ private fun ValueEditDialog(
 }
 
 @Composable
+fun LastFmContent(uiState: PlayerUiState, viewModel: PlayerViewModel) {
+    val uriHandler = LocalUriHandler.current
+    val apiKey = BuildConfig.LASTFM_API_KEY
+
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        SettingsSection(
+            title = "ACCOUNT",
+            icon = Icons.Rounded.Person,
+            isActive = uiState.lastFmUsername != null,
+            statusDot = if (uiState.lastFmUsername != null) Color(0xFFD32F2F) else null,
+            subtitle = if (uiState.lastFmUsername != null) "Logged in as ${uiState.lastFmUsername}" else "Not connected"
+        ) {
+            if (uiState.lastFmUsername == null) {
+                Text(
+                    "Connect your Last.fm account to track your listening history and get music recommendations.",
+                    color = Color.White.copy(0.6f),
+                    fontSize = 12.sp,
+                    lineHeight = 18.sp
+                )
+                Spacer(Modifier.height(8.dp))
+                Button(
+                    onClick = {
+                        uriHandler.openUri("https://www.last.fm/api/auth/?api_key=$apiKey&cb=beatflowy://lastfm")
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD32F2F)),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Text("Login with Last.fm", fontWeight = FontWeight.Bold)
+                }
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(uiState.lastFmUsername, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                        Text("Session active", color = Color(0xFF4CAF50), fontSize = 12.sp)
+                    }
+                    TextButton(onClick = { viewModel.logoutLastFm() }) {
+                        Text("LOGOUT", color = Color(0xFFD32F2F), fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+
+        SettingsSection(
+            title = "SCROBBLING",
+            icon = Icons.Rounded.Sync,
+            isActive = uiState.scrobblingEnabled,
+            headerActions = {
+                PremiumSwitch(
+                    checked = uiState.scrobblingEnabled,
+                    onCheckedChange = { viewModel.setScrobblingEnabled(it) }
+                )
+            }
+        ) {
+            Text(
+                "When enabled, tracks will be scrobbled to Last.fm after 50% or 4 minutes of playback.",
+                color = Color.White.copy(0.5f),
+                fontSize = 11.sp,
+                lineHeight = 16.sp
+            )
+        }
+    }
+}
+
+
+@Composable
 fun SettingMenuItem(
     title: String,
     subtitle: String,
@@ -951,37 +561,47 @@ fun SettingMenuItem(
     iconColor: Color,
     onClick: () -> Unit
 ) {
-    val interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+    val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
-    val bgAlpha by animateFloatAsState(if (isPressed) 0.10f else 0.045f, label = "bg")
+    val bgAlpha by animateFloatAsState(
+        targetValue = if (isPressed) 0.15f else 0.08f,
+        animationSpec = tween(220, easing = EaseInOutCubic),
+        label = "bg"
+    )
+    val scale by animateFloatAsState(
+        targetValue = if (isPressed) 0.98f else 1f,
+        animationSpec = tween(220, easing = EaseInOutCubic),
+        label = "scale"
+    )
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(18.dp))
-            .background(Color.White.copy(alpha = bgAlpha))
+            .clip(RoundedCornerShape(14.dp))
+            .background(CardSurface.copy(alpha = bgAlpha))
             .border(
-                width = 1.dp,
+                width = 1.2.dp,
                 brush = Brush.linearGradient(
                     listOf(
-                        iconColor.copy(alpha = 0.22f),
+                        iconColor.copy(alpha = 0.25f),
                         Color.White.copy(alpha = 0.05f)
                     )
                 ),
-                shape = RoundedCornerShape(18.dp)
+                shape = RoundedCornerShape(14.dp)
             )
+            .scale(scale)
             .clickable(interactionSource = interactionSource, indication = null, onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 14.dp),
+            .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         // Icon with colored glass background
         Box(
             modifier = Modifier
-                .size(46.dp)
-                .clip(RoundedCornerShape(14.dp))
+                .size(40.dp)
+                .clip(RoundedCornerShape(12.dp))
                 .glassIconBackground(
-                    backgroundColor = iconColor.copy(alpha = 0.15f),
-                    shape = RoundedCornerShape(14.dp),
+                    backgroundColor = iconColor.copy(alpha = 0.12f),
+                    shape = RoundedCornerShape(12.dp),
                     borderColor = iconColor.copy(alpha = 0.18f)
                 ),
             contentAlignment = Alignment.Center
@@ -990,24 +610,23 @@ fun SettingMenuItem(
                 imageVector = icon,
                 contentDescription = null,
                 tint = iconColor,
-                modifier = Modifier.size(22.dp)
+                modifier = Modifier.size(20.dp)
             )
         }
 
-        Spacer(Modifier.width(16.dp))
+        Spacer(Modifier.width(14.dp))
 
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = title,
-                color = Color.White,
-                fontSize = 15.sp,
-                fontWeight = FontWeight.SemiBold,
-                letterSpacing = 0.1.sp
+                color = TextWhite,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold
             )
             Spacer(Modifier.height(2.dp))
             Text(
                 text = subtitle,
-                color = Color.White.copy(alpha = 0.45f),
+                color = TextWhite.copy(alpha = 0.7f),
                 fontSize = 12.sp,
                 lineHeight = 16.sp
             )
@@ -1015,25 +634,13 @@ fun SettingMenuItem(
 
         Spacer(Modifier.width(8.dp))
 
-        Box(
-            modifier = Modifier
-                .size(28.dp)
-                .glassIconBackground(
-                    backgroundColor = Color.White.copy(alpha = 0.06f),
-                    shape = CircleShape,
-                    borderColor = Color.White.copy(alpha = 0.08f)
-                ),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
-                contentDescription = null,
-                tint = Color.White.copy(alpha = 0.35f),
-                modifier = Modifier.size(16.dp)
-            )
-        }
+        Icon(
+            Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+            null,
+            tint = TextWhite.copy(0.3f),
+            modifier = Modifier.size(20.dp)
+        )
     }
-    Spacer(Modifier.height(8.dp))
 }
 
 @Composable
@@ -1048,6 +655,8 @@ fun AudioEngineContent(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
+        var showBufferSizeDialog by remember { mutableStateOf(false) }
+
         // ── 1. Output Configuration ──────────────────────────────────────────
         SettingsSection(
             title = "OUTPUT CONFIGURATION",
@@ -1055,14 +664,15 @@ fun AudioEngineContent(
             isActive = true
         ) {
             Text(
-                "Output Method",
-                color = Color.White.copy(0.7f),
-                fontSize = 12.sp,
+                "OUTPUT METHOD",
+                color = PrimaryCyan.copy(0.8f),
+                fontSize = 11.sp,
                 fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(bottom = 8.dp)
+                letterSpacing = 1.5.sp,
+                modifier = Modifier.padding(bottom = 12.dp)
             )
 
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutputModeButton(
                     text = "AAudio",
                     selected = uiState.outputMode == OutputMode.AAUDIO.name,
@@ -1085,54 +695,79 @@ fun AudioEngineContent(
                 )
             }
 
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(16.dp))
 
             val activeMode = OutputMode.fromName(uiState.outputMode)
-            Text(activeMode.title, color = PremiumAccent, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-            Text(activeMode.subtitle, color = Color.White.copy(0.5f), fontSize = 12.sp, lineHeight = 16.sp)
+            
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(activeMode.title, color = PrimaryCyan, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                    Text(activeMode.subtitle, color = TextWhite.copy(0.7f), fontSize = 14.sp, lineHeight = 18.sp)
+                }
+                
+                Button(
+                    onClick = { showBufferSizeDialog = true },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = PrimaryCyan.copy(0.12f),
+                        contentColor = PrimaryCyan
+                    ),
+                    shape = RoundedCornerShape(10.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                    modifier = Modifier.height(36.dp)
+                ) {
+                    Icon(Icons.Rounded.SlowMotionVideo, null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("BUFFER SIZE", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+            
+            if (showBufferSizeDialog) {
+                BufferSizeDialog(
+                    uiState = uiState,
+                    viewModel = playerViewModel,
+                    onDismiss = { showBufferSizeDialog = false }
+                )
+            }
 
             if (activeMode == OutputMode.MMAP_EXCLUSIVE) {
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(16.dp))
                 Text(
-                    text = "MMAP buffer size (frames):",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = Color.White.copy(0.6f)
+                    text = "MMAP BUFFER SIZE (FRAMES)",
+                    color = PrimaryCyan.copy(0.8f),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.5.sp
                 )
 
                 val bufferOptions = listOf(64, 96, 128, 192, 256)
                 Row(
-                    modifier = Modifier.padding(top = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    modifier = Modifier.padding(top = 12.dp).horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     bufferOptions.forEach { frames ->
                         val isSelected = uiState.dsp.config.mmapRequestedBufferSizeFrames == frames
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(if (isSelected) PremiumAccent else Color.White.copy(0.05f))
-                                .clickable { playerViewModel.setMmapBufferSize(frames) }
-                                .padding(horizontal = 10.dp, vertical = 6.dp)
-                        ) {
-                            Text(
-                                frames.toString(),
-                                color = if (isSelected) Color.Black else Color.White,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
+                        PremiumChip(
+                            selected = isSelected,
+                            onClick = { playerViewModel.setMmapBufferSize(frames) },
+                            label = frames.toString()
+                        )
                     }
                 }
             }
 
-            Spacer(Modifier.height(12.dp))
-            HorizontalDivider(color = Color.White.copy(0.05f))
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(16.dp))
+            HorizontalDivider(color = TextWhite.copy(0.05f))
+            Spacer(Modifier.height(16.dp))
 
             Text(
                 text = uiState.hiResCapabilitySummary,
-                color = if (uiState.hiResDirectSupported) Color(0xFF00FF88).copy(0.8f) else Color.White.copy(0.4f),
-                fontSize = 11.sp,
-                lineHeight = 15.sp,
+                color = if (uiState.hiResDirectSupported) PrimaryCyan.copy(0.8f) else TextWhite.copy(0.4f),
+                fontSize = 12.sp,
+                lineHeight = 16.sp,
                 fontWeight = FontWeight.Medium
             )
         }
@@ -1147,15 +782,15 @@ fun AudioEngineContent(
                 if (isResamplerBypassed) {
                     Box(
                         modifier = Modifier
-                            .clip(RoundedCornerShape(6.dp))
+                            .clip(RoundedCornerShape(8.dp))
                             .background(Color.White.copy(0.05f))
-                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                            .padding(horizontal = 10.dp, vertical = 5.dp)
                     ) {
                         Text(
                             "BYPASSED",
-                            color = Color.White.copy(0.3f),
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.Black
+                            color = TextWhite.copy(0.3f),
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold
                         )
                     }
                 } else {
@@ -1167,31 +802,30 @@ fun AudioEngineContent(
             }
         ) {
             Column(modifier = Modifier.fillMaxWidth()) {
-                Text("Target Sample Rate", color = Color.White.copy(if (isResamplerBypassed) 0.3f else 0.6f), fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(8.dp))
+                Text(
+                    "TARGET SAMPLE RATE", 
+                    color = PrimaryCyan.copy(if (isResamplerBypassed) 0.3f else 0.8f), 
+                    fontSize = 11.sp, 
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.5.sp
+                )
+                Spacer(Modifier.height(12.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     ResamplerMode.entries.forEach { mode ->
                         val isSelected = uiState.dsp.config.resamplerMode == mode
-                        FilterChip(
+                        PremiumChip(
                             selected = isSelected,
                             onClick = { playerViewModel.setResamplerMode(mode) },
-                            enabled = uiState.dsp.config.highQualityResampler && !isResamplerBypassed,
-                            label = { Text(mode.displayName, color = if (isSelected) Color.Black else if (uiState.dsp.config.highQualityResampler && !isResamplerBypassed) Color.White else Color.White.copy(0.3f), fontSize = 11.sp) },
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = PremiumAccent,
-                                containerColor = Color.White.copy(0.05f),
-                                disabledContainerColor = Color.White.copy(0.02f)
-                            ),
-                            border = null
+                            label = mode.displayName
                         )
                     }
                 }
             }
 
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(16.dp))
 
             DspSliderRow(
                 title = "Cutoff Ratio",
@@ -1209,23 +843,24 @@ fun AudioEngineContent(
             icon = Icons.Rounded.Memory,
             isActive = true
         ) {
-            Text("Target Sample Format", color = Color.White.copy(0.6f), fontSize = 11.sp, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.height(8.dp))
+            Text(
+                "TARGET SAMPLE FORMAT", 
+                color = PrimaryCyan.copy(0.8f), 
+                fontSize = 11.sp, 
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.5.sp
+            )
+            Spacer(Modifier.height(12.dp))
             Row(
                 modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 sampleFormats.forEach { format ->
                     val isSelected = uiState.dsp.config.sampleFormat == format
-                    FilterChip(
+                    PremiumChip(
                         selected = isSelected,
                         onClick = { playerViewModel.setSampleFormat(format) },
-                        label = { Text(format.displayName, color = if (isSelected) Color.Black else Color.White, fontSize = 11.sp) },
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = PremiumAccent,
-                            containerColor = Color.White.copy(0.05f)
-                        ),
-                        border = null
+                        label = format.displayName
                     )
                 }
             }
@@ -1237,8 +872,6 @@ fun AudioEngineContent(
         Float64Card(uiState = uiState, viewModel = playerViewModel)
 
         DitherCard(uiState = uiState, viewModel = playerViewModel)
-
-        LimiterCard(uiState = uiState, viewModel = playerViewModel, onEditValue = onEditValue)
 
         // ── 5. System Tweaks ─────────────────────────────────────────────────
         SettingsSection(
@@ -1254,13 +887,14 @@ fun AudioEngineContent(
         ) {
             Text(
                 "DC Offset Blocker prevents clicks and pops by centering the audio waveform. Recommended for most setups.",
-                color = Color.White.copy(0.5f),
-                fontSize = 10.sp,
-                lineHeight = 14.sp
+                color = TextWhite.copy(0.7f),
+                fontSize = 14.sp,
+                lineHeight = 18.sp
             )
         }
     }
 }
+
 
 @Composable
 fun DspEnhancementsContent(
@@ -1279,36 +913,91 @@ fun DspEnhancementsContent(
 
         DvcCard(uiState = uiState, viewModel = viewModel)
 
-        SettingsSection(
-            title = "CROSSFEED",
-            icon = Icons.Rounded.Headset,
-            isActive = config.crossfeedEnabled,
-            headerActions = {
-                PremiumSwitch(
-                    checked = config.crossfeedEnabled,
-                    onCheckedChange = { viewModel.setCrossfeedEnabled(it) }
+        LimiterCard(uiState = uiState, viewModel = viewModel, onEditValue = onEditValue)
+
+        Column(verticalArrangement = Arrangement.spacedBy(24.dp)) {
+            SettingsSection(
+                title = "MONO DOWNMIX",
+                icon = Icons.Rounded.Headset,
+                isActive = config.monoEnabled,
+                headerActions = {
+                    PremiumSwitch(
+                        checked = config.monoEnabled,
+                        onCheckedChange = { viewModel.setMonoEnabled(it) }
+                    )
+                }
+            ) {
+                Text(
+                    "Sums left and right channels into mono. Applied after EQ but before limiter.",
+                    color = TextWhite.copy(0.7f),
+                    fontSize = 14.sp,
+                    lineHeight = 18.sp
                 )
             }
-        ) {
-            if (config.crossfeedEnabled) {
-                DspSliderRow(
-                    title = "Crossfeed Level",
-                    value = config.crossfeedLevel,
-                    range = 0f..1f,
-                    enabled = true,
-                    valueText = { "${(it * 100).toInt()}%" },
-                    onValueChange = viewModel::setCrossfeedLevel
-                )
-            } else {
-                Text(
-                    "Blends left and right channels to reduce listener fatigue on headphones.",
-                    color = Color.White.copy(0.5f),
-                    fontSize = 11.sp
-                )
+
+            SettingsSection(
+                title = "CROSSFEED",
+                icon = Icons.Rounded.Headset,
+                isActive = config.crossfeedEnabled,
+                headerActions = {
+                    PremiumSwitch(
+                        checked = config.crossfeedEnabled,
+                        onCheckedChange = { viewModel.setCrossfeedEnabled(it) }
+                    )
+                }
+            ) {
+                if (config.crossfeedEnabled) {
+                    DspSliderRow(
+                        title = "Crossfeed Level",
+                        value = config.crossfeedLevel,
+                        range = 0f..1f,
+                        enabled = true,
+                        valueText = { "${(it * 100).toInt()}%" },
+                        onValueChange = viewModel::setCrossfeedLevel
+                    )
+                } else {
+                    Text(
+                        "Blends left and right channels to reduce listener fatigue on headphones.",
+                        color = TextWhite.copy(0.7f),
+                        fontSize = 14.sp,
+                        lineHeight = 18.sp
+                    )
+                }
+            }
+
+            SettingsSection(
+                title = "SPATIAL AUDIO",
+                icon = Icons.Rounded.SpatialAudioOff,
+                isActive = config.spatialAudioEnabled,
+                headerActions = {
+                    PremiumSwitch(
+                        checked = config.spatialAudioEnabled,
+                        onCheckedChange = { viewModel.setSpatialAudioEnabled(it) }
+                    )
+                }
+            ) {
+                if (config.spatialAudioEnabled) {
+                    DspSliderRow(
+                        title = "Intensity",
+                        value = config.spatialAudioIntensity,
+                        range = 0f..1f,
+                        enabled = true,
+                        valueText = { "${(it * 100).toInt()}%" },
+                        onValueChange = viewModel::setSpatialAudioIntensity
+                    )
+                } else {
+                    Text(
+                        "Parametric binaural engine that simulates natural speaker placement. Recommended for headphones (pick either Spatial or Crossfeed, not both).",
+                        color = TextWhite.copy(0.7f),
+                        fontSize = 14.sp,
+                        lineHeight = 18.sp
+                    )
+                }
             }
         }
     }
 }
+
 
 @Composable
 private fun UsbDirectModeCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
@@ -1320,7 +1009,7 @@ private fun UsbDirectModeCard(uiState: PlayerUiState, viewModel: PlayerViewModel
         title = "USB DIRECT MODE",
         icon = Icons.Rounded.Usb,
         isActive = isUsbActive,
-        statusDot = if (isUsbActive) PremiumAccent else if (isUsbConnected) Color(0xFFFFAA00) else Color.White.copy(0.2f),
+        statusDot = if (isUsbActive) PrimaryCyan else if (isUsbConnected) Color(0xFFFFAA00) else TextWhite.copy(0.2f),
         subtitle = when {
             isUsbActive -> "Bypassing Android mixer — direct to DAC"
             isUsbConnected -> "USB DAC detected — enable to activate"
@@ -1334,67 +1023,71 @@ private fun UsbDirectModeCard(uiState: PlayerUiState, viewModel: PlayerViewModel
         }
     ) {
         if (isUsbConnected) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                UsbInfoChip(
-                    label = "DEVICE",
-                    value = uiState.outputDevice,
-                    modifier = Modifier.weight(1f)
-                )
-                UsbInfoChip(
-                    label = "PATH",
-                    value = if (isUsbActive) "USB Direct" else "AAudio",
-                    modifier = Modifier.weight(1f),
-                    highlight = isUsbActive
-                )
-            }
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    UsbInfoChip(
+                        label = "DEVICE",
+                        value = uiState.outputDevice,
+                        modifier = Modifier.weight(1f)
+                    )
+                    UsbInfoChip(
+                        label = "PATH",
+                        value = if (isUsbActive) "USB Direct" else "AAudio",
+                        modifier = Modifier.weight(1f),
+                        highlight = isUsbActive
+                    )
+                }
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                UsbInfoChip(
-                    label = "RATE",
-                    value = "${uiState.outputSampleRate / 1000}kHz",
-                    modifier = Modifier.weight(1f),
-                    highlight = isUsbActive
-                )
-                UsbInfoChip(
-                    label = "BIT DEPTH",
-                    value = "${uiState.outputBitDepth}-bit",
-                    modifier = Modifier.weight(1f),
-                    highlight = isUsbActive
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    UsbInfoChip(
+                        label = "RATE",
+                        value = "${uiState.outputSampleRate / 1000}kHz",
+                        modifier = Modifier.weight(1f),
+                        highlight = isUsbActive
+                    )
+                    UsbInfoChip(
+                        label = "BIT DEPTH",
+                        value = "${uiState.outputBitDepth}-bit",
+                        modifier = Modifier.weight(1f),
+                        highlight = isUsbActive
+                    )
+                }
             }
         }
 
         if (config.usbExclusiveEnabled && !isUsbConnected) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(8.dp))
+                    .clip(RoundedCornerShape(10.dp))
                     .background(Color(0xFFFF8800).copy(alpha = 0.08f))
-                    .padding(horizontal = 10.dp, vertical = 6.dp)
+                    .border(1.dp, Color(0xFFFF8800).copy(0.15f), RoundedCornerShape(10.dp))
+                    .padding(horizontal = 12.dp, vertical = 10.dp)
             ) {
                 Icon(
                     Icons.Rounded.Info,
                     contentDescription = null,
                     tint = Color(0xFFFF8800),
-                    modifier = Modifier.size(14.dp)
+                    modifier = Modifier.size(16.dp)
                 )
                 Text(
                     "No USB DAC detected. Falling back to AAudio.",
                     color = Color(0xFFFF8800).copy(0.9f),
-                    fontSize = 10.sp
+                    fontSize = 12.sp
                 )
             }
         }
     }
 }
+
 
 @Composable
 private fun UsbInfoChip(
@@ -1405,35 +1098,37 @@ private fun UsbInfoChip(
 ) {
     Box(
         modifier = modifier
-            .clip(RoundedCornerShape(8.dp))
+            .clip(RoundedCornerShape(10.dp))
             .background(
-                if (highlight) PremiumAccent.copy(alpha = 0.07f)
+                if (highlight) PrimaryCyan.copy(alpha = 0.1f)
                 else Color.White.copy(alpha = 0.04f)
             )
             .border(
-                0.5.dp,
-                if (highlight) PremiumAccent.copy(0.2f) else Color.White.copy(0.07f),
-                RoundedCornerShape(8.dp)
+                1.dp,
+                if (highlight) PrimaryCyan.copy(0.2f) else Color.White.copy(0.07f),
+                RoundedCornerShape(10.dp)
             )
-            .padding(horizontal = 10.dp, vertical = 6.dp)
+            .padding(horizontal = 10.dp, vertical = 8.dp)
     ) {
-        Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(
                 label,
-                color = Color.White.copy(0.35f),
-                fontSize = 8.sp,
-                fontWeight = FontWeight.Black,
-                letterSpacing = 0.8.sp
+                color = TextWhite.copy(0.4f),
+                fontSize = 9.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 0.5.sp
             )
             Text(
                 value,
-                color = if (highlight) PremiumAccent else Color.White.copy(0.85f),
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Bold
+                color = if (highlight) PrimaryCyan else TextWhite.copy(0.9f),
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
+                fontFamily = FontFamily.Monospace
             )
         }
     }
 }
+
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -1455,16 +1150,22 @@ private fun BitPerfectCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
         }
     ) {
         if (isActive) {
-            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
                     StatChip("RATE", "${uiState.inputSampleRate / 1000}kHz")
                     StatChip("DEPTH", "${uiState.bitDepth}-bit")
                     StatChip("DSP", "OFF")
                 }
             }
+
+
         }
     }
 }
+
 
 @Composable
 private fun UnbypassChip(
@@ -1496,6 +1197,49 @@ private fun UnbypassChip(
     )
 }
 
+
+@Composable
+private fun PremiumChip(
+    selected: Boolean,
+    onClick: () -> Unit,
+    label: String
+) {
+    val background = if (selected) {
+        Brush.linearGradient(listOf(Color.Black, Color.Black))
+    } else {
+        Brush.linearGradient(listOf(Color(0xFF1A232D), Color(0xFF1A232D)))
+    }
+    
+    Box(
+        modifier = Modifier
+            .widthIn(min = 52.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(background)
+            .clickable { onClick() }
+            .then(if (selected) Modifier.border(1.dp, PrimaryCyan, RoundedCornerShape(10.dp)) else Modifier)
+            .then(if (selected) Modifier.shadow(elevation = 12.dp, shape = RoundedCornerShape(10.dp), ambientColor = PrimaryCyan.copy(0.2f), spotColor = PrimaryCyan.copy(0.2f)) else Modifier)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        if (selected) {
+            Box(
+                Modifier
+                    .align(Alignment.TopCenter)
+                    .width(16.dp)
+                    .height(2.dp)
+                    .background(PrimaryCyan.copy(0.5f), CircleShape)
+            )
+        }
+        Text(
+            text = label,
+            color = if (selected) PrimaryCyan else TextWhite.copy(0.7f),
+            fontSize = 13.sp,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+            fontFamily = FontFamily.Monospace
+        )
+    }
+}
+
 @Composable
 private fun DvcCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
     val config = uiState.dsp.config
@@ -1514,42 +1258,181 @@ private fun DvcCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
             )
         }
     ) {
-        if (isActive) {
+        Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("DVC Mode", color = Color.White.copy(0.6f), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Text(
+                    "Hybrid RMS Leveler + 20ms Lookahead Limiter",
+                    color = TextWhite.copy(0.7f),
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Normal
+                )
+
                 Row(
-                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    DvcMode.entries.forEach { mode ->
-                        val isSelected = config.dvcMode == mode
-                        FilterChip(
-                            selected = isSelected,
-                            onClick = { viewModel.setDvcMode(mode) },
-                            label = { Text(mode.displayName, color = if (isSelected) Color.Black else Color.White, fontSize = 11.sp) },
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = PremiumAccent,
-                                containerColor = Color.White.copy(0.05f)
-                            ),
-                            border = null
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            "RMS DVC",
+                            color = Color.White,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            "RMS-based dynamic volume leveling",
+                            color = Color.White.copy(0.5f),
+                            fontSize = 11.sp
                         )
                     }
+                    PremiumSwitch(
+                        checked = config.rmsDvcEnabled,
+                        onCheckedChange = { viewModel.setRmsDvcEnabled(it) }
+                    )
                 }
 
-                Spacer(Modifier.height(4.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            "RMS LEVELER",
+                            color = Color.White,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            "Automatic volume balancing (Gain reduction)",
+                            color = Color.White.copy(0.5f),
+                            fontSize = 11.sp
+                        )
+                    }
+                    PremiumSwitch(
+                        checked = config.rmsLevelerEnabled,
+                        onCheckedChange = { viewModel.setRmsLevelerEnabled(it) }
+                    )
+                }
 
-                DspSliderRow(
-                    title = "DVC Level",
-                    value = config.dvcLevel,
-                    range = 0f..1f,
-                    enabled = true,
-                    valueText = { "${(it * 100).toInt()}%" },
-                    onValueChange = viewModel::setDvcLevel
-                )
+                HorizontalDivider(color = Color.White.copy(0.05f))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            "Headroom Management",
+                            color = Color.White,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            "Prevents digital clipping from EQ/tone gains",
+                            color = Color.White.copy(0.5f),
+                            fontSize = 11.sp
+                        )
+                    }
+                    PremiumSwitch(
+                        checked = config.headroomManagementEnabled,
+                        onCheckedChange = { viewModel.setHeadroomManagement(it) }
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            "Compensate DVC Volume",
+                            color = Color.White,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            "Enable if you experience unexpectedly low volume on Android 15+ in DVC mode.",
+                            color = Color.White.copy(0.5f),
+                            fontSize = 11.sp
+                        )
+                    }
+                    PremiumSwitch(
+                        checked = config.compensateDvcVolumeEnabled,
+                        onCheckedChange = { viewModel.setCompensateDvcVolumeEnabled(it) }
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            "No Headroom Gain",
+                            color = Color.White,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            "Don't reduce output gain when DVC is disabled. May cause distortion for high EQ/tone gains.",
+                            color = Color.White.copy(0.5f),
+                            fontSize = 11.sp
+                        )
+                    }
+                    PremiumSwitch(
+                        checked = config.noHeadroomGainEnabled,
+                        onCheckedChange = { viewModel.setNoHeadroomGainEnabled(it) }
+                    )
+                }
             }
+
+            if (isActive) {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        "DVC MODE", 
+                        color = PrimaryCyan.copy(0.8f), 
+                        fontSize = 11.sp, 
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.5.sp
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        DvcMode.entries.forEach { mode ->
+                            val isSelected = config.dvcMode == mode
+                            PremiumChip(
+                                selected = isSelected,
+                                onClick = { viewModel.setDvcMode(mode) },
+                                label = mode.displayName
+                            )
+                        }
+                    }
+
+                    Spacer(Modifier.height(8.dp))
+
+                    DspSliderRow(
+                        title = "DVC Level",
+                        value = config.dvcLevel,
+                        range = 0f..1f,
+                        enabled = true,
+                        valueText = { "${(it * 100).toInt()}%" },
+                        onValueChange = viewModel::setDvcLevel
+                    )
+                }
+            }
+
+
+
+
         }
     }
 }
+
 
 @Composable
 private fun SoxrQualityCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
@@ -1571,15 +1454,29 @@ private fun SoxrQualityCard(uiState: PlayerUiState, viewModel: PlayerViewModel) 
             if (!canChange) {
                 Box(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(6.dp))
+                        .clip(RoundedCornerShape(8.dp))
                         .background(Color.White.copy(0.05f))
-                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                        .padding(horizontal = 10.dp, vertical = 5.dp)
                 ) {
                     Text(
                         if (isBypassed) "BYPASSED" else "OFF",
-                        color = Color.White.copy(0.3f),
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.Black
+                        color = TextWhite.copy(0.3f),
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            } else {
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(PrimaryCyan.copy(0.15f))
+                        .padding(horizontal = 10.dp, vertical = 5.dp)
+                ) {
+                    Text(
+                        config.soxrQuality.displayName.uppercase(),
+                        color = PrimaryCyan,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold
                     )
                 }
             }
@@ -1590,37 +1487,46 @@ private fun SoxrQualityCard(uiState: PlayerUiState, viewModel: PlayerViewModel) 
             modifier = Modifier
                 .fillMaxWidth()
                 .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             qualities.forEach { quality ->
                 val isSelected = config.soxrQuality == quality
+                val background = if (isSelected && canChange) {
+                    Brush.linearGradient(listOf(Color.Black, Color.Black))
+                } else {
+                    Brush.linearGradient(listOf(Color(0xFF1A232D), Color(0xFF1A232D)))
+                }
+
                 Box(
                     modifier = Modifier
+                        .widthIn(min = 52.dp)
                         .clip(RoundedCornerShape(10.dp))
-                        .background(
-                            if (isSelected && canChange) PremiumAccent.copy(0.15f)
-                            else Color.White.copy(0.04f)
-                        )
-                        .border(
-                            1.dp,
-                            if (isSelected && canChange) PremiumAccent.copy(0.5f)
-                            else Color.White.copy(0.08f),
-                            RoundedCornerShape(10.dp)
-                        )
+                        .background(background)
+                        .then(if (isSelected && canChange) Modifier.border(1.dp, PrimaryCyan, RoundedCornerShape(10.dp)) else Modifier)
+                        .then(if (isSelected && canChange) Modifier.shadow(elevation = 12.dp, shape = RoundedCornerShape(10.dp), ambientColor = PrimaryCyan.copy(0.2f), spotColor = PrimaryCyan.copy(0.2f)) else Modifier)
                         .clickable(enabled = canChange) {
                             viewModel.setSoxrQuality(quality)
                         }
-                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
                     contentAlignment = Alignment.Center
                 ) {
+                    if (isSelected && canChange) {
+                        Box(
+                            Modifier
+                                .align(Alignment.TopCenter)
+                                .width(16.dp)
+                                .height(2.dp)
+                                .background(PrimaryCyan.copy(0.5f), CircleShape)
+                        )
+                    }
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(
                             quality.displayName.uppercase(),
-                            color = if (isSelected && canChange) PremiumAccent
-                                    else Color.White.copy(if (canChange) 0.7f else 0.25f),
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            letterSpacing = 0.5.sp
+                            color = if (isSelected && canChange) PrimaryCyan else TextWhite.copy(if (canChange) 0.8f else 0.3f),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 0.5.sp,
+                            fontFamily = FontFamily.Monospace
                         )
                         Text(
                             when (quality) {
@@ -1630,8 +1536,8 @@ private fun SoxrQualityCard(uiState: PlayerUiState, viewModel: PlayerViewModel) 
                                 SoxrQualityEnum.HIGH     -> "Recommended"
                                 SoxrQualityEnum.VERY_HIGH -> "Max quality"
                             },
-                            color = Color.White.copy(if (canChange) 0.35f else 0.15f),
-                            fontSize = 8.sp
+                            color = if (isSelected && canChange) PrimaryCyan.copy(0.7f) else TextWhite.copy(if (canChange) 0.45f else 0.15f),
+                            fontSize = 10.sp
                         )
                     }
                 }
@@ -1641,23 +1547,27 @@ private fun SoxrQualityCard(uiState: PlayerUiState, viewModel: PlayerViewModel) 
         if (config.soxrQuality == SoxrQualityEnum.VERY_HIGH && isResamplerOn && !config.bitPerfectEnabled) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(Color(0xFFFF8800).copy(0.07f))
-                    .padding(horizontal = 10.dp, vertical = 6.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(PrimaryCyan.copy(0.05f))
+                    .border(1.dp, PrimaryCyan.copy(0.15f), RoundedCornerShape(12.dp))
+                    .padding(horizontal = 12.dp, vertical = 10.dp)
             ) {
-                Icon(Icons.Rounded.Info, null, tint = Color(0xFFFF8800), modifier = Modifier.size(13.dp))
+                Icon(Icons.Rounded.Info, null, tint = PrimaryCyan, modifier = Modifier.size(16.dp))
                 Text(
                     "Very High quality uses significant CPU. Monitor for underruns.",
-                    color = Color(0xFFFF8800).copy(0.85f),
-                    fontSize = 9.sp
+                    color = TextWhite.copy(0.8f),
+                    fontSize = 12.sp,
+                    lineHeight = 16.sp
                 )
             }
         }
     }
 }
+
+
 
 @Composable
 private fun Float64Card(uiState: PlayerUiState, viewModel: PlayerViewModel) {
@@ -1725,6 +1635,7 @@ private fun Float64Card(uiState: PlayerUiState, viewModel: PlayerViewModel) {
     }
 }
 
+
 @Composable
 private fun DitherCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
     val config = uiState.dsp.config
@@ -1751,15 +1662,15 @@ private fun DitherCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
             } else {
                 Box(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(6.dp))
+                        .clip(RoundedCornerShape(8.dp))
                         .background(Color.White.copy(0.05f))
-                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                        .padding(horizontal = 10.dp, vertical = 5.dp)
                 ) {
                     Text(
                         "BYPASSED",
-                        color = Color.White.copy(0.3f),
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.Black
+                        color = TextWhite.copy(0.3f),
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold
                     )
                 }
             }
@@ -1770,38 +1681,48 @@ private fun DitherCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
             modifier = Modifier
                 .fillMaxWidth()
                 .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             types.forEach { type ->
                 val isSelected = currentType == type
                 val canSelect = !isBypassed && config.ditherEnabled
+                
+                val background = if (isSelected && canSelect) {
+                    Brush.linearGradient(listOf(Color.Black, Color.Black))
+                } else {
+                    Brush.linearGradient(listOf(Color(0xFF1A232D), Color(0xFF1A232D)))
+                }
+
                 Box(
                     modifier = Modifier
+                        .widthIn(min = 52.dp)
                         .clip(RoundedCornerShape(10.dp))
-                        .background(
-                            if (isSelected && canSelect) PremiumAccent.copy(0.15f)
-                            else Color.White.copy(0.04f)
-                        )
-                        .border(
-                            1.dp,
-                            if (isSelected && canSelect) PremiumAccent.copy(0.5f)
-                            else Color.White.copy(0.08f),
-                            RoundedCornerShape(10.dp)
-                        )
+                        .background(background)
+                        .then(if (isSelected && canSelect) Modifier.border(1.dp, PrimaryCyan, RoundedCornerShape(10.dp)) else Modifier)
+                        .then(if (isSelected && canSelect) Modifier.shadow(elevation = 12.dp, shape = RoundedCornerShape(10.dp), ambientColor = PrimaryCyan.copy(0.2f), spotColor = PrimaryCyan.copy(0.2f)) else Modifier)
                         .clickable(enabled = canSelect) {
                             viewModel.setDitherType(type)
                         }
-                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
                     contentAlignment = Alignment.Center
                 ) {
+                    if (isSelected && canSelect) {
+                        Box(
+                            Modifier
+                                .align(Alignment.TopCenter)
+                                .width(16.dp)
+                                .height(2.dp)
+                                .background(PrimaryCyan.copy(0.5f), CircleShape)
+                        )
+                    }
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(
                             type.displayName.uppercase(),
-                            color = if (isSelected && canSelect) PremiumAccent
-                                    else Color.White.copy(if (canSelect) 0.7f else 0.25f),
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            letterSpacing = 0.5.sp
+                            color = if (isSelected && canSelect) PrimaryCyan else TextWhite.copy(if (canSelect) 0.8f else 0.3f),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 0.5.sp,
+                            fontFamily = FontFamily.Monospace
                         )
                         Text(
                             when (type) {
@@ -1810,15 +1731,18 @@ private fun DitherCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
                                 DitherType.HIGHPASS -> "Optimal"
                                 else -> ""
                             },
-                            color = Color.White.copy(if (canSelect) 0.35f else 0.15f),
-                            fontSize = 8.sp
+                            color = if (isSelected && canSelect) Color.White.copy(0.8f) else TextWhite.copy(if (canSelect) 0.45f else 0.15f),
+                            fontSize = 10.sp
                         )
                     }
                 }
             }
+
+
         }
     }
 }
+
 
 @Composable
 private fun LimiterCard(
@@ -1828,74 +1752,140 @@ private fun LimiterCard(
 ) {
     val config = uiState.dsp.config
     val isBypassed = config.bitPerfectEnabled && !config.bitPerfectUnbypassLimiter
-    val isActive = config.limiterEnabled && !isBypassed
+    val isActive = (config.limiterEnabled || config.softLimiterEnabled) && !isBypassed
+
+    val subtitle = when {
+        isBypassed -> "Inactive — DSP bypassed"
+        config.softLimiterEnabled -> "Soft Saturation active (fatigue-free)"
+        config.limiterEnabled -> "Peak Limiter active (protection)"
+        else -> "Digital clipping protection"
+    }
 
     SettingsSection(
-        title = "PEAK LIMITER",
+        title = "LIMITER & SATURATION",
         icon = Icons.Rounded.Security,
         isActive = isActive,
-        subtitle = if (isBypassed) "Inactive — DSP bypassed"
-        else if (config.limiterEnabled) "Lookahead peak protection active"
-        else "Prevents digital clipping",
+        subtitle = null,
         headerActions = {
-            if (isBypassed) {
+            if (isActive) {
                 Box(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(Color.White.copy(0.05f))
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(PremiumAccent.copy(0.15f))
                         .padding(horizontal = 8.dp, vertical = 4.dp)
                 ) {
                     Text(
-                        "BYPASSED",
-                        color = Color.White.copy(0.3f),
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.Black
+                        if (config.limiterEnabled) {
+                            "%.1f dB · %.0fms".format(config.limiterThresholdDb, config.limiterReleaseMs)
+                        } else {
+                            "SATURATION"
+                        },
+                        color = PremiumAccent,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold
                     )
                 }
-            } else {
-                PremiumSwitch(
-                    checked = config.limiterEnabled,
-                    onCheckedChange = { viewModel.setLimiterEnabled(it) }
-                )
             }
         }
     ) {
-        if (config.limiterEnabled && !isBypassed) {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                LimiterSlider(
-                    label = "Threshold",
-                    value = config.limiterThresholdDb,
-                    range = -6f..0f,
-                    unit = "dB",
-                    onValueChange = viewModel::setLimiterThresholdDb,
-                    onLongPress = {
-                        onEditValue(EditingValue("Threshold", config.limiterThresholdDb, -6f..0f, viewModel::setLimiterThresholdDb))
+        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Text(
+                "Smooth Soft-Knee + Dynamic Peak Protection",
+                color = Color.White.copy(0.5f),
+                fontSize = 11.sp,
+                fontStyle = FontStyle.Italic
+            )
+
+            if (!isBypassed) {
+                // 1. Soft Limiter (Saturation)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Soft Limiter", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                        Text("Gentle rounding for fatigue-free listening", color = Color.White.copy(0.5f), fontSize = 11.sp)
                     }
-                )
-                LimiterSlider(
-                    label = "Attack",
-                    value = config.limiterAttackMs,
-                    range = 0.1f..10f,
-                    unit = "ms",
-                    onValueChange = viewModel::setLimiterAttackMs,
-                    onLongPress = {
-                        onEditValue(EditingValue("Attack", config.limiterAttackMs, 0.1f..10f, viewModel::setLimiterAttackMs))
+                    PremiumSwitch(
+                        checked = config.softLimiterEnabled,
+                        onCheckedChange = { viewModel.setSoftLimiterEnabled(it) }
+                    )
+                }
+
+                HorizontalDivider(color = Color.White.copy(0.05f))
+
+                // 2. Peak Limiter
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Peak Limiter", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                        Text("Hard lookahead transient protection", color = Color.White.copy(0.5f), fontSize = 11.sp)
                     }
-                )
-                LimiterSlider(
-                    label = "Release",
-                    value = config.limiterReleaseMs,
-                    range = 10f..200f,
-                    unit = "ms",
-                    onValueChange = viewModel::setLimiterReleaseMs,
-                    onLongPress = {
-                        onEditValue(EditingValue("Release", config.limiterReleaseMs, 10f..200f, viewModel::setLimiterReleaseMs))
+                    PremiumSwitch(
+                        checked = config.limiterEnabled,
+                        onCheckedChange = { viewModel.setLimiterEnabled(it) }
+                    )
+                }
+
+                if (config.limiterEnabled) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Color.White.copy(0.03f))
+                            .padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        LimiterSlider(
+                            label = "Threshold",
+                            value = config.limiterThresholdDb,
+                            range = -6f..0f,
+                            unit = "dB",
+                            onValueChange = viewModel::setLimiterThresholdDb,
+                            onLongPress = {
+                                onEditValue(EditingValue("Threshold", config.limiterThresholdDb, -6f..0f, viewModel::setLimiterThresholdDb))
+                            }
+                        )
+                        LimiterSlider(
+                            label = "Attack",
+                            value = config.limiterAttackMs,
+                            range = 0.1f..10f,
+                            unit = "ms",
+                            onValueChange = viewModel::setLimiterAttackMs,
+                            onLongPress = {
+                                onEditValue(EditingValue("Attack", config.limiterAttackMs, 0.1f..10f, viewModel::setLimiterAttackMs))
+                            }
+                        )
+                        LimiterSlider(
+                            label = "Release",
+                            value = config.limiterReleaseMs,
+                            range = 10f..200f,
+                            unit = "ms",
+                            onValueChange = viewModel::setLimiterReleaseMs,
+                            onLongPress = {
+                                onEditValue(EditingValue("Release", config.limiterReleaseMs, 10f..200f, viewModel::setLimiterReleaseMs))
+                            }
+                        )
                     }
-                )
+                }
             }
+
+            // Move limiter subtitle below text
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = subtitle,
+                color = Color.White.copy(0.45f),
+                fontSize = 11.sp,
+                lineHeight = 15.sp
+            )
         }
     }
 }
+
 
 @Composable
 private fun LimiterSlider(
@@ -1906,18 +1896,36 @@ private fun LimiterSlider(
     onValueChange: (Float) -> Unit,
     onLongPress: () -> Unit
 ) {
-    Column {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (isPressed) 1.02f else 1f,
+        animationSpec = tween(220, easing = EaseInOutCubic),
+        label = "SliderScale"
+    )
+
+    Column(
+        modifier = Modifier.graphicsLayer {
+            scaleX = scale
+            scaleY = scale
+        }
+    ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(label, color = Color.White.copy(0.6f), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            Text(
+                label.uppercase(Locale.getDefault()),
+                color = Color.White.copy(0.5f),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold
+            )
             Text(
                 if (unit == "dB") "%.1f %s".format(value, unit) else "%.0f %s".format(value, unit),
                 color = PremiumAccent,
-                fontSize = 10.sp,
-                fontWeight = FontWeight.Black,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
                 modifier = Modifier.clickable { onLongPress() }
             )
         }
@@ -1925,15 +1933,17 @@ private fun LimiterSlider(
             value = value,
             onValueChange = onValueChange,
             valueRange = range,
+            interactionSource = interactionSource,
             colors = SliderDefaults.colors(
                 thumbColor = PremiumAccent,
                 activeTrackColor = PremiumAccent,
                 inactiveTrackColor = Color.White.copy(0.1f)
             ),
-            modifier = Modifier.height(24.dp)
+            modifier = Modifier.height(32.dp)
         )
     }
 }
+
 
 @Composable
 fun ReplayGainContent(uiState: PlayerUiState, viewModel: PlayerViewModel) {
@@ -1949,87 +1959,56 @@ fun ReplayGainContent(uiState: PlayerUiState, viewModel: PlayerViewModel) {
             )
         }
     ) {
-        Column(modifier = Modifier.animateContentSize()) {
-            Text(
-                "Processing Mode",
-                color = Color.White.copy(if (config.replayGainEnabled) 0.6f else 0.3f),
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold
-            )
-            Spacer(Modifier.height(8.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                com.beatflowy.app.model.ReplayGainOption.entries.forEach { option ->
-                    val isSelected = config.replayGainOption == option
-                    FilterChip(
-                        selected = isSelected,
-                        enabled = config.replayGainEnabled,
-                        onClick = { viewModel.setReplayGainOption(option) },
-                        label = {
-                            Text(
-                                option.displayName,
-                                color = if (isSelected) {
-                                    if (config.replayGainEnabled) Color.Black else Color.Black.copy(0.4f)
-                                } else {
-                                    if (config.replayGainEnabled) Color.White else Color.White.copy(0.3f)
-                                }
-                            )
-                        },
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = if (config.replayGainEnabled) PremiumAccent else PremiumAccent.copy(0.4f),
-                            containerColor = Color.White.copy(0.05f),
-                            disabledContainerColor = Color.White.copy(0.02f),
-                            disabledSelectedContainerColor = PremiumAccent.copy(0.2f)
-                        ),
-                        border = null
-                    )
+        Column(modifier = Modifier.animateContentSize(), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+            Column {
+                Text(
+                    "PROCESSING MODE",
+                    color = PrimaryCyan.copy(if (config.replayGainEnabled) 0.8f else 0.3f),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.5.sp
+                )
+                Spacer(Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    com.beatflowy.app.model.ReplayGainOption.entries.forEach { option ->
+                        val isSelected = config.replayGainOption == option
+                        PremiumChip(
+                            selected = isSelected,
+                            onClick = { viewModel.setReplayGainOption(option) },
+                            label = option.displayName
+                        )
+                    }
                 }
             }
 
-            Spacer(Modifier.height(16.dp))
-
-            Text(
-                "Source",
-                color = Color.White.copy(if (config.replayGainEnabled) 0.6f else 0.3f),
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold
-            )
-            Spacer(Modifier.height(8.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                com.beatflowy.app.model.ReplayGainSource.entries.forEach { source ->
-                    val isSelected = config.replayGainSource == source
-                    FilterChip(
-                        selected = isSelected,
-                        enabled = config.replayGainEnabled,
-                        onClick = { viewModel.setReplayGainSource(source) },
-                        label = {
-                            Text(
-                                source.displayName,
-                                color = if (isSelected) {
-                                    if (config.replayGainEnabled) Color.Black else Color.Black.copy(0.4f)
-                                } else {
-                                    if (config.replayGainEnabled) Color.White else Color.White.copy(0.3f)
-                                }
+            Column {
+                Text(
+                    "SOURCE",
+                    color = PrimaryCyan.copy(if (config.replayGainEnabled) 0.8f else 0.3f),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.5.sp
+                )
+                Spacer(Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    com.beatflowy.app.model.ReplayGainSource.entries.forEach { source ->
+                        val isSelected = config.replayGainSource == source
+                        Box(modifier = Modifier.weight(1f)) {
+                            PremiumChip(
+                                selected = isSelected,
+                                onClick = { viewModel.setReplayGainSource(source) },
+                                label = source.displayName
                             )
-                        },
-                        modifier = Modifier.weight(1f),
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = if (config.replayGainEnabled) PremiumAccent else PremiumAccent.copy(0.4f),
-                            containerColor = Color.White.copy(0.05f),
-                            disabledContainerColor = Color.White.copy(0.02f),
-                            disabledSelectedContainerColor = PremiumAccent.copy(0.2f)
-                        ),
-                        border = null
-                    )
+                        }
+                    }
                 }
             }
-
-            Spacer(Modifier.height(16.dp))
 
             DspSliderRow(
                 title = "Pre-amplification",
@@ -2041,17 +2020,17 @@ fun ReplayGainContent(uiState: PlayerUiState, viewModel: PlayerViewModel) {
             )
 
             if (!config.replayGainEnabled) {
-                Spacer(Modifier.height(16.dp))
                 Text(
                     "Normalizes volume across tracks based on embedded ReplayGain tags. Prevents sudden volume jumps between albums.",
-                    color = Color.White.copy(0.4f),
-                    fontSize = 11.sp,
-                    lineHeight = 15.sp
+                    color = TextWhite.copy(0.5f),
+                    fontSize = 14.sp,
+                    lineHeight = 18.sp
                 )
             }
         }
     }
 }
+
 
 @Composable
 fun LibraryContent(uiState: PlayerUiState, viewModel: PlayerViewModel, onShowInfo: () -> Unit) {
@@ -2069,7 +2048,7 @@ fun LibraryContent(uiState: PlayerUiState, viewModel: PlayerViewModel, onShowInf
                     RoundedCornerShape(14.dp)
                 )
                 .clickable { viewModel.startFullScan() }
-                .padding(vertical = 14.dp),
+                .padding(vertical = 10.dp),
             contentAlignment = Alignment.Center
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -2088,7 +2067,7 @@ fun LibraryContent(uiState: PlayerUiState, viewModel: PlayerViewModel, onShowInf
                     .background(Color.White.copy(0.05f))
                     .border(1.dp, Color.White.copy(0.1f), RoundedCornerShape(14.dp))
                     .clickable { viewModel.quickScan() }
-                    .padding(vertical = 13.dp),
+                    .padding(vertical = 10.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -2365,12 +2344,20 @@ fun LibraryContent(uiState: PlayerUiState, viewModel: PlayerViewModel, onShowInf
                     }
                 }
             }
+
+
         }
     }
 }
 
+
 @Composable
-fun CloudContent(viewModel: PlayerViewModel, onRequestGDriveAccount: () -> Unit) {
+fun CloudContent(
+    uiState: PlayerUiState,
+    viewModel: PlayerViewModel,
+    onRequestGDriveAccount: () -> Unit,
+    onNavigateToGDriveSettings: () -> Unit
+) {
     val driveAccounts by viewModel.driveAccounts.collectAsStateWithLifecycle(initialValue = emptyList())
     val telegramChannels by viewModel.telegramChannels.collectAsStateWithLifecycle(initialValue = emptyList())
 
@@ -2382,7 +2369,8 @@ fun CloudContent(viewModel: PlayerViewModel, onRequestGDriveAccount: () -> Unit)
             title = "GOOGLE DRIVE",
             icon = Icons.Rounded.Cloud,
             isActive = true,
-            statusDot = Color(0xFF1A73E8)
+            statusDot = Color(0xFF1A73E8),
+            subtitle = "Enrichment rules, network and data saver"
         ) {
             OutlinedTextField(
                 value = driveQuery,
@@ -2395,7 +2383,7 @@ fun CloudContent(viewModel: PlayerViewModel, onRequestGDriveAccount: () -> Unit)
                         Text("Add", color = Color(0xFF1A73E8), fontWeight = FontWeight.Bold)
                     }
                 },
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(10.dp),
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedBorderColor = Color(0xFF1A73E8).copy(0.5f),
                     unfocusedBorderColor = Color.White.copy(0.1f),
@@ -2404,7 +2392,7 @@ fun CloudContent(viewModel: PlayerViewModel, onRequestGDriveAccount: () -> Unit)
                     cursorColor = Color(0xFF1A73E8)
                 ),
                 singleLine = true,
-                textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 15.sp)
+                textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 14.sp)
             )
 
             val filteredDrive = driveAccounts.filter {
@@ -2416,12 +2404,21 @@ fun CloudContent(viewModel: PlayerViewModel, onRequestGDriveAccount: () -> Unit)
                 filteredDrive.forEach { account ->
                     ConnectedAccountRow(
                         account = account,
-                        onScan = { viewModel.scanDriveAccount(account.email) },
+                        onSync = { viewModel.scanDriveAccount(account.email) },
                         onToggle = { enabled -> viewModel.toggleDriveAccountEnabled(account.email, enabled) },
                         onRemove = { viewModel.removeDriveAccount(account.email) }
                     )
                 }
             }
+
+            HorizontalDivider(color = Color.White.copy(0.08f), modifier = Modifier.padding(vertical = 8.dp))
+            
+            CloudSettingsButton(
+                title = "GDrive Settings",
+                subtitle = "Network, Data Saver and Sync options",
+                icon = Icons.Rounded.Settings,
+                onClick = onNavigateToGDriveSettings
+            )
         }
 
         SettingsSection(
@@ -2457,7 +2454,7 @@ fun CloudContent(viewModel: PlayerViewModel, onRequestGDriveAccount: () -> Unit)
                             color = Color(0xFF2AABEE), fontWeight = FontWeight.Bold)
                     }
                 },
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(10.dp),
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedBorderColor = Color(0xFF2AABEE).copy(0.5f),
                     unfocusedBorderColor = Color.White.copy(0.1f),
@@ -2466,7 +2463,7 @@ fun CloudContent(viewModel: PlayerViewModel, onRequestGDriveAccount: () -> Unit)
                     cursorColor = Color(0xFF2AABEE)
                 ),
                 singleLine = true,
-                textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 15.sp)
+                textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 14.sp)
             )
 
             val filteredTelegram = telegramChannels.filter {
@@ -2484,7 +2481,45 @@ fun CloudContent(viewModel: PlayerViewModel, onRequestGDriveAccount: () -> Unit)
                     )
                 }
             }
+
+
+
+
         }
+    }
+}
+
+
+@Composable
+private fun CloudSettingsButton(
+    title: String,
+    subtitle: String,
+    icon: ImageVector,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(Color.White.copy(0.04f))
+            .clickable(onClick = onClick)
+            .padding(12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(36.dp)
+                .background(Color(0xFF1A73E8).copy(0.12f), CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(icon, null, tint = Color(0xFF1A73E8), modifier = Modifier.size(20.dp))
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+            Text(subtitle, color = Color.White.copy(0.5f), fontSize = 11.sp)
+        }
+        Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, null, tint = Color.White.copy(0.3f), modifier = Modifier.size(16.dp))
     }
 }
 
@@ -2559,11 +2594,12 @@ private fun TelegramChannelRow(
     }
 }
 
+
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun ConnectedAccountRow(
     account: DriveAccount,
-    onScan: () -> Unit,
+    onSync: () -> Unit,
     onToggle: (Boolean) -> Unit,
     onRemove: () -> Unit
 ) {
@@ -2614,7 +2650,7 @@ private fun ConnectedAccountRow(
                 Icon(Icons.Rounded.Delete, "Remove", tint = Color.Red.copy(0.8f))
             }
         } else {
-            IconButton(onClick = onScan) {
+            IconButton(onClick = onSync) {
                 Icon(Icons.Rounded.Sync, "Sync", tint = Color.White.copy(0.6f))
             }
             PremiumSwitch(
@@ -2624,6 +2660,7 @@ private fun ConnectedAccountRow(
         }
     }
 }
+
 
 @Composable
 private fun parseMarkdown(text: String): AnnotatedString {
@@ -2640,6 +2677,7 @@ private fun parseMarkdown(text: String): AnnotatedString {
         }
     }
 }
+
 
 @Composable
 private fun WhatsNewSection(title: String, items: List<Pair<String, List<String>>>) {
@@ -2660,15 +2698,20 @@ private fun WhatsNewSection(title: String, items: List<Pair<String, List<String>
                     )
                 }
             }
+
+
+
+
         }
     }
 }
+
 
 @Composable
 fun WhatsNewCard() {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(20.dp),
+        shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(
             containerColor = Color.White.copy(alpha = 0.03f)
         ),
@@ -2678,31 +2721,31 @@ fun WhatsNewCard() {
         )
     ) {
         Column(
-            modifier = Modifier.padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Box(
                     modifier = Modifier
-                        .size(36.dp)
+                        .size(32.dp)
                         .glassIconBackground(
                             backgroundColor = PremiumAccent.copy(alpha = 0.15f),
-                            shape = RoundedCornerShape(10.dp),
+                            shape = RoundedCornerShape(8.dp),
                             borderColor = PremiumAccent.copy(alpha = 0.25f)
                         ),
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(Icons.Rounded.NewReleases, null, tint = PremiumAccent, modifier = Modifier.size(20.dp))
+                    Icon(Icons.Rounded.NewReleases, null, tint = PremiumAccent, modifier = Modifier.size(18.dp))
                 }
                 Text(
                     "WHAT'S NEW",
                     color = Color.White,
                     fontWeight = FontWeight.ExtraBold,
-                    fontSize = 14.sp,
-                    letterSpacing = 1.2.sp
+                    fontSize = 13.sp,
+                    letterSpacing = 1.sp
                 )
             }
 
@@ -2801,6 +2844,7 @@ fun WhatsNewCard() {
     }
 }
 
+
 @Composable
 fun AboutContent() {
     val context = LocalContext.current
@@ -2817,7 +2861,7 @@ fun AboutContent() {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(20.dp))
+                .clip(RoundedCornerShape(14.dp))
                 .background(
                     Brush.linearGradient(
                         listOf(
@@ -2832,7 +2876,7 @@ fun AboutContent() {
                     Brush.linearGradient(
                         listOf(PremiumAccent.copy(0.25f), Color.White.copy(0.06f))
                     ),
-                    RoundedCornerShape(20.dp)
+                    RoundedCornerShape(14.dp)
                 )
                 .padding(20.dp)
         ) {
@@ -2845,13 +2889,13 @@ fun AboutContent() {
                     Text(
                         "Beatraxus Music player",
                         color = Color.White,
-                        fontSize = 18.sp,
+                        fontSize = 16.sp,
                         fontWeight = FontWeight.Bold,
                         letterSpacing = 0.2.sp
                     )
                     Spacer(Modifier.height(2.dp))
-                    Text("HarbertRaj", color = Color.White.copy(0.5f), fontSize = 13.sp)
-                    Spacer(Modifier.height(12.dp))
+                    Text("HarbertRaj", color = Color.White.copy(0.5f), fontSize = 12.sp)
+                    Spacer(Modifier.height(10.dp))
                     Box(
                         modifier = Modifier
                             .clip(CircleShape)
@@ -2861,12 +2905,12 @@ fun AboutContent() {
                                 )
                             )
                             .border(1.dp, PremiumAccent.copy(0.3f), CircleShape)
-                            .padding(horizontal = 14.dp, vertical = 5.dp)
+                            .padding(horizontal = 10.dp, vertical = 4.dp)
                     ) {
                         Text(
                             "v$versionName",
                             color = PremiumAccent,
-                            fontSize = 12.sp,
+                            fontSize = 11.sp,
                             fontWeight = FontWeight.SemiBold
                         )
                     }
@@ -2877,7 +2921,7 @@ fun AboutContent() {
                     modifier = Modifier
                         .align(Alignment.Top)
                         .size(44.dp)
-                        .clip(RoundedCornerShape(12.dp))
+                        .clip(RoundedCornerShape(10.dp))
                         .background(Color.White.copy(0.07f))
                 ) {
                     Icon(
@@ -2888,20 +2932,25 @@ fun AboutContent() {
                     )
                 }
             }
+
+
+
+
         }
     }
 }
 
+
 @Composable
-fun FullScanPopup(progress: Float, count: Int, albums: Int, artists: Int) {
+fun FullScanPopup(progress: Float, count: Int, albums: Int, artists: Int, onDismiss: () -> Unit) {
     Dialog(
-        onDismissRequest = { },
+        onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(BgDeep),
+                .background(Color.Black.copy(alpha = 0.45f)),
             contentAlignment = Alignment.Center
         ) {
             Box(
@@ -2927,32 +2976,32 @@ fun FullScanPopup(progress: Float, count: Int, albums: Int, artists: Int) {
                         ),
                         RoundedCornerShape(28.dp)
                     )
-                    .padding(32.dp),
+                    .padding(24.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Box(
                         modifier = Modifier
-                            .size(56.dp)
+                            .size(48.dp)
                             .shadow(16.dp, CircleShape, ambientColor = PremiumAccent.copy(0.4f), spotColor = PremiumAccent.copy(0.4f))
                             .clip(CircleShape)
                             .background(Brush.radialGradient(listOf(PremiumAccent.copy(0.25f), Color.Transparent))),
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(Icons.Rounded.LibraryMusic, null, tint = PremiumAccent, modifier = Modifier.size(28.dp))
+                        Icon(Icons.Rounded.LibraryMusic, null, tint = PremiumAccent, modifier = Modifier.size(24.dp))
                     }
 
-                    Spacer(Modifier.height(16.dp))
+                    Spacer(Modifier.height(12.dp))
 
                     Text(
                         "Syncing Music",
                         color = Color.White,
-                        fontSize = 20.sp,
+                        fontSize = 18.sp,
                         fontWeight = FontWeight.Bold,
                         letterSpacing = 0.3.sp
                     )
 
-                    Spacer(Modifier.height(32.dp))
+                    Spacer(Modifier.height(24.dp))
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -2963,28 +3012,33 @@ fun FullScanPopup(progress: Float, count: Int, albums: Int, artists: Int) {
                         ScanStatItem(Icons.Rounded.Person, artists.toString(), "Artists", Color(0xFF7C4DFF))
                     }
 
-                    Spacer(Modifier.height(40.dp))
+                    Spacer(Modifier.height(24.dp))
 
                     LinearProgressIndicator(
                         progress = { progress },
-                        modifier = Modifier.fillMaxWidth().height(8.dp).clip(CircleShape),
+                        modifier = Modifier.fillMaxWidth().height(6.dp).clip(CircleShape),
                         color = PremiumAccent,
                         trackColor = Color.White.copy(0.1f)
                     )
 
-                    Spacer(Modifier.height(16.dp))
+                    Spacer(Modifier.height(12.dp))
 
                     Text(
                         "${(progress * 100).toInt()}%",
                         color = PremiumAccent,
                         fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp
+                        fontSize = 14.sp
                     )
                 }
             }
+
+
+
+
         }
     }
 }
+
 
 @Composable
 fun ScanStatItem(icon: ImageVector, value: String, label: String, color: Color) {
@@ -2994,12 +3048,12 @@ fun ScanStatItem(icon: ImageVector, value: String, label: String, color: Color) 
             .clip(RoundedCornerShape(14.dp))
             .background(color.copy(alpha = 0.08f))
             .border(1.dp, color.copy(alpha = 0.2f), RoundedCornerShape(14.dp))
-            .padding(horizontal = 16.dp, vertical = 12.dp)
+            .padding(horizontal = 12.dp, vertical = 10.dp)
     ) {
-        Icon(icon, null, tint = color, modifier = Modifier.size(22.dp))
-        Spacer(Modifier.height(6.dp))
-        Text(value, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp)
-        Text(label, color = Color.White.copy(0.45f), fontSize = 11.sp)
+        Icon(icon, null, tint = color, modifier = Modifier.size(20.dp))
+        Spacer(Modifier.height(4.dp))
+        Text(value, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+        Text(label, color = Color.White.copy(0.45f), fontSize = 10.sp)
     }
 }
 
@@ -3014,14 +3068,19 @@ fun SettingsSection(
     content: @Composable ColumnScope.() -> Unit
 ) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(20.dp),
+        modifier = Modifier.fillMaxWidth().shadow(
+            elevation = 8.dp,
+            shape = RoundedCornerShape(24.dp),
+            ambientColor = Color.Black.copy(0.35f),
+            spotColor = Color.Black.copy(0.35f)
+        ),
+        shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(
-            containerColor = if (isActive) PremiumAccent.copy(alpha = 0.08f) else Color.White.copy(alpha = 0.03f)
+            containerColor = CardSurface.copy(alpha = 0.85f)
         ),
         border = BorderStroke(
-            1.dp,
-            if (isActive) PremiumAccent.copy(0.35f) else Color.White.copy(0.08f)
+            1.2.dp,
+            if (isActive) PrimaryCyan.copy(0.3f) else Color(0xFF26D9FF).copy(0.15f)
         )
     ) {
         Column(
@@ -3038,32 +3097,31 @@ fun SettingsSection(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
-                    val iconAccent = if (isActive) PremiumAccent else Color.White
                     Box(
                         modifier = Modifier
-                            .size(34.dp)
+                            .size(40.dp)
                             .glassIconBackground(
-                                backgroundColor = iconAccent.copy(alpha = 0.12f),
-                                shape = RoundedCornerShape(10.dp),
-                                borderColor = iconAccent.copy(alpha = 0.18f)
+                                backgroundColor = PrimaryCyan.copy(alpha = 0.1f),
+                                shape = RoundedCornerShape(12.dp),
+                                borderColor = PrimaryCyan.copy(alpha = 0.2f)
                             ),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             icon,
                             null,
-                            tint = if (isActive) PremiumAccent else Color.White.copy(0.75f),
-                            modifier = Modifier.size(19.dp)
+                            tint = PrimaryCyan,
+                            modifier = Modifier.size(20.dp)
                         )
 
                         if (statusDot != null) {
                             Box(
                                 modifier = Modifier
                                     .align(Alignment.BottomEnd)
-                                    .offset(x = 3.dp, y = 3.dp)
-                                    .size(10.dp)
+                                    .offset(x = 2.dp, y = 2.dp)
+                                    .size(8.dp)
                                     .background(Color(0xFF121212), CircleShape)
-                                    .padding(1.5.dp)
+                                    .padding(1.2.dp)
                             ) {
                                 Box(
                                     modifier = Modifier
@@ -3075,27 +3133,30 @@ fun SettingsSection(
                     }
                     Column {
                         Text(
-                            title.uppercase(),
-                            color = if (isActive) PremiumAccent else Color.White,
-                            fontWeight = FontWeight.Black,
-                            fontSize = 12.sp,
-                            letterSpacing = 1.2.sp
+                            title,
+                            color = TextWhite,
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.SemiBold
                         )
                         if (subtitle != null) {
                             Text(
                                 subtitle,
-                                color = Color.White.copy(0.45f),
-                                fontSize = 10.sp
+                                color = TextWhite.copy(alpha = 0.7f),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Normal
                             )
                         }
                     }
                 }
-                headerActions?.invoke()
+                if (headerActions != null) {
+                    headerActions()
+                } else null
             }
             content()
         }
     }
 }
+
 
 @Composable
 fun OutputModeButton(
@@ -3105,34 +3166,33 @@ fun OutputModeButton(
     enabled: Boolean = true,
     modifier: Modifier = Modifier
 ) {
+    val background = if (selected) {
+        Brush.linearGradient(listOf(Color.Black, Color.Black))
+    } else {
+        Brush.linearGradient(listOf(Color(0xFF1A232D), Color(0xFF1A232D)))
+    }
+
     Box(
         modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
-            .background(
-                if (selected)
-                    Brush.verticalGradient(listOf(PremiumAccent.copy(0.25f), PremiumAccent.copy(0.10f)))
-                else
-                    Brush.verticalGradient(listOf(Color.White.copy(0.07f), Color.White.copy(0.03f)))
-            )
-            .border(
-                width = 1.dp,
-                color = if (selected) PremiumAccent.copy(0.6f) else Color.White.copy(0.09f),
-                shape = RoundedCornerShape(12.dp)
-            )
+            .clip(RoundedCornerShape(14.dp))
+            .background(background)
+            .then(if (selected) Modifier.border(1.dp, PrimaryCyan, RoundedCornerShape(14.dp)) else Modifier)
+            .then(if (selected) Modifier.shadow(elevation = 12.dp, shape = RoundedCornerShape(14.dp), ambientColor = PrimaryCyan.copy(0.2f), spotColor = PrimaryCyan.copy(0.2f)) else Modifier)
             .clickable(enabled = enabled, onClick = onClick)
-            .padding(vertical = 13.dp),
+            .padding(vertical = 10.dp),
         contentAlignment = Alignment.Center
     ) {
         Text(
             text = text,
             color = when {
-                !enabled -> Color.White.copy(0.28f)
-                selected -> PremiumAccent
-                else -> Color.White.copy(0.65f)
+                !enabled -> TextWhite.copy(0.2f)
+                selected -> PrimaryCyan
+                else -> TextWhite.copy(0.7f)
             },
             fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
             fontSize = 13.sp,
-            letterSpacing = 0.2.sp
+            letterSpacing = 0.2.sp,
+            fontFamily = FontFamily.Monospace
         )
     }
 }
@@ -3146,31 +3206,36 @@ private fun DspToggleRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .background(Color.White.copy(if (checked) 0.05f else 0.025f))
-            .padding(horizontal = 14.dp, vertical = 10.dp),
+            .clip(RoundedCornerShape(14.dp))
+            .background(if (checked) PrimaryCyan.copy(0.08f) else TextWhite.copy(0.03f))
+            .border(
+                1.dp,
+                if (checked) PrimaryCyan.copy(0.2f) else TextWhite.copy(0.07f),
+                RoundedCornerShape(14.dp)
+            )
+            .padding(horizontal = 16.dp, vertical = 12.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(
                 modifier = Modifier
-                    .width(3.dp)
-                    .height(22.dp)
+                    .width(4.dp)
+                    .height(24.dp)
                     .clip(RoundedCornerShape(2.dp))
                     .background(
                         if (checked)
-                            Brush.verticalGradient(listOf(PremiumAccent, PremiumAccent.copy(0.4f)))
+                            Brush.verticalGradient(listOf(PrimaryCyan, SecondaryCyan))
                         else
-                            Brush.verticalGradient(listOf(Color.White.copy(0.15f), Color.White.copy(0.05f)))
+                            Brush.verticalGradient(listOf(TextWhite.copy(0.2f), TextWhite.copy(0.05f)))
                     )
             )
-            Spacer(Modifier.width(12.dp))
+            Spacer(Modifier.width(14.dp))
             Text(
                 title,
-                color = if (checked) Color.White else Color.White.copy(0.75f),
-                fontSize = 14.sp,
-                fontWeight = if (checked) FontWeight.SemiBold else FontWeight.Normal
+                color = if (checked) TextWhite else TextWhite.copy(0.7f),
+                fontSize = 16.sp,
+                fontWeight = if (checked) FontWeight.SemiBold else FontWeight.Medium
             )
         }
         PremiumSwitch(
@@ -3198,20 +3263,20 @@ private fun DspSliderRow(
         ) {
             Text(
                 title,
-                color = Color.White.copy(alpha = if (enabled) 0.85f else 0.4f),
-                fontSize = 13.sp,
+                color = if (enabled) TextWhite else TextWhite.copy(alpha = 0.4f),
+                fontSize = 14.sp,
                 fontWeight = FontWeight.Medium
             )
             Box(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(PremiumAccent.copy(alpha = if (enabled) 0.15f else 0.06f))
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(PrimaryCyan.copy(alpha = if (enabled) 0.15f else 0.06f))
                     .padding(horizontal = 10.dp, vertical = 3.dp)
             ) {
                 Text(
                     valueText(value),
-                    color = PremiumAccent.copy(alpha = if (enabled) 1f else 0.35f),
-                    fontSize = 11.sp,
+                    color = PrimaryCyan.copy(alpha = if (enabled) 1f else 0.35f),
+                    fontSize = 12.sp,
                     fontWeight = FontWeight.Bold
                 )
             }
@@ -3223,130 +3288,87 @@ private fun DspSliderRow(
             steps = steps,
             enabled = enabled,
             colors = SliderDefaults.colors(
-                activeTrackColor = PremiumAccent,
-                inactiveTrackColor = Color.White.copy(alpha = 0.10f),
-                thumbColor = PremiumAccent,
-                disabledActiveTrackColor = PremiumAccent.copy(alpha = 0.2f),
-                disabledInactiveTrackColor = Color.White.copy(alpha = 0.06f),
-                disabledThumbColor = PremiumAccent.copy(alpha = 0.28f)
-            )
+                activeTrackColor = PrimaryCyan,
+                inactiveTrackColor = Color(0xFF1E2B36),
+                thumbColor = PrimaryCyan,
+                disabledActiveTrackColor = PrimaryCyan.copy(alpha = 0.2f),
+                disabledInactiveTrackColor = Color(0xFF1E2B36).copy(alpha = 0.5f),
+                disabledThumbColor = PrimaryCyan.copy(alpha = 0.28f)
+            ),
+            modifier = Modifier.padding(vertical = 8.dp)
         )
     }
 }
 
-@Composable
-private fun DlSection(
-    title: String,
-    icon: ImageVector,
-    content: @Composable ColumnScope.() -> Unit
-) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = Color.White.copy(alpha = 0.03f)
-        ),
-        border = BorderStroke(
-            1.dp,
-            Color.White.copy(0.08f)
-        )
-    ) {
-        Column(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(32.dp)
-                        .glassIconBackground(
-                            backgroundColor = DownloadAccent.copy(alpha = 0.15f),
-                            shape = RoundedCornerShape(10.dp),
-                            borderColor = DownloadAccent.copy(alpha = 0.25f)
-                        ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(icon, null, tint = DownloadAccent, modifier = Modifier.size(18.dp))
-                }
-                Text(
-                    title,
-                    color = Color.White,
-                    fontWeight = FontWeight.ExtraBold,
-                    fontSize = 12.sp,
-                    letterSpacing = 1.2.sp
-                )
-            }
-            content()
-        }
-    }
-}
 
-@Composable
-private fun DlToggleRow(
-    title: String,
-    subtitle: String,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .background(Color.White.copy(if (checked) 0.06f else 0.025f))
-            .padding(horizontal = 14.dp, vertical = 11.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                modifier = Modifier
-                    .width(3.dp)
-                    .height(32.dp)
-                    .clip(RoundedCornerShape(2.dp))
-                    .background(
-                        if (checked)
-                            Brush.verticalGradient(listOf(DownloadAccent, DownloadAccent.copy(0.3f)))
-                        else
-                            Brush.verticalGradient(listOf(Color.White.copy(0.12f), Color.White.copy(0.04f)))
-                    )
-            )
-            Spacer(Modifier.width(12.dp))
-            Column {
-                Text(
-                    title,
-                    color = if (checked) Color.White else Color.White.copy(0.8f),
-                    fontSize = 14.sp,
-                    fontWeight = if (checked) FontWeight.SemiBold else FontWeight.Normal
-                )
-                Spacer(Modifier.height(2.dp))
-                Text(subtitle, color = Color.White.copy(0.4f), fontSize = 11.sp, lineHeight = 15.sp)
-            }
-        }
-        Spacer(Modifier.width(12.dp))
-        PremiumSwitch(
-            checked = checked,
-            onCheckedChange = onCheckedChange
-        )
-    }
-}
 
 @Composable
 private fun StatChip(label: String, value: String) {
     Surface(
-        color = Color.White.copy(0.05f),
-        shape = RoundedCornerShape(8.dp),
-        border = BorderStroke(1.dp, Color.White.copy(0.1f))
+        color = PrimaryCyan.copy(0.05f),
+        shape = RoundedCornerShape(10.dp),
+        border = BorderStroke(1.2.dp, PrimaryCyan.copy(0.15f))
     ) {
         Column(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Text(label, color = Color.White.copy(0.4f), fontSize = 8.sp, fontWeight = FontWeight.Bold)
-            Text(value, color = PremiumAccent, fontSize = 12.sp, fontWeight = FontWeight.Black)
+            Text(
+                label.uppercase(), 
+                color = TextWhite.copy(0.5f), 
+                fontSize = 9.sp, 
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 0.5.sp
+            )
+            Text(
+                value, 
+                color = PrimaryCyan, 
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold,
+                fontFamily = FontFamily.Monospace
+            )
         }
+    }
+}
+
+
+@Composable
+fun BackupRestoreContent(
+    playerViewModel: PlayerViewModel,
+    onExport: () -> Unit,
+    onImport: () -> Unit
+) {
+    SettingsSection(
+        title = "Backup & Restore",
+        icon = Icons.Rounded.Backup
+    ) {
+        SettingMenuItem(
+            title = "Export Settings",
+            subtitle = "Save all app settings to a file",
+            icon = Icons.Rounded.Upload,
+            iconColor = Color.White,
+            onClick = onExport
+        )
+        SettingMenuItem(
+            title = "Import Settings",
+            subtitle = "Restore app settings from a file",
+            icon = Icons.Rounded.Download,
+            iconColor = Color.White,
+            onClick = onImport
+        )
+    }
+
+    SettingsSection(
+        title = "Device Assignment",
+        icon = Icons.Rounded.Devices
+    ) {
+        SettingMenuItem(
+            title = "Assign to All Devices",
+            subtitle = "Apply current DSP settings to all known devices",
+            icon = Icons.Rounded.Sync,
+            iconColor = Color.White,
+            onClick = { playerViewModel.applyCurrentConfigToAllDevices() }
+        )
     }
 }
 
@@ -3453,20 +3475,88 @@ fun MetadataSyncContent(uiState: PlayerUiState, playerViewModel: PlayerViewModel
 }
 
 @Composable
-private fun DlDivider() {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 10.dp)
-            .height(1.dp)
-            .background(
-                Brush.horizontalGradient(
-                    listOf(
-                        Color.Transparent,
-                        DownloadAccent.copy(alpha = 0.15f),
-                        Color.Transparent
-                    )
-                )
-            )
+fun BufferSizeDialog(
+    uiState: PlayerUiState,
+    viewModel: PlayerViewModel,
+    onDismiss: () -> Unit
+) {
+    val config = uiState.dsp.config
+    var pendingBufferMs by remember { mutableIntStateOf(config.outputBufferMs) }
+    var pendingBufferCount by remember { mutableIntStateOf(config.outputBufferCount) }
+    var pendingPostFadeMs by remember { mutableIntStateOf(config.postFadeBufferMs) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Color(0xFF15161A),
+        title = {
+            Column {
+                Text("Buffer Size", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 20.sp)
+                Text("Output buffer options for output device: ${uiState.dsp.activeOutputDeviceLabel}", color = Color.White.copy(0.6f), fontSize = 12.sp)
+            }
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
+                Column {
+                    Text("PRESETS", color = PrimaryCyan.copy(0.8f), fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                    Spacer(Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf("Normal", "Fast", "Powersave").forEach { preset ->
+                            val isSelected = when (preset) {
+                                "Normal" -> pendingBufferMs == 50 && pendingBufferCount == 2 && pendingPostFadeMs == 0
+                                "Fast" -> pendingBufferMs == 20 && pendingBufferCount == 2 && pendingPostFadeMs == 0
+                                "Powersave" -> pendingBufferMs == 100 && pendingBufferCount == 4 && pendingPostFadeMs == 10
+                                else -> false
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(if (isSelected) Color.Black else Color.White.copy(0.05f))
+                                    .border(1.dp, if (isSelected) PrimaryCyan else Color.White.copy(0.1f), RoundedCornerShape(8.dp))
+                                    .clickable {
+                                        when (preset) {
+                                            "Normal" -> { pendingBufferMs = 50; pendingBufferCount = 2; pendingPostFadeMs = 0 }
+                                            "Fast" -> { pendingBufferMs = 20; pendingBufferCount = 2; pendingPostFadeMs = 0 }
+                                            "Powersave" -> { pendingBufferMs = 100; pendingBufferCount = 4; pendingPostFadeMs = 10 }
+                                        }
+                                    }
+                                    .padding(vertical = 8.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = preset,
+                                    color = if (isSelected) PrimaryCyan else Color.White,
+                                    fontSize = 12.sp,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                                )
+                            }
+                        }
+                    }
+                }
+                BufferSizeSliderRow("Buffer ms", pendingBufferMs.toFloat(), 10f..200f, 0, { "${it.toInt()}ms" }) { pendingBufferMs = it.toInt() }
+                BufferSizeSliderRow("Buffers", pendingBufferCount.toFloat(), 2f..4f, 1, { it.toInt().toString() }) { pendingBufferCount = it.toInt() }
+                BufferSizeSliderRow("Post-fade", pendingPostFadeMs.toFloat(), 0f..100f, 0, { "${it.toInt()}ms" }) { pendingPostFadeMs = it.toInt() }
+            }
+        },
+        confirmButton = {
+            Button(onClick = { viewModel.setOutputBufferMs(pendingBufferMs); viewModel.setOutputBufferCount(pendingBufferCount); viewModel.setPostFadeBufferMs(pendingPostFadeMs); onDismiss() }, colors = ButtonDefaults.buttonColors(containerColor = PrimaryCyan)) {
+                Text("OK", color = Color.Black, fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("CANCEL", color = Color.White.copy(0.6f)) } },
+        shape = RoundedCornerShape(24.dp),
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+        modifier = Modifier.fillMaxWidth(0.92f)
     )
+}
+
+@Composable
+private fun BufferSizeSliderRow(title: String, value: Float, range: ClosedFloatingPointRange<Float>, steps: Int = 0, valueText: (Float) -> String, onValueChange: (Float) -> Unit) {
+    Column {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text(title, color = Color.White.copy(0.7f), fontSize = 14.sp, fontWeight = FontWeight.Medium)
+            Text(valueText(value), color = PrimaryCyan, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+        }
+        Slider(value = value, onValueChange = onValueChange, valueRange = range, steps = steps, colors = SliderDefaults.colors(activeTrackColor = PrimaryCyan, inactiveTrackColor = Color.White.copy(0.1f), thumbColor = PrimaryCyan), modifier = Modifier.padding(top = 4.dp))
+    }
 }

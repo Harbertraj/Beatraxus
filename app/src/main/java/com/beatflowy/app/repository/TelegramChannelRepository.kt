@@ -2,19 +2,36 @@ package com.beatflowy.app.repository
 
 import android.content.Context
 import androidx.datastore.core.DataStore
-import androidx.datastore.preferences.core.Preferences
-import androidx.datastore.preferences.core.edit
-import androidx.datastore.preferences.core.stringSetPreferencesKey
+import androidx.datastore.preferences.core.*
 import androidx.datastore.preferences.preferencesDataStore
 import com.beatflowy.app.model.TelegramChannel
 import com.beatflowy.app.model.parseTelegramChannelName
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import org.json.JSONObject
 
 private val Context.telegramDataStore: DataStore<Preferences> by preferencesDataStore(name = "telegram_channels")
 
 class TelegramChannelRepository(private val context: Context) {
+    suspend fun exportPreferences(): Map<String, Any> {
+        return context.telegramDataStore.data.first().asMap().mapKeys { it.key.name }.filterValues { it != null } as Map<String, Any>
+    }
+
+    suspend fun importPreferences(map: Map<String, Any>) {
+        context.telegramDataStore.edit { preferences ->
+            map.forEach { (keyName, value) ->
+                when (value) {
+                    is List<*> -> {
+                        if (value.all { it is String }) {
+                            @Suppress("UNCHECKED_CAST")
+                            preferences[stringSetPreferencesKey(keyName)] = (value as List<String>).toSet()
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     companion object {
         private val TELEGRAM_CHANNELS = stringSetPreferencesKey("telegram_channels")

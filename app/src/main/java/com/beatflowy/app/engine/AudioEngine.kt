@@ -32,9 +32,11 @@ import java.util.concurrent.atomic.AtomicLong
 class AudioEngine(
     context: Context,
     private val output: AudioOutput,
-    private val cloudCacheManager: com.beatflowy.app.drive.CloudCacheManager
+    private val cloudCacheManager: com.beatflowy.app.drive.CloudCacheManager,
+    private val database: com.beatflowy.app.model.AppDatabase
 ) {
     private val engineScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+    private val aiAnalysisDao = database.aiAnalysisDao()
     private val controlMutex = Mutex()
     private val driveAccountRepository = DriveAccountRepository(context)
 
@@ -61,6 +63,7 @@ class AudioEngine(
     private var currentSessionId = AtomicLong(0)
     private var activeSession: PlaybackSession? = null
     private var nextSession: PlaybackSession? = null
+    private var fadingOutSession: PlaybackSession? = null
 
     private var rendererJob: Job? = null
 
@@ -69,6 +72,13 @@ class AudioEngine(
     @Volatile private var dspConfig: DspConfig = DspConfig()
     private val dspRevision = AtomicLong(0L)
     private val isSeeking = AtomicBoolean(false)
+
+    fun isAffectedByDvcVolumeBug(): Boolean {
+        if (android.os.Build.VERSION.SDK_INT < 35) return false // only Android 15+
+        // TODO: add a real runtime probe here once you've identified the specific
+        // manufacturer/build fingerprint(s) affected — don't assume all Android 15+ devices are bugged.
+        return false
+    }
 
     init {
         startRenderer()
@@ -152,7 +162,7 @@ class AudioEngine(
         }
     }
 
-    fun prepare(song: Song) {
+    fun prepare(song: Song, startPositionMs: Long = 0L) {
         engineScope.launch {
             controlMutex.withLock {
                 if (currentSong?.id == song.id && (activeSession != null || nextSession != null)) return@withLock
@@ -171,7 +181,7 @@ class AudioEngine(
                 }
 
                 currentSong = song
-                positionMs = 0L
+                positionMs = startPositionMs
                 updateAudioStateForSong(song)
                 _playbackStateFlow.update { it.copy(currentSong = song, isPlaying = false) }
                 
@@ -303,11 +313,17 @@ class AudioEngine(
         // Forward USB Exclusive Mode to output layer
         output.setUsbExclusiveMode(config.usbExclusiveEnabled)
         output.setBitPerfectMode(config.bitPerfectEnabled)
+
+        output.setBufferConfig(
+            bufferFrames = (config.outputBufferMs * sourceSampleRate) / 1000,
+            bufferCount = config.outputBufferCount,
+            postFadeFrames = (config.postFadeBufferMs * sourceSampleRate) / 1000
+        )
         
         // Forward MMAP Exclusive Mode
         output.setMmapExclusiveMode(
             enabled = config.outputMode == OutputMode.MMAP_EXCLUSIVE,
-            requestedBufferFrames = config.mmapRequestedBufferSizeFrames
+            requestedBufferFrames = (config.outputBufferMs * sourceSampleRate) / 1000
         )
 
         val outputModeChanged = oldConfig.outputMode != config.outputMode
@@ -355,6 +371,7 @@ class AudioEngine(
 
     private suspend fun renderLoop() {
         val localBuffer = FloatArray(RENDER_BATCH_SAMPLES)
+        val localBufferNext = FloatArray(RENDER_BATCH_SAMPLES)
 
         while (engineScope.isActive) {
             val session = activeSession
@@ -374,13 +391,55 @@ class AudioEngine(
                 continue
             }
 
+            // Check if we should start crossfading into next track
+            if (dspConfig.crossfadeDurationS > 0 && fadingOutSession == null && nextSession?.pcmFormat != null) {
+                val remainingMs = session.song.durationMs - session.currentRenderedPositionMs()
+                if (remainingMs <= dspConfig.crossfadeDurationS * 1000L) {
+                    controlMutex.withLock {
+                        fadingOutSession = activeSession
+                        activeSession = nextSession
+                        nextSession = null
+                        currentSong = activeSession?.song
+                        updateAudioStateForSong(currentSong!!)
+                        _playbackStateFlow.update { it.copy(currentSong = currentSong) }
+                    }
+                }
+            }
+
             val sampleCount = session.ringBuffer.read(localBuffer, localBuffer.size)
             if (sampleCount > 0) {
                 val currentRevision = dspRevision.get()
                 if (appliedDspRevision != currentRevision) {
-                    // Light update: push new parameter values to existing native DSP
                     session.dspPipeline.updateConfig(dspConfig)
                     appliedDspRevision = currentRevision
+                }
+
+                // Handle fading in current session (if it just started crossfade)
+                // and fading out the previous session
+                val outSession = fadingOutSession
+                if (outSession != null) {
+                    val outSampleCount = outSession.ringBuffer.read(localBufferNext, sampleCount)
+                    if (outSampleCount > 0) {
+                        val crossfadeMs = dspConfig.crossfadeDurationS * 1000f
+                        val remainingMs = outSession.song.durationMs - outSession.currentRenderedPositionMs()
+                        
+                        // Equal-power crossfade curves: sqrt(t) and sqrt(1-t)
+                        for (i in 0 until outSampleCount step format.channels) {
+                            val t = (remainingMs / crossfadeMs).coerceIn(0f, 1f)
+                            val gainOut = kotlin.math.sqrt(t)
+                            val gainIn = kotlin.math.sqrt(1f - t)
+                            
+                            for (c in 0 until format.channels) {
+                                val idx = i + c
+                                if (idx < sampleCount) {
+                                    localBuffer[idx] = localBuffer[idx] * gainIn + localBufferNext[idx] * gainOut
+                                }
+                            }
+                        }
+                    }
+                    if (outSession.decoderCompleted && outSession.ringBuffer.isEmpty()) {
+                        fadingOutSession = null
+                    }
                 }
 
                 val processed = session.dspPipeline.process(localBuffer, sampleCount, format.channels, format.sampleRate)
@@ -388,11 +447,19 @@ class AudioEngine(
                 var writtenFramesTotal = 0
 
                 while (writtenFramesTotal < frames && engineScope.isActive && activeSession?.sessionId == session.sessionId && _playbackStateFlow.value.isPlaying) {
-                    val written = output.write(
-                        data = processed.data,
-                        offsetInSamples = writtenFramesTotal * format.channels,
-                        frameCount = frames - writtenFramesTotal
-                    )
+                    val written = if (processed.isDoP && processed.intData != null) {
+                        output.writeInt(
+                            data = processed.intData,
+                            offsetInSamples = writtenFramesTotal * format.channels,
+                            frameCount = frames - writtenFramesTotal
+                        )
+                    } else {
+                        output.write(
+                            data = processed.data,
+                            offsetInSamples = writtenFramesTotal * format.channels,
+                            frameCount = frames - writtenFramesTotal
+                        )
+                    }
                     if (written <= 0) {
                         underrunCount++
                         delay(2)
@@ -414,7 +481,7 @@ class AudioEngine(
                     if (activeSession?.sessionId == session.sessionId) {
                         val next = nextSession
                         if (next != null && next.pcmFormat != null) {
-                            // Gapless transition
+                            // Gapless transition (no crossfade active)
                             val oldFormat = session.pcmFormat
                             val newFormat = next.pcmFormat
 
@@ -424,12 +491,8 @@ class AudioEngine(
                             nextSong = null
 
                             if (oldFormat != newFormat) {
-                                // If formats differ, we MUST re-init output
-                                // This might cause a tiny gap but is necessary
                                 next.configure(newFormat!!)
                             }
-                            // Capture AFTER configure() so totalFramesWritten reflects
-                            // any reset that output.init() may have performed inside configure()
                             val framesAtTransition = output.totalFramesWritten()
                             next.setStartFrameOffset(framesAtTransition)
 
@@ -574,7 +637,7 @@ class AudioEngine(
                     output.setSampleFormat(dspConfig.sampleFormat)
                 }
 
-                if (!output.init(format.sampleRate, format.channels, format.bitDepth)) {
+                if (!output.init(format.sampleRate, format.channels, format.bitDepth, format.isDoP)) {
                     logWarn("Audio output initialization failed")
                 }
                 
@@ -639,15 +702,22 @@ class AudioEngine(
 
         fun refreshDspPipeline(format: PcmAudioFormat) {
             val actualOutputRate = output.outputSampleRate().takeIf { it > 0 } ?: resolveTargetSampleRate(format.sampleRate, dspConfig)
-            dspPipeline = AudioDspPipeline.create(
-                inputSampleRate = format.sampleRate,
-                outputSampleRate = actualOutputRate,
-                channels = format.channels,
-                outputBitDepth = output.outputBitDepth(),
-                config = dspConfig,
-                song = song
-            )
-            appliedDspRevision = dspRevision.get()
+            
+            engineScope.launch {
+                val aiAnalysis = aiAnalysisDao.getAnalysisForSong(song.id)
+                withContext(Dispatchers.Main) {
+                    dspPipeline = AudioDspPipeline.create(
+                        inputSampleRate = format.sampleRate,
+                        outputSampleRate = actualOutputRate,
+                        channels = format.channels,
+                        outputBitDepth = output.outputBitDepth(),
+                        config = dspConfig,
+                        song = song,
+                        aiAnalysis = aiAnalysis
+                    )
+                    appliedDspRevision = dspRevision.get()
+                }
+            }
         }
     }
 
@@ -717,6 +787,10 @@ class AudioEngine(
                 resamplerType = if (currentConfig.highQualityResampler) "SOXR" else "Cubic",
                 activeEffects = currentConfig.activeEffects(),
                 autoEqProfileName = currentConfig.autoEqProfile?.name,
+                headroomDb = activeSession?.dspPipeline?.getHeadroomDb() ?: 0f,
+                latencyFrames = activeSession?.dspPipeline?.getLatencyFrames() ?: 0,
+                ditherType = currentConfig.ditherType.displayName,
+                eqMode = if (currentConfig.eqPhaseMode == com.beatflowy.app.model.EqPhaseMode.LINEAR_PHASE) "Linear Phase" else "IIR",
                 pipelineSummary = buildPipelineSummary(
                     codec = codec.ifBlank { currentSong?.format ?: "Unknown" },
                     inputRate = sourceSampleRate,

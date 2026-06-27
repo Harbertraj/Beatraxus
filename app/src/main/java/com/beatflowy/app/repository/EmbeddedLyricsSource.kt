@@ -15,12 +15,38 @@ import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-/**
- * Metadata key for lyrics. Added in API 31, but the value 23 is consistent.
- */
-private const val METADATA_KEY_LYRIC_INT = 23
-
 class EmbeddedLyricsSource(private val context: Context) {
+
+    suspend fun saveLyrics(songPath: String, lyrics: String): Boolean = withContext(Dispatchers.IO) {
+        val file = File(songPath)
+        if (!file.exists() || !file.canWrite()) return@withContext false
+        
+        try {
+            val audioFile = AudioFileIO.read(file)
+            val tag = audioFile.tag ?: audioFile.createDefaultTag()
+            
+            tag.setField(FieldKey.LYRICS, lyrics)
+            audioFile.commit()
+            true
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
+    }
+
+    suspend fun saveLyrics(uri: Uri, lyrics: String): Boolean = withContext(Dispatchers.IO) {
+        if (uri.scheme == "file") {
+            return@withContext saveLyrics(uri.path ?: return@withContext false, lyrics)
+        }
+        
+        if (uri.scheme == "content") {
+            val realPath = getRealPathFromURI(uri)
+            if (realPath != null) {
+                return@withContext saveLyrics(realPath, lyrics)
+            }
+        }
+        false
+    }
 
     suspend fun getLyrics(songPath: String): LyricsResult? = withContext(Dispatchers.IO) {
         val file = File(songPath)
@@ -30,20 +56,22 @@ class EmbeddedLyricsSource(private val context: Context) {
             val audioFile = AudioFileIO.read(file)
             val tag = audioFile.tag ?: return@withContext null
 
-            // 1. Try SYLT (Synchronized Lyrics) via JAudioTagger
-            // val syltFrame = tag.getFirstField(FieldKey.LYRICS) // JAudioTagger might consolidate these
-            // However, JAudioTagger's high-level API might not expose SYLT easily. 
-            // Let's look for specific frames if it's an ID3 tag.
-            
+            // 1. Try SYLT (Synchronized Lyrics)
             val syltContent = extractSylt(tag)
             if (syltContent != null) return@withContext LyricsResult(LyricsType.SYNCED, syltContent)
 
-            // 2. Try USLT (Unsynchronized Lyrics)
-            val uslt = tag.getFirst(FieldKey.LYRICS)
-            if (uslt.isNotBlank()) {
+            // 2. Try USLT (Unsynchronized Lyrics) using multiple keys
+            val lyrics = tag.getFirst(FieldKey.LYRICS).ifBlank {
+                tag.getFirst(FieldKey.CUSTOM1).ifBlank { // Some players use CUSTOM1
+                    // For FLAC/Vorbis, it might be under a different name
+                    tag.getFirst("LYRICS") 
+                }
+            }
+
+            if (lyrics.isNotBlank()) {
                 return@withContext LyricsResult(
-                    type = if (isSynced(uslt)) LyricsType.SYNCED else LyricsType.PLAIN,
-                    content = uslt.trim()
+                    type = if (isSynced(lyrics)) LyricsType.SYNCED else LyricsType.PLAIN,
+                    content = lyrics.trim()
                 )
             }
         } catch (e: Exception) {
@@ -57,11 +85,19 @@ class EmbeddedLyricsSource(private val context: Context) {
             return@withContext getLyrics(uri.path ?: return@withContext null)
         }
         
-        // Fallback for content URIs using MediaMetadataRetriever
+        if (uri.scheme == "content") {
+            val realPath = getRealPathFromURI(uri)
+            if (realPath != null) {
+                return@withContext getLyrics(realPath)
+            }
+        }
+        
+        // Fallback for content URIs or cloud URIs using MediaMetadataRetriever
         try {
             val retriever = MediaMetadataRetriever()
             retriever.setDataSource(context, uri)
-            val lyrics = retriever.extractMetadata(METADATA_KEY_LYRIC_INT)
+            // METADATA_KEY_LYRIC is 23 (added in API 31)
+            val lyrics = retriever.extractMetadata(23)
             if (!lyrics.isNullOrBlank()) {
                 return@withContext LyricsResult(
                     type = if (isSynced(lyrics)) LyricsType.SYNCED else LyricsType.PLAIN,
@@ -69,36 +105,44 @@ class EmbeddedLyricsSource(private val context: Context) {
                 )
             }
         } catch (e: Exception) {
-            // Silently fail for cloud URLs as they likely need headers and we use online sources anyway
+            // Silently fail
         }
         null
     }
 
+    private fun getRealPathFromURI(contentUri: Uri): String? {
+        val projection = arrayOf(android.provider.MediaStore.Audio.Media.DATA)
+        return try {
+            context.contentResolver.query(contentUri, projection, null, null, null)?.use { cursor ->
+                val columnIndex = cursor.getColumnIndexOrThrow(android.provider.MediaStore.Audio.Media.DATA)
+                if (cursor.moveToFirst()) cursor.getString(columnIndex) else null
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
     private fun extractSylt(tag: org.jaudiotagger.tag.Tag): String? {
+        // JAudioTagger SYLT support is limited in high-level API.
+        // We look for SYLT frames in ID3 tags.
         try {
-            val fields = tag.getFields("SYLT")
-            if (fields.isEmpty()) return null
-            
-            val lrcBuilder = StringBuilder()
-            for (field in fields) {
-                val body = when (field) {
-                    is ID3v23Frame -> field.body as? FrameBodySYLT
-                    is ID3v24Frame -> field.body as? FrameBodySYLT
-                    else -> null
-                }
+            if (tag is org.jaudiotagger.tag.id3.AbstractID3v2Tag) {
+                val fields = tag.getFields("SYLT")
+                if (fields.isEmpty()) return null
                 
-                if (body != null) {
-                    // JAudioTagger's FrameBodySYLT provides access to the synchronized text
-                    // This is a bit complex in JAudioTagger, sometimes it's easier to parse raw if high-level fails
-                    // For now, if we have a SYLT frame, we know it's synced.
-                    // If JAudioTagger doesn't provide a clean string, we might need our manual parser as fallback.
-                }
+                // For simplicity, we just return the first one if it has content.
+                // Full SYLT parsing into LRC format is complex, but often the 
+                // raw bytes contain enough for us to detect it's synced.
+                // If it's tagged as SYLT, we might need a more specialized parser.
+                // For now, let's assume if it exists, we'll try to find USLT first
+                // as it's more standard for LRC content.
             }
         } catch (e: Exception) {}
         return null
     }
 
     private fun isSynced(text: String): Boolean {
-        return text.contains(Regex("\\[\\d+:\\d+[.:]\\d+\\]"))
+        // [mm:ss], [mm:ss.xx], [mm:ss.xxx], [h:mm:ss]
+        return text.contains(Regex("\\[\\d+:\\d{2}(?:[.:]\\d+)?\\]"))
     }
 }

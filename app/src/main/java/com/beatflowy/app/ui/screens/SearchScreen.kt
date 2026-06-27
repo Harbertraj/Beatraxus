@@ -19,6 +19,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.beatflowy.app.repository.GenreApiService
 import com.beatflowy.app.ui.theme.BgBase
 import com.beatflowy.app.ui.theme.BgDeep
 import com.beatflowy.app.ui.theme.TextPrimary
@@ -83,54 +84,11 @@ fun SearchScreen(
             }
         }
     ) { paddingValues ->
-        val genres = listOf(
-            "Alternative" to Color(0xFF673AB7),
-            "Americana & Indie" to Color(0xFF009688),
-            "Asian Music" to Color(0xFF3F51B5),
-            "Asian Music & Indian" to Color(0xFF827717),
-            "Bandas originales de..." to Color(0xFFD84315),
-            "Blues" to Color(0xFF00ACC1),
-            "Classical" to Color(0xFF0097A7),
-            "Dance" to Color(0xFF2E7D32),
-            "Film Soundtracks" to Color(0xFF455A64),
-            "Films, Bandes original..." to Color(0xFFC2185B),
-            "Films" to Color(0xFF827717),
-            "Films/Games & TV Series" to Color(0xFF43A047),
-            "Folk/Rock" to Color(0xFF00796B),
-            "Hip-Hop/Rap" to Color(0xFFAD1457),
-            "Instrumental, Relax, Premium" to Color(0xFFBF360C),
-            "Indian Music" to Color(0xFF9E9D24),
-            "Indian Pop" to Color(0xFF0277BD),
-            "Indie Pop" to Color(0xFFC62828),
-            "International" to Color(0xFF263238),
-            "Malayalam" to Color(0xFFEF6C00),
-            "Afrobeat, Neo-soul" to Color(0xFF455A64),
-            "Malayalam, Tamil Pop" to Color(0xFF37474F),
-            "Originale soundtracks" to Color(0xFFB71C1C),
-            "OST" to Color(0xFF263238),
-            "Pop" to Color(0xFF795548),
-            "R&B" to Color(0xFF006064),
-            "Rap/Hip-Hop" to Color(0xFFAD1457),
-            "Soul" to Color(0xFF311B92),
-            "Soundtrack - Telugu" to Color(0xFF01579B),
-            "Soundtrack" to Color(0xFF1B5E20),
-            "Soundtrack & Music" to Color(0xFF2E7D32),
-            "Soundtracks" to Color(0xFF37474F),
-            "Tamil" to Color(0xFF0D47A1),
-            "Tamil OST" to Color(0xFFB71C1C),
-            "Tamil Pop" to Color(0xFF1565C0),
-            "Tamil Songs" to Color(0xFF455A64),
-            "Tamil - Classic" to Color(0xFF6A1B9A),
-            "Tamil, Malayalam, Indian..." to Color(0xFF006064),
-            "Tamil, Music, Indian, Regional..." to Color(0xFF4E342E),
-            "Tamil, Music, India" to Color(0xFF212121),
-            "Western Instrumental" to Color(0xFF004D40),
-            "Tamil OST" to Color(0xFF263238),
-            "Telugu" to Color(0xFF1B5E20),
-            "Unknown Genre" to Color(0xFF212121),
-            "Vocal Music - Classic" to Color(0xFF4527A0),
-            "World" to Color(0xFFD81B60)
-        )
+        val genres = remember {
+            GenreApiService.STANDARD_GENRES.map { name ->
+                name to getGenreColor(name)
+            }
+        }
 
         LazyVerticalGrid(
             columns = GridCells.Fixed(2),
@@ -144,6 +102,25 @@ fun SearchScreen(
                     // Navigate to genre detail
                 }
             }
+        }
+    }
+}
+
+private fun getGenreColor(name: String): Color {
+    val hash = name.hashCode()
+    return when (name) {
+        "Tamil", "Tamil Film Music", "Tamil Melody" -> Color(0xFF0D47A1)
+        "Hindi", "Hindi Film Music" -> Color(0xFFE65100)
+        "English Pop", "Pop" -> Color(0xFFC2185B)
+        "Rock" -> Color(0xFFD32F2F)
+        "Hip-Hop", "Rap" -> Color(0xFF4527A0)
+        "Electronic", "EDM", "Dance" -> Color(0xFF00796B)
+        "Classical" -> Color(0xFF5D4037)
+        "Lo-Fi", "Ambient" -> Color(0xFF263238)
+        else -> {
+            // Generate a stable color based on name
+            val hue = (hash.coerceAtLeast(0) % 360).toFloat()
+            Color.hsl(hue, 0.6f, 0.4f)
         }
     }
 }

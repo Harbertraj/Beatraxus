@@ -29,13 +29,19 @@ object LrcParser {
             }
 
             val content = trimmedLine.substring(lastIndex).trim()
-            val wordTimings = parseWordTimings(content)
-            val cleanText = content.replace(WORD_TIME_PATTERN.toRegex(), "").trim()
+            val wordTimings = parseWordTimings(content, timeMatches.firstOrNull() ?: 0L)
+            val cleanText = content.replace(WORD_TIME_PATTERN.toRegex(), "").replace(TIME_PATTERN.toRegex(), "").trim()
 
             when {
                 timeMatches.isNotEmpty() -> {
+                    val baseStartTime = timeMatches.first()
                     for (startTime in timeMatches) {
-                        lines.add(LrcLine(startTime, cleanText, wordTimings.takeIf { it.isNotEmpty() }))
+                        val adjustedTimings = if (startTime == baseStartTime) {
+                            wordTimings
+                        } else {
+                            wordTimings.map { it.copy(startTime = it.startTime - baseStartTime + startTime) }
+                        }
+                        lines.add(LrcLine(startTime, cleanText, adjustedTimings.takeIf { it.isNotEmpty() }))
                     }
                 }
                 wordTimings.isNotEmpty() -> {
@@ -46,7 +52,8 @@ object LrcParser {
 
         if (lines.isEmpty()) {
             return rawLines.filter { it.isNotBlank() }.mapIndexed { index, text ->
-                LrcLine(index * 3000L, text.trim(), duration = 3000L)
+                val cleaned = text.replace(WORD_TIME_PATTERN.toRegex(), "").replace(TIME_PATTERN.toRegex(), "").trim()
+                LrcLine(index * 3000L, cleaned, duration = 3000L)
             }
         }
 
@@ -82,19 +89,41 @@ object LrcParser {
         return (m * 60 + s) * 1000 + msVal
     }
 
-    private fun parseWordTimings(text: String): List<WordTiming> {
+    private fun parseWordTimings(text: String, lineStartTime: Long): List<WordTiming> {
         val timings = mutableListOf<WordTiming>()
         val matcher = WORD_TIME_PATTERN.matcher(text)
-        val tags = mutableListOf<Pair<Long, Int>>() // time to word start index
+        val tags = mutableListOf<Triple<Long, Int, Int>>() // time, start, end
 
         while (matcher.find()) {
-            tags.add(parseTime(matcher.group(1), matcher.group(2), matcher.group(3)) to matcher.end())
+            var startTime = parseTime(matcher.group(1), matcher.group(2), matcher.group(3))
+            
+            // Heuristic to handle relative word timestamps (some LRC variants use offsets from line start)
+            if (startTime < lineStartTime && startTime < 600000) { // If tag is under 10min and before line start
+                startTime += lineStartTime
+            }
+            
+            tags.add(Triple(startTime, matcher.start(), matcher.end()))
+        }
+
+        if (tags.isEmpty()) return emptyList()
+
+        // Ensure tags are sorted
+        tags.sortBy { it.first }
+
+        // Handle text BEFORE the first tag
+        val firstTagStart = tags[0].second
+        if (firstTagStart > 0) {
+            val preText = text.substring(0, firstTagStart).trim()
+            if (preText.isNotEmpty()) {
+                val duration = (tags[0].first - lineStartTime).coerceAtLeast(0L)
+                timings.add(WordTiming(lineStartTime, duration, preText))
+            }
         }
 
         for (i in tags.indices) {
-            val (startTime, wordStart) = tags[i]
-            val nextWordStart = if (i < tags.lastIndex) tags[i + 1].second else text.length
-            val wordText = text.substring(wordStart, nextWordStart).trim()
+            val (startTime, _, tagEnd) = tags[i]
+            val nextTagStart = if (i < tags.lastIndex) tags[i + 1].second else text.length
+            val wordText = text.substring(tagEnd, nextTagStart).trim()
             val duration = if (i < tags.lastIndex) {
                 (tags[i + 1].first - startTime).coerceAtLeast(0L)
             } else 500L

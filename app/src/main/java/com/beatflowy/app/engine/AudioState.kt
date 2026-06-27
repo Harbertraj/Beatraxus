@@ -20,6 +20,10 @@ data class AudioState(
     val autoEqProfileName: String? = null,
     val outputLatencyMs: Int = 0,
     val underrunCount: Int = 0,
+    val headroomDb: Float = 0f,
+    val latencyFrames: Int = 0,
+    val ditherType: String = "None",
+    val eqMode: String = "IIR",
     val pipelineSummary: String = ""
 )
 

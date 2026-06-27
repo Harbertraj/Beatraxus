@@ -25,6 +25,9 @@ interface SongDao {
     @Query("DELETE FROM songs WHERE source = 'LOCAL'")
     suspend fun deleteLocalSongs()
 
+    @Query("UPDATE songs SET lyrics = :lyrics WHERE id = :songId")
+    suspend fun updateLyrics(songId: String, lyrics: String)
+
     @Query("DELETE FROM songs WHERE id IN (:ids)")
     suspend fun deleteSongsByIds(ids: List<String>)
 

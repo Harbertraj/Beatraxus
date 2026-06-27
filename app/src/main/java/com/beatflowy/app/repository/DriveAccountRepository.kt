@@ -2,14 +2,13 @@ package com.beatflowy.app.repository
 
 import android.content.Context
 import androidx.datastore.core.DataStore
-import androidx.datastore.preferences.core.Preferences
-import androidx.datastore.preferences.core.edit
-import androidx.datastore.preferences.core.stringSetPreferencesKey
+import androidx.datastore.preferences.core.*
 import androidx.datastore.preferences.preferencesDataStore
 import com.google.api.client.googleapis.extensions.android.gms.auth.GoogleAccountCredential
 import com.google.api.services.drive.DriveScopes
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -24,6 +23,24 @@ data class DriveAccount(
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "drive_accounts")
 
 class DriveAccountRepository(private val context: Context) {
+    suspend fun exportPreferences(): Map<String, Any> {
+        return context.dataStore.data.first().asMap().mapKeys { it.key.name }.filterValues { it != null } as Map<String, Any>
+    }
+
+    suspend fun importPreferences(map: Map<String, Any>) {
+        context.dataStore.edit { preferences ->
+            map.forEach { (keyName, value) ->
+                when (value) {
+                    is List<*> -> {
+                        if (value.all { it is String }) {
+                            @Suppress("UNCHECKED_CAST")
+                            preferences[stringSetPreferencesKey(keyName)] = (value as List<String>).toSet()
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     private data class CachedToken(val token: String, val expiry: Long)
 

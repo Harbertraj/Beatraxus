@@ -22,12 +22,21 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import coil.compose.AsyncImage
 import com.beatflowy.app.model.Song
+import com.beatflowy.app.repository.lastfm.LastFmRepository
+import com.beatflowy.app.repository.lastfm.LastFmTrack
 import com.beatflowy.app.ui.theme.AccentBlue
 import com.beatflowy.app.ui.theme.BgDeep
+import kotlinx.coroutines.launch
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -203,56 +212,9 @@ fun SongOptionsSheet(
 
             // Info Overlay
             if (showInfoOverlay) {
-                androidx.compose.ui.window.Dialog(onDismissRequest = { showInfoOverlay = false }) {
-                            Surface(
-                                modifier = Modifier
-                                    .fillMaxWidth(0.9f)
-                                    .wrapContentHeight(),
-                                shape = RoundedCornerShape(24.dp),
-                                color = Color.Black
-                            ) {
-                                Column(
-                                    modifier = Modifier.padding(24.dp),
-                                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                                ) {
-                                    Text("Song Info", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Black)
-                                    
-                                    InfoTag("Title", song.title)
-                                    InfoTag("Artist", song.artist)
-                                    InfoTag("Album", song.album)
-                                    InfoTag("Duration", formatDuration(song.durationMs))
-                                    InfoTag("Format", song.format.uppercase())
-                                    InfoTag("Quality", "${song.sampleRateHz / 1000} kHz | ${song.bitDepth} bit")
-                                    InfoTag("Location", song.folder)
-                                    InfoTag("Genre", song.genre)
-
-                            Spacer(Modifier.height(8.dp))
-                            Button(
-                                onClick = { showInfoOverlay = false },
-                                modifier = Modifier.fillMaxWidth(),
-                                colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(0.1f)),
-                                shape = RoundedCornerShape(12.dp)
-                            ) {
-                                Text("Close", color = Color.White)
-                            }
-                        }
-                    }
-                }
+                SongInfoDialog(song = song, onDismiss = { showInfoOverlay = false })
             }
         }
-    }
-}
-
-@Composable
-private fun InfoTag(label: String, value: String) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(Color.White.copy(0.05f), RoundedCornerShape(12.dp))
-            .padding(12.dp)
-    ) {
-        Text(label, color = AccentBlue, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-        Text(value, color = Color.White, fontSize = 14.sp, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
     }
 }
 
@@ -283,13 +245,6 @@ private fun OptionGridItem(
             fontWeight = FontWeight.Normal
         )
     }
-}
-
-
-private fun formatDuration(ms: Long): String {
-    val m = java.util.concurrent.TimeUnit.MILLISECONDS.toMinutes(ms)
-    val s = java.util.concurrent.TimeUnit.MILLISECONDS.toSeconds(ms) % 60
-    return "%d:%02d".format(m, s)
 }
 
 

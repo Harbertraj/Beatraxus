@@ -34,6 +34,9 @@ fun AlbumArtImage(
             .data(song.albumArtUri)
             .diskCachePolicy(CachePolicy.ENABLED)
             .memoryCachePolicy(CachePolicy.ENABLED)
+            .error(R.drawable.ic_album_default)
+            .fallback(R.drawable.ic_album_default)
+            .crossfade(true)
             .build(),
         contentDescription = "Album Art",
         modifier = modifier

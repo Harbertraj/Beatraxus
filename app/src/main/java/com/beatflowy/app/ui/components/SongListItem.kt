@@ -12,7 +12,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Badge
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
-import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -121,6 +120,7 @@ fun SongListItem(
     isMultiSelectMode: Boolean = false,
     isSelected: Boolean = false,
     onMoreClick: (() -> Unit)? = null,
+    onLongClick: (() -> Unit)? = null,
     isCompact: Boolean = false,
     isOnline: Boolean = true
 ) {
@@ -135,25 +135,45 @@ fun SongListItem(
     val haptic = LocalHapticFeedback.current
 
     // Quality determination logic
-    val rawFormat = song.format.lowercase()
-    val baseFormat = rawFormat.replace("g ", "").substringBefore(" ").trim()
-    val bitDepth = when {
-        rawFormat.contains("24") -> 24
-        rawFormat.contains("16") -> 16
-        song.bitDepth > 0 -> song.bitDepth
-        else -> 16
-    }
-    val sampleRate = song.sampleRateHz
-    val bitrate = song.bitrate
-    
-    val durationMin = song.durationMs / 60000.0
-    val sizeMb = song.fileSizeBytes / (1024.0 * 1024.0)
-    val isLikelyLossyM4A = (baseFormat == "m4a" || baseFormat == "mp4" || baseFormat == "aac") && 
-        ((durationMin > 0 && (sizeMb / durationMin) < 2.3) || (bitrate > 0 && bitrate < 400000))
+    val songMetadata = remember(song) {
+        val rawFormat = song.format.lowercase()
+        val baseFormat = rawFormat.replace("g ", "").substringBefore(" ").trim()
+        val bitDepth = when {
+            rawFormat.contains("24") -> 24
+            rawFormat.contains("16") -> 16
+            song.bitDepth > 0 -> song.bitDepth
+            else -> 16
+        }
+        val sampleRate = song.sampleRateHz
+        val bitrate = song.bitrate
 
-    val isALAC = baseFormat.contains("alac") || ((baseFormat == "m4a" || baseFormat == "mp4") && !isLikelyLossyM4A)
-    val isLosslessFormat = baseFormat.contains("flac") || isALAC || baseFormat.contains("wav") || baseFormat.contains("dsd") || baseFormat.contains("aiff")
-    val isHiRes = (bitDepth >= 24 || sampleRate > 48000) && isLosslessFormat
+        val durationMin = song.durationMs / 60000.0
+        val sizeMb = song.fileSizeBytes / (1024.0 * 1024.0)
+        val isLikelyLossyM4A = (baseFormat == "m4a" || baseFormat == "mp4" || baseFormat == "aac") &&
+                ((durationMin > 0 && (sizeMb / durationMin) < 2.3) || (bitrate > 0 && bitrate < 400000))
+
+        val isALAC = baseFormat.contains("alac") || ((baseFormat == "m4a" || baseFormat == "mp4") && !isLikelyLossyM4A)
+        val isLosslessFormat = baseFormat.contains("flac") || isALAC || baseFormat.contains("wav") || baseFormat.contains("dsd") || baseFormat.contains("aiff")
+        val isHiRes = (bitDepth >= 24 || sampleRate > 48000) && isLosslessFormat
+
+        object {
+            val baseFormat = baseFormat
+            val bitDepth = bitDepth
+            val sampleRate = sampleRate
+            val bitrate = bitrate
+            val isALAC = isALAC
+            val isLosslessFormat = isLosslessFormat
+            val isHiRes = isHiRes
+        }
+    }
+    
+    val baseFormat = songMetadata.baseFormat
+    val bitDepth = songMetadata.bitDepth
+    val sampleRate = songMetadata.sampleRate
+    val bitrate = songMetadata.bitrate
+    val isALAC = songMetadata.isALAC
+    val isLosslessFormat = songMetadata.isLosslessFormat
+    val isHiRes = songMetadata.isHiRes
 
     Box(
         modifier = modifier
@@ -178,9 +198,11 @@ fun SongListItem(
             .combinedClickable(
                 onClick = { if (isAvailable || isMultiSelectMode) onClick() },
                 onLongClick = {
-                    if (onMoreClick != null) {
-                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    if (!isMultiSelectMode && onMoreClick != null) {
                         onMoreClick()
+                    } else {
+                        onLongClick?.invoke()
                     }
                 }
             )
@@ -199,13 +221,35 @@ fun SongListItem(
                 )
                 Spacer(Modifier.width(8.dp))
             } else if (isPlaying) {
-                Box(Modifier.width(32.dp), contentAlignment = Alignment.Center) {
-                    PlaybackBars()
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .combinedClickable(
+                            onClick = { onClick() },
+                            onLongClick = {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                onLongClick?.invoke()
+                            }
+                        )
+                ) {
+                    Box(Modifier.width(32.dp), contentAlignment = Alignment.Center) {
+                        PlaybackBars()
+                    }
                 }
                 Spacer(Modifier.width(10.dp))
             } else {
                 Column(
-                    modifier = Modifier.width(46.dp),
+                    modifier = Modifier
+                        .width(46.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .combinedClickable(
+                            onClick = { onClick() },
+                            onLongClick = {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                onLongClick?.invoke()
+                            }
+                        )
+                        .padding(vertical = 2.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center
                 ) {
@@ -317,6 +361,8 @@ fun SongListItem(
                     }
                 }
             }
+
+
         }
     }
 }
