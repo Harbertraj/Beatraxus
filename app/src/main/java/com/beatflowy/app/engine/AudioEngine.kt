@@ -73,13 +73,6 @@ class AudioEngine(
     private val dspRevision = AtomicLong(0L)
     private val isSeeking = AtomicBoolean(false)
 
-    fun isAffectedByDvcVolumeBug(): Boolean {
-        if (android.os.Build.VERSION.SDK_INT < 35) return false // only Android 15+
-        // TODO: add a real runtime probe here once you've identified the specific
-        // manufacturer/build fingerprint(s) affected — don't assume all Android 15+ devices are bugged.
-        return false
-    }
-
     init {
         startRenderer()
     }
@@ -406,6 +399,10 @@ class AudioEngine(
                 }
             }
 
+            // Reflects activeSession AFTER any crossfade swap above — fixes a dropped
+            // audio chunk that used to happen right at the moment crossfade triggered.
+            val targetSessionId = activeSession?.sessionId ?: session.sessionId
+
             val sampleCount = session.ringBuffer.read(localBuffer, localBuffer.size)
             if (sampleCount > 0) {
                 val currentRevision = dspRevision.get()
@@ -446,7 +443,7 @@ class AudioEngine(
                 val frames = processed.sampleCount / format.channels
                 var writtenFramesTotal = 0
 
-                while (writtenFramesTotal < frames && engineScope.isActive && activeSession?.sessionId == session.sessionId && _playbackStateFlow.value.isPlaying) {
+                while (writtenFramesTotal < frames && engineScope.isActive && activeSession?.sessionId == targetSessionId && _playbackStateFlow.value.isPlaying) {
                     val written = if (processed.isDoP && processed.intData != null) {
                         output.writeInt(
                             data = processed.intData,
@@ -468,8 +465,8 @@ class AudioEngine(
                     writtenFramesTotal += written
                 }
 
-                val newPos = session.currentRenderedPositionMs()
-                if (engineScope.isActive && activeSession?.sessionId == session.sessionId && !isSeeking.get()) {
+                val newPos = activeSession?.currentRenderedPositionMs() ?: session.currentRenderedPositionMs()
+                if (engineScope.isActive && activeSession?.sessionId == targetSessionId && !isSeeking.get()) {
                     this@AudioEngine.positionMs = newPos
                 }
                 continue
@@ -529,6 +526,7 @@ class AudioEngine(
             private set
         private var basePositionMs: Long = initialStartPositionMs
         private var startFrameOffset = output.playbackPositionFrames()
+        @Volatile
         var dspPipeline = AudioDspPipeline.create(44_100, 44_100, 2, output.outputBitDepth(), this@AudioEngine.dspConfig, song)
 
         fun setStartFrameOffset(offset: Long) {
@@ -592,6 +590,7 @@ class AudioEngine(
 
         fun stop() {
             started = false
+            dspPipeline.release()
             ringBuffer.close()
         }
 
@@ -706,6 +705,7 @@ class AudioEngine(
             engineScope.launch {
                 val aiAnalysis = aiAnalysisDao.getAnalysisForSong(song.id)
                 withContext(Dispatchers.Main) {
+                    val oldPipeline = dspPipeline
                     dspPipeline = AudioDspPipeline.create(
                         inputSampleRate = format.sampleRate,
                         outputSampleRate = actualOutputRate,
@@ -716,6 +716,7 @@ class AudioEngine(
                         aiAnalysis = aiAnalysis
                     )
                     appliedDspRevision = dspRevision.get()
+                    oldPipeline.release()
                 }
             }
         }

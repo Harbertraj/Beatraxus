@@ -33,10 +33,12 @@ configure<ApplicationExtension> {
             useSupportLibrary = true
         }
 
-        val defaultLastFmKey = "16833738f9c418a1755341a988a11a2d"
-        val defaultLastFmSecret = "cb3217f1db1b98825f96c1aee6918c53"
-        buildConfigField("String", "LASTFM_API_KEY", "\"${localProperties.getProperty("LASTFM_API_KEY") ?: defaultLastFmKey}\"")
-        buildConfigField("String", "LASTFM_SECRET", "\"${localProperties.getProperty("LASTFM_SECRET") ?: defaultLastFmSecret}\"")
+        val lastFmKey = localProperties.getProperty("LASTFM_API_KEY")
+            ?: error("Missing LASTFM_API_KEY in local.properties")
+        val lastFmSecret = localProperties.getProperty("LASTFM_SECRET")
+            ?: error("Missing LASTFM_SECRET in local.properties")
+        buildConfigField("String", "LASTFM_API_KEY", "\"$lastFmKey\"")
+        buildConfigField("String", "LASTFM_SECRET", "\"$lastFmSecret\"")
 
         externalNativeBuild {
             cmake {

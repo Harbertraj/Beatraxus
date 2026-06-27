@@ -19,3 +19,7 @@ local.properties
 *.apk
 /app/release/
 /Beatraxus Key/
+
+hs_err_pid*.log
+buildlog.txt
+compile_out.txt

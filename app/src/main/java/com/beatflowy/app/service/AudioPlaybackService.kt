@@ -958,10 +958,10 @@ class AudioPlaybackService : Service() {
         prefs.unregisterOnSharedPreferenceChangeListener(prefListener)
 
         val finalState = engine.playbackStateFlow.value.copy(isPlaying = false)
-        CoroutineScope(Dispatchers.Default + SupervisorJob()).launch {
+        serviceScope.launch {
             updateAllWidgets(finalState)
         }
-        
+
         // Ensure cloud cache is cleared on destroy if we are not just restarting
         if (!engine.playbackStateFlow.value.isPlaying) {
             cloudCacheManager.clearFullCache()

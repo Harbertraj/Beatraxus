@@ -22,6 +22,7 @@ internal interface DspProcessor {
     fun process(input: DspProcessResult, channels: Int): DspProcessResult
     fun updateConfig(config: DspConfig) {}
     fun flush() {}
+    fun release() {}
 }
 
 internal class AudioDspPipeline(
@@ -105,6 +106,10 @@ internal class AudioDspPipeline(
         processors.forEach { it.flush() }
     }
 
+    fun release() {
+        processors.forEach { it.release() }
+    }
+
     fun getHeadroomDb(): Float {
         return processors.filterIsInstance<NativeDspProcessor>().firstOrNull()?.getHeadroomDb() ?: 0f
     }
@@ -171,6 +176,10 @@ private class NativeDspProcessor(
         }
         dsp.setBitDepth(outputBitDepth)
         updateNativeConfig(currentConfig, dsp)
+    }
+
+    override fun release() {
+        native.release()
     }
 
     private fun updateNativeConfig(cfg: DspConfig, dsp: NativeDsp) {
