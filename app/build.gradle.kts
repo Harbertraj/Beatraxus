@@ -49,8 +49,8 @@ configure<ApplicationExtension> {
 
     signingConfigs {
         create("release") {
-            // Updated path to match the file named "key" in your "Beatraxus Key" folder
-            storeFile = file("../Beatraxus Key/key")
+            storeFile = localProperties.getProperty("RELEASE_STORE_FILE")?.let { file(it) }
+                ?: file("../../Beatraxus Key/key") // Fallback to relative path if property is missing
             storePassword = localProperties.getProperty("RELEASE_STORE_PASSWORD")
             keyAlias = localProperties.getProperty("RELEASE_KEY_ALIAS")
             keyPassword = localProperties.getProperty("RELEASE_KEY_PASSWORD")
