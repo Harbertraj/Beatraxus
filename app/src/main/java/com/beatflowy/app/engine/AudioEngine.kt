@@ -24,10 +24,13 @@ import kotlinx.coroutines.flow.update
 import com.beatflowy.app.repository.DriveAccountRepository
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.locks.ReentrantReadWriteLock
+import kotlin.concurrent.withLock
 
 class AudioEngine(
     context: Context,
@@ -66,6 +69,11 @@ class AudioEngine(
     private var fadingOutSession: PlaybackSession? = null
 
     private var rendererJob: Job? = null
+    private val reconfigChannel = MutableSharedFlow<Unit>(
+        replay = 0,
+        extraBufferCapacity = 1,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST
+    )
 
     private var positionMs: Long = 0L
     private var underrunCount = 0
@@ -75,6 +83,14 @@ class AudioEngine(
 
     init {
         startRenderer()
+
+        // Debounce reconfiguration requests to prevent app crash when user rapidly toggles settings
+        engineScope.launch {
+            reconfigChannel.collectLatest {
+                delay(200)
+                performReconfigureOutput()
+            }
+        }
     }
 
     private fun startRenderer() {
@@ -274,18 +290,20 @@ class AudioEngine(
     }
 
     fun reconfigureOutput() {
-        engineScope.launch {
-            controlMutex.withLock {
-                val song = currentSong ?: return@withLock
-                val session = activeSession
-                if (session != null && session.isActive() && session.pcmFormat != null) {
-                    session.requestOutputRestart()
-                } else if (_playbackStateFlow.value.isPlaying) {
-                    val resumePositionMs = currentPositionMs()
-                    startSessionInternal(song, resumePositionMs)
-                } else {
-                    publishDspState(activeSession?.pcmFormat)
-                }
+        reconfigChannel.tryEmit(Unit)
+    }
+
+    private suspend fun performReconfigureOutput() {
+        controlMutex.withLock {
+            val song = currentSong ?: return@withLock
+            val session = activeSession
+            if (session != null && session.isActive() && session.pcmFormat != null) {
+                session.requestOutputRestart()
+            } else if (_playbackStateFlow.value.isPlaying) {
+                val resumePositionMs = currentPositionMs()
+                startSessionInternal(song, resumePositionMs)
+            } else {
+                publishDspState(activeSession?.pcmFormat)
             }
         }
     }
@@ -399,47 +417,51 @@ class AudioEngine(
                 }
             }
 
-            // Reflects activeSession AFTER any crossfade swap above — fixes a dropped
-            // audio chunk that used to happen right at the moment crossfade triggered.
-            val targetSessionId = activeSession?.sessionId ?: session.sessionId
+            // Reflects activeSession AFTER any crossfade swap above
+            val targetSession = activeSession ?: session
+            val targetSessionId = targetSession.sessionId
 
-            val sampleCount = session.ringBuffer.read(localBuffer, localBuffer.size)
+            val sampleCount = targetSession.ringBuffer.read(localBuffer, localBuffer.size)
             if (sampleCount > 0) {
                 val currentRevision = dspRevision.get()
-                if (appliedDspRevision != currentRevision) {
-                    session.dspPipeline.updateConfig(dspConfig)
-                    appliedDspRevision = currentRevision
-                }
+                
+                val processed = targetSession.dspLock.readLock().withLock {
+                    if (appliedDspRevision != currentRevision) {
+                        targetSession.dspPipeline.updateConfig(dspConfig)
+                        appliedDspRevision = currentRevision
+                    }
 
-                // Handle fading in current session (if it just started crossfade)
-                // and fading out the previous session
-                val outSession = fadingOutSession
-                if (outSession != null) {
-                    val outSampleCount = outSession.ringBuffer.read(localBufferNext, sampleCount)
-                    if (outSampleCount > 0) {
-                        val crossfadeMs = dspConfig.crossfadeDurationS * 1000f
-                        val remainingMs = outSession.song.durationMs - outSession.currentRenderedPositionMs()
-                        
-                        // Equal-power crossfade curves: sqrt(t) and sqrt(1-t)
-                        for (i in 0 until outSampleCount step format.channels) {
-                            val t = (remainingMs / crossfadeMs).coerceIn(0f, 1f)
-                            val gainOut = kotlin.math.sqrt(t)
-                            val gainIn = kotlin.math.sqrt(1f - t)
+                    // Handle fading in current session (if it just started crossfade)
+                    // and fading out the previous session
+                    val outSession = fadingOutSession
+                    if (outSession != null) {
+                        val outSampleCount = outSession.ringBuffer.read(localBufferNext, sampleCount)
+                        if (outSampleCount > 0) {
+                            val crossfadeMs = dspConfig.crossfadeDurationS * 1000f
+                            val remainingMs = outSession.song.durationMs - outSession.currentRenderedPositionMs()
                             
-                            for (c in 0 until format.channels) {
-                                val idx = i + c
-                                if (idx < sampleCount) {
-                                    localBuffer[idx] = localBuffer[idx] * gainIn + localBufferNext[idx] * gainOut
+                            // Equal-power crossfade curves: sqrt(t) and sqrt(1-t)
+                            for (i in 0 until outSampleCount step format.channels) {
+                                val t = (remainingMs / crossfadeMs).coerceIn(0f, 1f)
+                                val gainOut = kotlin.math.sqrt(t)
+                                val gainIn = kotlin.math.sqrt(1f - t)
+                                
+                                for (c in 0 until format.channels) {
+                                    val idx = i + c
+                                    if (idx < sampleCount) {
+                                        localBuffer[idx] = localBuffer[idx] * gainIn + localBufferNext[idx] * gainOut
+                                    }
                                 }
                             }
                         }
+                        if (outSession.decoderCompleted && outSession.ringBuffer.isEmpty()) {
+                            fadingOutSession = null
+                        }
                     }
-                    if (outSession.decoderCompleted && outSession.ringBuffer.isEmpty()) {
-                        fadingOutSession = null
-                    }
-                }
 
-                val processed = session.dspPipeline.process(localBuffer, sampleCount, format.channels, format.sampleRate)
+                    targetSession.dspPipeline.process(localBuffer, sampleCount, format.channels, format.sampleRate)
+                }
+                
                 val frames = processed.sampleCount / format.channels
                 var writtenFramesTotal = 0
 
@@ -526,6 +548,10 @@ class AudioEngine(
             private set
         private var basePositionMs: Long = initialStartPositionMs
         private var startFrameOffset = output.playbackPositionFrames()
+        private var lastOutputRate = 0
+        private var lastOutputBitDepth = 0
+        val dspLock = ReentrantReadWriteLock()
+        
         @Volatile
         var dspPipeline = AudioDspPipeline.create(44_100, 44_100, 2, output.outputBitDepth(), this@AudioEngine.dspConfig, song)
 
@@ -590,7 +616,9 @@ class AudioEngine(
 
         fun stop() {
             started = false
-            dspPipeline.release()
+            dspLock.writeLock().withLock {
+                dspPipeline.release()
+            }
             ringBuffer.close()
         }
 
@@ -600,7 +628,7 @@ class AudioEngine(
             return basePositionMs + framesToMs(framesSinceStart, sampleRate)
         }
 
-        fun requestOutputRestart() {
+        suspend fun requestOutputRestart() {
             val format = pcmFormat ?: return
             
             // Capture current position synchronously before launching reconfiguration.
@@ -608,12 +636,10 @@ class AudioEngine(
             basePositionMs = currentRenderedPositionMs()
             startFrameOffset = output.playbackPositionFrames()
 
-            engineScope.launch {
-                try {
-                    configure(format)
-                } catch (e: Exception) {
-                    Log.e(TAG, "Output restart failed", e)
-                }
+            try {
+                configure(format)
+            } catch (e: Exception) {
+                Log.e(TAG, "Output restart failed", e)
             }
         }
 
@@ -622,12 +648,19 @@ class AudioEngine(
             pcmFormat = format
 
             if (activeSession?.sessionId == this.sessionId) {
-                if (formatChanged) {
+                val targetRate = resolveTargetSampleRate(format.sampleRate, dspConfig)
+                val targetBitDepth = if (dspConfig.outputMode == OutputMode.HI_RES) 32 else dspConfig.sampleFormat.bitDepth
+                
+                val outputConfigChanged = targetRate != lastOutputRate || targetBitDepth != lastOutputBitDepth
+                
+                if (formatChanged || outputConfigChanged) {
                     ringBuffer.clear()
                     output.flush()
                 }
 
-                val targetRate = resolveTargetSampleRate(format.sampleRate, dspConfig)
+                lastOutputRate = targetRate
+                lastOutputBitDepth = targetBitDepth
+
                 output.setTargetSampleRate(targetRate)
 
                 if (dspConfig.outputMode == OutputMode.HI_RES) {
@@ -701,22 +734,35 @@ class AudioEngine(
 
         fun refreshDspPipeline(format: PcmAudioFormat) {
             val actualOutputRate = output.outputSampleRate().takeIf { it > 0 } ?: resolveTargetSampleRate(format.sampleRate, dspConfig)
+            val currentBitDepth = output.outputBitDepth()
             
             engineScope.launch {
                 val aiAnalysis = aiAnalysisDao.getAnalysisForSong(song.id)
                 withContext(Dispatchers.Main) {
-                    val oldPipeline = dspPipeline
-                    dspPipeline = AudioDspPipeline.create(
-                        inputSampleRate = format.sampleRate,
-                        outputSampleRate = actualOutputRate,
-                        channels = format.channels,
-                        outputBitDepth = output.outputBitDepth(),
-                        config = dspConfig,
-                        song = song,
-                        aiAnalysis = aiAnalysis
-                    )
-                    appliedDspRevision = dspRevision.get()
-                    oldPipeline.release()
+                    dspLock.writeLock().withLock {
+                        val oldPipeline = dspPipeline
+                        
+                        if (oldPipeline.inputSampleRate == format.sampleRate &&
+                            oldPipeline.outputSampleRate == actualOutputRate &&
+                            oldPipeline.channels == format.channels) {
+                            
+                            oldPipeline.updateOutputBitDepth(currentBitDepth)
+                            oldPipeline.updateConfig(dspConfig)
+                            appliedDspRevision = dspRevision.get()
+                        } else {
+                            dspPipeline = AudioDspPipeline.create(
+                                inputSampleRate = format.sampleRate,
+                                outputSampleRate = actualOutputRate,
+                                channels = format.channels,
+                                outputBitDepth = currentBitDepth,
+                                config = dspConfig,
+                                song = song,
+                                aiAnalysis = aiAnalysis
+                            )
+                            appliedDspRevision = dspRevision.get()
+                            oldPipeline.release()
+                        }
+                    }
                 }
             }
         }

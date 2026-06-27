@@ -260,17 +260,22 @@ fun DspScreen(
                         .fillMaxSize()
                         .verticalScroll(rememberScrollState())
                         .padding(horizontal = 14.dp, vertical = 2.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                    verticalArrangement = Arrangement.spacedBy(if (page == 0) 6.dp else 4.dp)
                 ) {
                     if (page == 0) {
                         Text(
                             text = "Settings for: ${uiState.dsp.activeOutputDeviceLabel}",
                             style = MaterialTheme.typography.labelMedium,
                             color = Color.White.copy(0.5f),
-                            modifier = Modifier.padding(start = 8.dp, top = 4.dp, bottom = 4.dp)
+                            modifier = Modifier.padding(start = 8.dp, top = 6.dp, bottom = 0.dp)
                         )
 
-                        PremiumGraphicCard(uiState)
+                        val currentGains = uiState.dsp.config.eqBands.map { it.gainDb }
+                        val activePresetName = uiState.dsp.customEqPresets.find { it.bands.map { b -> b.gainDb } == currentGains }?.name
+                            ?: builtInPresets.find { it.gains == currentGains }?.name
+                            ?: "Custom"
+
+                        PremiumGraphicCard(uiState, activePresetName)
 
                         UnifiedPresetSection(
                             uiState = uiState,
@@ -1092,7 +1097,7 @@ private fun AnalysisDetailsRow(label: String, value: String) {
 }
 
 @Composable
-private fun PremiumGraphicCard(uiState: PlayerUiState) {
+private fun PremiumGraphicCard(uiState: PlayerUiState, presetName: String) {
     val config = uiState.dsp.config
     val displayBands = config.eqBands
     val displayEnabled = config.eqEnabled
@@ -1106,14 +1111,38 @@ private fun PremiumGraphicCard(uiState: PlayerUiState) {
                 Color.White.copy(alpha = 0.1f),
                 RoundedCornerShape(24.dp)
             )
-            .padding(8.dp),
-        verticalArrangement = Arrangement.spacedBy(2.dp)
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Text("GRAPHIC RESPONSE", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 11.sp, letterSpacing = 1.sp)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                "GRAPHIC RESPONSE",
+                color = Color.White,
+                fontWeight = FontWeight.ExtraBold,
+                fontSize = 11.sp,
+                letterSpacing = 1.sp
+            )
+            Text(
+                text = presetName.uppercase(),
+                color = PremiumAccent,
+                fontWeight = FontWeight.Black,
+                fontSize = 10.sp,
+                textAlign = TextAlign.End,
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(start = 24.dp)
+                    .basicMarquee(),
+                maxLines = 1
+            )
+        }
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(110.dp)
+                .height(102.dp)
                 .clip(RoundedCornerShape(14.dp))
                 .background(Color.Black.copy(alpha = 0.3f))
                 .border(1.dp, Color.White.copy(alpha = 0.05f), RoundedCornerShape(14.dp))
@@ -1144,7 +1173,7 @@ private fun PremiumEqualizerCard(
                 Color.White.copy(alpha = 0.1f),
                 RoundedCornerShape(24.dp)
             )
-            .padding(8.dp),
+            .padding(6.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
         Row(
@@ -1230,7 +1259,7 @@ private fun PremiumEqualizerCard(
 
         // Preamp Horizontal Line Control
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
@@ -1241,7 +1270,7 @@ private fun PremiumEqualizerCard(
                 fontSize = 9.sp,
                 letterSpacing = 1.sp
             )
-            Box(modifier = Modifier.weight(1f).height(32.dp), contentAlignment = Alignment.Center) {
+            Box(modifier = Modifier.weight(1f).height(24.dp), contentAlignment = Alignment.Center) {
                 // Background track line
                 Box(Modifier.fillMaxWidth().height(1.dp).background(Color.White.copy(alpha = 0.1f)))
                 
@@ -1350,7 +1379,7 @@ private fun PremiumVerticalBand(
         Box(
             modifier = Modifier
                 .padding(vertical = 2.dp)
-                .height(200.dp)
+                .height(280.dp)
                 .width(32.dp)
                 .pointerInput(isActive) {
                     if (!isActive) return@pointerInput
@@ -1434,7 +1463,7 @@ private fun PremiumVerticalBand(
             Box(
                 modifier = Modifier
                     .align(Alignment.TopCenter)
-                    .offset(y = (200.dp * (1f - gainProgress)))
+                    .offset(y = (280.dp * (1f - gainProgress)))
                     .size(32.dp, 32.dp)
                     .graphicsLayer {
                         translationY = -16.dp.toPx()
@@ -1598,7 +1627,7 @@ private fun UnifiedPresetSection(
                 Color.White.copy(alpha = 0.1f),
                 RoundedCornerShape(24.dp)
             )
-            .padding(8.dp),
+            .padding(6.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
         Row(
@@ -1746,7 +1775,7 @@ private fun UnifiedPresetSection(
                 ) {
                     Text(
                         preset.name,
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
                         color = if (isActive) PremiumAccent else Color.White,
                         fontWeight = FontWeight.SemiBold,
                         fontSize = 12.sp
@@ -2609,7 +2638,7 @@ private fun PremiumReverbCard(uiState: PlayerUiState, viewModel: PlayerViewModel
             .background(Color.Black.copy(alpha = 0.2f))
             .border(1.dp, Color.White.copy(0.1f), RoundedCornerShape(24.dp))
             .padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         // Header
         Row(
@@ -2682,7 +2711,7 @@ private fun PremiumReverbCard(uiState: PlayerUiState, viewModel: PlayerViewModel
             }
         }
 
-        val knobSizeSmall = 85.dp
+        val knobSizeSmall = 76.dp
         val reverbActive = config.reverbEnabled && !isReverbBypassed
 
         // Main Mix Area
@@ -2700,7 +2729,7 @@ private fun PremiumReverbCard(uiState: PlayerUiState, viewModel: PlayerViewModel
                 onValueChange = viewModel::setReverbAmount,
                 range = 0f..1f,
                 unit = "x",
-                knobSize = 140.dp,
+                knobSize = 115.dp,
                 isBipolar = false,
                 enabled = !isReverbBypassed,
                 active = config.reverbEnabled,
@@ -2710,8 +2739,8 @@ private fun PremiumReverbCard(uiState: PlayerUiState, viewModel: PlayerViewModel
         }
 
         // Section: Room Characteristics
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            MasteringSectionHeader("ROOM ACOUSTICS", Icons.Rounded.HomeWork)
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            MasteringSectionHeader("ROOM ACOUSTICS", Icons.Rounded.HomeWork, isActive = reverbActive)
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -2728,8 +2757,8 @@ private fun PremiumReverbCard(uiState: PlayerUiState, viewModel: PlayerViewModel
         }
 
         // Section: Timing & Structure
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            MasteringSectionHeader("TIMING & STRUCTURE", Icons.Rounded.Timer)
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            MasteringSectionHeader("TIMING & STRUCTURE", Icons.Rounded.Timer, isActive = reverbActive)
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -2849,52 +2878,56 @@ private fun PremiumMasteringCard(uiState: PlayerUiState, viewModel: PlayerViewMo
         }
 
         // GRID 3x2 (3 rows, 2 columns) with enhanced styling
-        val knobSize = 120.dp
+        val knobSize = 92.dp
         val controlsEnabled = !isBypassed
         
         Column(
             modifier = Modifier.fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             // Section 1: Tone
-            MasteringSectionHeader("TONAL BALANCE", Icons.Rounded.Equalizer)
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                KnobControl("MID-BASS", config.midBassDb, viewModel::setMidBassDb, -12f..12f, "dB", knobSize, true, controlsEnabled, config.midBassEnabled, { viewModel.setMidBassEnabled(!config.midBassEnabled) }, { onEditValue(EditingValue("MID-BASS", config.midBassDb, -12f..12f, viewModel::setMidBassDb)) })
-                KnobControl("TREBLE", config.trebleDb, viewModel::setTrebleDb, -12f..12f, "dB", knobSize, true, controlsEnabled, config.trebleEnabled, { viewModel.setTrebleEnabled(!config.trebleEnabled) }, { onEditValue(EditingValue("TREBLE", config.trebleDb, -12f..12f, viewModel::setTrebleDb)) })
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                MasteringSectionHeader("TONAL BALANCE", Icons.Rounded.Equalizer, isActive = config.midBassEnabled || config.trebleEnabled)
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                    KnobControl("MID-BASS", config.midBassDb, viewModel::setMidBassDb, -12f..12f, "dB", knobSize, true, controlsEnabled, config.midBassEnabled, { viewModel.setMidBassEnabled(!config.midBassEnabled) }, { onEditValue(EditingValue("MID-BASS", config.midBassDb, -12f..12f, viewModel::setMidBassDb)) })
+                    KnobControl("TREBLE", config.trebleDb, viewModel::setTrebleDb, -12f..12f, "dB", knobSize, true, controlsEnabled, config.trebleEnabled, { viewModel.setTrebleEnabled(!config.trebleEnabled) }, { onEditValue(EditingValue("TREBLE", config.trebleDb, -12f..12f, viewModel::setTrebleDb)) })
+                }
             }
-            
-            HorizontalDivider(color = Color.White.copy(0.05f), modifier = Modifier.padding(vertical = 4.dp))
             
             // Section 2: Space
-            MasteringSectionHeader("STEREO IMAGING", Icons.Rounded.CenterFocusWeak)
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                KnobControl("STEREO", config.stereoWidth, viewModel::setStereoWidth, 0.5f..2.0f, "x", knobSize, false, controlsEnabled, config.stereoExpansionEnabled, { viewModel.setStereoExpansionEnabled(!config.stereoExpansionEnabled) }, { onEditValue(EditingValue("STEREO WIDTH", config.stereoWidth, 0.5f..2.0f, viewModel::setStereoWidth)) })
-                KnobControl("BALANCE", config.balance, viewModel::setBalance, -1f..1f, "L/R", knobSize, true, controlsEnabled, config.balanceEnabled, { viewModel.setBalanceEnabled(!config.balanceEnabled) }, { onEditValue(EditingValue("BALANCE", config.balance, -1f..1f, viewModel::setBalance)) })
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                MasteringSectionHeader("STEREO IMAGING", Icons.Rounded.CenterFocusWeak, isActive = config.stereoExpansionEnabled || config.balanceEnabled)
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                    KnobControl("STEREO", config.stereoWidth, viewModel::setStereoWidth, 0.5f..2.0f, "x", knobSize, false, controlsEnabled, config.stereoExpansionEnabled, { viewModel.setStereoExpansionEnabled(!config.stereoExpansionEnabled) }, { onEditValue(EditingValue("STEREO WIDTH", config.stereoWidth, 0.5f..2.0f, viewModel::setStereoWidth)) })
+                    KnobControl("BALANCE", config.balance, viewModel::setBalance, -1f..1f, "L/R", knobSize, true, controlsEnabled, config.balanceEnabled, { viewModel.setBalanceEnabled(!config.balanceEnabled) }, { onEditValue(EditingValue("BALANCE", config.balance, -1f..1f, viewModel::setBalance)) })
+                }
             }
 
-            HorizontalDivider(color = Color.White.copy(0.05f), modifier = Modifier.padding(vertical = 4.dp))
-
             // Section 3: Fine Tune
-            MasteringSectionHeader("ENHANCEMENTS", Icons.Rounded.AutoAwesome)
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                KnobControl("AIR", config.airDb, viewModel::setAirDb, -12f..12f, "dB", knobSize, true, controlsEnabled, config.airEnabled, { viewModel.setAirEnabled(!config.airEnabled) }, { onEditValue(EditingValue("AIR", config.airDb, -12f..12f, viewModel::setAirDb)) })
-                KnobControl("CROSSFEED", config.crossfeedLevel, viewModel::setCrossfeedLevel, 0f..1f, "x", knobSize, false, controlsEnabled, config.crossfeedEnabled, { viewModel.setCrossfeedEnabled(!config.crossfeedEnabled) }, { onEditValue(EditingValue("CROSSFEED", config.crossfeedLevel, 0f..1f, viewModel::setCrossfeedLevel)) })
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                MasteringSectionHeader("ENHANCEMENTS", Icons.Rounded.AutoAwesome, isActive = config.airEnabled || config.crossfeedEnabled)
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                    KnobControl("AIR", config.airDb, viewModel::setAirDb, -12f..12f, "dB", knobSize, true, controlsEnabled, config.airEnabled, { viewModel.setAirEnabled(!config.airEnabled) }, { onEditValue(EditingValue("AIR", config.airDb, -12f..12f, viewModel::setAirDb)) })
+                    KnobControl("CROSSFEED", config.crossfeedLevel, viewModel::setCrossfeedLevel, 0f..1f, "x", knobSize, false, controlsEnabled, config.crossfeedEnabled, { viewModel.setCrossfeedEnabled(!config.crossfeedEnabled) }, { onEditValue(EditingValue("CROSSFEED", config.crossfeedLevel, 0f..1f, viewModel::setCrossfeedLevel)) })
+                }
             }
         }
     }
 }
 
 @Composable
-private fun MasteringSectionHeader(label: String, icon: ImageVector) {
+private fun MasteringSectionHeader(label: String, icon: ImageVector, isActive: Boolean = false) {
+    val alpha = if (isActive) 1f else 0.3f
+    val iconAlpha = if (isActive) 0.8f else 0.2f
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        Icon(icon, null, tint = Color.White.copy(0.2f), modifier = Modifier.size(10.dp))
+        Icon(icon, null, tint = Color.White.copy(iconAlpha), modifier = Modifier.size(10.dp))
         Text(
             label,
-            color = Color.White.copy(0.3f),
+            color = Color.White.copy(alpha),
             fontWeight = FontWeight.Black,
             fontSize = 8.sp,
             letterSpacing = 1.5.sp

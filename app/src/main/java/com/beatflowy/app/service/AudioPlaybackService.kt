@@ -635,6 +635,31 @@ class AudioPlaybackService : Service() {
         }
     }
 
+    fun updateEnrichingProgress(progress: Float, current: Int, total: Int) {
+        val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        if (progress >= 1.0f) {
+            notificationManager.cancel(ENRICH_NOTIFICATION_ID)
+        } else {
+            val intent = Intent(this, MainActivity::class.java)
+            val pendingIntent = PendingIntent.getActivity(
+                this, 0, intent,
+                PendingIntent.FLAG_IMMUTABLE)
+
+            val notification = NotificationCompat.Builder(this, CHANNEL_ID)
+                .setContentTitle("Enriching Metadata...")
+                .setContentText("Processed $current of $total songs")
+                .setSmallIcon(R.mipmap.ic_launcher)
+                .setProgress(100, (progress * 100).toInt(), false)
+                .setOngoing(true)
+                .setContentIntent(pendingIntent)
+                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .setOnlyAlertOnce(true)
+                .build()
+            
+            notificationManager.notify(ENRICH_NOTIFICATION_ID, notification)
+        }
+    }
+
     fun getNextSong(): Song? = if (playlist.isNotEmpty() && currentIndex < playlist.size - 1) playlist[currentIndex + 1] else null
     
     fun getUpcomingSongs(): List<Song> {
@@ -911,6 +936,7 @@ class AudioPlaybackService : Service() {
         private const val CHANNEL_ID = "playback_channel"
         private const val NOTIFICATION_ID = 1
         private const val SCAN_NOTIFICATION_ID = 101
+        private const val ENRICH_NOTIFICATION_ID = 102
         const val ACTION_PLAY_PAUSE = "com.beatflowy.app.ACTION_PLAY_PAUSE"
         const val ACTION_NEXT = "com.beatflowy.app.ACTION_NEXT"
         const val ACTION_PREVIOUS = "com.beatflowy.app.ACTION_PREVIOUS"

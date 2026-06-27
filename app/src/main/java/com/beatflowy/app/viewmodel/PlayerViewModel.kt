@@ -439,11 +439,6 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         if (libraryLoadJob?.isActive == true) return
         
         libraryLoadJob = viewModelScope.launch {
-            if (_uiState.value.isFirstRun) {
-                _uiState.update { it.copy(permissionDenied = false, showScanOptions = true) }
-                return@launch
-            }
-            
             _uiState.update { it.copy(permissionDenied = false, isScanning = true) }
             try {
                 val dbSongs = withContext(Dispatchers.IO) {
@@ -483,6 +478,16 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         )
                     }
                 }
+
+                if (_uiState.value.isFirstRun) {
+                    if (dbSongs.isNotEmpty()) {
+                        setFirstRunComplete()
+                    } else {
+                        _uiState.update { it.copy(isScanning = false, showScanOptions = true) }
+                        return@launch
+                    }
+                }
+
                 if (dbSongs.isNotEmpty()) {
                     val sortedSongs = withContext(Dispatchers.Default) {
                         dbSongs.sortedBy { it.title }
@@ -800,6 +805,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                             processed++
                             val progress = processed.toFloat() / total.toFloat()
                             _uiState.update { it.copy(scanProgress = progress) }
+                            service?.updateEnrichingProgress(progress, processed, total)
                             
                             // Update DB and Memory for each song as it finishes
                             songDao.insertSong(updatedSong.toEntity())
@@ -814,6 +820,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                             }
                         }
                         _uiState.update { it.copy(enrichmentStatus = null) }
+                        service?.updateEnrichingProgress(1.0f, total, total)
                     }
 
                     _uiState.update { it.copy(errorMessage = "Synced ${newSongs.size} songs from $email", scanProgress = 1f) }
@@ -1019,6 +1026,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     )
                 }
                 service?.updateScanningProgress(1.0f, results.size, true)
+
+                // Mark first run as complete if we finished a full scan successfully
+                if (_uiState.value.isFirstRun) {
+                    setFirstRunComplete()
+                }
             } catch (e: Exception) {
                 _uiState.update { it.copy(errorMessage = "Full scan failed: ${e.message}") }
                 service?.updateScanningProgress(1.0f, _uiState.value.scanCount, true)
@@ -1090,6 +1102,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 updateLibraryCounts(allResults)
                 _uiState.update { it.copy(scanProgress = 1.0f, errorMessage = "Scan complete: ${allResults.size} songs found") }
                 service?.updateScanningProgress(1.0f, allResults.size, true)
+                
+                // Mark first run as complete if we finished a folder scan successfully
+                if (_uiState.value.isFirstRun) {
+                    setFirstRunComplete()
+                }
+
                 delay(2000)
                 _uiState.update { it.copy(errorMessage = null) }
             } catch (e: Exception) {

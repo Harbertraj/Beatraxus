@@ -1,7 +1,11 @@
 package com.beatflowy.app.engine
 
+import java.util.concurrent.locks.ReentrantReadWriteLock
+import kotlin.concurrent.withLock
+
 class NativeDsp {
     private var nativeHandle: Long = 0
+    private val lock = ReentrantReadWriteLock()
 
     init {
         System.loadLibrary("beatraxus_dsp")
@@ -9,217 +13,211 @@ class NativeDsp {
     }
 
     fun init(sampleRate: Float, channels: Int) {
-        if (nativeHandle != 0L) nInit(nativeHandle, sampleRate, channels)
+        lock.writeLock().withLock {
+            if (nativeHandle != 0L) nInit(nativeHandle, sampleRate, channels)
+        }
     }
 
     fun initResampler(inputRate: Float, channels: Int, targetRate: Float) {
-        if (nativeHandle != 0L) nInitResampler(nativeHandle, inputRate, channels, targetRate)
+        lock.writeLock().withLock {
+            if (nativeHandle != 0L) nInitResampler(nativeHandle, inputRate, channels, targetRate)
+        }
     }
 
-    fun setPreamp(db: Float) {
+    fun setPreamp(db: Float) = lock.readLock().withLock {
         if (nativeHandle != 0L) nSetPreamp(nativeHandle, db)
     }
 
-    fun setDcBlocker(enabled: Boolean) {
+    fun setDcBlocker(enabled: Boolean) = lock.readLock().withLock {
         if (nativeHandle != 0L) nSetDcBlocker(nativeHandle, enabled)
     }
 
-    fun setReplayGain(db: Float) {
+    fun setReplayGain(db: Float) = lock.readLock().withLock {
         if (nativeHandle != 0L) nSetReplayGain(nativeHandle, db)
     }
 
-    fun setVolume(volume: Float) {
+    fun setVolume(volume: Float) = lock.readLock().withLock {
         if (nativeHandle != 0L) nSetVolume(nativeHandle, volume)
     }
 
-    fun setDvc(enabled: Boolean) {
+    fun setDvc(enabled: Boolean) = lock.readLock().withLock {
         if (nativeHandle != 0L) nSetDvc(nativeHandle, enabled)
     }
 
-    fun setRmsDvc(enabled: Boolean) {
+    fun setRmsDvc(enabled: Boolean) = lock.readLock().withLock {
         if (nativeHandle != 0L) nSetRmsDvc(nativeHandle, enabled)
     }
 
-    fun setRmsLeveler(enabled: Boolean) {
+    fun setRmsLeveler(enabled: Boolean) = lock.readLock().withLock {
         if (nativeHandle != 0L) nSetRmsLeveler(nativeHandle, enabled)
     }
 
-    fun setDvcLevel(level: Float) {
+    fun setDvcLevel(level: Float) = lock.readLock().withLock {
         if (nativeHandle != 0L) nSetDvcLevel(nativeHandle, level)
     }
 
-    fun setDvcMode(mode: Int) {
+    fun setDvcMode(mode: Int) = lock.readLock().withLock {
         if (nativeHandle != 0L) nSetDvcMode(nativeHandle, mode)
     }
 
-    fun setTone(midBass: Float, treble: Float, air: Float) {
+    fun setTone(midBass: Float, treble: Float, air: Float) = lock.readLock().withLock {
         if (nativeHandle != 0L) nSetTone(nativeHandle, midBass, treble, air)
     }
 
-    fun setSpatial(balance: Float, widen: Float) {
+    fun setSpatial(balance: Float, widen: Float) = lock.readLock().withLock {
         if (nativeHandle != 0L) nSetSpatial(nativeHandle, balance, widen)
     }
 
-    fun setSpatialEnabled(enabled: Boolean) {
+    fun setSpatialEnabled(enabled: Boolean) = lock.readLock().withLock {
         if (nativeHandle != 0L) nSetSpatialEnabled(nativeHandle, enabled)
     }
 
-    fun setSpatialIntensity(intensity: Float) {
+    fun setSpatialIntensity(intensity: Float) = lock.readLock().withLock {
         if (nativeHandle != 0L) nSetSpatialIntensity(nativeHandle, intensity)
     }
 
-    fun setSoundStageNodePosition(bandIdx: Int, azimuth: Float, elevation: Float, distance: Float) {
+    fun setSoundStageNodePosition(bandIdx: Int, azimuth: Float, elevation: Float, distance: Float) = lock.readLock().withLock {
         if (nativeHandle != 0L) nSetSoundStageNodePosition(nativeHandle, bandIdx, azimuth, elevation, distance)
     }
 
-    fun setSoundStageWidth(width: Float) {
+    fun setSoundStageWidth(width: Float) = lock.readLock().withLock {
         if (nativeHandle != 0L) nSetSoundStageWidth(nativeHandle, width)
     }
 
-    fun setSoundStageCenterLock(amount: Float) {
+    fun setSoundStageCenterLock(amount: Float) = lock.readLock().withLock {
         if (nativeHandle != 0L) nSetSoundStageCenterLock(nativeHandle, amount)
     }
 
-    fun setCrossfeed(enabled: Boolean, level: Float) {
+    fun setCrossfeed(enabled: Boolean, level: Float) = lock.readLock().withLock {
         if (nativeHandle != 0L) nSetCrossfeed(nativeHandle, enabled, level)
     }
 
-    fun setReverb(amount: Float) {
+    fun setReverb(amount: Float) = lock.readLock().withLock {
         if (nativeHandle != 0L) nSetReverb(nativeHandle, amount)
     }
 
-    fun setReverbType(type: Int) {
+    fun setReverbType(type: Int) = lock.readLock().withLock {
         if (nativeHandle != 0L) nSetReverbType(nativeHandle, type)
     }
 
-    fun setReverbPredelay(ms: Float) {
+    fun setReverbPredelay(ms: Float) = lock.readLock().withLock {
         if (nativeHandle != 0L) nSetReverbPredelay(nativeHandle, ms)
     }
 
-    fun setReverbWidth(width: Float) {
+    fun setReverbWidth(width: Float) = lock.readLock().withLock {
         if (nativeHandle != 0L) nSetReverbWidth(nativeHandle, width)
     }
 
-    fun setReverbParams(roomSize: Float, damping: Float) {
+    fun setReverbParams(roomSize: Float, damping: Float) = lock.readLock().withLock {
         if (nativeHandle != 0L) nSetReverbParams(nativeHandle, roomSize, damping)
     }
 
-    fun muteReverb() {
+    fun muteReverb() = lock.readLock().withLock {
         if (nativeHandle != 0L) nMuteReverb(nativeHandle)
     }
 
-    fun setBand(index: Int, frequency: Float, gainDb: Float, q: Float, type: Int = 0) {
+    fun setBand(index: Int, frequency: Float, gainDb: Float, q: Float, type: Int = 0) = lock.readLock().withLock {
         if (nativeHandle != 0L) nSetBand(nativeHandle, index, frequency, gainDb, q, type)
     }
 
-    fun setEqPhaseMode(linearPhase: Boolean) {
+    fun setEqPhaseMode(linearPhase: Boolean) = lock.readLock().withLock {
         if (nativeHandle != 0L) nSetEqPhaseMode(nativeHandle, linearPhase)
     }
 
-    fun setEqEnabled(enabled: Boolean) {
+    fun setEqEnabled(enabled: Boolean) = lock.readLock().withLock {
         if (nativeHandle != 0L) nSetEqEnabled(nativeHandle, enabled)
     }
 
-    fun setHeadroomManagement(enabled: Boolean) {
+    fun setHeadroomManagement(enabled: Boolean) = lock.readLock().withLock {
         if (nativeHandle != 0L) nSetHeadroomManagement(nativeHandle, enabled)
     }
 
-    fun setNoHeadroomGain(enabled: Boolean) {
+    fun setNoHeadroomGain(enabled: Boolean) = lock.readLock().withLock {
         if (nativeHandle != 0L) nSetNoHeadroomGain(nativeHandle, enabled)
     }
 
-    fun getHeadroomDb(): Float {
+    fun getHeadroomDb(): Float = lock.readLock().withLock {
         return if (nativeHandle != 0L) nGetHeadroomDb(nativeHandle) else 0.0f
     }
 
-    fun getEqLatencyFrames(): Int {
+    fun getEqLatencyFrames(): Int = lock.readLock().withLock {
         return if (nativeHandle != 0L) nGetEqLatencyFrames(nativeHandle) else 0
     }
 
-    fun setAiEqEnabled(enabled: Boolean) {
+    fun setAiEqEnabled(enabled: Boolean) = lock.readLock().withLock {
         if (nativeHandle != 0L) nSetAiEqEnabled(nativeHandle, enabled)
     }
 
-    fun setAiBand(index: Int, frequency: Float, gainDb: Float, q: Float, type: Int = 0) {
+    fun setAiBand(index: Int, frequency: Float, gainDb: Float, q: Float, type: Int = 0) = lock.readLock().withLock {
         if (nativeHandle != 0L) nSetAiBand(nativeHandle, index, frequency, gainDb, q, type)
     }
 
-    fun setSimBand(index: Int, frequency: Float, gainDb: Float, q: Float, type: Int = 0) {
+    fun setSimBand(index: Int, frequency: Float, gainDb: Float, q: Float, type: Int = 0) = lock.readLock().withLock {
         if (nativeHandle != 0L) nSetSimBand(nativeHandle, index, frequency, gainDb, q, type)
     }
 
-    fun setSimEqEnabled(enabled: Boolean) {
+    fun setSimEqEnabled(enabled: Boolean) = lock.readLock().withLock {
         if (nativeHandle != 0L) nSetSimEqEnabled(nativeHandle, enabled)
     }
 
-    fun setHardwareVolume(enabled: Boolean) {
+    fun setHardwareVolume(enabled: Boolean) = lock.readLock().withLock {
         if (nativeHandle != 0L) nSetHardwareVolume(nativeHandle, enabled)
     }
 
-    fun setHighQualityResampler(enabled: Boolean) {
+    fun setHighQualityResampler(enabled: Boolean) = lock.readLock().withLock {
         if (nativeHandle != 0L) nSetHighQualityResampler(nativeHandle, enabled)
     }
 
-    fun setSoxrQuality(quality: Int) {
+    fun setSoxrQuality(quality: Int) = lock.readLock().withLock {
         if (nativeHandle != 0L) nSetSoxrQuality(nativeHandle, quality)
     }
 
-    fun setFloat64(enabled: Boolean) {
+    fun setFloat64(enabled: Boolean) = lock.readLock().withLock {
         if (nativeHandle != 0L) nSetFloat64(nativeHandle, enabled)
     }
 
-    fun setMono(enabled: Boolean) {
+    fun setMono(enabled: Boolean) = lock.readLock().withLock {
         if (nativeHandle != 0L) nSetMono(nativeHandle, enabled)
     }
 
-    fun setSoftLimiter(enabled: Boolean) {
+    fun setSoftLimiter(enabled: Boolean) = lock.readLock().withLock {
         if (nativeHandle != 0L) nSetSoftLimiter(nativeHandle, enabled)
     }
 
-    fun setLimiter(enabled: Boolean) {
+    fun setLimiter(enabled: Boolean) = lock.readLock().withLock {
         if (nativeHandle != 0L) nSetLimiter(nativeHandle, enabled)
     }
 
-    fun setLimiterParams(thresholdDb: Float, attackMs: Float, releaseMs: Float) {
+    fun setLimiterParams(thresholdDb: Float, attackMs: Float, releaseMs: Float) = lock.readLock().withLock {
         if (nativeHandle != 0L) nSetLimiterParams(nativeHandle, thresholdDb, attackMs, releaseMs)
     }
 
-    fun setBitDepth(bitDepth: Int) {
+    fun setBitDepth(bitDepth: Int) = lock.readLock().withLock {
         if (nativeHandle != 0L) nSetBitDepth(nativeHandle, bitDepth)
     }
 
-    fun setDither(enabled: Boolean, bitDepth: Int) {
+    fun setDither(enabled: Boolean, bitDepth: Int) = lock.readLock().withLock {
         if (nativeHandle != 0L) nSetDither(nativeHandle, enabled, bitDepth)
     }
 
-    fun setDitherType(type: Int) {
+    fun setDitherType(type: Int) = lock.readLock().withLock {
         if (nativeHandle != 0L) nSetDitherType(nativeHandle, type)
     }
 
-    fun setCutoffRatio(ratio: Float) {
+    fun setCutoffRatio(ratio: Float) = lock.readLock().withLock {
         if (nativeHandle != 0L) nSetCutoffRatio(nativeHandle, ratio)
     }
 
-    fun packDoP(dsdBits: ByteArray, pcmOutput: IntArray, frames: Int, channels: Int, alternateMarker: Boolean) {
-        nPackDoP(dsdBits, pcmOutput, frames, channels, alternateMarker)
-    }
-
-    fun dsdToPcm(dsdBits: ByteArray, pcmOutput: FloatArray, frames: Int, channels: Int) {
-        nDsdToPcm(dsdBits, pcmOutput, frames, channels)
-    }
-
-    fun setSpeed(speed: Float, preservePitch: Boolean) {
+    fun setSpeed(speed: Float, preservePitch: Boolean) = lock.readLock().withLock {
         if (nativeHandle != 0L) nSetSpeed(nativeHandle, speed, preservePitch)
     }
 
-    fun process(data: FloatArray, frames: Int) {
+    fun process(data: FloatArray, frames: Int) = lock.readLock().withLock {
         if (nativeHandle != 0L) nProcess(nativeHandle, data, frames)
     }
 
-    fun processResampled(input: FloatArray, inFrames: Int, output: FloatArray): Int {
-        return if (nativeHandle != 0L) {
-            nProcessResampled(nativeHandle, input, inFrames, output)
-        } else 0
+    fun processResampled(input: FloatArray, inFrames: Int, output: FloatArray): Int = lock.readLock().withLock {
+        return if (nativeHandle != 0L) nProcessResampled(nativeHandle, input, inFrames, output) else 0
     }
 
     suspend fun extractFeatures(context: android.content.Context, uri: android.net.Uri, seconds: Int): AudioFeatures? = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
@@ -235,9 +233,11 @@ class NativeDsp {
     private external fun nExtractFeatures(fd: Int, seconds: Int): AudioFeatures?
 
     fun release() {
-        if (nativeHandle != 0L) {
-            nDestroy(nativeHandle)
-            nativeHandle = 0
+        lock.writeLock().withLock {
+            if (nativeHandle != 0L) {
+                nDestroy(nativeHandle)
+                nativeHandle = 0
+            }
         }
     }
 

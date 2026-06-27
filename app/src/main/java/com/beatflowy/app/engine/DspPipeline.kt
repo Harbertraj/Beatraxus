@@ -21,14 +21,17 @@ internal data class DspProcessResult(
 internal interface DspProcessor {
     fun process(input: DspProcessResult, channels: Int): DspProcessResult
     fun updateConfig(config: DspConfig) {}
+    fun updateOutputBitDepth(bitDepth: Int) {}
     fun flush() {}
     fun release() {}
 }
 
 internal class AudioDspPipeline(
     private val processors: List<DspProcessor>,
-    private val config: DspConfig,
-    private val outputSampleRate: Int,
+    val config: DspConfig,
+    val inputSampleRate: Int,
+    val outputSampleRate: Int,
+    val channels: Int,
     private val song: Song? = null
 ) {
     private var isDoP = song?.format?.contains("DSD", ignoreCase = true) == true || 
@@ -102,6 +105,10 @@ internal class AudioDspPipeline(
         processors.forEach { it.updateConfig(config) }
     }
 
+    fun updateOutputBitDepth(bitDepth: Int) {
+        processors.forEach { it.updateOutputBitDepth(bitDepth) }
+    }
+
     fun flush() {
         processors.forEach { it.flush() }
     }
@@ -133,7 +140,7 @@ internal class AudioDspPipeline(
 
             processors += NativeDspProcessor(config, effectiveInputRate, outputSampleRate, channels, outputBitDepth, song, aiAnalysis)
 
-            return AudioDspPipeline(processors, config, outputSampleRate)
+            return AudioDspPipeline(processors, config, effectiveInputRate, outputSampleRate, channels, song)
         }
     }
 }
@@ -444,6 +451,12 @@ private class NativeDspProcessor(
 
     override fun updateConfig(config: DspConfig) {
         currentConfig = config
+        updateNativeConfig(currentConfig, native)
+    }
+
+    override fun updateOutputBitDepth(bitDepth: Int) {
+        native.setBitDepth(bitDepth)
+        // Also need to update dither config because it depends on bit depth
         updateNativeConfig(currentConfig, native)
     }
 

@@ -287,9 +287,11 @@ fun BeatraxusApp(
                     viewModel = viewModel,
                     onEnterFlow = onRequestPermissions,
                     onFinish = {
-                        viewModel.setFirstRunComplete()
-                        navController.navigate(Screen.Main.route) {
-                            popUpTo("welcome") { inclusive = true }
+                        if (navController.currentBackStackEntry?.destination?.route == "welcome") {
+                            viewModel.setFirstRunComplete()
+                            navController.navigate(Screen.Main.route) {
+                                popUpTo("welcome") { inclusive = true }
+                            }
                         }
                     }
                 )

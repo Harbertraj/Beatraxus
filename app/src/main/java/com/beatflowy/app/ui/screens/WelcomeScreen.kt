@@ -25,6 +25,7 @@ import kotlin.math.PI
 import kotlin.math.sqrt
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -60,8 +61,8 @@ fun WelcomeScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     var startAnimation by remember { mutableStateOf(false) }
-    var hasStartedScanning by remember { mutableStateOf(false) }
-    var isFinished by remember { mutableStateOf(false) }
+    var hasStartedScanning by rememberSaveable { mutableStateOf(false) }
+    var isFinished by rememberSaveable { mutableStateOf(false) }
 
     // Automatically transition to scanning screen based on state
     LaunchedEffect(uiState.isScanning, uiState.scanProgress) {
@@ -76,6 +77,13 @@ fun WelcomeScreen(
             isFinished = true
             // Give a small delay so user can see 100% for a moment
             delay(1000)
+            onFinish()
+        }
+    }
+
+    // New effect to handle case where first run is marked complete externally
+    LaunchedEffect(uiState.isFirstRun) {
+        if (!uiState.isFirstRun) {
             onFinish()
         }
     }
@@ -209,7 +217,7 @@ fun WelcomeScreen(
 
         AnimatedContent(
             targetState = when {
-                uiState.isScanning || isFinished -> 2
+                uiState.isScanning || isFinished || uiState.scanProgress >= 0.99f -> 2
                 uiState.showScanOptions -> 1
                 else -> 0
             },

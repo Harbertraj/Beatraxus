@@ -1,88 +1,93 @@
 package com.beatflowy.app.engine
 
 import android.util.Log
+import java.util.concurrent.locks.ReentrantReadWriteLock
+import kotlin.concurrent.withLock
 
 /**
  * AAudio MMAP Exclusive output.
  * Delegates all real work to the native layer via JNI.
- * The native side opens an AAudio stream with AAUDIO_SHARING_MODE_EXCLUSIVE
- * and AAUDIO_PERFORMANCE_MODE_LOW_LATENCY (which triggers MMAP on supported hardware).
  */
 internal class MmapAudioOutput {
 
     private var nativeHandle: Long = 0L
     private var framesWritten: Long = 0L
+    private val lock = ReentrantReadWriteLock()
 
     init {
         System.loadLibrary("beatraxus_dsp")
     }
 
     fun init(sampleRate: Int, channels: Int, requestedBufferFrames: Int, format: Int = 2): Boolean {
-        nativeHandle = nMmapCreate(sampleRate, channels, requestedBufferFrames, format)
-        return nativeHandle != 0L
+        lock.writeLock().withLock {
+            nativeHandle = nMmapCreate(sampleRate, channels, requestedBufferFrames, format)
+            return nativeHandle != 0L
+        }
     }
 
-    fun start() {
+    fun start() = lock.readLock().withLock {
         if (nativeHandle != 0L) nMmapStart(nativeHandle)
     }
 
-    fun pause() {
+    fun pause() = lock.readLock().withLock {
         if (nativeHandle != 0L) nMmapPause(nativeHandle)
     }
 
-    fun stop() {
+    fun stop() = lock.readLock().withLock {
         if (nativeHandle != 0L) nMmapStop(nativeHandle)
     }
 
-    fun flush() {
+    fun flush() = lock.readLock().withLock {
         if (nativeHandle != 0L) nMmapFlush(nativeHandle)
         framesWritten = 0L
     }
 
-    fun write(data: FloatArray, offsetInSamples: Int, frameCount: Int): Int {
+    fun write(data: FloatArray, offsetInSamples: Int, frameCount: Int): Int = lock.readLock().withLock {
         if (nativeHandle == 0L) return 0
         val written = nMmapWrite(nativeHandle, data, offsetInSamples, frameCount)
         if (written > 0) framesWritten += written
         return written
     }
 
-    fun writeInt(data: IntArray, offsetInSamples: Int, frameCount: Int): Int {
+    fun writeInt(data: IntArray, offsetInSamples: Int, frameCount: Int): Int = lock.readLock().withLock {
         if (nativeHandle == 0L) return 0
         val written = nMmapWriteInt(nativeHandle, data, offsetInSamples, frameCount)
         if (written > 0) framesWritten += written
         return written
     }
 
-    fun playbackPositionFrames(): Long {
+    fun playbackPositionFrames(): Long = lock.readLock().withLock {
         if (nativeHandle == 0L) return 0L
         return nMmapGetPlaybackPosition(nativeHandle)
     }
 
-    fun totalFramesWritten(): Long = framesWritten
+    fun totalFramesWritten(): Long = lock.readLock().withLock { framesWritten }
 
-    fun mmapActualBufferFrames(): Int {
+    fun mmapActualBufferFrames(): Int = lock.readLock().withLock {
         if (nativeHandle == 0L) return 0
         return nMmapGetBufferFrames(nativeHandle)
     }
 
-    fun setBufferConfig(bufferFrames: Int, bufferCount: Int, postFadeFrames: Int) {
+    fun setBufferConfig(bufferFrames: Int, bufferCount: Int, postFadeFrames: Int) = lock.readLock().withLock {
         if (nativeHandle != 0L) nMmapSetBufferConfig(nativeHandle, bufferFrames, bufferCount, postFadeFrames)
     }
 
-    fun estimatedLatencyMs(): Int {
+    fun estimatedLatencyMs(): Int = lock.readLock().withLock {
         if (nativeHandle == 0L) return 0
         return nMmapGetLatencyMs(nativeHandle)
     }
 
-    fun outputSampleRate(): Int {
+    fun outputSampleRate(): Int = lock.readLock().withLock {
         if (nativeHandle == 0L) return 48000
         return nMmapGetSampleRate(nativeHandle)
     }
 
     fun release() {
-        if (nativeHandle != 0L) {
-            nMmapDestroy(nativeHandle)
-            nativeHandle = 0L
+        lock.writeLock().withLock {
+            if (nativeHandle != 0L) {
+                nMmapDestroy(nativeHandle)
+                nativeHandle = 0L
+            }
         }
     }
 

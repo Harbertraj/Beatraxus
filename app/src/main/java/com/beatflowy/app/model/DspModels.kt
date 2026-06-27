@@ -54,12 +54,12 @@ data class SoundStageNodePosition(
     val distance: Float = 2.0f
 )
 
-enum class SampleFormat(val displayName: String) {
-    AUTO("Auto"),
-    PCM_16BIT("16-bit"),
-    PCM_24BIT("24-bit"),
-    PCM_32BIT("32-bit"),
-    FLOAT_32BIT("Float 32-bit")
+enum class SampleFormat(val displayName: String, val bitDepth: Int) {
+    AUTO("Auto", 0),
+    PCM_16BIT("16-bit", 16),
+    PCM_24BIT("24-bit", 24),
+    PCM_32BIT("32-bit", 32),
+    FLOAT_32BIT("Float 32-bit", 32)
 }
 
 enum class ResamplerType(val displayName: String) {
