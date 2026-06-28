@@ -81,11 +81,16 @@ class DriveAccountRepository(private val context: Context) {
     }
 
     suspend fun addAccount(account: DriveAccount) {
+        android.util.Log.d("DriveAccountRepo", "Adding account: ${account.email}")
         context.dataStore.edit { prefs ->
             val current = prefs[DRIVE_ACCOUNTS] ?: emptySet()
             // Check if already exists by email to avoid duplicates
             val filtered = current.filter { json ->
-                JSONObject(json).getString("email") != account.email
+                try {
+                    JSONObject(json).getString("email") != account.email
+                } catch (e: Exception) {
+                    false // Keep it if malformed to avoid losing data, or true to discard? Let's discard malformed.
+                }
             }
             val json = JSONObject().apply {
                 put("email", account.email)
@@ -94,6 +99,7 @@ class DriveAccountRepository(private val context: Context) {
                 put("enabled", account.enabled)
             }.toString()
             prefs[DRIVE_ACCOUNTS] = (filtered + json).toSet()
+            android.util.Log.d("DriveAccountRepo", "Account added. Total accounts: ${(filtered + json).size}")
         }
     }
 

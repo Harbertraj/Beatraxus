@@ -144,8 +144,8 @@ data class DspConfig(
     val autoEqEnabled: Boolean = false,
     val autoEqProfile: AutoEqProfile? = null,
     val aiEqEnabled: Boolean = false, // New AI EQ
-    val midBassEnabled: Boolean = false,
-    val midBassDb: Float = 0f,
+    val bassEnabled: Boolean = false,
+    val bassDb: Float = 0f,
     val trebleEnabled: Boolean = false,
     val trebleDb: Float = 0f,
     val airEnabled: Boolean = false,
@@ -268,7 +268,7 @@ data class DspConfig(
                 add(if (eqPhaseMode == EqPhaseMode.LINEAR_PHASE) "EQ (LP)" else "EQ")
             }
         }
-        if (midBassEnabled && abs(midBassDb) > 0.05f) add("Mid Bass")
+        if (bassEnabled && abs(bassDb) > 0.05f) add("Bass")
         if (trebleEnabled && abs(trebleDb) > 0.05f) add("Treble")
         if (airEnabled && abs(airDb) > 0.05f) add("Air")
         if (dcBlockerEnabled) add("DC Block")

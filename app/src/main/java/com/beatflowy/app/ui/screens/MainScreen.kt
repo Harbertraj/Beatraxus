@@ -3019,6 +3019,7 @@ fun MainScreen(
                 onRemoveFromQueue = { viewModel.removeFromQueue(it) },
                 onMoveInQueue = { from, to -> viewModel.moveInQueue(from, to) },
                 onPlayFromQueue = { viewModel.playFromQueue(it) },
+                previousSongs = uiState.previousSongs,
                 upcomingSongs = uiState.upcomingSongs,
                 isFavorite = uiState.currentSong?.let { favorites.contains(it.id) } ?: false,
                 onFavoriteClick = { uiState.currentSong?.let { viewModel.toggleFavorite(it) } },

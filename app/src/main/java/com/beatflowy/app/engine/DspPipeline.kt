@@ -156,18 +156,8 @@ private class NativeDspProcessor(
 ) : DspProcessor {
     private var currentConfig = config
 
-    // Tone smoothing state to avoid audible artifacts when changing tone knobs
-    @Volatile
-    private var toneTargetMidBass = if (config.midBassEnabled) config.midBassDb else 0f
-    @Volatile
-    private var toneTargetTreble = if (config.trebleEnabled) config.trebleDb else 0f
-    @Volatile
-    private var toneTargetAir = if (config.airEnabled) config.airDb else 0f
-
-    private var toneCurrentMidBass = toneTargetMidBass
-    private var toneCurrentTreble = toneTargetTreble
-    private var toneCurrentAir = toneTargetAir
-    private var previousMidBassEnabled = config.midBassEnabled
+    // Tone smoothing state removed as it is now handled in C++
+    private var previousBassEnabled = config.bassEnabled
     private var previousTrebleEnabled = config.trebleEnabled
     private var previousAirEnabled = config.airEnabled
     private var isFirstConfig = true
@@ -220,38 +210,31 @@ private class NativeDspProcessor(
         dsp.setFloat64(if (isBP) cfg.bitPerfectUnbypassFloat64 else cfg.float64Enabled)
         dsp.setCutoffRatio(if (resampleActive) cfg.resamplerCutoffRatio else 0.999f)
         
-        // Tone knobs - not in unbypass list
-        val targetMidBass = if (!isBP && cfg.midBassEnabled) cfg.midBassDb else 0f
+        // Tone knobs - smooth application is handled inside NativeDsp
+        val targetBass = if (!isBP && cfg.bassEnabled) cfg.bassDb else 0f
         val targetTreble = if (!isBP && cfg.trebleEnabled) cfg.trebleDb else 0f
         val targetAir = if (!isBP && cfg.airEnabled) cfg.airDb else 0f
 
-        val midBassToggled = cfg.midBassEnabled != previousMidBassEnabled
+        val bassToggled = cfg.bassEnabled != previousBassEnabled
         val trebleToggled = cfg.trebleEnabled != previousTrebleEnabled
         val airToggled = cfg.airEnabled != previousAirEnabled
 
-        toneTargetMidBass = targetMidBass
-        toneTargetTreble = targetTreble
-        toneTargetAir = targetAir
-
         var forceApplyTone = isFirstConfig
-        if (midBassToggled) {
-            toneCurrentMidBass = targetMidBass
-            previousMidBassEnabled = cfg.midBassEnabled
+        if (bassToggled) {
+            previousBassEnabled = cfg.bassEnabled
             forceApplyTone = true
         }
         if (trebleToggled) {
-            toneCurrentTreble = targetTreble
             previousTrebleEnabled = cfg.trebleEnabled
             forceApplyTone = true
         }
         if (airToggled) {
-            toneCurrentAir = targetAir
             previousAirEnabled = cfg.airEnabled
             forceApplyTone = true
         }
 
-        if (forceApplyTone) {
-            dsp.setTone(toneCurrentMidBass, toneCurrentTreble, toneCurrentAir)
+        if (forceApplyTone || cfg.bassDb != targetBass || cfg.trebleDb != targetTreble || cfg.airDb != targetAir) {
+            dsp.setTone(targetBass, targetTreble, targetAir)
             isFirstConfig = false
         }
 
@@ -405,13 +388,13 @@ private class NativeDspProcessor(
         // For tone knobs, we apply a very minimal constant headroom reduction
         // only if any boost knob is active. This avoids the "dipping" sensation.
         val maxToneBoost = listOf(
-            if (config.midBassEnabled) config.midBassDb else 0f,
+            if (config.bassEnabled) config.bassDb else 0f,
             if (config.trebleEnabled) config.trebleDb else 0f,
             if (config.airEnabled) config.airDb else 0f
         ).maxOrNull()?.coerceAtLeast(0f) ?: 0f
 
-        // Very light compensation for tone knobs (max 1.5dB drop at full 12dB boost)
-        val toneHeadroom = if (maxToneBoost > 0.1f) (maxToneBoost * 0.125f).coerceAtMost(1.5f) else 0f
+        // Compensation for tone knobs (1:1 ratio to prevent clipping/limiting noise)
+        val toneHeadroom = if (maxToneBoost > 0.1f) maxToneBoost else 0f
 
         val totalPreamp = manualPreamp + autoEqPreamp + reverbCompensation + appliedEqMasterGain - toneHeadroom
 
@@ -473,9 +456,6 @@ private class NativeDspProcessor(
     fun getLatencyFrames(): Int = native.getEqLatencyFrames()
 
     override fun process(input: DspProcessResult, channels: Int): DspProcessResult {
-        // Smooth tone targets towards current values each buffer to avoid clicks/noise
-        smoothToneAndApply(native)
-
         if (inputSampleRate == outputSampleRate) {
             native.process(input.data, input.sampleCount / channels)
             return input
@@ -499,55 +479,6 @@ private class NativeDspProcessor(
         )
     }
 
-    private fun smoothToneAndApply(dsp: NativeDsp) {
-        var changed = false
-        synchronized(this) {
-            // Mid-bass knob 1
-            changed = smoothToneParameter(
-                ::toneTargetMidBass,
-                ::toneCurrentMidBass,
-                { toneCurrentMidBass = it }
-            ) || changed
-
-            // Treble knob 2
-            changed = smoothToneParameter(
-                ::toneTargetTreble,
-                ::toneCurrentTreble,
-                { toneCurrentTreble = it }
-            ) || changed
-
-            // Air knob 3
-            changed = smoothToneParameter(
-                ::toneTargetAir,
-                ::toneCurrentAir,
-                { toneCurrentAir = it }
-            ) || changed
-
-            if (changed) {
-                dsp.setTone(toneCurrentMidBass, toneCurrentTreble, toneCurrentAir)
-            }
-        }
-    }
-
-    private inline fun smoothToneParameter(
-        getTarget: () -> Float,
-        getCurrent: () -> Float,
-        setCurrent: (Float) -> Unit
-    ): Boolean {
-        val target = getTarget()
-        val current = getCurrent()
-        val difference = target - current
-
-        return if (kotlin.math.abs(difference) <= toneSnapThreshold) {
-            if (current != target) {
-                setCurrent(target)
-                true
-            } else false
-        } else {
-            setCurrent(current + difference * toneSmoothingFactor)
-            true
-        }
-    }
 }
 
 private data class ReplayGainState(

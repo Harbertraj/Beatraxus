@@ -130,8 +130,8 @@ class DspPreferences(private val context: Context) {
             }.getOrDefault(EqPhaseMode.MINIMUM_PHASE),
             autoEqEnabled = pref(AUTO_EQ_ENABLED, false),
             autoEqProfile = deserializeAutoEqProfile(prefNullable(AUTO_EQ_PROFILE)),
-            midBassEnabled = pref(MID_BASS_ENABLED, false),
-            midBassDb = pref(MID_BASS_DB, 0f),
+            bassEnabled = pref(BASS_ENABLED, false),
+            bassDb = pref(BASS_DB, 0f),
             trebleEnabled = pref(TREBLE_ENABLED, false),
             trebleDb = pref(TREBLE_DB, 0f),
             airEnabled = pref(AIR_ENABLED, false),
@@ -245,8 +245,8 @@ class DspPreferences(private val context: Context) {
             set(EQ_PHASE_MODE, config.eqPhaseMode.name)
             set(AUTO_EQ_ENABLED, config.autoEqEnabled)
             set(AUTO_EQ_PROFILE, serializeAutoEqProfile(config.autoEqProfile))
-            set(MID_BASS_ENABLED, config.midBassEnabled)
-            set(MID_BASS_DB, config.midBassDb)
+            set(BASS_ENABLED, config.bassEnabled)
+            set(BASS_DB, config.bassDb)
             set(TREBLE_ENABLED, config.trebleEnabled)
             set(TREBLE_DB, config.trebleDb)
             set(AIR_ENABLED, config.airEnabled)
@@ -394,8 +394,8 @@ class DspPreferences(private val context: Context) {
                 set(EQ_PHASE_MODE, config.eqPhaseMode.name)
                 set(AUTO_EQ_ENABLED, config.autoEqEnabled)
                 set(AUTO_EQ_PROFILE, serializeAutoEqProfile(config.autoEqProfile))
-                set(MID_BASS_ENABLED, config.midBassEnabled)
-                set(MID_BASS_DB, config.midBassDb)
+                set(BASS_ENABLED, config.bassEnabled)
+                set(BASS_DB, config.bassDb)
                 set(TREBLE_ENABLED, config.trebleEnabled)
                 set(TREBLE_DB, config.trebleDb)
                 set(AIR_ENABLED, config.airEnabled)
@@ -588,8 +588,8 @@ class DspPreferences(private val context: Context) {
         private val EQ_PHASE_MODE = stringPreferencesKey("eq_phase_mode")
         private val AUTO_EQ_ENABLED = booleanPreferencesKey("auto_eq_enabled")
         private val AUTO_EQ_PROFILE = stringPreferencesKey("auto_eq_profile")
-        private val MID_BASS_ENABLED = booleanPreferencesKey("mid_bass_enabled")
-        private val MID_BASS_DB = floatPreferencesKey("mid_bass_db")
+        private val BASS_ENABLED = booleanPreferencesKey("bass_enabled")
+        private val BASS_DB = floatPreferencesKey("bass_db")
         private val TREBLE_ENABLED = booleanPreferencesKey("treble_enabled")
         private val TREBLE_DB = floatPreferencesKey("treble_db")
         private val AIR_ENABLED = booleanPreferencesKey("air_enabled")

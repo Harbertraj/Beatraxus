@@ -111,6 +111,7 @@ data class PlayerUiState(
     val selectedItemName: String? = null, // For Album name, Artist name etc.
     val showFullPlayer: Boolean = false,
     val showQueue: Boolean = false,
+    val previousSongs: List<Song> = emptyList(),
     val upcomingSongs: List<Song> = emptyList(),
     val searchQuery: String = "",
     val authRecoveryIntent: android.content.Intent? = null,

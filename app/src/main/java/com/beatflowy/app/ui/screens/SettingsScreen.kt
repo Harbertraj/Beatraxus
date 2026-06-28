@@ -90,6 +90,7 @@ import com.beatflowy.app.model.SoxrQuality
 import com.beatflowy.app.model.DitherType
 import com.beatflowy.app.model.PlayerUiState
 import com.beatflowy.app.model.SoxrQuality as SoxrQualityEnum
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import com.beatflowy.app.repository.DriveAccount
 import com.beatflowy.app.ui.theme.BgDeep
 import com.beatflowy.app.viewmodel.PlayerViewModel
@@ -509,7 +510,7 @@ fun LastFmContent(uiState: PlayerUiState, viewModel: PlayerViewModel) {
                         uriHandler.openUri("https://www.last.fm/api/auth/?api_key=$apiKey&cb=beatflowy://lastfm")
                     },
                     modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD32F2F)),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD32F2F), contentColor = Color.Black),
                     shape = RoundedCornerShape(10.dp)
                 ) {
                     Text("Login with Last.fm", fontWeight = FontWeight.Bold)
@@ -2395,6 +2396,15 @@ fun CloudContent(
                 textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 14.sp)
             )
 
+            uiState.errorMessage?.let { error ->
+                Text(
+                    text = error,
+                    color = if (error.contains("failed", ignoreCase = true)) Color.Red else Color(0xFF1A73E8),
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(top = 4.dp, start = 4.dp)
+                )
+            }
+
             val filteredDrive = driveAccounts.filter {
                 it.email.contains(driveQuery, ignoreCase = true) || it.accountName.contains(driveQuery, ignoreCase = true)
             }
@@ -2811,7 +2821,6 @@ fun WhatsNewCard() {
                 items = listOf(
                     "" to listOf(
                         "🎼 **Built-in Hi-Res Song Download Support**",
-                        "☁️ **MEGA Cloud Integration**",
                         "More **audio enhancements, performance optimizations, and ecosystem improvements**"
                     )
                 )
@@ -2955,8 +2964,8 @@ fun FullScanPopup(progress: Float, count: Int, albums: Int, artists: Int, onDism
         ) {
             Box(
                 modifier = Modifier
-                    .fillMaxWidth(0.85f)
-                    .heightIn(max = 300.dp)
+                    .fillMaxWidth(0.9f)
+                    .wrapContentHeight()
                     .shadow(
                         elevation = 28.dp,
                         shape = RoundedCornerShape(28.dp),
@@ -2979,7 +2988,10 @@ fun FullScanPopup(progress: Float, count: Int, albums: Int, artists: Int, onDism
                     .padding(24.dp),
                 contentAlignment = Alignment.Center
             ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.verticalScroll(rememberScrollState())
+                ) {
                     Box(
                         modifier = Modifier
                             .size(48.dp)
@@ -3029,6 +3041,7 @@ fun FullScanPopup(progress: Float, count: Int, albums: Int, artists: Int, onDism
                         fontWeight = FontWeight.Bold,
                         fontSize = 14.sp
                     )
+                    Spacer(Modifier.height(8.dp))
                 }
             }
 

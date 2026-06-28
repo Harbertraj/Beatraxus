@@ -2889,9 +2889,9 @@ private fun PremiumMasteringCard(uiState: PlayerUiState, viewModel: PlayerViewMo
         ) {
             // Section 1: Tone
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                MasteringSectionHeader("TONAL BALANCE", Icons.Rounded.Equalizer, isActive = config.midBassEnabled || config.trebleEnabled)
+                MasteringSectionHeader("TONAL BALANCE", Icons.Rounded.Equalizer, isActive = config.bassEnabled || config.trebleEnabled)
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                    KnobControl("MID-BASS", config.midBassDb, viewModel::setMidBassDb, -12f..12f, "dB", knobSize, true, controlsEnabled, config.midBassEnabled, { viewModel.setMidBassEnabled(!config.midBassEnabled) }, { onEditValue(EditingValue("MID-BASS", config.midBassDb, -12f..12f, viewModel::setMidBassDb)) })
+                    KnobControl("BASS", config.bassDb, viewModel::setBassDb, -12f..12f, "dB", knobSize, true, controlsEnabled, config.bassEnabled, { viewModel.setBassEnabled(!config.bassEnabled) }, { onEditValue(EditingValue("BASS", config.bassDb, -12f..12f, viewModel::setBassDb)) })
                     KnobControl("TREBLE", config.trebleDb, viewModel::setTrebleDb, -12f..12f, "dB", knobSize, true, controlsEnabled, config.trebleEnabled, { viewModel.setTrebleEnabled(!config.trebleEnabled) }, { onEditValue(EditingValue("TREBLE", config.trebleDb, -12f..12f, viewModel::setTrebleDb)) })
                 }
             }

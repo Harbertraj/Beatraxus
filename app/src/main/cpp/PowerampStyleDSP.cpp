@@ -1243,7 +1243,7 @@ public:
             inRate(44100), outRate(44100), channels(2),
             useSox(true), dcBlockerEnabled(true), monoEnabled(false), dvcEnabled(true), rmsDvcEnabled(true), rmsLevelerEnabled(true), limiterEnabled(true), replayGainDb(0.0f), preampDb(0.0f),
             dvcLevel(1.0f), dvcMode(0),
-            midBassDb(0.0f), trebleDb(0.0f), airDb(0.0f),
+            bassDb(0.0f), trebleDb(0.0f), airDb(0.0f),
             balance(0.0f), stereoWidth(1.0f), crossfeedEnabled(false), crossfeedLevel(0.4f),
             reverbAmount(0.0f),
             reverbType(0), reverbPredelayMs(0.0f), reverbWidth(1.0f),
@@ -1341,14 +1341,14 @@ public:
         // Smooth tone targets towards current values to avoid coefficient jumps
         bool needUpdateFilters = false;
         {
-            float tmb = toneTargetMidBass.load(std::memory_order_relaxed);
+            float tmb = toneTargetBass.load(std::memory_order_relaxed);
             float tt = toneTargetTreble.load(std::memory_order_relaxed);
             float ta = toneTargetAir.load(std::memory_order_relaxed);
 
             float diff;
-            diff = tmb - toneCurrentMidBass;
-            if (std::abs(diff) > 0.0005f) { toneCurrentMidBass += diff * toneSmoothingFactor; needUpdateFilters = true; }
-            else if (toneCurrentMidBass != tmb) { toneCurrentMidBass = tmb; needUpdateFilters = true; }
+            diff = tmb - toneCurrentBass;
+            if (std::abs(diff) > 0.0005f) { toneCurrentBass += diff * toneSmoothingFactor; needUpdateFilters = true; }
+            else if (toneCurrentBass != tmb) { toneCurrentBass = tmb; needUpdateFilters = true; }
 
             diff = tt - toneCurrentTreble;
             if (std::abs(diff) > 0.0005f) { toneCurrentTreble += diff * toneSmoothingFactor; needUpdateFilters = true; }
@@ -1359,7 +1359,7 @@ public:
             else if (toneCurrentAir != ta) { toneCurrentAir = ta; needUpdateFilters = true; }
 
             if (needUpdateFilters) {
-                midBassDb = toneCurrentMidBass; trebleDb = toneCurrentTreble; airDb = toneCurrentAir;
+                bassDb = toneCurrentBass; trebleDb = toneCurrentTreble; airDb = toneCurrentAir;
                 updateFilters();
             }
         }
@@ -1620,9 +1620,9 @@ public:
     void setBitDepth(int bd) { bitDepth = bd; }
     void setDither(bool enabled, int bd) { dither.setEnabled(enabled, bd); }
     void setDitherType(int mode) { dither.setType(mode); }
-    void setTone(float midBass, float treble, float air) {
+    void setTone(float bass, float treble, float air) {
         // Set targets atomically; actual application is smoothed in audio thread
-        toneTargetMidBass.store(midBass, std::memory_order_relaxed);
+        toneTargetBass.store(bass, std::memory_order_relaxed);
         toneTargetTreble.store(treble, std::memory_order_relaxed);
         toneTargetAir.store(air, std::memory_order_relaxed);
         // Do not call updateFilters() here to avoid coefficient jumps on the control thread
@@ -1676,8 +1676,8 @@ private:
 
     void updateFilters() {
         double sr = (double)inRate;
-        // Tweak: gentler shelf/peaking defaults to avoid muffling and excessive resonances
-        if (fabsf(midBassDb) > 0.05f) toneFilters[0].setPeaking(sr, 300.0, (double)midBassDb, 0.65); else toneFilters[0].reset();
+        // Tweak: Peaking filter at 80Hz for tighter, punchier bass (not muffled)
+        if (fabsf(bassDb) > 0.05f) toneFilters[0].setPeaking(sr, 80.0, (double)bassDb, 0.7); else toneFilters[0].reset();
         if (fabsf(trebleDb) > 0.05f) toneFilters[1].setHighShelf(sr, 6000.0, (double)trebleDb, 0.7); else toneFilters[1].reset();
         if (fabsf(airDb) > 0.05f) toneFilters[2].setHighShelf(sr, 12000.0, (double)airDb, 0.6); else toneFilters[2].reset();
         // Manual bands handled by EqEngine
@@ -1708,7 +1708,7 @@ private:
     double levelerReleaseCoeff = 0.0;
     double rmsEnvCoeff = 0.0;
     DitherProcessor dither;
-    float replayGainDb, preampDb; float midBassDb, trebleDb, airDb;
+    float replayGainDb, preampDb; float bassDb, trebleDb, airDb;
     EqEngine eq;
     EqEngine aiEq; // New AI EQ Engine
     EqEngine simEq; // Headphone simulation EQ (Phase 3.5)
@@ -1721,8 +1721,8 @@ private:
     float balance, stereoWidth;    int bitDepth;
 
     // Tone smoothing targets and current values to avoid coefficient jumps
-    std::atomic<float> toneTargetMidBass{0.0f}, toneTargetTreble{0.0f}, toneTargetAir{0.0f};
-    float toneCurrentMidBass = 0.0f, toneCurrentTreble = 0.0f, toneCurrentAir = 0.0f;
+    std::atomic<float> toneTargetBass{0.0f}, toneTargetTreble{0.0f}, toneTargetAir{0.0f};
+    float toneCurrentBass = 0.0f, toneCurrentTreble = 0.0f, toneCurrentAir = 0.0f;
     float toneSmoothingFactor = 0.12f; // per-buffer interpolation
 
     std::vector<float> tempoBuffer, resampleBuffer; std::vector<double> doubleBuffer;
@@ -2001,7 +2001,7 @@ JNIEXPORT jlong JNICALL Java_com_beatflowy_app_engine_NativeDsp_nCreate(JNIEnv* 
 JNIEXPORT void JNICALL Java_com_beatflowy_app_engine_NativeDsp_nDestroy(JNIEnv* env, jobject thiz, jlong handle) { if (handle) delete (DSP*)handle; }
 JNIEXPORT void JNICALL Java_com_beatflowy_app_engine_NativeDsp_nInitResampler(JNIEnv* env, jobject thiz, jlong handle, jfloat inputSR, jint channels, jfloat targetSR) { if (handle) ((DSP*)handle)->init((int)inputSR, (int)targetSR, channels); }
 JNIEXPORT void JNICALL Java_com_beatflowy_app_engine_NativeDsp_nSetVolume(JNIEnv* env, jobject thiz, jlong handle, jfloat volume) { if (handle) ((DSP*)handle)->setVolume(volume); }
-JNIEXPORT void JNICALL Java_com_beatflowy_app_engine_NativeDsp_nSetTone(JNIEnv* env, jobject thiz, jlong handle, jfloat midBass, jfloat treble, jfloat air) { if (handle) ((DSP*)handle)->setTone(midBass, treble, air); }
+JNIEXPORT void JNICALL Java_com_beatflowy_app_engine_NativeDsp_nSetTone(JNIEnv* env, jobject thiz, jlong handle, jfloat bass, jfloat treble, jfloat air) { if (handle) ((DSP*)handle)->setTone(bass, treble, air); }
 JNIEXPORT void JNICALL Java_com_beatflowy_app_engine_NativeDsp_nSetBand(JNIEnv* env, jobject thiz, jlong handle, jint index, jfloat freq, jfloat gainDb, jfloat Q, jint type) { if (handle) ((DSP*)handle)->setBand(index, freq, gainDb, Q, type); }
 JNIEXPORT void JNICALL Java_com_beatflowy_app_engine_NativeDsp_nSetEqEnabled(JNIEnv* env, jobject thiz, jlong handle, jboolean enabled) { if (handle) ((DSP*)handle)->setEqEnabled(enabled); }
 JNIEXPORT void JNICALL Java_com_beatflowy_app_engine_NativeDsp_nSetEqPhaseMode(JNIEnv* env, jobject thiz, jlong handle, jboolean linearPhase) { if (handle) ((DSP*)handle)->setEqPhaseMode(linearPhase); }

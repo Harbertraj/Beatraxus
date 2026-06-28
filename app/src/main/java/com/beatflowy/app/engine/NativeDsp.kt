@@ -60,8 +60,8 @@ class NativeDsp {
         if (nativeHandle != 0L) nSetDvcMode(nativeHandle, mode)
     }
 
-    fun setTone(midBass: Float, treble: Float, air: Float) = lock.readLock().withLock {
-        if (nativeHandle != 0L) nSetTone(nativeHandle, midBass, treble, air)
+    fun setTone(bass: Float, treble: Float, air: Float) = lock.readLock().withLock {
+        if (nativeHandle != 0L) nSetTone(nativeHandle, bass, treble, air)
     }
 
     fun setSpatial(balance: Float, widen: Float) = lock.readLock().withLock {
@@ -258,7 +258,7 @@ class NativeDsp {
     private external fun nSetRmsLeveler(handle: Long, enabled: Boolean)
     private external fun nSetDvcLevel(handle: Long, level: Float)
     private external fun nSetDvcMode(handle: Long, mode: Int)
-    private external fun nSetTone(handle: Long, midBass: Float, treble: Float, air: Float)
+    private external fun nSetTone(handle: Long, bass: Float, treble: Float, air: Float)
     private external fun nSetSpatial(handle: Long, balance: Float, widen: Float)
     private external fun nSetSpatialEnabled(handle: Long, enabled: Boolean)
     private external fun nSetSpatialIntensity(handle: Long, intensity: Float)

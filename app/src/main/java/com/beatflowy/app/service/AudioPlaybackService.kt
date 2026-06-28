@@ -430,6 +430,9 @@ class AudioPlaybackService : Service() {
     private val _upcomingSongs = MutableStateFlow<List<Song>>(emptyList())
     val upcomingSongs: StateFlow<List<Song>> = _upcomingSongs.asStateFlow()
 
+    private val _previousSongs = MutableStateFlow<List<Song>>(emptyList())
+    val previousSongs: StateFlow<List<Song>> = _previousSongs.asStateFlow()
+
     private fun updateUpcomingSongs() {
         val upcoming = if (playlist.isEmpty() || currentIndex >= playlist.size - 1) {
             emptyList()
@@ -437,6 +440,13 @@ class AudioPlaybackService : Service() {
             playlist.subList(currentIndex + 1, playlist.size)
         }
         _upcomingSongs.value = upcoming
+
+        val previous = if (playlist.isEmpty() || currentIndex <= 0) {
+            emptyList()
+        } else {
+            playlist.subList(0, currentIndex)
+        }
+        _previousSongs.value = previous
         
         serviceScope.launch {
             cloudCacheManager.prepareCache(playlist.getOrNull(currentIndex), upcoming)
@@ -665,6 +675,11 @@ class AudioPlaybackService : Service() {
     fun getUpcomingSongs(): List<Song> {
         if (playlist.isEmpty() || currentIndex >= playlist.size - 1) return emptyList()
         return playlist.subList(currentIndex + 1, playlist.size)
+    }
+
+    fun getPreviousSongs(): List<Song> {
+        if (playlist.isEmpty() || currentIndex <= 0) return emptyList()
+        return playlist.subList(0, currentIndex)
     }
 
     fun removeFromQueue(songId: String) {

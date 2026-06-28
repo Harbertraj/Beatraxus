@@ -61,6 +61,9 @@ import com.beatflowy.app.repository.DspPreferences
 import com.beatflowy.app.repository.DriveAccount
 import com.beatflowy.app.repository.TelegramChannelRepository
 import com.beatflowy.app.service.AudioPlaybackService
+import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
 
 class PlayerViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -312,8 +315,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 if (state.selectedTelegramChannelUrl != null) {
                     it.source == com.beatflowy.app.model.SongSource.TELEGRAM && it.telegramChannelUrl == state.selectedTelegramChannelUrl
                 } else {
-                    it.source == com.beatflowy.app.model.SongSource.GDRIVE && 
-                    (state.selectedItemName == null || it.driveAccountEmail?.lowercase() == state.selectedItemName.lowercase())
+                    it.source == com.beatflowy.app.model.SongSource.GDRIVE &&
+                            (state.selectedItemName == null || it.driveAccountEmail?.lowercase() == state.selectedItemName.lowercase())
                 }
             }
         }
@@ -381,6 +384,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 _uiState.update { it.copy(lastFmUsername = name) }
             }
         }
+    }
+
+    fun setErrorMessage(message: String?) {
+        _uiState.update { it.copy(errorMessage = message) }
     }
 
     fun consumeAuthRecoveryIntent() {
@@ -651,6 +658,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 }
             }
             launch {
+                svc.previousSongs.collect { songs ->
+                    _uiState.update { it.copy(previousSongs = songs) }
+                }
+            }
+            launch {
                 networkObserver.isOnline.collect { online ->
                     _uiState.update { it.copy(isOnline = online) }
                 }
@@ -833,7 +845,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 }
             } catch (e: Exception) {
                 Log.e("PlayerViewModel", "Drive scan error for $email", e)
-                if (e !is UserRecoverableAuthIOException) {
+                if (e is UserRecoverableAuthIOException) {
+                    _uiState.update { it.copy(authRecoveryIntent = e.intent) }
+                } else {
                     val message = e.message ?: e.javaClass.simpleName
                     _uiState.update { it.copy(errorMessage = "Drive scan failed: $message") }
                 }
@@ -1668,7 +1682,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             put("preampDb", config.preampDb)
             put("eqEnabled", config.eqEnabled)
             put("eqPhaseMode", config.eqPhaseMode.name)
-            put("midBassDb", config.midBassDb)
+            put("bassDb", config.bassDb)
             put("trebleDb", config.trebleDb)
             put("airDb", config.airDb)
             put("limiterEnabled", config.limiterEnabled)
@@ -1706,7 +1720,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 config.copy(
                     preampDb = obj.optDouble("preampDb", config.preampDb.toDouble()).toFloat().coerceIn(-20f, 20f),
                     eqEnabled = obj.optBoolean("eqEnabled", config.eqEnabled),
-                    midBassDb = obj.optDouble("midBassDb", config.midBassDb.toDouble()).toFloat().coerceIn(-12f, 12f),
+                    bassDb = obj.optDouble("bassDb", obj.optDouble("midBassDb", config.bassDb.toDouble())).toFloat().coerceIn(-12f, 12f),
                     trebleDb = obj.optDouble("trebleDb", config.trebleDb.toDouble()).toFloat().coerceIn(-12f, 12f),
                     airDb = obj.optDouble("airDb", config.airDb.toDouble()).toFloat().coerceIn(-12f, 12f),
                     eqBands = importedBands
@@ -1892,8 +1906,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         persistCustomEqPresets(updated)
         _uiState.update { it.copy(dsp = it.dsp.copy(customEqPresets = updated)) }
     }
-    fun setMidBassEnabled(enabled: Boolean) = applyDspConfig { it.copy(midBassEnabled = enabled) }
-    fun setMidBassDb(value: Float) = applyDspConfig { it.copy(midBassDb = value.coerceIn(-12f, 12f), midBassEnabled = true) }
+    fun setBassEnabled(enabled: Boolean) = applyDspConfig { it.copy(bassEnabled = enabled) }
+    fun setBassDb(value: Float) = applyDspConfig { it.copy(bassDb = value.coerceIn(-12f, 12f), bassEnabled = true) }
     fun setTrebleEnabled(enabled: Boolean) = applyDspConfig { it.copy(trebleEnabled = enabled) }
     fun setTrebleDb(value: Float) = applyDspConfig { it.copy(trebleDb = value.coerceIn(-12f, 12f), trebleEnabled = true) }
     fun setAirEnabled(enabled: Boolean) = applyDspConfig { it.copy(airEnabled = enabled) }

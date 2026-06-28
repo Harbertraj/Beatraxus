@@ -238,7 +238,8 @@ fun BeatraxusApp(
 
     val driveSignInOptions = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
         .requestEmail()
-        .requestScopes(Scope(DriveScopes.DRIVE_READONLY))
+        .requestProfile()
+        .requestScopes(Scope(DriveScopes.DRIVE_READONLY), Scope(DriveScopes.DRIVE_METADATA_READONLY))
         .build()
 
     val googleSignInClient = GoogleSignIn.getClient(context as Activity, driveSignInOptions)
@@ -246,16 +247,24 @@ fun BeatraxusApp(
     val driveAccountLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
+        Log.d("MainActivity", "Drive account launcher result: ${result.resultCode}")
         if (result.resultCode == Activity.RESULT_OK) {
             val task = GoogleSignIn.getSignedInAccountFromIntent(result.data)
             try {
                 val account = task.getResult(ApiException::class.java)
+                Log.d("MainActivity", "Google sign in success: ${account?.email}")
                 account?.email?.let { email ->
                     viewModel.addDriveAccount(DriveAccount(email, account.displayName ?: "Google Drive", account.photoUrl?.toString(), true))
                 }
             } catch (e: ApiException) {
-                Log.e("MainActivity", "Google sign in failed", e)
+                Log.e("MainActivity", "Google sign in failed: status code = ${e.statusCode}", e)
+                viewModel.setErrorMessage("Google sign in failed: ${e.statusCode}")
+            } catch (e: Exception) {
+                Log.e("MainActivity", "Unexpected error during Google sign in", e)
+                viewModel.setErrorMessage("Sign in error: ${e.localizedMessage}")
             }
+        } else if (result.resultCode == Activity.RESULT_CANCELED) {
+            Log.d("MainActivity", "Google sign in canceled by user")
         }
     }
 
