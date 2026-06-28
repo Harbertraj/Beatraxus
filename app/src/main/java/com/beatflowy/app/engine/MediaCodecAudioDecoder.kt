@@ -18,7 +18,8 @@ import java.io.File
 internal class MediaCodecAudioDecoder(
     private val context: Context,
     private val driveAccountRepository: DriveAccountRepository,
-    private val cloudCacheManager: com.beatflowy.app.drive.CloudCacheManager
+    private val cloudCacheManager: com.beatflowy.app.drive.CloudCacheManager,
+    private val tdLibManager: com.beatflowy.app.telegram.TdLibManager
 ) : AudioDecoder {
     
     override suspend fun decode(
@@ -35,7 +36,7 @@ internal class MediaCodecAudioDecoder(
             if (cachedFile != null) {
                 extractor.setDataSource(cachedFile.absolutePath)
             } else if (request.song.source != SongSource.LOCAL) {
-                val dataSource = cloudCacheManager.getDataSource(request.song) { control.isSeekPending() }
+                val dataSource = cloudCacheManager.getDataSource(request.song, tdLibManager) { control.isSeekPending() }
                 if (dataSource != null) {
                     try {
                         extractor.setDataSource(dataSource)

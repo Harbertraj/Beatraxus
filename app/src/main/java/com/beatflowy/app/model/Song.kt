@@ -3,6 +3,7 @@ package com.beatflowy.app.model
 import android.net.Uri
 import com.beatflowy.app.model.OutputMode
 import com.beatflowy.app.repository.LyricsSource
+import com.beatflowy.app.telegram.AuthState
 
 enum class SongSource { LOCAL, GDRIVE, WEB, TELEGRAM }
 
@@ -37,6 +38,9 @@ data class Song(
     val driveFileId: String? = null,
     val driveAccountEmail: String? = null,
     val telegramChannelUrl: String? = null,
+    val telegramChatId: Long? = null,
+    val telegramMessageId: Long? = null,
+    val telegramFileId: Int? = null,
     val isEnriched: Boolean = false,
     val lastSyncTimestamp: Long = 0L
 )
@@ -172,7 +176,8 @@ data class PlayerUiState(
     val syncQuality: SyncQuality = SyncQuality.MEDIUM,
     val backgroundSyncEnabled: Boolean = true,
     val isEnrichmentPaused: Boolean = false,
-    val enrichmentStatus: String? = null
+    val enrichmentStatus: String? = null,
+    val telegramAuthState: AuthState = AuthState.LoggedOut
 )
 {
     override fun equals(other: Any?): Boolean {
@@ -258,7 +263,8 @@ data class PlayerUiState(
                 syncQuality == other.syncQuality &&
                 backgroundSyncEnabled == other.backgroundSyncEnabled &&
                 isEnrichmentPaused == other.isEnrichmentPaused &&
-                enrichmentStatus == other.enrichmentStatus
+                enrichmentStatus == other.enrichmentStatus &&
+                telegramAuthState == other.telegramAuthState
     }
 
     override fun hashCode(): Int {
@@ -343,6 +349,7 @@ data class PlayerUiState(
         result = 31 * result + backgroundSyncEnabled.hashCode()
         result = 31 * result + isEnrichmentPaused.hashCode()
         result = 31 * result + (enrichmentStatus?.hashCode() ?: 0)
+        result = 31 * result + telegramAuthState.hashCode()
         return result
     }
 }

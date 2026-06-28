@@ -90,6 +90,7 @@ import com.beatflowy.app.model.SoxrQuality
 import com.beatflowy.app.model.DitherType
 import com.beatflowy.app.model.PlayerUiState
 import com.beatflowy.app.model.SoxrQuality as SoxrQualityEnum
+import com.beatflowy.app.telegram.AuthState
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import com.beatflowy.app.repository.DriveAccount
 import com.beatflowy.app.ui.theme.BgDeep
@@ -295,7 +296,7 @@ fun SettingsScreen(
                             when (section) {
                                 "Audio Engine" -> AudioEngineContent(uiState, playerViewModel, onEditValue = { editingValue = it })
                                 "DSP Enhancements" -> DspEnhancementsContent(uiState, playerViewModel, onEditValue = { editingValue = it })
-                                "Replay Gain" -> ReplayGainContent(uiState, playerViewModel)
+                                "Replay Gain" -> ReplayGainContent(uiState, playerViewModel, onEditValue = { editingValue = it })
                                 "Library" -> LibraryContent(uiState, playerViewModel, onShowInfo = { showInfoPopup = true })
                                 "Cloud" -> CloudContent(uiState, playerViewModel, onRequestGDriveAccount = onRequestGDriveAccount, onNavigateToGDriveSettings = { sectionStack.add("GDrive Settings") })
                                 "GDrive Settings" -> MetadataSyncContent(uiState, playerViewModel)
@@ -513,7 +514,7 @@ fun LastFmContent(uiState: PlayerUiState, viewModel: PlayerViewModel) {
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD32F2F), contentColor = Color.Black),
                     shape = RoundedCornerShape(10.dp)
                 ) {
-                    Text("Login with Last.fm", fontWeight = FontWeight.Bold)
+                    Text("Login with Last.fm", fontWeight = FontWeight.Bold, color = Color.Black)
                 }
             } else {
                 Row(
@@ -834,7 +835,10 @@ fun AudioEngineContent(
                 range = 0.5f..1.0f,
                 enabled = uiState.dsp.config.highQualityResampler && !isResamplerBypassed,
                 valueText = { "${(it * 100).toInt()}%" },
-                onValueChange = playerViewModel::setResamplerCutoffRatio
+                onValueChange = playerViewModel::setResamplerCutoffRatio,
+                onValueClick = {
+                    onEditValue(EditingValue("Cutoff Ratio", uiState.dsp.config.resamplerCutoffRatio, 0.5f..1.0f, playerViewModel::setResamplerCutoffRatio))
+                }
             )
         }
 
@@ -954,7 +958,10 @@ fun DspEnhancementsContent(
                         range = 0f..1f,
                         enabled = true,
                         valueText = { "${(it * 100).toInt()}%" },
-                        onValueChange = viewModel::setCrossfeedLevel
+                        onValueChange = viewModel::setCrossfeedLevel,
+                        onValueClick = {
+                            onEditValue(EditingValue("Crossfeed Level", config.crossfeedLevel, 0f..1f, viewModel::setCrossfeedLevel))
+                        }
                     )
                 } else {
                     Text(
@@ -984,7 +991,10 @@ fun DspEnhancementsContent(
                         range = 0f..1f,
                         enabled = true,
                         valueText = { "${(it * 100).toInt()}%" },
-                        onValueChange = viewModel::setSpatialAudioIntensity
+                        onValueChange = viewModel::setSpatialAudioIntensity,
+                        onValueClick = {
+                            onEditValue(EditingValue("Intensity", config.spatialAudioIntensity, 0f..1f, viewModel::setSpatialAudioIntensity))
+                        }
                     )
                 } else {
                     Text(
@@ -1203,7 +1213,8 @@ private fun UnbypassChip(
 private fun PremiumChip(
     selected: Boolean,
     onClick: () -> Unit,
-    label: String
+    label: String,
+    modifier: Modifier = Modifier
 ) {
     val background = if (selected) {
         Brush.linearGradient(listOf(Color.Black, Color.Black))
@@ -1212,7 +1223,7 @@ private fun PremiumChip(
     }
     
     Box(
-        modifier = Modifier
+        modifier = modifier
             .widthIn(min = 52.dp)
             .clip(RoundedCornerShape(10.dp))
             .background(background)
@@ -1947,7 +1958,11 @@ private fun LimiterSlider(
 
 
 @Composable
-fun ReplayGainContent(uiState: PlayerUiState, viewModel: PlayerViewModel) {
+fun ReplayGainContent(
+    uiState: PlayerUiState,
+    viewModel: PlayerViewModel,
+    onEditValue: (EditingValue) -> Unit
+) {
     val config = uiState.dsp.config
     SettingsSection(
         title = "REPLAY GAIN",
@@ -2004,7 +2019,8 @@ fun ReplayGainContent(uiState: PlayerUiState, viewModel: PlayerViewModel) {
                             PremiumChip(
                                 selected = isSelected,
                                 onClick = { viewModel.setReplayGainSource(source) },
-                                label = source.displayName
+                                label = source.displayName,
+                                modifier = Modifier.fillMaxWidth()
                             )
                         }
                     }
@@ -2017,7 +2033,10 @@ fun ReplayGainContent(uiState: PlayerUiState, viewModel: PlayerViewModel) {
                 range = -15f..15f,
                 enabled = config.replayGainEnabled,
                 valueText = { String.format(Locale.getDefault(), "%.1f dB", it) },
-                onValueChange = viewModel::setReplayGainPreamp
+                onValueChange = viewModel::setReplayGainPreamp,
+                onValueClick = {
+                    onEditValue(EditingValue("Pre-amplification", config.replayGainPreamp, -15f..15f, viewModel::setReplayGainPreamp))
+                }
             )
 
             if (!config.replayGainEnabled) {
@@ -2492,9 +2511,153 @@ fun CloudContent(
                 }
             }
 
+            HorizontalDivider(color = Color.White.copy(0.08f), modifier = Modifier.padding(vertical = 8.dp))
 
+            TelegramLoginCard(uiState, viewModel)
+        }
+    }
+}
 
+@Composable
+private fun TelegramLoginCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
+    var phone by remember { mutableStateOf("") }
+    var code by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
 
+    val authState = uiState.telegramAuthState
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color.White.copy(0.04f))
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Icon(
+                Icons.Rounded.Lock,
+                contentDescription = null,
+                tint = Color(0xFF2AABEE),
+                modifier = Modifier.size(16.dp)
+            )
+            Text(
+                "TELEGRAM ACCOUNT",
+                color = Color(0xFF2AABEE),
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.sp
+            )
+        }
+
+        Crossfade(targetState = authState, label = "telegram_auth_transition") { state ->
+            when (state) {
+                AuthState.LoggedOut -> {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            "Login to access private channels and faster downloads.",
+                            color = Color.White.copy(0.6f),
+                            fontSize = 12.sp
+                        )
+                        Button(
+                            onClick = { /* Login trigger */ },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2AABEE)),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text("LOGIN WITH TELEGRAM", fontWeight = FontWeight.Bold, color = Color.White)
+                        }
+                    }
+                }
+                AuthState.WaitPhoneNumber -> {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = phone,
+                            onValueChange = { phone = it },
+                            label = { Text("Phone Number (+...)") },
+                            modifier = Modifier.fillMaxWidth(),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone, imeAction = ImeAction.Send),
+                            keyboardActions = KeyboardActions(onSend = { viewModel.submitTelegramPhone(phone) }),
+                            singleLine = true,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = Color(0xFF2AABEE),
+                                unfocusedBorderColor = Color.White.copy(0.1f)
+                            )
+                        )
+                        Button(
+                            onClick = { viewModel.submitTelegramPhone(phone) },
+                            modifier = Modifier.fillMaxWidth(),
+                            enabled = phone.isNotBlank(),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2AABEE))
+                        ) {
+                            Text("SEND CODE")
+                        }
+                    }
+                }
+                AuthState.WaitCode -> {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = code,
+                            onValueChange = { code = it },
+                            label = { Text("Verification Code") },
+                            modifier = Modifier.fillMaxWidth(),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Send),
+                            keyboardActions = KeyboardActions(onSend = { viewModel.submitTelegramCode(code) }),
+                            singleLine = true,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = Color(0xFF2AABEE),
+                                unfocusedBorderColor = Color.White.copy(0.1f)
+                            )
+                        )
+                        Button(
+                            onClick = { viewModel.submitTelegramCode(code) },
+                            modifier = Modifier.fillMaxWidth(),
+                            enabled = code.isNotBlank(),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2AABEE))
+                        ) {
+                            Text("SUBMIT CODE")
+                        }
+                    }
+                }
+                AuthState.WaitPassword -> {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = password,
+                            onValueChange = { password = it },
+                            label = { Text("2FA Password") },
+                            modifier = Modifier.fillMaxWidth(),
+                            visualTransformation = PasswordVisualTransformation(),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Send),
+                            keyboardActions = KeyboardActions(onSend = { viewModel.submitTelegramPassword(password) }),
+                            singleLine = true,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = Color(0xFF2AABEE),
+                                unfocusedBorderColor = Color.White.copy(0.1f)
+                            )
+                        )
+                        Button(
+                            onClick = { viewModel.submitTelegramPassword(password) },
+                            modifier = Modifier.fillMaxWidth(),
+                            enabled = password.isNotBlank(),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2AABEE))
+                        ) {
+                            Text("SUBMIT PASSWORD")
+                        }
+                    }
+                }
+                AuthState.Ready -> {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Icon(Icons.Rounded.CheckCircle, null, tint = Color(0xFF4CAF50), modifier = Modifier.size(16.dp))
+                            Text("Authenticated", color = Color(0xFF4CAF50), fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -3266,7 +3429,8 @@ private fun DspSliderRow(
     enabled: Boolean,
     steps: Int = 0,
     valueText: (Float) -> String,
-    onValueChange: (Float) -> Unit
+    onValueChange: (Float) -> Unit,
+    onValueClick: () -> Unit = {}
 ) {
     Column {
         Row(
@@ -3284,6 +3448,7 @@ private fun DspSliderRow(
                 modifier = Modifier
                     .clip(RoundedCornerShape(10.dp))
                     .background(PrimaryCyan.copy(alpha = if (enabled) 0.15f else 0.06f))
+                    .clickable(enabled = enabled) { onValueClick() }
                     .padding(horizontal = 10.dp, vertical = 3.dp)
             ) {
                 Text(

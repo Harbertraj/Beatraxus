@@ -23,7 +23,8 @@ import java.util.Locale
 internal class FfmpegAlacDecoder(
     private val context: Context,
     private val driveAccountRepository: DriveAccountRepository,
-    private val cloudCacheManager: com.beatflowy.app.drive.CloudCacheManager
+    private val cloudCacheManager: com.beatflowy.app.drive.CloudCacheManager,
+    private val tdLibManager: com.beatflowy.app.telegram.TdLibManager
 ) : AudioDecoder {
 
     override suspend fun canDecode(song: Song): Boolean {
@@ -342,7 +343,7 @@ internal class FfmpegAlacDecoder(
             if (cachedFile != null) {
                 extractor.setDataSource(cachedFile.absolutePath)
             } else if (song.source != SongSource.LOCAL) {
-                val dataSource = cloudCacheManager.getDataSource(song) { false }
+                val dataSource = cloudCacheManager.getDataSource(song, tdLibManager) { false }
                 if (dataSource != null) {
                     extractor.setDataSource(dataSource)
                 } else {

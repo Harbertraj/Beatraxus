@@ -36,7 +36,8 @@ class AudioEngine(
     context: Context,
     private val output: AudioOutput,
     private val cloudCacheManager: com.beatflowy.app.drive.CloudCacheManager,
-    private val database: com.beatflowy.app.model.AppDatabase
+    private val database: com.beatflowy.app.model.AppDatabase,
+    private val tdLibManager: com.beatflowy.app.telegram.TdLibManager
 ) {
     private val engineScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
     private val aiAnalysisDao = database.aiAnalysisDao()
@@ -47,8 +48,9 @@ class AudioEngine(
         context = context,
         driveAccountRepository = driveAccountRepository,
         cloudCacheManager = cloudCacheManager,
-        ffmpegAlacDecoder = FfmpegAlacDecoder(context, driveAccountRepository, cloudCacheManager),
-        mediaCodecDecoder = MediaCodecAudioDecoder(context, driveAccountRepository, cloudCacheManager)
+        tdLibManager = tdLibManager,
+        ffmpegAlacDecoder = FfmpegAlacDecoder(context, driveAccountRepository, cloudCacheManager, tdLibManager),
+        mediaCodecDecoder = MediaCodecAudioDecoder(context, driveAccountRepository, cloudCacheManager, tdLibManager)
     )
 
     private val _audioStateFlow = MutableStateFlow(AudioState())

@@ -133,8 +133,10 @@ class AudioPlaybackService : Service() {
         cloudCacheManager = com.beatflowy.app.drive.CloudCacheManager(this, driveAccountRepository)
         audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         audioOutput = AudioTrackOutput(this)
-        val database = (application as com.beatflowy.app.BeatraxusApplication).database
-        engine = AudioEngine(this, audioOutput, cloudCacheManager, database)
+        val application = (application as com.beatflowy.app.BeatraxusApplication)
+        val database = application.database
+        val tdLibManager = application.tdLibManager
+        engine = AudioEngine(this, audioOutput, cloudCacheManager, database, tdLibManager)
         refreshOutputRoute()
         audioManager.registerAudioDeviceCallback(audioDeviceCallback, null)
         registerReceiver(noisyReceiver, IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY))

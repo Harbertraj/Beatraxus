@@ -1223,10 +1223,9 @@ fun QueueView(
 
         val reorderableState = rememberReorderableLazyListState(lazyListState) { from, to ->
             if (from.index >= firstNextUpIndex && to.index >= firstNextUpIndex) {
-                val currentPlaylistIndex = previousSongs.size
-                val fromPlaylistIndex = currentPlaylistIndex + 1 + (from.index - firstNextUpIndex)
-                val toPlaylistIndex = currentPlaylistIndex + 1 + (to.index - firstNextUpIndex)
-                onMove(fromPlaylistIndex, toPlaylistIndex)
+                val fromRelativeIndex = from.index - firstNextUpIndex
+                val toRelativeIndex = to.index - firstNextUpIndex
+                onMove(fromRelativeIndex, toRelativeIndex)
             }
         }
 

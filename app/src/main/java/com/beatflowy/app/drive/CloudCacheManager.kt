@@ -6,11 +6,13 @@ import android.util.Log
 import com.beatflowy.app.model.Song
 import com.beatflowy.app.model.SongSource
 import com.beatflowy.app.repository.DriveAccountRepository
+import com.beatflowy.app.telegram.TdLibManager
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import org.drinkless.tdlib.TdApi
 import java.io.File
 import java.io.FileOutputStream
 import java.io.RandomAccessFile
@@ -46,7 +48,14 @@ class CloudCacheManager(
         } else null
     }
 
-    fun getDataSource(song: Song, isSeekPending: () -> Boolean = { false }): MediaDataSource? {
+    fun getDataSource(
+        song: Song,
+        tdLib: TdLibManager,
+        isSeekPending: () -> Boolean = { false }
+    ): MediaDataSource? {
+        if (song.source == SongSource.TELEGRAM && song.telegramFileId != null) {
+            return TelegramFileDataSource(song.telegramFileId, song.fileSizeBytes, tdLib)
+        }
         if (!song.isCloud()) return null
         return StreamingCacheDataSource(song, isSeekPending)
     }
@@ -317,6 +326,68 @@ class CloudCacheManager(
             try { raf?.close() } catch (e: Exception) {}
             raf = null
             currentRafPath = null
+        }
+    }
+
+    private inner class TelegramFileDataSource(
+        private val fileId: Int,
+        private val knownSize: Long,
+        private val tdLib: TdLibManager
+    ) : MediaDataSource() {
+
+        private var localPath: String? = null
+        private var downloadedPrefix: Long = 0L
+        private val lock = ReentrantLock()
+        private val job = Job()
+        private val scope = CoroutineScope(Dispatchers.IO + job)
+
+        init {
+            // Kick off the download immediately at high priority
+            runBlocking {
+                tdLib.send(TdApi.DownloadFile(fileId, 32, 0, 0, false))
+            }
+            scope.launch {
+                tdLib.getFileFlow(fileId).collect { file ->
+                    if (file != null) {
+                        lock.withLock {
+                            localPath = file.local.path
+                            downloadedPrefix = file.local.downloadedPrefixSize.toLong()
+                        }
+                    }
+                }
+            }
+        }
+
+        override fun getSize(): Long = knownSize
+
+        override fun readAt(position: Long, buffer: ByteArray, offset: Int, size: Int): Int = lock.withLock {
+            val totalSize = getSize()
+            if (totalSize > 0 && position >= totalSize) return -1
+            
+            var attempts = 0
+            // Wait for TDLib to have downloaded at least up to position + size
+            while (downloadedPrefix < position + size && attempts < 200) {
+                try {
+                    lock.unlock()
+                    Thread.sleep(50)
+                    lock.lock()
+                } catch (e: Exception) {}
+                attempts++
+                // Quick check if it's already satisfied after sleep
+                if (localPath != null && downloadedPrefix >= position + size) break
+            }
+
+            val path = localPath ?: return -1
+            return try {
+                RandomAccessFile(path, "r").use { raf ->
+                    raf.seek(position)
+                    raf.read(buffer, offset, size)
+                }
+            } catch (e: Exception) { -1 }
+        }
+
+        override fun close() {
+            job.cancel()
         }
     }
 }

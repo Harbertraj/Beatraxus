@@ -54,6 +54,9 @@ data class SongEntity(
     val driveFileId: String? = null,
     val driveAccountEmail: String? = null,
     val telegramChannelUrl: String? = null,
+    val telegramChatId: Long? = null,
+    val telegramMessageId: Long? = null,
+    val telegramFileId: Int? = null,
     val isEnriched: Boolean = false,
     val lastSyncTimestamp: Long = 0L
 )

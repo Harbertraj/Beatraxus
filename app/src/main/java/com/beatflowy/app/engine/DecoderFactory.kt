@@ -13,6 +13,7 @@ internal class DecoderFactory(
     private val context: Context,
     private val driveAccountRepository: DriveAccountRepository,
     private val cloudCacheManager: com.beatflowy.app.drive.CloudCacheManager,
+    private val tdLibManager: com.beatflowy.app.telegram.TdLibManager,
     private val ffmpegAlacDecoder: FfmpegAlacDecoder,
     private val mediaCodecDecoder: MediaCodecAudioDecoder
 ) {
@@ -89,7 +90,7 @@ internal class DecoderFactory(
             if (cachedFile != null) {
                 extractor.setDataSource(cachedFile.absolutePath)
             } else if (song.source != com.beatflowy.app.model.SongSource.LOCAL) {
-                val dataSource = cloudCacheManager.getDataSource(song) { false }
+                val dataSource = cloudCacheManager.getDataSource(song, tdLibManager) { false }
                 if (dataSource != null) {
                     try {
                         extractor.setDataSource(dataSource)

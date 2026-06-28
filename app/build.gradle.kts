@@ -33,12 +33,21 @@ configure<ApplicationExtension> {
             useSupportLibrary = true
         }
 
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86", "x86_64")
+        }
+
         val lastFmKey = localProperties.getProperty("LASTFM_API_KEY")
             ?: error("Missing LASTFM_API_KEY in local.properties")
         val lastFmSecret = localProperties.getProperty("LASTFM_SECRET")
             ?: error("Missing LASTFM_SECRET in local.properties")
         buildConfigField("String", "LASTFM_API_KEY", "\"$lastFmKey\"")
         buildConfigField("String", "LASTFM_SECRET", "\"$lastFmSecret\"")
+
+        val telegramApiId = localProperties.getProperty("TELEGRAM_API_ID", "0")
+        val telegramApiHash = localProperties.getProperty("TELEGRAM_API_HASH", "")
+        buildConfigField("String", "TELEGRAM_API_ID", "\"$telegramApiId\"")
+        buildConfigField("String", "TELEGRAM_API_HASH", "\"$telegramApiHash\"")
 
         externalNativeBuild {
             cmake {
@@ -235,4 +244,5 @@ dependencies {
     implementation("com.google.oauth-client:google-oauth-client-jetty:1.34.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.7.3")
     implementation("net.jthink:jaudiotagger:3.0.1")
+    implementation("com.github.tdlibx:td:1.8.56")
 }

@@ -5,8 +5,12 @@ import android.net.Uri
 import android.util.Log
 import com.beatflowy.app.model.Song
 import com.beatflowy.app.model.SongSource
+import com.beatflowy.app.telegram.TdLibManager
+import kotlinx.coroutines.runBlocking
+import org.drinkless.tdlib.TdApi
 import java.io.InputStream
 import java.io.OutputStream
+import java.io.RandomAccessFile
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
@@ -187,8 +191,15 @@ object LocalCastServer {
                             connection.inputStream
                         }
                         SongSource.TELEGRAM -> {
-                            // TODO: Implement Telegram streaming if needed
-                            null
+                            val application = context.applicationContext as com.beatflowy.app.BeatraxusApplication
+                            val tdLib = application.tdLibManager
+                            val fileId = song.telegramFileId ?: return@execute
+                            
+                            runBlocking {
+                                tdLib.send(TdApi.DownloadFile(fileId, 32, 0, 0, false))
+                            }
+                            
+                            TelegramInputStream(tdLib, fileId, startByte)
                         }
                     }
                 } catch (e: Exception) {
@@ -247,5 +258,60 @@ object LocalCastServer {
             output.write(message.toByteArray())
             output.flush()
         } catch (e: Exception) {}
+    }
+
+    private class TelegramInputStream(
+        private val tdLib: TdLibManager,
+        private val fileId: Int,
+        private var position: Long
+    ) : InputStream() {
+        private var localPath: String? = null
+        private var downloadedSize: Long = 0L
+
+        override fun read(): Int {
+            val b = ByteArray(1)
+            val result = read(b, 0, 1)
+            return if (result == -1) -1 else b[0].toInt() and 0xFF
+        }
+
+        override fun read(b: ByteArray, off: Int, len: Int): Int {
+            var attempts = 0
+            while (attempts < 100) {
+                val file = tdLib.getFileFlow(fileId).value
+                localPath = file?.local?.path
+                downloadedSize = file?.local?.downloadedPrefixSize?.toLong() ?: 0L
+
+                if (localPath != null && downloadedSize >= position + len) {
+                    break
+                }
+                
+                // If the file is already fully downloaded, we don't need to wait more than what it has
+                if (localPath != null && file?.local?.isDownloadingCompleted == true) {
+                    break
+                }
+
+                try {
+                    Thread.sleep(50)
+                } catch (e: Exception) {}
+                attempts++
+            }
+
+            val path = localPath ?: return -1
+            val available = (downloadedSize - position).toInt()
+            if (available <= 0) return -1
+            
+            val toRead = minOf(len, available)
+
+            return try {
+                RandomAccessFile(path, "r").use { raf ->
+                    raf.seek(position)
+                    val read = raf.read(b, off, toRead)
+                    if (read > 0) position += read
+                    read
+                }
+            } catch (e: Exception) {
+                -1
+            }
+        }
     }
 }
