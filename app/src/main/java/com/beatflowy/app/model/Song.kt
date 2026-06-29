@@ -177,7 +177,9 @@ data class PlayerUiState(
     val backgroundSyncEnabled: Boolean = true,
     val isEnrichmentPaused: Boolean = false,
     val enrichmentStatus: String? = null,
-    val telegramAuthState: AuthState = AuthState.LoggedOut
+    val telegramAuthState: AuthState = AuthState.LoggedOut,
+    val isSubmittingTelegram: Boolean = false,
+    val telegramAuthError: String? = null
 )
 {
     override fun equals(other: Any?): Boolean {
@@ -264,7 +266,9 @@ data class PlayerUiState(
                 backgroundSyncEnabled == other.backgroundSyncEnabled &&
                 isEnrichmentPaused == other.isEnrichmentPaused &&
                 enrichmentStatus == other.enrichmentStatus &&
-                telegramAuthState == other.telegramAuthState
+                telegramAuthState == other.telegramAuthState &&
+                isSubmittingTelegram == other.isSubmittingTelegram &&
+                telegramAuthError == other.telegramAuthError
     }
 
     override fun hashCode(): Int {
@@ -350,6 +354,8 @@ data class PlayerUiState(
         result = 31 * result + isEnrichmentPaused.hashCode()
         result = 31 * result + (enrichmentStatus?.hashCode() ?: 0)
         result = 31 * result + telegramAuthState.hashCode()
+        result = 31 * result + isSubmittingTelegram.hashCode()
+        result = 31 * result + (telegramAuthError?.hashCode() ?: 0)
         return result
     }
 }

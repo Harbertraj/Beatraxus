@@ -231,6 +231,7 @@ fun SettingsScreen(
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
+                        .imePadding()
                         .verticalScroll(rememberScrollState())
                         .padding(horizontal = 16.dp, vertical = 10.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp)
@@ -2525,6 +2526,8 @@ private fun TelegramLoginCard(uiState: PlayerUiState, viewModel: PlayerViewModel
     var password by remember { mutableStateOf("") }
 
     val authState = uiState.telegramAuthState
+    val isSubmitting = uiState.isSubmittingTelegram
+    val authError = uiState.telegramAuthError
 
     Column(
         modifier = Modifier
@@ -2560,12 +2563,17 @@ private fun TelegramLoginCard(uiState: PlayerUiState, viewModel: PlayerViewModel
                             fontSize = 12.sp
                         )
                         Button(
-                            onClick = { /* Login trigger */ },
+                            onClick = { viewModel.submitTelegramPhone("") /* Trigger parameters step if needed, though usually automatic */ },
                             modifier = Modifier.fillMaxWidth(),
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2AABEE)),
-                            shape = RoundedCornerShape(8.dp)
+                            shape = RoundedCornerShape(8.dp),
+                            enabled = !isSubmitting
                         ) {
-                            Text("LOGIN WITH TELEGRAM", fontWeight = FontWeight.Bold, color = Color.White)
+                            if (isSubmitting) {
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
+                            } else {
+                                Text("LOGIN WITH TELEGRAM", fontWeight = FontWeight.Bold, color = Color.White)
+                            }
                         }
                     }
                 }
@@ -2576,6 +2584,7 @@ private fun TelegramLoginCard(uiState: PlayerUiState, viewModel: PlayerViewModel
                             onValueChange = { phone = it },
                             label = { Text("Phone Number (+...)") },
                             modifier = Modifier.fillMaxWidth(),
+                            enabled = !isSubmitting,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone, imeAction = ImeAction.Send),
                             keyboardActions = KeyboardActions(onSend = { viewModel.submitTelegramPhone(phone) }),
                             singleLine = true,
@@ -2587,10 +2596,14 @@ private fun TelegramLoginCard(uiState: PlayerUiState, viewModel: PlayerViewModel
                         Button(
                             onClick = { viewModel.submitTelegramPhone(phone) },
                             modifier = Modifier.fillMaxWidth(),
-                            enabled = phone.isNotBlank(),
+                            enabled = phone.isNotBlank() && !isSubmitting,
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2AABEE))
                         ) {
-                            Text("SEND CODE")
+                            if (isSubmitting) {
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
+                            } else {
+                                Text("SEND CODE")
+                            }
                         }
                     }
                 }
@@ -2601,6 +2614,7 @@ private fun TelegramLoginCard(uiState: PlayerUiState, viewModel: PlayerViewModel
                             onValueChange = { code = it },
                             label = { Text("Verification Code") },
                             modifier = Modifier.fillMaxWidth(),
+                            enabled = !isSubmitting,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Send),
                             keyboardActions = KeyboardActions(onSend = { viewModel.submitTelegramCode(code) }),
                             singleLine = true,
@@ -2612,10 +2626,14 @@ private fun TelegramLoginCard(uiState: PlayerUiState, viewModel: PlayerViewModel
                         Button(
                             onClick = { viewModel.submitTelegramCode(code) },
                             modifier = Modifier.fillMaxWidth(),
-                            enabled = code.isNotBlank(),
+                            enabled = code.isNotBlank() && !isSubmitting,
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2AABEE))
                         ) {
-                            Text("SUBMIT CODE")
+                            if (isSubmitting) {
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
+                            } else {
+                                Text("SUBMIT CODE")
+                            }
                         }
                     }
                 }
@@ -2626,6 +2644,7 @@ private fun TelegramLoginCard(uiState: PlayerUiState, viewModel: PlayerViewModel
                             onValueChange = { password = it },
                             label = { Text("2FA Password") },
                             modifier = Modifier.fillMaxWidth(),
+                            enabled = !isSubmitting,
                             visualTransformation = PasswordVisualTransformation(),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Send),
                             keyboardActions = KeyboardActions(onSend = { viewModel.submitTelegramPassword(password) }),
@@ -2638,10 +2657,14 @@ private fun TelegramLoginCard(uiState: PlayerUiState, viewModel: PlayerViewModel
                         Button(
                             onClick = { viewModel.submitTelegramPassword(password) },
                             modifier = Modifier.fillMaxWidth(),
-                            enabled = password.isNotBlank(),
+                            enabled = password.isNotBlank() && !isSubmitting,
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2AABEE))
                         ) {
-                            Text("SUBMIT PASSWORD")
+                            if (isSubmitting) {
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
+                            } else {
+                                Text("SUBMIT PASSWORD")
+                            }
                         }
                     }
                 }
@@ -2658,6 +2681,15 @@ private fun TelegramLoginCard(uiState: PlayerUiState, viewModel: PlayerViewModel
                     }
                 }
             }
+        }
+
+        authError?.let {
+            Text(
+                text = it,
+                color = MaterialTheme.colorScheme.error,
+                fontSize = 12.sp,
+                modifier = Modifier.padding(top = 4.dp)
+            )
         }
     }
 }

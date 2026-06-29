@@ -1850,40 +1850,6 @@ private fun PremiumSoundStageCard(
             .padding(bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp)
     ) {
-        // 0. Master Toggle Centered Card
-        Box(
-            modifier = Modifier
-                .fillMaxWidth(),
-            contentAlignment = Alignment.Center
-        ) {
-            Surface(
-                shape = RoundedCornerShape(20.dp),
-                color = Color.Black.copy(alpha = 0.2f),
-                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f))
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    @OptIn(ExperimentalLayoutApi::class)
-                    Text(
-                        "SPATIAL AUDIO",
-                        color = Color.White,
-                        fontWeight = FontWeight.ExtraBold,
-                        fontSize = 13.sp,
-                        letterSpacing = 1.5.sp
-                    )
-                    PremiumSwitch(
-                        checked = config.spatialAudioEnabled,
-                        onCheckedChange = { viewModel.setSpatialAudioEnabled(it) }
-                    )
-                }
-            }
-        }
-
-
-
         // 2. Main Visualization
         BoxWithConstraints(
             modifier = Modifier
@@ -1955,10 +1921,11 @@ private fun PremiumSoundStageCard(
                 
                 // Character Container with Depth
                 Surface(
+                    onClick = { viewModel.setSpatialAudioEnabled(!config.spatialAudioEnabled) },
                     modifier = Modifier.size(90.dp),
                     shape = CircleShape,
                     color = Color(0xFF161B22),
-                    border = BorderStroke(1.5.dp, Color.White.copy(0.1f)),
+                    border = BorderStroke(1.5.dp, if (config.spatialAudioEnabled) PremiumAccent.copy(0.4f) else Color.White.copy(0.1f)),
                     shadowElevation = 16.dp
                 ) {
                     Box(contentAlignment = Alignment.Center) {
@@ -2306,13 +2273,23 @@ private fun PremiumSoundStageCard(
                 .graphicsLayer { alpha = if (config.spatialAudioEnabled) 1f else 0.4f },
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Text(
-                "GLOBAL SETTINGS",
-                color = PremiumAccent.copy(0.6f),
-                fontWeight = FontWeight.Black,
-                fontSize = 10.sp,
-                letterSpacing = 1.sp
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "GLOBAL SETTINGS",
+                    color = PremiumAccent.copy(0.6f),
+                    fontWeight = FontWeight.Black,
+                    fontSize = 10.sp,
+                    letterSpacing = 1.sp
+                )
+                PremiumSwitch(
+                    checked = config.spatialAudioEnabled,
+                    onCheckedChange = { viewModel.setSpatialAudioEnabled(it) }
+                )
+            }
 
             Column {
                 SoundStageSliderRow(

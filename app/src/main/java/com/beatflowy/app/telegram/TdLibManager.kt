@@ -1,6 +1,7 @@
 package com.beatflowy.app.telegram
 
 import android.content.Context
+import android.util.Log
 import com.beatflowy.app.BuildConfig
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -45,6 +46,7 @@ class TdLibManager private constructor(
 
     private fun handleUpdate(update: TdApi.Object) {
         if (update is TdApi.UpdateAuthorizationState) {
+            Log.d("TDLib", "Auth state changed to: ${update.authorizationState::class.simpleName}")
             when (val state = update.authorizationState) {
                 is TdApi.AuthorizationStateWaitTdlibParameters -> setParameters()
                 is TdApi.AuthorizationStateWaitPhoneNumber -> _authState.value = AuthState.WaitPhoneNumber
@@ -52,7 +54,9 @@ class TdLibManager private constructor(
                 is TdApi.AuthorizationStateWaitPassword -> _authState.value = AuthState.WaitPassword
                 is TdApi.AuthorizationStateReady -> _authState.value = AuthState.Ready
                 is TdApi.AuthorizationStateClosed -> _authState.value = AuthState.LoggedOut
-                else -> {}
+                else -> {
+                    Log.d("TDLib", "Unhandled auth state: ${state::class.simpleName}")
+                }
             }
         } else if (update is TdApi.UpdateFile) {
             fileFlows[update.file.id]?.value = update.file
@@ -107,7 +111,10 @@ class TdLibManager private constructor(
                     context.applicationContext,
                     BuildConfig.TELEGRAM_API_ID,
                     BuildConfig.TELEGRAM_API_HASH
-                ).also { INSTANCE = it }
+                ).also {
+                    Log.d("TDLib", "apiId=${BuildConfig.TELEGRAM_API_ID} apiHash=${BuildConfig.TELEGRAM_API_HASH}")
+                    INSTANCE = it
+                }
             }
         }
     }

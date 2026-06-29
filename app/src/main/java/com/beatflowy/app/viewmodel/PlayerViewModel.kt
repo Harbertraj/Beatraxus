@@ -2686,31 +2686,52 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun submitTelegramPhone(phone: String) {
+        if (_uiState.value.isSubmittingTelegram) return
         viewModelScope.launch {
+            _uiState.update { it.copy(isSubmittingTelegram = true, telegramAuthError = null) }
             try {
+                Log.d("TDLib", "Submitting phone number: $phone")
                 tdLibManager.submitPhoneNumber(phone)
             } catch (e: Exception) {
+                Log.e("TDLib", "submitPhoneNumber failed", e)
+                _uiState.update { it.copy(telegramAuthError = e.message ?: "Failed to submit phone number") }
                 setErrorMessage(e.message)
+            } finally {
+                _uiState.update { it.copy(isSubmittingTelegram = false) }
             }
         }
     }
 
     fun submitTelegramCode(code: String) {
+        if (_uiState.value.isSubmittingTelegram) return
         viewModelScope.launch {
+            _uiState.update { it.copy(isSubmittingTelegram = true, telegramAuthError = null) }
             try {
+                Log.d("TDLib", "Submitting code: $code")
                 tdLibManager.submitCode(code)
             } catch (e: Exception) {
+                Log.e("TDLib", "submitCode failed", e)
+                _uiState.update { it.copy(telegramAuthError = "Incorrect code — please check and try again.") }
                 setErrorMessage(e.message)
+            } finally {
+                _uiState.update { it.copy(isSubmittingTelegram = false) }
             }
         }
     }
 
     fun submitTelegramPassword(password: String) {
+        if (_uiState.value.isSubmittingTelegram) return
         viewModelScope.launch {
+            _uiState.update { it.copy(isSubmittingTelegram = true, telegramAuthError = null) }
             try {
+                Log.d("TDLib", "Submitting password")
                 tdLibManager.submitPassword(password)
             } catch (e: Exception) {
+                Log.e("TDLib", "submitPassword failed", e)
+                _uiState.update { it.copy(telegramAuthError = "Incorrect password — please try again.") }
                 setErrorMessage(e.message)
+            } finally {
+                _uiState.update { it.copy(isSubmittingTelegram = false) }
             }
         }
     }
