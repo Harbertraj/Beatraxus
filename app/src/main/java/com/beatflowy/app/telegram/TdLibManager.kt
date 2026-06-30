@@ -93,7 +93,7 @@ class TdLibManager private constructor(
         }
 
     suspend fun submitPhoneNumber(phone: String) =
-        send(TdApi.SetAuthenticationPhoneNumber(phone, null))
+        send(TdApi.SetAuthenticationPhoneNumber(phone, TdApi.PhoneNumberAuthenticationSettings()))
 
     suspend fun submitCode(code: String) =
         send(TdApi.CheckAuthenticationCode(code))

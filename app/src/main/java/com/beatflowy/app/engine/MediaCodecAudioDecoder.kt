@@ -76,7 +76,19 @@ internal class MediaCodecAudioDecoder(
 
             // 3. Configure Codec
             extractor.selectTrack(track.index)
-            codec = MediaCodec.createDecoderByType(track.mime)
+            
+            // SECURITY: Never use MediaCodec for ALAC. It's notoriously unstable across Android vendors.
+            if (track.mime.contains("alac", ignoreCase = true)) {
+                return@withContext DecodeResult.Failed("ALAC not supported via MediaCodec")
+            }
+
+            codec = try {
+                MediaCodec.createDecoderByType(track.mime)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to create decoder for ${track.mime}", e)
+                return@withContext DecodeResult.Failed("Decoder creation failed: ${e.message}")
+            }
+
             codec.configure(track.format, null, null, 0)
             codec.start()
 

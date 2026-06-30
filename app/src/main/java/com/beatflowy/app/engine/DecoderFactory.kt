@@ -45,7 +45,7 @@ internal class DecoderFactory(
                 return ffmpegAlacDecoder
             }
 
-            // If it's an M4A, it MIGHT be ALAC. If we have high bitrate or unknown, probe it.
+            // Always probe for cloud M4A if bitrate is high or unknown, to catch ALAC early
             if (isM4A && (song.bitrate > 500000 || song.bitrate == 0)) {
                 val probedMime = probeAudioMime(song)
                 if (probedMime?.contains("alac", ignoreCase = true) == true) {
@@ -62,8 +62,12 @@ internal class DecoderFactory(
         // 2. Local routing
         // For local files, FFmpeg is often more stable for ALAC and WAV (especially with seeking).
         if (isAlac || isM4A || isWav || format == "audio") {
-            Log.i(TAG, "Routing to FFmpeg (Local Lossless): ${song.title} [format=$format]")
-            return ffmpegAlacDecoder
+            // Check if it's actually ALAC inside M4A container
+            val probedMime = if (isM4A) probeAudioMime(song) else null
+            if (isAlac || isWav || probedMime?.contains("alac", ignoreCase = true) == true) {
+                Log.i(TAG, "Routing to FFmpeg (Local Lossless): ${song.title} [format=$format]")
+                return ffmpegAlacDecoder
+            }
         }
 
         // 3. Probing for local unknown formats

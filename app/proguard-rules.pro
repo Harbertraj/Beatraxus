@@ -165,3 +165,13 @@
 -keep class com.beatflowy.app.repository.LyricsType { *; }
 -keepclassmembers enum com.beatflowy.app.repository.LyricsType { *; }
 -keep class com.beatflowy.app.model.LrcLine { *; }
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TDLIB (Telegram Library)
+# ══════════════════════════════════════════════════════════════════════════════
+-keep class org.drinkless.tdlib.** { *; }
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TDLIB (Telegram Library)
+# ══════════════════════════════════════════════════════════════════════════════
+-keep class org.drinkless.tdlib.** { *; }
