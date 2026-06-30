@@ -158,6 +158,7 @@ data class DspConfig(
     val crossfeedEnabled: Boolean = false,
     val crossfeedLevel: Float = 0.4f,
     val spatialAudioEnabled: Boolean = false,
+    val spatialTouchEnabled: Boolean = false,
     val spatialAudioIntensity: Float = 0.6f,
     val soundStageSelectedNode: String = "Vocals",
     val soundStageNodePositions: Map<String, SoundStageNodePosition> = mapOf(

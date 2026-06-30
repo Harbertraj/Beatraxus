@@ -43,7 +43,11 @@ data class Song(
     val telegramFileId: Int? = null,
     val isEnriched: Boolean = false,
     val lastSyncTimestamp: Long = 0L
-)
+) {
+    fun isCloud(): Boolean = source == SongSource.GDRIVE || 
+                            source == SongSource.TELEGRAM || 
+                            source == SongSource.WEB
+}
 
 data class Playlist(
     val id: String,

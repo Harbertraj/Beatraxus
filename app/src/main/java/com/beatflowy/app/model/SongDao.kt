@@ -25,6 +25,9 @@ interface SongDao {
     @Query("DELETE FROM songs WHERE source = 'LOCAL'")
     suspend fun deleteLocalSongs()
 
+    @Query("DELETE FROM songs WHERE telegramChannelUrl = :url")
+    suspend fun deleteSongsByTelegramChannel(url: String)
+
     @Query("UPDATE songs SET lyrics = :lyrics WHERE id = :songId")
     suspend fun updateLyrics(songId: String, lyrics: String)
 

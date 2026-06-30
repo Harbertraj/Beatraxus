@@ -1293,12 +1293,13 @@ fun MainScreen(
                                                 }
                                                 LibraryView.CLOUD -> {
                                                     val accounts by viewModel.driveAccounts.collectAsStateWithLifecycle(emptyList())
-                                                    if (accounts.isEmpty()) {
+                                                    val tgChannels by viewModel.telegramChannels.collectAsStateWithLifecycle(emptyList())
+                                                    if (accounts.isEmpty() && tgChannels.isEmpty()) {
                                                         Column(Modifier.fillMaxSize(), horizontalAlignment=Alignment.CenterHorizontally, verticalArrangement=Arrangement.Center) {
                                                             Icon(Icons.Rounded.Cloud, null, tint=Color(0xFF1A73E8), modifier=Modifier.size(64.dp))
                                                             Spacer(Modifier.height(16.dp))
-                                                            Text("No Cloud accounts connected", color=Color.White.copy(0.6f), textAlign=TextAlign.Center)
-                                                            Text("Add an account in Settings → Cloud Account", color=Color.White.copy(0.3f), fontSize=13.sp, textAlign=TextAlign.Center)
+                                                            Text("No Cloud accounts or Telegram channels connected", color=Color.White.copy(0.6f), textAlign=TextAlign.Center)
+                                                            Text("Add an account in Settings", color=Color.White.copy(0.3f), fontSize=13.sp, textAlign=TextAlign.Center)
                                                         }
                                                     } else if (songs.isEmpty()) {
                                                         if (uiState.isCloudScanning) {

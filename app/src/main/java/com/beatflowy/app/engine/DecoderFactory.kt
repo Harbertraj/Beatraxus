@@ -19,9 +19,7 @@ internal class DecoderFactory(
 ) {
     suspend fun create(song: Song): AudioDecoder {
         val format = song.format.lowercase()
-        val isCloud = song.source == com.beatflowy.app.model.SongSource.GDRIVE ||
-                      song.source == com.beatflowy.app.model.SongSource.WEB ||
-                      song.source == com.beatflowy.app.model.SongSource.TELEGRAM
+        val isCloud = song.isCloud()
 
         val durationMin = song.durationMs / 60000.0
         val sizeMb = song.fileSizeBytes / (1024.0 * 1024.0)

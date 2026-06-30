@@ -1150,12 +1150,12 @@ fun TechnicalInfo(song: Song, uiState: com.beatflowy.app.model.PlayerUiState) {
         border = BorderStroke(1.dp, Brush.verticalGradient(listOf(Color.White.copy(0.2f), Color.Transparent)))
     ) {
         val info = buildString {
-            if (song.source == SongSource.GDRIVE) {
-                // 16BIT | 96KHZ | FLAC | GDRIVE
+            if (song.isCloud()) {
+                // 16BIT | 96KHZ | FLAC | GDRIVE/TELEGRAM
                 append("${bitDepth}BIT | ")
                 append("${khz}KHZ | ")
                 append("${rawFormat.uppercase(Locale.US)} | ")
-                append("GDRIVE")
+                append(song.source.name)
             } else {
                 // 16BIT | 1566KBPS | 96KHZ | ALAC
                 append("${bitDepth}BIT | ")

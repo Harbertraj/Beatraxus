@@ -16,7 +16,7 @@ class CloudLibraryRepository(
     private val allAnalysis = aiAnalysisDao.getAllAnalysisFlow()
 
     override fun getSongs(): Flow<List<Song>> = combine(allSongs, selectedEmail) { songs, email ->
-        songs.filter { it.source == com.beatflowy.app.model.SongSource.GDRIVE && (email == null || it.driveAccountEmail == email) }
+        songs.filter { it.isCloud() && (email == null || it.driveAccountEmail == email) }
     }
 
     override fun getMoods(): Flow<List<Triple<String, String, Uri?>>> = 

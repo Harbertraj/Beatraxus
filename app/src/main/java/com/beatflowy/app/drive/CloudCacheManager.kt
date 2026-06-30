@@ -141,8 +141,6 @@ class CloudCacheManager(
         }
     }
 
-    private fun Song.isCloud(): Boolean = source == SongSource.GDRIVE || source == SongSource.TELEGRAM || source == SongSource.WEB
-
     private suspend fun downloadSong(song: Song) {
         if (!song.isCloud()) return
         

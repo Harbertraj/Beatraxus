@@ -143,6 +143,7 @@ class DspPreferences(private val context: Context) {
             crossfeedEnabled = pref(CROSSFEED_ENABLED, false),
             crossfeedLevel = pref(CROSSFEED_LEVEL, 0.4f),
             spatialAudioEnabled = pref(SPATIAL_AUDIO_ENABLED, false),
+            spatialTouchEnabled = pref(SPATIAL_TOUCH_ENABLED, false),
             spatialAudioIntensity = pref(SPATIAL_AUDIO_INTENSITY, 0.6f),
             soundStageSelectedNode = pref(SOUND_STAGE_SELECTED_NODE, "Vocals"),
             soundStageNodePositions = deserializeNodePositions(prefNullable(SOUND_STAGE_NODE_POSITIONS)),
@@ -258,6 +259,7 @@ class DspPreferences(private val context: Context) {
             set(CROSSFEED_ENABLED, config.crossfeedEnabled)
             set(CROSSFEED_LEVEL, config.crossfeedLevel)
             set(SPATIAL_AUDIO_ENABLED, config.spatialAudioEnabled)
+            set(SPATIAL_TOUCH_ENABLED, config.spatialTouchEnabled)
             set(SPATIAL_AUDIO_INTENSITY, config.spatialAudioIntensity)
             set(SOUND_STAGE_SELECTED_NODE, config.soundStageSelectedNode)
             set(SOUND_STAGE_NODE_POSITIONS, serializeNodePositions(config.soundStageNodePositions))
@@ -407,6 +409,7 @@ class DspPreferences(private val context: Context) {
                 set(CROSSFEED_ENABLED, config.crossfeedEnabled)
                 set(CROSSFEED_LEVEL, config.crossfeedLevel)
                 set(SPATIAL_AUDIO_ENABLED, config.spatialAudioEnabled)
+                set(SPATIAL_TOUCH_ENABLED, config.spatialTouchEnabled)
                 set(SPATIAL_AUDIO_INTENSITY, config.spatialAudioIntensity)
                 set(SOUND_STAGE_SELECTED_NODE, config.soundStageSelectedNode)
                 set(SOUND_STAGE_NODE_POSITIONS, serializeNodePositions(config.soundStageNodePositions))
@@ -601,6 +604,7 @@ class DspPreferences(private val context: Context) {
         private val CROSSFEED_ENABLED = booleanPreferencesKey("crossfeed_enabled")
         private val CROSSFEED_LEVEL = floatPreferencesKey("crossfeed_level")
         private val SPATIAL_AUDIO_ENABLED = booleanPreferencesKey("spatial_audio_enabled")
+        private val SPATIAL_TOUCH_ENABLED = booleanPreferencesKey("spatial_touch_enabled")
         private val SPATIAL_AUDIO_INTENSITY = floatPreferencesKey("spatial_audio_intensity")
         private val SOUND_STAGE_SELECTED_NODE = stringPreferencesKey("sound_stage_selected_node")
         private val SOUND_STAGE_NODE_POSITIONS = stringPreferencesKey("sound_stage_node_positions")

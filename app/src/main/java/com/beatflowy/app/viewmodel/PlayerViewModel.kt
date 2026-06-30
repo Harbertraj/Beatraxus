@@ -164,7 +164,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val driveLibrarySongs: StateFlow<List<Song>> = allSongs.map { songs ->
-        songs.filter { it.source == SongSource.GDRIVE }
+        songs.filter { it.isCloud() }
     }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val albums = filteredSongsByMode.map { songs ->
@@ -187,6 +187,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     val firstSong = list.first()
                     if (firstSong.source == com.beatflowy.app.model.SongSource.GDRIVE) {
                         Triple(path, "GDRIVE", firstSong.albumArtUri)
+                    } else if (firstSong.source == com.beatflowy.app.model.SongSource.TELEGRAM) {
+                        Triple(path, "TELEGRAM", firstSong.albumArtUri)
                     } else {
                         Triple(path, path.substringAfterLast("/"), list.first().albumArtUri)
                     }
@@ -290,9 +292,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             LibraryView.CLOUD -> allSongsList.filter {
                 if (state.selectedTelegramChannelUrl != null) {
                     it.source == com.beatflowy.app.model.SongSource.TELEGRAM && it.telegramChannelUrl == state.selectedTelegramChannelUrl
-                } else {
+                } else if (state.selectedItemName != null) {
                     it.source == com.beatflowy.app.model.SongSource.GDRIVE &&
-                            (state.selectedItemName == null || it.driveAccountEmail?.lowercase() == state.selectedItemName.lowercase())
+                            it.driveAccountEmail?.lowercase() == state.selectedItemName.lowercase()
+                } else {
+                    it.isCloud()
                 }
             }
         }
@@ -1233,7 +1237,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun refreshCloudLibrary() {
-        _uiState.value.selectedCloudEmail?.let { scanDriveAccount(it) }
+        val state = _uiState.value
+        if (state.selectedTelegramChannelUrl != null) {
+            syncTelegramChannel(state.selectedTelegramChannelUrl)
+        } else if (state.currentView == LibraryView.CLOUD && state.selectedItemName != null) {
+            scanDriveAccount(state.selectedItemName)
+        }
     }
 
     fun navigateToFolder(path: String, name: String) {
@@ -1948,6 +1957,15 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun setCrossfeedEnabled(enabled: Boolean) = applyDspConfig { it.copy(crossfeedEnabled = enabled) }
     fun setCrossfeedLevel(value: Float) = applyDspConfig { it.copy(crossfeedLevel = value.coerceIn(0f, 1f), crossfeedEnabled = true) }
     fun setSpatialAudioEnabled(enabled: Boolean) { applyDspConfig { it.copy(spatialAudioEnabled = enabled) } }
+    fun setSpatialTouchEnabled(enabled: Boolean) { 
+        applyDspConfig { 
+            if (enabled) {
+                it.copy(spatialTouchEnabled = true, spatialAudioEnabled = true)
+            } else {
+                it.copy(spatialTouchEnabled = false)
+            }
+        } 
+    }
     fun setSpatialAudioIntensity(value: Float) { applyDspConfig { it.copy(spatialAudioIntensity = value.coerceIn(0f, 1f)) } }
 
     fun selectSoundStageNode(name: String) { applyDspConfig { it.copy(soundStageSelectedNode = name) } }
@@ -2431,9 +2449,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             LibraryView.CLOUD -> allSongsList.filter {
                 if (state.selectedTelegramChannelUrl != null) {
                     it.source == com.beatflowy.app.model.SongSource.TELEGRAM && it.telegramChannelUrl == state.selectedTelegramChannelUrl
-                } else {
+                } else if (state.selectedItemName != null) {
                     it.source == com.beatflowy.app.model.SongSource.GDRIVE &&
-                            (state.selectedItemName == null || it.driveAccountEmail?.lowercase() == state.selectedItemName.lowercase())
+                            it.driveAccountEmail?.lowercase() == state.selectedItemName.lowercase()
+                } else {
+                    it.isCloud()
                 }
             }
             else -> modeSongs
@@ -2776,6 +2796,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun removeTelegramChannel(url: String) {
         viewModelScope.launch {
             telegramChannelRepository.removeChannel(url)
+            songDao.deleteSongsByTelegramChannel(url)
+            _songs.update { current -> current.filterNot { it.telegramChannelUrl == url } }
         }
     }
 
