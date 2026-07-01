@@ -3,13 +3,21 @@ package com.beatflowy.app.engine
 import java.util.concurrent.locks.ReentrantReadWriteLock
 import kotlin.concurrent.withLock
 
-class NativeDsp {
+class NativeDsp : AutoCloseable {
     private var nativeHandle: Long = 0
     private val lock = ReentrantReadWriteLock()
 
     init {
-        System.loadLibrary("beatraxus_dsp")
-        nativeHandle = nCreate()
+        try {
+            System.loadLibrary("beatraxus_dsp")
+            nativeHandle = nCreate()
+        } catch (e: UnsatisfiedLinkError) {
+            android.util.Log.e("NativeDsp", "Failed to load library: beatraxus_dsp", e)
+        }
+    }
+
+    override fun close() {
+        release()
     }
 
     fun init(sampleRate: Float, channels: Int) {
@@ -221,12 +229,17 @@ class NativeDsp {
     }
 
     suspend fun extractFeatures(context: android.content.Context, uri: android.net.Uri, seconds: Int): AudioFeatures? = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-        val pfd = context.contentResolver.openFileDescriptor(uri, "r") ?: return@withContext null
+        if (uri == android.net.Uri.EMPTY || uri.scheme?.startsWith("http") == true) return@withContext null
+        val pfd = try {
+            context.contentResolver.openFileDescriptor(uri, "r")
+        } catch (e: Exception) {
+            null
+        } ?: return@withContext null
         try {
             val fd = pfd.fd
             nExtractFeatures(fd, seconds)
         } finally {
-            pfd.close()
+            try { pfd.close() } catch (e: Exception) {}
         }
     }
 

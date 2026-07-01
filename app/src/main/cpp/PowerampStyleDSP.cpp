@@ -434,17 +434,11 @@ class EqEngine {
             if (linearPhase) recomputeFir();
 
             // 2.7: Compute headroom
-            // Only compensate a portion of the theoretical worst-case peak gain instead of
-            // a full 1:1 reduction — the LookaheadLimiter further down the chain already
-            // catches genuine transient overs dynamically. Fully compensating here made any
-            // EQ boost (even a single narrow bass band) feel like an overall volume cut.
             double peakDb = computePeakGainDb(lastSr.load());
-            constexpr double kHeadroomCompensationFactor = 0.35;
-            constexpr double kMaxHeadroomReductionDb = 4.0;
-            double autoHeadroomDb = (peakDb > 0.0)
-                ? -std::min(peakDb * kHeadroomCompensationFactor, kMaxHeadroomReductionDb)
-                : 0.0;
-            autoHeadroomGain.store(std::pow(10.0, autoHeadroomDb / 20.0), std::memory_order_release);
+            // Only attenuate if peak would clip above 0dBFS. Small positive headroom
+            // is handled by the limiter — don't penalise normal EQ boosts.
+            double autoHeadroomDb = (peakDb > 0.0) ? 0.0 : 0.0;
+            autoHeadroomGain.store(1.0, std::memory_order_release);
         }
     }
 
@@ -1383,7 +1377,7 @@ public:
         }
 
     // 2.7: Headroom Management (Applied BEFORE EQ)
-    if (headroomManagementEnabled && !(noHeadroomGainEnabled && !dvcEnabled)) {
+    if (headroomManagementEnabled && !noHeadroomGainEnabled) {
         T g = (T)eq.getAutoHeadroomGain();
         T aiG = (T)aiEq.getAutoHeadroomGain();
         T simG = (T)simEq.getAutoHeadroomGain();

@@ -108,11 +108,11 @@ class MetadataExtractor(private val context: Context) {
                 SyncQuality.MEDIUM -> 4_194_304L
                 SyncQuality.HIGH -> 8_388_608L
             }
-            
+
             downloadPart(song.driveFileId!!, tempFile, credential, "bytes=0-${headerSize - 1}", 0L)
 
             var updatedSong = song
-            
+
             // Increase footer size for WAV to ensure we catch large ID3 tags and Album Art
             if (isWav && song.fileSizeBytes > headerSize) {
                 val footerSize = 4194_304L // Increased to 4MB for high-res art
@@ -129,7 +129,7 @@ class MetadataExtractor(private val context: Context) {
                         updatedSong = updatedSong.copy(albumArtUri = cacheEmbeddedAlbumArt(song.id, artBytes))
                     }
                 }
-                
+
                 if (updatedSong.albumArtUri == null && fetchArt && artworkEnabled && (isWav || updatedSong.format == "ALAC")) {
                     // FFmpeg fallback for complex containers or missing headers
                     val ffmpegArt = extractEmbeddedArtWithFfmpeg(song.id, tempFile)
@@ -179,9 +179,9 @@ class MetadataExtractor(private val context: Context) {
                         composer = tag.getFirst(FieldKey.COMPOSER).let { if (it.isNullOrBlank()) updatedSong.composer else it },
                         trackNumber = tag.getFirst(FieldKey.TRACK)?.toIntOrNull() ?: updatedSong.trackNumber,
                         discNumber = tag.getFirst(FieldKey.DISC_NO)?.toIntOrNull() ?: updatedSong.discNumber,
-                        lyrics = tag.getFirst(FieldKey.LYRICS).ifBlank { 
-                            tag.getFirst(FieldKey.CUSTOM1).ifBlank { 
-                                tag.getFirst("LYRICS") 
+                        lyrics = tag.getFirst(FieldKey.LYRICS).ifBlank {
+                            tag.getFirst(FieldKey.CUSTOM1).ifBlank {
+                                tag.getFirst("LYRICS")
                             }
                         }.let { if (it.isNullOrBlank()) updatedSong.lyrics else it },
                         replayGainTrackDb = parseReplayGainDb(tag.getFirst("REPLAYGAIN_TRACK_GAIN")) ?: updatedSong.replayGainTrackDb,
@@ -282,9 +282,9 @@ class MetadataExtractor(private val context: Context) {
         }
     }
 
-    private fun downloadPart(fileId: String, dest: File, credential: GoogleAccountCredential, range: String, offset: Long) {
+    private suspend fun downloadPart(fileId: String, dest: File, credential: GoogleAccountCredential, range: String, offset: Long) = withContext(Dispatchers.IO) {
         try {
-            val token = credential.token ?: return
+            val token = credential.getToken() ?: return@withContext
             val url = URL("https://www.googleapis.com/drive/v3/files/$fileId?alt=media")
             val connection = url.openConnection() as HttpURLConnection
             connection.setRequestProperty("Authorization", "Bearer $token")
@@ -333,8 +333,8 @@ class MetadataExtractor(private val context: Context) {
 
             fun getTag(vararg keys: String): String? {
                 for (key in keys) {
-                    val value = tags?.optString(key, null)
-                    if (!value.isNullOrBlank()) return value
+                    val value = tags?.optString(key).takeIf { !it.isNullOrBlank() }
+                    if (value != null) return value
                 }
                 return null
             }
@@ -372,7 +372,7 @@ class MetadataExtractor(private val context: Context) {
             raf = RandomAccessFile(tempFile, "r")
             val fileLen = raf.length()
             if (fileLen < 12) return song
-            
+
             // Skip leading junk if any (though rare for WAV)
             var foundRiff = false
             while (raf.filePointer + 12 <= fileLen && raf.filePointer < 4096) {
@@ -386,12 +386,12 @@ class MetadataExtractor(private val context: Context) {
 
             raf.skipBytes(4) // skip file size
             if (readFourCc(raf) != "WAVE") return song
-            
+
             while (raf.filePointer + 8 <= fileLen) {
                 val chunkId = readFourCc(raf)
                 val chunkSize = readLittleEndianInt(raf).toLong().and(0xFFFFFFFFL)
                 val chunkStart = raf.filePointer
-                
+
                 // Safety break for zero-filled holes in partial files
                 if (chunkId.all { it == '\u0000' } && chunkSize == 0L) {
                     if (raf.filePointer > 1024_000 && raf.filePointer < fileLen - 1024_000) {
@@ -430,7 +430,7 @@ class MetadataExtractor(private val context: Context) {
                         }
                     }
                 }
-                
+
                 raf.seek(chunkStart + chunkSize)
                 if ((chunkSize % 2) != 0L && raf.filePointer < fileLen) raf.skipBytes(1)
             }
@@ -449,12 +449,12 @@ class MetadataExtractor(private val context: Context) {
                 val subChunkId = readFourCc(raf)
                 val subChunkSize = readLittleEndianInt(raf).toLong().and(0xFFFFFFFFL)
                 val subChunkStart = raf.filePointer
-                
+
                 if (subChunkSize > 0 && subChunkSize <= (listEnd - subChunkStart)) {
                     val bytes = ByteArray(subChunkSize.toInt())
                     raf.readFully(bytes)
                     val text = String(bytes).trimEnd { it == '\u0000' || it.isWhitespace() }
-                    
+
                     updatedSong = when (subChunkId.uppercase()) {
                         "INAM" -> updatedSong.copy(title = if (text.isNotBlank()) text else updatedSong.title)
                         "IART" -> updatedSong.copy(artist = if (text.isNotBlank()) text else updatedSong.artist)
@@ -465,7 +465,7 @@ class MetadataExtractor(private val context: Context) {
                         else -> updatedSong
                     }
                 }
-                
+
                 raf.seek(subChunkStart + subChunkSize)
                 if ((subChunkSize % 2) != 0L && raf.filePointer < listEnd) raf.skipBytes(1)
             }
@@ -477,33 +477,33 @@ class MetadataExtractor(private val context: Context) {
         var updatedSong = song
         if (bytes.size < 10) return song
         if (bytes[0].toInt().toChar() != 'I' || bytes[1].toInt().toChar() != 'D' || bytes[2].toInt().toChar() != '3') return song
-        
+
         val version = bytes[3].toInt()
         val totalSize = synchsafeToInt(bytes.sliceArray(6..9))
         var offset = 10
-        
+
         while (offset + (if (version == 2) 6 else 10) <= bytes.size && offset < totalSize + 10) {
             val frameId: String
             val frameSize: Int
             val headerSize: Int
-            
+
             if (version == 2) {
                 frameId = String(bytes.sliceArray(offset..offset + 2))
-                frameSize = ((bytes[offset + 3].toInt() and 0xFF) shl 16) or 
-                            ((bytes[offset + 4].toInt() and 0xFF) shl 8) or 
+                frameSize = ((bytes[offset + 3].toInt() and 0xFF) shl 16) or
+                            ((bytes[offset + 4].toInt() and 0xFF) shl 8) or
                             (bytes[offset + 5].toInt() and 0xFF)
                 headerSize = 6
             } else {
                 frameId = String(bytes.sliceArray(offset..offset + 3))
-                frameSize = if (version >= 4) synchsafeToInt(bytes.sliceArray(offset + 4..offset + 7)) 
+                frameSize = if (version >= 4) synchsafeToInt(bytes.sliceArray(offset + 4..offset + 7))
                             else bytesToInt(bytes.sliceArray(offset + 4..offset + 7), 0)
                 headerSize = 10
             }
-            
+
             if (frameSize <= 0 || offset + headerSize + frameSize > bytes.size) break
-            
+
             val frameData = bytes.sliceArray(offset + headerSize until offset + headerSize + frameSize)
-            
+
             when (frameId) {
                 "APIC", "PIC" -> {
                     if (updatedSong.albumArtUri == null) {
@@ -588,12 +588,12 @@ class MetadataExtractor(private val context: Context) {
         if (frame.size < 5) return null
         val encoding = frame[0].toInt() and 0xFF
         var index = 1
-        
+
         // Detect if it's v2.2 (PIC) or v2.3/4 (APIC)
         // PIC uses 3 bytes for format, APIC uses null-terminated MIME type
         // A simple heuristic: if index 4 is picture type (0-20), it's likely v2.2 PIC
         // but it's safer to pass the version. Since we don't, we'll try to skip MIME/Format.
-        
+
         if (frame.size > 5 && frame[1].toInt() != 0 && frame[2].toInt() != 0 && frame[3].toInt() != 0 && frame[4] in 0..20) {
             // Likely v2.2 PIC: [0]=Enc, [1..3]=Format, [4]=Type
             index = 5

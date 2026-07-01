@@ -378,6 +378,16 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
         viewModelScope.launch {
+            driveAccountRepository.accounts.collect { accounts ->
+                _uiState.update { it.copy(driveAccounts = accounts) }
+            }
+        }
+        viewModelScope.launch {
+            telegramChannelRepository.channels.collect { channels ->
+                _uiState.update { it.copy(telegramChannels = channels) }
+            }
+        }
+        viewModelScope.launch {
             com.beatflowy.app.drive.DrivePlaybackHelper.authRecoveryFlow.collect { intent ->
                 _uiState.update { it.copy(authRecoveryIntent = intent) }
             }
@@ -720,8 +730,6 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    val driveAccounts = driveAccountRepository.accounts
-    val telegramChannels = telegramChannelRepository.channels
 
     fun removeDriveAccount(email: String) {
         viewModelScope.launch {
@@ -944,11 +952,18 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         }
                     }
                     
-                    // Trigger AI Analysis for new songs
+                    // Trigger AI Analysis for new songs (Limited on first run to prevent crashes)
                     if (newSongs.isNotEmpty()) {
                         viewModelScope.launch(Dispatchers.Default) {
-                            newSongs.forEach { song ->
-                                aiAnalysisChannel.send(song)
+                            // On first run, we only analyze a few songs to ensure stability
+                            // The rest will be picked up later or when played
+                            val toAnalyze = if (_uiState.value.isFirstRun) newSongs.take(20) else newSongs
+                            toAnalyze.forEach { song ->
+                                try {
+                                    aiAnalysisChannel.send(song)
+                                } catch (e: Exception) {
+                                    Log.e("PlayerViewModel", "Failed to queue song for analysis", e)
+                                }
                             }
                         }
                     }
@@ -1030,8 +1045,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
                 // AI Analysis for all songs in full scan
                 viewModelScope.launch(Dispatchers.Default) {
-                    results.forEach { song ->
-                        aiAnalysisChannel.send(song)
+                    results.forEachIndexed { index, song ->
+                        // Limit AI Analysis during full scan to avoid overwhelming system
+                        if (index % 10 == 0) {
+                            aiAnalysisChannel.send(song)
+                        }
                     }
                 }
 
@@ -1131,8 +1149,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
                 // AI Analysis for added folders scan
                 viewModelScope.launch(Dispatchers.Default) {
-                    allResults.forEach { song ->
-                        aiAnalysisChannel.send(song)
+                    allResults.forEachIndexed { index, song ->
+                        // Limit analysis for newly added folders
+                        if (index < 30) {
+                            aiAnalysisChannel.send(song)
+                        }
                     }
                 }
 

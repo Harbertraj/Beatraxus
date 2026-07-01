@@ -4,7 +4,10 @@ import android.content.Context
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.util.Log
+import com.arthenica.ffmpegkit.FFmpegKitConfig
+import com.arthenica.ffmpegkit.FFprobeKit
 import com.beatflowy.app.model.Song
+import com.beatflowy.app.model.SongSource
 import com.beatflowy.app.repository.DriveAccountRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -23,12 +26,12 @@ internal class DecoderFactory(
 
         val durationMin = song.durationMs / 60000.0
         val sizeMb = song.fileSizeBytes / (1024.0 * 1024.0)
-        val isLikelyLossyM4A = (format == "m4a" || format == "mp4" || format == "aac") && 
-            ((durationMin > 0 && (sizeMb / durationMin) < 2.3) || (song.bitrate in 1..400000))
+        val isLikelyLossyM4A = (format == "m4a" || format == "mp4" || format == "aac") &&
+                ((durationMin > 0 && (sizeMb / durationMin) < 2.3) || (song.bitrate in 1..400000))
 
-        val isAlac = format.contains("alac") || 
-                    ((format == "m4a" || format == "mp4") && !isLikelyLossyM4A) ||
-                    song.title.contains("alac", ignoreCase = true)
+        val isAlac = format.contains("alac") ||
+                ((format == "m4a" || format == "mp4") && !isLikelyLossyM4A) ||
+                song.title.contains("alac", ignoreCase = true)
 
         val isM4A = format == "m4a" || format == "mp4"
         val isWav = format.contains("wav")
@@ -37,8 +40,10 @@ internal class DecoderFactory(
         // 1. Cloud routing
         if (isCloud) {
             // FFmpeg is much more robust for ALAC and WAV (especially over network)
-            // Local MediaCodec often fails or has glitches with lossless formats over MediaDataSource
-            if (isAlac || isWav) {
+            // Local MediaCodec often fails or has glitches with lossless formats over MediaDataSource.
+            // However, for Telegram we now use a specialized MediaDataSource that handles local file growth,
+            // which MediaCodec handles better for WAV than FFmpeg does without complex piping.
+            if (isAlac || (isWav && song.source != SongSource.TELEGRAM)) {
                 Log.i(TAG, "Routing Cloud Lossless (${if (isAlac) "ALAC" else "WAV"}) to FFmpeg: ${song.title}")
                 return ffmpegAlacDecoder
             }
@@ -51,6 +56,15 @@ internal class DecoderFactory(
                     return ffmpegAlacDecoder
                 }
             }
+
+            // NOTE: we intentionally do NOT add a generic "probe every cloud file with
+            // bitrate==0" fallback here. Telegram songs always have bitrate==0 (it's never
+            // populated by TelegramChannelRepository), so such a probe would fire on every
+            // single non-WAV Telegram song and block on a network read via
+            // TelegramFileDataSource before playback could even start. Since format is now
+            // derived correctly from the filename/mimeType at scan time (see
+            // TelegramChannelRepository.detectAudioFormat), the isAlac/isWav checks above are
+            // sufficient without an extra network round-trip per song.
 
             // Most other cloud files (AAC, FLAC, MP3) should use MediaCodec for better streaming
             Log.d(TAG, "Routing to MediaCodec (Cloud): ${song.title} [format=$format]")
@@ -70,14 +84,14 @@ internal class DecoderFactory(
 
         // 3. Probing for local unknown formats
         if (song.bitrate == 0) {
-             val probedMime = probeAudioMime(song)
-             Log.i(TAG, "Probed mime for ${song.title}: $probedMime")
-             if (probedMime?.contains("alac", ignoreCase = true) == true || 
-                 probedMime?.contains("wav", ignoreCase = true) == true ||
-                 probedMime?.contains("audio/x-wav", ignoreCase = true) == true) {
-                 Log.i(TAG, "Routing to FFmpeg (Probed Lossless): ${song.title}")
-                 return ffmpegAlacDecoder
-             }
+            val probedMime = probeAudioMime(song)
+            Log.i(TAG, "Probed mime for ${song.title}: $probedMime")
+            if (probedMime?.contains("alac", ignoreCase = true) == true ||
+                probedMime?.contains("wav", ignoreCase = true) == true ||
+                probedMime?.contains("audio/x-wav", ignoreCase = true) == true) {
+                Log.i(TAG, "Routing to FFmpeg (Probed Lossless): ${song.title}")
+                return ffmpegAlacDecoder
+            }
         }
 
         Log.d(TAG, "Routing to MediaCodec: ${song.title}")
@@ -91,7 +105,7 @@ internal class DecoderFactory(
             val cachedFile = cloudCacheManager.getCachedFile(song)
             if (cachedFile != null) {
                 extractor.setDataSource(cachedFile.absolutePath)
-            } else if (song.source != com.beatflowy.app.model.SongSource.LOCAL) {
+            } else if (song.source != SongSource.LOCAL) {
                 val dataSource = cloudCacheManager.getDataSource(song, tdLibManager) { false }
                 if (dataSource != null) {
                     try {
@@ -137,12 +151,12 @@ internal class DecoderFactory(
         // Fallback to FFprobe for definitive identification if MediaExtractor failed or was ambiguous
         try {
             Log.d(TAG, "Ambiguous mime for ${song.title}, falling back to FFprobe probe")
-            val inputSource = if (song.source == com.beatflowy.app.model.SongSource.LOCAL) {
+            val inputSource = if (song.source == SongSource.LOCAL) {
                 com.arthenica.ffmpegkit.FFmpegKitConfig.getSafParameterForRead(context, song.uri)
             } else {
                 resolveDirectUrl(song)
             }
-            
+
             val session = com.arthenica.ffmpegkit.FFprobeKit.getMediaInformation(inputSource)
             val info = session.mediaInformation
             val audioStream = info?.streams?.firstOrNull { it.type == "audio" }
@@ -152,7 +166,7 @@ internal class DecoderFactory(
         } catch (e: Exception) {
             Log.w(TAG, "FFprobe probe failed for ${song.title}", e)
         }
-        
+
         null
     }
 

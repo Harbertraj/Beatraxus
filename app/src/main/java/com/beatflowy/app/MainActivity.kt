@@ -4,6 +4,8 @@ import android.Manifest
 import android.app.Activity
 import android.content.ComponentName
 
+import android.content.Context
+import android.content.ContextWrapper
 import android.content.Intent
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
@@ -25,7 +27,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 
 import androidx.navigation.compose.NavHost
@@ -207,6 +211,13 @@ class MainActivity : ComponentActivity() {
         }
     }
 }
+
+fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
+}
+
 sealed class Screen(val route: String) {
     object Main      : Screen("main")
     object Settings  : Screen("settings")
@@ -220,8 +231,7 @@ fun BeatraxusApp(
 ) {
     val navController = rememberNavController()
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    val view = LocalView.current
-    val context = view.context
+    val context = LocalContext.current
 
     val folderPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree()
@@ -236,42 +246,74 @@ fun BeatraxusApp(
         viewModel.consumeFolderPickerTrigger()
     }
 
-    val driveSignInOptions = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
-        .requestEmail()
-        .requestProfile()
-        .requestScopes(Scope(DriveScopes.DRIVE_READONLY), Scope(DriveScopes.DRIVE_METADATA_READONLY))
-        .build()
+    val driveSignInOptions = remember {
+        GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+            .requestEmail()
+            .requestProfile()
+            .requestScopes(Scope(DriveScopes.DRIVE_READONLY), Scope(DriveScopes.DRIVE_METADATA_READONLY))
+            .build()
+    }
 
-    val googleSignInClient = GoogleSignIn.getClient(context as Activity, driveSignInOptions)
+    val googleSignInClient = remember(context, driveSignInOptions) {
+        val activity = context.findActivity()
+        if (activity != null) {
+            GoogleSignIn.getClient(activity, driveSignInOptions)
+        } else {
+            // Fallback for non-activity context, though it shouldn't happen in MainActivity
+            GoogleSignIn.getClient(context, driveSignInOptions)
+        }
+    }
 
     val driveAccountLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         Log.d("MainActivity", "Drive account launcher result: ${result.resultCode}")
-        if (result.resultCode == Activity.RESULT_OK) {
+        if (result.resultCode == Activity.RESULT_OK && result.data != null) {
             val task = GoogleSignIn.getSignedInAccountFromIntent(result.data)
             try {
                 val account = task.getResult(ApiException::class.java)
                 Log.d("MainActivity", "Google sign in success: ${account?.email}")
-                account?.email?.let { email ->
-                    viewModel.addDriveAccount(DriveAccount(email, account.displayName ?: "Google Drive", account.photoUrl?.toString(), true))
+                if (account != null && account.email != null) {
+                    viewModel.addDriveAccount(DriveAccount(
+                        account.email!!,
+                        account.displayName ?: "Google Drive",
+                        account.photoUrl?.toString(),
+                        true
+                    ))
+                } else {
+                    Log.e("MainActivity", "Google account or email is null")
+                    viewModel.setErrorMessage("Sign in failed: Account information missing")
                 }
             } catch (e: ApiException) {
                 Log.e("MainActivity", "Google sign in failed: status code = ${e.statusCode}", e)
-                viewModel.setErrorMessage("Google sign in failed: ${e.statusCode}")
+                viewModel.setErrorMessage("Google sign in failed: status code ${e.statusCode}")
             } catch (e: Exception) {
                 Log.e("MainActivity", "Unexpected error during Google sign in", e)
                 viewModel.setErrorMessage("Sign in error: ${e.localizedMessage}")
             }
         } else if (result.resultCode == Activity.RESULT_CANCELED) {
             Log.d("MainActivity", "Google sign in canceled by user")
+        } else {
+            Log.w("MainActivity", "Google sign in failed or returned null data. Code: ${result.resultCode}")
         }
+    }
+
+    val authRecoveryLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        Log.d("MainActivity", "Auth recovery result: ${result.resultCode}")
+        if (result.resultCode == Activity.RESULT_OK) {
+            // Retry scan for all enabled accounts
+            uiState.driveAccounts.filter { it.enabled }.forEach { account ->
+                viewModel.scanDriveAccount(account.email)
+            }
+        }
+        viewModel.consumeAuthRecoveryIntent()
     }
 
     LaunchedEffect(uiState.authRecoveryIntent) {
         uiState.authRecoveryIntent?.let { intent ->
-            driveAccountLauncher.launch(intent)
-            viewModel.consumeAuthRecoveryIntent()
+            authRecoveryLauncher.launch(intent)
         }
     }
 
@@ -367,7 +409,12 @@ fun BeatraxusApp(
                     onNavigateToDsp = { navController.navigate(Screen.Dsp.route) },
                     onRequestGDriveAccount = {
                         googleSignInClient.signOut().addOnCompleteListener {
-                            driveAccountLauncher.launch(googleSignInClient.signInIntent)
+                            try {
+                                driveAccountLauncher.launch(googleSignInClient.signInIntent)
+                            } catch (e: Exception) {
+                                Log.e("MainActivity", "Failed to launch sign-in intent", e)
+                                viewModel.setErrorMessage("Could not start Google Sign-In")
+                            }
                         }
                     }
                 )

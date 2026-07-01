@@ -1292,8 +1292,8 @@ fun MainScreen(
                                                     HomeScreen(viewModel, uiState, homeListState)
                                                 }
                                                 LibraryView.CLOUD -> {
-                                                    val accounts by viewModel.driveAccounts.collectAsStateWithLifecycle(emptyList())
-                                                    val tgChannels by viewModel.telegramChannels.collectAsStateWithLifecycle(emptyList())
+                                                    val accounts = uiState.driveAccounts
+                                                    val tgChannels = uiState.telegramChannels
                                                     if (accounts.isEmpty() && tgChannels.isEmpty()) {
                                                         Column(Modifier.fillMaxSize(), horizontalAlignment=Alignment.CenterHorizontally, verticalArrangement=Arrangement.Center) {
                                                             Icon(Icons.Rounded.Cloud, null, tint=Color(0xFF1A73E8), modifier=Modifier.size(64.dp))
@@ -2851,8 +2851,8 @@ fun MainScreen(
                                         )
                                     }
                                     MainSheetType.CLOUD -> {
-                                        val driveAccounts by viewModel.driveAccounts.collectAsState(initial = emptyList())
-                                        val telegramChannels by viewModel.telegramChannels.collectAsStateWithLifecycle(emptyList())
+                                        val driveAccounts = uiState.driveAccounts
+                                        val telegramChannels = uiState.telegramChannels
                                         CloudSheetContent(
                                             accounts = driveAccounts,
                                             telegramChannels = telegramChannels,

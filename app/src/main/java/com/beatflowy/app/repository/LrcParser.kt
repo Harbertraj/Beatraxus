@@ -64,14 +64,32 @@ object LrcParser {
         for (i in sorted.indices) {
             val current = sorted[i]
             val nextTime = if (i < sorted.size - 1) sorted[i + 1].startTime else current.startTime + 5000L
-            val duration = (nextTime - current.startTime).coerceAtLeast(0L)
+            val lineDuration = (nextTime - current.startTime).coerceAtLeast(0L)
             
             // Deduplicate: If multiple lines have same startTime, merge them or keep last
             if (result.isNotEmpty() && result.last().startTime == current.startTime) {
                 continue
             }
+
+            // Adjust word timings to fill the line duration if it's ELRC
+            val adjustedWordTimings = current.wordTimings?.let { timings ->
+                if (timings.isNotEmpty()) {
+                    val updatedTimings = timings.toMutableList()
+                    val lastWord = updatedTimings.last()
+                    val lastWordEnd = lastWord.startTime + lastWord.duration
+                    val lineEndTime = current.startTime + lineDuration
+                    
+                    if (lastWordEnd < lineEndTime) {
+                        // Extend the last word to the end of the line, 
+                        // or at least give it a more reasonable duration
+                        val newDuration = (lineEndTime - lastWord.startTime).coerceAtLeast(500L)
+                        updatedTimings[updatedTimings.size - 1] = lastWord.copy(duration = newDuration)
+                    }
+                    updatedTimings
+                } else null
+            }
             
-            result.add(current.copy(duration = duration))
+            result.add(current.copy(duration = lineDuration, wordTimings = adjustedWordTimings))
         }
 
         return result

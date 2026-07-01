@@ -2379,8 +2379,8 @@ fun CloudContent(
     onRequestGDriveAccount: () -> Unit,
     onNavigateToGDriveSettings: () -> Unit
 ) {
-    val driveAccounts by viewModel.driveAccounts.collectAsStateWithLifecycle(initialValue = emptyList())
-    val telegramChannels by viewModel.telegramChannels.collectAsStateWithLifecycle(initialValue = emptyList())
+    val driveAccounts = uiState.driveAccounts
+    val telegramChannels = uiState.telegramChannels
 
     var driveQuery by remember { mutableStateOf("") }
     var telegramUrl by remember { mutableStateOf("") }

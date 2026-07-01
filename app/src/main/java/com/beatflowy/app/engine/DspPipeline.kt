@@ -385,18 +385,7 @@ private class NativeDspProcessor(
         val eqMasterGain = if (effectiveEqEnabled) config.eqMasterGainDb else 0f
         val appliedEqMasterGain = eqMasterGain
 
-        // For tone knobs, we apply a very minimal constant headroom reduction
-        // only if any boost knob is active. This avoids the "dipping" sensation.
-        val maxToneBoost = listOf(
-            if (config.bassEnabled) config.bassDb else 0f,
-            if (config.trebleEnabled) config.trebleDb else 0f,
-            if (config.airEnabled) config.airDb else 0f
-        ).maxOrNull()?.coerceAtLeast(0f) ?: 0f
-
-        // Compensation for tone knobs (1:1 ratio to prevent clipping/limiting noise)
-        val toneHeadroom = if (maxToneBoost > 0.1f) maxToneBoost else 0f
-
-        val totalPreamp = manualPreamp + autoEqPreamp + reverbCompensation + appliedEqMasterGain - toneHeadroom
+        val totalPreamp = manualPreamp + autoEqPreamp + reverbCompensation + appliedEqMasterGain
 
         dsp.setPreamp(totalPreamp)
 

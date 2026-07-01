@@ -12,10 +12,7 @@ import com.arthenica.ffmpegkit.ReturnCode
 import com.beatflowy.app.model.Song
 import com.beatflowy.app.model.SongSource
 import com.beatflowy.app.repository.DriveAccountRepository
-import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.*
 import java.io.FileInputStream
 import java.io.File
 import java.util.Locale
@@ -44,6 +41,8 @@ internal class FfmpegAlacDecoder(
         val format = probeFormat(request.song, headers) ?: return@withContext DecodeResult.Failed("Format probe failed (ALAC/WAV)")
         
         val inputSource = resolveInputSource(request.song)
+        if (inputSource.isBlank()) return@withContext DecodeResult.Failed("Unable to resolve input source for ${request.song.title}")
+
         val outputFormat = PcmAudioFormat(
             sampleRate = format.sampleRate,
             channels = format.channels.coerceIn(1, 8),
@@ -58,7 +57,6 @@ internal class FfmpegAlacDecoder(
 
         val pipePath = FFmpegKitConfig.registerNewFFmpegPipe(context)
         Log.d(TAG, "FFmpeg output pipe registered at: $pipePath")
-
 
         // Determine demuxer to help FFmpeg with pipes or extension-less cache files
         val demuxerHint = when {
@@ -174,7 +172,7 @@ internal class FfmpegAlacDecoder(
                 }
                 
                 if (bytesRead == 0) {
-                    kotlinx.coroutines.delay(5)
+                    delay(5)
                     continue
                 }
 
@@ -248,12 +246,14 @@ internal class FfmpegAlacDecoder(
         return headers
     }
 
-    private fun resolveInputSource(song: Song): String {
+    private suspend fun resolveInputSource(song: Song): String {
         val cachedFile = cloudCacheManager.getCachedFile(song)
         if (cachedFile != null) return cachedFile.absolutePath
 
         return if (song.source == SongSource.GDRIVE) {
             "https://www.googleapis.com/drive/v3/files/${song.driveFileId}?alt=media"
+        } else if (song.source == SongSource.TELEGRAM) {
+            cloudCacheManager.getTelegramFilePath(song, tdLibManager) ?: ""
         } else if (song.uri.scheme?.startsWith("http") == true) {
             song.uri.toString()
         } else {
@@ -336,7 +336,7 @@ internal class FfmpegAlacDecoder(
         }
     }
 
-    private fun probeFormatWithExtractor(song: Song, headers: Map<String, String>): ProbedAlacFormat? {
+    private suspend fun probeFormatWithExtractor(song: Song, headers: Map<String, String>): ProbedAlacFormat? {
         val extractor = MediaExtractor()
         return try {
             val cachedFile = cloudCacheManager.getCachedFile(song)
@@ -347,12 +347,12 @@ internal class FfmpegAlacDecoder(
                 if (dataSource != null) {
                     extractor.setDataSource(dataSource)
                 } else {
-                    val url = if (song.source == SongSource.GDRIVE) {
-                        "https://www.googleapis.com/drive/v3/files/${song.driveFileId}?alt=media"
+                    val inputSource = resolveInputSource(song)
+                    if (inputSource.isNotBlank()) {
+                        extractor.setDataSource(inputSource, headers)
                     } else {
-                        song.uri.toString()
+                        return null
                     }
-                    extractor.setDataSource(url, headers)
                 }
             } else {
                 try {

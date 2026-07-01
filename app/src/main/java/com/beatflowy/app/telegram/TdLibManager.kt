@@ -35,6 +35,8 @@ class TdLibManager private constructor(
 
     val updates = MutableSharedFlow<TdApi.Update>(extraBufferCapacity = 64)
 
+    fun isReady(): Boolean = _authState.value is AuthState.Ready
+
     private val fileFlows = ConcurrentHashMap<Int, MutableStateFlow<TdApi.File?>>()
 
     fun getFileFlow(fileId: Int): StateFlow<TdApi.File?> {
@@ -92,14 +94,19 @@ class TdLibManager private constructor(
             }
         }
 
-    suspend fun submitPhoneNumber(phone: String) =
-        send(TdApi.SetAuthenticationPhoneNumber(phone, TdApi.PhoneNumberAuthenticationSettings()))
+    suspend fun submitPhoneNumber(phone: String): TdApi.Ok {
+        Log.d("TDLib", "submitPhoneNumber called for $phone (Ready: ${isReady()})")
+        return send(TdApi.SetAuthenticationPhoneNumber(phone, TdApi.PhoneNumberAuthenticationSettings()))
+    }
 
     suspend fun submitCode(code: String) =
         send(TdApi.CheckAuthenticationCode(code))
 
     suspend fun submitPassword(password: String) =
         send(TdApi.CheckAuthenticationPassword(password))
+
+    suspend fun getMessage(chatId: Long, messageId: Long): TdApi.Message =
+        send(TdApi.GetMessage(chatId, messageId))
 
     companion object {
         @Volatile

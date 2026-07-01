@@ -240,8 +240,8 @@ data class DspConfig(
     val crossfadeDurationS: Int = 0,
 
     // Phase 2.7: Headroom Management
-    val headroomManagementEnabled: Boolean = true,
-    val noHeadroomGainEnabled: Boolean = false,
+    val headroomManagementEnabled: Boolean = false,
+    val noHeadroomGainEnabled: Boolean = true,
 
     // Phase 3.4: Hardware Volume
     val hardwareVolumeEnabled: Boolean = false,

@@ -19,7 +19,7 @@ interface LrcLibService {
         @Query("artist_name") artist: String,
         @Query("track_name") title: String,
         @Query("album_name") album: String?,
-        @Query("duration") duration: Int?
+        @Query("duration") duration: Double?
     ): LrcLibResponse
 
     @GET("api/search")
@@ -34,7 +34,7 @@ data class LrcLibResponse(
     @SerializedName("trackName") val trackName: String?,
     @SerializedName("artistName") val artistName: String?,
     @SerializedName("albumName") val albumName: String?,
-    @SerializedName("duration") val duration: Int?,
+    @SerializedName("duration") val duration: Double?,
     @SerializedName("instrumental") val instrumental: Boolean,
     @SerializedName("plainLyrics") val plainLyrics: String?,
     @SerializedName("syncedLyrics") val syncedLyrics: String?
@@ -69,9 +69,9 @@ class OnlineLyricsSource {
         // ── 1. Precise get (exact metadata match by lrclib) ───────────────────────
         if (durationSec > 0) {
             runCatching {
-                val response = lrcLibService.getLyrics(artist, title, album, durationSec)
+                val response = lrcLibService.getLyrics(artist, title, album, durationSec.toDouble())
                 if (isValidResponse(response)) {
-                    val resDur = response.duration ?: 0
+                    val resDur = response.duration?.toInt() ?: 0
                     // Accept only if duration is within 3s of actual song length
                     if (abs(resDur - durationSec) <= 3) {
                         val result = createResultFromResponse(response)
@@ -144,7 +144,7 @@ class OnlineLyricsSource {
         durationSec: Int
     ): Double {
         // 1. Reject bad matches
-        val resDuration = res.duration ?: 0
+        val resDuration = res.duration?.toInt() ?: 0
         // Reject if duration differs by more than 4s OR more than 3% of song length
         val maxAllowedGap = maxOf(4, (durationSec * 0.03).toInt())
         if (abs(resDuration - durationSec) > maxAllowedGap) return 0.0

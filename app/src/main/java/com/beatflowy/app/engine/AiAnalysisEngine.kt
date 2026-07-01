@@ -5,6 +5,7 @@ import android.net.Uri
 import android.util.Log
 import com.beatflowy.app.model.AiAnalysisEntity
 import com.beatflowy.app.model.Song
+import com.beatflowy.app.model.SongSource
 import com.beatflowy.app.repository.GenreApiService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -46,10 +47,14 @@ class AiAnalysisEngine(private val context: Context) {
     }
 
     suspend fun analyzeSong(song: Song): AiAnalysisEntity? = withContext(Dispatchers.Default) {
+        if (song.source != SongSource.LOCAL) return@withContext null // Skip cloud/telegram songs for AI analysis to avoid native crashes on web URIs
+
         try {
             // 1. Extract audio features using native C++ engine
             // We analyze the first 60 seconds as requested
-            val features = NativeDsp().extractFeatures(context, song.uri, 60) ?: return@withContext null
+            val features = NativeDsp().use { dsp ->
+                dsp.extractFeatures(context, song.uri, 60)
+            } ?: return@withContext null
             
             // 2. Run AI Inference for Genre (Local + Online)
             val genreResult = runInference(genreInterpreter, features.spectralData)
@@ -113,6 +118,9 @@ class AiAnalysisEngine(private val context: Context) {
             )
         } catch (e: Exception) {
             Log.e(TAG, "Error analyzing song ${song.title}", e)
+            null
+        } catch (t: Throwable) {
+            Log.e(TAG, "Fatal error analyzing song ${song.title}", t)
             null
         }
     }

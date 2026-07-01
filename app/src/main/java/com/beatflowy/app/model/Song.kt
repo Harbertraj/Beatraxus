@@ -170,6 +170,9 @@ data class PlayerUiState(
     val selectedCloudEmail: String? = null,
     val selectedTelegramChannelUrl: String? = null,
     val libraryMode: LibraryMode = LibraryMode.LOCAL,
+    // Cloud
+    val driveAccounts: List<com.beatflowy.app.repository.DriveAccount> = emptyList(),
+    val telegramChannels: List<TelegramChannel> = emptyList(),
     // Last.fm
     val lastFmUsername: String? = null,
     val scrobblingEnabled: Boolean = true,
@@ -261,6 +264,8 @@ data class PlayerUiState(
                 selectedCloudEmail == other.selectedCloudEmail &&
                 selectedTelegramChannelUrl == other.selectedTelegramChannelUrl &&
                 libraryMode == other.libraryMode &&
+                driveAccounts == other.driveAccounts &&
+                telegramChannels == other.telegramChannels &&
                 lastFmUsername == other.lastFmUsername &&
                 scrobblingEnabled == other.scrobblingEnabled &&
                 metadataNetworkType == other.metadataNetworkType &&
@@ -348,6 +353,8 @@ data class PlayerUiState(
         result = 31 * result + (selectedCloudEmail?.hashCode() ?: 0)
         result = 31 * result + (selectedTelegramChannelUrl?.hashCode() ?: 0)
         result = 31 * result + libraryMode.hashCode()
+        result = 31 * result + driveAccounts.hashCode()
+        result = 31 * result + telegramChannels.hashCode()
         result = 31 * result + (lastFmUsername?.hashCode() ?: 0)
         result = 31 * result + scrobblingEnabled.hashCode()
         result = 31 * result + metadataNetworkType.hashCode()

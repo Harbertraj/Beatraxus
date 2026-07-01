@@ -387,7 +387,8 @@ fun BouncyWordByWordFlow(
             
             val wordAlpha by animateFloatAsState(
                 targetValue = if (isWordActive) 1f else 0.35f,
-                animationSpec = tween(durationMillis = 250),
+                // Snap alpha for ELRC to allow brush to handle the smooth fill transition
+                animationSpec = if (isWordByWord && isWordActive) snap() else tween(durationMillis = 250),
                 label = "wordAlpha"
             )
             
@@ -404,11 +405,12 @@ fun BouncyWordByWordFlow(
             val wordDuration = word.duration.coerceAtLeast(1L)
             val wordProgress = ((progressInLine - relativeStartTime).toFloat() / wordDuration).coerceIn(0f, 1f)
 
+            // Enhanced "Fill Effect": Sharp gradient transition for a karaoke-like feel
             val brush = if (isWordByWord && isWordActive && wordProgress < 1f) {
                 Brush.horizontalGradient(
                     0.0f to Color.White,
                     wordProgress to Color.White,
-                    (wordProgress + 0.15f).coerceAtMost(1f) to Color.White.copy(alpha = 0.35f),
+                    wordProgress to Color.White.copy(alpha = 0.35f),
                     1.0f to Color.White.copy(alpha = 0.35f)
                 )
             } else null

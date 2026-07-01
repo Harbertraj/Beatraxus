@@ -53,11 +53,77 @@ class CloudCacheManager(
         tdLib: TdLibManager,
         isSeekPending: () -> Boolean = { false }
     ): MediaDataSource? {
-        if (song.source == SongSource.TELEGRAM && song.telegramFileId != null) {
-            return TelegramFileDataSource(song.telegramFileId, song.fileSizeBytes, tdLib)
+        if (song.source == SongSource.TELEGRAM) {
+            return TelegramFileDataSource(song, tdLib)
         }
         if (!song.isCloud()) return null
         return StreamingCacheDataSource(song, isSeekPending)
+    }
+
+    /**
+     * For Telegram songs, tries to get the local path from TDLib, refreshing fileId if needed.
+     * This is useful for decoders like FFmpeg that need a real file path.
+     */
+    suspend fun getTelegramFilePath(song: Song, tdLib: TdLibManager): String? = withContext(Dispatchers.IO) {
+        if (song.source != SongSource.TELEGRAM) return@withContext null
+        
+        var currentFileId = song.telegramFileId
+        if (currentFileId == null || currentFileId == 0) {
+            currentFileId = refreshFileId(song, tdLib)
+        }
+        
+        if (currentFileId == null || currentFileId == 0) {
+            Log.e(TAG, "No fileId for Telegram song: ${song.title}")
+            return@withContext null
+        }
+
+        // Trigger/check download
+        var file = try {
+            tdLib.send(TdApi.DownloadFile(currentFileId, 32, 0, 0, false))
+        } catch (e: Exception) {
+            Log.w(TAG, "DownloadFile failed for ${song.title}, refreshing ID: ${e.message}")
+            currentFileId = refreshFileId(song, tdLib) ?: return@withContext null
+            try { 
+                tdLib.send(TdApi.DownloadFile(currentFileId, 32, 0, 0, false)) 
+            } catch (e2: Exception) { 
+                Log.e(TAG, "DownloadFile failed again after refresh: ${e2.message}")
+                null 
+            }
+        }
+
+        if (file?.local?.path?.isNotBlank() == true) {
+            return@withContext file.local.path
+        }
+
+        // Wait for path to become available
+        Log.d(TAG, "Waiting for Telegram file path for ${song.title} (ID: $currentFileId)...")
+        var attempts = 0
+        while (attempts < 2400) { // 2 minutes
+            file = try { tdLib.send(TdApi.GetFile(currentFileId)) } catch (e: Exception) { null }
+            if (file?.local?.path?.isNotBlank() == true) {
+                Log.d(TAG, "Telegram file path available for ${song.title}: ${file.local.path}")
+                return@withContext file.local.path
+            }
+            if (attempts % 20 == 0 && file != null) {
+                Log.d(TAG, "Waiting for Telegram song path ${song.title}: ${file.local.downloadedPrefixSize} / ${song.fileSizeBytes} bytes...")
+            }
+            delay(50)
+            attempts++
+        }
+        Log.e(TAG, "Timeout waiting for Telegram file path: ${song.title}")
+        null
+    }
+
+    private suspend fun refreshFileId(song: Song, tdLib: TdLibManager): Int? {
+        val chatId = song.telegramChatId ?: return null
+        val messageId = song.telegramMessageId ?: return null
+        return try {
+            val msg = tdLib.getMessage(chatId, messageId)
+            (msg.content as? TdApi.MessageAudio)?.audio?.audio?.id
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to refresh Telegram fileId for ${song.title}: ${e.message}")
+            null
+        }
     }
 
     private fun getCachedFileById(id: String): File? {
@@ -328,8 +394,7 @@ class CloudCacheManager(
     }
 
     private inner class TelegramFileDataSource(
-        private val fileId: Int,
-        private val knownSize: Long,
+        private val song: Song,
         private val tdLib: TdLibManager
     ) : MediaDataSource() {
 
@@ -340,23 +405,59 @@ class CloudCacheManager(
         private val scope = CoroutineScope(Dispatchers.IO + job)
 
         init {
-            // Kick off the download immediately at high priority
-            runBlocking {
-                tdLib.send(TdApi.DownloadFile(fileId, 32, 0, 0, false))
-            }
-            scope.launch {
-                tdLib.getFileFlow(fileId).collect { file ->
-                    if (file != null) {
-                        lock.withLock {
-                            localPath = file.local.path
-                            downloadedPrefix = file.local.downloadedPrefixSize.toLong()
+            if (tdLib.isReady()) {
+                scope.launch {
+                    var currentFileId = song.telegramFileId
+                    
+                    // If ID is missing or potentially stale, refresh it
+                    if (currentFileId == null || currentFileId == 0) {
+                        currentFileId = refreshFileId()
+                    }
+
+                    if (currentFileId != null && currentFileId != 0) {
+                        try {
+                            tdLib.send(TdApi.DownloadFile(currentFileId, 32, 0, 0, false))
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Stale fileId detected for ${song.title}, refreshing...")
+                            currentFileId = refreshFileId()
+                            if (currentFileId != null) {
+                                try {
+                                    tdLib.send(TdApi.DownloadFile(currentFileId, 32, 0, 0, false))
+                                } catch (_: Exception) {
+                                    Log.e(TAG, "Failed to download after refresh for ${song.title}")
+                                }
+                            }
+                        }
+                    }
+                    
+                    if (currentFileId != null && currentFileId != 0) {
+                        tdLib.getFileFlow(currentFileId).collect { file ->
+                            if (file != null) {
+                                lock.withLock {
+                                    // TDLib returns empty path if file is not yet available for reading
+                                    localPath = file.local.path.takeIf { it.isNotBlank() }
+                                    downloadedPrefix = file.local.downloadedPrefixSize.toLong()
+                                }
+                            }
                         }
                     }
                 }
             }
         }
 
-        override fun getSize(): Long = knownSize
+        private suspend fun refreshFileId(): Int? {
+            val chatId = song.telegramChatId ?: return null
+            val messageId = song.telegramMessageId ?: return null
+            return try {
+                val msg = tdLib.getMessage(chatId, messageId)
+                (msg.content as? TdApi.MessageAudio)?.audio?.audio?.id
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to refresh Telegram fileId for ${song.title}: ${e.message}")
+                null
+            }
+        }
+
+        override fun getSize(): Long = song.fileSizeBytes
 
         override fun readAt(position: Long, buffer: ByteArray, offset: Int, size: Int): Int = lock.withLock {
             val totalSize = getSize()
@@ -364,14 +465,14 @@ class CloudCacheManager(
             
             var attempts = 0
             // Wait for TDLib to have downloaded at least up to position + size
-            while (downloadedPrefix < position + size && attempts < 200) {
+            // AND for localPath to be available (not blank)
+            while ((localPath == null || downloadedPrefix < position + size) && attempts < 2400) {
                 try {
                     lock.unlock()
                     Thread.sleep(50)
                     lock.lock()
                 } catch (e: Exception) {}
                 attempts++
-                // Quick check if it's already satisfied after sleep
                 if (localPath != null && downloadedPrefix >= position + size) break
             }
 

@@ -219,6 +219,11 @@ internal class MediaCodecAudioDecoder(
             return cachedFile.absolutePath to emptyMap()
         }
 
+        if (song.source == SongSource.TELEGRAM) {
+            val path = cloudCacheManager.getTelegramFilePath(song, tdLibManager)
+            if (path != null) return path to emptyMap()
+        }
+
         return if (song.source == SongSource.GDRIVE) {
             val url = "https://www.googleapis.com/drive/v3/files/${song.driveFileId}?alt=media"
             val headers = mutableMapOf<String, String>()

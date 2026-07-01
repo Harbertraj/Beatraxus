@@ -50,14 +50,19 @@ class DriveAccountRepository(private val context: Context) {
     }
 
     val accounts: Flow<List<DriveAccount>> = context.dataStore.data.map { prefs ->
-        (prefs[DRIVE_ACCOUNTS] ?: emptySet()).map { json ->
-            val obj = JSONObject(json)
-            DriveAccount(
-                obj.getString("email"),
-                obj.getString("name"),
-                obj.optString("photo", ""),
-                obj.optBoolean("enabled", true)
-            )
+        (prefs[DRIVE_ACCOUNTS] ?: emptySet()).mapNotNull { json ->
+            try {
+                val obj = JSONObject(json)
+                DriveAccount(
+                    obj.getString("email"),
+                    obj.getString("name"),
+                    obj.optString("photo").takeIf { it.isNotEmpty() },
+                    obj.optBoolean("enabled", true)
+                )
+            } catch (e: Exception) {
+                android.util.Log.e("DriveAccountRepo", "Error parsing drive account JSON", e)
+                null
+            }
         }
     }
 
@@ -70,12 +75,13 @@ class DriveAccountRepository(private val context: Context) {
 
         try {
             val credential = getCredential(email)
-            val token = credential.token
+            val token = credential.getToken()
             if (token != null) {
-                tokenCache[email] = CachedToken(token, now + 3000_000) // ~50 mins
+                tokenCache[email] = CachedToken(token, now + 3500_000) // ~58 mins
             }
             token
         } catch (e: Exception) {
+            android.util.Log.e("DriveAccountRepo", "Error getting access token for $email", e)
             null
         }
     }
@@ -84,12 +90,12 @@ class DriveAccountRepository(private val context: Context) {
         android.util.Log.d("DriveAccountRepo", "Adding account: ${account.email}")
         context.dataStore.edit { prefs ->
             val current = prefs[DRIVE_ACCOUNTS] ?: emptySet()
-            // Check if already exists by email to avoid duplicates
+            // Remove any existing entry with the same email
             val filtered = current.filter { json ->
                 try {
                     JSONObject(json).getString("email") != account.email
                 } catch (e: Exception) {
-                    false // Keep it if malformed to avoid losing data, or true to discard? Let's discard malformed.
+                    false // Remove malformed
                 }
             }
             val json = JSONObject().apply {
@@ -107,11 +113,15 @@ class DriveAccountRepository(private val context: Context) {
         context.dataStore.edit { prefs ->
             val current = prefs[DRIVE_ACCOUNTS] ?: emptySet()
             val updated = current.map { json ->
-                val obj = JSONObject(json)
-                if (obj.getString("email") == email) {
-                    obj.put("enabled", enabled)
-                    obj.toString()
-                } else {
+                try {
+                    val obj = JSONObject(json)
+                    if (obj.getString("email") == email) {
+                        obj.put("enabled", enabled)
+                        obj.toString()
+                    } else {
+                        json
+                    }
+                } catch (e: Exception) {
                     json
                 }
             }.toSet()
@@ -123,8 +133,12 @@ class DriveAccountRepository(private val context: Context) {
         context.dataStore.edit { prefs ->
             val current = prefs[DRIVE_ACCOUNTS] ?: emptySet()
             val filtered = current.filter { json ->
-                val obj = JSONObject(json)
-                obj.getString("email") != email
+                try {
+                    val obj = JSONObject(json)
+                    obj.getString("email") != email
+                } catch (e: Exception) {
+                    false // Remove malformed
+                }
             }.toSet()
             prefs[DRIVE_ACCOUNTS] = filtered
         }
