@@ -121,12 +121,14 @@ class MainActivity : ComponentActivity() {
             }
         }
         
-        // Immediate check to start loading if possible, but skip on first run to avoid nagging the user
-        // before they click the "Enter the Flow" button.
+        // Start library loading after the first frame is drawn to avoid UI jank on startup
         window.decorView.post {
             com.beatflowy.app.cast.CastManager.initialize(this@MainActivity)
             if (!viewModel.uiState.value.isFirstRun) {
-                checkAndRequestPermissions()
+                // Post again to ensure the activity is fully settled before starting intensive I/O
+                window.decorView.postDelayed({
+                    checkAndRequestPermissions()
+                }, 500)
             }
         }
     }

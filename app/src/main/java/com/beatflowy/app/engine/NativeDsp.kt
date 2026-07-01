@@ -230,6 +230,18 @@ class NativeDsp : AutoCloseable {
 
     suspend fun extractFeatures(context: android.content.Context, uri: android.net.Uri, seconds: Int): AudioFeatures? = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
         if (uri == android.net.Uri.EMPTY || uri.scheme?.startsWith("http") == true) return@withContext null
+        
+        // Guard against ALAC files which cause native SIGSEGV due to MediaCodec config failures
+        val mimeType = context.contentResolver.getType(uri)
+        val extension = uri.path?.substringAfterLast('.', "")?.lowercase()
+        val isAlac = mimeType == "audio/alac" || extension == "alac" || 
+                    ((extension == "m4a" || mimeType == "audio/mp4") && isAlacEncoded(context, uri))
+
+        if (isAlac) {
+            android.util.Log.w("NativeDsp", "Skipping feature extraction for ALAC to avoid native crash: $uri")
+            return@withContext null
+        }
+
         val pfd = try {
             context.contentResolver.openFileDescriptor(uri, "r")
         } catch (e: Exception) {
@@ -237,9 +249,30 @@ class NativeDsp : AutoCloseable {
         } ?: return@withContext null
         try {
             val fd = pfd.fd
-            nExtractFeatures(fd, seconds)
+            // Wrap native call in try-catch to prevent SIGSEGV or other native exceptions from killing the app
+            try {
+                nExtractFeatures(fd, seconds)
+            } catch (t: Throwable) {
+                android.util.Log.e("NativeDsp", "Native crash prevented in nExtractFeatures: ${t.message}")
+                null
+            }
         } finally {
             try { pfd.close() } catch (e: Exception) {}
+        }
+    }
+
+    private fun isAlacEncoded(context: android.content.Context, uri: android.net.Uri): Boolean {
+        val retriever = android.media.MediaMetadataRetriever()
+        return try {
+            retriever.setDataSource(context, uri)
+            val mime = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_MIMETYPE)
+            val bitrate = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_BITRATE)?.toIntOrNull() ?: 0
+            // ALAC often reports as audio/alac or audio/mp4 with high bitrate (>500kbps)
+            mime == "audio/alac" || (mime == "audio/mp4" && bitrate > 500000)
+        } catch (e: Exception) {
+            false
+        } finally {
+            try { retriever.release() } catch (e: Exception) {}
         }
     }
 

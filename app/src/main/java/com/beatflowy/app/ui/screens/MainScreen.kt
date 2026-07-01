@@ -582,7 +582,7 @@ fun MainScreen(
                                     LibraryView.FOLDER_DETAIL -> uiState.selectedItemName ?: "FOLDER"
                                     LibraryView.YEAR_DETAIL -> uiState.selectedItemName ?: "YEAR"
                                     LibraryView.GENRE_DETAIL -> uiState.selectedItemName ?: "GENRE"
-                                    LibraryView.CLOUD -> "CLOUD ACCOUNT"
+                                    LibraryView.CLOUD -> "CLOUD"
                                 }
                                 val titleIcon = when (uiState.currentView) {
                                     LibraryView.HOME -> Icons.Rounded.Home
@@ -4942,7 +4942,7 @@ fun SortSheetContent(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Text("SORT BY", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp, letterSpacing = 1.sp)
+            Text("SORT BY", color = Color.White, fontWeight = FontWeight.Black, fontSize = 14.sp, letterSpacing = 1.sp)
             IconButton(onClick = { viewModel.toggleSortOrder() }, modifier = Modifier.size(40.dp).background(Color.White.copy(0.06f), CircleShape)) {
                 Icon(if (uiState.isAscending) Icons.Rounded.ArrowUpward else Icons.Rounded.ArrowDownward, null, tint = AccentBlue, modifier = Modifier.size(20.dp))
             }
@@ -4981,7 +4981,7 @@ fun CloudSheetContent(
 ) {
     val enabledAccounts = remember(accounts) { accounts.filter { it.enabled } }
     Column(modifier = Modifier.padding(16.dp)) {
-        Text("CLOUD ACCOUNTS", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp, letterSpacing = 1.sp, modifier = Modifier.padding(bottom = 16.dp))
+        Text("CLOUD ACCOUNTS", color = Color.White, fontWeight = FontWeight.Black, fontSize = 14.sp, letterSpacing = 1.sp, modifier = Modifier.padding(bottom = 16.dp))
         Row(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Color.White.copy(0.04f)).clickable { onSelectAccount(null); onDismiss() }.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Rounded.CloudQueue, null, tint = AccentBlue, modifier = Modifier.size(24.dp))
             Spacer(Modifier.width(16.dp))
@@ -5031,7 +5031,7 @@ fun LayoutDensitySheetContent(
     val maxVal = if (isGrid) 5f else 6f
     val currentVal = if (isGrid) categoryGridColumns.toFloat() else trackLayoutDensity.toFloat()
     Column(modifier = Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(if (isGrid) "GRID COLUMNS" else "LAYOUT DENSITY", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp, letterSpacing = 1.sp)
+        Text(if (isGrid) "GRID COLUMNS" else "LAYOUT DENSITY", color = Color.White, fontWeight = FontWeight.Black, fontSize = 14.sp, letterSpacing = 1.sp)
         Spacer(Modifier.height(24.dp))
         Slider(value = currentVal, onValueChange = { if (isGrid) onCategoryGridColumnsChange(it.toInt()) else onTrackLayoutDensityChange(it.toInt()) }, valueRange = 1f..maxVal, steps = (maxVal - 2).toInt(), colors = SliderDefaults.colors(thumbColor = AccentBlue, activeTrackColor = AccentBlue))
         Text(currentVal.toInt().toString(), color = AccentBlue, fontWeight = FontWeight.Black, fontSize = 24.sp)

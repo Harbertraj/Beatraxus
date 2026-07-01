@@ -1860,6 +1860,8 @@ public:
 
 extern "C" {
 JNIEXPORT jobject JNICALL Java_com_beatflowy_app_engine_NativeDsp_nExtractFeatures(JNIEnv* env, jobject thiz, jint fd, jint seconds) {
+    if (fd < 0) return nullptr;
+
     // Check if it's a DSF file first
     char magic[4];
     lseek(fd, 0, SEEK_SET);
@@ -1867,10 +1869,14 @@ JNIEXPORT jobject JNICALL Java_com_beatflowy_app_engine_NativeDsp_nExtractFeatur
         // Basic DSF metadata extraction
         DsfFormatChunk fmt = {};
         lseek(fd, 28, SEEK_SET); // Skip DSD header to get to fmt chunk
-        read(fd, &fmt, sizeof(DsfFormatChunk));
+        if (read(fd, &fmt, sizeof(DsfFormatChunk)) != sizeof(DsfFormatChunk)) {
+            return nullptr;
+        }
 
         jclass featuresClass = env->FindClass("com/beatflowy/app/engine/AudioFeatures");
+        if (!featuresClass) return nullptr;
         jmethodID constructor = env->GetMethodID(featuresClass, "<init>", "(FFFFFFFFF[F)V");
+        if (!constructor) return nullptr;
         jfloatArray spectralData = env->NewFloatArray(128);
         float dummy[128] = {0};
         env->SetFloatArrayRegion(spectralData, 0, 128, dummy);
@@ -1890,6 +1896,7 @@ JNIEXPORT jobject JNICALL Java_com_beatflowy_app_engine_NativeDsp_nExtractFeatur
     }
 
     AMediaExtractor* ex = AMediaExtractor_new();
+    if (!ex) return nullptr;
     if (AMediaExtractor_setDataSourceFd(ex, fd, 0, 0x7FFFFFFFFFFFFFFFL) != AMEDIA_OK) {
         AMediaExtractor_delete(ex);
         return nullptr;
@@ -1899,18 +1906,26 @@ JNIEXPORT jobject JNICALL Java_com_beatflowy_app_engine_NativeDsp_nExtractFeatur
     int trackIdx = -1;
     for (int i = 0; i < AMediaExtractor_getTrackCount(ex); i++) {
         AMediaFormat* format = AMediaExtractor_getTrackFormat(ex, i);
+        if (!format) continue;
         const char* mime;
         if (AMediaFormat_getString(format, AMEDIAFORMAT_KEY_MIME, &mime)) {
             if (strncmp(mime, "audio/", 6) == 0) {
                 trackIdx = i;
                 codec = AMediaCodec_createDecoderByType(mime);
-                AMediaCodec_configure(codec, format, nullptr, nullptr, 0);
-                AMediaExtractor_selectTrack(ex, i);
+                if (codec) {
+                    media_status_t status = AMediaCodec_configure(codec, format, nullptr, nullptr, 0);
+                    if (status != AMEDIA_OK) {
+                        AMediaCodec_delete(codec);
+                        codec = nullptr;
+                    } else {
+                        AMediaExtractor_selectTrack(ex, i);
+                    }
+                }
                 AMediaFormat_delete(format);
-                break;
+                if (codec) break;
             }
         }
-        AMediaFormat_delete(format);
+        if (format) AMediaFormat_delete(format);
     }
 
     if (!codec) {
@@ -1918,16 +1933,22 @@ JNIEXPORT jobject JNICALL Java_com_beatflowy_app_engine_NativeDsp_nExtractFeatur
         return nullptr;
     }
 
-    AMediaCodec_start(codec);
+    if (AMediaCodec_start(codec) != AMEDIA_OK) {
+        AMediaCodec_delete(codec);
+        AMediaExtractor_delete(ex);
+        return nullptr;
+    }
 
     std::vector<float> pcm;
     bool sawInputEOS = false, sawOutputEOS = false;
     int sampleRate = 44100, channels = 2;
 
     AMediaFormat* format = AMediaCodec_getOutputFormat(codec);
-    AMediaFormat_getInt32(format, AMEDIAFORMAT_KEY_SAMPLE_RATE, &sampleRate);
-    AMediaFormat_getInt32(format, AMEDIAFORMAT_KEY_CHANNEL_COUNT, &channels);
-    AMediaFormat_delete(format);
+    if (format) {
+        AMediaFormat_getInt32(format, AMEDIAFORMAT_KEY_SAMPLE_RATE, &sampleRate);
+        AMediaFormat_getInt32(format, AMEDIAFORMAT_KEY_CHANNEL_COUNT, &channels);
+        AMediaFormat_delete(format);
+    }
 
     int64_t maxSamples = (int64_t)seconds * sampleRate * channels;
     if (maxSamples <= 0) maxSamples = 30 * sampleRate * channels;

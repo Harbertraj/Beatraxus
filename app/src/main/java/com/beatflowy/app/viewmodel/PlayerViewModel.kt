@@ -338,6 +338,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
         // Start AI Analysis worker
         viewModelScope.launch(Dispatchers.Default) {
+            // Delay AI analysis at startup to prevent blocking the main thread during initial UI render
+            delay(2000)
+
             for (song in aiAnalysisChannel) {
                 try {
                     val analysis = aiAnalysisEngine.analyzeSong(song)
@@ -355,8 +358,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                             }
                         }
                     }
-                } catch (e: Exception) {
-                    Log.e("PlayerViewModel", "AI Analysis failed for ${song.title}", e)
+                } catch (t: Throwable) {
+                    Log.e("PlayerViewModel", "AI Analysis failed for ${song.title}: ${t.message}", t)
                 }
                 // Small delay to prevent CPU hogging
                 delay(100)
