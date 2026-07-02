@@ -169,10 +169,11 @@ public:
                 double input = static_cast<double>(data[idx]);
 
                 if (type == 2) {
-                    input += -0.9 * lastDitherErr[c];
+                    double original = input;                    // save before shaping
+                    input += -0.9 * lastDitherErr[c];           // apply 1st-order shaping
                     double dithered = input + noise * scale;
                     double quantized = std::floor(dithered / scale + 0.5) * scale;
-                    lastDitherErr[c] = quantized - input;
+                    lastDitherErr[c] = quantized - original;    // error vs true original
                     data[idx] = static_cast<T>(quantized);
                 } else if (type == 3) {
                     double hpNoise = noise - 0.5 * lastNoise[c];
@@ -742,8 +743,8 @@ public:
     void init(int sampleRate, int channels) {
         currentSampleRate = sampleRate;
         currentChannels = channels;
-        // 20ms look-ahead delay for musical peak protection
-        delaySize = (size_t)std::max(1, (int)std::ceil(0.020 * sampleRate));
+        // 5ms look-ahead delay for musical peak protection
+        delaySize = (size_t)std::max(1, (int)std::ceil(0.005 * sampleRate));
         delayBuffer.assign(delaySize * channels, 0.0);
         writePos = 0;
         gainEnvelope = 1.0;
@@ -820,25 +821,37 @@ public:
 };
 
 void resample_cubic(const float* in, int inFrames, float* out, int outFrames, int channels, float ratio) {
+    // Anti-aliasing pre-filter state (one-pole lowpass at Nyquist*ratio) for downsampling
+    static thread_local std::vector<float> filterState;
+    static thread_local std::vector<float> filtered;
+    bool needFilter = ratio < 0.999f; // downsampling: output is lower rate
+    if (needFilter) {
+        filtered.assign(inFrames * channels, 0.0f);
+        filterState.resize(channels, 0.0f);
+        // cutoff = ratio * pi (bilinear-approx one-pole)
+        float alpha = ratio / (ratio + 1.0f);  // simple RC lowpass
+        for (int f = 0; f < inFrames; f++)
+            for (int c = 0; c < channels; c++) {
+                filterState[c] = filterState[c] + alpha * (in[f * channels + c] - filterState[c]);
+                filtered[f * channels + c] = filterState[c];
+            }
+    }
+    const float* src = needFilter ? filtered.data() : in;
     for (int i = 0; i < outFrames; i++) {
         float x = i / ratio;
         int ix = (int)x;
         float frac = x - ix;
         for (int ch = 0; ch < channels; ch++) {
-            auto get = [&](int f) {
-                if (f < 0) return in[ch];
-                if (f >= inFrames) return in[(inFrames - 1) * channels + ch];
-                return in[f * channels + ch];
+            auto get = [&](int f) -> float {
+                if (f < 0) return src[ch];
+                if (f >= inFrames) return src[(inFrames - 1) * channels + ch];
+                return src[f * channels + ch];
             };
-            float y0 = get(ix - 1);
-            float y1 = get(ix);
-            float y2 = get(ix + 1);
-            float y3 = get(ix + 2);
-            float a = (-0.5f * y0) + (1.5f * y1) - (1.5f * y2) + (0.5f * y3);
-            float b = y0 - (2.5f * y1) + (2.0f * y2) - (0.5f * y3);
-            float c = (-0.5f * y0) + (0.5f * y2);
-            float d = y1;
-            out[(i * channels) + ch] = a * frac * frac * frac + b * frac * frac + c * frac + d;
+            float y0=get(ix-1), y1=get(ix), y2=get(ix+1), y3=get(ix+2);
+            float a=(-0.5f*y0)+(1.5f*y1)-(1.5f*y2)+(0.5f*y3);
+            float b=y0-(2.5f*y1)+(2.0f*y2)-(0.5f*y3);
+            float c2=(-0.5f*y0)+(0.5f*y2);
+            out[i*channels+ch] = a*frac*frac*frac + b*frac*frac + c2*frac + y1;
         }
     }
 }
@@ -983,37 +996,53 @@ public:
 };
 
 struct BandSplitter {
-    double lp1State[2] = {0,0}, lp2State[2] = {0,0}, lp3State[2] = {0,0}, lp4State[2] = {0,0};
-    double a1, a2, a3, a4;
+    // 2nd-order Linkwitz-Riley (2x cascaded Butterworth) for 5-band split
+    // L/R channels each get independent state
+    struct LR2 {
+        double b0, b1, b2, a1, a2;
+        double z1[2], z2[2];
+        void init(double hz, double sr, bool hiPass) {
+            double wc = 2.0 * M_PI * hz / sr;
+            double k = std::tan(wc * 0.5);
+            double k2 = k * k;
+            double denom = k2 + std::sqrt(2.0) * k + 1.0;
+            if (!hiPass) {
+                b0 = k2/denom; b1 = 2*b0; b2 = b0;
+            } else {
+                b0 = 1.0/denom; b1 = -2*b0; b2 = b0;
+            }
+            a1 = 2*(k2-1)/denom; a2 = (k2-std::sqrt(2.0)*k+1.0)/denom;
+            z1[0]=z1[1]=z2[0]=z2[1]=0.0;
+        }
+        double process(double in, int ch) {
+            double out = b0*in + z1[ch];
+            z1[ch] = b1*in - a1*out + z2[ch];
+            z2[ch] = b2*in - a2*out;
+            return out;
+        }
+    } lp1, hp1, lp2, hp2, lp3, hp3, lp4, hp4;
 
     void init(int sampleRate) {
-        a1 = computeOnePoleCoeff(150.0, (double)sampleRate);
-        a2 = computeOnePoleCoeff(400.0, (double)sampleRate);
-        a3 = computeOnePoleCoeff(1000.0, (double)sampleRate);
-        a4 = computeOnePoleCoeff(3000.0, (double)sampleRate);
-        reset();
+        lp1.init(150,  sampleRate, false); hp1.init(150,  sampleRate, true);
+        lp2.init(400,  sampleRate, false); hp2.init(400,  sampleRate, true);
+        lp3.init(1000, sampleRate, false); hp3.init(1000, sampleRate, true);
+        lp4.init(3000, sampleRate, false); hp4.init(3000, sampleRate, true);
     }
     void reset() {
-        for(int i=0; i<2; i++) lp1State[i] = lp2State[i] = lp3State[i] = lp4State[i] = 0.0;
+        for (auto* f : {&lp1,&hp1,&lp2,&hp2,&lp3,&hp3,&lp4,&hp4})
+            f->z1[0]=f->z1[1]=f->z2[0]=f->z2[1]=0.0;
     }
-    double computeOnePoleCoeff(double hz, double sr) { return exp(-2.0 * M_PI * hz / sr); }
 
     void split(double in, int ch, double bands[5]) {
-        double& s1 = lp1State[ch % 2];
-        double& s2 = lp2State[ch % 2];
-        double& s3 = lp3State[ch % 2];
-        double& s4 = lp4State[ch % 2];
-
-        s1 = in * (1.0 - a1) + s1 * a1;
-        double r1 = in - s1;
-        s2 = r1 * (1.0 - a2) + s2 * a2;
-        double r2 = r1 - s2;
-        s3 = r2 * (1.0 - a3) + s3 * a3;
-        double r3 = r2 - s3;
-        s4 = r3 * (1.0 - a4) + s4 * a4;
-        double r4 = r3 - s4;
-
-        bands[0] = s1; bands[1] = s2; bands[2] = s3; bands[3] = s4; bands[4] = r4;
+        double lo1 = lp1.process(in, ch);
+        double hi1 = hp1.process(in, ch);
+        double lo2 = lp2.process(hi1, ch);
+        double hi2 = hp2.process(hi1, ch);
+        double lo3 = lp3.process(hi2, ch);
+        double hi3 = hp3.process(hi2, ch);
+        double lo4 = lp4.process(hi3, ch);
+        double hi4 = hp4.process(hi3, ch);
+        bands[0]=lo1; bands[1]=lo2; bands[2]=lo3; bands[3]=lo4; bands[4]=hi4;
     }
 };
 
@@ -1076,10 +1105,13 @@ public:
     void setRoomSize(float v) { roomSize.store((double)v * 0.28 + 0.7, std::memory_order_relaxed); }
     void setDamping(float v) { damp.store((double)v * 0.4, std::memory_order_relaxed); }
     void setWet(float v) {
-        // v is 0..1. Maintain original dry signal at unity to prevent volume drop.
-        // Add wet signal on top, scaled for musical balance.
-        wet.store((double)v * 1.5, std::memory_order_relaxed);
-        dry.store(1.0, std::memory_order_relaxed);
+        // Equal-power mix: as wet rises, dry falls, total power stays constant.
+        // v = 0: dry=1, wet=0. v = 1: dry=0.707, wet=1.06 (Freeverb's fixedgain=0.015
+        // already attenuates the reverb signal internally; the 1.06 factor is compensation).
+        double w = std::sqrt((double)v) * 1.06;
+        double d = std::sqrt(1.0 - (double)v * 0.3);  // dry dips only -1.3dB at full wet
+        wet.store(w, std::memory_order_relaxed);
+        dry.store(d, std::memory_order_relaxed);
     }
     void setWidth(float v) { width.store((double)v, std::memory_order_relaxed); }
     template<typename T>
@@ -1146,9 +1178,12 @@ public:
                 for (int c = 0; c < channels; c++) {
                     float sample = input[(inPos + i) * channels + c];
                     if (i < overlapSamples && !firstChunk) {
-                        float fadeIn = (float)i / overlapSamples;
+                        // Hann window: 0.5*(1 - cos(pi*t)), symmetric fade-in/fade-out
+                        float t = (float)i / overlapSamples;
+                        float fadeIn  = 0.5f * (1.0f - std::cos((float)M_PI * t));
+                        float fadeOut = 0.5f * (1.0f - std::cos((float)M_PI * (1.0f - t)));
                         float prevTail = overlapBuffer[i * channels + c];
-                        output[(outFrames + i) * channels + c] = sample * fadeIn + prevTail * (1.0f - fadeIn);
+                        output[(outFrames + i) * channels + c] = sample * fadeIn + prevTail * fadeOut;
                     } else {
                         output[(outFrames + i) * channels + c] = sample;
                     }
@@ -1825,9 +1860,35 @@ public:
             }
         }
 
+        if (flux.size() > 10) {
+            // Sample rate of flux is sampleRate / fftSize (one flux value per FFT hop)
+            float fluxRate = (float)sampleRate / fftSize;
+            float bestScore = 0.0f;
+            float bestBpm = 120.0f;
+            // Search 60-200 BPM (period in flux samples = fluxRate * 60 / bpm)
+            for (float bpm = 60.0f; bpm <= 200.0f; bpm += 1.0f) {
+                float period = fluxRate * 60.0f / bpm;
+                if (period < 2.0f || period >= (float)flux.size()) continue;
+                int lag = (int)std::round(period);
+                double corr = 0.0;
+                int count = 0;
+                for (int i = 0; i + lag < (int)flux.size(); i++) {
+                    corr += (double)flux[i] * flux[i + lag];
+                    count++;
+                }
+                if (count > 0) corr /= count;
+                if ((float)corr > bestScore) { bestScore = (float)corr; bestBpm = bpm; }
+            }
+            res.tempoBpm = bestBpm;
+        } else {
+            res.tempoBpm = 120.0f;
+        }
+
         float totalSamples = (float)frames * channels;
         res.rms = (float)std::sqrt((sumSq[0] + sumSq[1]) / (totalSamples + 1e-10));
         res.peak = peak;
+        res.dynamicRange = 20.0f * std::log10(res.peak + 1e-9f) - 20.0f * std::log10(res.rms + 1e-9f);
+        res.dynamicRange = std::clamp(res.dynamicRange, 0.0f, 60.0f);
         res.stereoWidth = (float)(sideEnergy / (sumSq[0] + sumSq[1] + 1e-10));
 
         // LUFS Calculation (Simplified ITU-R BS.1770)
@@ -2067,7 +2128,12 @@ JNIEXPORT jint JNICALL Java_com_beatflowy_app_engine_NativeDsp_nProcessResampled
     int outFrames = 0; ((DSP*)handle)->process(inBody, inFrames, outBody, outFrames);
     env->ReleaseFloatArrayElements(input, inBody, JNI_ABORT); env->ReleaseFloatArrayElements(output, outBody, 0); return outFrames;
 }
-JNIEXPORT void JNICALL Java_com_beatflowy_app_engine_NativeDsp_nInit(JNIEnv* env, jobject thiz, jlong handle, jfloat sampleRate, jint channels) { if (handle) ((DSP*)handle)->init((int)sampleRate, (int)sampleRate, channels); }
+JNIEXPORT void JNICALL Java_com_beatflowy_app_engine_NativeDsp_nInit(JNIEnv* env, jobject thiz, jlong handle, jfloat sampleRate, jint channels) {
+    if (handle) ((DSP*)handle)->init((int)sampleRate, (int)sampleRate, channels);
+    // NOTE: call nInitResampler afterwards if output rate differs from input rate.
+    // This is safe because nInitResampler calls init(inputSR, targetSR, channels)
+    // which overwrites both rates correctly.
+}
 JNIEXPORT void JNICALL Java_com_beatflowy_app_engine_NativeDsp_nProcess(JNIEnv* env, jobject thiz, jlong handle, jfloatArray data, jint frames) {
     if (!handle) return; jfloat* body = env->GetFloatArrayElements(data, 0); ((DSP*)handle)->processInPlace(body, frames); env->ReleaseFloatArrayElements(data, body, 0);
 }

@@ -11,12 +11,12 @@ import com.beatflowy.app.model.SongSource
 import com.beatflowy.app.model.TelegramChannel
 import com.beatflowy.app.model.parseTelegramChannelName
 import com.beatflowy.app.telegram.TdLibManager
-import com.arthenica.ffmpegkit.FFmpegKit
-import com.arthenica.ffmpegkit.ReturnCode
 import java.io.FileOutputStream
 import java.io.File
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import org.drinkless.tdlib.TdApi
 import org.json.JSONObject
 
@@ -54,196 +54,198 @@ private suspend fun downloadAlbumArtUri(tdLib: TdLibManager, audio: TdApi.Audio)
     if (!tdLib.isReady()) return null
     val thumbnail = audio.albumCoverThumbnail ?: return null
     return try {
-        val file = tdLib.send(TdApi.DownloadFile(thumbnail.file.id, 32, 0, 0, true))
-        if (file.local.isDownloadingCompleted && file.local.path.isNotBlank()) {
-            Uri.fromFile(File(file.local.path))
-        } else null
+        tdLib.send(TdApi.DownloadFile(thumbnail.file.id, 32, 0, 0, true))
+        val path = waitForDownload(tdLib, thumbnail.file.id, 2000) // 2s timeout for thumb
+        path?.let { Uri.fromFile(File(it)) }
     } catch (e: Exception) {
         null
     }
 }
 
 private suspend fun waitForDownload(tdLib: TdLibManager, fileId: Int, timeoutMs: Long = 5000): String? {
-    var attempts = 0
-    while (attempts * 100 < timeoutMs) {
+    val start = System.currentTimeMillis()
+    while (System.currentTimeMillis() - start < timeoutMs) {
         val file = try { tdLib.send(TdApi.GetFile(fileId)) } catch (e: Exception) { null }
-        if (file?.local?.path?.isNotBlank() == true) return file.local.path
-        delay(100)
-        attempts++
+        if (file?.local?.isDownloadingCompleted == true && file.local.path.isNotBlank()) {
+            return file.local.path
+        }
+        delay(200)
     }
     return null
 }
 
-private suspend fun extractAlbumTag(tdLib: TdLibManager, fileId: Int): String? =
-    withContext(Dispatchers.IO) {
-        if (!tdLib.isReady()) return@withContext null
-        try {
-            tdLib.send(TdApi.DownloadFile(fileId, 32, 0, 512 * 1024, true))
-            val path = waitForDownload(tdLib, fileId) ?: return@withContext null
+private val metadataSemaphore = Semaphore(3)
 
-            val retriever = android.media.MediaMetadataRetriever()
-            try {
-                retriever.setDataSource(path)
-                retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_ALBUM)
-                    ?.trim()
-                    ?.takeIf { it.isNotBlank() }
-            } finally {
-                retriever.release()
-            }
-        } catch (e: Exception) {
-            null
+private data class ExtractedMetadata(
+    val title: String? = null,
+    val artist: String? = null,
+    val album: String? = null,
+    val albumArtUri: Uri? = null,
+    val durationMs: Long? = null
+)
+
+private fun parseMetadataFromFileName(fileName: String): Pair<String?, String?> {
+    val nameWithoutExt = fileName.substringBeforeLast('.')
+    val separators = listOf(" - ", " – ", " — ", " ~ ")
+    for (sep in separators) {
+        if (nameWithoutExt.contains(sep)) {
+            val parts = nameWithoutExt.split(sep, limit = 2)
+            if (parts.size == 2) return Pair(parts[0].trim(), parts[1].trim())
         }
     }
+    if (nameWithoutExt.count { it == '-' } == 1) {
+        val parts = nameWithoutExt.split("-")
+        return Pair(parts[0].trim(), parts[1].trim())
+    }
+    return Pair(null, null)
+}
 
-private suspend fun extractEmbeddedAlbumArt(
-    context: Context, 
-    tdLib: TdLibManager, 
-    fileId: Int, 
-    fileName: String, 
-    mimeType: String?, 
+private suspend fun extractFullMetadata(
+    context: Context,
+    tdLib: TdLibManager,
+    fileId: Int,
+    fileName: String,
+    mimeType: String?,
     totalSize: Long
-): Uri? =
-    withContext(Dispatchers.IO) {
-        if (!tdLib.isReady()) return@withContext null
+): ExtractedMetadata = withContext(Dispatchers.IO) {
+    if (!tdLib.isReady()) return@withContext ExtractedMetadata()
+    try {
+        val format = detectAudioFormat(fileName, mimeType)
+        val isWav = format == "WAV"
+        // Download first 1MB for better chance of getting all metadata + art
+        val downloadSize = 1024 * 1024L
+        tdLib.send(TdApi.DownloadFile(fileId, 32, 0, downloadSize, true))
+        
+        if (isWav && totalSize > downloadSize) {
+            val footerSize = 1024 * 1024L
+            val offset = (totalSize - footerSize).coerceAtLeast(0L)
+            tdLib.send(TdApi.DownloadFile(fileId, 32, offset, footerSize, true))
+        }
+        
+        val path = waitForDownload(tdLib, fileId, 3000) ?: return@withContext ExtractedMetadata()
+        val retriever = android.media.MediaMetadataRetriever()
         try {
-            val format = detectAudioFormat(fileName, mimeType)
-            val isWav = format == "WAV"
+            retriever.setDataSource(path)
+            val title = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_TITLE)
+            val artist = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_ARTIST)
+            val album = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_ALBUM)
+            val duration = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()
+            val artBytes = retriever.embeddedPicture
             
-            tdLib.send(TdApi.DownloadFile(fileId, 32, 0, 512 * 1024, true))
-            
-            if (isWav && totalSize > 1024 * 1024) {
-                val footerSize = 1024 * 1024L
-                val offset = (totalSize - footerSize).coerceAtLeast(0L)
-                tdLib.send(TdApi.DownloadFile(fileId, 32, offset, footerSize, true))
-            }
-            
-            val path = waitForDownload(tdLib, fileId) ?: return@withContext null
-
-            val retriever = android.media.MediaMetadataRetriever()
-            var artBytes: ByteArray? = null
-            try {
-                retriever.setDataSource(path)
-                artBytes = retriever.embeddedPicture
-            } catch (e: Exception) {
-                // ignore
-            } finally {
-                retriever.release()
-            }
-
-            if (artBytes != null) {
+            var albumArtUri: Uri? = null
+            if (artBytes != null && artBytes.isNotEmpty()) {
                 val outDir = File(context.filesDir, "embedded_album_art").apply { mkdirs() }
                 val outFile = File(outDir, "tg_${fileId}.jpg")
-                try {
-                    FileOutputStream(outFile).use { it.write(artBytes) }
-                    return@withContext Uri.fromFile(outFile)
-                } catch (e: Exception) {
-                    // ignore
-                }
+                FileOutputStream(outFile).use { it.write(artBytes) }
+                albumArtUri = Uri.fromFile(outFile)
             }
-        } catch (e: Exception) {
-            // ignore
+            
+            ExtractedMetadata(title, artist, album, albumArtUri, duration)
+        } finally {
+            try { retriever.release() } catch (e: Exception) {}
         }
-        null
+    } catch (e: Exception) {
+        ExtractedMetadata()
     }
+}
 
 class TelegramChannelRepository(private val context: Context) {
     suspend fun scanChannel(
         tdLib: TdLibManager,
+        cloudCacheManager: com.beatflowy.app.drive.CloudCacheManager,
         channelUrl: String,
-        onSongsFound: (List<Song>) -> Unit
-    ) {
+        existingSongs: Map<String, Song> = emptyMap(),
+        onProgress: ((Float) -> Unit)? = null
+    ): List<Song> {
         val username = parseTelegramChannelName(channelUrl)
-        val chat = try {
-            tdLib.send(TdApi.SearchPublicChat(username))
-        } catch (e: Exception) {
-            Log.e("TelegramRepo", "Failed to search chat: $username", e)
-            return
-        }
+        Log.d("TelegramRepo", "Scanning channel: $username (from $channelUrl)")
         
-        try {
-            tdLib.send(TdApi.JoinChat(chat.id))
+        val messages = try {
+            tdLib.getChannelHistory(username, 500)
         } catch (e: Exception) {
-            Log.w("TelegramRepo", "Failed to join chat: ${chat.id}", e)
+            Log.e("TelegramRepo", "Failed to fetch channel history for: $username", e)
+            return emptyList()
         }
 
-        var fromMessageId = 0L
-        var pageCount = 0
-        while (true) {
-            val page = try {
-                tdLib.send(TdApi.GetChatHistory(chat.id, fromMessageId, 0, 100, false))
-            } catch (e: Exception) {
-                Log.e("TelegramRepo", "GetChatHistory failed", e)
-                break
-            }
-            if (page.messages.isEmpty()) break
+        Log.d("TelegramRepo", "Found ${messages.size} messages in channel history")
 
-            val songs = withContext(Dispatchers.IO) {
-                page.messages.map { msg ->
-                    async {
-                        val audioContent = msg.content as? TdApi.MessageAudio
-                        val docContent = msg.content as? TdApi.MessageDocument
+        val total = messages.size
+        var processed = 0
+
+        val songs = withContext(Dispatchers.IO) {
+            messages.map { msg ->
+                async {
+                    val audioContent = msg.content as? TdApi.MessageAudio
+                    val docContent = msg.content as? TdApi.MessageDocument
+                    
+                    val songId = "tg_${msg.chatId}_${msg.id}"
+                    val existing = existingSongs[songId]
+                    
+                    val song = if (existing != null) {
+                        existing
+                    } else if (audioContent != null) {
+                        val audio = audioContent.audio
+                        val fileId = audio.audio.id
                         
-                        if (audioContent != null) {
-                            val audio = audioContent.audio
-                            val fileId = audio.audio.id
-                            val realAlbum = extractAlbumTag(tdLib, fileId)
-                            Song(
-                                id = "tg_${chat.id}_${msg.id}",
-                                uri = Uri.EMPTY,
-                                title = audio.title.ifBlank { audio.fileName },
-                                artist = audio.performer.ifBlank { "Unknown Artist" },
-                                album = realAlbum ?: "Telegram: $username",
-                                folder = "Telegram: $username",
-                                durationMs = audio.duration * 1000L,
-                                format = detectAudioFormat(audio.fileName, audio.mimeType),
-                                sampleRateHz = 44100,
-                                fileSizeBytes = audio.audio.size.toLong(),
-                                source = SongSource.TELEGRAM,
-                                albumArtUri = extractEmbeddedAlbumArt(context, tdLib, fileId, audio.fileName, audio.mimeType, audio.audio.size.toLong()) ?: downloadAlbumArtUri(tdLib, audio),
-                                telegramChannelUrl = channelUrl,
-                                telegramChatId = chat.id,
-                                telegramMessageId = msg.id,
-                                telegramFileId = fileId,
-                                isEnriched = false,
-                                lastSyncTimestamp = System.currentTimeMillis()
-                            )
-                        } else if (docContent != null && isAudioMime(docContent.document.mimeType, docContent.document.fileName)) {
-                            val doc = docContent.document
-                            val fileId = doc.document.id
-                            val realAlbum = extractAlbumTag(tdLib, fileId)
-                            Song(
-                                id = "tg_${chat.id}_${msg.id}",
-                                uri = Uri.EMPTY,
-                                title = doc.fileName,
-                                artist = "Unknown Artist",
-                                album = realAlbum ?: "Telegram: $username",
-                                folder = "Telegram: $username",
-                                durationMs = 0,
-                                format = detectAudioFormat(doc.fileName, doc.mimeType),
-                                sampleRateHz = 44100,
-                                fileSizeBytes = doc.document.size.toLong(),
-                                source = SongSource.TELEGRAM,
-                                albumArtUri = extractEmbeddedAlbumArt(context, tdLib, fileId, doc.fileName, doc.mimeType, doc.document.size.toLong()),
-                                telegramChannelUrl = channelUrl,
-                                telegramChatId = chat.id,
-                                telegramMessageId = msg.id,
-                                telegramFileId = fileId,
-                                isEnriched = false,
-                                lastSyncTimestamp = System.currentTimeMillis()
-                            )
-                        } else null
-                    }
-                }.awaitAll().filterNotNull()
-            }
+                        val (fnArtist, fnTitle) = parseMetadataFromFileName(audio.fileName)
 
-            if (songs.isNotEmpty()) {
-                onSongsFound(songs)
-            }
+                        Song(
+                            id = songId,
+                            uri = Uri.EMPTY,
+                            title = audio.title.ifBlank { fnTitle ?: audio.fileName },
+                            artist = audio.performer.ifBlank { fnArtist ?: "Unknown Artist" },
+                            album = "Telegram: $username",
+                            folder = "Telegram: $username",
+                            durationMs = (audio.duration * 1000L),
+                            format = detectAudioFormat(audio.fileName, audio.mimeType),
+                            sampleRateHz = 44100,
+                            fileSizeBytes = audio.audio.size.toLong(),
+                            source = SongSource.TELEGRAM,
+                            albumArtUri = downloadAlbumArtUri(tdLib, audio),
+                            telegramChannelUrl = channelUrl,
+                            telegramChatId = msg.chatId,
+                            telegramMessageId = msg.id,
+                            telegramFileId = fileId,
+                            isEnriched = false,
+                            lastSyncTimestamp = System.currentTimeMillis()
+                        )
+                    } else if (docContent != null && isAudioMime(docContent.document.mimeType, docContent.document.fileName)) {
+                        val doc = docContent.document
+                        val fileId = doc.document.id
+                        
+                        val (fnArtist, fnTitle) = parseMetadataFromFileName(doc.fileName)
 
-            fromMessageId = page.messages.last().id
-            pageCount++
-            if (pageCount >= 50) break
+                        Song(
+                            id = songId,
+                            uri = Uri.EMPTY,
+                            title = fnTitle ?: doc.fileName,
+                            artist = fnArtist ?: "Unknown Artist",
+                            album = "Telegram: $username",
+                            folder = "Telegram: $username",
+                            durationMs = 0L,
+                            format = detectAudioFormat(doc.fileName, doc.mimeType),
+                            sampleRateHz = 44100,
+                            fileSizeBytes = doc.document.size.toLong(),
+                            source = SongSource.TELEGRAM,
+                            albumArtUri = null,
+                            telegramChannelUrl = channelUrl,
+                            telegramChatId = msg.chatId,
+                            telegramMessageId = msg.id,
+                            telegramFileId = fileId,
+                            isEnriched = false,
+                            lastSyncTimestamp = System.currentTimeMillis()
+                        )
+                    } else null
+
+                    processed++
+                    if (total > 0) onProgress?.invoke(processed.toFloat() / total)
+                    song
+                }
+            }.awaitAll().filterNotNull()
         }
+
+        Log.d("TelegramRepo", "Successfully parsed ${songs.size} songs from channel $username")
+        return songs
     }
 
     private fun isAudioMime(mime: String?, fileName: String): Boolean {
@@ -257,6 +259,7 @@ class TelegramChannelRepository(private val context: Context) {
 
     fun observeLiveChannel(
         tdLib: TdLibManager,
+        cloudCacheManager: com.beatflowy.app.drive.CloudCacheManager,
         chatId: Long,
         channelUrl: String,
         scope: CoroutineScope,
@@ -271,25 +274,31 @@ class TelegramChannelRepository(private val context: Context) {
                     if (audioContent != null) {
                         val audio = audioContent.audio
                         val fileId = audio.audio.id
-                        val realAlbum = extractAlbumTag(tdLib, fileId)
+                        
+                        val localUri = Uri.EMPTY
+                        val realFormat = detectAudioFormat(audio.fileName, audio.mimeType)
+
+                        val (fnArtist, fnTitle) = parseMetadataFromFileName(audio.fileName)
+                        val extracted = extractFullMetadata(context, tdLib, fileId, audio.fileName, audio.mimeType, audio.audio.size.toLong())
+
                         val song = Song(
                             id = "tg_${chatId}_${msg.id}",
-                            uri = Uri.EMPTY,
-                            title = audio.title.ifBlank { audio.fileName },
-                            artist = audio.performer.ifBlank { "Unknown Artist" },
-                            album = realAlbum ?: "Telegram: $username",
+                            uri = localUri,
+                            title = extracted.title ?: audio.title.ifBlank { fnTitle ?: audio.fileName },
+                            artist = extracted.artist ?: audio.performer.ifBlank { fnArtist ?: "Unknown Artist" },
+                            album = extracted.album ?: "Telegram: $username",
                             folder = "Telegram: $username",
-                            durationMs = audio.duration * 1000L,
-                            format = detectAudioFormat(audio.fileName, audio.mimeType),
+                            durationMs = extracted.durationMs ?: (audio.duration * 1000L),
+                            format = realFormat,
                             sampleRateHz = 44100,
                             fileSizeBytes = audio.audio.size.toLong(),
                             source = SongSource.TELEGRAM,
-                            albumArtUri = extractEmbeddedAlbumArt(context, tdLib, fileId, audio.fileName, audio.mimeType, audio.audio.size.toLong()) ?: downloadAlbumArtUri(tdLib, audio),
+                            albumArtUri = extracted.albumArtUri ?: downloadAlbumArtUri(tdLib, audio),
                             telegramChannelUrl = channelUrl,
                             telegramChatId = chatId,
                             telegramMessageId = msg.id,
                             telegramFileId = fileId,
-                            isEnriched = false,
+                            isEnriched = true,
                             lastSyncTimestamp = System.currentTimeMillis()
                         )
                         onNewSong(song)

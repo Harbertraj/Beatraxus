@@ -20,9 +20,17 @@ class NativeDsp : AutoCloseable {
         release()
     }
 
-    fun init(sampleRate: Float, channels: Int) {
+    fun init(sampleRate: Float, channels: Int, outputSampleRate: Int = sampleRate.toInt()) {
         lock.writeLock().withLock {
-            if (nativeHandle != 0L) nInit(nativeHandle, sampleRate, channels)
+            if (nativeHandle != 0L) {
+                // ASSERTION: This is always followed by initResampler() in DspPipeline if rates differ.
+                // If not followed, the DSP will silently disable SOXR because nInit passes sampleRate as both in/out.
+                nInit(nativeHandle, sampleRate, channels)
+                
+                if (sampleRate.toInt() != outputSampleRate) {
+                    android.util.Log.w("NativeDsp", "nInit called with input rate ${sampleRate.toInt()} but output rate is $outputSampleRate — call initResampler after init")
+                }
+            }
         }
     }
 

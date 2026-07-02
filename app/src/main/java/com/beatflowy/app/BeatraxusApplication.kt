@@ -24,5 +24,21 @@ class BeatraxusApplication : Application() {
         super.onCreate()
         // Initialize TDLib early
         tdLibManager
+
+        // Clear temporary cloud cache on app start (effectively clearing "on close")
+        clearTemporaryCache()
+    }
+
+    private fun clearTemporaryCache() {
+        try {
+            val cacheDir = java.io.File(cacheDir, "cloud_cache")
+            if (cacheDir.exists()) {
+                cacheDir.listFiles()?.forEach { it.delete() }
+            }
+            // Also clear the LRU map preferences
+            getSharedPreferences("playback_lru_prefs", MODE_PRIVATE).edit().clear().apply()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 }

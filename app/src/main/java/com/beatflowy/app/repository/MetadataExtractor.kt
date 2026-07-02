@@ -72,20 +72,18 @@ class MetadataExtractor(private val context: Context) {
 
     suspend fun extractCloudMetadata(
         song: Song, 
-        credential: GoogleAccountCredential,
+        credential: GoogleAccountCredential?,
         dataSaver: Boolean = false,
         artworkEnabled: Boolean = true,
         quality: SyncQuality = SyncQuality.MEDIUM
     ): Song = withContext(Dispatchers.IO) {
-        if (song.source != SongSource.GDRIVE || song.driveFileId == null) return@withContext song
-        
-        // Feature 3: Skip if already enriched and accurate
         if (song.isEnriched && !dataSaver && song.durationMs > 0) {
              return@withContext song
         }
 
+        if (song.source != SongSource.GDRIVE || song.driveFileId == null || credential == null) return@withContext song
+        
         // Speedup UNDONE: Every song now performs its own full extraction to ensure 100% accuracy
-        // No more album-level metadata sharing which was causing incorrect art/tags
         return@withContext fetchSongSpecificMetadata(song, credential, true, artworkEnabled, quality)
     }
 
@@ -111,129 +109,23 @@ class MetadataExtractor(private val context: Context) {
 
             downloadPart(song.driveFileId!!, tempFile, credential, "bytes=0-${headerSize - 1}", 0L)
 
-            var updatedSong = song
-
-            // Increase footer size for WAV to ensure we catch large ID3 tags and Album Art
+            // Step 7: Increased footer size to 8MB to catch larger embedded artwork in WAVs
             if (isWav && song.fileSizeBytes > headerSize) {
-                val footerSize = 4194_304L // Increased to 4MB for high-res art
+                val footerSize = 8_388_608L // Increased from 4MB
                 val start = (song.fileSizeBytes - footerSize).coerceAtLeast(0L)
                 downloadPart(song.driveFileId, tempFile, credential, "bytes=$start-${song.fileSizeBytes - 1}", start)
             }
 
-            val retriever = android.media.MediaMetadataRetriever()
-            try {
-                retriever.setDataSource(tempFile.absolutePath)
-                if (fetchArt && artworkEnabled) {
-                    val artBytes = retriever.embeddedPicture
-                    if (artBytes != null && artBytes.isNotEmpty()) {
-                        updatedSong = updatedSong.copy(albumArtUri = cacheEmbeddedAlbumArt(song.id, artBytes))
-                    }
-                }
+            var updatedSong = extractMetadataFromLocalFile(song, tempFile, fetchArt, artworkEnabled)
 
-                if (updatedSong.albumArtUri == null && fetchArt && artworkEnabled && (isWav || updatedSong.format == "ALAC")) {
-                    // FFmpeg fallback for complex containers or missing headers
-                    val ffmpegArt = extractEmbeddedArtWithFfmpeg(song.id, tempFile)
-                    if (ffmpegArt != null) {
-                        updatedSong = updatedSong.copy(albumArtUri = ffmpegArt)
-                    }
-                }
-
-                if (isWav) {
-                    updatedSong = extractWavMetadataManual(tempFile, updatedSong)
-                }
-
-                val title = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_TITLE)
-                val artist = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_ARTIST)
-                val album = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_ALBUM)
-                val genre = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_GENRE)
-                val yearStr = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_YEAR)
-                val durationStr = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)
-
-                updatedSong = updatedSong.copy(
-                    title = if (title.isNullOrBlank()) updatedSong.title else title,
-                    artist = if (artist.isNullOrBlank()) updatedSong.artist else artist,
-                    album = if (album != null && album != "Unknown Album") album else updatedSong.album,
-                    genre = if (genre.isNullOrBlank()) updatedSong.genre else genre,
-                    year = yearStr?.toIntOrNull() ?: updatedSong.year,
-                    durationMs = durationStr?.toLongOrNull() ?: updatedSong.durationMs
-                )
-            } catch (e: Exception) {
-                Log.d(TAG, "MediaMetadataRetriever failed for ${song.title}")
-            } finally {
-                try { retriever.release() } catch (e: Exception) {}
+            // Step 7 Fallback: If art is still missing for a large WAV, download the full file as a last resort
+            if (isWav && fetchArt && artworkEnabled && updatedSong.albumArtUri == null && song.fileSizeBytes > (headerSize + 8_388_608L)) {
+                Log.i(TAG, "Album art missing for large WAV ${song.title}, triggering full-file fallback (Last Resort)")
+                downloadPart(song.driveFileId!!, tempFile, credential, null, 0L)
+                updatedSong = extractMetadataFromLocalFile(song, tempFile, fetchArt, artworkEnabled)
             }
 
-            try {
-                val audioFile = AudioFileIO.read(tempFile)
-                val tag = audioFile.tag
-                val header = audioFile.audioHeader
-
-                if (tag != null) {
-                    updatedSong = updatedSong.copy(
-                        title = tag.getFirst(FieldKey.TITLE).let { if (it.isNullOrBlank()) updatedSong.title else it },
-                        artist = tag.getFirst(FieldKey.ARTIST).let { if (it.isNullOrBlank()) updatedSong.artist else it },
-                        album = tag.getFirst(FieldKey.ALBUM).let { if (it.isNullOrBlank() || it == "Unknown Album") updatedSong.album else it },
-                        albumArtist = tag.getFirst(FieldKey.ALBUM_ARTIST).let { if (it.isNullOrBlank()) updatedSong.albumArtist else it },
-                        genre = tag.getFirst(FieldKey.GENRE).let { if (it.isNullOrBlank()) updatedSong.genre else it },
-                        year = tag.getFirst(FieldKey.YEAR)?.toIntOrNull() ?: updatedSong.year,
-                        composer = tag.getFirst(FieldKey.COMPOSER).let { if (it.isNullOrBlank()) updatedSong.composer else it },
-                        trackNumber = tag.getFirst(FieldKey.TRACK)?.toIntOrNull() ?: updatedSong.trackNumber,
-                        discNumber = tag.getFirst(FieldKey.DISC_NO)?.toIntOrNull() ?: updatedSong.discNumber,
-                        lyrics = tag.getFirst(FieldKey.LYRICS).ifBlank {
-                            tag.getFirst(FieldKey.CUSTOM1).ifBlank {
-                                tag.getFirst("LYRICS")
-                            }
-                        }.let { if (it.isNullOrBlank()) updatedSong.lyrics else it },
-                        replayGainTrackDb = parseReplayGainDb(tag.getFirst("REPLAYGAIN_TRACK_GAIN")) ?: updatedSong.replayGainTrackDb,
-                        replayGainAlbumDb = parseReplayGainDb(tag.getFirst("REPLAYGAIN_ALBUM_GAIN")) ?: updatedSong.replayGainAlbumDb,
-                        replayGainTrackPeak = tag.getFirst("REPLAYGAIN_TRACK_PEAK")?.toFloatOrNull() ?: updatedSong.replayGainTrackPeak,
-                        replayGainAlbumPeak = tag.getFirst("REPLAYGAIN_ALBUM_PEAK")?.toFloatOrNull() ?: updatedSong.replayGainAlbumPeak
-                    )
-
-                    if (fetchArt && artworkEnabled && updatedSong.albumArtUri == null) {
-                        tag.firstArtwork?.binaryData?.let {
-                            updatedSong = updatedSong.copy(albumArtUri = cacheEmbeddedAlbumArt(song.id, it))
-                        }
-                    }
-                }
-
-                if (header != null) {
-                    updatedSong = updatedSong.copy(
-                        durationMs = if (updatedSong.durationMs <= 0) (header.trackLength * 1000).toLong() else updatedSong.durationMs,
-                        bitrate = if (updatedSong.bitrate <= 0) header.bitRateAsNumber.toInt() * 1000 else updatedSong.bitrate,
-                        sampleRateHz = if (updatedSong.sampleRateHz <= 0) header.sampleRateAsNumber else updatedSong.sampleRateHz
-                    )
-
-                    // ALAC detection for M4A/MP4 containers
-                    val format = updatedSong.format.uppercase()
-                    if (format == "M4A" || format == "MP4" || format == "AUDIO") {
-                        val encoding = header.encodingType?.uppercase() ?: ""
-                        if (encoding.contains("ALAC") || header.javaClass.simpleName.contains("Mp4", ignoreCase = true)) {
-                            // If it's Mp4 and bitrate is high, it's likely ALAC
-                            if (encoding.contains("ALAC") || updatedSong.bitrate > 500000) {
-                                updatedSong = updatedSong.copy(format = "ALAC")
-                            }
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                updatedSong = extractMetadataWithFFprobe(updatedSong, tempFile)
-            }
-
-            // Only mark as enriched if we actually got valid data to prevent caching "Unknown"
-            val valid = updatedSong.durationMs > 0 && !updatedSong.artist.contains("Unknown", ignoreCase = true)
-
-            // Feature: Accurate Online Genre Enrichment
-            if (updatedSong.genre.isBlank() || updatedSong.genre.contains("Unknown", ignoreCase = true)) {
-                onlineGenreService.fetchAccurateGenre(updatedSong.artist, updatedSong.title)?.let { onlineGenre ->
-                    updatedSong = updatedSong.copy(genre = onlineGenre)
-                }
-            }
-
-            return@withContext updatedSong.copy(
-                isEnriched = valid,
-                lastSyncTimestamp = System.currentTimeMillis()
-            )
+            return@withContext updatedSong
         } catch (e: Exception) {
             Log.e(TAG, "Error extracting metadata for ${song.title}", e)
             return@withContext song
@@ -242,9 +134,135 @@ class MetadataExtractor(private val context: Context) {
         }
     }
 
+    suspend fun extractMetadataFromLocalFile(
+        song: Song,
+        localFile: File,
+        fetchArt: Boolean = true,
+        artworkEnabled: Boolean = true
+    ): Song = withContext(Dispatchers.IO) {
+        var updatedSong = song
+        val format = song.format.lowercase()
+        val isWav = format.contains("wav")
+
+        val retriever = android.media.MediaMetadataRetriever()
+        try {
+            retriever.setDataSource(localFile.absolutePath)
+            if (fetchArt && artworkEnabled) {
+                val artBytes = retriever.embeddedPicture
+                if (artBytes != null && artBytes.isNotEmpty()) {
+                    updatedSong = updatedSong.copy(albumArtUri = cacheEmbeddedAlbumArt(song.id, artBytes))
+                }
+            }
+
+            if (updatedSong.albumArtUri == null && fetchArt && artworkEnabled && (isWav || updatedSong.format == "ALAC")) {
+                // FFmpeg fallback for complex containers or missing headers
+                val ffmpegArt = extractEmbeddedArtWithFfmpeg(song.id, localFile)
+                if (ffmpegArt != null) {
+                    updatedSong = updatedSong.copy(albumArtUri = ffmpegArt)
+                }
+            }
+
+            if (isWav) {
+                updatedSong = extractWavMetadataManual(localFile, updatedSong)
+            }
+
+            val title = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_TITLE)
+            val artist = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_ARTIST)
+            val album = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_ALBUM)
+            val genre = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_GENRE)
+            val yearStr = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_YEAR)
+            val durationStr = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)
+
+            updatedSong = updatedSong.copy(
+                title = if (title.isNullOrBlank()) updatedSong.title else title,
+                artist = if (artist.isNullOrBlank()) updatedSong.artist else artist,
+                album = if (album != null && album != "Unknown Album") album else updatedSong.album,
+                genre = if (genre.isNullOrBlank()) updatedSong.genre else genre,
+                year = yearStr?.toIntOrNull() ?: updatedSong.year,
+                durationMs = durationStr?.toLongOrNull() ?: updatedSong.durationMs
+            )
+        } catch (e: Exception) {
+            Log.d(TAG, "MediaMetadataRetriever failed for ${song.title}")
+        } finally {
+            try { retriever.release() } catch (e: Exception) {}
+        }
+
+        try {
+            val audioFile = AudioFileIO.read(localFile)
+            val tag = audioFile.tag
+            val header = audioFile.audioHeader
+
+            if (tag != null) {
+                updatedSong = updatedSong.copy(
+                    title = tag.getFirst(FieldKey.TITLE).let { if (it.isNullOrBlank()) updatedSong.title else it },
+                    artist = tag.getFirst(FieldKey.ARTIST).let { if (it.isNullOrBlank()) updatedSong.artist else it },
+                    album = tag.getFirst(FieldKey.ALBUM).let { if (it.isNullOrBlank() || it == "Unknown Album") updatedSong.album else it },
+                    albumArtist = tag.getFirst(FieldKey.ALBUM_ARTIST).let { if (it.isNullOrBlank()) updatedSong.albumArtist else it },
+                    genre = tag.getFirst(FieldKey.GENRE).let { if (it.isNullOrBlank()) updatedSong.genre else it },
+                    year = tag.getFirst(FieldKey.YEAR)?.toIntOrNull() ?: updatedSong.year,
+                    composer = tag.getFirst(FieldKey.COMPOSER).let { if (it.isNullOrBlank()) updatedSong.composer else it },
+                    trackNumber = tag.getFirst(FieldKey.TRACK)?.toIntOrNull() ?: updatedSong.trackNumber,
+                    discNumber = tag.getFirst(FieldKey.DISC_NO)?.toIntOrNull() ?: updatedSong.discNumber,
+                    lyrics = tag.getFirst(FieldKey.LYRICS).ifBlank {
+                        tag.getFirst(FieldKey.CUSTOM1).ifBlank {
+                            tag.getFirst("LYRICS")
+                        }
+                    }.let { if (it.isNullOrBlank()) updatedSong.lyrics else it },
+                    replayGainTrackDb = parseReplayGainDb(tag.getFirst("REPLAYGAIN_TRACK_GAIN")) ?: updatedSong.replayGainTrackDb,
+                    replayGainAlbumDb = parseReplayGainDb(tag.getFirst("REPLAYGAIN_ALBUM_GAIN")) ?: updatedSong.replayGainAlbumDb,
+                    replayGainTrackPeak = tag.getFirst("REPLAYGAIN_TRACK_PEAK")?.toFloatOrNull() ?: updatedSong.replayGainTrackPeak,
+                    replayGainAlbumPeak = tag.getFirst("REPLAYGAIN_ALBUM_PEAK")?.toFloatOrNull() ?: updatedSong.replayGainAlbumPeak
+                )
+
+                if (fetchArt && artworkEnabled && updatedSong.albumArtUri == null) {
+                    tag.firstArtwork?.binaryData?.let {
+                        updatedSong = updatedSong.copy(albumArtUri = cacheEmbeddedAlbumArt(song.id, it))
+                    }
+                }
+            }
+
+            if (header != null) {
+                updatedSong = updatedSong.copy(
+                    durationMs = if (updatedSong.durationMs <= 0) (header.trackLength * 1000).toLong() else updatedSong.durationMs,
+                    bitrate = if (updatedSong.bitrate <= 0) header.bitRateAsNumber.toInt() * 1000 else updatedSong.bitrate,
+                    sampleRateHz = if (updatedSong.sampleRateHz <= 0) header.sampleRateAsNumber else updatedSong.sampleRateHz
+                )
+
+                // ALAC detection for M4A/MP4 containers
+                val formatUpper = updatedSong.format.uppercase()
+                if (formatUpper == "M4A" || formatUpper == "MP4" || formatUpper == "AUDIO") {
+                    val encoding = header.encodingType?.uppercase() ?: ""
+                    if (encoding.contains("ALAC") || header.javaClass.simpleName.contains("Mp4", ignoreCase = true)) {
+                        // If it's Mp4 and bitrate is high, it's likely ALAC
+                        if (encoding.contains("ALAC") || updatedSong.bitrate > 500000) {
+                            updatedSong = updatedSong.copy(format = "ALAC")
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            updatedSong = extractMetadataWithFFprobe(updatedSong, localFile)
+        }
+
+        // Only mark as enriched if we actually got valid data to prevent caching "Unknown"
+        val valid = updatedSong.durationMs > 0 && !updatedSong.artist.contains("Unknown", ignoreCase = true)
+
+        // Feature: Online Genre Enrichment
+        if (updatedSong.genre.isBlank() || updatedSong.genre.contains("Unknown", ignoreCase = true)) {
+            onlineGenreService.fetchAccurateGenre(updatedSong.artist, updatedSong.title)?.let { onlineGenre ->
+                updatedSong = updatedSong.copy(genre = onlineGenre)
+            }
+        }
+
+        updatedSong.copy(
+            isEnriched = valid,
+            lastSyncTimestamp = System.currentTimeMillis()
+        )
+    }
+
     private fun cacheEmbeddedAlbumArt(songId: String, bytes: ByteArray): Uri? {
-        val dir = File(context.filesDir, "embedded_album_art").apply { mkdirs() }
-        val f = File(dir, "cloud_$songId.jpg")
+        val dir = File(context.filesDir, "album_art").apply { mkdirs() }
+        val f = File(dir, "$songId.jpg")
         
         val prefs = context.getSharedPreferences("beatraxus", Context.MODE_PRIVATE)
         val useOriginalQuality = prefs.getBoolean("use_original_quality_art", false)
@@ -282,13 +300,15 @@ class MetadataExtractor(private val context: Context) {
         }
     }
 
-    private suspend fun downloadPart(fileId: String, dest: File, credential: GoogleAccountCredential, range: String, offset: Long) = withContext(Dispatchers.IO) {
+    private suspend fun downloadPart(fileId: String, dest: File, credential: GoogleAccountCredential, range: String?, offset: Long) = withContext(Dispatchers.IO) {
         try {
             val token = credential.getToken() ?: return@withContext
             val url = URL("https://www.googleapis.com/drive/v3/files/$fileId?alt=media")
             val connection = url.openConnection() as HttpURLConnection
             connection.setRequestProperty("Authorization", "Bearer $token")
-            connection.setRequestProperty("Range", range)
+            if (range != null) {
+                connection.setRequestProperty("Range", range)
+            }
             connection.connect()
 
             if (connection.responseCode == 200 || connection.responseCode == 206) {
@@ -551,7 +571,7 @@ class MetadataExtractor(private val context: Context) {
     }
 
     private fun extractEmbeddedArtWithFfmpeg(songId: String, file: File): Uri? {
-        val outputFile = File(File(context.filesDir, "embedded_album_art").apply { mkdirs() }, "cloud_ffmpeg_$songId.jpg")
+        val outputFile = File(File(context.filesDir, "album_art").apply { mkdirs() }, "$songId.jpg")
         val session = FFmpegKit.executeWithArguments(
             arrayOf(
                 "-y",

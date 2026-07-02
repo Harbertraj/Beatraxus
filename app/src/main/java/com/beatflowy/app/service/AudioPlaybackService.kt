@@ -187,6 +187,7 @@ class AudioPlaybackService : Service() {
                     val songChanged = state.currentSong?.id != lastSongId
                     
                     if (songChanged) {
+                        cloudCacheManager.setCurrentlyPlayingId(state.currentSong?.id)
                         // Scrobble previous song if needed before resetting
                         handleScrobble(lastSongId, state.currentSong?.id)
 
@@ -989,11 +990,15 @@ class AudioPlaybackService : Service() {
     override fun onTaskRemoved(rootIntent: Intent?) {
         super.onTaskRemoved(rootIntent)
         saveState()
-        // If we are not playing, we can clear the cache when the task is removed (app swiped away)
-        if (!engine.playbackStateFlow.value.isPlaying) {
-            cloudCacheManager.clearFullCache()
-            stopSelf()
-        }
+        
+        // Stop playback and release engine to ensure hardware resources are freed
+        engine.stop()
+        engine.release()
+        
+        // Clear all temporary playback caches (GDrive and Telegram cached copies)
+        cloudCacheManager.clearAllPlaybackCaches()
+        
+        stopSelf()
     }
 
     override fun onDestroy() {

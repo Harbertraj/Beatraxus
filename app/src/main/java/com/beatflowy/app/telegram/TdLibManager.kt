@@ -8,8 +8,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.flow.first
 import org.drinkless.tdlib.Client
 import org.drinkless.tdlib.TdApi
+import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -107,6 +109,100 @@ class TdLibManager private constructor(
 
     suspend fun getMessage(chatId: Long, messageId: Long): TdApi.Message =
         send(TdApi.GetMessage(chatId, messageId))
+
+    /**
+     * Fetches messages from a channel by username.
+     * Tries to find as many audio/document messages as possible.
+     */
+    suspend fun getChannelHistory(channelUsername: String, limit: Int = 500): List<TdApi.Message> {
+        Log.d("TDLib", "getChannelHistory for: $channelUsername")
+        // 1. Resolve username or ID or Invite to chat
+        val chat = try {
+            if (channelUsername.startsWith("-") || channelUsername.toLongOrNull() != null) {
+                send(TdApi.GetChat(channelUsername.toLong()))
+            } else if (channelUsername.startsWith("+")) {
+                val invite = send(TdApi.CheckChatInviteLink("https://t.me/$channelUsername"))
+                send(TdApi.GetChat(invite.chatId))
+            } else {
+                send(TdApi.SearchPublicChat(channelUsername))
+            }
+        } catch (e: Exception) {
+            Log.e("TDLib", "Failed to find chat: $channelUsername", e)
+            // Fallback for public channels if prefix was missing
+            if (!channelUsername.startsWith("-") && !channelUsername.startsWith("+")) {
+                 send(TdApi.SearchPublicChat(channelUsername))
+            } else {
+                throw e
+            }
+        }
+
+        Log.d("TDLib", "Found chat: ${chat.title} (ID: ${chat.id})")
+
+        val combined = mutableListOf<TdApi.Message>()
+        
+        // Use a loop to fetch up to 'limit' messages using SearchChatMessages
+        suspend fun searchWithFilter(filter: TdApi.SearchMessagesFilter): List<TdApi.Message> {
+            val filterName = filter::class.simpleName
+            val results = mutableListOf<TdApi.Message>()
+            var lastMessageId = 0L
+            while (results.size < limit) {
+                val req = TdApi.SearchChatMessages()
+                req.chatId = chat.id
+                req.query = ""
+                req.fromMessageId = lastMessageId
+                req.offset = 0
+                req.limit = (limit - results.size).coerceAtMost(100)
+                req.filter = filter
+                
+                Log.d("TDLib", "Searching $filterName in ${chat.title}, offset=${results.size}, lastId=$lastMessageId")
+                val res = try { send(req) } catch (e: Exception) { 
+                    Log.e("TDLib", "Search failed for $filterName", e)
+                    null 
+                }
+                if (res == null || res.messages.isEmpty()) {
+                    Log.d("TDLib", "No more messages found for $filterName")
+                    break
+                }
+                
+                results.addAll(res.messages)
+                if (lastMessageId == res.messages.last().id) break // Prevent infinite loop
+                lastMessageId = res.messages.last().id
+            }
+            Log.d("TDLib", "Found ${results.size} messages for $filterName")
+            return results
+        }
+
+        combined.addAll(searchWithFilter(TdApi.SearchMessagesFilterAudio()))
+        combined.addAll(searchWithFilter(TdApi.SearchMessagesFilterDocument()))
+
+        if (combined.size < 5) {
+            // Fallback to general history if search didn't yield enough results (indexing lag)
+            Log.d("TDLib", "Search yielded too few results (${combined.size}), falling back to GetChatHistory")
+            val history = send(TdApi.GetChatHistory(chat.id, 0, 0, 100, false))
+            Log.d("TDLib", "GetChatHistory found ${history.messages.size} messages")
+            combined.addAll(history.messages.toList())
+        }
+
+        if (combined.isNotEmpty()) {
+            val finalResult = combined.distinctBy { it.id }.sortedByDescending { it.date }
+            Log.d("TDLib", "Total unique messages found: ${finalResult.size}")
+            return finalResult
+        }
+
+        return emptyList()
+    }
+
+    /**
+     * Downloads a file and returns its local path when complete.
+     */
+    suspend fun downloadAudioFile(fileId: Int): File? {
+        // Start download
+        send(TdApi.DownloadFile(fileId, 32, 0, 0, true))
+
+        // Wait for completion using the file flow
+        return getFileFlow(fileId).first { it?.local?.isDownloadingCompleted == true }
+            ?.local?.path?.let { File(it) }
+    }
 
     companion object {
         @Volatile

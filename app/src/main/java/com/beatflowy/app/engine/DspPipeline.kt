@@ -167,7 +167,7 @@ private class NativeDspProcessor(
     private val toneSnapThreshold = 0.001f
 
     private val native = NativeDsp().also { dsp ->
-        dsp.init(inputSampleRate.toFloat(), channels)
+        dsp.init(inputSampleRate.toFloat(), channels, outputSampleRate)
         if (inputSampleRate != outputSampleRate) {
             dsp.initResampler(inputSampleRate.toFloat(), channels, outputSampleRate.toFloat())
         }
@@ -195,8 +195,7 @@ private class NativeDspProcessor(
         dsp.setRmsDvc(if (isBP) false else cfg.rmsDvcEnabled)
         dsp.setRmsLeveler(if (isBP) false else cfg.rmsLevelerEnabled)
 
-        val dvcBoost = if (cfg.dvcEnabled && cfg.compensateDvcVolumeEnabled) 1.585f else 1.0f // ~+4dB boost
-        dsp.setDvcLevel((if (isBP || cfg.hardwareVolumeEnabled) 1f else cfg.dvcLevel) * dvcBoost)
+        dsp.setDvcLevel(if (isBP || cfg.hardwareVolumeEnabled) 1f else cfg.dvcLevel)
 
         dsp.setDvcMode(cfg.dvcMode.ordinal)
         
@@ -384,8 +383,9 @@ private class NativeDspProcessor(
         val manualPreamp = if (!isBP && config.preampEnabled) config.preampDb else 0f
         val eqMasterGain = if (effectiveEqEnabled) config.eqMasterGainDb else 0f
         val appliedEqMasterGain = eqMasterGain
+        val dvcCompensationDb = if (config.dvcEnabled && config.compensateDvcVolumeEnabled && !isBP) 4.0f else 0f
 
-        val totalPreamp = manualPreamp + autoEqPreamp + reverbCompensation + appliedEqMasterGain
+        val totalPreamp = manualPreamp + autoEqPreamp + reverbCompensation + appliedEqMasterGain + dvcCompensationDb
 
         dsp.setPreamp(totalPreamp)
 
@@ -433,7 +433,7 @@ private class NativeDspProcessor(
     }
 
     override fun flush() {
-        native.init(inputSampleRate.toFloat(), channels)
+        native.init(inputSampleRate.toFloat(), channels, outputSampleRate)
         if (inputSampleRate != outputSampleRate) {
             native.initResampler(inputSampleRate.toFloat(), channels, outputSampleRate.toFloat())
         }

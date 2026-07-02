@@ -28,12 +28,17 @@ class CloudCacheManager(
     private val TAG = "CloudCacheManager"
     private val cacheDir = File(context.cacheDir, "cloud_cache").apply { mkdirs() }
     private val downloadScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val playbackLruCache = PlaybackLruCache(context)
     
     // Use ConcurrentHashMap for thread-safe access from media threads
     private val activeDownloads = ConcurrentHashMap<String, Job>()
     private val mutex = Mutex()
-    private val MAX_CACHE_SIZE = 1024L * 1024L * 1024L // 1GB
+    private var currentlyPlayingId: String? = null
     
+    fun setCurrentlyPlayingId(id: String?) {
+        currentlyPlayingId = id
+    }
+
     private val okHttpClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
@@ -41,11 +46,7 @@ class CloudCacheManager(
 
     fun getCachedFile(song: Song): File? {
         if (!song.isCloud()) return null
-        val file = File(cacheDir, "${song.id}.cache")
-        return if (file.exists() && file.length() > 0) {
-            file.setLastModified(System.currentTimeMillis())
-            file
-        } else null
+        return playbackLruCache.getCachedFile(song)
     }
 
     fun getDataSource(
@@ -66,7 +67,7 @@ class CloudCacheManager(
      */
     suspend fun getTelegramFilePath(song: Song, tdLib: TdLibManager): String? = withContext(Dispatchers.IO) {
         if (song.source != SongSource.TELEGRAM) return@withContext null
-        
+
         var currentFileId = song.telegramFileId
         if (currentFileId == null || currentFileId == 0) {
             currentFileId = refreshFileId(song, tdLib)
@@ -92,6 +93,9 @@ class CloudCacheManager(
         }
 
         if (file?.local?.path?.isNotBlank() == true) {
+            if (file.local.isDownloadingCompleted) {
+                return@withContext playbackLruCache.getOrCacheFile(song, File(file.local.path), true, currentlyPlayingId).absolutePath
+            }
             return@withContext file.local.path
         }
 
@@ -101,6 +105,10 @@ class CloudCacheManager(
         while (attempts < 2400) { // 2 minutes
             file = try { tdLib.send(TdApi.GetFile(currentFileId)) } catch (e: Exception) { null }
             if (file?.local?.path?.isNotBlank() == true) {
+                if (file.local.isDownloadingCompleted) {
+                    Log.d(TAG, "Telegram file download complete for ${song.title}")
+                    return@withContext playbackLruCache.getOrCacheFile(song, File(file.local.path), true, currentlyPlayingId).absolutePath
+                }
                 Log.d(TAG, "Telegram file path available for ${song.title}: ${file.local.path}")
                 return@withContext file.local.path
             }
@@ -127,11 +135,11 @@ class CloudCacheManager(
     }
 
     private fun getCachedFileById(id: String): File? {
-        val file = File(cacheDir, "$id.cache")
-        return if (file.exists() && file.length() > 0) file else null
+        return playbackLruCache.getCachedFile(Song(id = id, uri = android.net.Uri.EMPTY, title = "", artist = "", album = "", durationMs = 0, format = "", sampleRateHz = 0))
     }
 
     suspend fun prepareCache(currentSong: Song?, upcomingSongs: List<Song>) = mutex.withLock {
+        currentlyPlayingId = currentSong?.id
         val keepIds = mutableSetOf<String>()
         currentSong?.let { if (it.isCloud()) keepIds.add(it.id) }
         upcomingSongs.take(5).forEach { 
@@ -159,40 +167,16 @@ class CloudCacheManager(
                 startDownload(song)
             }
         }
+    }
 
-        // 3. Cleanup old cache files if limit exceeded (LRU)
-        cleanupCache(keepIds)
+    fun clearAllPlaybackCaches() {
+        playbackLruCache.clearCache()
+        // Also clear any lingering .tmp files from cloud_cache/
+        cacheDir.listFiles { _, name -> name.endsWith(".tmp") }?.forEach { it.delete() }
     }
 
     fun clearFullCache() {
-        try {
-            cacheDir.deleteRecursively()
-            cacheDir.mkdirs()
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to clear cloud cache", e)
-        }
-    }
-
-    private fun cleanupCache(keepIds: Set<String>) {
-        val files = cacheDir.listFiles() ?: return
-        val cacheFiles = files.filter { it.name.endsWith(".cache") }
-        var totalSize = cacheFiles.sumOf { it.length() }
-        
-        if (totalSize <= MAX_CACHE_SIZE) return
-
-        // Sort by last modified (oldest first)
-        val sortedFiles = cacheFiles.sortedBy { it.lastModified() }
-
-        for (file in sortedFiles) {
-            val id = file.name.removeSuffix(".cache")
-            if (id in keepIds) continue
-            
-            val fileSize = file.length()
-            if (file.delete()) {
-                totalSize -= fileSize
-                if (totalSize <= MAX_CACHE_SIZE * 0.7) break // Clean up until we reach 70% of max
-            }
-        }
+        clearAllPlaybackCaches()
     }
 
     private fun startDownload(song: Song) {
@@ -241,6 +225,8 @@ class CloudCacheManager(
 
                 if (tempFile.exists() && tempFile.length() > 0) {
                     tempFile.renameTo(finalFile)
+                    // Register with unified 15-song LRU cache (as pre-fetch)
+                    playbackLruCache.getOrCacheFile(song, finalFile, false, currentlyPlayingId)
                 }
             }
         } catch (e: Exception) {
