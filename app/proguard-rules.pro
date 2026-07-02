@@ -90,14 +90,28 @@
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# GOOGLE PLAY SERVICES
+# GOOGLE PLAY SERVICES & AUTH
 # ══════════════════════════════════════════════════════════════════════════════
 
 -keep class com.google.android.gms.auth.** { *; }
 -keep class com.google.android.gms.common.** { *; }
 -keep class com.google.android.gms.tasks.** { *; }
 -keep class com.google.android.gms.auth.api.signin.** { *; }
+-keep class com.google.android.gms.auth.api.signin.internal.** { *; }
+-keep class com.google.android.gms.common.api.** { *; }
 -dontwarn com.google.android.gms.**
+
+# Crucial: Keep Parcelable CREATORs for GMS IPC
+-keepclassmembers class * implements android.os.Parcelable {
+    public static final android.os.Parcelable$Creator *;
+}
+
+-keep class com.google.android.gms.common.internal.safeparcel.SafeParcelable {
+    public static final *** CREATOR;
+}
+
+# Keep specific resources that Google Play Services might need
+-keep class com.google.android.gms.common.R$* { *; }
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -111,6 +125,13 @@
 -keepclassmembers class * {
     @com.google.api.client.util.Key <fields>;
 }
+
+# Ensure reflection-based service loading works
+-keepattributes Signature,RuntimeVisibleAnnotations,AnnotationDefault,EnclosingMethod,InnerClasses
+-keep class com.google.api.client.json.gson.GsonFactory { *; }
+-keep class com.google.api.client.http.javanet.NetHttpTransport { *; }
+-keepnames class com.google.api.client.googleapis.extensions.android.gms.auth.GoogleAccountCredential
+-keepnames class com.google.api.client.googleapis.extensions.android.gms.auth.UserRecoverableAuthIOException
 
 # Resolve missing classes from Apache HttpClient used by Google API Client
 -dontwarn javax.naming.**

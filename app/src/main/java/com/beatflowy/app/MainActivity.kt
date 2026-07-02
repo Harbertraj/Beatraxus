@@ -269,7 +269,7 @@ fun BeatraxusApp(
     val driveAccountLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
-        Log.d("MainActivity", "Drive account launcher result: ${result.resultCode}")
+        Log.i("MainActivity", "Drive account launcher result: ${result.resultCode}")
         if (result.resultCode == Activity.RESULT_OK && result.data != null) {
             val task = GoogleSignIn.getSignedInAccountFromIntent(result.data)
             try {
@@ -296,7 +296,8 @@ fun BeatraxusApp(
         } else if (result.resultCode == Activity.RESULT_CANCELED) {
             Log.d("MainActivity", "Google sign in canceled by user")
         } else {
-            Log.w("MainActivity", "Google sign in failed or returned null data. Code: ${result.resultCode}")
+            Log.e("MainActivity", "Google sign in failed or returned null data. Code: ${result.resultCode}")
+            viewModel.setErrorMessage("Google sign in failed with result code: ${result.resultCode}")
         }
     }
 
@@ -309,6 +310,8 @@ fun BeatraxusApp(
             uiState.driveAccounts.filter { it.enabled }.forEach { account ->
                 viewModel.scanDriveAccount(account.email)
             }
+        } else {
+            Log.e("MainActivity", "Auth recovery failed or canceled. Code: ${result.resultCode}")
         }
         viewModel.consumeAuthRecoveryIntent()
     }

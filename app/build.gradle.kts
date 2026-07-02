@@ -241,7 +241,6 @@ dependencies {
     }
     implementation("com.google.api-client:google-api-client-android:2.5.0")
     implementation("com.google.http-client:google-http-client-android:1.45.0")
-    implementation("com.google.oauth-client:google-oauth-client-jetty:1.34.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.7.3")
     implementation("net.jthink:jaudiotagger:3.0.1")
     implementation("com.github.tdlibx:td:1.8.56")
