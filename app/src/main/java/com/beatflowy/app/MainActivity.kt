@@ -252,6 +252,7 @@ fun BeatraxusApp(
         GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
             .requestEmail()
             .requestProfile()
+            .requestIdToken("1013270401840-ueb0ttfq5h5uej3j1iv459gjqcst104r.apps.googleusercontent.com")
             .requestScopes(Scope(DriveScopes.DRIVE_READONLY), Scope(DriveScopes.DRIVE_METADATA_READONLY))
             .build()
     }
