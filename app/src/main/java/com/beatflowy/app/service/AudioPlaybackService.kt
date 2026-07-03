@@ -115,6 +115,7 @@ class AudioPlaybackService : Service() {
     }
 
     private var lastSongId: String? = null
+    private var lastSessionId: Long = 0L
     private var currentAlbumArt: Bitmap? = null
     private var currentAlbumArtSongId: String? = null
     private var albumArtLoadJob: Job? = null
@@ -184,14 +185,17 @@ class AudioPlaybackService : Service() {
         serviceScope.launch {
             engine.playbackStateFlow
                 .collectLatest { state ->
-                    val songChanged = state.currentSong?.id != lastSongId
+                    val songChanged = state.currentSong?.id != lastSongId || state.sessionId != lastSessionId
                     
                     if (songChanged) {
                         cloudCacheManager.setCurrentlyPlayingId(state.currentSong?.id)
                         // Scrobble previous song if needed before resetting
-                        handleScrobble(lastSongId, state.currentSong?.id)
+                        if (state.currentSong?.id != lastSongId) {
+                            handleScrobble(lastSongId, state.currentSong?.id)
+                        }
 
                         lastSongId = state.currentSong?.id
+                        lastSessionId = state.sessionId
                         currentAlbumArt = null
                         currentAlbumArtSongId = null
                         
@@ -200,8 +204,16 @@ class AudioPlaybackService : Service() {
                         lastProgressUpdateTime = System.currentTimeMillis()
                         isScrobbled = false
                         
+                        // Update current index if the song changed (gapless transition)
+                        state.currentSong?.let { song ->
+                            val newIndex = playlist.indexOfFirst { it.id == song.id }
+                            if (newIndex != -1 && newIndex != currentIndex) {
+                                currentIndex = newIndex
+                            }
+                        }
+
                         // Preload next song for gapless playback
-                        getNextSong()?.let { engine.preloadNext(it) }
+                        updateUpcomingSongs()
 
                         albumArtLoadJob?.cancel()
                         albumArtLoadJob = serviceScope.launch {
@@ -324,23 +336,27 @@ class AudioPlaybackService : Service() {
     }
 
     private fun handleCompletion() {
-        val currentRepeatMode = engine.playbackStateFlow.value.repeatMode
-        val engineCurrentSong = engine.playbackStateFlow.value.currentSong
+        val state = engine.playbackStateFlow.value
+        val currentRepeatMode = state.repeatMode
+        val engineSessionId = state.sessionId
         
-        // Check if engine already transitioned gaplessly
-        if (engineCurrentSong != null && engineCurrentSong.id != playlist.getOrNull(currentIndex)?.id) {
-            val newIndex = playlist.indexOfFirst { it.id == engineCurrentSong.id }
-            if (newIndex != -1) {
-                currentIndex = newIndex
-                updateUpcomingSongs()
-                // Already playing the new song, no need to call play()
-                return
+        // If engine already transitioned (sessionId changed), we just need to sync
+        if (engineSessionId != lastSessionId) {
+            lastSessionId = engineSessionId
+            val engineCurrentSong = state.currentSong
+            if (engineCurrentSong != null) {
+                val newIndex = playlist.indexOfFirst { it.id == engineCurrentSong.id }
+                if (newIndex != -1) {
+                    currentIndex = newIndex
+                    updateUpcomingSongs()
+                    return
+                }
             }
         }
 
         when (currentRepeatMode) {
             RepeatMode.ONE -> {
-                val song = engine.playbackStateFlow.value.currentSong
+                val song = playlist.getOrNull(currentIndex)
                 if (song != null) engine.play(song)
             }
             RepeatMode.ALL -> next()
@@ -437,11 +453,7 @@ class AudioPlaybackService : Service() {
     val previousSongs: StateFlow<List<Song>> = _previousSongs.asStateFlow()
 
     private fun updateUpcomingSongs() {
-        val upcoming = if (playlist.isEmpty() || currentIndex >= playlist.size - 1) {
-            emptyList()
-        } else {
-            playlist.subList(currentIndex + 1, playlist.size)
-        }
+        val upcoming = getUpcomingSongs()
         _upcomingSongs.value = upcoming
 
         val previous = if (playlist.isEmpty() || currentIndex <= 0) {
@@ -452,7 +464,8 @@ class AudioPlaybackService : Service() {
         _previousSongs.value = previous
         
         serviceScope.launch {
-            cloudCacheManager.prepareCache(playlist.getOrNull(currentIndex), upcoming)
+            val tdLib = (application as com.beatflowy.app.BeatraxusApplication).tdLibManager
+            cloudCacheManager.prepareCache(playlist.getOrNull(currentIndex), upcoming, tdLib)
         }
 
         // Enable gapless transition in engine
@@ -621,6 +634,9 @@ class AudioPlaybackService : Service() {
             RepeatMode.ONE -> RepeatMode.OFF
         }
         engine.setRepeatMode(next)
+        updateUpcomingSongs()
+        updateMediaSessionState()
+        saveState()
     }
 
     fun updateScanningProgress(progress: Float, count: Int, completed: Boolean) {
@@ -673,11 +689,39 @@ class AudioPlaybackService : Service() {
         }
     }
 
-    fun getNextSong(): Song? = if (playlist.isNotEmpty() && currentIndex < playlist.size - 1) playlist[currentIndex + 1] else null
+    fun getNextSong(): Song? {
+        if (playlist.isEmpty()) return null
+        val repeatMode = engine.playbackStateFlow.value.repeatMode
+        return when (repeatMode) {
+            RepeatMode.ONE -> playlist.getOrNull(currentIndex)
+            RepeatMode.ALL -> if (currentIndex < playlist.size - 1) playlist[currentIndex + 1] else playlist[0]
+            RepeatMode.OFF -> if (currentIndex < playlist.size - 1) playlist[currentIndex + 1] else null
+        }
+    }
     
     fun getUpcomingSongs(): List<Song> {
-        if (playlist.isEmpty() || currentIndex >= playlist.size - 1) return emptyList()
-        return playlist.subList(currentIndex + 1, playlist.size)
+        if (playlist.isEmpty()) return emptyList()
+        val repeatMode = engine.playbackStateFlow.value.repeatMode
+        return when (repeatMode) {
+            RepeatMode.ONE -> {
+                val current = playlist.getOrNull(currentIndex)
+                if (current != null) {
+                    val remaining = if (currentIndex < playlist.size - 1) playlist.subList(currentIndex + 1, playlist.size) else emptyList()
+                    listOf(current) + remaining
+                } else emptyList()
+            }
+            RepeatMode.ALL -> {
+                if (currentIndex < playlist.size - 1) {
+                    playlist.subList(currentIndex + 1, playlist.size) + playlist.subList(0, currentIndex + 1)
+                } else {
+                    playlist
+                }
+            }
+            RepeatMode.OFF -> {
+                if (currentIndex < playlist.size - 1) playlist.subList(currentIndex + 1, playlist.size)
+                else emptyList()
+            }
+        }
     }
 
     fun getPreviousSongs(): List<Song> {

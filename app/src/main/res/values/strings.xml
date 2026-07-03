@@ -17,4 +17,5 @@
     <string name="empty_library_body">Add audio files to your device to start playing</string>
     <string name="permission_denied">Storage permission is required to read your music library</string>
     <string name="select_track_hint">Select a track to begin</string>
+    <string name="default_web_client_id">1013270401840-sdo82io7gggkifi27851sk8342tn0mnq.apps.googleusercontent.com</string>
 </resources>

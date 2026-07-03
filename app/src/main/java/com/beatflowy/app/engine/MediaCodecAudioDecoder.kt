@@ -92,9 +92,8 @@ internal class MediaCodecAudioDecoder(
             codec.configure(track.format, null, null, 0)
             codec.start()
 
-            if (request.startPositionMs > 0) {
-                extractor.seekTo(request.startPositionMs * 1000, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
-            }
+            // Explicitly seek to requested position (even if 0) to ensure extractor is at the right start
+            extractor.seekTo(request.startPositionMs * 1000, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
 
             val info = MediaCodec.BufferInfo()
             var currentPcmEncoding = AudioFormat.ENCODING_PCM_16BIT
@@ -309,51 +308,43 @@ internal class MediaCodecAudioDecoder(
             throw IllegalStateException("PCM target buffer too small: ${target.size} < $sampleCount")
         }
 
-        buffer.position(0)
-        buffer.limit(sizeBytes)
+        // Framework sets position and limit to valid data range
+        val startPos = buffer.position()
         buffer.order(ByteOrder.LITTLE_ENDIAN)
 
         return when (pcmEncoding) {
             AudioFormat.ENCODING_PCM_FLOAT -> {
                 val floatView = buffer.asFloatBuffer()
-                var index = 0
-                while (index < sampleCount) {
-                    target[index] = floatView.get(index)
-                    index++
+                for (i in 0 until sampleCount) {
+                    target[i] = floatView.get(i)
                 }
                 sampleCount
             }
 
             AudioFormat.ENCODING_PCM_32BIT -> {
-                var index = 0
-                while (index < sampleCount) {
-                    target[index] = buffer.getInt(index * 4) / 2147483648f
-                    index++
+                for (i in 0 until sampleCount) {
+                    target[i] = buffer.getInt(startPos + i * 4) / 2147483648f
                 }
                 sampleCount
             }
 
             AudioFormat.ENCODING_PCM_24BIT_PACKED -> {
-                var index = 0
-                while (index < sampleCount) {
-                    val base = index * 3
+                for (i in 0 until sampleCount) {
+                    val base = startPos + i * 3
                     val raw =
                         (buffer.get(base).toInt() and 0xFF) or
                             ((buffer.get(base + 1).toInt() and 0xFF) shl 8) or
                             (buffer.get(base + 2).toInt() shl 16)
                     val signed = if (raw and 0x800000 != 0) raw or -0x1000000 else raw
-                    target[index] = signed / 8388608f
-                    index++
+                    target[i] = signed / 8388608f
                 }
                 sampleCount
             }
 
             else -> {
                 val shortBuffer = buffer.asShortBuffer()
-                var index = 0
-                while (index < sampleCount) {
-                    target[index] = shortBuffer.get(index) / 32768f
-                    index++
+                for (i in 0 until sampleCount) {
+                    target[i] = shortBuffer.get(i) / 32768f
                 }
                 sampleCount
             }

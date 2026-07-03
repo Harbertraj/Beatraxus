@@ -45,6 +45,10 @@ class AudioTrackOutput(
     private var dvcEnabled = true
     private var dvcMode = DvcMode.DAC
     private var dvcLevel = 1f
+    @Volatile private var ditherEnabled = true
+    @Volatile private var ditherType = 1
+    private var ditherLastErr = 0f
+    private var ditherLastNoise = 0f
     private var ditherState0 = 0x1234ABCD   
     private var ditherState1 = 0xDEADBEEF.toInt()  
     private var lastThreadId = -1L
@@ -476,8 +480,23 @@ class AudioTrackOutput(
         usingMmap = false
         val track = audioTrack
         audioTrack = null
-        track?.let {
-            try { it.stop(); it.release() } catch (_: Exception) {}
+        if (track != null) {
+            // SECURITY: AudioTrack.stop()/release() can block for 100ms+ on some drivers.
+            // We offload this to a background thread to prevent the engine control loop from "sticking"
+            // during source changes (e.g. Telegram to GDrive).
+            Thread {
+                try {
+                    if (track.playState == AudioTrack.PLAYSTATE_PLAYING) {
+                        track.pause()
+                        track.flush()
+                    }
+                    track.stop()
+                    track.release()
+                    Log.d(TAG, "AudioTrack released successfully in background")
+                } catch (e: Exception) {
+                    Log.w(TAG, "Error in background track release: ${e.message}")
+                }
+            }.start()
         }
     }
 
@@ -615,6 +634,13 @@ class AudioTrackOutput(
             dvcMode = DvcMode.entries.firstOrNull { it.name == mode } ?: DvcMode.DAC
             dvcLevel = level.coerceIn(0f, 1f)
             applyTrackVolume()
+        }
+    }
+
+    override fun setDitherState(enabled: Boolean, type: Int) {
+        synchronized(stateLock) {
+            ditherEnabled = enabled
+            ditherType = type
         }
     }
 
@@ -763,7 +789,7 @@ class AudioTrackOutput(
         var inIndex = offset
         var outIndex = 0
         repeat(sampleCount) {
-            val sample = (data[inIndex++] * Short.MAX_VALUE + tpdfDither(1f)).roundToInt().coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt()).toShort()
+            val sample = ditherSample(data[inIndex++] * Short.MAX_VALUE, 1f).roundToInt().coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt()).toShort()
             pcm16Buffer[outIndex++] = (sample.toInt() and 0xFF).toByte()
             pcm16Buffer[outIndex++] = ((sample.toInt() shr 8) and 0xFF).toByte()
         }
@@ -773,7 +799,7 @@ class AudioTrackOutput(
         var inIndex = offset
         var outIndex = 0
         repeat(sampleCount) {
-            val sample = (data[inIndex++] * PCM_24_MAX + tpdfDither(256f)).roundToInt().coerceIn(-8_388_608, 8_388_607)
+            val sample = ditherSample(data[inIndex++] * PCM_24_MAX, 256f).roundToInt().coerceIn(-8_388_608, 8_388_607)
             pcm24Buffer[outIndex++] = (sample and 0xFF).toByte()
             pcm24Buffer[outIndex++] = ((sample shr 8) and 0xFF).toByte()
             pcm24Buffer[outIndex++] = ((sample shr 16) and 0xFF).toByte()
@@ -794,12 +820,32 @@ class AudioTrackOutput(
 
     private fun getHardwareSampleRate(): Int = audioManager.getProperty(AudioManager.PROPERTY_OUTPUT_SAMPLE_RATE)?.toIntOrNull() ?: 48000
 
-    private fun tpdfDither(scale: Float): Float {
+    private fun ditherSample(inputSample: Float, scale: Float): Float {
+        if (!ditherEnabled || ditherType == 0) return inputSample
+
         ditherState0 = 1_664_525 * ditherState0 + 1_013_904_223
         val a = ((ditherState0 ushr 1) and 0x7FFF) / 32767f
         ditherState1 = 22_695_477 * ditherState1 + 1
         val b = ((ditherState1 ushr 1) and 0x7FFF) / 32767f
-        return (a - b) / scale
+        val noise = a - b
+
+        return when (ditherType) {
+            2 -> { // Shaped: simple error-feedback
+                val res = inputSample + (noise / scale) - 0.9f * ditherLastErr
+                val rounded = res.roundToInt().toFloat()
+                ditherLastErr = rounded - res
+                rounded
+            }
+            3 -> { // HighPass: one-pole high-pass to the noise
+                val currentNoise = noise
+                val hpNoise = currentNoise - 0.5f * ditherLastNoise
+                ditherLastNoise = currentNoise
+                inputSample + (hpNoise / scale)
+            }
+            else -> { // TPDF (type 1)
+                inputSample + (noise / scale)
+            }
+        }
     }
 
     private fun encodingName(enc: Int) = when (enc) {

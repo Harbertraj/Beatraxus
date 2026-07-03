@@ -115,12 +115,13 @@ class AudioEngine(
                 if (nextSession != null && nextSong?.id == song.id) {
                     activeSession?.stop()
                     activeSession = nextSession
+                    val newSessionId = activeSession?.sessionId ?: 0L
                     nextSession = null
                     currentSong = song
                     nextSong = null
                     positionMs = 0L
                     updateAudioStateForSong(song)
-                    _playbackStateFlow.update { it.copy(currentSong = song, isPlaying = true) }
+                    _playbackStateFlow.update { it.copy(currentSong = song, isPlaying = true, sessionId = newSessionId) }
                     
                     // Trigger output reconfiguration for the promoted session
                     val fmt = activeSession?.pcmFormat
@@ -323,6 +324,11 @@ class AudioEngine(
             level = config.dvcLevel
         )
 
+        output.setDitherState(
+            enabled = config.ditherEnabled && config.ditherType != com.beatflowy.app.model.DitherType.NONE,
+            type = config.ditherType.nativeValue
+        )
+
         // Forward USB Exclusive Mode to output layer
         output.setUsbExclusiveMode(config.usbExclusiveEnabled)
         output.setBitPerfectMode(config.bitPerfectEnabled)
@@ -370,6 +376,7 @@ class AudioEngine(
         val sessionId = currentSessionId.incrementAndGet()
         val session = PlaybackSession(sessionId, song, startPositionMs)
         activeSession = session
+        _playbackStateFlow.update { it.copy(sessionId = sessionId) }
 
         engineScope.launch(Dispatchers.IO) {
             try {
@@ -411,10 +418,12 @@ class AudioEngine(
                     controlMutex.withLock {
                         fadingOutSession = activeSession
                         activeSession = nextSession
+                        val newSessionId = activeSession?.sessionId ?: 0L
                         nextSession = null
                         currentSong = activeSession?.song
                         updateAudioStateForSong(currentSong!!)
-                        _playbackStateFlow.update { it.copy(currentSong = currentSong) }
+                        this@AudioEngine.positionMs = 0L
+                        _playbackStateFlow.update { it.copy(currentSong = currentSong, sessionId = newSessionId) }
                     }
                 }
             }
@@ -507,18 +516,22 @@ class AudioEngine(
                             val newFormat = next.pcmFormat
 
                             activeSession = next
+                            val newSessionId = next.sessionId
                             nextSession = null
                             currentSong = next.song
                             nextSong = null
 
                             if (oldFormat != newFormat) {
                                 next.configure(newFormat!!)
+                                // Reconfigure output for the new format
+                                reconfigureOutput()
                             }
                             val framesAtTransition = output.totalFramesWritten()
                             next.setStartFrameOffset(framesAtTransition)
 
                             updateAudioStateForSong(currentSong!!)
-                            _playbackStateFlow.update { it.copy(currentSong = currentSong) }
+                            this@AudioEngine.positionMs = 0L
+                            _playbackStateFlow.update { it.copy(currentSong = currentSong, sessionId = newSessionId) }
                             _onCompletion.emit(Unit)
                         } else {
                             // No next track ready

@@ -56,7 +56,7 @@ import kotlinx.coroutines.delay
 @Composable
 fun WelcomeScreen(
     viewModel: PlayerViewModel,
-    onEnterFlow: () -> Unit,
+    onEnterFlow: (onGranted: () -> Unit) -> Unit,
     onFinish: () -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -551,7 +551,7 @@ fun WelcomeScreen(
                                                 indication = null,
                                                 onClick = {
                                                     if (!uiState.isScanning) {
-                                                        onEnterFlow()
+                                                        viewModel.showScanOptions()
                                                     }
                                                 }
                                             )
@@ -620,7 +620,7 @@ fun WelcomeScreen(
                             description = "Scan all compatible audio files from your device storage.",
                             icon = Icons.Rounded.Search,
                             color = Color(0xFF7C4DFF),
-                            onClick = { viewModel.startFullScan() }
+                            onClick = { onEnterFlow { viewModel.startFullScan() } }
                         )
 
                         Spacer(modifier = Modifier.height(24.dp))
@@ -631,7 +631,7 @@ fun WelcomeScreen(
                             description = "Pick specific folders to include in your library.",
                             icon = Icons.Rounded.CreateNewFolder,
                             color = Color(0xFF1E88E5),
-                            onClick = { viewModel.openFolderPicker() }
+                            onClick = { onEnterFlow { viewModel.openFolderPicker() } }
                         )
                         
                         if (uiState.musicFolders.isNotEmpty()) {
@@ -680,7 +680,7 @@ fun WelcomeScreen(
                             Spacer(modifier = Modifier.height(24.dp))
                             
                             Button(
-                                onClick = { viewModel.startAddedFoldersScan() },
+                                onClick = { onEnterFlow { viewModel.startAddedFoldersScan() } },
                                 colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(alpha = 0.1f)),
                                 shape = RoundedCornerShape(16.dp),
                                 modifier = Modifier.fillMaxWidth().height(56.dp)

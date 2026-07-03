@@ -99,6 +99,10 @@
 -keep class com.google.android.gms.auth.api.signin.** { *; }
 -keep class com.google.android.gms.auth.api.signin.internal.** { *; }
 -keep class com.google.android.gms.common.api.** { *; }
+-keep class com.google.android.gms.common.api.Scope { *; }
+-keep class com.google.android.gms.common.api.Status { *; }
+-keep class com.google.android.gms.auth.api.signin.GoogleSignInOptions { *; }
+-keep class com.google.android.gms.auth.api.signin.GoogleSignInAccount { *; }
 -dontwarn com.google.android.gms.**
 
 # Crucial: Keep Parcelable CREATORs for GMS IPC
@@ -187,12 +191,44 @@
 -keepclassmembers enum com.beatflowy.app.repository.LyricsType { *; }
 -keep class com.beatflowy.app.model.LrcLine { *; }
 
-# ══════════════════════════════════════════════════════════════════════════════
 # TDLIB (Telegram Library)
-# ══════════════════════════════════════════════════════════════════════════════
 -keep class org.drinkless.tdlib.** { *; }
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TDLIB (Telegram Library)
+# ADDITIONAL GOOGLE / FIREBASE / CREDENTIALS
 # ══════════════════════════════════════════════════════════════════════════════
+
+-keep class com.google.android.gms.** { *; }
+-dontwarn com.google.android.gms.**
+
+# Google Sign-In / Play Services Auth / Sign-in
+-keep class com.google.android.gms.signin.** { *; }
+
+# Credential Manager / Identity Services
+-keep class androidx.credentials.** { *; }
+-keep class com.google.android.libraries.identity.googleid.** { *; }
+
+# Google API Client JSON models
+-keep class * extends com.google.api.client.json.GenericJson { *; }
+-keep class com.google.api.services.** { *; }
+
+# TDLIB (Telegram Library)
 -keep class org.drinkless.tdlib.** { *; }
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ADDITIONAL GOOGLE / FIREBASE / CREDENTIALS
+# ══════════════════════════════════════════════════════════════════════════════
+
+-keep class com.google.android.gms.** { *; }
+-dontwarn com.google.android.gms.**
+
+# Google Sign-In / Play Services Auth / Sign-in
+-keep class com.google.android.gms.signin.** { *; }
+
+# Credential Manager / Identity Services
+-keep class androidx.credentials.** { *; }
+-keep class com.google.android.libraries.identity.googleid.** { *; }
+
+# Google API Client JSON models
+-keep class * extends com.google.api.client.json.GenericJson { *; }
+-keep class com.google.api.services.** { *; }

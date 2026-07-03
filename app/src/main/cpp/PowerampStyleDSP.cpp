@@ -920,6 +920,7 @@ public:
 
 // ===================== SOUND STAGE ENGINE (3D Spatialization) =====================
 class SoundStageEngine {
+    static constexpr double REFERENCE_DISTANCE = 2.0; // unity gain at this distance
     std::vector<double> delayBufL, delayBufR;
     size_t delaySize = 0, writePos = 0;
     double azimuthDeg = 0.0;       // 0-360, 0 = front
@@ -977,7 +978,8 @@ public:
         writePos = (writePos + 1) % delaySize;
 
         // 4. Distance: inverse falloff + air-absorption darkening
-        double distGain = 1.0 / (1.0 + (distanceM - 1.0) * 0.15);
+        double distGain = 1.0 / (1.0 + (distanceM - REFERENCE_DISTANCE) * 0.15);
+        distGain = std::clamp(distGain, 0.5, 1.5);
         double absorbCoeff = std::clamp(1.0 - (distanceM / 15.0), 0.2, 0.95);
         airAbsorbState = airAbsorbState * (1.0 - absorbCoeff) + mid * absorbCoeff;
 

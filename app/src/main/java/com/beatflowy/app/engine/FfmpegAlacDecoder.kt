@@ -265,16 +265,19 @@ internal class FfmpegAlacDecoder(
     private suspend fun probeFormat(song: Song, headers: Map<String, String>): ProbedAlacFormat? = withContext(Dispatchers.IO) {
         // 1. Try MediaExtractor first (local or cached)
         // MediaExtractor is significantly faster than FFprobe as it can use our StreamingCacheDataSource
-        val extracted = probeFormatWithExtractor(song, headers)
-        if (extracted != null) return@withContext extracted
+        // SKIP for Telegram unless already cached, to avoid slow/blocking network reads during probe.
+        if (song.source != SongSource.TELEGRAM || cloudCacheManager.getCachedFile(song) != null) {
+            val extracted = probeFormatWithExtractor(song, headers)
+            if (extracted != null) return@withContext extracted
+        }
 
         // 2. Trust Song metadata if we have it (to avoid slow FFprobe fallback)
-        if (song.sampleRateHz > 8000 && song.bitDepth > 0) {
+        if (song.sampleRateHz > 8000 && (song.bitDepth > 0 || song.source == SongSource.TELEGRAM)) {
             return@withContext ProbedAlacFormat(
-                codecName = song.format,
+                codecName = if (song.format.isNotBlank()) song.format else "ALAC",
                 sampleRate = song.sampleRateHz,
                 channels = 2, // Assumption, but safe for 99% of music
-                bitDepth = song.bitDepth
+                bitDepth = if (song.bitDepth > 0) song.bitDepth else 16
             )
         }
 

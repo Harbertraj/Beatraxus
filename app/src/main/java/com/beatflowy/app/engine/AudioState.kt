@@ -30,6 +30,7 @@ data class AudioState(
 data class PlaybackState(
     val isPlaying: Boolean = false,
     val currentSong: Song? = null,
+    val sessionId: Long = 0,
     val shuffleMode: Boolean = false,
     val repeatMode: RepeatMode = RepeatMode.OFF
 )

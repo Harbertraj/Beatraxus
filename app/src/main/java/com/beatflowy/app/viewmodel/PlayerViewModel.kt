@@ -485,11 +485,15 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun showScanOptions() {
+        _uiState.update { it.copy(showScanOptions = true) }
+    }
+
     fun loadLibrary() {
         if (libraryLoadJob?.isActive == true) return
         
         libraryLoadJob = viewModelScope.launch {
-            _uiState.update { it.copy(permissionDenied = false, isScanning = true) }
+            _uiState.update { it.copy(permissionDenied = false, isLoadingLibrary = true) }
             try {
                 val dbSongs = withContext(Dispatchers.IO) {
                     songDao.getAllSongs().map { entity ->
@@ -536,7 +540,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     if (dbSongs.isNotEmpty()) {
                         setFirstRunComplete()
                     } else {
-                        _uiState.update { it.copy(isScanning = false, showScanOptions = true) }
+                        _uiState.update { 
+                            if (it.isScanning) it.copy(isLoadingLibrary = false)
+                            else it.copy(isLoadingLibrary = false, showScanOptions = true)
+                        }
                         return@launch
                     }
                 }
@@ -595,7 +602,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     }
                     
                     // After loading from DB, we stop here to avoid automatic "sync" (quickScan) on startup
-                    _uiState.update { it.copy(isScanning = false) }
+                    _uiState.update { it.copy(isLoadingLibrary = false) }
                     return@launch
                 }
             } catch (e: Exception) {
@@ -1086,7 +1093,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     setFirstRunComplete()
                 }
             } catch (e: Exception) {
-                _uiState.update { it.copy(errorMessage = "Full scan failed: ${e.message}") }
+                _uiState.update { it.copy(errorMessage = "Full scan failed: ${e.message}", showScanOptions = true) }
                 service?.updateScanningProgress(1.0f, _uiState.value.scanCount, true)
             } finally {
                 _uiState.update { it.copy(isScanning = false, isFullScanning = false) }
@@ -1168,7 +1175,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 delay(2000)
                 _uiState.update { it.copy(errorMessage = null) }
             } catch (e: Exception) {
-                _uiState.update { it.copy(errorMessage = "Scan failed: ${e.message}") }
+                _uiState.update { it.copy(errorMessage = "Scan failed: ${e.message}", showScanOptions = true) }
             } finally {
                 _uiState.update { it.copy(isScanning = false) }
             }

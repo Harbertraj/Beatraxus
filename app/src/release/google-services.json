@@ -1,1 +1,29 @@
-{"installed":{"client_id":"1013270401840-ueb0ttfq5h5uej3j1iv459gjqcst104r.apps.googleusercontent.com","project_id":"beatraxus-drive-api","auth_uri":"https://accounts.google.com/o/oauth2/auth","token_uri":"https://oauth2.googleapis.com/token","auth_provider_x509_cert_url":"https://www.googleapis.com/oauth2/v1/certs"}}
+{
+  "project_info": {
+    "project_number": "315086294170",
+    "project_id": "app-3e4f782c",
+    "storage_bucket": "app-3e4f782c.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:315086294170:android:cb74714f780243d7d4e323",
+        "android_client_info": {
+          "package_name": "com.beatflowy.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAN6YtCLuCXc6e-uaojQPxSHU4Px-56VvY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

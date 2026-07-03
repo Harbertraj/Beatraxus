@@ -5,6 +5,7 @@ interface AudioOutput {
     fun setTargetSampleRate(sampleRate: Int)
     fun setSampleFormat(format: com.beatflowy.app.model.SampleFormat)
     fun setDvcState(enabled: Boolean, mode: String, level: Float)
+    fun setDitherState(enabled: Boolean, type: Int)
     fun setUsbExclusiveMode(enabled: Boolean)
     fun setBitPerfectMode(enabled: Boolean)
     fun setBufferConfig(bufferFrames: Int, bufferCount: Int, postFadeFrames: Int)

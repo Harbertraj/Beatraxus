@@ -43,13 +43,17 @@ internal class DecoderFactory(
             // Local MediaCodec often fails or has glitches with lossless formats over MediaDataSource.
             // However, for Telegram we now use a specialized MediaDataSource that handles local file growth,
             // which MediaCodec handles better for WAV than FFmpeg does without complex piping.
-            if (isAlac || (isWav && song.source != SongSource.TELEGRAM)) {
-                Log.i(TAG, "Routing Cloud Lossless (${if (isAlac) "ALAC" else "WAV"}) to FFmpeg: ${song.title}")
+            // We also route Telegram M4A/MP4 here to ensure ALAC support without risky/slow probing.
+            if (isAlac || (isWav && song.source != SongSource.TELEGRAM) || (isM4A && song.source == SongSource.TELEGRAM)) {
+                Log.i(TAG, "Routing Cloud (${if (isAlac) "ALAC" else if (isWav) "WAV" else "Telegram M4A"}) to FFmpeg: ${song.title}")
                 return ffmpegAlacDecoder
             }
 
             // Always probe for cloud M4A if bitrate is high or unknown, to catch ALAC early
-            if (isM4A && (song.bitrate > 500000 || song.bitrate == 0)) {
+            // (Skipped for Telegram above)
+            // PERFORMANCE: Only probe if we have a strong reason to suspect ALAC, otherwise assume AAC
+            // to avoid blocking network reads during playback start.
+            if (isM4A && song.source != SongSource.TELEGRAM && (song.bitrate > 800000 || (song.bitrate == 0 && song.fileSizeBytes > 30 * 1024 * 1024))) {
                 val probedMime = probeAudioMime(song)
                 if (probedMime?.contains("alac", ignoreCase = true) == true) {
                     Log.i(TAG, "Routing Cloud Probed ALAC to FFmpeg: ${song.title}")

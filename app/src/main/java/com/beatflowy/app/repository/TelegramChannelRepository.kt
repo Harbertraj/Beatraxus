@@ -41,6 +41,8 @@ internal fun detectAudioFormat(fileName: String, mimeType: String?): String {
     return when {
         mime.contains("wav") -> "WAV"
         mime.contains("flac") -> "FLAC"
+        mime.contains("alac") -> "ALAC"
+        mime.contains("dsd") || mime.contains("dsf") -> "DSD"
         mime.contains("mp4") || mime.contains("m4a") -> "M4A"
         mime.contains("aac") -> "AAC"
         mime.contains("ogg") -> "OGG"

@@ -41,6 +41,7 @@ import com.google.android.gms.common.api.ApiException
 import com.google.android.gms.common.api.Scope
 import com.google.api.services.drive.DriveScopes
 
+import com.beatflowy.app.R
 import com.beatflowy.app.repository.DriveAccount
 import com.beatflowy.app.service.AudioPlaybackService
 import com.beatflowy.app.ui.screens.MainScreen
@@ -66,6 +67,8 @@ class MainActivity : ComponentActivity() {
 
     private var serviceBound = false
     private lateinit var frameJankMonitor: FrameJankMonitor
+    private var pendingPermissionAction: (() -> Unit)? = null
+
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             val localBinder = binder as? AudioPlaybackService.LocalBinder
@@ -90,10 +93,15 @@ class MainActivity : ComponentActivity() {
 
         if (results[essentialPermission] == true) {
             Log.d("MainActivity", "Essential permission granted, loading library")
-            viewModel.loadLibrary()
+            if (pendingPermissionAction == null) {
+                viewModel.loadLibrary()
+            } else {
+                pendingPermissionAction?.invoke()
+            }
         } else {
             viewModel.onPermissionDenied()
         }
+        pendingPermissionAction = null
     }
 
     override fun onStart() {
@@ -116,7 +124,7 @@ class MainActivity : ComponentActivity() {
             BeatraxusTheme {
                 BeatraxusApp(
                     viewModel = viewModel,
-                    onRequestPermissions = { requestPermissions() }
+                    onRequestPermissions = { action -> requestPermissions(action) }
                 )
             }
         }
@@ -178,7 +186,7 @@ class MainActivity : ComponentActivity() {
         bindService(intent, serviceConnection, BIND_AUTO_CREATE)
     }
 
-    fun requestPermissions(onPermissionGranted: () -> Unit = {}) {
+    fun requestPermissions(onPermissionGranted: (() -> Unit)? = null) {
         val essentialPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             Manifest.permission.READ_MEDIA_AUDIO
         } else {
@@ -187,10 +195,15 @@ class MainActivity : ComponentActivity() {
 
         // If already granted, just trigger library load and return
         if (ContextCompat.checkSelfPermission(this, essentialPermission) == PackageManager.PERMISSION_GRANTED) {
-            viewModel.loadLibrary()
-            onPermissionGranted()
+            if (onPermissionGranted == null) {
+                viewModel.loadLibrary()
+            } else {
+                onPermissionGranted()
+            }
             return
         }
+
+        pendingPermissionAction = onPermissionGranted
 
         val permissions = mutableListOf(essentialPermission)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -229,7 +242,7 @@ sealed class Screen(val route: String) {
 @Composable
 fun BeatraxusApp(
     viewModel: PlayerViewModel,
-    onRequestPermissions: () -> Unit
+    onRequestPermissions: (onGranted: () -> Unit) -> Unit
 ) {
     val navController = rememberNavController()
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -251,9 +264,8 @@ fun BeatraxusApp(
     val driveSignInOptions = remember {
         GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
             .requestEmail()
-            .requestProfile()
-            .requestIdToken("1013270401840-ueb0ttfq5h5uej3j1iv459gjqcst104r.apps.googleusercontent.com")
             .requestScopes(Scope(DriveScopes.DRIVE_READONLY), Scope(DriveScopes.DRIVE_METADATA_READONLY))
+            .requestIdToken(context.getString(R.string.default_web_client_id))
             .build()
     }
 
@@ -271,10 +283,13 @@ fun BeatraxusApp(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         Log.i("MainActivity", "Drive account launcher result: ${result.resultCode}")
+        
+        // Even if not RESULT_OK, try to get the account/task to see if there's an error status
+        val task = result.data?.let { GoogleSignIn.getSignedInAccountFromIntent(it) }
+        
         if (result.resultCode == Activity.RESULT_OK && result.data != null) {
-            val task = GoogleSignIn.getSignedInAccountFromIntent(result.data)
             try {
-                val account = task.getResult(ApiException::class.java)
+                val account = task?.getResult(ApiException::class.java)
                 Log.d("MainActivity", "Google sign in success: ${account?.email}")
                 if (account != null && account.email != null) {
                     viewModel.addDriveAccount(DriveAccount(
@@ -294,11 +309,26 @@ fun BeatraxusApp(
                 Log.e("MainActivity", "Unexpected error during Google sign in", e)
                 viewModel.setErrorMessage("Sign in error: ${e.localizedMessage}")
             }
-        } else if (result.resultCode == Activity.RESULT_CANCELED) {
-            Log.d("MainActivity", "Google sign in canceled by user")
         } else {
-            Log.e("MainActivity", "Google sign in failed or returned null data. Code: ${result.resultCode}")
-            viewModel.setErrorMessage("Google sign in failed with result code: ${result.resultCode}")
+            // Handle failure/cancel
+            if (task != null) {
+                try {
+                    task.getResult(ApiException::class.java)
+                } catch (e: ApiException) {
+                    Log.e("MainActivity", "Google sign in error status: ${e.statusCode}")
+                    viewModel.setErrorMessage("Sign in failed: Status code ${e.statusCode}. Ensure SHA-1 is registered.")
+                    return@rememberLauncherForActivityResult
+                } catch (e: Exception) {
+                    Log.e("MainActivity", "Error parsing sign in result", e)
+                }
+            }
+            
+            if (result.resultCode == Activity.RESULT_CANCELED) {
+                Log.d("MainActivity", "Google sign in canceled by user or failed internally")
+            } else {
+                Log.e("MainActivity", "Google sign in failed. Code: ${result.resultCode}")
+                viewModel.setErrorMessage("Google sign in failed (Code: ${result.resultCode})")
+            }
         }
     }
 

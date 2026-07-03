@@ -306,7 +306,7 @@ private class NativeDspProcessor(
         val shouldDither = cfg.ditherEnabled && ditherUnbypassed &&
             cfg.ditherType != com.beatflowy.app.model.DitherType.NONE &&
             outputBitDepth < 32
-        dsp.setDither(shouldDither, outputBitDepth)
+        dsp.setDither(false, outputBitDepth)
         dsp.setDitherType(cfg.ditherType.nativeValue)
 
         // Phase 2.1: Speed
