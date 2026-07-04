@@ -11,6 +11,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import org.jaudiotagger.audio.AudioFileIO
@@ -29,7 +30,7 @@ import java.util.concurrent.ConcurrentHashMap
 class MetadataExtractor(private val context: Context) {
 
     private val TAG = "MetadataExtractor"
-    private val batchSemaphore = Semaphore(12) // Reverted to standard parallelism
+    private val batchSemaphore = Semaphore(30) // Increased to 30 parallel workers for maximum speed as requested
     private val onlineGenreService = GenreApiService()
     
     // Global tracking to prevent multiple batches from processing the same song
@@ -127,6 +128,7 @@ class MetadataExtractor(private val context: Context) {
 
             return@withContext updatedSong
         } catch (e: Exception) {
+            if (e is CancellationException) throw e
             Log.e(TAG, "Error extracting metadata for ${song.title}", e)
             return@withContext song
         } finally {

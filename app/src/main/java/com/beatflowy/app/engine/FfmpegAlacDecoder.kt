@@ -162,7 +162,7 @@ internal class FfmpegAlacDecoder(
                     // Reverting to blocking read as available() is unreliable for pipes
                     input.read(byteBuffer, remainder, bytesToRead)
                 } catch (e: Exception) {
-                    Log.w(TAG, "Pipe read failed: ${e.message}")
+                    Log.e(TAG, "Pipe read failed for ${request.song.title}", e)
                     -1
                 }
                 
@@ -211,8 +211,8 @@ internal class FfmpegAlacDecoder(
             }
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
-            Log.e(TAG, "Lossless decode failed", e)
-            DecodeResult.Failed(e.message)
+            Log.e(TAG, "Lossless decode failed for ${request.song.title}", e)
+            DecodeResult.Failed(e.message ?: e.toString())
         } finally {
             try {
                 input?.close()

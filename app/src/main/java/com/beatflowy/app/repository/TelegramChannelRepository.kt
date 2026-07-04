@@ -76,7 +76,7 @@ private suspend fun waitForDownload(tdLib: TdLibManager, fileId: Int, timeoutMs:
     return null
 }
 
-private val metadataSemaphore = Semaphore(3)
+private val metadataSemaphore = Semaphore(30) // Increased to 30 for maximum throughput as requested
 
 private data class ExtractedMetadata(
     val title: String? = null,
@@ -174,74 +174,77 @@ class TelegramChannelRepository(private val context: Context) {
         val total = messages.size
         var processed = 0
 
+        val semaphore = Semaphore(30)
         val songs = withContext(Dispatchers.IO) {
             messages.map { msg ->
                 async {
-                    val audioContent = msg.content as? TdApi.MessageAudio
-                    val docContent = msg.content as? TdApi.MessageDocument
-                    
-                    val songId = "tg_${msg.chatId}_${msg.id}"
-                    val existing = existingSongs[songId]
-                    
-                    val song = if (existing != null) {
-                        existing
-                    } else if (audioContent != null) {
-                        val audio = audioContent.audio
-                        val fileId = audio.audio.id
+                    semaphore.withPermit {
+                        val audioContent = msg.content as? TdApi.MessageAudio
+                        val docContent = msg.content as? TdApi.MessageDocument
                         
-                        val (fnArtist, fnTitle) = parseMetadataFromFileName(audio.fileName)
-
-                        Song(
-                            id = songId,
-                            uri = Uri.EMPTY,
-                            title = audio.title.ifBlank { fnTitle ?: audio.fileName },
-                            artist = audio.performer.ifBlank { fnArtist ?: "Unknown Artist" },
-                            album = "Telegram: $username",
-                            folder = "Telegram: $username",
-                            durationMs = (audio.duration * 1000L),
-                            format = detectAudioFormat(audio.fileName, audio.mimeType),
-                            sampleRateHz = 44100,
-                            fileSizeBytes = audio.audio.size.toLong(),
-                            source = SongSource.TELEGRAM,
-                            albumArtUri = downloadAlbumArtUri(tdLib, audio),
-                            telegramChannelUrl = channelUrl,
-                            telegramChatId = msg.chatId,
-                            telegramMessageId = msg.id,
-                            telegramFileId = fileId,
-                            isEnriched = false,
-                            lastSyncTimestamp = System.currentTimeMillis()
-                        )
-                    } else if (docContent != null && isAudioMime(docContent.document.mimeType, docContent.document.fileName)) {
-                        val doc = docContent.document
-                        val fileId = doc.document.id
+                        val songId = "tg_${msg.chatId}_${msg.id}"
+                        val existing = existingSongs[songId]
                         
-                        val (fnArtist, fnTitle) = parseMetadataFromFileName(doc.fileName)
+                        val song = if (existing != null) {
+                            existing
+                        } else if (audioContent != null) {
+                            val audio = audioContent.audio
+                            val fileId = audio.audio.id
+                            
+                            val (fnArtist, fnTitle) = parseMetadataFromFileName(audio.fileName)
 
-                        Song(
-                            id = songId,
-                            uri = Uri.EMPTY,
-                            title = fnTitle ?: doc.fileName,
-                            artist = fnArtist ?: "Unknown Artist",
-                            album = "Telegram: $username",
-                            folder = "Telegram: $username",
-                            durationMs = 0L,
-                            format = detectAudioFormat(doc.fileName, doc.mimeType),
-                            sampleRateHz = 44100,
-                            fileSizeBytes = doc.document.size.toLong(),
-                            source = SongSource.TELEGRAM,
-                            albumArtUri = null,
-                            telegramChannelUrl = channelUrl,
-                            telegramChatId = msg.chatId,
-                            telegramMessageId = msg.id,
-                            telegramFileId = fileId,
-                            isEnriched = false,
-                            lastSyncTimestamp = System.currentTimeMillis()
-                        )
-                    } else null
+                            Song(
+                                id = songId,
+                                uri = Uri.EMPTY,
+                                title = audio.title.ifBlank { fnTitle ?: audio.fileName },
+                                artist = audio.performer.ifBlank { fnArtist ?: "Unknown Artist" },
+                                album = "Telegram: $username",
+                                folder = "Telegram: $username",
+                                durationMs = (audio.duration * 1000L),
+                                format = detectAudioFormat(audio.fileName, audio.mimeType),
+                                sampleRateHz = 44100,
+                                fileSizeBytes = audio.audio.size.toLong(),
+                                source = SongSource.TELEGRAM,
+                                albumArtUri = downloadAlbumArtUri(tdLib, audio),
+                                telegramChannelUrl = channelUrl,
+                                telegramChatId = msg.chatId,
+                                telegramMessageId = msg.id,
+                                telegramFileId = fileId,
+                                isEnriched = false,
+                                lastSyncTimestamp = System.currentTimeMillis()
+                            )
+                        } else if (docContent != null && isAudioMime(docContent.document.mimeType, docContent.document.fileName)) {
+                            val doc = docContent.document
+                            val fileId = doc.document.id
+                            
+                            val (fnArtist, fnTitle) = parseMetadataFromFileName(doc.fileName)
 
-                    processed++
-                    if (total > 0) onProgress?.invoke(processed.toFloat() / total)
-                    song
+                            Song(
+                                id = songId,
+                                uri = Uri.EMPTY,
+                                title = fnTitle ?: doc.fileName,
+                                artist = fnArtist ?: "Unknown Artist",
+                                album = "Telegram: $username",
+                                folder = "Telegram: $username",
+                                durationMs = 0L,
+                                format = detectAudioFormat(doc.fileName, doc.mimeType),
+                                sampleRateHz = 44100,
+                                fileSizeBytes = doc.document.size.toLong(),
+                                source = SongSource.TELEGRAM,
+                                albumArtUri = null,
+                                telegramChannelUrl = channelUrl,
+                                telegramChatId = msg.chatId,
+                                telegramMessageId = msg.id,
+                                telegramFileId = fileId,
+                                isEnriched = false,
+                                lastSyncTimestamp = System.currentTimeMillis()
+                            )
+                        } else null
+
+                        processed++
+                        if (total > 0) onProgress?.invoke(processed.toFloat() / total)
+                        song
+                    }
                 }
             }.awaitAll().filterNotNull()
         }

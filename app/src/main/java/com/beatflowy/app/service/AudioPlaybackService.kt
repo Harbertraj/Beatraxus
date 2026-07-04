@@ -340,18 +340,17 @@ class AudioPlaybackService : Service() {
         val currentRepeatMode = state.repeatMode
         val engineSessionId = state.sessionId
         
-        // If engine already transitioned (sessionId changed), we just need to sync
-        if (engineSessionId != lastSessionId) {
-            lastSessionId = engineSessionId
+        // If engine already transitioned (e.g. gapless playback), it will already be playing 
+        // the next song. We just need to sync our internal currentIndex and return to avoid double-skipping.
+        if (state.isPlaying && state.currentSong != null) {
             val engineCurrentSong = state.currentSong
-            if (engineCurrentSong != null) {
-                val newIndex = playlist.indexOfFirst { it.id == engineCurrentSong.id }
-                if (newIndex != -1) {
-                    currentIndex = newIndex
-                    updateUpcomingSongs()
-                    return
-                }
+            val newIndex = playlist.indexOfFirst { it.id == engineCurrentSong.id }
+            if (newIndex != -1) {
+                currentIndex = newIndex
+                updateUpcomingSongs()
             }
+            lastSessionId = engineSessionId
+            return
         }
 
         when (currentRepeatMode) {
@@ -453,6 +452,7 @@ class AudioPlaybackService : Service() {
     val previousSongs: StateFlow<List<Song>> = _previousSongs.asStateFlow()
 
     private fun updateUpcomingSongs() {
+        val current = playlist.getOrNull(currentIndex)
         val upcoming = getUpcomingSongs()
         _upcomingSongs.value = upcoming
 
@@ -465,7 +465,7 @@ class AudioPlaybackService : Service() {
         
         serviceScope.launch {
             val tdLib = (application as com.beatflowy.app.BeatraxusApplication).tdLibManager
-            cloudCacheManager.prepareCache(playlist.getOrNull(currentIndex), upcoming, tdLib)
+            cloudCacheManager.prepareCache(current, upcoming, tdLib)
         }
 
         // Enable gapless transition in engine
@@ -575,10 +575,9 @@ class AudioPlaybackService : Service() {
         saveState()
         
         playbackJob = serviceScope.launch {
-            delay(150) // Debounce for rapid presses
+            delay(150)
             if (isActive && requestAudioFocus()) {
                 engine.play(nextSong)
-                updateUpcomingSongs()
             }
         }
     }
@@ -769,10 +768,21 @@ class AudioPlaybackService : Service() {
     fun playFromQueue(songId: String) {
         val index = playlist.indexOfFirst { it.id == songId }
         if (index != -1) {
-            if (requestAudioFocus()) {
-                currentIndex = index
-                engine.play(playlist[currentIndex])
-                updateUpcomingSongs()
+            playbackJob?.cancel()
+            currentIndex = index
+            val song = playlist[currentIndex]
+            
+            engine.prepare(song)
+            saveState()
+            
+            playbackJob = serviceScope.launch {
+                delay(150)
+                if (isActive && requestAudioFocus()) {
+                    engine.play(song)
+                    // We don't need to call updateUpcomingSongs() here explicitly anymore,
+                    // as engine.play(song) will trigger the state collector in onCreate,
+                    // which will call updateUpcomingSongs() automatically.
+                }
             }
         }
     }
@@ -802,31 +812,40 @@ class AudioPlaybackService : Service() {
     }
     
     fun playList(songs: List<Song>, startIndex: Int) {
-        if (requestAudioFocus()) {
-            originalPlaylist = songs
-            if (engine.playbackStateFlow.value.shuffleMode) {
-                val shuffled = songs.shuffled().toMutableList()
-                val selectedSong = songs.getOrNull(startIndex)
-                if (selectedSong != null) {
-                    val idx = shuffled.indexOfFirst { it.id == selectedSong.id }
-                    if (idx != -1) {
-                        val removed = shuffled.removeAt(idx)
-                        shuffled.add(0, removed)
-                    }
+        playbackJob?.cancel()
+
+        originalPlaylist = songs
+        if (engine.playbackStateFlow.value.shuffleMode) {
+            val shuffled = songs.shuffled().toMutableList()
+            val selectedSong = songs.getOrNull(startIndex)
+            if (selectedSong != null) {
+                val idx = shuffled.indexOfFirst { it.id == selectedSong.id }
+                if (idx != -1) {
+                    val removed = shuffled.removeAt(idx)
+                    shuffled.add(0, removed)
                 }
-                playlist = shuffled
-                currentIndex = 0
-            } else {
-                playlist = songs
-                currentIndex = if (startIndex in songs.indices) startIndex else 0
             }
+            playlist = shuffled
+            currentIndex = 0
+        } else {
+            playlist = songs
+            currentIndex = if (startIndex in songs.indices) startIndex else 0
+        }
 
-            updateUpcomingSongs()
-
-            if (playlist.isNotEmpty()) {
-                engine.play(playlist[currentIndex])
-            }
+        if (playlist.isNotEmpty()) {
+            val song = playlist[currentIndex]
+            engine.prepare(song)
             saveState()
+
+            playbackJob = serviceScope.launch {
+                delay(150)
+                if (isActive && requestAudioFocus()) {
+                    engine.play(song)
+                    // We don't need to call updateUpcomingSongs() here explicitly anymore,
+                    // as engine.play(song) will trigger the state collector in onCreate,
+                    // which will call updateUpcomingSongs() automatically.
+                }
+            }
         }
     }
 
@@ -851,12 +870,20 @@ class AudioPlaybackService : Service() {
     val currentPositionMs get() = engine.currentPositionMs()
 
     fun playSong(song: Song) {
-        if (requestAudioFocus()) {
-            originalPlaylist = listOf(song)
-            playlist = listOf(song)
-            currentIndex = 0
-            updateUpcomingSongs()
-            engine.play(song)
+        playbackJob?.cancel()
+
+        originalPlaylist = listOf(song)
+        playlist = listOf(song)
+        currentIndex = 0
+
+        engine.prepare(song)
+        saveState()
+
+        playbackJob = serviceScope.launch {
+            delay(150)
+            if (isActive && requestAudioFocus()) {
+                engine.play(song)
+            }
         }
     }
 

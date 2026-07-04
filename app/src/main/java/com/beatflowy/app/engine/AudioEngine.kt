@@ -10,6 +10,7 @@ import com.beatflowy.app.model.OutputMode
 import com.beatflowy.app.model.ResamplerMode
 import com.beatflowy.app.model.SampleFormat
 import com.beatflowy.app.model.Song
+import com.beatflowy.app.model.SongSource
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -158,18 +159,24 @@ class AudioEngine(
 
     fun preloadNext(song: Song) {
         engineScope.launch {
-            controlMutex.withLock {
-                if (nextSong?.id == song.id) return@withLock
-                nextSong = song
-                nextSession?.stop()
+            preloadNextInternal(song)
+        }
+    }
 
-                val sessionId = currentSessionId.incrementAndGet()
-                val session = PlaybackSession(sessionId, song, 0L)
-                nextSession = session
+    private suspend fun preloadNextInternal(song: Song) {
+        controlMutex.withLock {
+            if (nextSong?.id == song.id && nextSession != null) return@withLock
+            
+            // Log.d(TAG, "Preloading next song: ${song.title}")
+            nextSong = song
+            nextSession?.stop()
 
-                engineScope.launch(Dispatchers.IO) {
-                    session.run()
-                }
+            val sessionId = currentSessionId.incrementAndGet()
+            val session = PlaybackSession(sessionId, song, 0L)
+            nextSession = session
+
+            engineScope.launch(Dispatchers.IO) {
+                session.run()
             }
         }
     }
@@ -177,7 +184,11 @@ class AudioEngine(
     fun prepare(song: Song, startPositionMs: Long = 0L) {
         engineScope.launch {
             controlMutex.withLock {
-                if (currentSong?.id == song.id && (activeSession != null || nextSession != null)) return@withLock
+                if (currentSong?.id == song.id && (activeSession != null || nextSession != null)) {
+                    // Even if already present, ensure state is correct
+                    _playbackStateFlow.update { it.copy(currentSong = song) }
+                    return@withLock
+                }
                 
                 // If it's not already preloaded, clear and start preloading
                 if (nextSong?.id != song.id) {
@@ -198,7 +209,14 @@ class AudioEngine(
                 _playbackStateFlow.update { it.copy(currentSong = song, isPlaying = false) }
                 
                 if (activeSession == null && nextSession == null) {
-                    preloadNext(song)
+                    // Preload immediately while holding lock to avoid race with play()
+                    val sessionId = currentSessionId.incrementAndGet()
+                    val session = PlaybackSession(sessionId, song, startPositionMs)
+                    nextSession = session
+                    nextSong = song
+                    engineScope.launch(Dispatchers.IO) {
+                        session.run()
+                    }
                 }
             }
         }
@@ -588,6 +606,7 @@ class AudioEngine(
         suspend fun run() {
             val decoder = decoderFactory.create(song)
             var decodeStartMs = initialStartPositionMs
+            var retryCount = 0
 
             try {
                 while (isActive()) {
@@ -607,10 +626,18 @@ class AudioEngine(
                         is DecodeResult.Seek -> {
                             notifySeek(result.positionMs)
                             decodeStartMs = result.positionMs
+                            retryCount = 0 // Reset retry on seek
                         }
 
                         is DecodeResult.Failed -> {
-                            logWarn("Decoder failed: ${result.reason ?: "unknown"}")
+                            if (song.source == SongSource.GDRIVE && retryCount < 2) {
+                                retryCount++
+                                Log.w("AudioEngine", "Retry $retryCount for Drive song ${song.title} after failure: ${result.reason}")
+                                delay(500)
+                                continue
+                            }
+
+                            logWarn("Decoder failed permanently: ${result.reason ?: "unknown"}")
                             ringBuffer.close()
                             controlMutex.withLock {
                                 if (activeSession?.sessionId == sessionId) {

@@ -126,7 +126,7 @@ class MusicRepository(private val context: Context) {
         var processedCount = 0
         val processedSongs = mutableListOf<Song>()
         
-        val concurrency = Runtime.getRuntime().availableProcessors().coerceAtLeast(4)
+        val concurrency = 30 // Increased to 30 parallel workers for maximum speed as requested
 
         rawList.asFlow()
             .flatMapMerge(concurrency = concurrency) { raw ->

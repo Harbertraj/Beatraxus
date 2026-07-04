@@ -18,8 +18,14 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
+import java.util.concurrent.atomic.AtomicInteger
 import com.google.api.client.googleapis.extensions.android.gms.auth.UserRecoverableAuthIOException
 import kotlin.math.roundToInt
 import com.beatflowy.app.BeatraxusApplication
@@ -881,6 +887,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     _uiState.update { it.copy(errorMessage = "No songs found for $email") }
                 }
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 Log.e("PlayerViewModel", "Drive scan error for $email", e)
                 if (e is UserRecoverableAuthIOException) {
                     _uiState.update { it.copy(authRecoveryIntent = e.intent) }
@@ -1009,6 +1016,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 delay(2000)
                 _uiState.update { it.copy(errorMessage = null) }
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 _uiState.update { it.copy(errorMessage = "Scan failed: ${e.message}") }
                 service?.updateScanningProgress(1.0f, _uiState.value.scanCount, true)
             } finally {
@@ -1093,6 +1101,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     setFirstRunComplete()
                 }
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 _uiState.update { it.copy(errorMessage = "Full scan failed: ${e.message}", showScanOptions = true) }
                 service?.updateScanningProgress(1.0f, _uiState.value.scanCount, true)
             } finally {
@@ -1175,6 +1184,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 delay(2000)
                 _uiState.update { it.copy(errorMessage = null) }
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 _uiState.update { it.copy(errorMessage = "Scan failed: ${e.message}", showScanOptions = true) }
             } finally {
                 _uiState.update { it.copy(isScanning = false) }
@@ -2887,26 +2897,34 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     if (toEnrich.isNotEmpty()) {
                         _uiState.update { it.copy(enrichmentStatus = "Enriching ${toEnrich.size} new Telegram songs...") }
                         
-                        var enrichedCount = 0
-                        toEnrich.forEach { song ->
-                            if (!isActive) return@forEach
-                            
-                            Log.d("PlayerViewModel", "Enriching [${enrichedCount+1}/${toEnrich.size}]: ${song.title}")
-                            val enriched = extractTelegramMetadata(song)
-                            if (enriched != null) {
-                                withContext(Dispatchers.IO) {
-                                    songDao.insertSong(enriched.toEntity())
-                                }
-                                _songs.update { current ->
-                                    current.map { if (it.id == enriched.id) enriched else it }
+                        val enrichedCount = AtomicInteger(0)
+                        val enrichmentSemaphore = Semaphore(30)
+                        
+                        toEnrich.map { song ->
+                            async {
+                                enrichmentSemaphore.withPermit {
+                                    if (!isActive) return@async
+                                    
+                                    val currentCount = enrichedCount.get() + 1
+                                    Log.d("PlayerViewModel", "Enriching [$currentCount/${toEnrich.size}]: ${song.title}")
+                                    
+                                    val enriched = extractTelegramMetadata(song)
+                                    if (enriched != null) {
+                                        withContext(Dispatchers.IO) {
+                                            songDao.insertSong(enriched.toEntity())
+                                        }
+                                        _songs.update { current ->
+                                            current.map { if (it.id == enriched.id) enriched else it }
+                                        }
+                                    }
+                                    
+                                    val processedCount = enrichedCount.incrementAndGet()
+                                    val enrichmentProgress = 0.1f + (processedCount.toFloat() / toEnrich.size.toFloat() * 0.9f)
+                                    _uiState.update { it.copy(scanProgress = enrichmentProgress) }
+                                    service?.updateEnrichingProgress(enrichmentProgress, processedCount, toEnrich.size)
                                 }
                             }
-                            
-                            enrichedCount++
-                            val enrichmentProgress = 0.1f + (enrichedCount.toFloat() / toEnrich.size.toFloat() * 0.9f)
-                            _uiState.update { it.copy(scanProgress = enrichmentProgress) }
-                            service?.updateEnrichingProgress(enrichmentProgress, enrichedCount, toEnrich.size)
-                        }
+                        }.awaitAll()
                     }
 
                     _uiState.update { it.copy(errorMessage = "Synced ${songs.size} songs from $channelName", enrichmentStatus = null) }
@@ -2923,6 +2941,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     _uiState.update { it.copy(errorMessage = "No songs found in $channelName") }
                 }
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 Log.e("PlayerViewModel", "Telegram sync failed", e)
                 _uiState.update { it.copy(errorMessage = "Sync failed: ${e.message}", enrichmentStatus = null) }
             } finally {

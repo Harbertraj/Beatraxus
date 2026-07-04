@@ -12,6 +12,7 @@ import com.google.api.services.drive.Drive
 import com.google.api.services.drive.DriveScopes
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
@@ -74,6 +75,7 @@ class DriveLibraryScanner(private val context: Context) {
             DrivePlaybackHelper.authRecoveryFlow.tryEmit(e.intent)
             throw e
         } catch (e: Exception) {
+            if (e is CancellationException) throw e
             DrivePlaybackHelper.errorState.tryEmit("Drive scan error: ${e.message}")
             e.printStackTrace()
         }
@@ -113,6 +115,7 @@ class DriveLibraryScanner(private val context: Context) {
                 DrivePlaybackHelper.authRecoveryFlow.tryEmit(e.intent)
                 throw e
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 Log.e("DriveScanner", "Drive scan fatal error: ${e.message}", e)
                 throw e
             }

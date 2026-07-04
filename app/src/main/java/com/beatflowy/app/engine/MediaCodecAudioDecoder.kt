@@ -132,7 +132,7 @@ internal class MediaCodecAudioDecoder(
                         inIndex = codec.dequeueInputBuffer(0)
                     }
                 } catch (e: Exception) {
-                    control.logWarn("MediaCodec input error: ${e.message}")
+                    Log.e(TAG, "MediaCodec input error for ${request.song.title}", e)
                     break
                 }
 
@@ -201,7 +201,7 @@ internal class MediaCodecAudioDecoder(
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
             Log.e(TAG, "MediaCodec decode failed for ${request.song.title}", e)
-            return@withContext DecodeResult.Failed(e.message)
+            return@withContext DecodeResult.Failed(e.message ?: e.toString())
         } finally {
             try { codec?.stop() } catch (_: Exception) {}
             try { codec?.release() } catch (_: Exception) {}

@@ -143,9 +143,17 @@ class CloudCacheManager(
     private val tokenCache = ConcurrentHashMap<String, String>()
 
     suspend fun prepareCache(currentSong: Song?, upcomingSongs: List<Song>, tdLib: TdLibManager? = null) = mutex.withLock {
-        currentlyPlayingId = currentSong?.id
+        // Only update currentlyPlayingId if we have a non-null currentSong,
+        // otherwise we might accidentally clear it due to a race with the service's state flow.
+        if (currentSong != null) {
+            currentlyPlayingId = currentSong.id
+        }
+        
         val keepIds = mutableSetOf<String>()
         currentSong?.let { if (it.isCloud()) keepIds.add(it.id) }
+        // Also keep the one we THINK is playing even if currentSong passed here is null
+        currentlyPlayingId?.let { keepIds.add(it) }
+
         upcomingSongs.take(5).forEach { 
             if (it.isCloud()) keepIds.add(it.id) 
         }
@@ -165,6 +173,9 @@ class CloudCacheManager(
 
         // 1. Cancel downloads for songs no longer in 'keepIds'
         val toCancel = activeDownloads.keys - keepIds
+        if (toCancel.isNotEmpty()) {
+            Log.d(TAG, "Cancelling ${toCancel.size} downloads not in keepIds: $toCancel (currentlyPlaying=$currentlyPlayingId)")
+        }
         toCancel.forEach { id ->
             activeDownloads[id]?.cancel()
             activeDownloads.remove(id)
