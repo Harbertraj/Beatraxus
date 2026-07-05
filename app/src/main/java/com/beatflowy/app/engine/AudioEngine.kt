@@ -34,6 +34,12 @@ import java.util.concurrent.Executors
 import java.util.concurrent.locks.ReentrantReadWriteLock
 import kotlin.concurrent.withLock
 
+internal fun computeCrossfadeProgress(remainingMs: Long, crossfadeDurationS: Int): Float {
+    val crossfadeMs = crossfadeDurationS * 1000f
+    if (crossfadeMs <= 0f) return 0f
+    return (remainingMs / crossfadeMs).coerceIn(0f, 1f)
+}
+
 class AudioEngine(
     context: Context,
     private val output: AudioOutput,
@@ -130,8 +136,15 @@ class AudioEngine(
                     } else if (state.currentSong != null && currentPos < state.currentSong.durationMs - 1000) {
                         // Case 2: Stuck detection. isPlaying is true, but position isn't advancing.
                         if (currentPos == lastStuckPosition) {
-                            if (lastStuckCheckTime > 0 && now - lastStuckCheckTime > 4000) {
-                                Log.w(TAG, "Playback appears stuck (position unchanged for 4s at $currentPos ms).")
+                            val session = activeSession
+                            val isBuffering = session != null && !session.decoderCompleted && 
+                                             (now - session.lastDecoderProgressTime > 2000) &&
+                                             state.currentSong.isCloud()
+                            
+                            val timeout = if (isBuffering) 15000 else 4000
+                            
+                            if (lastStuckCheckTime > 0 && now - lastStuckCheckTime > timeout) {
+                                Log.w(TAG, "Playback appears stuck (position unchanged for ${timeout/1000}s at $currentPos ms). Buffering=$isBuffering")
                                 shouldRecover = true
                             }
                         } else {
@@ -553,10 +566,12 @@ class AudioEngine(
                 continue
             }
 
+            val crossfadeDurationS = dspConfig.crossfadeDurationS
+
             // Check if we should start crossfading into next track
-            if (dspConfig.crossfadeDurationS > 0 && fadingOutSession == null && nextSession?.pcmFormat != null) {
+            if (crossfadeDurationS > 0 && fadingOutSession == null && nextSession?.pcmFormat != null) {
                 val remainingMs = session.song.durationMs - session.currentRenderedPositionMs()
-                if (remainingMs <= dspConfig.crossfadeDurationS * 1000L) {
+                if (remainingMs <= crossfadeDurationS * 1000L) {
                     controlMutex.withLock {
                         fadingOutSession = activeSession
                         activeSession = nextSession
@@ -590,12 +605,11 @@ class AudioEngine(
                     if (outSession != null) {
                         val outSampleCount = outSession.ringBuffer.read(localBufferNext, sampleCount)
                         if (outSampleCount > 0) {
-                            val crossfadeMs = dspConfig.crossfadeDurationS * 1000f
                             val remainingMs = outSession.song.durationMs - outSession.currentRenderedPositionMs()
+                            val t = computeCrossfadeProgress(remainingMs, crossfadeDurationS)
                             
                             // Equal-power crossfade curves: sqrt(t) and sqrt(1-t)
                             for (i in 0 until outSampleCount step format.channels) {
-                                val t = (remainingMs / crossfadeMs).coerceIn(0f, 1f)
                                 val gainOut = kotlin.math.sqrt(t)
                                 val gainIn = kotlin.math.sqrt(1f - t)
                                 
@@ -701,6 +715,9 @@ class AudioEngine(
         private var seekListener: (() -> Unit)? = null
         var decoderCompleted = false
             private set
+
+        @Volatile
+        var lastDecoderProgressTime = System.currentTimeMillis()
 
         var pcmFormat: PcmAudioFormat? = null
             private set
@@ -864,6 +881,7 @@ class AudioEngine(
         }
 
         override suspend fun write(data: FloatArray, sampleCount: Int) {
+            lastDecoderProgressTime = System.currentTimeMillis()
             ringBuffer.write(data, sampleCount)
         }
 

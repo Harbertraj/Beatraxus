@@ -164,14 +164,24 @@ internal class MediaCodecAudioDecoder(
                 while (outIndex >= 0) {
                     val outputBuffer = codec.getOutputBuffer(outIndex)
                     if (outputBuffer != null && info.size > 0) {
-                        val sampleCount = convertPcmToFloatArray(
+                        val bytesPerSample = when (currentPcmEncoding) {
+                            AudioFormat.ENCODING_PCM_FLOAT, AudioFormat.ENCODING_PCM_32BIT -> 4
+                            AudioFormat.ENCODING_PCM_24BIT_PACKED -> 3
+                            else -> 2
+                        }
+                        val sampleCount = info.size / bytesPerSample
+                        if (sampleCount > floatBuffer.size) {
+                            floatBuffer = FloatArray(sampleCount)
+                        }
+
+                        val actualCount = convertPcmToFloatArray(
                             buffer = outputBuffer,
                             sizeBytes = info.size,
                             pcmEncoding = currentPcmEncoding,
                             target = floatBuffer
                         )
-                        if (sampleCount > 0) {
-                            sink.write(floatBuffer, sampleCount)
+                        if (actualCount > 0) {
+                            sink.write(floatBuffer, actualCount)
                         }
                     }
 
@@ -309,10 +319,8 @@ internal class MediaCodecAudioDecoder(
             else -> 2
         }
         val sampleCount = sizeBytes / bytesPerSample
-        if (sampleCount == 0) return 0
-        if (target.size < sampleCount) {
-            throw IllegalStateException("PCM target buffer too small: ${target.size} < $sampleCount")
-        }
+        if (sampleCount <= 0) return 0
+        val finalSampleCount = if (sampleCount > target.size) target.size else sampleCount
 
         // Framework sets position and limit to valid data range
         val startPos = buffer.position()
@@ -321,21 +329,21 @@ internal class MediaCodecAudioDecoder(
         return when (pcmEncoding) {
             AudioFormat.ENCODING_PCM_FLOAT -> {
                 val floatView = buffer.asFloatBuffer()
-                for (i in 0 until sampleCount) {
+                for (i in 0 until finalSampleCount) {
                     target[i] = floatView.get(i)
                 }
-                sampleCount
+                finalSampleCount
             }
 
             AudioFormat.ENCODING_PCM_32BIT -> {
-                for (i in 0 until sampleCount) {
+                for (i in 0 until finalSampleCount) {
                     target[i] = buffer.getInt(startPos + i * 4) / 2147483648f
                 }
-                sampleCount
+                finalSampleCount
             }
 
             AudioFormat.ENCODING_PCM_24BIT_PACKED -> {
-                for (i in 0 until sampleCount) {
+                for (i in 0 until finalSampleCount) {
                     val base = startPos + i * 3
                     val raw =
                         (buffer.get(base).toInt() and 0xFF) or
@@ -344,15 +352,15 @@ internal class MediaCodecAudioDecoder(
                     val signed = if (raw and 0x800000 != 0) raw or -0x1000000 else raw
                     target[i] = signed / 8388608f
                 }
-                sampleCount
+                finalSampleCount
             }
 
             else -> {
                 val shortBuffer = buffer.asShortBuffer()
-                for (i in 0 until sampleCount) {
+                for (i in 0 until finalSampleCount) {
                     target[i] = shortBuffer.get(i) / 32768f
                 }
-                sampleCount
+                finalSampleCount
             }
         }
     }

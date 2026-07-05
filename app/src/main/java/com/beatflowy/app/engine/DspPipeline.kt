@@ -326,7 +326,7 @@ private class NativeDspProcessor(
         val shouldDither = cfg.ditherEnabled && ditherUnbypassed &&
             cfg.ditherType != com.beatflowy.app.model.DitherType.NONE &&
             outputBitDepth < 32
-        dsp.setDither(false, outputBitDepth)
+        dsp.setDither(shouldDither, outputBitDepth)
         dsp.setDitherType(cfg.ditherType.nativeValue)
 
         // Phase 2.1: Speed
@@ -470,13 +470,16 @@ private class NativeDspProcessor(
     fun getLatencyFrames(): Int = native.getEqLatencyFrames()
 
     override fun process(input: DspProcessResult, channels: Int): DspProcessResult {
-        if (inputSampleRate == outputSampleRate) {
+        val speedActive = abs(currentConfig.playbackSpeed - 1.0f) > 0.001f
+        if (inputSampleRate == outputSampleRate && !speedActive) {
             native.process(input.data, input.sampleCount / channels)
             return input
         }
 
-        val ratio = outputSampleRate.toFloat() / inputSampleRate.toFloat()
-        val maxFrames = (input.sampleCount / channels * ratio * 1.2f).toInt() + 128
+        val speedRatio = 1.0f / currentConfig.playbackSpeed.coerceAtLeast(0.1f)
+        val ratio = (outputSampleRate.toFloat() / inputSampleRate.toFloat()) * speedRatio
+        // Account for speed expansion and use a safer margin matching the native side (1.5x + 1024)
+        val maxFrames = (input.sampleCount / channels * ratio * 1.5f).toInt() + 1024
         val requiredSize = maxFrames * channels
         
         if (outputBuffer.size < requiredSize) {

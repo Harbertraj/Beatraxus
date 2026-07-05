@@ -678,7 +678,7 @@ class AudioTrackOutput(
         val (rate, pos, written) = lifecycleLock.readLock().withLock {
             val r = sampleRate
             val p = playbackPositionFrames()
-            val w = totalFramesWritten
+            val w = synchronized(stateLock) { totalFramesWritten }
             Triple(r, p, w)
         }
         val queued = (written - pos).coerceAtLeast(0L)
