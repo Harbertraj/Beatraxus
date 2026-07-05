@@ -74,14 +74,22 @@ class TdLibManager private constructor(
         val params = TdApi.SetTdlibParameters().apply {
             apiId = this@TdLibManager.apiId.toInt()
             apiHash = this@TdLibManager.apiHash
-            databaseDirectory = context.filesDir.absolutePath + "/tdlib"
+            databaseDirectory = context.cacheDir.absolutePath + "/tdlib"
             useMessageDatabase = true
+            useChatInfoDatabase = true
+            useFileDatabase = true
             useSecretChats = false
             systemLanguageCode = "en"
             deviceModel = "Android"
             applicationVersion = "1.0"
         }
-        client.send(params) {}
+        client.send(params) {
+            // Optimize network for faster downloads
+            client.send(TdApi.SetOption("is_network_unmetered", TdApi.OptionValueBoolean(true))) {}
+            client.send(TdApi.SetOption("ignore_background_networking", TdApi.OptionValueBoolean(true))) {}
+            // Higher number of concurrent downloads
+            client.send(TdApi.SetOption("active_network_count", TdApi.OptionValueInteger(3))) {}
+        }
     }
 
     suspend fun <T : TdApi.Object> send(function: TdApi.Function<T>): T =
@@ -202,6 +210,12 @@ class TdLibManager private constructor(
         // Wait for completion using the file flow
         return getFileFlow(fileId).first { it?.local?.isDownloadingCompleted == true }
             ?.local?.path?.let { File(it) }
+    }
+
+    fun close() {
+        client.send(TdApi.Close()) {
+            INSTANCE = null
+        }
     }
 
     companion object {

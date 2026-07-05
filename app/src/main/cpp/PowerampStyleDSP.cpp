@@ -950,50 +950,74 @@ public:
     void setCenterLock(double amount) { centerLockAmount = std::clamp(amount, 0.0, 1.0); }
 
     void process(double& left, double& right) {
-        if (intensity <= 0.0001) return;
+        // Run if 3D intensity is active OR width expansion is active
+        if (intensity <= 0.0001 && std::abs(widthAmount - 1.0) <= 0.001) return;
 
         // 1. Mid/Side split
         double mid = (left + right) * 0.5;
         double side = (left - right) * 0.5;
 
-        // 2. Width applies to the side signal only
-        side *= widthAmount;
+        // 2. Apply Width Expansion (The "Soundstage" knob effect)
+        // This affects the base stereo image without coloration.
+        double expandedSide = side * widthAmount;
+        double dryL = mid + expandedSide;
+        double dryR = mid - expandedSide;
 
-        // 3. Azimuth -> ITD/ILD on the side component (the part that actually carries position)
+        // 3. If 3D Spatial Audio intensity is 0, we are done (Pure Width Expansion)
+        if (intensity <= 0.0001) {
+            left = dryL;
+            right = dryR;
+            return;
+        }
+
+        // 4. Calculate 3D Spatialized Version (The "Wet" signal)
+        // Azimuth -> ITD/ILD
         double azRad = azimuthDeg * M_PI / 180.0;
-        double itdSamples = std::sin(azRad) * 0.0008 * currentSampleRate; // signed, +right / -left
+        double itdSamples = std::sin(azRad) * 0.0008 * currentSampleRate;
         double ildL = 1.0 - std::max(0.0, std::sin(azRad)) * 0.3;
         double ildR = 1.0 - std::max(0.0, -std::sin(azRad)) * 0.3;
 
-        delayBufL[writePos] = side;
-        delayBufR[writePos] = side;
+        delayBufL[writePos] = expandedSide;
+        delayBufR[writePos] = expandedSide;
         double readPos = (double)writePos - std::abs(itdSamples);
         if (readPos < 0) readPos += (double)delaySize;
         size_t r0 = (size_t)readPos % delaySize;
         double delayedSide = (itdSamples >= 0) ? delayBufL[r0] : delayBufR[r0];
 
-        double sideL = (itdSamples >= 0) ? side : delayedSide;
-        double sideR = (itdSamples >= 0) ? delayedSide : side;
-        sideL *= ildL; sideR *= ildR;
+        double sideL = (itdSamples >= 0) ? expandedSide : delayedSide;
+        double sideR = (itdSamples >= 0) ? delayedSide : expandedSide;
+
+        // Constant power ILD normalization
+        double pwrSide = (ildL * ildL + ildR * ildR) * 0.5;
+        double ildMakeup = (pwrSide > 0.001) ? 1.0 / std::sqrt(pwrSide) : 1.0;
+        sideL *= (ildL * ildMakeup);
+        sideR *= (ildR * ildMakeup);
+
         writePos = (writePos + 1) % delaySize;
 
-        // 4. Distance: inverse falloff + air-absorption darkening
-        double distGain = 1.0 / (1.0 + (distanceM - REFERENCE_DISTANCE) * 0.15);
+        // Distance simulation (Inverse falloff + Air absorption)
+        double distGain = 1.0 / (1.0 + (distanceM - REFERENCE_DISTANCE) * 0.1);
         distGain = std::clamp(distGain, 0.5, 1.5);
-        double absorbCoeff = std::clamp(1.0 - (distanceM / 15.0), 0.2, 0.95);
-        airAbsorbState = airAbsorbState * (1.0 - absorbCoeff) + mid * absorbCoeff;
 
-        // 5. Elevation: cheap presence-band tilt
-        double elevTilt = 1.0 + (elevationDeg / 90.0) * 0.15;
+        if (distanceM > REFERENCE_DISTANCE) {
+            double absorbCoeff = std::clamp(1.0 - ((distanceM - REFERENCE_DISTANCE) / 13.0), 0.4, 0.98);
+            airAbsorbState = airAbsorbState * (1.0 - absorbCoeff) + mid * absorbCoeff;
+        } else {
+            airAbsorbState = mid;
+        }
 
-        // 6. Recombine, with center-lock keeping `mid` un-positioned
+        // Elevation presence tilt
+        double elevTilt = 1.0 + (elevationDeg / 90.0) * 0.12;
+
+        // Recombine wet signals
         double positionedMid = mid * (1.0 - centerLockAmount) + airAbsorbState * centerLockAmount;
-        double outL = (positionedMid + sideL) * distGain * elevTilt;
-        double outR = (positionedMid - sideR) * distGain * elevTilt;
+        double wetL = (positionedMid + sideL) * distGain * elevTilt;
+        double wetR = (positionedMid - sideR) * distGain * elevTilt;
 
-        // 7. Blend based on intensity
-        left = left * (1.0 - intensity) + outL * intensity;
-        right = right * (1.0 - intensity) + outR * intensity;
+        // 5. Final Blend: (Width Expanded Stereo) -> (3D Spatialized Stage)
+        // This ensures the "Soundstage" knob doesn't pan vocals if 3D intensity is low.
+        left = dryL * (1.0 - intensity) + wetL * intensity;
+        right = dryR * (1.0 - intensity) + wetR * intensity;
     }
 };
 

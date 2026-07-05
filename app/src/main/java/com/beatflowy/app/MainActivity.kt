@@ -13,8 +13,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
 import android.util.Log
-import androidx.activity.ComponentActivity
-
+import androidx.fragment.app.FragmentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -59,7 +58,7 @@ import com.beatflowy.app.ui.theme.BeatraxusTheme
 import com.beatflowy.app.viewmodel.PlayerViewModel
 import com.beatflowy.app.viewmodel.PlayerViewModelFactory
 
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() {
 
     private val viewModel: PlayerViewModel by viewModels {
         PlayerViewModelFactory(application)

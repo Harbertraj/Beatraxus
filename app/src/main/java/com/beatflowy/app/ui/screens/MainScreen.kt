@@ -822,7 +822,6 @@ fun MainScreen(
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
-
                                     val searchBgColor by animateColorAsState(
                                         targetValue = if (uiState.isSearchActive) AccentBlue.copy(0.15f) else Color.White.copy(0.08f),
                                         label = "searchBg"
@@ -1031,9 +1030,10 @@ fun MainScreen(
                                                 }
                                             }
 
-                                            // Sort Icon
-                                            if (uiState.currentView != LibraryView.HOME && uiState.currentView != LibraryView.CLOUD) {
+                                            // Sort / Filter Icon
+                                            if (uiState.currentView != LibraryView.HOME) {
                                                 val isSelected = activeMainSheet == MainSheetType.SORT
+                                                val isCloud = uiState.currentView == LibraryView.CLOUD
                                                 Box(
                                                     modifier = Modifier.weight(1f),
                                                     contentAlignment = Alignment.Center
@@ -1054,27 +1054,12 @@ fun MainScreen(
                                                             )
                                                     ) {
                                                         Icon(
-                                                            Icons.AutoMirrored.Rounded.Sort,
+                                                            if (isCloud) Icons.Rounded.FilterList else Icons.AutoMirrored.Rounded.Sort,
                                                             null,
                                                             tint = if (isSelected) AccentBlue else Color.White.copy(0.85f),
                                                             modifier = Modifier.size(23.dp)
                                                         )
                                                     }
-                                                }
-                                            }
-
-                                            // Cast Icon
-                                            if (uiState.currentView != LibraryView.HOME) {
-                                                Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                                                    CastButton(
-                                                        modifier = Modifier
-                                                            .size(46.dp)
-                                                            .glassIconBackground(
-                                                                backgroundColor = Color.Transparent,
-                                                                shape = CircleShape,
-                                                                borderColor = Color.Transparent
-                                                            )
-                                                    )
                                                 }
                                             }
 
@@ -4681,6 +4666,14 @@ fun SlideDrawerMenu(
                         )
                 ) {
                     Box(modifier = Modifier.fillMaxWidth()) {
+                        CastButton(
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(12.dp)
+                                .size(32.dp)
+                                .background(Color.White.copy(0.05f), CircleShape)
+                                .padding(4.dp)
+                        )
                         if (isPlaying) {
                             val notesTransition = rememberInfiniteTransition(label = "notes")
                             
@@ -4939,7 +4932,8 @@ fun SortSheetContent(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Text("SORT BY", color = Color.White, fontWeight = FontWeight.Black, fontSize = 14.sp, letterSpacing = 1.sp)
+            val titleText = if (uiState.currentView == com.beatflowy.app.model.LibraryView.CLOUD) "SORT & FILTER" else "SORT BY"
+            Text(titleText, color = Color.White, fontWeight = FontWeight.Black, fontSize = 14.sp, letterSpacing = 1.sp)
             IconButton(onClick = { viewModel.toggleSortOrder() }, modifier = Modifier.size(40.dp).background(Color.White.copy(0.06f), CircleShape)) {
                 Icon(if (uiState.isAscending) Icons.Rounded.ArrowUpward else Icons.Rounded.ArrowDownward, null, tint = AccentBlue, modifier = Modifier.size(20.dp))
             }

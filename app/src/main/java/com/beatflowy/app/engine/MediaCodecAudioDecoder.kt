@@ -121,8 +121,14 @@ internal class MediaCodecAudioDecoder(
                     var inIndex = codec.dequeueInputBuffer(0)
                     while (inIndex >= 0) {
                         val inputBuffer = codec.getInputBuffer(inIndex) ?: break
-                        val sampleSize = extractor.readSampleData(inputBuffer, 0)
+                        val sampleSize = try { extractor.readSampleData(inputBuffer, 0) } catch (e: Exception) { -1 }
                         if (sampleSize < 0) {
+                            // If a seek is pending, the -1 is likely a forced interruption from the DataSource.
+                            // We break the input loop without queuing EOS so the outer loop can handle the seek.
+                            if (control.isSeekPending()) {
+                                Log.d(TAG, "Extractor interrupted by pending seek, skipping EOS")
+                                break 
+                            }
                             codec.queueInputBuffer(inIndex, 0, 0, 0L, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
                             break
                         }

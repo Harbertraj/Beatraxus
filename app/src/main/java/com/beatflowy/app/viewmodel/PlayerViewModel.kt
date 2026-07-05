@@ -627,7 +627,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     val lastQueueIds = prefs?.getString("last_queue_ids", null)?.split(",")?.filter { it.isNotBlank() }
                     val lastOriginalQueueIds = prefs?.getString("last_original_queue_ids", null)?.split(",")?.filter { it.isNotBlank() }
                     val lastIndex = prefs?.getInt("last_queue_index", -1) ?: -1
-                    val lastPos = prefs?.getLong("last_song_pos", 0L) ?: 0L
+                    val lastPos = 0L // Start song from beginning on app open as requested by user
 
                     if (!lastQueueIds.isNullOrEmpty()) {
                         val songMap = dbSongs.associateBy { it.id }
@@ -640,6 +640,14 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                                 while (service == null) {
                                     delay(100)
                                 }
+                                
+                                // Ensure currently playing ID is set for cache exclusion BEFORE restore
+                                if (lastIndex in restoredPlaylist.indices) {
+                                    cloudCacheManager.setCurrentlyPlayingId(restoredPlaylist[lastIndex].id)
+                                } else if (lastSongId != null) {
+                                    cloudCacheManager.setCurrentlyPlayingId(lastSongId)
+                                }
+                                
                                 service?.restorePlaylist(restoredPlaylist, restoredOriginalPlaylist, lastIndex, lastPos)
                                 _progressMs.value = lastPos
                             }
@@ -651,6 +659,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                                 while (service == null) {
                                     delay(100)
                                 }
+                                cloudCacheManager.setCurrentlyPlayingId(lastSong.id)
                                 service?.prepareSong(lastSong, lastPos)
                                 _progressMs.value = lastPos
                             }
@@ -1882,7 +1891,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun setSpatialTouchEnabled(enabled: Boolean) { 
         applyDspConfig { 
             if (enabled) {
-                it.copy(spatialTouchEnabled = true, spatialAudioEnabled = true)
+                it.copy(spatialTouchEnabled = true, soundStageEnabled = true)
             } else {
                 it.copy(spatialTouchEnabled = false)
             }
@@ -1910,7 +1919,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             distance = distance.coerceIn(0.3f, 15f)
         ) }
     }
-    fun setSoundStageWidth(value: Float) { applyDspConfig { it.copy(soundStageWidth = value.coerceIn(0f, 2f)) } }
+    fun setSoundStageEnabled(enabled: Boolean) = applyDspConfig { it.copy(soundStageEnabled = enabled) }
+    fun setSoundStageWidth(value: Float) { applyDspConfig { it.copy(soundStageWidth = value.coerceIn(0f, 2f), soundStageEnabled = true) } }
+    fun setSpatialStageWidth(value: Float) { applyDspConfig { it.copy(spatialStageWidth = value.coerceIn(0f, 2f)) } }
     fun setSoundStageCenterLock(value: Float) { applyDspConfig { it.copy(soundStageCenterLock = value.coerceIn(0f, 1f)) } }
     fun setHrtfMode(mode: HrtfMode) = applyDspConfig { it.copy(hrtfMode = mode) }
     fun setDcBlockerEnabled(enabled: Boolean) = applyDspConfig { it.copy(dcBlockerEnabled = enabled) }

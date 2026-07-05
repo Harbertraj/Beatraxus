@@ -20,7 +20,6 @@ import kotlinx.coroutines.flow.*
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
-import java.io.RandomAccessFile
 import java.util.Locale
 import kotlin.math.max
 
@@ -459,114 +458,15 @@ class MusicRepository(private val context: Context) {
     private fun extractEmbeddedArtFromWavFile(path: String, mediaStoreId: Long, albumId: Long): Uri? {
         if (path.isBlank()) return null
         return runCatching {
-            RandomAccessFile(path, "r").use { raf ->
-                if (raf.length() < 12) return@use null
-                if (raf.readFourCc() != "RIFF") return@use null
-                raf.skipBytes(4)
-                if (raf.readFourCc() != "WAVE") return@use null
-                while (raf.filePointer + 8 <= raf.length()) {
-                    val chunkId = raf.readFourCc()
-                    val chunkSize = raf.readLittleEndianInt().toLong().coerceAtLeast(0L)
-                    if (chunkSize > raf.length() - raf.filePointer) break
-                    when (chunkId) {
-                        "ID3 ", "id3 " -> {
-                            val bytes = ByteArray(chunkSize.toInt())
-                            raf.readFully(bytes)
-                            extractApicFromId3(bytes)?.let { art ->
-                                return@runCatching cacheEmbeddedAlbumArt(mediaStoreId, albumId, art, forceRefresh = true)
-                            }
-                        }
-                        "DISP" -> {
-                            if (chunkSize > 8) {
-                                raf.skipBytes(4)
-                                val artSize = (chunkSize - 4).toInt()
-                                val bytes = ByteArray(artSize)
-                                raf.readFully(bytes)
-                                if (bytes.isNotEmpty()) {
-                                    return@runCatching cacheEmbeddedAlbumArt(mediaStoreId, albumId, bytes, forceRefresh = true)
-                                }
-                            } else {
-                                raf.skipBytes(chunkSize.toInt())
-                            }
-                        }
-                        else -> raf.skipBytes(chunkSize.toInt())
-                    }
-                    if ((chunkSize and 1L) == 1L && raf.filePointer < raf.length()) {
-                        raf.skipBytes(1)
-                    }
-                }
+            val art = WavArtHelper.extractArt(path)
+            if (art != null) {
+                cacheEmbeddedAlbumArt(mediaStoreId, albumId, art, forceRefresh = true)
+            } else {
                 null
             }
         }.getOrElse {
             ContentUris.withAppendedId(Uri.parse("content://media/external/audio/albumart"), albumId)
         }
-    }
-
-    private fun extractApicFromId3(bytes: ByteArray): ByteArray? {
-        if (bytes.size < 10 || String(bytes, 0, 3) != "ID3") return null
-        val tagSize = synchsafeToInt(bytes.copyOfRange(6, 10)).coerceAtMost(bytes.size - 10)
-        var offset = 10
-        while (offset + 10 <= 10 + tagSize && offset + 10 <= bytes.size) {
-            val frameId = String(bytes, offset, 4)
-            val frameSize = bytesToInt(bytes, offset + 4)
-            if (frameSize <= 0 || offset + 10 + frameSize > bytes.size) break
-            if (frameId == "APIC") {
-                val frame = bytes.copyOfRange(offset + 10, offset + 10 + frameSize)
-                return parseApicFrame(frame)
-            }
-            offset += 10 + frameSize
-        }
-        return null
-    }
-
-    private fun parseApicFrame(frame: ByteArray): ByteArray? {
-        if (frame.size < 4) return null
-        val encoding = frame[0].toInt() and 0xFF
-        var index = 1
-        while (index < frame.size && frame[index].toInt() != 0) index++
-        index++
-        if (index >= frame.size) return null
-        index++ // picture type
-        if (encoding == 0 || encoding == 3) {
-            while (index < frame.size && frame[index].toInt() != 0) index++
-            index++
-        } else {
-            while (index + 1 < frame.size && !(frame[index].toInt() == 0 && frame[index + 1].toInt() == 0)) index += 2
-            index += 2
-        }
-        return if (index in 0 until frame.size) frame.copyOfRange(index, frame.size) else null
-    }
-
-    private fun synchsafeToInt(bytes: ByteArray): Int {
-        if (bytes.size < 4) return 0
-        return (bytes[0].toInt() and 0x7F shl 21) or
-            (bytes[1].toInt() and 0x7F shl 14) or
-            (bytes[2].toInt() and 0x7F shl 7) or
-            (bytes[3].toInt() and 0x7F)
-    }
-
-    private fun bytesToInt(bytes: ByteArray, offset: Int): Int {
-        return ((bytes[offset].toInt() and 0xFF) shl 24) or
-            ((bytes[offset + 1].toInt() and 0xFF) shl 16) or
-            ((bytes[offset + 2].toInt() and 0xFF) shl 8) or
-            (bytes[offset + 3].toInt() and 0xFF)
-    }
-
-    private fun RandomAccessFile.readFourCc(): String {
-        val bytes = ByteArray(4)
-        readFully(bytes)
-        return String(bytes, Charsets.US_ASCII)
-    }
-
-    private fun RandomAccessFile.readLittleEndianInt(): Int {
-        val b0 = read()
-        val b1 = read()
-        val b2 = read()
-        val b3 = read()
-        return (b0 and 0xFF) or
-            ((b1 and 0xFF) shl 8) or
-            ((b2 and 0xFF) shl 16) or
-            ((b3 and 0xFF) shl 24)
     }
 
     private fun extractReplayGain(uri: Uri): ReplayGainMetadata {

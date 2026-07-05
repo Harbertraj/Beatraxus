@@ -23,7 +23,10 @@ import org.json.JSONObject
 private val Context.telegramDataStore: DataStore<Preferences> by preferencesDataStore(name = "telegram_channels")
 
 internal fun detectAudioFormat(fileName: String, mimeType: String?): String {
-    val ext = fileName.substringAfterLast('.', "").lowercase()
+    val f = fileName.lowercase()
+    if (f.contains("alac")) return "ALAC"
+    
+    val ext = f.substringAfterLast('.', "")
     when (ext) {
         "wav", "wave" -> return "WAV"
         "flac" -> return "FLAC"
@@ -39,9 +42,9 @@ internal fun detectAudioFormat(fileName: String, mimeType: String?): String {
 
     val mime = mimeType?.lowercase().orEmpty()
     return when {
+        mime.contains("alac") -> "ALAC"
         mime.contains("wav") -> "WAV"
         mime.contains("flac") -> "FLAC"
-        mime.contains("alac") -> "ALAC"
         mime.contains("dsd") || mime.contains("dsf") -> "DSD"
         mime.contains("mp4") || mime.contains("m4a") -> "M4A"
         mime.contains("aac") -> "AAC"
@@ -114,12 +117,15 @@ private suspend fun extractFullMetadata(
     try {
         val format = detectAudioFormat(fileName, mimeType)
         val isWav = format == "WAV"
+        val isM4A = format == "M4A" || format == "ALAC"
+        
         // Download first 1MB for better chance of getting all metadata + art
         val downloadSize = 1024 * 1024L
         tdLib.send(TdApi.DownloadFile(fileId, 32, 0, downloadSize, true))
         
-        if (isWav && totalSize > downloadSize) {
-            val footerSize = 1024 * 1024L
+        // For WAV and M4A/ALAC, we often need the footer for metadata/duration
+        if ((isWav || isM4A) && totalSize > downloadSize) {
+            val footerSize = if (isWav) 8 * 1024 * 1024L else 1024 * 1024L // 8MB for WAV art
             val offset = (totalSize - footerSize).coerceAtLeast(0L)
             tdLib.send(TdApi.DownloadFile(fileId, 32, offset, footerSize, true))
         }
@@ -132,13 +138,19 @@ private suspend fun extractFullMetadata(
             val artist = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_ARTIST)
             val album = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_ALBUM)
             val duration = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()
-            val artBytes = retriever.embeddedPicture
+            
+            var finalArtBytes = retriever.embeddedPicture
+            
+            // Special handling for WAV art
+            if ((finalArtBytes == null || finalArtBytes.isEmpty()) && isWav) {
+                finalArtBytes = WavArtHelper.extractArt(path)
+            }
             
             var albumArtUri: Uri? = null
-            if (artBytes != null && artBytes.isNotEmpty()) {
+            if (finalArtBytes != null && finalArtBytes.isNotEmpty()) {
                 val outDir = File(context.filesDir, "embedded_album_art").apply { mkdirs() }
                 val outFile = File(outDir, "tg_${fileId}.jpg")
-                FileOutputStream(outFile).use { it.write(artBytes) }
+                FileOutputStream(outFile).use { it.write(finalArtBytes) }
                 albumArtUri = Uri.fromFile(outFile)
             }
             

@@ -158,6 +158,7 @@ data class DspConfig(
     val crossfeedEnabled: Boolean = false,
     val crossfeedLevel: Float = 0.4f,
     val spatialAudioEnabled: Boolean = false,
+    val soundStageEnabled: Boolean = false,
     val spatialTouchEnabled: Boolean = false,
     val spatialAudioIntensity: Float = 0.6f,
     val soundStageSelectedNode: String = "Vocals",
@@ -172,6 +173,7 @@ data class DspConfig(
         "Guitar" to SoundStageNodePosition(315f, 0f, 2.6f)
     ),
     val soundStageWidth: Float = 1.0f,
+    val spatialStageWidth: Float = 1.0f,
     val soundStageCenterLock: Float = 0f,
     val hrtfMode: HrtfMode = HrtfMode.NATURAL_BALANCED,
     val reverbEnabled: Boolean = false,
@@ -277,6 +279,7 @@ data class DspConfig(
         if (stereoExpansionEnabled && abs(stereoWidth - 1f) > 0.01f) add("Stereo")
         if (crossfeedEnabled) add("Crossfeed")
         if (spatialAudioEnabled) add("Spatial")
+        if (soundStageEnabled) add("Soundstage")
         if (reverbEnabled && reverbAmount > 0.01f) add("Reverb")
         if (dvcEnabled) add("DVC")
         if (usbExclusiveEnabled) add("USB Direct")

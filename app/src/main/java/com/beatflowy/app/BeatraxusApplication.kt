@@ -22,8 +22,6 @@ class BeatraxusApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        // Initialize TDLib early
-        tdLibManager
 
         // Clear temporary cloud cache on app start (effectively clearing "on close")
         clearTemporaryCache()

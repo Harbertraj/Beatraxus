@@ -80,11 +80,17 @@ class PlaybackLruCache(private val context: Context) {
         }
     }
 
-    fun clearCache() {
+    fun clearCache(excludeId: String? = null) {
         synchronized(lruMap) {
-            lruMap.clear()
+            val toRemove = lruMap.keys.filter { it != excludeId }
+            toRemove.forEach { lruMap.remove(it) }
             persistMap()
-            cacheDir.listFiles()?.forEach { it.delete() }
+            
+            cacheDir.listFiles()?.forEach { file ->
+                if (excludeId == null || !file.name.startsWith("$excludeId.")) {
+                    file.delete()
+                }
+            }
         }
     }
 

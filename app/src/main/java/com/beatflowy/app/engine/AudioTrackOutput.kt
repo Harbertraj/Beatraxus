@@ -320,13 +320,20 @@ class AudioTrackOutput(
                 .setChannelMask(channelConfig)
                 .build()
 
-            val newTrack = AudioTrack.Builder()
+            val builder = AudioTrack.Builder()
                 .setAudioAttributes(audioAttributes)
                 .setAudioFormat(audioFormat)
                 .setBufferSizeInBytes(bufferSize)
                 .setTransferMode(AudioTrack.MODE_STREAM)
                 .setPerformanceMode(resolvedPerformanceMode)
-                .build()
+
+            val newTrack = try {
+                builder.build()
+            } catch (e: Exception) {
+                Log.e(TAG, "AudioTrack.Builder.build() failed: ${e.message}")
+                if (channels > 2) return init(sampleRate, 2, bitDepth, isDoP)
+                return false
+            }
 
             if (newTrack.state != AudioTrack.STATE_INITIALIZED) {
                 newTrack.release()

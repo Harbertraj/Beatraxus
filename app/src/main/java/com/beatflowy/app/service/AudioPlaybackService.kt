@@ -1376,13 +1376,22 @@ class AudioPlaybackService : Service() {
         super.onTaskRemoved(rootIntent)
         saveState()
         
+        val currentSong = engine.playbackStateFlow.value.currentSong
+        val isPlaying = engine.playbackStateFlow.value.isPlaying
+        
         // Stop playback and release engine to ensure hardware resources are freed
         engine.stop()
         engine.release()
         
         // Clear all temporary playback caches (GDrive and Telegram cached copies)
-        cloudCacheManager.clearAllPlaybackCaches()
+        // If we were playing, exclude the current song so it remains cached for immediate resume
+        if (isPlaying && currentSong != null) {
+            cloudCacheManager.clearAllPlaybackCaches(excludeId = currentSong.id)
+        } else if (!isPlaying) {
+            cloudCacheManager.clearAllPlaybackCaches()
+        }
         
+        stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
 
@@ -1396,9 +1405,15 @@ class AudioPlaybackService : Service() {
         }
 
         // Ensure cloud cache is cleared on destroy if we are not just restarting
-        if (!engine.playbackStateFlow.value.isPlaying) {
+        val isPlaying = engine.playbackStateFlow.value.isPlaying
+        val currentSong = engine.playbackStateFlow.value.currentSong
+        if (!isPlaying) {
             cloudCacheManager.clearFullCache()
+        } else if (currentSong != null) {
+            cloudCacheManager.clearFullCache(excludeId = currentSong.id)
         }
+        
+        cloudCacheManager.release()
 
         serviceScope.cancel()
         audioManager.unregisterAudioDeviceCallback(audioDeviceCallback)
@@ -1408,6 +1423,10 @@ class AudioPlaybackService : Service() {
         engine.release()
         mediaSession.release()
         abandonAudioFocus()
+        
+        // Close TDLib when the service is destroyed to prevent background processing
+        (application as com.beatflowy.app.BeatraxusApplication).tdLibManager.close()
+
         super.onDestroy()
     }
 }

@@ -165,6 +165,12 @@ class MetadataExtractor(private val context: Context) {
             }
 
             if (isWav) {
+                // First try specialized WAV art extraction (handles ID3 and DISP chunks)
+                if (fetchArt && artworkEnabled && updatedSong.albumArtUri == null) {
+                    WavArtHelper.extractArt(localFile.absolutePath)?.let { artBytes ->
+                        updatedSong = updatedSong.copy(albumArtUri = cacheEmbeddedAlbumArt(song.id, artBytes))
+                    }
+                }
                 updatedSong = extractWavMetadataManual(localFile, updatedSong)
             }
 
@@ -433,19 +439,9 @@ class MetadataExtractor(private val context: Context) {
                             updatedSong = extractMetadataFromId3(bytes, updatedSong)
                         }
                     }
-                    "DISP" -> {
-                        if (chunkSize > 4 && chunkSize <= (fileLen - chunkStart)) {
-                            raf.skipBytes(4)
-                            val bytes = ByteArray((chunkSize - 4).toInt())
-                            raf.readFully(bytes)
-                            if (bytes.isNotEmpty() && updatedSong.albumArtUri == null) {
-                                updatedSong = updatedSong.copy(albumArtUri = cacheEmbeddedAlbumArt(song.id, bytes))
-                            }
-                        }
-                    }
                     "LIST" -> {
                         if (chunkSize >= 4 && chunkSize <= (fileLen - chunkStart)) {
-                            val listType = readFourCc(raf)
+                            val listType = WavArtHelper.readFourCc(raf) // Using helper to read tag list
                             if (listType == "INFO") {
                                 updatedSong = extractMetadataFromInfoList(raf, chunkStart + chunkSize, updatedSong)
                             }
@@ -527,13 +523,6 @@ class MetadataExtractor(private val context: Context) {
             val frameData = bytes.sliceArray(offset + headerSize until offset + headerSize + frameSize)
 
             when (frameId) {
-                "APIC", "PIC" -> {
-                    if (updatedSong.albumArtUri == null) {
-                        parseApicFrame(frameData)?.let { art ->
-                            updatedSong = updatedSong.copy(albumArtUri = cacheEmbeddedAlbumArt(song.id, art))
-                        }
-                    }
-                }
                 "TIT2", "TT2" -> updatedSong = updatedSong.copy(title = parseId3TextFrame(frameData) ?: updatedSong.title)
                 "TPE1", "TP1" -> updatedSong = updatedSong.copy(artist = parseId3TextFrame(frameData) ?: updatedSong.artist)
                 "TALB", "TAL" -> {
@@ -604,41 +593,6 @@ class MetadataExtractor(private val context: Context) {
                ((bytes[1].toInt() and 0xFF) shl 8) or
                ((bytes[2].toInt() and 0xFF) shl 16) or
                ((bytes[3].toInt() and 0xFF) shl 24)
-    }
-
-    private fun parseApicFrame(frame: ByteArray): ByteArray? {
-        if (frame.size < 5) return null
-        val encoding = frame[0].toInt() and 0xFF
-        var index = 1
-
-        // Detect if it's v2.2 (PIC) or v2.3/4 (APIC)
-        // PIC uses 3 bytes for format, APIC uses null-terminated MIME type
-        // A simple heuristic: if index 4 is picture type (0-20), it's likely v2.2 PIC
-        // but it's safer to pass the version. Since we don't, we'll try to skip MIME/Format.
-
-        if (frame.size > 5 && frame[1].toInt() != 0 && frame[2].toInt() != 0 && frame[3].toInt() != 0 && frame[4] in 0..20) {
-            // Likely v2.2 PIC: [0]=Enc, [1..3]=Format, [4]=Type
-            index = 5
-        } else {
-            // Likely v2.3+ APIC: [0]=Enc, [1..]=MIME(null-term), [next]=Type
-            while (index < frame.size && frame[index].toInt() != 0) index++
-            index++ // skip null
-            if (index >= frame.size) return null
-            index++ // skip picture type
-        }
-
-        if (index >= frame.size) return null
-
-        // Skip description (null-terminated)
-        if (encoding == 0 || encoding == 3) {
-            while (index < frame.size && frame[index].toInt() != 0) index++
-            index++
-        } else {
-            while (index + 1 < frame.size && !(frame[index].toInt() == 0 && frame[index + 1].toInt() == 0)) index += 2
-            index += 2
-        }
-
-        return if (index in 0 until frame.size) frame.copyOfRange(index, frame.size) else null
     }
 
     private fun synchsafeToInt(bytes: ByteArray): Int {

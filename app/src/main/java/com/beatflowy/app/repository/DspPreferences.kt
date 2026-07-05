@@ -143,11 +143,13 @@ class DspPreferences(private val context: Context) {
             crossfeedEnabled = pref(CROSSFEED_ENABLED, false),
             crossfeedLevel = pref(CROSSFEED_LEVEL, 0.4f),
             spatialAudioEnabled = pref(SPATIAL_AUDIO_ENABLED, false),
+            soundStageEnabled = pref(SOUND_STAGE_ENABLED, false),
             spatialTouchEnabled = pref(SPATIAL_TOUCH_ENABLED, false),
             spatialAudioIntensity = pref(SPATIAL_AUDIO_INTENSITY, 0.6f),
             soundStageSelectedNode = pref(SOUND_STAGE_SELECTED_NODE, "Vocals"),
             soundStageNodePositions = deserializeNodePositions(prefNullable(SOUND_STAGE_NODE_POSITIONS)),
             soundStageWidth = pref(SOUND_STAGE_WIDTH, 1.0f),
+            spatialStageWidth = pref(SPATIAL_STAGE_WIDTH, 1.0f),
             soundStageCenterLock = pref(SOUND_STAGE_CENTER_LOCK, 0f),
             hrtfMode = HrtfMode.valueOf(prefNullable(HRTF_MODE) ?: HrtfMode.NATURAL_BALANCED.name),
             reverbEnabled = pref(REVERB_ENABLED, false),
@@ -259,11 +261,13 @@ class DspPreferences(private val context: Context) {
             set(CROSSFEED_ENABLED, config.crossfeedEnabled)
             set(CROSSFEED_LEVEL, config.crossfeedLevel)
             set(SPATIAL_AUDIO_ENABLED, config.spatialAudioEnabled)
+            set(SOUND_STAGE_ENABLED, config.soundStageEnabled)
             set(SPATIAL_TOUCH_ENABLED, config.spatialTouchEnabled)
             set(SPATIAL_AUDIO_INTENSITY, config.spatialAudioIntensity)
             set(SOUND_STAGE_SELECTED_NODE, config.soundStageSelectedNode)
             set(SOUND_STAGE_NODE_POSITIONS, serializeNodePositions(config.soundStageNodePositions))
             set(SOUND_STAGE_WIDTH, config.soundStageWidth)
+            set(SPATIAL_STAGE_WIDTH, config.spatialStageWidth)
             set(SOUND_STAGE_CENTER_LOCK, config.soundStageCenterLock)
             set(HRTF_MODE, config.hrtfMode.name)
             set(REVERB_ENABLED, config.reverbEnabled)
@@ -409,11 +413,13 @@ class DspPreferences(private val context: Context) {
                 set(CROSSFEED_ENABLED, config.crossfeedEnabled)
                 set(CROSSFEED_LEVEL, config.crossfeedLevel)
                 set(SPATIAL_AUDIO_ENABLED, config.spatialAudioEnabled)
+                set(SOUND_STAGE_ENABLED, config.soundStageEnabled)
                 set(SPATIAL_TOUCH_ENABLED, config.spatialTouchEnabled)
                 set(SPATIAL_AUDIO_INTENSITY, config.spatialAudioIntensity)
                 set(SOUND_STAGE_SELECTED_NODE, config.soundStageSelectedNode)
                 set(SOUND_STAGE_NODE_POSITIONS, serializeNodePositions(config.soundStageNodePositions))
                 set(SOUND_STAGE_WIDTH, config.soundStageWidth)
+                set(SPATIAL_STAGE_WIDTH, config.spatialStageWidth)
                 set(SOUND_STAGE_CENTER_LOCK, config.soundStageCenterLock)
                 set(HRTF_MODE, config.hrtfMode.name)
                 set(REVERB_ENABLED, config.reverbEnabled)
@@ -604,11 +610,13 @@ class DspPreferences(private val context: Context) {
         private val CROSSFEED_ENABLED = booleanPreferencesKey("crossfeed_enabled")
         private val CROSSFEED_LEVEL = floatPreferencesKey("crossfeed_level")
         private val SPATIAL_AUDIO_ENABLED = booleanPreferencesKey("spatial_audio_enabled")
+        private val SOUND_STAGE_ENABLED = booleanPreferencesKey("sound_stage_enabled")
         private val SPATIAL_TOUCH_ENABLED = booleanPreferencesKey("spatial_touch_enabled")
         private val SPATIAL_AUDIO_INTENSITY = floatPreferencesKey("spatial_audio_intensity")
         private val SOUND_STAGE_SELECTED_NODE = stringPreferencesKey("sound_stage_selected_node")
         private val SOUND_STAGE_NODE_POSITIONS = stringPreferencesKey("sound_stage_node_positions")
         private val SOUND_STAGE_WIDTH = floatPreferencesKey("sound_stage_width")
+        private val SPATIAL_STAGE_WIDTH = floatPreferencesKey("spatial_stage_width")
         private val SOUND_STAGE_CENTER_LOCK = floatPreferencesKey("sound_stage_center_lock")
         private val HRTF_MODE = stringPreferencesKey("hrtf_mode")
         private val REVERB_ENABLED = booleanPreferencesKey("reverb_enabled")

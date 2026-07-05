@@ -8,6 +8,7 @@ import com.beatflowy.app.model.SongSource
 import com.beatflowy.app.repository.DriveAccountRepository
 import com.beatflowy.app.telegram.TdLibManager
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import okhttp3.OkHttpClient
@@ -42,8 +43,11 @@ class CloudCacheManager(
     private val okHttpClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
-        .connectionPool(okhttp3.ConnectionPool(20, 5, TimeUnit.MINUTES))
-        .dispatcher(okhttp3.Dispatcher().apply { maxRequestsPerHost = 15 })
+        .connectionPool(okhttp3.ConnectionPool(50, 5, TimeUnit.MINUTES))
+        .dispatcher(okhttp3.Dispatcher().apply { 
+            maxRequests = 100
+            maxRequestsPerHost = 50 
+        })
         .build()
 
     fun getCachedFile(song: Song): File? {
@@ -98,24 +102,30 @@ class CloudCacheManager(
             if (file.local.isDownloadingCompleted) {
                 return@withContext playbackLruCache.getOrCacheFile(song, File(file.local.path), true, currentlyPlayingId).absolutePath
             }
-            return@withContext file.local.path
+            // ALAC/M4A files from Telegram often have the 'moov' atom at the end, causing FFmpeg to fail 
+            // if opened as a partial local file. For these, we wait for the download to complete.
+            val isAlac = song.format == "ALAC" || song.title.contains("alac", ignoreCase = true)
+            if (!isAlac) return@withContext file.local.path
         }
 
         // Wait for path to become available
         Log.d(TAG, "Waiting for Telegram file path for ${song.title} (ID: $currentFileId)...")
         var attempts = 0
-        while (attempts < 300) { // 15 seconds (reduced from 120s to prevent UI/Engine hang)
+        while (attempts < 600) { // 30 seconds (increased from 15s to allow for ALAC completion)
             file = try { tdLib.send(TdApi.GetFile(currentFileId)) } catch (e: Exception) { null }
             if (file?.local?.path?.isNotBlank() == true) {
                 if (file.local.isDownloadingCompleted) {
                     Log.d(TAG, "Telegram file download complete for ${song.title}")
                     return@withContext playbackLruCache.getOrCacheFile(song, File(file.local.path), true, currentlyPlayingId).absolutePath
                 }
-                Log.d(TAG, "Telegram file path available for ${song.title}: ${file.local.path}")
-                return@withContext file.local.path
+                val isAlac = song.format == "ALAC" || song.title.contains("alac", ignoreCase = true)
+                if (!isAlac) {
+                    Log.d(TAG, "Telegram file path available for ${song.title}: ${file.local.path}")
+                    return@withContext file.local.path
+                }
             }
             if (attempts % 20 == 0 && file != null) {
-                Log.d(TAG, "Waiting for Telegram song path ${song.title}: ${file.local.downloadedPrefixSize} / ${song.fileSizeBytes} bytes...")
+                Log.d(TAG, "Waiting for Telegram song completion ${song.title}: ${file.local.downloadedPrefixSize} / ${song.fileSizeBytes} bytes...")
             }
             delay(50)
             attempts++
@@ -215,22 +225,42 @@ class CloudCacheManager(
                 }
                 if (currentFileId != null && currentFileId != 0) {
                     tdLib.send(TdApi.DownloadFile(currentFileId, 32, 0, 0, false))
-                    // We don't need to wait for completion here, TDLib handles it in background
+                    
+                    // Wait for completion to add to unified 15-song LRU cache (same logic as GDrive)
+                    tdLib.getFileFlow(currentFileId).collect { file ->
+                        if (file?.local?.isDownloadingCompleted == true && file.local.path.isNotBlank()) {
+                            playbackLruCache.getOrCacheFile(song, File(file.local.path), false, currentlyPlayingId)
+                            this@launch.cancel()
+                        }
+                    }
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "Telegram pre-download failed for ${song.title}: ${e.message}")
+                if (e !is CancellationException) {
+                    Log.w(TAG, "Telegram pre-download failed for ${song.title}: ${e.message}")
+                }
+            } finally {
+                activeDownloads.remove(id)
             }
         }
     }
 
-    fun clearAllPlaybackCaches() {
-        playbackLruCache.clearCache()
+    fun clearAllPlaybackCaches(excludeId: String? = null) {
+        playbackLruCache.clearCache(excludeId)
         // Also clear any lingering .tmp files from cloud_cache/
-        cacheDir.listFiles { _, name -> name.endsWith(".tmp") }?.forEach { it.delete() }
+        cacheDir.listFiles { _, name -> 
+            name.endsWith(".tmp") && (excludeId == null || !name.startsWith("$excludeId."))
+        }?.forEach { it.delete() }
     }
 
-    fun clearFullCache() {
-        clearAllPlaybackCaches()
+    fun clearFullCache(excludeId: String? = null) {
+        clearAllPlaybackCaches(excludeId)
+    }
+
+    fun release() {
+        downloadScope.cancel()
+        activeDownloads.values.forEach { it.cancel() }
+        activeDownloads.clear()
+        tokenCache.clear()
     }
 
     private fun startDownload(song: Song) {
@@ -253,24 +283,48 @@ class CloudCacheManager(
 
         try {
             val url = resolveDownloadUrl(song) ?: return
-            val requestBuilder = Request.Builder().url(url)
             
-            if (song.source == SongSource.GDRIVE && song.driveAccountEmail != null) {
-                val email = song.driveAccountEmail
-                val token = tokenCache[email] ?: driveAccountRepository.getAccessToken(email)
-                if (token != null) {
-                    requestBuilder.header("Authorization", "Bearer $token")
-                    tokenCache[email] = token
-                }
+            val totalSize = if (song.fileSizeBytes > 0) song.fileSizeBytes else {
+                // Fetch size if unknown
+                val request = Request.Builder().url(url).head().build()
+                okHttpClient.newCall(request).execute().use { it.header("Content-Length")?.toLong() ?: 0L }
             }
 
-            okHttpClient.newCall(requestBuilder.build()).execute().use { response ->
-                if (!response.isSuccessful) {
-                    Log.e(TAG, "Failed to download song ${song.title}: ${response.code}")
-                    return
-                }
+            if (totalSize <= 0) {
+                downloadSequential(url, song, tempFile)
+            } else if (totalSize < 1024 * 1024 * 2) { // Less than 2MB, just do sequential
+                downloadSequential(url, song, tempFile)
+            } else {
+                downloadParallel(url, song, tempFile, totalSize)
+            }
 
-                val body = response.body ?: return
+            if (tempFile.exists() && tempFile.length() > 0) {
+                tempFile.renameTo(finalFile)
+                // Register with unified 15-song LRU cache (as pre-fetch)
+                playbackLruCache.getOrCacheFile(song, finalFile, false, currentlyPlayingId)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error downloading song ${song.title}", e)
+        } finally {
+            if (tempFile.exists()) tempFile.delete()
+        }
+    }
+
+    private suspend fun downloadSequential(url: String, song: Song, tempFile: File) {
+        val requestBuilder = Request.Builder().url(url)
+        if (song.source == SongSource.GDRIVE && song.driveAccountEmail != null) {
+            val email = song.driveAccountEmail
+            val token = tokenCache[email] ?: driveAccountRepository.getAccessToken(email)
+            if (token != null) {
+                requestBuilder.header("Authorization", "Bearer $token")
+                tokenCache[email] = token
+            }
+        }
+
+        withContext(Dispatchers.IO) {
+            okHttpClient.newCall(requestBuilder.build()).execute().use { response ->
+                if (!response.isSuccessful) return@use
+                val body = response.body ?: return@use
                 body.byteStream().use { input ->
                     FileOutputStream(tempFile).use { output ->
                         val buffer = ByteArray(65536)
@@ -280,17 +334,61 @@ class CloudCacheManager(
                         }
                     }
                 }
+            }
+        }
+    }
 
-                if (tempFile.exists() && tempFile.length() > 0) {
-                    tempFile.renameTo(finalFile)
-                    // Register with unified 15-song LRU cache (as pre-fetch)
-                    playbackLruCache.getOrCacheFile(song, finalFile, false, currentlyPlayingId)
+    private suspend fun downloadParallel(url: String, song: Song, tempFile: File, totalSize: Long) = coroutineScope {
+        val chunkSize = 2 * 1024 * 1024L // 2MB chunks
+        val chunks = (totalSize + chunkSize - 1) / chunkSize
+        val email = song.driveAccountEmail
+        val token = if (song.source == SongSource.GDRIVE && email != null) {
+            tokenCache[email] ?: driveAccountRepository.getAccessToken(email)
+        } else null
+        if (token != null && email != null) tokenCache[email] = token
+
+        RandomAccessFile(tempFile, "rw").use { raf ->
+            raf.setLength(totalSize)
+            
+            val deferreds = (0 until chunks).map { i ->
+                async(Dispatchers.IO) {
+                    val start = i * chunkSize
+                    val end = minOf(start + chunkSize - 1, totalSize - 1)
+                    
+                    var success = false
+                    var attempts = 0
+                    while (!success && attempts < 3) {
+                        try {
+                            val requestBuilder = Request.Builder()
+                                .url(url)
+                                .header("Range", "bytes=$start-$end")
+                            
+                            if (token != null) requestBuilder.header("Authorization", "Bearer $token")
+
+                            okHttpClient.newCall(requestBuilder.build()).execute().use { response ->
+                                if (response.isSuccessful) {
+                                    val body = response.body ?: return@use
+                                    val bytes = body.bytes()
+                                    synchronized(raf) {
+                                        raf.seek(start)
+                                        raf.write(bytes)
+                                    }
+                                    success = true
+                                }
+                            }
+                        } catch (e: Exception) {
+                            attempts++
+                            delay(500L * attempts)
+                        }
+                    }
+                    success
                 }
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error downloading song ${song.title}", e)
-        } finally {
-            if (tempFile.exists()) tempFile.delete()
+            
+            val results = deferreds.awaitAll()
+            if (results.any { !it }) {
+                throw Exception("Some chunks failed to download")
+            }
         }
     }
 
@@ -369,9 +467,9 @@ class CloudCacheManager(
             }
 
             var attempts = 0
-            // PERFORMANCE: For the very first read, wait more patiently for the download to start 
-            // instead of opening a redundant concurrent connection via readFromNetwork.
-            val maxWaitAttempts = if (position == 0L) 100 else 15 // 2s for start, 0.3s for subsequent
+            // PERFORMANCE: Wait more patiently for the download to start or catch up.
+            // For seeks, we also wait a bit to avoid falling back to network if the cache is close.
+            val maxWaitAttempts = if (position == 0L) 100 else 50 // 2s for start, 1s for subsequent
             while (position + size > tmpFile.length() && activeDownloads.containsKey(song.id) && attempts < maxWaitAttempts) {
                 if (isSeekPending()) return -1
                 try {

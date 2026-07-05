@@ -96,6 +96,10 @@ class AudioEngine(
     @Volatile private var dspConfig: DspConfig = DspConfig()
     private val dspRevision = AtomicLong(0L)
     private val isSeeking = AtomicBoolean(false)
+    private val userIntentPlaying = AtomicBoolean(false)
+    private var recoveryAttempts = 0
+    private var lastStuckCheckTime = 0L
+    private var lastStuckPosition = -1L
 
     init {
         startRenderer()
@@ -106,6 +110,69 @@ class AudioEngine(
                 delay(200)
                 performReconfigureOutput()
             }
+        }
+
+        // Recovery watcher: if playback silently dies or gets stuck (e.g. MediaCodec hang or AudioFlinger drop)
+        // while the user intent is still 'playing', attempt to restart.
+        engineScope.launch {
+            while (isActive) {
+                val state = playbackStateFlow.value
+                val currentPos = positionMs
+                val now = System.currentTimeMillis()
+                
+                var shouldRecover = false
+                
+                if (userIntentPlaying.get()) {
+                    if (!state.isPlaying) {
+                        // Case 1: Playback state flipped to paused unexpectedly
+                        Log.w(TAG, "Playback silently died (intent=true, isPlaying=false).")
+                        shouldRecover = true
+                    } else if (state.currentSong != null && currentPos < state.currentSong.durationMs - 1000) {
+                        // Case 2: Stuck detection. isPlaying is true, but position isn't advancing.
+                        if (currentPos == lastStuckPosition) {
+                            if (lastStuckCheckTime > 0 && now - lastStuckCheckTime > 4000) {
+                                Log.w(TAG, "Playback appears stuck (position unchanged for 4s at $currentPos ms).")
+                                shouldRecover = true
+                            }
+                        } else {
+                            lastStuckPosition = currentPos
+                            lastStuckCheckTime = now
+                        }
+                    }
+                }
+
+                if (shouldRecover && recoveryAttempts < 3) {
+                    recoveryAttempts++
+                    Log.i(TAG, "Attempting recovery $recoveryAttempts/3...")
+                    lastStuckCheckTime = now // Reset timer to avoid immediate re-trigger
+                    delay(500L * recoveryAttempts) // Backoff
+                    performRecovery()
+                } else if (!shouldRecover) {
+                    // Reset attempts if we are playing normally
+                    if (userIntentPlaying.get() && state.isPlaying && currentPos != lastStuckPosition) {
+                        if (recoveryAttempts > 0) recoveryAttempts = 0
+                    }
+                }
+                
+                delay(1000)
+            }
+        }
+    }
+
+    private suspend fun performRecovery() {
+        controlMutex.withLock {
+            val song = currentSong ?: return@withLock
+            val pos = currentPositionMs()
+            Log.i(TAG, "Recovering playback for ${song.title} at $pos ms")
+            
+            // Re-initialize session at current position
+            stopSessionsInternal()
+            
+            // Reset underrun count for the new start
+            underrunCount = 0
+            
+            _playbackStateFlow.update { it.copy(isPlaying = true) }
+            startSessionInternal(song, pos)
         }
     }
 
@@ -126,13 +193,19 @@ class AudioEngine(
             controlMutex.withLock {
                 // Promotion logic: if we have this song preloaded as nextSession, promote it!
                 if (nextSession != null && nextSong?.id == song.id) {
-                    activeSession?.stop()
+                    val oldSession = activeSession
                     activeSession = nextSession
                     val newSessionId = activeSession?.sessionId ?: 0L
                     nextSession = null
                     currentSong = song
                     nextSong = null
-                    positionMs = 0L
+                    
+                    // Don't reset positionMs to 0 if we are promoting a prepared session
+                    // instead, sync it with the session's current internal position.
+                    this@AudioEngine.positionMs = activeSession?.currentRenderedPositionMs() ?: 0L
+                    
+                    userIntentPlaying.set(true)
+                    recoveryAttempts = 0
                     updateAudioStateForSong(song)
                     _playbackStateFlow.update { it.copy(currentSong = song, isPlaying = true, sessionId = newSessionId) }
                     
@@ -141,8 +214,13 @@ class AudioEngine(
                     if (fmt != null) {
                         activeSession?.configure(fmt)
                     } else {
-                        output.start()
+                        // If format is not yet known (still probing), output.start() is a no-op.
+                        // The session will automatically call configure() and start() once the decoder 
+                        // identifies the stream format.
                     }
+                    
+                    // Stop old session after promotion to avoid gap
+                    oldSession?.stop()
                     return@withLock
                 }
 
@@ -162,6 +240,8 @@ class AudioEngine(
                 positionMs = 0L
                 updateAudioStateForSong(song)
 
+                userIntentPlaying.set(true)
+                recoveryAttempts = 0
                 _playbackStateFlow.update { it.copy(currentSong = song, isPlaying = true) }
 
                 startSessionInternal(song, startPositionMs = 0L)
@@ -258,24 +338,34 @@ class AudioEngine(
 
                 // Promotion logic: if we have this song preloaded as nextSession, promote it!
                 if (nextSession != null && nextSong?.id == song.id) {
-                    activeSession?.stop()
+                    val oldSession = activeSession
                     activeSession = nextSession
                     val newSessionId = activeSession?.sessionId ?: 0L
                     nextSession = null
                     nextSong = null
                     
+                    this@AudioEngine.positionMs = activeSession?.currentRenderedPositionMs() ?: positionMs
+                    
+                    userIntentPlaying.set(true)
+                    recoveryAttempts = 0
                     _playbackStateFlow.update { it.copy(isPlaying = true, sessionId = newSessionId) }
                     
                     val fmt = activeSession?.pcmFormat
                     if (fmt != null) {
                         activeSession?.configure(fmt)
                     } else {
-                        output.start()
+                        // If format is not yet known (still probing), output.start() is a no-op.
+                        // The session will automatically call configure() and start() once the decoder 
+                        // identifies the stream format.
                     }
+                    
+                    oldSession?.stop()
                     return@withLock
                 }
 
                 // Set isPlaying = true EAGERLY to ensure UI responsiveness
+                userIntentPlaying.set(true)
+                recoveryAttempts = 0
                 _playbackStateFlow.update { it.copy(isPlaying = true) }
 
                 if (activeSession == null) {
@@ -290,6 +380,7 @@ class AudioEngine(
     fun stop() {
         engineScope.launch {
             controlMutex.withLock {
+                userIntentPlaying.set(false)
                 stopSessionsInternal()
                 output.stop()
                 _playbackStateFlow.update { it.copy(isPlaying = false) }
@@ -300,6 +391,7 @@ class AudioEngine(
     fun pause() {
         engineScope.launch {
             controlMutex.withLock {
+                userIntentPlaying.set(false)
                 output.pause()
                 _playbackStateFlow.update { it.copy(isPlaying = false) }
             }
@@ -339,6 +431,7 @@ class AudioEngine(
         stop()
         rendererJob?.cancel()
         output.release()
+        engineScope.cancel()
     }
 
     fun reconfigureOutput() {
@@ -585,6 +678,7 @@ class AudioEngine(
                         } else {
                             // No next track ready
                             activeSession = null
+                            userIntentPlaying.set(false)
                             _playbackStateFlow.update { it.copy(isPlaying = false) }
                             _onCompletion.emit(Unit)
                         }
@@ -674,6 +768,9 @@ class AudioEngine(
                                 if (activeSession?.sessionId == sessionId) {
                                     activeSession = null
                                     _playbackStateFlow.update { it.copy(isPlaying = false) }
+                                } else if (nextSession?.sessionId == sessionId) {
+                                    nextSession = null
+                                    nextSong = null
                                 }
                             }
                             return
@@ -749,12 +846,15 @@ class AudioEngine(
                 // Hardware position was just reset by init(), so we reset our offset to match.
                 startFrameOffset = output.playbackPositionFrames()
 
+                // Move pipeline refresh BEFORE starting output to avoid race condition where
+                // audio at the new rate is processed by an old-rate pipeline.
+                refreshDspPipeline(format)
+
                 // FIX: Only start output if we are actually in playing state
                 if (_playbackStateFlow.value.isPlaying) {
                     output.start()
                 }
 
-                refreshDspPipeline(format)
                 publishDspState(format)
             } else if (nextSession?.sessionId == this.sessionId) {
                 pcmFormat = format
@@ -805,37 +905,55 @@ class AudioEngine(
             this@AudioEngine.positionMs = positionMs
         }
 
-        fun refreshDspPipeline(format: PcmAudioFormat) {
+        suspend fun refreshDspPipeline(format: PcmAudioFormat) {
             val actualOutputRate = output.outputSampleRate().takeIf { it > 0 } ?: resolveTargetSampleRate(format.sampleRate, dspConfig)
             val currentBitDepth = output.outputBitDepth()
             
+                // 1. Swap/Update pipeline synchronously so the next render loop uses correct parameters
+            val oldPipelineToRelease = dspLock.writeLock().withLock {
+                val current = dspPipeline
+                
+                if (current.inputSampleRate == format.sampleRate &&
+                    current.outputSampleRate == actualOutputRate &&
+                    current.channels == format.channels) {
+                    
+                    current.updateOutputBitDepth(currentBitDepth)
+                    current.updateConfig(dspConfig)
+                    appliedDspRevision = dspRevision.get()
+                    null
+                } else {
+                    val newPipeline = AudioDspPipeline.create(
+                        inputSampleRate = format.sampleRate,
+                        outputSampleRate = actualOutputRate,
+                        channels = format.channels,
+                        outputBitDepth = currentBitDepth,
+                        config = dspConfig,
+                        song = song,
+                        aiAnalysis = null // Don't gate pipeline creation on DB lookup
+                    )
+                    dspPipeline = newPipeline
+                    appliedDspRevision = dspRevision.get()
+                    current
+                }
+            }
+            
+            // Release old pipeline outside of lock
+            oldPipelineToRelease?.release()
+
+            // 2. Lookup AI analysis in background and update the pipeline when ready
             engineScope.launch {
-                val aiAnalysis = aiAnalysisDao.getAnalysisForSong(song.id)
-                withContext(Dispatchers.Main) {
-                    dspLock.writeLock().withLock {
-                        val oldPipeline = dspPipeline
-                        
-                        if (oldPipeline.inputSampleRate == format.sampleRate &&
-                            oldPipeline.outputSampleRate == actualOutputRate &&
-                            oldPipeline.channels == format.channels) {
-                            
-                            oldPipeline.updateOutputBitDepth(currentBitDepth)
-                            oldPipeline.updateConfig(dspConfig)
-                            appliedDspRevision = dspRevision.get()
-                        } else {
-                            dspPipeline = AudioDspPipeline.create(
-                                inputSampleRate = format.sampleRate,
-                                outputSampleRate = actualOutputRate,
-                                channels = format.channels,
-                                outputBitDepth = currentBitDepth,
-                                config = dspConfig,
-                                song = song,
-                                aiAnalysis = aiAnalysis
-                            )
-                            appliedDspRevision = dspRevision.get()
-                            oldPipeline.release()
+                try {
+                    val aiAnalysis = aiAnalysisDao.getAnalysisForSong(song.id)
+                    if (aiAnalysis != null) {
+                        dspLock.writeLock().withLock {
+                            // Verify session is still active and same song
+                            if (isActive() && dspPipeline.inputSampleRate == format.sampleRate) {
+                                dspPipeline.updateAiAnalysis(aiAnalysis)
+                            }
                         }
                     }
+                } catch (e: Exception) {
+                    Log.e(TAG, "AI analysis lookup failed for ${song.id}", e)
                 }
             }
         }

@@ -22,6 +22,7 @@ internal interface DspProcessor {
     fun process(input: DspProcessResult, channels: Int): DspProcessResult
     fun updateConfig(config: DspConfig) {}
     fun updateOutputBitDepth(bitDepth: Int) {}
+    fun updateAiAnalysis(aiAnalysis: AiAnalysisEntity?) {}
     fun flush() {}
     fun release() {}
 }
@@ -107,6 +108,10 @@ internal class AudioDspPipeline(
 
     fun updateOutputBitDepth(bitDepth: Int) {
         processors.forEach { it.updateOutputBitDepth(bitDepth) }
+    }
+
+    fun updateAiAnalysis(aiAnalysis: AiAnalysisEntity?) {
+        processors.forEach { it.updateAiAnalysis(aiAnalysis) }
     }
 
     fun flush() {
@@ -243,8 +248,14 @@ private class NativeDspProcessor(
         )
 
         dsp.setCrossfeed(if (!isBP) cfg.crossfeedEnabled else false, cfg.crossfeedLevel)
-        dsp.setSpatialEnabled(if (!isBP) cfg.spatialAudioEnabled else false)
-        dsp.setSpatialIntensity(cfg.spatialAudioIntensity)
+        val spatialActive = if (!isBP) (cfg.spatialAudioEnabled || cfg.soundStageEnabled) else false
+        dsp.setSpatialEnabled(spatialActive)
+        
+        // Separation logic: 
+        // 1. The "Soundstage" knob (width) is now processed independently in the native engine.
+        // 2. Spatial Intensity ONLY controls the 3D positioning (ITD/ILD/Dist/Elev) blend.
+        val effectiveIntensity = if (cfg.spatialAudioEnabled) cfg.spatialAudioIntensity else 0.0f
+        dsp.setSpatialIntensity(effectiveIntensity)
         
         // 5-band Sound Stage mapping
         fun getPos(node: String) = cfg.soundStageNodePositions[node] ?: SoundStageNodePosition()
@@ -264,14 +275,23 @@ private class NativeDspProcessor(
             var avgDist = 0f
             nodes.forEach { node ->
                 val p = getPos(node)
-                avgAz += p.azimuth
-                avgEl += p.elevation
-                avgDist += p.distance
+                // Only apply 3D positioning (azimuth/distance) if Spatial Audio is actually ON.
+                // If only Soundstage knob is ON, we keep them centered to act as a pure width expander.
+                if (cfg.spatialAudioEnabled) {
+                    avgAz += p.azimuth
+                    avgEl += p.elevation
+                    avgDist += p.distance
+                } else {
+                    avgAz += 0f
+                    avgEl += 0f
+                    avgDist += 2.0f // Reference distance
+                }
             }
             dsp.setSoundStageNodePosition(bandIdx, avgAz / nodes.size, avgEl / nodes.size, avgDist / nodes.size)
         }
 
-        dsp.setSoundStageWidth(cfg.soundStageWidth)
+        val effectiveWidth = if (cfg.soundStageEnabled) cfg.soundStageWidth else cfg.spatialStageWidth
+        dsp.setSoundStageWidth(effectiveWidth)
         dsp.setSoundStageCenterLock(cfg.soundStageCenterLock)
 
         data class ReverbParams(val type: Int, val room: Float, val damp: Float, val width: Float, val delay: Float)
@@ -319,10 +339,10 @@ private class NativeDspProcessor(
         // Phase 3.4: Hardware Volume
         dsp.setHardwareVolume(cfg.hardwareVolumeEnabled)
 
-        applyEqBands(cfg, dsp)
+        applyEqBands(cfg, dsp, aiAnalysis)
     }
 
-    private fun applyEqBands(config: DspConfig, dsp: NativeDsp) {
+    private fun applyEqBands(config: DspConfig, dsp: NativeDsp, analysis: AiAnalysisEntity? = null) {
         val isBP = config.bitPerfectEnabled
         val eqUnbypassed = !isBP || config.bitPerfectUnbypassEq
         val effectiveEqEnabled = config.eqEnabled && eqUnbypassed
@@ -330,18 +350,19 @@ private class NativeDspProcessor(
         // Handle AI EQ
         val aiEnabled = config.aiEqEnabled && !isBP
         dsp.setAiEqEnabled(aiEnabled)
-        if (aiEnabled && aiAnalysis != null) {
+        val targetAnalysis = analysis ?: aiAnalysis
+        if (aiEnabled && targetAnalysis != null) {
             val bands = listOf(
-                31.25f to aiAnalysis.eq31,
-                62.5f to aiAnalysis.eq62,
-                125f to aiAnalysis.eq125,
-                250f to aiAnalysis.eq250,
-                500f to aiAnalysis.eq500,
-                1000f to aiAnalysis.eq1k,
-                2000f to aiAnalysis.eq2k,
-                4000f to aiAnalysis.eq4k,
-                8000f to aiAnalysis.eq8k,
-                16000f to aiAnalysis.eq16k
+                31.25f to targetAnalysis.eq31,
+                62.5f to targetAnalysis.eq62,
+                125f to targetAnalysis.eq125,
+                250f to targetAnalysis.eq250,
+                500f to targetAnalysis.eq500,
+                1000f to targetAnalysis.eq1k,
+                2000f to targetAnalysis.eq2k,
+                4000f to targetAnalysis.eq4k,
+                8000f to targetAnalysis.eq8k,
+                16000f to targetAnalysis.eq16k
             )
             bands.forEachIndexed { index, (freq, gain) ->
                 dsp.setAiBand(index, freq, gain, 1.41f, 0)
@@ -430,6 +451,10 @@ private class NativeDspProcessor(
         native.setBitDepth(bitDepth)
         // Also need to update dither config because it depends on bit depth
         updateNativeConfig(currentConfig, native)
+    }
+
+    override fun updateAiAnalysis(aiAnalysis: AiAnalysisEntity?) {
+        applyEqBands(currentConfig, native, aiAnalysis)
     }
 
     override fun flush() {
