@@ -949,6 +949,12 @@ public:
     void setWidth(double w) { widthAmount = w; }
     void setCenterLock(double amount) { centerLockAmount = std::clamp(amount, 0.0, 1.0); }
 
+    bool isActive() const {
+        return intensity > 0.0001 || std::abs(widthAmount - 1.0) > 0.001;
+    }
+    double getIntensity() const { return intensity; }
+    double getWidth() const { return widthAmount; }
+
     void process(double& left, double& right) {
         // Run if 3D intensity is active OR width expansion is active
         if (intensity <= 0.0001 && std::abs(widthAmount - 1.0) <= 0.001) return;
@@ -1491,20 +1497,51 @@ public:
             for (int f = 0; f < inFrames; f++) crossfeed.process(input[f * channels], input[f * channels + 1], crossfeedLevel);
         }
         if (soundStageEnabled && channels >= 2) {
-            for (int f = 0; f < inFrames; f++) {
-                int lIdx = f * channels, rIdx = f * channels + 1;
-                double l = (double)input[lIdx], r = (double)input[rIdx];
-                double lBands[5], rBands[5];
-                splitter.split(l, 0, lBands);
-                splitter.split(r, 1, rBands);
+            bool anyActive = false;
+            bool anyIntensity = false;
+            bool allWidthsSame = true;
+            double firstWidth = soundStages[0].getWidth();
 
-                double sumL = 0, sumR = 0;
-                for(int b=0; b<5; b++) {
-                    double bL = lBands[b], bR = rBands[b];
-                    soundStages[b].process(bL, bR);
-                    sumL += bL; sumR += bR;
+            for (int b = 0; b < 5; b++) {
+                if (soundStages[b].isActive()) anyActive = true;
+                if (soundStages[b].getIntensity() > 0.0001) anyIntensity = true;
+                if (std::abs(soundStages[b].getWidth() - firstWidth) > 0.001) allWidthsSame = false;
+            }
+
+            if (anyActive) {
+                if (!anyIntensity && allWidthsSame) {
+                    // Optimization: If no 3D intensity is active and all band widths are the same,
+                    // we can perform a single-pass stereo expansion. This bypasses the 5-band
+                    // Linkwitz-Riley splitter, ensuring ZERO frequency coloration (perfect transparency)
+                    // when the Soundstage knob is at 0 (or only doing uniform width expansion).
+                    T w = (T)firstWidth;
+                    for (int f = 0; f < inFrames; f++) {
+                        int lIdx = f * channels, rIdx = f * channels + 1;
+                        T mid = (input[lIdx] + input[rIdx]) * (T)0.5;
+                        T side = (input[lIdx] - input[rIdx]) * (T)0.5;
+                        side *= w;
+                        input[lIdx] = mid + side;
+                        input[rIdx] = mid - side;
+                    }
+                } else {
+                    // Multi-band processing: required if 3D spatialization is active OR
+                    // if different frequency bands have different width settings.
+                    for (int f = 0; f < inFrames; f++) {
+                        int lIdx = f * channels, rIdx = f * channels + 1;
+                        double l = (double)input[lIdx], r = (double)input[rIdx];
+                        double lBands[5], rBands[5];
+                        splitter.split(l, 0, lBands);
+                        splitter.split(r, 1, rBands);
+
+                        double sumL = 0, sumR = 0;
+                        for (int b = 0; b < 5; b++) {
+                            double bL = lBands[b], bR = rBands[b];
+                            soundStages[b].process(bL, bR);
+                            sumL += bL; sumR += bR;
+                        }
+                        input[lIdx] = (T)sumL; input[rIdx] = (T)sumR;
+                    }
                 }
-                input[lIdx] = (T)sumL; input[rIdx] = (T)sumR;
             }
         }
         if (reverbAmount > 0.001f) {
