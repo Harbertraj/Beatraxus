@@ -76,7 +76,8 @@ data class LastFmTrack(
     val userplaycount: String?,
     val userloved: String?,
     val toptags: LastFmTopTags?,
-    val wiki: LastFmWiki?
+    val wiki: LastFmWiki?,
+    val image: List<LastFmImage>? = null
 )
 
 data class LastFmArtist(val name: String, val mbid: String?, val url: String?, val image: List<LastFmImage>?)

@@ -48,6 +48,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.foundation.Canvas
+import com.beatflowy.app.ui.components.CastButton
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
@@ -1064,29 +1065,16 @@ fun MainScreen(
 
                                             // Cast Icon
                                             if (uiState.currentView != LibraryView.HOME) {
-                                                val isSelected = activeMainSheet == MainSheetType.CAST
                                                 Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                                                    val castIconBgColor by animateColorAsState(
-                                                        targetValue = if (isSelected) Color.White.copy(0.12f) else Color.Transparent,
-                                                        label = "castIconBg"
-                                                    )
-                                                    IconButton(
-                                                        onClick = { activeMainSheet = MainSheetType.CAST },
+                                                    CastButton(
                                                         modifier = Modifier
                                                             .size(46.dp)
                                                             .glassIconBackground(
-                                                                backgroundColor = castIconBgColor,
+                                                                backgroundColor = Color.Transparent,
                                                                 shape = CircleShape,
-                                                                borderColor = if (isSelected) Color.White.copy(alpha = 0.2f) else Color.Transparent
+                                                                borderColor = Color.Transparent
                                                             )
-                                                    ) {
-                                                        Icon(
-                                                            Icons.Rounded.Cast,
-                                                            null,
-                                                            tint = if (isSelected || com.beatflowy.app.cast.CastManager.isConnected) AccentBlue else Color.White.copy(0.85f),
-                                                            modifier = Modifier.size(23.dp)
-                                                        )
-                                                    }
+                                                    )
                                                 }
                                             }
 
@@ -2801,7 +2789,7 @@ fun MainScreen(
                                             selectedSongForOptions = null
                                         },
                                 onInfo = {
-                                    selectedSongForOptions = null
+                                    viewModel.fetchOnlineInfo(song)
                                 },
                                 onDelete = {
                                     songToDelete = song
@@ -2823,7 +2811,15 @@ fun MainScreen(
                                 onGoToGenre = {
                                     viewModel.setLibraryView(com.beatflowy.app.model.LibraryView.GENRE_DETAIL, song.genre)
                                     selectedSongForOptions = null
-                                }
+                                },
+                                lastFmTrackInfo = uiState.lastFmTrackInfo,
+                                lastFmArtistInfo = uiState.lastFmArtistInfo,
+                                lastFmAlbumInfo = uiState.lastFmAlbumInfo,
+                                isLoadingInfo = uiState.isLoadingOnlineInfo,
+                                selectedLastFmTrackInfo = uiState.selectedLastFmTrackInfo,
+                                selectedLastFmArtistInfo = uiState.selectedLastFmArtistInfo,
+                                selectedLastFmAlbumInfo = uiState.selectedLastFmAlbumInfo,
+                                isSelectedLoading = uiState.isSelectedLoadingOnlineInfo
                             )
                         }
 
@@ -3032,6 +3028,7 @@ fun MainScreen(
                 onToggleLyrics = { viewModel.toggleLyrics() },
                 onAdjustOffset = { viewModel.adjustLyricsOffset(it) },
                 onSetLyricsOffset = { viewModel.setLyricsOffset(it) },
+                onSearchLyricsOnline = { viewModel.forceSearchLyricsOnline() },
                 showPipelineOverlay = showPipelineOverlay,
                 onTogglePipeline = { showPipelineOverlay = it },
                 onSetSleepTimer = { seconds, finishTrack, playCount ->

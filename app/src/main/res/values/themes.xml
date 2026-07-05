@@ -7,4 +7,18 @@
         <item name="android:windowBackground">@color/bg_deep</item>
         <item name="android:windowLightStatusBar">false</item>
     </style>
+
+    <style name="Theme.CastExpandedController" parent="Theme.AppCompat.NoActionBar">
+        <item name="castExpandedControllerStyle">@style/CustomCastExpandedControllerStyle</item>
+        <item name="android:windowBackground">@android:color/black</item>
+    </style>
+
+    <style name="CustomCastExpandedControllerStyle" parent="CastExpandedController">
+        <item name="castButtonColor">#FFFFFF</item>
+        <item name="castPlayButtonDrawable">@drawable/ic_play</item>
+        <item name="castPauseButtonDrawable">@drawable/ic_pause</item>
+        <item name="castSkipNextButtonDrawable">@drawable/ic_skip_next</item>
+        <item name="castSkipPreviousButtonDrawable">@drawable/ic_skip_previous</item>
+        <item name="castSeekBarProgressAndThumbColor">#2196F3</item>
+    </style>
 </resources>

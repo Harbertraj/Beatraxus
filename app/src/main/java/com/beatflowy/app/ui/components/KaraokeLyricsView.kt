@@ -3,8 +3,10 @@ package com.beatflowy.app.ui.components
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
@@ -54,9 +56,10 @@ fun KaraokeLyricsView(
     lyricsSource: LyricsSource?,
     onLineClick: (Long) -> Unit,
     onAdjustOffset: (Long) -> Unit,
-    onSetOffset: (Long) -> Unit = {},
     modifier: Modifier = Modifier,
-    onSwipeDown: () -> Unit = {}
+    onSetOffset: (Long) -> Unit = {},
+    onSwipeDown: () -> Unit = {},
+    onSearchOnline: (() -> Unit)? = null
 ) {
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -120,7 +123,13 @@ fun KaraokeLyricsView(
             )
         } else if (lyrics.isEmpty()) {
             Column(
-                modifier = Modifier.align(Alignment.Center),
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = { onSearchOnline?.invoke() }
+                    ),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
@@ -172,6 +181,11 @@ fun KaraokeLyricsView(
                         onClick = { 
                             onLineClick(line.startTime)
                             lastInteractionTime = System.currentTimeMillis()
+                        },
+                        onLongClick = {
+                            if (line.wordTimings == null) {
+                                onSearchOnline?.invoke()
+                            }
                         }
                     )
                 }
@@ -279,6 +293,7 @@ fun KaraokeLyricsView(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun SyncedLyricLine(
     line: LrcLine,
@@ -286,7 +301,8 @@ fun SyncedLyricLine(
     progressInLine: Long,
     targetAlpha: Float,
     isWordByWord: Boolean,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onLongClick: () -> Unit = {}
 ) {
     val animatedAlpha by animateFloatAsState(
         targetValue = targetAlpha, 
@@ -302,6 +318,16 @@ fun SyncedLyricLine(
             stiffness = Spring.StiffnessLow
         ),
         label = "lineScale"
+    )
+
+    // Unique upward movement animation when line becomes active
+    val verticalOffset by animateFloatAsState(
+        targetValue = if (isCurrent) 0f else 8f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioLowBouncy,
+            stiffness = Spring.StiffnessLow
+        ),
+        label = "upwardMovement"
     )
 
     // Generate word timings if they don't exist to support word-by-word highlighting
@@ -329,12 +355,14 @@ fun SyncedLyricLine(
                 alpha = animatedAlpha
                 scaleX = animatedScale
                 scaleY = animatedScale
+                translationY = verticalOffset
                 transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0.5f)
             }
-            .clickable(
+            .combinedClickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
-                onClick = onClick
+                onClick = onClick,
+                onLongClick = onLongClick
             )
     ) {
         if (isCurrent && words.isNotEmpty()) {
@@ -405,14 +433,20 @@ fun BouncyWordByWordFlow(
             val wordDuration = word.duration.coerceAtLeast(1L)
             val wordProgress = ((progressInLine - relativeStartTime).toFloat() / wordDuration).coerceIn(0f, 1f)
 
-            // Enhanced "Fill Effect": Sharp gradient transition for a karaoke-like feel
+            // Enhanced "Smooth Fill Effect": Gradient with soft edge transition
             val brush = if (isWordByWord && isWordActive && wordProgress < 1f) {
+                val transitionStart = (wordProgress - 0.15f).coerceAtLeast(0f)
+                val transitionEnd = (wordProgress + 0.15f).coerceAtMost(1f)
                 Brush.horizontalGradient(
                     0.0f to Color.White,
-                    wordProgress to Color.White,
-                    wordProgress to Color.White.copy(alpha = 0.35f),
+                    transitionStart to Color.White,
+                    transitionEnd to Color.White.copy(alpha = 0.35f),
                     1.0f to Color.White.copy(alpha = 0.35f)
                 )
+            } else if (isWordByWord && isWordActive && wordProgress >= 1f) {
+                null // Full white
+            } else if (isWordByWord && !isWordActive) {
+                null // Handled by alpha
             } else null
 
             Text(

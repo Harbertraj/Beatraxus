@@ -19,9 +19,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
+import androidx.compose.material.icons.rounded.Album
+import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import com.beatflowy.app.model.Song
 import com.beatflowy.app.repository.lastfm.LastFmRepository
 import com.beatflowy.app.repository.lastfm.LastFmTrack
+import com.beatflowy.app.repository.lastfm.LastFmArtistDetail
+import com.beatflowy.app.repository.lastfm.LastFmAlbum
 import com.beatflowy.app.ui.theme.AccentBlue
 import com.beatflowy.app.ui.theme.BgDeep
 import kotlinx.coroutines.launch
@@ -29,21 +34,13 @@ import kotlinx.coroutines.launch
 @Composable
 fun SongInfoDialog(
     song: Song,
+    lastFmTrackInfo: LastFmTrack? = null,
+    lastFmArtistInfo: LastFmArtistDetail? = null,
+    lastFmAlbumInfo: LastFmAlbum? = null,
+    isLoadingInfo: Boolean = false,
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
-    val lastFmRepository = remember { LastFmRepository(context) }
-    var lastFmTrackInfo by remember { mutableStateOf<LastFmTrack?>(null) }
-    var isLoadingInfo by remember { mutableStateOf(false) }
-    val scope = rememberCoroutineScope()
-
-    LaunchedEffect(song.id) {
-        isLoadingInfo = true
-        scope.launch {
-            lastFmTrackInfo = lastFmRepository.getTrackInfo(song.artist, song.title)
-            isLoadingInfo = false
-        }
-    }
 
     Dialog(onDismissRequest = onDismiss) {
         Surface(
@@ -73,12 +70,14 @@ fun SongInfoDialog(
                         .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    // Last.fm Thumbnail and Online Info
+                    // Last.fm Online Information Section
                     if (isLoadingInfo) {
                         Box(Modifier.fillMaxWidth().height(120.dp), contentAlignment = Alignment.Center) {
                             CircularProgressIndicator(color = AccentBlue)
                         }
-                    } else if (lastFmTrackInfo != null) {
+                    } else if (lastFmTrackInfo != null || lastFmArtistInfo != null || lastFmAlbumInfo != null) {
+                        Text("Online Information", color = Color.White.copy(0.5f), fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp))
+                        
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -86,35 +85,70 @@ fun SongInfoDialog(
                                 .padding(12.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            val onlineArt = lastFmTrackInfo?.album?.image?.lastOrNull { it.url.isNotEmpty() }?.url 
-                                ?: lastFmTrackInfo?.artist?.image?.lastOrNull { it.url.isNotEmpty() }?.url
+                            val onlineArt = remember(lastFmAlbumInfo, lastFmTrackInfo, lastFmArtistInfo) {
+                                // Priority: 1. Full Album Info, 2. Track's Album, 3. Track directly, 4. Artist's Track info, 5. Full Artist Bio
+                                lastFmAlbumInfo?.image?.lastOrNull { it.url.isNotBlank() }?.url 
+                                    ?: lastFmTrackInfo?.album?.image?.lastOrNull { it.url.isNotBlank() }?.url
+                                    ?: lastFmTrackInfo?.image?.lastOrNull { it.url.isNotBlank() }?.url
+                                    ?: lastFmTrackInfo?.artist?.image?.lastOrNull { it.url.isNotBlank() }?.url
+                                    ?: lastFmArtistInfo?.image?.lastOrNull { it.url.isNotBlank() }?.url
+                            }
                             
                             AsyncImage(
-                                model = onlineArt,
-                                contentDescription = "Last.fm Artwork",
+                                model = ImageRequest.Builder(context)
+                                    .data(onlineArt)
+                                    .crossfade(true)
+                                    .build(),
+                                contentDescription = "Online Artwork",
                                 modifier = Modifier
-                                    .size(80.dp)
+                                    .size(100.dp)
                                     .clip(RoundedCornerShape(12.dp))
-                                    .background(Color.DarkGray),
-                                contentScale = ContentScale.Crop
+                                    .background(Color.White.copy(0.05f)),
+                                contentScale = ContentScale.Crop,
+                                error = rememberVectorPainter(androidx.compose.material.icons.Icons.Rounded.Album)
                             )
                             
                             Spacer(Modifier.width(16.dp))
                             
-                            Column {
-                                Text("Last.fm Tags", color = AccentBlue, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                val tags = lastFmTrackInfo?.toptags?.tag?.take(5)?.joinToString(", ") { it.name }
-                                Text(tags ?: "No tags found", color = Color.White, fontSize = 14.sp)
-                                
-                                Spacer(Modifier.height(4.dp))
-                                
-                                Text("Listeners", color = AccentBlue, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                Text(lastFmTrackInfo?.listeners ?: "0", color = Color.White, fontSize = 14.sp)
+                            Column(Modifier.weight(1f)) {
+                                if (lastFmTrackInfo?.listeners != null) {
+                                    OnlineStat("Listeners", lastFmTrackInfo?.listeners ?: "0")
+                                }
+                                if (lastFmTrackInfo?.playcount != null) {
+                                    OnlineStat("Playcount", lastFmTrackInfo?.playcount ?: "0")
+                                }
+                                if (lastFmTrackInfo?.userplaycount != null && lastFmTrackInfo?.userplaycount != "0") {
+                                    OnlineStat("Your Plays", lastFmTrackInfo?.userplaycount ?: "0")
+                                }
+                                if (lastFmArtistInfo?.stats?.listeners != null) {
+                                    OnlineStat("Artist Listeners", lastFmArtistInfo?.stats?.listeners ?: "0")
+                                }
                             }
                         }
 
-                        lastFmTrackInfo?.wiki?.summary?.let { summary ->
-                            InfoTag("Summary", summary.replace(Regex("<[^>]*>"), ""))
+                        // Online Tags
+                        val allTags = mutableSetOf<String>()
+                        lastFmTrackInfo?.toptags?.tag?.map { it.name }?.let { allTags.addAll(it) }
+                        lastFmArtistInfo?.tags?.tag?.map { it.name }?.let { allTags.addAll(it) }
+                        
+                        if (allTags.isNotEmpty()) {
+                            InfoTag("Online Tags", allTags.take(12).joinToString(", "))
+                        }
+
+                        // Online Wiki / Bio
+                        val wikiContent = lastFmTrackInfo?.wiki?.content 
+                            ?: lastFmTrackInfo?.wiki?.summary
+                            ?: lastFmArtistInfo?.bio?.content
+                            ?: lastFmArtistInfo?.bio?.summary
+                        
+                        if (wikiContent != null) {
+                            InfoTag("Online Bio/Summary", wikiContent.replace(Regex("<[^>]*>"), ""), maxLines = 10)
+                        }
+
+                        // Similar Artists
+                        val similar = lastFmArtistInfo?.similar?.artist?.map { it.name }
+                        if (!similar.isNullOrEmpty()) {
+                            InfoTag("Similar Artists", similar.take(6).joinToString(", "))
                         }
                     }
 
@@ -146,7 +180,7 @@ fun SongInfoDialog(
 }
 
 @Composable
-private fun InfoTag(label: String, value: String) {
+private fun InfoTag(label: String, value: String, maxLines: Int = 2) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -154,7 +188,15 @@ private fun InfoTag(label: String, value: String) {
             .padding(12.dp)
     ) {
         Text(label, color = AccentBlue, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-        Text(value, color = Color.White, fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Text(value, color = Color.White, fontSize = 14.sp, maxLines = maxLines, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+@Composable
+private fun OnlineStat(label: String, value: String) {
+    Column(modifier = Modifier.padding(vertical = 2.dp)) {
+        Text(label, color = AccentBlue, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+        Text(value, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium)
     }
 }
 

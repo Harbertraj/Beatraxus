@@ -9,13 +9,18 @@ import androidx.compose.runtime.setValue
 import androidx.mediarouter.media.MediaRouteSelector
 import androidx.mediarouter.media.MediaRouter
 import com.beatflowy.app.model.Song
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import com.google.android.gms.cast.CastMediaControlIntent
 import com.google.android.gms.cast.MediaInfo
 import com.google.android.gms.cast.MediaLoadRequestData
 import com.google.android.gms.cast.MediaMetadata
+import com.google.android.gms.cast.MediaSeekOptions
+import com.google.android.gms.cast.MediaStatus
 import com.google.android.gms.cast.framework.CastContext
 import com.google.android.gms.cast.framework.CastSession
 import com.google.android.gms.cast.framework.SessionManagerListener
+import com.google.android.gms.cast.framework.media.RemoteMediaClient
 import com.google.android.gms.common.images.WebImage
 
 object CastManager {
@@ -24,6 +29,15 @@ object CastManager {
     val availableDevices = mutableStateListOf<MediaRouter.RouteInfo>()
     var isConnected by mutableStateOf(false)
     var connectedDeviceName by mutableStateOf<String?>(null)
+
+    private val _castMediaStatus = MutableStateFlow<MediaStatus?>(null)
+    val castMediaStatus = _castMediaStatus.asStateFlow()
+
+    private val mediaClientCallback = object : RemoteMediaClient.Callback() {
+        override fun onStatusUpdated() {
+            _castMediaStatus.value = castContext?.sessionManager?.currentCastSession?.remoteMediaClient?.mediaStatus
+        }
+    }
 
     private var pendingSongToCast: Pair<Song, String>? = null
 
@@ -66,6 +80,9 @@ object CastManager {
                     isConnected = true
                     connectedDeviceName = session.castDevice?.friendlyName
                     
+                    session.remoteMediaClient?.registerCallback(mediaClientCallback)
+                    _castMediaStatus.value = session.remoteMediaClient?.mediaStatus
+
                     LocalCastServer.start(context)
 
                     pendingSongToCast?.let { (song, _) ->
@@ -101,6 +118,8 @@ object CastManager {
                     Log.d(TAG, "onSessionEnded: error code $error")
                     isConnected = false
                     connectedDeviceName = null
+                    session.remoteMediaClient?.unregisterCallback(mediaClientCallback)
+                    _castMediaStatus.value = null
                     LocalCastServer.stop()
                 }
                 override fun onSessionResuming(session: CastSession, sessionId: String) {
@@ -184,5 +203,25 @@ object CastManager {
     fun stopCast() {
         castContext?.sessionManager?.endCurrentSession(true)
         LocalCastServer.stop()
+    }
+
+    fun play() {
+        castContext?.sessionManager?.currentCastSession?.remoteMediaClient?.play()
+    }
+
+    fun pause() {
+        castContext?.sessionManager?.currentCastSession?.remoteMediaClient?.pause()
+    }
+
+    fun seek(position: Long) {
+        val options = MediaSeekOptions.Builder()
+            .setPosition(position)
+            .build()
+        castContext?.sessionManager?.currentCastSession?.remoteMediaClient?.seek(options)
+    }
+
+    fun next() {
+        // Cast SDK doesn't have a direct "next" on RemoteMediaClient if we are just loading single items
+        // We'll need to handle this in AudioPlaybackService by calling castSong with the next song
     }
 }

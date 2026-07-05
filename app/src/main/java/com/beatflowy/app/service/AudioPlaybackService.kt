@@ -19,6 +19,7 @@ import android.media.AudioManager
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import android.os.SystemClock
 import android.util.Log
 import android.support.v4.media.session.MediaSessionCompat
@@ -40,6 +41,7 @@ import com.beatflowy.app.engine.PlaybackState
 import com.beatflowy.app.engine.RepeatMode
 import com.beatflowy.app.model.DspConfig
 import com.beatflowy.app.model.Song
+import com.beatflowy.app.model.toEntity
 import com.beatflowy.app.widget.MusicWidgetKeys
 import com.beatflowy.app.widget.MusicWidgetLarge
 import com.beatflowy.app.widget.MusicWidgetMedium
@@ -55,6 +57,12 @@ import coil.ImageLoader
 import coil.request.ImageRequest
 import coil.request.SuccessResult
 import coil.request.CachePolicy
+import com.beatflowy.app.repository.MusicRepository
+import com.google.android.gms.cast.MediaStatus
+import com.beatflowy.app.model.AppDatabase
+import com.google.api.client.googleapis.extensions.android.gms.auth.UserRecoverableAuthIOException
+import java.io.File
+
 
 class AudioPlaybackService : Service() {
     private val binder = LocalBinder()
@@ -180,6 +188,27 @@ class AudioPlaybackService : Service() {
             // Use a flow to listen to preference changes or just poll/initialize
             scrobblingEnabled = prefs.getBoolean("scrobbling_enabled", true)
             Log.d("AudioPlaybackService", "Scrobbling enabled: $scrobblingEnabled")
+        }
+
+        serviceScope.launch {
+            androidx.compose.runtime.snapshotFlow { com.beatflowy.app.cast.CastManager.isConnected }
+                .collect { connected ->
+                    if (connected && engine.playbackStateFlow.value.isPlaying) {
+                        engine.pause()
+                    }
+                }
+        }
+
+        serviceScope.launch {
+            com.beatflowy.app.cast.CastManager.castMediaStatus.collect { status ->
+                if (status != null && com.beatflowy.app.cast.CastManager.isConnected) {
+                    val isPlaying = status.playerState == MediaStatus.PLAYER_STATE_PLAYING ||
+                                    status.playerState == MediaStatus.PLAYER_STATE_BUFFERING
+                    if (_playbackStateFlow.value.isPlaying != isPlaying) {
+                        _playbackStateFlow.update { it.copy(isPlaying = isPlaying) }
+                    }
+                }
+            }
         }
 
         serviceScope.launch {
@@ -428,7 +457,10 @@ class AudioPlaybackService : Service() {
     override fun onBind(intent: Intent): IBinder = binder
 
     private val driveAccountRepository by lazy { DriveAccountRepository(this) }
+    private val musicRepository by lazy { com.beatflowy.app.repository.MusicRepository(this) }
+    private val songDao by lazy { (application as com.beatflowy.app.BeatraxusApplication).database.songDao() }
     private val lastFmRepository by lazy { com.beatflowy.app.repository.lastfm.LastFmRepository(this) }
+    private var libraryScanJob: Job? = null
 
     private var currentSongStartTime: Long = 0
     private var currentSongPlaybackTimeMs: Long = 0
@@ -535,6 +567,17 @@ class AudioPlaybackService : Service() {
     fun togglePlayPause() {
         playbackJob?.cancel()
 
+        if (com.beatflowy.app.cast.CastManager.isConnected) {
+            if (engine.playbackStateFlow.value.isPlaying) {
+                com.beatflowy.app.cast.CastManager.pause()
+            } else {
+                com.beatflowy.app.cast.CastManager.play()
+            }
+            // Update local state so UI reflects change immediately
+            _playbackStateFlow.update { it.copy(isPlaying = !it.isPlaying) }
+            return
+        }
+
         if (engine.playbackStateFlow.value.isPlaying) {
             engine.pause()
             abandonAudioFocus()
@@ -571,6 +614,13 @@ class AudioPlaybackService : Service() {
         
         val nextSong = playlist[currentIndex]
         
+        if (com.beatflowy.app.cast.CastManager.isConnected) {
+            val route = androidx.mediarouter.media.MediaRouter.getInstance(this).selectedRoute
+            com.beatflowy.app.cast.CastManager.castSong(this, route, nextSong, nextSong.uri.toString())
+            _playbackStateFlow.update { it.copy(currentSong = nextSong, isPlaying = true) }
+            return
+        }
+
         engine.prepare(nextSong)
         saveState()
         
@@ -583,6 +633,10 @@ class AudioPlaybackService : Service() {
     }
 
     fun seekTo(pos: Long) {
+        if (com.beatflowy.app.cast.CastManager.isConnected) {
+            com.beatflowy.app.cast.CastManager.seek(pos)
+            return
+        }
         engine.seekTo(pos)
         updateNotification()
     }
@@ -636,6 +690,251 @@ class AudioPlaybackService : Service() {
         updateUpcomingSongs()
         updateMediaSessionState()
         saveState()
+    }
+
+    fun runLocalScan(
+        fullScan: Boolean,
+        currentSongs: List<Song>,
+        onProgress: (Float, Int, Int, Int) -> Unit,
+        onComplete: (List<Song>, List<Song>, List<String>, String, Boolean) -> Unit,
+        onError: (String) -> Unit
+    ) {
+        if (libraryScanJob?.isActive == true) return
+        libraryScanJob = serviceScope.launch(Dispatchers.Default) {
+            acquireScanWakeLock()
+            try {
+                val blocked = musicRepository.getBlockedFolders()
+                val currentLocalSongsMap = currentSongs.filter { it.source == SongSource.LOCAL }.associateBy { it.id }
+                
+                val resultsFromMediaStore = musicRepository.scanAudioFiles(fullScan = fullScan, excludedPaths = blocked) { count, albums, artists, progress ->
+                    onProgress(progress, count, albums, artists)
+                    updateScanningProgress(progress, count, false)
+                }
+                
+                val results = resultsFromMediaStore.map { scanned ->
+                    currentLocalSongsMap[scanned.id] ?: scanned
+                }
+
+                val currentLocalIds = currentLocalSongsMap.keys
+                val resultIds = results.map { it.id }.toSet()
+                val newSongs = results.filter { it.id !in currentLocalIds }
+                val removedLocalIds = currentLocalIds - resultIds
+                
+                val hasChanges = fullScan || currentLocalSongsMap.size != results.size || newSongs.isNotEmpty() || removedLocalIds.isNotEmpty()
+
+                if (hasChanges) {
+                    val entities = results.map { it.toEntity() }
+                    withContext(Dispatchers.IO) {
+                        if (fullScan) {
+                            songDao.deleteLocalSongs()
+                        } else if (removedLocalIds.isNotEmpty()) {
+                            songDao.deleteSongsByIds(removedLocalIds.toList())
+                        }
+                        entities.chunked(200).forEach { chunk ->
+                            songDao.insertSongs(chunk)
+                        }
+                    }
+                }
+
+                val allFolders = results.map { it.folder }.filter { it != "Unknown" }.toSet()
+                val sortedFolders = allFolders.sortedBy { it.length }
+                val minimalFolders = mutableListOf<String>()
+                val blockedSet = blocked.toSet()
+                for (folder in sortedFolders) {
+                    if (blockedSet.any { folder.startsWith(it + "/") || folder == it }) continue
+                    if (minimalFolders.none { folder.startsWith(it + "/") || folder == it }) {
+                        minimalFolders.add(folder)
+                    }
+                }
+                musicRepository.addMusicFolders(minimalFolders)
+
+                val message = when {
+                    fullScan -> "Full scan complete"
+                    newSongs.isNotEmpty() && removedLocalIds.isNotEmpty() -> "Added ${newSongs.size} songs, removed ${removedLocalIds.size}"
+                    newSongs.isNotEmpty() -> "Added ${newSongs.size} new songs"
+                    removedLocalIds.isNotEmpty() -> "Removed ${removedLocalIds.size} missing songs"
+                    hasChanges -> "Library updated"
+                    else -> "No changes found"
+                }
+
+                onComplete(results, newSongs, removedLocalIds.toList(), message, hasChanges)
+                updateScanningProgress(1.0f, results.size, true)
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                onError(e.message ?: "Unknown error")
+                updateScanningProgress(1.0f, 0, true)
+            } finally {
+                releaseScanWakeLock()
+            }
+        }
+    }
+
+    fun runDriveScan(
+        email: String,
+        onProgress: (Float) -> Unit,
+        onDiscoveryComplete: (List<Song>) -> Unit,
+        onEnrichmentProgress: (Float, Int, Int) -> Unit,
+        onStatusUpdate: (String?) -> Unit,
+        onSongUpdated: (Song) -> Unit,
+        onComplete: (String) -> Unit,
+        onError: (String, Intent?) -> Unit
+    ) {
+        if (libraryScanJob?.isActive == true) return
+        libraryScanJob = serviceScope.launch(Dispatchers.Default) {
+            acquireScanWakeLock()
+            try {
+                val credential = driveAccountRepository.getCredential(email)
+                val scanner = com.beatflowy.app.drive.DriveLibraryScanner(application)
+                val newSongs = scanner.scanAccount(credential)
+                
+                val existingSongs = withContext(Dispatchers.IO) {
+                    songDao.getSongsByAccount(email.lowercase()).associateBy { it.id }
+                }
+
+                val newSongIds = newSongs.map { it.id }.toSet()
+                val songsToDelete = existingSongs.filterKeys { it !in newSongIds }.keys.toList()
+                if (songsToDelete.isNotEmpty()) {
+                    withContext(Dispatchers.IO) {
+                        songDao.deleteSongsByIds(songsToDelete)
+                    }
+                }
+
+                if (newSongs.isNotEmpty()) {
+                    val updatedNewSongs = newSongs.map { song ->
+                        val existing = existingSongs[song.id]
+                        if (existing != null && (existing.isEnriched || existing.durationMs > 0)) {
+                            song.copy(
+                                durationMs = existing.durationMs,
+                                bitrate = existing.bitrate,
+                                sampleRateHz = existing.sampleRateHz,
+                                bitDepth = existing.bitDepth,
+                                albumArtUri = existing.albumArtUriString?.let { Uri.parse(it) } ?: song.albumArtUri,
+                                format = existing.format,
+                                album = existing.album,
+                                artist = existing.artist,
+                                genre = existing.genre,
+                                year = existing.year,
+                                lyrics = existing.lyrics,
+                                replayGainTrackDb = existing.replayGainTrackDb,
+                                replayGainAlbumDb = existing.replayGainAlbumDb,
+                                replayGainTrackPeak = existing.replayGainTrackPeak,
+                                replayGainAlbumPeak = existing.replayGainAlbumPeak,
+                                isEnriched = existing.isEnriched,
+                                lastSyncTimestamp = existing.lastSyncTimestamp
+                            )
+                        } else {
+                            song
+                        }
+                    }
+
+                    songDao.insertSongs(updatedNewSongs.map { it.toEntity() })
+                    onDiscoveryComplete(updatedNewSongs)
+                    
+                    val toEnrich = updatedNewSongs.filter { !it.isEnriched }
+                    if (toEnrich.isNotEmpty()) {
+                        val extractor = com.beatflowy.app.repository.MetadataExtractor(application)
+                        var processed = 0
+                        val total = toEnrich.size
+                        
+                        onStatusUpdate("Enriching $total new songs...")
+
+                        extractor.extractCloudMetadataBatch(toEnrich, credential) { updatedSong ->
+                            processed++
+                            val progress = processed.toFloat() / total.toFloat()
+                            onProgress(progress)
+                            onEnrichmentProgress(progress, processed, total)
+                            updateEnrichingProgress(progress, processed, total)
+                            
+                            songDao.insertSong(updatedSong.toEntity())
+                            onSongUpdated(updatedSong)
+                        }
+                        onStatusUpdate(null)
+                        updateEnrichingProgress(1.0f, total, total)
+                    }
+                    onComplete("Synced ${newSongs.size} songs from $email")
+                } else {
+                    onComplete("No songs found for $email")
+                }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                if (e is UserRecoverableAuthIOException) {
+                    onError(e.message ?: "Auth error", e.intent)
+                } else {
+                    onError(e.message ?: "Drive scan failed: ${e.message}", null)
+                }
+            } finally {
+                releaseScanWakeLock()
+            }
+        }
+    }
+
+    fun runFolderScan(
+        folders: List<String>,
+        onProgress: (Float, Int, Int, Int) -> Unit,
+        onComplete: (List<Song>, String) -> Unit,
+        onError: (String) -> Unit
+    ) {
+        if (libraryScanJob?.isActive == true) return
+        libraryScanJob = serviceScope.launch(Dispatchers.Default) {
+            acquireScanWakeLock()
+            try {
+                val allResults = mutableListOf<Song>()
+                var totalProcessed = 0
+                val allAlbums = mutableSetOf<String>()
+                val allArtists = mutableSetOf<String>()
+                
+                for ((index, folder) in folders.withIndex()) {
+                    val results = musicRepository.scanAudioFiles(fullScan = false, targetPath = folder) { count, albums, artists, progress ->
+                        // Partial progress
+                        val overallProgress = (index.toFloat() + progress) / folders.size.toFloat()
+                        onProgress(overallProgress, totalProcessed + count, allAlbums.size + albums, allArtists.size + artists)
+                        updateScanningProgress(overallProgress, totalProcessed + count, false)
+                    }
+                    allResults.addAll(results)
+                    totalProcessed += results.size
+                    allAlbums.addAll(results.map { it.album })
+                    allArtists.addAll(results.map { it.artist })
+                }
+                
+                // Save to DB
+                withContext(Dispatchers.IO) {
+                    val entities = allResults.map { it.toEntity() }
+                    entities.chunked(200).forEach { chunk ->
+                        songDao.insertSongs(chunk)
+                    }
+                }
+                
+                onComplete(allResults, "Added ${allResults.size} songs from folders")
+                updateScanningProgress(1.0f, allResults.size, true)
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                onError(e.message ?: "Folder scan failed")
+                updateScanningProgress(1.0f, 0, true)
+            } finally {
+                releaseScanWakeLock()
+            }
+        }
+    }
+
+    fun cancelLibraryScan() {
+        libraryScanJob?.cancel()
+        libraryScanJob = null
+    }
+
+    private var scanWakeLock: PowerManager.WakeLock? = null
+
+
+    private fun acquireScanWakeLock() {
+        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+        scanWakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Beatraxus:LibraryScan").apply {
+            setReferenceCounted(false)
+            acquire(10 * 60 * 1000L) // 10 min safety timeout, don't hold forever
+        }
+    }
+
+    private fun releaseScanWakeLock() {
+        scanWakeLock?.let { if (it.isHeld) it.release() }
+        scanWakeLock = null
     }
 
     fun updateScanningProgress(progress: Float, count: Int, completed: Boolean) {
@@ -834,6 +1133,14 @@ class AudioPlaybackService : Service() {
 
         if (playlist.isNotEmpty()) {
             val song = playlist[currentIndex]
+
+            if (com.beatflowy.app.cast.CastManager.isConnected) {
+                val route = androidx.mediarouter.media.MediaRouter.getInstance(this).selectedRoute
+                com.beatflowy.app.cast.CastManager.castSong(this, route, song, song.uri.toString())
+                _playbackStateFlow.update { it.copy(currentSong = song, isPlaying = true) }
+                return
+            }
+
             engine.prepare(song)
             saveState()
 
@@ -875,6 +1182,13 @@ class AudioPlaybackService : Service() {
         originalPlaylist = listOf(song)
         playlist = listOf(song)
         currentIndex = 0
+
+        if (com.beatflowy.app.cast.CastManager.isConnected) {
+            val route = androidx.mediarouter.media.MediaRouter.getInstance(this).selectedRoute
+            com.beatflowy.app.cast.CastManager.castSong(this, route, song, song.uri.toString())
+            _playbackStateFlow.update { it.copy(currentSong = song, isPlaying = true) }
+            return
+        }
 
         engine.prepare(song)
         saveState()

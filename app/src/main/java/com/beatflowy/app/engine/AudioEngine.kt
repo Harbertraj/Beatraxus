@@ -30,6 +30,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.Executors
 import java.util.concurrent.locks.ReentrantReadWriteLock
 import kotlin.concurrent.withLock
 
@@ -41,6 +42,15 @@ class AudioEngine(
     private val tdLibManager: com.beatflowy.app.telegram.TdLibManager
 ) {
     private val engineScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+    private val audioRenderDispatcher = Executors.newSingleThreadExecutor { r ->
+        Thread({
+            runCatching { Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO) }
+            r.run()
+        }, "AudioRenderThread").apply {
+            priority = Thread.MAX_PRIORITY
+        }
+    }.asCoroutineDispatcher()
+
     private val aiAnalysisDao = database.aiAnalysisDao()
     private val controlMutex = Mutex()
     private val driveAccountRepository = DriveAccountRepository(context)
@@ -67,8 +77,11 @@ class AudioEngine(
     private var nextSong: Song? = null
 
     private var currentSessionId = AtomicLong(0)
+    @Volatile
     private var activeSession: PlaybackSession? = null
+    @Volatile
     private var nextSession: PlaybackSession? = null
+    @Volatile
     private var fadingOutSession: PlaybackSession? = null
 
     private var rendererJob: Job? = null
@@ -98,8 +111,7 @@ class AudioEngine(
 
     private fun startRenderer() {
         rendererJob?.cancel()
-        rendererJob = engineScope.launch(Dispatchers.IO) {
-            runCatching { Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO) }
+        rendererJob = engineScope.launch(audioRenderDispatcher) {
             renderLoop()
         }
     }
@@ -243,6 +255,25 @@ class AudioEngine(
             controlMutex.withLock {
                 val song = currentSong ?: return@withLock
                 if (_playbackStateFlow.value.isPlaying) return@withLock
+
+                // Promotion logic: if we have this song preloaded as nextSession, promote it!
+                if (nextSession != null && nextSong?.id == song.id) {
+                    activeSession?.stop()
+                    activeSession = nextSession
+                    val newSessionId = activeSession?.sessionId ?: 0L
+                    nextSession = null
+                    nextSong = null
+                    
+                    _playbackStateFlow.update { it.copy(isPlaying = true, sessionId = newSessionId) }
+                    
+                    val fmt = activeSession?.pcmFormat
+                    if (fmt != null) {
+                        activeSession?.configure(fmt)
+                    } else {
+                        output.start()
+                    }
+                    return@withLock
+                }
 
                 // Set isPlaying = true EAGERLY to ensure UI responsiveness
                 _playbackStateFlow.update { it.copy(isPlaying = true) }
@@ -511,7 +542,7 @@ class AudioEngine(
                     if (written <= 0) {
                         underrunCount++
                         delay(2)
-                        break
+                        continue
                     }
                     writtenFramesTotal += written
                 }

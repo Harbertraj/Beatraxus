@@ -47,6 +47,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -59,6 +60,9 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.PlatformTextStyle
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -266,10 +270,11 @@ fun SettingsScreen(
                                 onClick = { sectionStack.add("Library") }
                             )
                             SettingMenuItem(
-                                title = "Cloud Account (Admin Only)",
+                                title = "Cloud Account",
                                 subtitle = "Cloud, Telegram and Metadata Sync",
                                 icon = Icons.Rounded.Cloud,
                                 iconColor = Color(0xFF1A73E8),
+                                showBetaBadge = true,
                                 onClick = { sectionStack.add("Cloud") }
                             )
                             SettingMenuItem(
@@ -562,6 +567,7 @@ fun SettingMenuItem(
     subtitle: String,
     icon: ImageVector,
     iconColor: Color,
+    showBetaBadge: Boolean = false,
     onClick: () -> Unit
 ) {
     val interactionSource = remember { MutableInteractionSource() }
@@ -620,12 +626,34 @@ fun SettingMenuItem(
         Spacer(Modifier.width(14.dp))
 
         Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = title,
-                color = TextWhite,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.SemiBold
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = title,
+                    color = TextWhite,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                if (showBetaBadge) {
+                    Spacer(Modifier.width(8.dp))
+                    Surface(
+                        color = Color.Red.copy(0.12f),
+                        shape = RoundedCornerShape(3.dp),
+                        border = BorderStroke(0.8.dp, Color.Red.copy(0.4f))
+                    ) {
+                        Text(
+                            text = "BETA",
+                            color = Color.Red,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
+                            style = TextStyle(
+                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                textAlign = TextAlign.Center
+                            )
+                        )
+                    }
+                }
+            }
             Spacer(Modifier.height(2.dp))
             Text(
                 text = subtitle,
@@ -1021,7 +1049,7 @@ private fun UsbDirectModeCard(uiState: PlayerUiState, viewModel: PlayerViewModel
         title = "USB DIRECT MODE",
         icon = Icons.Rounded.Usb,
         isActive = isUsbActive,
-        statusDot = if (isUsbActive) PrimaryCyan else if (isUsbConnected) Color(0xFFFFAA00) else TextWhite.copy(0.2f),
+        enabled = isUsbConnected,
         subtitle = when {
             isUsbActive -> "Bypassing Android mixer — direct to DAC"
             isUsbConnected -> "USB DAC detected — enable to activate"
@@ -1030,6 +1058,7 @@ private fun UsbDirectModeCard(uiState: PlayerUiState, viewModel: PlayerViewModel
         headerActions = {
             PremiumSwitch(
                 checked = config.usbExclusiveEnabled,
+                enabled = isUsbConnected,
                 onCheckedChange = { viewModel.setUsbExclusiveMode(it) }
             )
         }
@@ -2390,7 +2419,6 @@ fun CloudContent(
             title = "GOOGLE DRIVE",
             icon = Icons.Rounded.Cloud,
             isActive = true,
-            statusDot = Color(0xFF1A73E8),
             subtitle = "Enrichment rules, network and data saver"
         ) {
             OutlinedTextField(
@@ -2398,7 +2426,6 @@ fun CloudContent(
                 onValueChange = { driveQuery = it },
                 modifier = Modifier.fillMaxWidth(),
                 placeholder = { Text("Search or add account...", color = Color.Gray, fontSize = 14.sp) },
-                leadingIcon = { Icon(Icons.Rounded.Cloud, null, tint = Color(0xFF1A73E8), modifier = Modifier.size(20.dp)) },
                 trailingIcon = {
                     TextButton(onClick = onRequestGDriveAccount) {
                         Text("Add", color = Color(0xFF1A73E8), fontWeight = FontWeight.Bold)
@@ -2454,22 +2481,13 @@ fun CloudContent(
         SettingsSection(
             title = "TELEGRAM CHANNELS",
             icon = Icons.AutoMirrored.Rounded.Send,
-            isActive = true,
-            statusDot = Color(0xFF2AABEE)
+            isActive = true
         ) {
             OutlinedTextField(
                 value = telegramUrl,
                 onValueChange = { telegramUrl = it },
                 modifier = Modifier.fillMaxWidth(),
                 placeholder = { Text("Channel URL or @username...", color = Color.Gray, fontSize = 14.sp) },
-                leadingIcon = {
-                    Box(
-                        modifier = Modifier.size(20.dp).background(Color(0xFF2AABEE), CircleShape),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(Icons.AutoMirrored.Rounded.Send, null, tint = Color.White, modifier = Modifier.size(12.dp))
-                    }
-                },
                 trailingIcon = {
                     TextButton(
                         onClick = {
@@ -2565,14 +2583,17 @@ private fun TelegramLoginCard(uiState: PlayerUiState, viewModel: PlayerViewModel
                         Button(
                             onClick = { viewModel.submitTelegramPhone("") /* Trigger parameters step if needed, though usually automatic */ },
                             modifier = Modifier.fillMaxWidth(),
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2AABEE)),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFF2AABEE),
+                                contentColor = Color.Black
+                            ),
                             shape = RoundedCornerShape(8.dp),
                             enabled = !isSubmitting
                         ) {
                             if (isSubmitting) {
-                                CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.Black, strokeWidth = 2.dp)
                             } else {
-                                Text("LOGIN WITH TELEGRAM", fontWeight = FontWeight.Bold, color = Color.White)
+                                Text("LOGIN WITH TELEGRAM", color = Color.Black, fontWeight = FontWeight.Bold)
                             }
                         }
                     }
@@ -2597,12 +2618,15 @@ private fun TelegramLoginCard(uiState: PlayerUiState, viewModel: PlayerViewModel
                             onClick = { viewModel.submitTelegramPhone(phone) },
                             modifier = Modifier.fillMaxWidth(),
                             enabled = phone.isNotBlank() && !isSubmitting,
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2AABEE))
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFF2AABEE),
+                                contentColor = Color.Black
+                            )
                         ) {
                             if (isSubmitting) {
-                                CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.Black, strokeWidth = 2.dp)
                             } else {
-                                Text("SEND CODE")
+                                Text("SEND CODE", color = Color.Black, fontWeight = FontWeight.Bold)
                             }
                         }
                     }
@@ -2627,12 +2651,15 @@ private fun TelegramLoginCard(uiState: PlayerUiState, viewModel: PlayerViewModel
                             onClick = { viewModel.submitTelegramCode(code) },
                             modifier = Modifier.fillMaxWidth(),
                             enabled = code.isNotBlank() && !isSubmitting,
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2AABEE))
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFF2AABEE),
+                                contentColor = Color.Black
+                            )
                         ) {
                             if (isSubmitting) {
-                                CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.Black, strokeWidth = 2.dp)
                             } else {
-                                Text("SUBMIT CODE")
+                                Text("SUBMIT CODE", color = Color.Black, fontWeight = FontWeight.Bold)
                             }
                         }
                     }
@@ -2658,12 +2685,15 @@ private fun TelegramLoginCard(uiState: PlayerUiState, viewModel: PlayerViewModel
                             onClick = { viewModel.submitTelegramPassword(password) },
                             modifier = Modifier.fillMaxWidth(),
                             enabled = password.isNotBlank() && !isSubmitting,
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2AABEE))
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFF2AABEE),
+                                contentColor = Color.Black
+                            )
                         ) {
                             if (isSubmitting) {
-                                CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.Black, strokeWidth = 2.dp)
                             } else {
-                                Text("SUBMIT PASSWORD")
+                                Text("SUBMIT PASSWORD", color = Color.Black, fontWeight = FontWeight.Bold)
                             }
                         }
                     }
@@ -2760,20 +2790,6 @@ private fun TelegramChannelRow(
                 fontWeight = FontWeight.Bold,
                 fontSize = 18.sp
             )
-
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .size(12.dp)
-                    .background(Color(0xFF1A1A2E), CircleShape)
-                    .padding(2.dp)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(if (channel.enabled) Color(0xFF4CAF50) else Color.Gray, CircleShape)
-                )
-            }
         }
 
         Spacer(Modifier.width(16.dp))
@@ -2827,20 +2843,6 @@ private fun ConnectedAccountRow(
             contentAlignment = Alignment.Center
         ) {
             Icon(Icons.Rounded.Person, contentDescription = null, tint = Color(0xFF1A73E8), modifier = Modifier.size(24.dp))
-
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .size(12.dp)
-                    .background(Color(0xFF1A1A2E), CircleShape)
-                    .padding(2.dp)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(if (account.enabled) Color(0xFF4CAF50) else Color.Gray, CircleShape)
-                )
-            }
         }
 
         Spacer(Modifier.width(16.dp))
@@ -3270,13 +3272,16 @@ fun SettingsSection(
     title: String,
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     isActive: Boolean = false,
+    enabled: Boolean = true,
     statusDot: Color? = null,
     subtitle: String? = null,
     headerActions: @Composable (() -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit
 ) {
+    val alpha by animateFloatAsState(if (enabled) 1f else 0.45f, label = "alpha")
+
     Card(
-        modifier = Modifier.fillMaxWidth().shadow(
+        modifier = Modifier.fillMaxWidth().graphicsLayer(alpha = alpha).shadow(
             elevation = 8.dp,
             shape = RoundedCornerShape(24.dp),
             ambientColor = Color.Black.copy(0.35f),

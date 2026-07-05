@@ -108,6 +108,7 @@ fun NowPlayingScreen(
     onToggleLyrics: () -> Unit = {},
     onAdjustOffset: (Long) -> Unit = {},
     onSetLyricsOffset: (Long) -> Unit = {},
+    onSearchLyricsOnline: () -> Unit = {},
     showPipelineOverlay: Boolean = false,
     onTogglePipeline: (Boolean) -> Unit = {},
     onSetSleepTimer: (Int, Boolean, Int) -> Unit = { _, _, _ -> },
@@ -485,7 +486,8 @@ fun NowPlayingScreen(
                                     onAdjustOffset = onAdjustOffset,
                                     onSetOffset = onSetLyricsOffset,
                                     modifier = Modifier.fillMaxSize(),
-                                    onSwipeDown = { onClose() }
+                                    onSwipeDown = { onClose() },
+                                    onSearchOnline = onSearchLyricsOnline
                                 )
                             }
                         }
@@ -879,6 +881,10 @@ fun NowPlayingScreen(
         if (showSongInfo) {
             SongInfoDialog(
                 song = song,
+                lastFmTrackInfo = uiState.lastFmTrackInfo,
+                lastFmArtistInfo = uiState.lastFmArtistInfo,
+                lastFmAlbumInfo = uiState.lastFmAlbumInfo,
+                isLoadingInfo = uiState.isLoadingOnlineInfo,
                 onDismiss = { showSongInfo = false }
             )
         }

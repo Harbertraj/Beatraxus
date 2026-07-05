@@ -208,6 +208,7 @@ class MainActivity : ComponentActivity() {
         val permissions = mutableListOf(essentialPermission)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             permissions.add(Manifest.permission.POST_NOTIFICATIONS)
+            permissions.add(Manifest.permission.NEARBY_WIFI_DEVICES)
         }
         permissionLauncher.launch(permissions.toTypedArray())
     }

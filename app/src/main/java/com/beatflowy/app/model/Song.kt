@@ -49,6 +49,43 @@ data class Song(
                             source == SongSource.WEB
 }
 
+fun Song.toEntity() = SongEntity(
+    id = id,
+    uriString = uri.toString(),
+    title = title,
+    artist = artist,
+    album = album,
+    durationMs = durationMs,
+    format = format,
+    sampleRateHz = sampleRateHz,
+    bitDepth = bitDepth,
+    bitrate = bitrate,
+    fileSizeBytes = fileSizeBytes,
+    albumArtUriString = albumArtUri?.toString(),
+    year = year,
+    genre = genre,
+    albumArtist = albumArtist,
+    composer = composer,
+    trackNumber = trackNumber,
+    discNumber = discNumber,
+    lyrics = lyrics,
+    folder = folder,
+    dateAdded = dateAdded,
+    replayGainTrackDb = replayGainTrackDb,
+    replayGainAlbumDb = replayGainAlbumDb,
+    replayGainTrackPeak = replayGainTrackPeak,
+    replayGainAlbumPeak = replayGainAlbumPeak,
+    source = source.name,
+    driveFileId = driveFileId,
+    driveAccountEmail = driveAccountEmail,
+    telegramChannelUrl = telegramChannelUrl,
+    telegramChatId = telegramChatId,
+    telegramMessageId = telegramMessageId,
+    telegramFileId = telegramFileId,
+    isEnriched = isEnriched,
+    lastSyncTimestamp = lastSyncTimestamp
+)
+
 data class Playlist(
     val id: String,
     val name: String,
@@ -149,6 +186,19 @@ data class PlayerUiState(
     val useOriginalQualityArt: Boolean = false,
     val showLyrics: Boolean = false,
     val cameFromNowPlaying: Boolean = false,
+    
+    // Online Metadata (Last.fm etc)
+    val lastFmTrackInfo: com.beatflowy.app.repository.lastfm.LastFmTrack? = null,
+    val lastFmArtistInfo: com.beatflowy.app.repository.lastfm.LastFmArtistDetail? = null,
+    val lastFmAlbumInfo: com.beatflowy.app.repository.lastfm.LastFmAlbum? = null,
+    val isLoadingOnlineInfo: Boolean = false,
+    
+    // Online Metadata for selected song (in lists/popups)
+    val selectedLastFmTrackInfo: com.beatflowy.app.repository.lastfm.LastFmTrack? = null,
+    val selectedLastFmArtistInfo: com.beatflowy.app.repository.lastfm.LastFmArtistDetail? = null,
+    val selectedLastFmAlbumInfo: com.beatflowy.app.repository.lastfm.LastFmAlbum? = null,
+    val isSelectedLoadingOnlineInfo: Boolean = false,
+
     val lyrics: List<LrcLine> = emptyList(),
     val lyricsCurrentIndex: Int = -1,
     val lyricsOffsetMs: Long = 0L,
@@ -186,7 +236,9 @@ data class PlayerUiState(
     val enrichmentStatus: String? = null,
     val telegramAuthState: AuthState = AuthState.LoggedOut,
     val isSubmittingTelegram: Boolean = false,
-    val telegramAuthError: String? = null
+    val telegramAuthError: String? = null,
+    val isIgnoringBatteryOptimizations: Boolean = false,
+    val isOemBatteryManagerDetected: Boolean = false
 )
 {
     override fun equals(other: Any?): Boolean {
@@ -246,6 +298,14 @@ data class PlayerUiState(
                 useOriginalQualityArt == other.useOriginalQualityArt &&
                 showLyrics == other.showLyrics &&
                 cameFromNowPlaying == other.cameFromNowPlaying &&
+                lastFmTrackInfo == other.lastFmTrackInfo &&
+                lastFmArtistInfo == other.lastFmArtistInfo &&
+                lastFmAlbumInfo == other.lastFmAlbumInfo &&
+                isLoadingOnlineInfo == other.isLoadingOnlineInfo &&
+                selectedLastFmTrackInfo == other.selectedLastFmTrackInfo &&
+                selectedLastFmArtistInfo == other.selectedLastFmArtistInfo &&
+                selectedLastFmAlbumInfo == other.selectedLastFmAlbumInfo &&
+                isSelectedLoadingOnlineInfo == other.isSelectedLoadingOnlineInfo &&
                 lyrics == other.lyrics &&
                 lyricsCurrentIndex == other.lyricsCurrentIndex &&
                 lyricsOffsetMs == other.lyricsOffsetMs &&
@@ -277,7 +337,9 @@ data class PlayerUiState(
                 enrichmentStatus == other.enrichmentStatus &&
                 telegramAuthState == other.telegramAuthState &&
                 isSubmittingTelegram == other.isSubmittingTelegram &&
-                telegramAuthError == other.telegramAuthError
+                telegramAuthError == other.telegramAuthError &&
+                isIgnoringBatteryOptimizations == other.isIgnoringBatteryOptimizations &&
+                isOemBatteryManagerDetected == other.isOemBatteryManagerDetected
     }
 
     override fun hashCode(): Int {
@@ -335,6 +397,14 @@ data class PlayerUiState(
         result = 31 * result + useOriginalQualityArt.hashCode()
         result = 31 * result + showLyrics.hashCode()
         result = 31 * result + cameFromNowPlaying.hashCode()
+        result = 31 * result + (lastFmTrackInfo?.hashCode() ?: 0)
+        result = 31 * result + (lastFmArtistInfo?.hashCode() ?: 0)
+        result = 31 * result + (lastFmAlbumInfo?.hashCode() ?: 0)
+        result = 31 * result + isLoadingOnlineInfo.hashCode()
+        result = 31 * result + (selectedLastFmTrackInfo?.hashCode() ?: 0)
+        result = 31 * result + (selectedLastFmArtistInfo?.hashCode() ?: 0)
+        result = 31 * result + (selectedLastFmAlbumInfo?.hashCode() ?: 0)
+        result = 31 * result + isSelectedLoadingOnlineInfo.hashCode()
         result = 31 * result + lyrics.hashCode()
         result = 31 * result + lyricsCurrentIndex
         result = 31 * result + lyricsOffsetMs.hashCode()
@@ -367,6 +437,8 @@ data class PlayerUiState(
         result = 31 * result + telegramAuthState.hashCode()
         result = 31 * result + isSubmittingTelegram.hashCode()
         result = 31 * result + (telegramAuthError?.hashCode() ?: 0)
+        result = 31 * result + isIgnoringBatteryOptimizations.hashCode()
+        result = 31 * result + isOemBatteryManagerDetected.hashCode()
         return result
     }
 }

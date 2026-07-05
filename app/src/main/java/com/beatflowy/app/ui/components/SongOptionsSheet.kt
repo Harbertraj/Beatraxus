@@ -31,6 +31,8 @@ import coil.compose.AsyncImage
 import com.beatflowy.app.model.Song
 import com.beatflowy.app.repository.lastfm.LastFmRepository
 import com.beatflowy.app.repository.lastfm.LastFmTrack
+import com.beatflowy.app.repository.lastfm.LastFmArtistDetail
+import com.beatflowy.app.repository.lastfm.LastFmAlbum
 import com.beatflowy.app.ui.theme.AccentBlue
 import com.beatflowy.app.ui.theme.BgDeep
 import kotlinx.coroutines.launch
@@ -54,7 +56,15 @@ fun SongOptionsSheet(
     onGoToArtist: () -> Unit,
     onGoToAlbum: () -> Unit,
     onGoToFolder: () -> Unit,
-    onGoToGenre: () -> Unit
+    onGoToGenre: () -> Unit,
+    lastFmTrackInfo: LastFmTrack? = null,
+    lastFmArtistInfo: LastFmArtistDetail? = null,
+    lastFmAlbumInfo: LastFmAlbum? = null,
+    isLoadingInfo: Boolean = false,
+    selectedLastFmTrackInfo: LastFmTrack? = null,
+    selectedLastFmArtistInfo: LastFmArtistDetail? = null,
+    selectedLastFmAlbumInfo: LastFmAlbum? = null,
+    isSelectedLoading: Boolean = false
 ) {
     var showInfoOverlay by remember { mutableStateOf(false) }
 
@@ -171,6 +181,7 @@ fun SongOptionsSheet(
                             onDismiss()
                         }
                         OptionGridItem(OptionItem(Icons.Rounded.Info, "Info/Tags", {}), contentColor, Modifier.weight(1f)) {
+                            onInfo()
                             showInfoOverlay = true
                         }
                     }
@@ -212,7 +223,15 @@ fun SongOptionsSheet(
 
             // Info Overlay
             if (showInfoOverlay) {
-                SongInfoDialog(song = song, onDismiss = { showInfoOverlay = false })
+                val isCurrent = song.id == currentPlayingSong?.id
+                SongInfoDialog(
+                    song = song,
+                    lastFmTrackInfo = if (isCurrent) lastFmTrackInfo else selectedLastFmTrackInfo,
+                    lastFmArtistInfo = if (isCurrent) lastFmArtistInfo else selectedLastFmArtistInfo,
+                    lastFmAlbumInfo = if (isCurrent) lastFmAlbumInfo else selectedLastFmAlbumInfo,
+                    isLoadingInfo = if (isCurrent) isLoadingInfo else isSelectedLoading,
+                    onDismiss = { showInfoOverlay = false }
+                )
             }
         }
     }

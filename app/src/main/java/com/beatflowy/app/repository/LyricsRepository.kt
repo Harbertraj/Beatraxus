@@ -164,7 +164,7 @@ class LyricsRepository(private val context: Context, private val database: AppDa
         }
     }
 
-    private suspend fun fetchOnline(song: Song): LyricsLoadResult? {
+    suspend fun fetchOnline(song: Song): LyricsLoadResult? {
         val existingOffset = lyricsDao.getLyrics(song.id)?.syncOffset ?: 0L
         val result = onlineSource.fetchLyrics(song.artist, song.title, song.album, song.durationMs)
         

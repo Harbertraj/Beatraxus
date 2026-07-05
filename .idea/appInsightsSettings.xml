@@ -8,10 +8,10 @@
             <InsightsFilterSettings>
               <option name="connection">
                 <ConnectionSetting>
-                  <option name="appId" value="com.beatflowy.app" />
-                  <option name="mobileSdkAppId" value="1:315086294170:android:cb74714f780243d7d4e323" />
-                  <option name="projectId" value="app-3e4f782c" />
-                  <option name="projectNumber" value="315086294170" />
+                  <option name="appId" value="PLACEHOLDER" />
+                  <option name="mobileSdkAppId" value="" />
+                  <option name="projectId" value="" />
+                  <option name="projectNumber" value="" />
                 </ConnectionSetting>
               </option>
               <option name="signal" value="SIGNAL_UNSPECIFIED" />
