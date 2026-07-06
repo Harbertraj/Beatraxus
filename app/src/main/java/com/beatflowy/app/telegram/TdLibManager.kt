@@ -17,6 +17,7 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
 sealed class AuthState {
+    object Initializing : AuthState()
     object LoggedOut : AuthState()
     object WaitPhoneNumber : AuthState()
     object WaitCode : AuthState()
@@ -32,7 +33,7 @@ class TdLibManager private constructor(
 
     private val client: Client = Client.create({ update -> handleUpdate(update) }, null, null)
 
-    private val _authState = MutableStateFlow<AuthState>(AuthState.LoggedOut)
+    private val _authState = MutableStateFlow<AuthState>(AuthState.Initializing)
     val authState: StateFlow<AuthState> = _authState
 
     val updates = MutableSharedFlow<TdApi.Update>(extraBufferCapacity = 64)

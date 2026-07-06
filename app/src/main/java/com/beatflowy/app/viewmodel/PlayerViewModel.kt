@@ -617,7 +617,16 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     // Check if cached album art still exists. If not, we need a refresh.
                     val cacheWiped = dbSongs.any { song ->
                         val artUri = song.albumArtUri
-                        artUri != null && artUri.scheme == "file" && !File(artUri.path ?: "").exists()
+                        if (artUri != null && artUri.scheme == "file") {
+                            val file = File(artUri.path ?: "")
+                            val exists = file.exists()
+                            if (!exists) {
+                                Log.d("PlayerViewModel", "Cache wipe detected for song: ${song.title}")
+                                Log.d("PlayerViewModel", "  - Missing file path: ${artUri.path}")
+                                Log.d("PlayerViewModel", "  - FilesDir: ${getApplication<Application>().filesDir.absolutePath}")
+                            }
+                            !exists
+                        } else false
                     }
                     
                     _songs.value = sortedSongs

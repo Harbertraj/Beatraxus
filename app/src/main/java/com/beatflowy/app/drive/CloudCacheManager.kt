@@ -102,10 +102,11 @@ class CloudCacheManager(
             if (file.local.isDownloadingCompleted) {
                 return@withContext playbackLruCache.getOrCacheFile(song, File(file.local.path), true, currentlyPlayingId).absolutePath
             }
-            // ALAC/M4A files from Telegram often have the 'moov' atom at the end, causing FFmpeg to fail 
-            // if opened as a partial local file. For these, we wait for the download to complete.
-            val isAlac = song.format == "ALAC" || song.title.contains("alac", ignoreCase = true)
-            if (!isAlac) return@withContext file.local.path
+            // M4A/MP4 files from Telegram (using FFmpeg mov demuxer) often have the 'moov' atom at the end,
+            // causing FFmpeg to fail if opened as a partial local file. For these, we wait for the download to complete.
+            val format = song.format.lowercase()
+            val isMov = format == "m4a" || format == "mp4" || format.contains("alac") || song.title.contains("alac", ignoreCase = true)
+            if (!isMov) return@withContext file.local.path
         }
 
         // Wait for path to become available
@@ -118,8 +119,9 @@ class CloudCacheManager(
                     Log.d(TAG, "Telegram file download complete for ${song.title}")
                     return@withContext playbackLruCache.getOrCacheFile(song, File(file.local.path), true, currentlyPlayingId).absolutePath
                 }
-                val isAlac = song.format == "ALAC" || song.title.contains("alac", ignoreCase = true)
-                if (!isAlac) {
+                val format = song.format.lowercase()
+                val isMov = format == "m4a" || format == "mp4" || format.contains("alac") || song.title.contains("alac", ignoreCase = true)
+                if (!isMov) {
                     Log.d(TAG, "Telegram file path available for ${song.title}: ${file.local.path}")
                     return@withContext file.local.path
                 }

@@ -2573,6 +2573,11 @@ private fun TelegramLoginCard(uiState: PlayerUiState, viewModel: PlayerViewModel
 
         Crossfade(targetState = authState, label = "telegram_auth_transition") { state ->
             when (state) {
+                AuthState.Initializing -> {
+                    Box(modifier = Modifier.fillMaxWidth().height(48.dp), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(modifier = Modifier.size(24.dp), color = Color(0xFF2AABEE), strokeWidth = 2.dp)
+                    }
+                }
                 AuthState.LoggedOut -> {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(
