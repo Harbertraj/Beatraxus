@@ -18,8 +18,12 @@ import com.beatflowy.app.R
 import com.beatflowy.app.model.Song
 import com.beatflowy.app.ui.theme.BgHighlight
 
+import com.beatflowy.app.utils.ImageUtils
+
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
+
+import androidx.compose.runtime.remember
 
 @Composable
 fun AlbumArtImage(
@@ -29,15 +33,20 @@ fun AlbumArtImage(
     cornerRadius: Dp = 8.dp,
     grayscale: Boolean = false
 ) {
-    AsyncImage(
-        model = ImageRequest.Builder(LocalContext.current)
+    val context = LocalContext.current
+    val defaultArt = ImageUtils.getDefaultAlbumArtRes()
+    val model = remember(song.albumArtUri, defaultArt) {
+        ImageRequest.Builder(context)
             .data(song.albumArtUri)
             .diskCachePolicy(CachePolicy.ENABLED)
             .memoryCachePolicy(CachePolicy.ENABLED)
-            .error(R.drawable.ic_album_default)
-            .fallback(R.drawable.ic_album_default)
-            .crossfade(true)
-            .build(),
+            .error(defaultArt)
+            .fallback(defaultArt)
+            .crossfade(200)
+            .build()
+    }
+    AsyncImage(
+        model = model,
         contentDescription = "Album Art",
         modifier = modifier
             .size(size)

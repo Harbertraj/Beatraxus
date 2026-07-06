@@ -19,6 +19,7 @@ import kotlin.coroutines.resumeWithException
 sealed class AuthState {
     object Initializing : AuthState()
     object LoggedOut : AuthState()
+    data class Error(val message: String) : AuthState()
     object WaitPhoneNumber : AuthState()
     object WaitCode : AuthState()
     object WaitPassword : AuthState() // 2FA
@@ -31,10 +32,19 @@ class TdLibManager private constructor(
     private val apiHash: String
 ) {
 
-    private val client: Client = Client.create({ update -> handleUpdate(update) }, null, null)
+    private var client: Client? = null
 
     private val _authState = MutableStateFlow<AuthState>(AuthState.Initializing)
     val authState: StateFlow<AuthState> = _authState
+
+    init {
+        startClient()
+    }
+
+    private fun startClient() {
+        Log.d("TDLib", "Starting TDLib client...")
+        client = Client.create({ update -> handleUpdate(update) }, null, null)
+    }
 
     val updates = MutableSharedFlow<TdApi.Update>(extraBufferCapacity = 64)
 
@@ -51,16 +61,35 @@ class TdLibManager private constructor(
 
     private fun handleUpdate(update: TdApi.Object) {
         if (update is TdApi.UpdateAuthorizationState) {
-            Log.d("TDLib", "Auth state changed to: ${update.authorizationState::class.simpleName}")
-            when (val state = update.authorizationState) {
+            val authState = update.authorizationState
+            Log.d("TDLib", "Auth state changed to: ${authState::class.simpleName}")
+            when (authState) {
                 is TdApi.AuthorizationStateWaitTdlibParameters -> setParameters()
+                // In some TDLib versions this state might be named differently or handled automatically
+                // If AuthorizationStateWaitEncryptionKey is unresolved, we can try to skip it if database encryption is not used
+                /*
+                is TdApi.AuthorizationStateWaitEncryptionKey -> {
+                    client?.send(TdApi.CheckAuthenticationEncryptionKey()) { result ->
+                        if (result is TdApi.Error) {
+                            Log.e("TDLib", "CheckAuthenticationEncryptionKey failed: ${result.code} ${result.message}")
+                            _authState.value = AuthState.Error("Encryption Error: ${result.message}")
+                        }
+                    }
+                }
+                */
                 is TdApi.AuthorizationStateWaitPhoneNumber -> _authState.value = AuthState.WaitPhoneNumber
                 is TdApi.AuthorizationStateWaitCode -> _authState.value = AuthState.WaitCode
                 is TdApi.AuthorizationStateWaitPassword -> _authState.value = AuthState.WaitPassword
                 is TdApi.AuthorizationStateReady -> _authState.value = AuthState.Ready
-                is TdApi.AuthorizationStateClosed -> _authState.value = AuthState.LoggedOut
+                is TdApi.AuthorizationStateLoggingOut -> _authState.value = AuthState.LoggedOut
+                is TdApi.AuthorizationStateClosing -> {}
+                is TdApi.AuthorizationStateClosed -> {
+                    _authState.value = AuthState.LoggedOut
+                    // Client is dead, will be recreated on next login attempt if needed
+                    client = null
+                }
                 else -> {
-                    Log.d("TDLib", "Unhandled auth state: ${state::class.simpleName}")
+                    Log.d("TDLib", "Unhandled auth state: ${authState::class.simpleName}")
                 }
             }
         } else if (update is TdApi.UpdateFile) {
@@ -72,30 +101,56 @@ class TdLibManager private constructor(
     }
 
     private fun setParameters() {
+        val id = apiId.toIntOrNull() ?: 0
+        if (id == 0 || apiHash.isBlank()) {
+            val msg = "TELEGRAM_API_ID or API_HASH is not set. Please check your local.properties."
+            Log.e("TDLib", msg)
+            _authState.value = AuthState.Error(msg)
+            return
+        }
+
         val params = TdApi.SetTdlibParameters().apply {
-            apiId = this@TdLibManager.apiId.toInt()
+            apiId = id
             apiHash = this@TdLibManager.apiHash
-            databaseDirectory = context.cacheDir.absolutePath + "/tdlib"
+            databaseDirectory = File(context.filesDir, "tdlib/db").absolutePath
+            filesDirectory = File(context.filesDir, "tdlib/files").absolutePath
+            
+            // Ensure directories exist
+            File(databaseDirectory).mkdirs()
+            File(filesDirectory).mkdirs()
+            
             useMessageDatabase = true
             useChatInfoDatabase = true
             useFileDatabase = true
             useSecretChats = false
-            systemLanguageCode = "en"
-            deviceModel = "Android"
+            systemLanguageCode = java.util.Locale.getDefault().language
+            deviceModel = android.os.Build.MODEL
             applicationVersion = "1.0"
+            // If enableStorageOptimizer is unresolved, it might be named differently or missing in this build
+            // useStorageOptimizer = true
         }
-        client.send(params) {
-            // Optimize network for faster downloads
-            client.send(TdApi.SetOption("is_network_unmetered", TdApi.OptionValueBoolean(true))) {}
-            client.send(TdApi.SetOption("ignore_background_networking", TdApi.OptionValueBoolean(true))) {}
-            // Higher number of concurrent downloads
-            client.send(TdApi.SetOption("active_network_count", TdApi.OptionValueInteger(3))) {}
+        
+        client?.send(params) { result ->
+            if (result is TdApi.Error) {
+                Log.e("TDLib", "SetTdlibParameters failed: ${result.code} ${result.message}")
+                _authState.value = AuthState.Error("TDLib Init Failed: ${result.message}")
+            } else {
+                // Optimize network for faster downloads
+                client?.send(TdApi.SetOption("is_network_unmetered", TdApi.OptionValueBoolean(true))) {}
+                client?.send(TdApi.SetOption("ignore_background_networking", TdApi.OptionValueBoolean(true))) {}
+                // Higher number of concurrent downloads
+                client?.send(TdApi.SetOption("active_network_count", TdApi.OptionValueInteger(3))) {}
+            }
         }
     }
 
     suspend fun <T : TdApi.Object> send(function: TdApi.Function<T>): T =
         suspendCancellableCoroutine { cont ->
-            client.send(function) { result ->
+            val c = client ?: run {
+                cont.resumeWithException(RuntimeException("TDLib client is not active"))
+                return@suspendCancellableCoroutine
+            }
+            c.send(function) { result ->
                 if (result is TdApi.Error) {
                     cont.resumeWithException(RuntimeException("TDLib error ${result.code}: ${result.message}"))
                 } else {
@@ -104,6 +159,14 @@ class TdLibManager private constructor(
                 }
             }
         }
+
+    fun ensureClientStarted() {
+        if (client == null || _authState.value is AuthState.Error) {
+            Log.d("TDLib", "ensureClientStarted: Restarting client (current state: ${_authState.value::class.simpleName})")
+            _authState.value = AuthState.Initializing
+            startClient()
+        }
+    }
 
     suspend fun submitPhoneNumber(phone: String): TdApi.Ok {
         Log.d("TDLib", "submitPhoneNumber called for $phone (Ready: ${isReady()})")
@@ -214,7 +277,7 @@ class TdLibManager private constructor(
     }
 
     fun close() {
-        client.send(TdApi.Close()) {
+        client?.send(TdApi.Close()) {
             INSTANCE = null
         }
     }

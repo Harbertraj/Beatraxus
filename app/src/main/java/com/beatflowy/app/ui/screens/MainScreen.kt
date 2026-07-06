@@ -1,6 +1,7 @@
 package com.beatflowy.app.ui.screens
 
 import androidx.activity.compose.BackHandler
+import com.beatflowy.app.utils.ImageUtils
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import kotlin.math.sqrt
@@ -68,6 +69,7 @@ import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.input.pointer.*
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -2584,21 +2586,24 @@ fun MainScreen(
                                             Box(Modifier.fillMaxSize()) {
                                                 Box(Modifier.fillMaxSize().background(Color(0xFF121212)))
                                                 AnimatedContent(
-                                                    targetState = uiState.currentSong?.albumArtUri,
+                                                    targetState = uiState.currentSong,
                                                     transitionSpec = {
-                                                        fadeIn(tween(500)) togetherWith fadeOut(tween(500))
+                                                        fadeIn(tween(400)) togetherWith fadeOut(tween(400))
                                                     },
                                                     label = "miniPlayerBgArt"
-                                                ) { artUri ->
-                                                    AsyncImage(
-                                                        model = ImageRequest.Builder(LocalContext.current)
-                                                            .data(artUri)
+                                                ) { currentSong ->
+                                                    val context = LocalContext.current
+                                                    val model = remember(currentSong?.id) {
+                                                        ImageRequest.Builder(context)
+                                                            .data(currentSong?.albumArtUri)
                                                             .diskCachePolicy(CachePolicy.ENABLED)
                                                             .memoryCachePolicy(CachePolicy.ENABLED)
-                                                            .crossfade(true)
-                                                            .error(com.beatflowy.app.R.drawable.ic_album_default)
-                                                            .fallback(com.beatflowy.app.R.drawable.ic_album_default)
-                                                            .build(),
+                                                            .error(ImageUtils.getDefaultAlbumArtRes())
+                                                            .fallback(ImageUtils.getDefaultAlbumArtRes())
+                                                            .build()
+                                                    }
+                                                    AsyncImage(
+                                                        model = model,
                                                         contentDescription = null,
                                                         modifier = Modifier
                                                             .fillMaxSize()
@@ -2647,21 +2652,24 @@ fun MainScreen(
                                                     color = Color.White.copy(0.05f)
                                                 ) {
                                                     AnimatedContent(
-                                                        targetState = uiState.currentSong?.albumArtUri,
+                                                        targetState = uiState.currentSong,
                                                         transitionSpec = {
-                                                            fadeIn(tween(400)) togetherWith fadeOut(tween(400))
+                                                            fadeIn(tween(300)) togetherWith fadeOut(tween(300))
                                                         },
                                                         label = "miniPlayerArt"
-                                                    ) { artUri ->
-                                                        AsyncImage(
-                                                            model = ImageRequest.Builder(LocalContext.current)
-                                                                .data(artUri)
+                                                    ) { currentSong ->
+                                                        val context = LocalContext.current
+                                                        val model = remember(currentSong?.id) {
+                                                            ImageRequest.Builder(context)
+                                                                .data(currentSong?.albumArtUri)
                                                                 .diskCachePolicy(CachePolicy.ENABLED)
                                                                 .memoryCachePolicy(CachePolicy.ENABLED)
-                                                                .crossfade(true)
-                                                                .error(com.beatflowy.app.R.drawable.ic_album_default)
-                                                                .fallback(com.beatflowy.app.R.drawable.ic_album_default)
-                                                                .build(),
+                                                                .error(ImageUtils.getDefaultAlbumArtRes())
+                                                                .fallback(ImageUtils.getDefaultAlbumArtRes())
+                                                                .build()
+                                                        }
+                                                        AsyncImage(
+                                                            model = model,
                                                             contentDescription = null,
                                                             contentScale = ContentScale.Crop
                                                         )
@@ -3197,7 +3205,7 @@ fun CastDevicePopup(
         expanded = expanded,
         onDismiss = onDismiss,
         anchorBounds = anchorBounds,
-        cardWidth = 280.dp
+        cardWidth = 240.dp
     ) {
         CastSheetContent(currentSong, onCast, onDismiss)
     }
@@ -3309,7 +3317,7 @@ fun CloudDrivePopup(
         expanded = expanded,
         onDismiss = onDismiss,
         anchorBounds = anchorBounds,
-        cardWidth = 280.dp
+        cardWidth = 240.dp
     ) {
         Column(modifier = Modifier.padding(vertical = 4.dp)) {
             Text(
@@ -3326,30 +3334,30 @@ fun CloudDrivePopup(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clickable { onSelectAccount(null); onDismiss() }
-                    .padding(horizontal = 12.dp, vertical = 4.dp)
-                    .clip(RoundedCornerShape(12.dp))
+                    .padding(horizontal = 10.dp, vertical = 3.dp)
+                    .clip(RoundedCornerShape(10.dp))
                     .background(Color.White.copy(0.04f))
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Box(
-                    modifier = Modifier.size(32.dp).background(AccentBlue.copy(0.15f), CircleShape),
+                    modifier = Modifier.size(30.dp).background(AccentBlue.copy(0.15f), CircleShape),
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(Icons.Rounded.CloudQueue, null, tint = AccentBlue, modifier = Modifier.size(18.dp))
+                    Icon(Icons.Rounded.CloudQueue, null, tint = AccentBlue, modifier = Modifier.size(16.dp))
                 }
-                Spacer(Modifier.width(14.dp))
-                Text("All Accounts", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.width(12.dp))
+                Text("All Accounts", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
             }
 
-            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp, horizontal = 16.dp), color = Color.White.copy(0.08f))
+            HorizontalDivider(modifier = Modifier.padding(vertical = 6.dp, horizontal = 14.dp), color = Color.White.copy(0.08f))
 
             if (enabledAccounts.isEmpty()) {
                 Text(
                     "No accounts connected",
                     color = Color.White.copy(0.4f),
-                    fontSize = 13.sp,
-                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp),
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 14.dp),
                     textAlign = TextAlign.Center
                 )
             } else {
@@ -3358,24 +3366,24 @@ fun CloudDrivePopup(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable { onSelectAccount(account.email); onDismiss() }
-                            .padding(horizontal = 12.dp, vertical = 6.dp)
-                            .clip(RoundedCornerShape(14.dp))
+                            .padding(horizontal = 10.dp, vertical = 5.dp)
+                            .clip(RoundedCornerShape(12.dp))
                             .background(Color.White.copy(0.03f))
-                            .padding(12.dp),
+                            .padding(10.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Box(
-                            modifier = Modifier.size(40.dp).background(Color.White.copy(0.08f), CircleShape),
+                            modifier = Modifier.size(36.dp).background(Color.White.copy(0.08f), CircleShape),
                             contentAlignment = Alignment.Center
                         ) {
-                            Icon(Icons.Rounded.AccountCircle, null, tint = Color.White.copy(0.5f), modifier = Modifier.size(24.dp))
+                            Icon(Icons.Rounded.AccountCircle, null, tint = Color.White.copy(0.5f), modifier = Modifier.size(22.dp))
                         }
-                        Spacer(Modifier.width(14.dp))
+                        Spacer(Modifier.width(12.dp))
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 account.accountName,
                                 color = Color.White,
-                                fontSize = 14.sp,
+                                fontSize = 13.sp,
                                 fontWeight = FontWeight.Bold,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
@@ -3383,17 +3391,26 @@ fun CloudDrivePopup(
                             Text(
                                 account.email,
                                 color = Color.White.copy(0.4f),
-                                fontSize = 11.sp,
+                                fontSize = 10.sp,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
                         }
                         
-                        IconButton(
+                        Surface(
                             onClick = { onRefreshAccount(account.email) },
-                            modifier = Modifier.size(32.dp).background(AccentBlue.copy(0.15f), CircleShape)
+                            color = AccentBlue.copy(0.15f),
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier.height(26.dp)
                         ) {
-                            Icon(Icons.Rounded.Sync, null, tint = AccentBlue, modifier = Modifier.size(16.dp))
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Rounded.Sync, null, tint = AccentBlue, modifier = Modifier.size(12.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("SYNC", color = AccentBlue, fontSize = 9.sp, fontWeight = FontWeight.Black)
+                            }
                         }
                     }
                 }
@@ -3416,40 +3433,49 @@ fun CloudDrivePopup(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable { onSelectTelegramChannel(channel.url); onDismiss() }
-                            .padding(horizontal = 12.dp, vertical = 4.dp)
-                            .clip(RoundedCornerShape(12.dp))
+                            .padding(horizontal = 10.dp, vertical = 3.dp)
+                            .clip(RoundedCornerShape(10.dp))
                             .background(Color(0xFF2AABEE).copy(0.05f))
-                            .padding(10.dp),
+                            .padding(8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Box(
                             modifier = Modifier
-                                .size(32.dp)
+                                .size(30.dp)
                                 .background(Color(0xFF2AABEE).copy(0.15f), CircleShape),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
                                 channel.name.firstOrNull()?.uppercaseChar()?.toString() ?: "",
                                 color = Color(0xFF2AABEE),
-                                fontSize = 12.sp,
+                                fontSize = 11.sp,
                                 fontWeight = FontWeight.Black
                             )
                         }
-                        Spacer(Modifier.width(14.dp))
+                        Spacer(Modifier.width(12.dp))
                         Text(
                             channel.name,
                             color = Color.White,
-                            fontSize = 14.sp,
+                            fontSize = 13.sp,
                             fontWeight = FontWeight.Bold,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f)
                         )
-                        IconButton(
+                        Surface(
                             onClick = { onSyncTelegramChannel(channel.url) },
-                            modifier = Modifier.size(32.dp).background(Color(0xFF2AABEE).copy(0.15f), CircleShape)
+                            color = Color(0xFF2AABEE).copy(0.12f),
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier.height(26.dp)
                         ) {
-                            Icon(Icons.Rounded.Sync, null, tint = Color(0xFF2AABEE), modifier = Modifier.size(16.dp))
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Rounded.Sync, null, tint = Color(0xFF2AABEE), modifier = Modifier.size(12.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("SYNC", color = Color(0xFF2AABEE), fontSize = 9.sp, fontWeight = FontWeight.Black)
+                            }
                         }
                     }
                 }
@@ -3512,15 +3538,11 @@ fun HomeScreen(
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 8.dp)
                     .clip(RoundedCornerShape(24.dp))
-                    .background(
-                        Brush.verticalGradient(
-                            listOf(Color.White.copy(0.08f), Color.White.copy(0.02f))
-                        )
-                    )
+                    .background(Color.Black.copy(alpha = 0.9f))
                     .border(
                         0.5.dp, 
                         Brush.verticalGradient(
-                            listOf(Color.White.copy(0.12f), Color.Transparent)
+                            listOf(Color.White.copy(0.15f), Color.White.copy(0.05f))
                         ), 
                         RoundedCornerShape(24.dp)
                     )
@@ -3580,7 +3602,7 @@ fun HomeScreen(
                             modifier = Modifier
                                 .background(
                                     Brush.linearGradient(
-                                        listOf(Color(0xFF7000FF), Color(0xFFFF00D6))
+                                        listOf(Color(0xFF00E5FF), Color(0xFF1200FF))
                                     )
                                 )
                                 .padding(horizontal = 16.dp, vertical = 10.dp),
@@ -3593,6 +3615,211 @@ fun HomeScreen(
                                 modifier = Modifier.size(18.dp)
                             )
                         }
+                    }
+                }
+            }
+        }
+
+        item {
+            androidx.compose.animation.AnimatedVisibility(
+                visible = uiState.libraryMode != LibraryMode.LOCAL || uiState.showSyncStatusOnHome,
+                enter = expandVertically() + fadeIn(),
+                exit = shrinkVertically() + fadeOut()
+            ) {
+                var showCloudPopup by remember { mutableStateOf(false) }
+                var anchorBounds by remember { mutableStateOf(Rect.Zero) }
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp)
+                        .clip(RoundedCornerShape(24.dp))
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(Color.White.copy(0.08f), Color.White.copy(0.02f))
+                            )
+                        )
+                        .border(
+                            0.5.dp,
+                            Brush.verticalGradient(
+                                listOf(Color.White.copy(0.15f), Color.Transparent)
+                            ),
+                            RoundedCornerShape(24.dp)
+                        )
+                        .clickable { 
+                            if (uiState.selectedTelegramChannelUrl != null) {
+                                viewModel.setLibraryViewTelegram(uiState.selectedTelegramChannelUrl!!)
+                            } else {
+                                viewModel.setLibraryView(LibraryView.CLOUD, uiState.selectedCloudEmail)
+                            }
+                        }
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(36.dp)
+                                        .background(Color(0xFF1A73E8).copy(0.15f), CircleShape)
+                                        .border(1.dp, Color(0xFF1A73E8).copy(0.2f), CircleShape),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        Icons.Rounded.CloudSync,
+                                        null,
+                                        tint = Color(0xFF1A73E8),
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                                Spacer(Modifier.width(12.dp))
+                                Column {
+                                    Text(
+                                        text = "CLOUD LIBRARY",
+                                        color = Color.White,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Black,
+                                        letterSpacing = 1.2.sp
+                                    )
+                                    val currentAccount = when {
+                                        uiState.selectedCloudEmail != null -> uiState.selectedCloudEmail
+                                        uiState.selectedTelegramChannelUrl != null -> {
+                                            uiState.telegramChannels.find { it.url == uiState.selectedTelegramChannelUrl }?.name ?: "Telegram"
+                                        }
+                                        else -> "All Accounts"
+                                    }
+                                    Text(
+                                        text = currentAccount ?: "All Accounts",
+                                        color = Color.White.copy(0.5f),
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
+                            }
+
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                if (uiState.isCloudScanning) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(18.dp),
+                                        color = Color(0xFF1A73E8),
+                                        strokeWidth = 2.dp
+                                    )
+                                } else if (uiState.isSyncFinishedRecently) {
+                                    Icon(
+                                        Icons.Rounded.CheckCircle,
+                                        null,
+                                        tint = Color(0xFF4CAF50),
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                                
+                                Spacer(Modifier.width(12.dp))
+                                
+                                IconButton(
+                                    onClick = { showCloudPopup = true },
+                                    modifier = Modifier
+                                        .size(32.dp)
+                                        .onGloballyPositioned { anchorBounds = it.boundsInRoot() }
+                                        .background(if (showCloudPopup) Color.Black else Color.White.copy(0.08f), CircleShape)
+                                        .then(if (showCloudPopup) Modifier.border(1.dp, Color.White.copy(0.4f), CircleShape) else Modifier)
+                                ) {
+                                    Icon(
+                                        Icons.Rounded.SwapHoriz,
+                                        null,
+                                        tint = Color.White,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                        }
+
+                        Spacer(Modifier.height(16.dp))
+                        
+                        val statusText = if (uiState.isCloudScanning) {
+                            uiState.enrichmentStatus ?: uiState.driveErrorMessage ?: uiState.telegramSyncErrorMessage ?: "Syncing..."
+                        } else if (uiState.isSyncFinishedRecently) {
+                            uiState.driveErrorMessage ?: uiState.telegramSyncErrorMessage ?: "Sync Complete"
+                        } else ""
+
+                        if (statusText.isNotEmpty()) {
+                            Text(
+                                text = statusText,
+                                color = Color.White.copy(0.7f),
+                                fontSize = 13.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Spacer(Modifier.height(12.dp))
+                        }
+
+                        if (uiState.isCloudScanning) {
+                            LinearProgressIndicator(
+                                progress = { uiState.scanProgress },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(4.dp)
+                                    .clip(CircleShape),
+                                color = Color(0xFF1A73E8),
+                                trackColor = Color(0xFF1A73E8).copy(0.1f)
+                            )
+                            Spacer(Modifier.height(16.dp))
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(20.dp))
+                                    .background(Color.White.copy(0.05f))
+                                    .border(0.5.dp, Color.White.copy(0.1f), RoundedCornerShape(20.dp))
+                                    .padding(vertical = 12.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                StatItem(Icons.Rounded.MusicNote, uiState.cloudSongCount.toString(), "Songs", Color(0xFFFF4081))
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(20.dp))
+                                    .background(Color.White.copy(0.05f))
+                                    .border(0.5.dp, Color.White.copy(0.1f), RoundedCornerShape(20.dp))
+                                    .padding(vertical = 12.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                StatItem(Icons.Rounded.Album, uiState.cloudAlbumCount.toString(), "Albums", Color(0xFF00E676))
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(20.dp))
+                                    .background(Color.White.copy(0.05f))
+                                    .border(0.5.dp, Color.White.copy(0.1f), RoundedCornerShape(20.dp))
+                                    .padding(vertical = 12.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                StatItem(Icons.Rounded.Person, uiState.cloudArtistCount.toString(), "Artists", Color(0xFF2979FF))
+                            }
+                        }
+                    }
+
+                    if (showCloudPopup) {
+                        CloudDrivePopup(
+                            expanded = showCloudPopup,
+                            onDismiss = { showCloudPopup = false },
+                            anchorBounds = anchorBounds,
+                            accounts = uiState.driveAccounts,
+                            telegramChannels = uiState.telegramChannels,
+                            onSelectAccount = { viewModel.setCloudAccount(it) },
+                            onSelectTelegramChannel = { viewModel.setCloudTelegram(it) },
+                            onRefreshAccount = { viewModel.scanDriveAccount(it) },
+                            onSyncTelegramChannel = { viewModel.syncTelegramChannel(it) }
+                        )
                     }
                 }
             }
@@ -4111,6 +4338,22 @@ fun MiniPlayerTimeText(progressProvider: () -> Long, duration: Long) {
         maxLines = 1,
         overflow = TextOverflow.Ellipsis
     )
+}
+
+@Composable
+private fun StatItemSmall(label: String, count: String, color: Color) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            modifier = Modifier
+                .size(6.dp)
+                .background(color, CircleShape)
+        )
+        Spacer(Modifier.width(8.dp))
+        Column {
+            Text(count, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+            Text(label, color = Color.White.copy(0.5f), fontSize = 10.sp)
+        }
+    }
 }
 
 @Composable
@@ -4987,8 +5230,20 @@ fun CloudSheetContent(
                     Text(account.accountName, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
                     Text(account.email, color = Color.White.copy(0.4f), fontSize = 11.sp)
                 }
-                IconButton(onClick = { onRefreshAccount(account.email) }) {
-                    Icon(Icons.Rounded.Sync, null, tint = AccentBlue, modifier = Modifier.size(20.dp))
+                Surface(
+                    onClick = { onRefreshAccount(account.email) },
+                    color = AccentBlue.copy(0.15f),
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.height(26.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Rounded.Sync, null, tint = AccentBlue, modifier = Modifier.size(12.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("SYNC", color = AccentBlue, fontSize = 9.sp, fontWeight = FontWeight.Black)
+                    }
                 }
             }
         }
@@ -5000,8 +5255,20 @@ fun CloudSheetContent(
                     Text(channel.name.firstOrNull()?.uppercaseChar()?.toString() ?: "", color = Color(0xFF2AABEE), fontSize = 14.sp, fontWeight = FontWeight.Black)
                     Spacer(Modifier.width(12.dp))
                     Text(channel.name, color = Color.White, fontSize = 14.sp, modifier = Modifier.weight(1f))
-                    IconButton(onClick = { onSyncTelegramChannel(channel.url) }) {
-                        Icon(Icons.Rounded.Sync, null, tint = Color(0xFF2AABEE), modifier = Modifier.size(20.dp))
+                    Surface(
+                        onClick = { onSyncTelegramChannel(channel.url) },
+                        color = Color(0xFF2AABEE).copy(0.12f),
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.height(26.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Rounded.Sync, null, tint = Color(0xFF2AABEE), modifier = Modifier.size(12.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("SYNC", color = Color(0xFF2AABEE), fontSize = 9.sp, fontWeight = FontWeight.Black)
+                        }
                     }
                 }
             }

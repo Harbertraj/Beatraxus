@@ -148,8 +148,15 @@ data class PlayerUiState(
     val scanCount: Int = 0,
     val albumCount: Int = 0,
     val artistCount: Int = 0,
+    val cloudSongCount: Int = 0,
+    val cloudAlbumCount: Int = 0,
+    val cloudArtistCount: Int = 0,
+    val showSyncStatusOnHome: Boolean = false,
+    val isSyncFinishedRecently: Boolean = false,
     val permissionDenied: Boolean = false,
     val errorMessage: String? = null,
+    val driveErrorMessage: String? = null,
+    val telegramSyncErrorMessage: String? = null,
     val shuffleMode: Boolean = false,
     val repeatMode: Int = 0, // 0: Off, 1: One, 2: All
     val currentView: LibraryView = LibraryView.HOME,
@@ -237,6 +244,7 @@ data class PlayerUiState(
     val telegramAuthState: AuthState = AuthState.LoggedOut,
     val isSubmittingTelegram: Boolean = false,
     val telegramAuthError: String? = null,
+    val showTelegramPhoneForm: Boolean = false,
     val isIgnoringBatteryOptimizations: Boolean = false,
     val isOemBatteryManagerDetected: Boolean = false
 )
@@ -263,8 +271,15 @@ data class PlayerUiState(
                 scanCount == other.scanCount &&
                 albumCount == other.albumCount &&
                 artistCount == other.artistCount &&
+                cloudSongCount == other.cloudSongCount &&
+                cloudAlbumCount == other.cloudAlbumCount &&
+                cloudArtistCount == other.cloudArtistCount &&
+                showSyncStatusOnHome == other.showSyncStatusOnHome &&
+                isSyncFinishedRecently == other.isSyncFinishedRecently &&
                 permissionDenied == other.permissionDenied &&
                 errorMessage == other.errorMessage &&
+                driveErrorMessage == other.driveErrorMessage &&
+                telegramSyncErrorMessage == other.telegramSyncErrorMessage &&
                 shuffleMode == other.shuffleMode &&
                 repeatMode == other.repeatMode &&
                 currentView == other.currentView &&
@@ -338,6 +353,7 @@ data class PlayerUiState(
                 telegramAuthState == other.telegramAuthState &&
                 isSubmittingTelegram == other.isSubmittingTelegram &&
                 telegramAuthError == other.telegramAuthError &&
+                showTelegramPhoneForm == other.showTelegramPhoneForm &&
                 isIgnoringBatteryOptimizations == other.isIgnoringBatteryOptimizations &&
                 isOemBatteryManagerDetected == other.isOemBatteryManagerDetected
     }
@@ -362,8 +378,15 @@ data class PlayerUiState(
         result = 31 * result + scanCount
         result = 31 * result + albumCount
         result = 31 * result + artistCount
+        result = 31 * result + cloudSongCount
+        result = 31 * result + cloudAlbumCount
+        result = 31 * result + cloudArtistCount
+        result = 31 * result + showSyncStatusOnHome.hashCode()
+        result = 31 * result + isSyncFinishedRecently.hashCode()
         result = 31 * result + permissionDenied.hashCode()
         result = 31 * result + (errorMessage?.hashCode() ?: 0)
+        result = 31 * result + (driveErrorMessage?.hashCode() ?: 0)
+        result = 31 * result + (telegramSyncErrorMessage?.hashCode() ?: 0)
         result = 31 * result + shuffleMode.hashCode()
         result = 31 * result + repeatMode
         result = 31 * result + currentView.hashCode()
@@ -437,6 +460,7 @@ data class PlayerUiState(
         result = 31 * result + telegramAuthState.hashCode()
         result = 31 * result + isSubmittingTelegram.hashCode()
         result = 31 * result + (telegramAuthError?.hashCode() ?: 0)
+        result = 31 * result + showTelegramPhoneForm.hashCode()
         result = 31 * result + isIgnoringBatteryOptimizations.hashCode()
         result = 31 * result + isOemBatteryManagerDetected.hashCode()
         return result

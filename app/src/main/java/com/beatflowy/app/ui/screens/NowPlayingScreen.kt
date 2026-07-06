@@ -5,6 +5,7 @@ import androidx.compose.material.icons.outlined.Repeat
 import androidx.compose.material.icons.outlined.Shuffle
 import androidx.compose.material.icons.automirrored.outlined.QueueMusic
 import kotlinx.coroutines.delay
+import com.beatflowy.app.utils.ImageUtils
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
@@ -175,18 +176,20 @@ fun NowPlayingScreen(
     ) {
         // Vibrant Background
         AnimatedContent(
-            targetState = song.albumArtUri,
+            targetState = song,
             transitionSpec = {
-                fadeIn(tween(700)) togetherWith fadeOut(tween(700))
+                fadeIn(tween(700)).togetherWith(fadeOut(tween(700)))
             },
-            label = "vibrantBackground"
-        ) { artUri ->
+            label = "backgroundTransition",
+            modifier = Modifier.fillMaxSize()
+        ) { targetSong ->
             AsyncImage(
                 model = ImageRequest.Builder(LocalContext.current)
-                    .data(artUri)
+                    .data(targetSong.albumArtUri)
                     .diskCachePolicy(CachePolicy.ENABLED)
                     .memoryCachePolicy(CachePolicy.ENABLED)
-                    .crossfade(true)
+                    .error(ImageUtils.getDefaultAlbumArtRes())
+                    .fallback(ImageUtils.getDefaultAlbumArtRes())
                     .build(),
                 contentDescription = null,
                 modifier = Modifier
@@ -429,22 +432,22 @@ fun NowPlayingScreen(
                                         )
                                 ) {
                                     AnimatedContent(
-                                        targetState = song.albumArtUri,
+                                        targetState = song,
                                         transitionSpec = {
-                                            fadeIn(tween(500)) togetherWith fadeOut(tween(500))
+                                            fadeIn(tween(400)).togetherWith(fadeOut(tween(400)))
                                         },
-                                        label = "mainAlbumArt"
-                                    ) { artUri ->
+                                        label = "albumArtTransition",
+                                        modifier = Modifier.fillMaxSize()
+                                    ) { targetSong ->
                                         AsyncImage(
                                             model = ImageRequest.Builder(LocalContext.current)
-                                                .data(artUri)
+                                                .data(targetSong.albumArtUri)
                                                 .diskCachePolicy(CachePolicy.ENABLED)
                                                 .memoryCachePolicy(CachePolicy.ENABLED)
-                                                .crossfade(true)
+                                                .error(ImageUtils.getDefaultAlbumArtRes())
+                                                .fallback(ImageUtils.getDefaultAlbumArtRes())
                                                 .build(),
                                             contentDescription = null,
-                                            error = painterResource(R.drawable.ic_album_default),
-                                            fallback = painterResource(R.drawable.ic_album_default),
                                             modifier = Modifier.fillMaxSize(),
                                             contentScale = ContentScale.Crop
                                         )
@@ -1390,7 +1393,6 @@ fun QueueView(
                                             .data(song.albumArtUri)
                                             .diskCachePolicy(CachePolicy.ENABLED)
                                             .memoryCachePolicy(CachePolicy.ENABLED)
-                                            .crossfade(true)
                                             .build(),
                                         contentDescription = null,
                                         modifier = Modifier
@@ -1531,7 +1533,6 @@ private fun SongQueueItem(
                         .data(song.albumArtUri)
                         .diskCachePolicy(CachePolicy.ENABLED)
                         .memoryCachePolicy(CachePolicy.ENABLED)
-                        .crossfade(true)
                         .build(),
                     contentDescription = null,
                     modifier = Modifier

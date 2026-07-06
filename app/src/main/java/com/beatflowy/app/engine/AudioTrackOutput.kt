@@ -527,20 +527,32 @@ class AudioTrackOutput(
                     AudioFormat.ENCODING_PCM_16BIT -> {
                         toPcm16InPlace(data, offsetInSamples, sampleCount)
                         val writtenBytes = track.write(pcm16Buffer, 0, sampleCount * 2, AudioTrack.WRITE_NON_BLOCKING)
+                        if (writtenBytes == 0 && track.playState != AudioTrack.PLAYSTATE_PLAYING) {
+                            try { track.play() } catch (_: Exception) {}
+                        }
                         if (writtenBytes > 0) writtenBytes / (channels * 2) else writtenBytes
                     }
                     AudioFormat.ENCODING_PCM_24BIT_PACKED -> {
                         toPcm24InPlace(data, offsetInSamples, sampleCount)
                         val writtenBytes = track.write(pcm24Buffer, 0, sampleCount * 3, AudioTrack.WRITE_NON_BLOCKING)
+                        if (writtenBytes == 0 && track.playState != AudioTrack.PLAYSTATE_PLAYING) {
+                            try { track.play() } catch (_: Exception) {}
+                        }
                         if (writtenBytes > 0) writtenBytes / (channels * 3) else writtenBytes
                     }
                     AudioFormat.ENCODING_PCM_32BIT -> {
                         toPcm32InPlace(data, offsetInSamples, sampleCount)
                         val writtenBytes = track.write(pcm32Buffer, 0, sampleCount * 4, AudioTrack.WRITE_NON_BLOCKING)
+                        if (writtenBytes == 0 && track.playState != AudioTrack.PLAYSTATE_PLAYING) {
+                            try { track.play() } catch (_: Exception) {}
+                        }
                         if (writtenBytes > 0) writtenBytes / (channels * 4) else writtenBytes
                     }
                     else -> {
                         val writtenSamples = track.write(data, offsetInSamples, sampleCount, AudioTrack.WRITE_NON_BLOCKING)
+                        if (writtenSamples == 0 && track.playState != AudioTrack.PLAYSTATE_PLAYING) {
+                            try { track.play() } catch (_: Exception) {}
+                        }
                         if (writtenSamples > 0) writtenSamples / channels else writtenSamples
                     }
                 }

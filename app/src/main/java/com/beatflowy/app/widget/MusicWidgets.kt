@@ -1,5 +1,6 @@
 package com.beatflowy.app.widget
 
+import com.beatflowy.app.utils.ImageUtils
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
@@ -407,7 +408,7 @@ private var lastAlbumArtUri: String? = null
 private var lastImageProvider: ImageProvider? = null
 
 private suspend fun getImageProvider(context: Context, uriString: String): ImageProvider {
-    if (uriString.isEmpty()) return ImageProvider(R.drawable.ic_album_default)
+    if (uriString.isEmpty()) return ImageProvider(ImageUtils.getDefaultAlbumArtRes())
     
     synchronized(MusicWidgetKeys) {
         if (uriString == lastAlbumArtUri && lastImageProvider != null) {
@@ -446,8 +447,8 @@ private suspend fun getImageProvider(context: Context, uriString: String): Image
                     } catch (e: Exception) {
                         ImageProvider(scaled)
                     }
-                } else ImageProvider(R.drawable.ic_album_default)
-            } ?: ImageProvider(R.drawable.ic_album_default)
+                } else ImageProvider(ImageUtils.getDefaultAlbumArtRes())
+            } ?: ImageProvider(ImageUtils.getDefaultAlbumArtRes())
             
             synchronized(MusicWidgetKeys) {
                 lastAlbumArtUri = uriString
@@ -455,7 +456,7 @@ private suspend fun getImageProvider(context: Context, uriString: String): Image
             }
             result
         } catch (e: Exception) {
-            ImageProvider(R.drawable.ic_album_default)
+            ImageProvider(ImageUtils.getDefaultAlbumArtRes())
         }
     }
 }

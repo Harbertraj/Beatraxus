@@ -173,20 +173,26 @@ class AudioEngine(
     }
 
     private suspend fun performRecovery() {
+        val (song, pos) = controlMutex.withLock {
+            val s = currentSong ?: return
+            val p = currentPositionMs()
+            s to p
+        }
+
+        Log.i(TAG, "Recovering playback for ${song.title} at $pos ms")
+        
+        // Full hardware and session reset
+        output.stop()
+        output.flush()
+        
         controlMutex.withLock {
-            val song = currentSong ?: return@withLock
-            val pos = currentPositionMs()
-            Log.i(TAG, "Recovering playback for ${song.title} at $pos ms")
-            
-            // Re-initialize session at current position
             stopSessionsInternal()
-            
-            // Reset underrun count for the new start
             underrunCount = 0
-            
             _playbackStateFlow.update { it.copy(isPlaying = true) }
             startSessionInternal(song, pos)
         }
+        
+        output.start()
     }
 
     private fun startRenderer() {

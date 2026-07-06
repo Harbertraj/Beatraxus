@@ -2411,6 +2411,12 @@ fun CloudContent(
     val driveAccounts = uiState.driveAccounts
     val telegramChannels = uiState.telegramChannels
 
+    DisposableEffect(Unit) {
+        onDispose {
+            viewModel.resetTelegramLoginForm()
+        }
+    }
+
     var driveQuery by remember { mutableStateOf("") }
     var telegramUrl by remember { mutableStateOf("") }
 
@@ -2443,7 +2449,7 @@ fun CloudContent(
                 textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 14.sp)
             )
 
-            uiState.errorMessage?.let { error ->
+            uiState.driveErrorMessage?.let { error ->
                 Text(
                     text = error,
                     color = if (error.contains("failed", ignoreCase = true)) Color.Red else Color(0xFF1A73E8),
@@ -2514,6 +2520,15 @@ fun CloudContent(
                 textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 14.sp)
             )
 
+            uiState.telegramSyncErrorMessage?.let { error ->
+                Text(
+                    text = error,
+                    color = if (error.contains("failed", ignoreCase = true)) Color.Red else Color(0xFF2AABEE),
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(top = 4.dp, start = 4.dp)
+                )
+            }
+
             val filteredTelegram = telegramChannels.filter {
                 it.name.contains(telegramUrl, ignoreCase = true) || it.url.contains(telegramUrl, ignoreCase = true)
             }
@@ -2552,7 +2567,8 @@ private fun TelegramLoginCard(uiState: PlayerUiState, viewModel: PlayerViewModel
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
             .background(Color.White.copy(0.04f))
-            .padding(12.dp),
+            .padding(12.dp)
+            .animateContentSize(),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -2571,160 +2587,201 @@ private fun TelegramLoginCard(uiState: PlayerUiState, viewModel: PlayerViewModel
             )
         }
 
-        Crossfade(targetState = authState, label = "telegram_auth_transition") { state ->
-            when (state) {
+        // Error message at the top
+        authError?.let {
+            Row(
+                modifier = Modifier.padding(bottom = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Icon(
+                    Icons.Rounded.ErrorOutline,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(14.dp)
+                )
+                Text(
+                    text = it,
+                    color = MaterialTheme.colorScheme.error,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+        }
+
+        if (authState is AuthState.Ready) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(Icons.Rounded.CheckCircle, null, tint = Color(0xFF4CAF50), modifier = Modifier.size(16.dp))
+                    Text("Authenticated", color = Color(0xFF4CAF50), fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        } else if (!uiState.showTelegramPhoneForm) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "Login to access private channels and faster downloads.",
+                    color = Color.White.copy(0.6f),
+                    fontSize = 12.sp
+                )
+                Button(
+                    onClick = { viewModel.showTelegramLoginForm() },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF2AABEE),
+                        contentColor = Color.Black
+                    ),
+                    shape = RoundedCornerShape(8.dp),
+                    enabled = !isSubmitting
+                ) {
+                    if (isSubmitting) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.Black, strokeWidth = 2.dp)
+                    } else {
+                        Text("LOGIN WITH TELEGRAM", color = Color.Black, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        } else {
+            when (authState) {
                 AuthState.Initializing -> {
                     Box(modifier = Modifier.fillMaxWidth().height(48.dp), contentAlignment = Alignment.Center) {
                         CircularProgressIndicator(modifier = Modifier.size(24.dp), color = Color(0xFF2AABEE), strokeWidth = 2.dp)
                     }
                 }
-                AuthState.LoggedOut -> {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(
-                            "Login to access private channels and faster downloads.",
-                            color = Color.White.copy(0.6f),
-                            fontSize = 12.sp
-                        )
+                is AuthState.Error -> {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(Icons.Rounded.ErrorOutline, null, tint = Color.Red, modifier = Modifier.size(24.dp))
+                        Text(authState.message, color = Color.Red, fontSize = 12.sp, textAlign = TextAlign.Center)
                         Button(
-                            onClick = { viewModel.submitTelegramPhone("") /* Trigger parameters step if needed, though usually automatic */ },
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = Color(0xFF2AABEE),
-                                contentColor = Color.Black
-                            ),
-                            shape = RoundedCornerShape(8.dp),
-                            enabled = !isSubmitting
+                            onClick = { viewModel.restartTelegramAuth() },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(0.1f))
                         ) {
-                            if (isSubmitting) {
-                                CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.Black, strokeWidth = 2.dp)
-                            } else {
-                                Text("LOGIN WITH TELEGRAM", color = Color.Black, fontWeight = FontWeight.Bold)
-                            }
+                            Text("RETRY", color = Color.White)
                         }
                     }
                 }
-                AuthState.WaitPhoneNumber -> {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                else -> {
+                    val isPhoneDone = authState !is AuthState.LoggedOut && authState !is AuthState.WaitPhoneNumber
+                    
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         OutlinedTextField(
                             value = phone,
                             onValueChange = { phone = it },
                             label = { Text("Phone Number (+...)") },
                             modifier = Modifier.fillMaxWidth(),
-                            enabled = !isSubmitting,
+                            enabled = !isPhoneDone && !isSubmitting,
+                            trailingIcon = {
+                                if (isPhoneDone) {
+                                    TextButton(onClick = { viewModel.restartTelegramAuth() }) {
+                                        Text("EDIT", color = Color(0xFF2AABEE), fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone, imeAction = ImeAction.Send),
-                            keyboardActions = KeyboardActions(onSend = { viewModel.submitTelegramPhone(phone) }),
+                            keyboardActions = KeyboardActions(onSend = { if (!isPhoneDone) viewModel.submitTelegramPhone(phone) }),
                             singleLine = true,
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedBorderColor = Color(0xFF2AABEE),
-                                unfocusedBorderColor = Color.White.copy(0.1f)
+                                unfocusedBorderColor = Color.White.copy(0.1f),
+                                disabledBorderColor = Color.White.copy(0.1f),
+                                disabledTextColor = Color.White.copy(0.6f),
+                                disabledLabelColor = Color.White.copy(0.4f)
                             )
                         )
-                        Button(
-                            onClick = { viewModel.submitTelegramPhone(phone) },
-                            modifier = Modifier.fillMaxWidth(),
-                            enabled = phone.isNotBlank() && !isSubmitting,
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = Color(0xFF2AABEE),
-                                contentColor = Color.Black
-                            )
-                        ) {
-                            if (isSubmitting) {
-                                CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.Black, strokeWidth = 2.dp)
-                            } else {
-                                Text("SEND CODE", color = Color.Black, fontWeight = FontWeight.Bold)
+
+                        if (!isPhoneDone) {
+                            Button(
+                                onClick = { viewModel.submitTelegramPhone(phone) },
+                                modifier = Modifier.fillMaxWidth(),
+                                enabled = phone.isNotBlank() && !isSubmitting,
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color(0xFF2AABEE),
+                                    contentColor = Color.Black
+                                )
+                            ) {
+                                if (isSubmitting) {
+                                    CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.Black, strokeWidth = 2.dp)
+                                } else {
+                                    Text("SEND CODE", color = Color.Black, fontWeight = FontWeight.Bold)
+                                }
                             }
                         }
-                    }
-                }
-                AuthState.WaitCode -> {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedTextField(
-                            value = code,
-                            onValueChange = { code = it },
-                            label = { Text("Verification Code") },
-                            modifier = Modifier.fillMaxWidth(),
-                            enabled = !isSubmitting,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Send),
-                            keyboardActions = KeyboardActions(onSend = { viewModel.submitTelegramCode(code) }),
-                            singleLine = true,
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = Color(0xFF2AABEE),
-                                unfocusedBorderColor = Color.White.copy(0.1f)
+
+                        if (isPhoneDone) {
+                            val isCodeDone = authState is AuthState.WaitPassword
+                            OutlinedTextField(
+                                value = code,
+                                onValueChange = { code = it },
+                                label = { Text("Verification Code") },
+                                modifier = Modifier.fillMaxWidth(),
+                                enabled = !isCodeDone && !isSubmitting,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Send),
+                                keyboardActions = KeyboardActions(onSend = { if (!isCodeDone) viewModel.submitTelegramCode(code) }),
+                                singleLine = true,
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = Color(0xFF2AABEE),
+                                    unfocusedBorderColor = Color.White.copy(0.1f),
+                                    disabledBorderColor = Color.White.copy(0.05f)
+                                )
                             )
-                        )
-                        Button(
-                            onClick = { viewModel.submitTelegramCode(code) },
-                            modifier = Modifier.fillMaxWidth(),
-                            enabled = code.isNotBlank() && !isSubmitting,
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = Color(0xFF2AABEE),
-                                contentColor = Color.Black
-                            )
-                        ) {
-                            if (isSubmitting) {
-                                CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.Black, strokeWidth = 2.dp)
-                            } else {
-                                Text("SUBMIT CODE", color = Color.Black, fontWeight = FontWeight.Bold)
+
+                            if (!isCodeDone && authState is AuthState.WaitCode) {
+                                Button(
+                                    onClick = { viewModel.submitTelegramCode(code) },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    enabled = code.isNotBlank() && !isSubmitting,
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = Color(0xFF2AABEE),
+                                        contentColor = Color.Black
+                                    )
+                                ) {
+                                    if (isSubmitting) {
+                                        CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.Black, strokeWidth = 2.dp)
+                                    } else {
+                                        Text("SUBMIT CODE", color = Color.Black, fontWeight = FontWeight.Bold)
+                                    }
+                                }
                             }
                         }
-                    }
-                }
-                AuthState.WaitPassword -> {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedTextField(
-                            value = password,
-                            onValueChange = { password = it },
-                            label = { Text("2FA Password") },
-                            modifier = Modifier.fillMaxWidth(),
-                            enabled = !isSubmitting,
-                            visualTransformation = PasswordVisualTransformation(),
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Send),
-                            keyboardActions = KeyboardActions(onSend = { viewModel.submitTelegramPassword(password) }),
-                            singleLine = true,
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = Color(0xFF2AABEE),
-                                unfocusedBorderColor = Color.White.copy(0.1f)
+
+                        if (authState is AuthState.WaitPassword) {
+                            OutlinedTextField(
+                                value = password,
+                                onValueChange = { password = it },
+                                label = { Text("2FA Password") },
+                                modifier = Modifier.fillMaxWidth(),
+                                enabled = !isSubmitting,
+                                visualTransformation = PasswordVisualTransformation(),
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Send),
+                                keyboardActions = KeyboardActions(onSend = { viewModel.submitTelegramPassword(password) }),
+                                singleLine = true,
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = Color(0xFF2AABEE),
+                                    unfocusedBorderColor = Color.White.copy(0.1f)
+                                )
                             )
-                        )
-                        Button(
-                            onClick = { viewModel.submitTelegramPassword(password) },
-                            modifier = Modifier.fillMaxWidth(),
-                            enabled = password.isNotBlank() && !isSubmitting,
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = Color(0xFF2AABEE),
-                                contentColor = Color.Black
-                            )
-                        ) {
-                            if (isSubmitting) {
-                                CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.Black, strokeWidth = 2.dp)
-                            } else {
-                                Text("SUBMIT PASSWORD", color = Color.Black, fontWeight = FontWeight.Bold)
+                            Button(
+                                onClick = { viewModel.submitTelegramPassword(password) },
+                                modifier = Modifier.fillMaxWidth(),
+                                enabled = password.isNotBlank() && !isSubmitting,
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color(0xFF2AABEE),
+                                    contentColor = Color.Black
+                                )
+                            ) {
+                                if (isSubmitting) {
+                                    CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.Black, strokeWidth = 2.dp)
+                                } else {
+                                    Text("SUBMIT PASSWORD", color = Color.Black, fontWeight = FontWeight.Bold)
+                                }
                             }
-                        }
-                    }
-                }
-                AuthState.Ready -> {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Icon(Icons.Rounded.CheckCircle, null, tint = Color(0xFF4CAF50), modifier = Modifier.size(16.dp))
-                            Text("Authenticated", color = Color(0xFF4CAF50), fontSize = 14.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
             }
-        }
-
-        authError?.let {
-            Text(
-                text = it,
-                color = MaterialTheme.colorScheme.error,
-                fontSize = 12.sp,
-                modifier = Modifier.padding(top = 4.dp)
-            )
         }
     }
 }

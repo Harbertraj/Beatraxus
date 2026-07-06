@@ -433,14 +433,47 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
 
+        // Cloud Library Counts (Reactive to selection)
+        viewModelScope.launch(Dispatchers.Default) {
+            combine(
+                allSongs, 
+                _uiState.map { it.selectedCloudEmail }.distinctUntilChanged(),
+                _uiState.map { it.selectedTelegramChannelUrl }.distinctUntilChanged()
+            ) { songs, email, telegramUrl ->
+                songs.filter { s ->
+                    s.isCloud() && when {
+                        email != null -> s.driveAccountEmail == email
+                        telegramUrl != null -> s.telegramChannelUrl == telegramUrl
+                        else -> true
+                    }
+                }
+            }.collect { cloudSongs ->
+                _uiState.update {
+                    it.copy(
+                        cloudSongCount = cloudSongs.size,
+                        cloudAlbumCount = cloudSongs.map { s -> s.album }.toSet().size,
+                        cloudArtistCount = cloudSongs.map { s -> s.artist }.toSet().size
+                    )
+                }
+            }
+        }
+
         // Network observer
         viewModelScope.launch {
             networkObserver.isOnline.collect { online ->
                 _uiState.update { it.copy(isOnline = online) }
                 if (!online && _uiState.value.isCloudScanning) {
-                    _uiState.update { it.copy(errorMessage = "Sync paused: No internet connection") }
-                } else if (online && _uiState.value.errorMessage?.contains("Sync paused") == true) {
-                    _uiState.update { it.copy(errorMessage = "Network restored, continuing sync...") }
+                    val msg = "Sync paused: No internet connection"
+                    _uiState.update { it.copy(
+                        driveErrorMessage = if (it.selectedItemName != null) msg else it.driveErrorMessage,
+                        telegramSyncErrorMessage = if (it.selectedTelegramChannelUrl != null) msg else it.telegramSyncErrorMessage
+                    ) }
+                } else if (online && (_uiState.value.driveErrorMessage?.contains("Sync paused") == true || _uiState.value.telegramSyncErrorMessage?.contains("Sync paused") == true)) {
+                    val msg = "Network restored, continuing sync..."
+                    _uiState.update { it.copy(
+                        driveErrorMessage = if (it.driveErrorMessage?.contains("Sync paused") == true) msg else it.driveErrorMessage,
+                        telegramSyncErrorMessage = if (it.telegramSyncErrorMessage?.contains("Sync paused") == true) msg else it.telegramSyncErrorMessage
+                    ) }
                 }
             }
         }
@@ -645,9 +678,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
                         if (restoredPlaylist.isNotEmpty()) {
                             viewModelScope.launch {
-                                // Wait for service to be attached
-                                while (service == null) {
-                                    delay(100)
+                                // Wait for service and TDLib to be ready
+                                while (service == null || (restoredPlaylist.any { it.source == SongSource.TELEGRAM } && tdLibManager.authState.value !is AuthState.Ready)) {
+                                    delay(200)
                                 }
                                 
                                 // Ensure currently playing ID is set for cache exclusion BEFORE restore
@@ -665,8 +698,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         // Fallback for older versions that only saved last_song_id
                         dbSongs.find { it.id == lastSongId }?.let { lastSong ->
                             viewModelScope.launch {
-                                while (service == null) {
-                                    delay(100)
+                                while (service == null || (lastSong.source == SongSource.TELEGRAM && tdLibManager.authState.value !is AuthState.Ready)) {
+                                    delay(200)
                                 }
                                 cloudCacheManager.setCurrentlyPlayingId(lastSong.id)
                                 service?.prepareSong(lastSong, lastPos)
@@ -850,16 +883,16 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         if (networkType == com.beatflowy.app.model.NetworkType.ASK_MOBILE && 
             com.beatflowy.app.util.NetworkUtils.isMobileConnected(context) && 
             !com.beatflowy.app.util.NetworkUtils.isWifiConnected(context)) {
-            _uiState.update { it.copy(errorMessage = "Confirmation needed: Use mobile data for sync?") }
+            _uiState.update { it.copy(driveErrorMessage = "Confirmation needed: Use mobile data for sync?") }
             return
         }
 
         if (!com.beatflowy.app.util.NetworkUtils.isNetworkAllowed(context, networkType)) {
-            _uiState.update { it.copy(errorMessage = "Waiting for allowed network (Rule: $networkType)") }
+            _uiState.update { it.copy(driveErrorMessage = "Waiting for allowed network (Rule: $networkType)") }
             return
         }
 
-        _uiState.update { it.copy(isCloudScanning = true, scanProgress = 0f, errorMessage = null) }
+        _uiState.update { it.copy(isCloudScanning = true, scanProgress = 0f, driveErrorMessage = "Starting Drive scan...", showSyncStatusOnHome = true, isSyncFinishedRecently = false) }
         
         svc.runDriveScan(
             email = email,
@@ -894,13 +927,15 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 }
             },
             onComplete = { message ->
-                _uiState.update { it.copy(isCloudScanning = false, errorMessage = message, scanProgress = 1f, enrichmentStatus = null) }
+                _uiState.update { it.copy(isCloudScanning = false, driveErrorMessage = message, scanProgress = 1f, enrichmentStatus = null, isSyncFinishedRecently = true) }
+                startSyncDismissTimer()
             },
             onError = { error, intent ->
                 if (intent != null) {
-                    _uiState.update { it.copy(isCloudScanning = false, authRecoveryIntent = intent, enrichmentStatus = null) }
+                    _uiState.update { it.copy(isCloudScanning = false, authRecoveryIntent = intent, enrichmentStatus = null, showSyncStatusOnHome = false) }
                 } else {
-                    _uiState.update { it.copy(isCloudScanning = false, errorMessage = "Drive scan failed: $error", enrichmentStatus = null) }
+                    _uiState.update { it.copy(isCloudScanning = false, driveErrorMessage = "Drive scan failed: $error", enrichmentStatus = null, isSyncFinishedRecently = true) }
+                    startSyncDismissTimer()
                 }
             }
         )
@@ -1095,11 +1130,17 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun onPermissionDenied() {
         _uiState.update { it.copy(permissionDenied = true) }
+        // Even without permissions, we can load cloud library
+        loadLibrary()
     }
 
     fun playSong(song: Song) {
         val list = songs.value
         val index = list.indexOfFirst { it.id == song.id }
+        
+        // Save song ID immediately to prefs so it persists even if playback fails/service isn't ready
+        prefs?.edit()?.putString("last_song_id", song.id)?.apply()
+
         if (index >= 0) {
             // Check if we are already playing this song to handle resume correctly
             if (_uiState.value.currentSong?.id == song.id) {
@@ -1172,6 +1213,23 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             selectedItemName = null, // Clear drive account
             currentView = LibraryView.CLOUD,
             isSearchActive = false
+        ) }
+    }
+
+    fun setCloudAccount(email: String?) {
+        _uiState.update { it.copy(
+            selectedCloudEmail = email,
+            selectedItemName = email,
+            selectedTelegramChannelUrl = null
+        ) }
+    }
+
+    fun setCloudTelegram(url: String?) {
+        val normalizedUrl = url?.trim()?.removeSuffix("/")
+        _uiState.update { it.copy(
+            selectedTelegramChannelUrl = normalizedUrl,
+            selectedCloudEmail = null,
+            selectedItemName = null
         ) }
     }
 
@@ -2724,17 +2782,65 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         ) }
     }
 
+    fun showTelegramLoginForm() {
+        tdLibManager.ensureClientStarted()
+        _uiState.update { it.copy(showTelegramPhoneForm = true, telegramAuthError = null) }
+    }
+
+    fun restartTelegramAuth() {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isSubmittingTelegram = true) }
+            try {
+                // To change number, we need to log out or restart the client
+                // For simplicity and reliability with TDLib, we restart the client
+                tdLibManager.close()
+                delay(500)
+                tdLibManager.ensureClientStarted()
+                _uiState.update { it.copy(telegramAuthError = null) }
+            } catch (e: Exception) {
+                Log.e("TDLib", "Failed to restart auth", e)
+            } finally {
+                _uiState.update { it.copy(isSubmittingTelegram = false) }
+            }
+        }
+    }
+
+    fun resetTelegramLoginForm() {
+        if (tdLibManager.authState.value !is AuthState.Ready) {
+            _uiState.update { it.copy(showTelegramPhoneForm = false) }
+        }
+    }
+
     fun submitTelegramPhone(phone: String) {
         if (_uiState.value.isSubmittingTelegram) return
+        
+        val trimmedPhone = phone.trim()
+        
+        // Basic Validation
+        if (!trimmedPhone.startsWith("+")) {
+            _uiState.update { it.copy(telegramAuthError = "Phone number must include country code starting with '+' (e.g. +1234567890)") }
+            return
+        }
+        
+        if (trimmedPhone.length < 8) {
+            _uiState.update { it.copy(telegramAuthError = "Phone number is too short.") }
+            return
+        }
+
         viewModelScope.launch {
             _uiState.update { it.copy(isSubmittingTelegram = true, telegramAuthError = null) }
             try {
-                Log.d("TDLib", "Submitting phone number: $phone")
-                tdLibManager.submitPhoneNumber(phone)
+                Log.d("TDLib", "Submitting phone number: $trimmedPhone")
+                tdLibManager.submitPhoneNumber(trimmedPhone)
             } catch (e: Exception) {
                 Log.e("TDLib", "submitPhoneNumber failed", e)
-                _uiState.update { it.copy(telegramAuthError = e.message ?: "Failed to submit phone number") }
-                setErrorMessage(e.message)
+                val msg = when {
+                    e.message?.contains("PHONE_NUMBER_INVALID") == true -> "The phone number is incorrect. Please check and try again."
+                    e.message?.contains("TDLib error 400") == true -> "Incorrect phone number format."
+                    else -> e.message ?: "Failed to submit phone number"
+                }
+                _uiState.update { it.copy(telegramAuthError = msg) }
+                setErrorMessage(msg)
             } finally {
                 _uiState.update { it.copy(isSubmittingTelegram = false) }
             }
@@ -2743,15 +2849,26 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun submitTelegramCode(code: String) {
         if (_uiState.value.isSubmittingTelegram) return
+        val trimmedCode = code.trim()
+        if (trimmedCode.isBlank()) {
+            _uiState.update { it.copy(telegramAuthError = "Please enter the verification code.") }
+            return
+        }
+
         viewModelScope.launch {
             _uiState.update { it.copy(isSubmittingTelegram = true, telegramAuthError = null) }
             try {
-                Log.d("TDLib", "Submitting code: $code")
-                tdLibManager.submitCode(code)
+                Log.d("TDLib", "Submitting code: $trimmedCode")
+                tdLibManager.submitCode(trimmedCode)
             } catch (e: Exception) {
                 Log.e("TDLib", "submitCode failed", e)
-                _uiState.update { it.copy(telegramAuthError = "Incorrect code — please check and try again.") }
-                setErrorMessage(e.message)
+                val msg = when {
+                    e.message?.contains("PHONE_CODE_INVALID") == true -> "Incorrect code — please check and try again."
+                    e.message?.contains("PHONE_CODE_EXPIRED") == true -> "The verification code has expired. Please request a new one."
+                    else -> "Incorrect code or TDLib error: ${e.message}"
+                }
+                _uiState.update { it.copy(telegramAuthError = msg) }
+                setErrorMessage(msg)
             } finally {
                 _uiState.update { it.copy(isSubmittingTelegram = false) }
             }
@@ -2760,6 +2877,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun submitTelegramPassword(password: String) {
         if (_uiState.value.isSubmittingTelegram) return
+        if (password.isBlank()) {
+            _uiState.update { it.copy(telegramAuthError = "Please enter your 2FA password.") }
+            return
+        }
+
         viewModelScope.launch {
             _uiState.update { it.copy(isSubmittingTelegram = true, telegramAuthError = null) }
             try {
@@ -2767,8 +2889,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 tdLibManager.submitPassword(password)
             } catch (e: Exception) {
                 Log.e("TDLib", "submitPassword failed", e)
-                _uiState.update { it.copy(telegramAuthError = "Incorrect password — please try again.") }
-                setErrorMessage(e.message)
+                val msg = when {
+                    e.message?.contains("PASSWORD_HASH_INVALID") == true -> "Incorrect password — please try again."
+                    else -> "Incorrect password or TDLib error: ${e.message}"
+                }
+                _uiState.update { it.copy(telegramAuthError = msg) }
+                setErrorMessage(msg)
             } finally {
                 _uiState.update { it.copy(isSubmittingTelegram = false) }
             }
@@ -2783,7 +2909,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun syncTelegramChannel(url: String) {
         if (!tdLibManager.isReady()) {
-            _uiState.update { it.copy(errorMessage = "Telegram is not connected. Please log in first.") }
+            _uiState.update { it.copy(telegramSyncErrorMessage = "Telegram is not connected. Please log in first.") }
             return
         }
         
@@ -2791,7 +2917,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         
         enrichmentJob?.cancel()
         enrichmentJob = viewModelScope.launch(Dispatchers.IO) {
-            _uiState.update { it.copy(isCloudScanning = true, scanProgress = 0f, errorMessage = null) }
+            _uiState.update { it.copy(isCloudScanning = true, scanProgress = 0f, telegramSyncErrorMessage = "Connecting...", showSyncStatusOnHome = true, isSyncFinishedRecently = false) }
             try {
                 val channelName = normalizedUrl.substringAfterLast("/")
                 Log.d("PlayerViewModel", "Starting Telegram sync for: $normalizedUrl")
@@ -2840,7 +2966,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 // 2. Fast scan messages
                 Log.d("PlayerViewModel", "Scanning Telegram channel: $normalizedUrl")
                 val songs = telegramChannelRepository.scanChannel(tdLibManager, cloudCacheManager, normalizedUrl, existingSongs) { progress ->
-                    _uiState.update { it.copy(scanProgress = progress * 0.1f) } // First 10% is scanning
+                    _uiState.update { it.copy(scanProgress = progress * 0.1f, telegramSyncErrorMessage = "Scanning messages...") } // First 10% is scanning
                 }
                 
                 Log.d("PlayerViewModel", "Scan complete. Found ${songs.size} songs.")
@@ -2870,7 +2996,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         (unchanged + songs).sortedBy { it.title }
                     }
                     
-                    _uiState.update { it.copy(errorMessage = "Found ${songs.size} songs. Starting enrichment...") }
+                    _uiState.update { it.copy(telegramSyncErrorMessage = "Found ${songs.size} songs. Starting enrichment...") }
 
                     // 3. Deep Enrichment for new songs (fetch duration, bitrate, album art)
                     val toEnrich = songs.filter { !it.isEnriched }
@@ -2912,7 +3038,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         }.awaitAll()
                     }
 
-                    _uiState.update { it.copy(errorMessage = "Synced ${songs.size} songs from $channelName", enrichmentStatus = null) }
+                    _uiState.update { it.copy(telegramSyncErrorMessage = "Synced ${songs.size} songs from $channelName", enrichmentStatus = null, isSyncFinishedRecently = true) }
+                    startSyncDismissTimer()
                     service?.updateEnrichingProgress(1.0f, toEnrich.size, toEnrich.size)
                 } else {
                     Log.d("PlayerViewModel", "No songs found for Telegram channel: $normalizedUrl")
@@ -2923,12 +3050,14 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         }
                         _songs.update { current -> current.filterNot { it.telegramChannelUrl == normalizedUrl } }
                     }
-                    _uiState.update { it.copy(errorMessage = "No songs found in $channelName") }
+                    _uiState.update { it.copy(telegramSyncErrorMessage = "No songs found in $channelName", isSyncFinishedRecently = true) }
+                    startSyncDismissTimer()
                 }
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 Log.e("PlayerViewModel", "Telegram sync failed", e)
-                _uiState.update { it.copy(errorMessage = "Sync failed: ${e.message}", enrichmentStatus = null) }
+                _uiState.update { it.copy(telegramSyncErrorMessage = "Sync failed: ${e.message}", enrichmentStatus = null, isSyncFinishedRecently = true) }
+                startSyncDismissTimer()
             } finally {
                 _uiState.update { it.copy(isCloudScanning = false) }
             }
@@ -3033,6 +3162,13 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         const val FRAME_TICK_MS = 8L // Reduced from 16ms to 8ms for 120Hz smoothness
         const val KEY_OUTPUT_MODE = "output_mode"
         const val KEY_CUSTOM_EQ_PRESETS = "custom_eq_presets"
+    }
+
+    private fun startSyncDismissTimer() {
+        viewModelScope.launch {
+            delay(5000)
+            _uiState.update { it.copy(showSyncStatusOnHome = false, isSyncFinishedRecently = false) }
+        }
     }
 
     private fun updateLibraryCounts(songs: List<Song>) {

@@ -1,5 +1,6 @@
 package com.beatflowy.app.service
 
+import com.beatflowy.app.utils.ImageUtils
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -245,6 +246,9 @@ class AudioPlaybackService : Service() {
                         updateUpcomingSongs()
 
                         albumArtLoadJob?.cancel()
+                        currentAlbumArt = null
+                        currentAlbumArtSongId = null
+                        updateNotification()
                         albumArtLoadJob = serviceScope.launch {
                             loadAlbumArt(state.currentSong)
                             updateNotification()
@@ -1270,8 +1274,9 @@ class AudioPlaybackService : Service() {
             if (currentAlbumArt != null) {
                 builder.setLargeIcon(currentAlbumArt)
             } else {
-                builder.setLargeIcon(BitmapFactory.decodeResource(resources, R.drawable.ic_album_default))
+                builder.setLargeIcon(BitmapFactory.decodeResource(resources, ImageUtils.getDefaultAlbumArtRes()))
             }
+
         } else {
             builder.setContentTitle("Beatraxus")
             builder.setContentText("No song playing")

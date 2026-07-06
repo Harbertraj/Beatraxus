@@ -50,12 +50,21 @@ internal class MediaCodecAudioDecoder(
                     extractor.setDataSource(source, headers)
                 }
             } else {
+                // For local files, try multiple ways to set the data source.
+                // FileDescriptor is generally more robust on modern Android versions.
                 try {
-                    extractor.setDataSource(context, request.song.uri, null)
-                } catch (e: Exception) {
                     context.contentResolver.openFileDescriptor(request.song.uri, "r")?.use { pfd ->
                         extractor.setDataSource(pfd.fileDescriptor)
-                    } ?: throw e
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to set data source via PFD for ${request.song.uri}: ${e.message}")
+                    try {
+                        // Fallback to standard Context/Uri method
+                        extractor.setDataSource(context, request.song.uri, null)
+                    } catch (e2: Exception) {
+                        Log.e(TAG, "Failed to set data source via Context/Uri for ${request.song.uri}", e2)
+                        throw e2
+                    }
                 }
             }
 
