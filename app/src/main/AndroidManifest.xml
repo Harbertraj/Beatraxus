@@ -48,7 +48,7 @@
 
         <meta-data
             android:name="com.google.android.gms.cast.framework.OPTIONS_PROVIDER_CLASS_NAME"
-            android:value="com.beatflowy.app.CastOptionsProvider" />
+            android:value="com.beatraxus.app.CastOptionsProvider" />
 
         <activity
             android:name=".cast.CustomExpandedControllerActivity"
@@ -70,7 +70,7 @@
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="beatflowy" android:host="lastfm" />
+                <data android:scheme="beatraxus" android:host="lastfm" />
             </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
@@ -95,7 +95,7 @@
             android:name=".service.AudioPlaybackService"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback|dataSync"
-            android:stopWithTask="false">
+            android:stopWithTask="true">
             <intent-filter>
                 <action android:name="android.intent.action.MEDIA_BUTTON" />
             </intent-filter>

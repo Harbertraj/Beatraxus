@@ -14,7 +14,7 @@ Beatraxus uses a multi-layered approach to handle album artwork:
 
 ## 1. MUSIC DATA MODEL
 
-**File:** `app/src/main/java/com/beatflowy/app/model/Song.kt`
+**File:** `app/src/main/java/com/beatraxus/app/model/Song.kt`
 
 ### Song Data Class Fields (Relevant to Album Art):
 ```kotlin
@@ -45,7 +45,7 @@ data class Song(
 
 ## 2. ALBUM ART EXTRACTION & CACHING
 
-**Primary File:** `app/src/main/java/com/beatflowy/app/repository/MusicRepository.kt`
+**Primary File:** `app/src/main/java/com/beatraxus/app/repository/MusicRepository.kt`
 
 ### Extraction Flow (scanAudioFiles):
 
@@ -191,7 +191,7 @@ AsyncImage(
 
 ### 5.1 AlbumArtImage Component (Reusable)
 
-**File:** `app/src/main/java/com/beatflowy/app/ui/components/AlbumArt.kt`
+**File:** `app/src/main/java/com/beatraxus/app/ui/components/AlbumArt.kt`
 
 ```kotlin
 @Composable
@@ -219,7 +219,7 @@ fun AlbumArtImage(
 
 ### 5.2 NowPlayingScreen (Full-Size Display)
 
-**File:** `app/src/main/java/com/beatflowy/app/ui/screens/NowPlayingScreen.kt`
+**File:** `app/src/main/java/com/beatraxus/app/ui/screens/NowPlayingScreen.kt`
 
 **Direct AsyncImage Usage** (not AlbumArtImage component):
 ```kotlin
@@ -248,7 +248,7 @@ AsyncImage(
 
 ## 6. MUSIC WIDGETS (Small/Medium/Large)
 
-**File:** `app/src/main/java/com/beatflowy/app/widget/MusicWidgets.kt`
+**File:** `app/src/main/java/com/beatraxus/app/widget/MusicWidgets.kt`
 
 ### Widget Types:
 - **Small**: 48×48 dp album art thumbnail
@@ -304,7 +304,7 @@ private suspend fun getImageProvider(context: Context, uriString: String): Image
 
 ## 7. NOTIFICATION ALBUM ART
 
-**File:** `app/src/main/java/com/beatflowy/app/service/AudioPlaybackService.kt`
+**File:** `app/src/main/java/com/beatraxus/app/service/AudioPlaybackService.kt`
 
 ### LoadAlbumArt Function:
 

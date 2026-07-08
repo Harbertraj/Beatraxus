@@ -18,7 +18,7 @@ add_subdirectory(soxr)
 add_library(
     beatraxus_dsp
     SHARED
-    PowerampStyleDSP.cpp
+    SpecialDSP.cpp
 )
 
 # ✅ Define flag for C++

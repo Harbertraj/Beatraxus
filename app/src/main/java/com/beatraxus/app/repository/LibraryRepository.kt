@@ -1,0 +1,14 @@
+package com.beatraxus.app.repository
+
+import com.beatraxus.app.model.Song
+import kotlinx.coroutines.flow.Flow
+
+interface LibraryRepository {
+    fun getSongs(): Flow<List<Song>>
+    fun getAlbums(): Flow<List<Triple<String, String, android.net.Uri?>>>
+    fun getArtists(): Flow<List<Triple<String, String, android.net.Uri?>>>
+    fun getYears(): Flow<List<Triple<String, String, android.net.Uri?>>>
+    fun getGenres(): Flow<List<Triple<String, String, android.net.Uri?>>>
+    fun getMoods(): Flow<List<Triple<String, String, android.net.Uri?>>>
+    fun getLanguages(): Flow<List<Triple<String, String, android.net.Uri?>>>
+}

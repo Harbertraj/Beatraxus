@@ -61,11 +61,11 @@ Beatraxus is a high-performance Android music player designed for audiophiles. I
 ## Project Structure
 
 - `:app`: Main application module.
-  - `com.beatflowy.app.engine`: Core audio processing logic (`Resampler`, `Equalizer`, `AudioEngine`, `OutputManager`).
-  - `com.beatflowy.app.ui.screens`: Main application screens (`MainScreen`, `EqualizerScreen`).
-  - `com.beatflowy.app.ui.components`: Reusable UI components (`NowPlayingSection`, `AudioInfoBar`, `SongListItem`).
-  - `com.beatflowy.app.ui.theme`: Design system (Colors, Type, Theme).
-  - `com.beatflowy.app.viewmodel`: State management and business logic.
+  - `com.beatraxus.app.engine`: Core audio processing logic (`Resampler`, `Equalizer`, `AudioEngine`, `OutputManager`).
+  - `com.beatraxus.app.ui.screens`: Main application screens (`MainScreen`, `EqualizerScreen`).
+  - `com.beatraxus.app.ui.components`: Reusable UI components (`NowPlayingSection`, `AudioInfoBar`, `SongListItem`).
+  - `com.beatraxus.app.ui.theme`: Design system (Colors, Type, Theme).
+  - `com.beatraxus.app.viewmodel`: State management and business logic.
 
 ## License
 

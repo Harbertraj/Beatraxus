@@ -5,26 +5,26 @@
 # ══════════════════════════════════════════════════════════════════════════════
 
 # DSP engine — must not be renamed (JNI + math-critical)
--keep class com.beatflowy.app.engine.** { *; }
+-keep class com.beatraxus.app.engine.** { *; }
 
 # Data models — used by Room, Gson, Retrofit; must survive reflection
--keep class com.beatflowy.app.model.** { *; }
+-keep class com.beatraxus.app.model.** { *; }
 
 # Services — bound by Android OS via intent/component name
--keep class com.beatflowy.app.service.** { *; }
+-keep class com.beatraxus.app.service.** { *; }
 
 # Repository package (Keep all for Lyrics/Cloud logic and reflection)
--keep class com.beatflowy.app.repository.** { *; }
--keepclassmembers class com.beatflowy.app.repository.** { *; }
+-keep class com.beatraxus.app.repository.** { *; }
+-keepclassmembers class com.beatraxus.app.repository.** { *; }
 
 # Drive package
--keep class com.beatflowy.app.drive.** { *; }
--keepclassmembers class com.beatflowy.app.drive.** { *; }
+-keep class com.beatraxus.app.drive.** { *; }
+-keepclassmembers class com.beatraxus.app.drive.** { *; }
 
 # Application / ViewModel / top-level classes
--keep class com.beatflowy.app.BeatraxusApplication { *; }
--keep class com.beatflowy.app.viewmodel.** { *; }
--keep class com.beatflowy.app.utils.** { *; }
+-keep class com.beatraxus.app.BeatraxusApplication { *; }
+-keep class com.beatraxus.app.viewmodel.** { *; }
+-keep class com.beatraxus.app.utils.** { *; }
 
 # Kotlin Coroutines
 -keep class kotlinx.coroutines.** { *; }
@@ -184,33 +184,12 @@
 # ══════════════════════════════════════════════════════════════════════════════
 # ONLINE LYRICS MODELS — MUST SURVIVE REFLECTION
 # ══════════════════════════════════════════════════════════════════════════════
--keep class com.beatflowy.app.repository.LrcLibResponse { *; }
--keep interface com.beatflowy.app.repository.LrcLibService { *; }
--keep class com.beatflowy.app.repository.LyricsResult { *; }
--keep class com.beatflowy.app.repository.LyricsType { *; }
--keepclassmembers enum com.beatflowy.app.repository.LyricsType { *; }
--keep class com.beatflowy.app.model.LrcLine { *; }
-
-# TDLIB (Telegram Library)
--keep class org.drinkless.tdlib.** { *; }
-
-# ══════════════════════════════════════════════════════════════════════════════
-# ADDITIONAL GOOGLE / FIREBASE / CREDENTIALS
-# ══════════════════════════════════════════════════════════════════════════════
-
--keep class com.google.android.gms.** { *; }
--dontwarn com.google.android.gms.**
-
-# Google Sign-In / Play Services Auth / Sign-in
--keep class com.google.android.gms.signin.** { *; }
-
-# Credential Manager / Identity Services
--keep class androidx.credentials.** { *; }
--keep class com.google.android.libraries.identity.googleid.** { *; }
-
-# Google API Client JSON models
--keep class * extends com.google.api.client.json.GenericJson { *; }
--keep class com.google.api.services.** { *; }
+-keep class com.beatraxus.app.repository.LrcLibResponse { *; }
+-keep interface com.beatraxus.app.repository.LrcLibService { *; }
+-keep class com.beatraxus.app.repository.LyricsResult { *; }
+-keep class com.beatraxus.app.repository.LyricsType { *; }
+-keepclassmembers enum com.beatraxus.app.repository.LyricsType { *; }
+-keep class com.beatraxus.app.model.LrcLine { *; }
 
 # TDLIB (Telegram Library)
 -keep class org.drinkless.tdlib.** { *; }

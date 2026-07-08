@@ -17,12 +17,12 @@ if (localPropertiesFile.exists()) {
 }
 
 configure<ApplicationExtension> {
-    namespace = "com.beatflowy.app"
+    namespace = "com.beatraxus.app"
     compileSdk = 35
     ndkVersion = "26.1.10909125"
 
     defaultConfig {
-        applicationId = "com.beatflowy.app"
+        applicationId = "com.beatraxus.app"
         minSdk = 26
         targetSdk = 35
         versionCode = 8

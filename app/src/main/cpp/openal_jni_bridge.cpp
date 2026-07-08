@@ -28,7 +28,7 @@ namespace {
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
-Java_com_beatflowy_app_engine_OpenAlAudioEngine_nativeInit(JNIEnv*, jobject) {
+Java_com_beatraxus_app_engine_OpenAlAudioEngine_nativeInit(JNIEnv*, jobject) {
     // ALC_HRTF_SOFT = TRUE forces HRTF rendering on for this device, rather
     // than leaving it to alsoft.conf / auto-detection.
     ALCint attrs[] = {
@@ -72,7 +72,7 @@ Java_com_beatflowy_app_engine_OpenAlAudioEngine_nativeInit(JNIEnv*, jobject) {
 // Load a mono 16-bit PCM buffer (e.g. decoded from one of your source
 // assets) at the given sample rate. Re-callable to swap clips.
 extern "C" JNIEXPORT void JNICALL
-Java_com_beatflowy_app_engine_OpenAlAudioEngine_nativeLoadMonoPcm16(
+Java_com_beatraxus_app_engine_OpenAlAudioEngine_nativeLoadMonoPcm16(
         JNIEnv* env, jobject, jshortArray pcm, jint sampleRate) {
     jsize len = env->GetArrayLength(pcm);
     std::vector<int16_t> samples(len);
@@ -89,29 +89,29 @@ Java_com_beatflowy_app_engine_OpenAlAudioEngine_nativeLoadMonoPcm16(
 // For a simple left/right/front "virtual speaker" preset, you mostly just
 // drive x (and leave y=0, z=small negative to keep it "in front").
 extern "C" JNIEXPORT void JNICALL
-Java_com_beatflowy_app_engine_OpenAlAudioEngine_nativeSetSourcePosition(
+Java_com_beatraxus_app_engine_OpenAlAudioEngine_nativeSetSourcePosition(
         JNIEnv*, jobject, jfloat x, jfloat y, jfloat z) {
     alSource3f(g_source, AL_POSITION, x, y, z);
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_beatflowy_app_engine_OpenAlAudioEngine_nativePlay(JNIEnv*, jobject) {
+Java_com_beatraxus_app_engine_OpenAlAudioEngine_nativePlay(JNIEnv*, jobject) {
     alSourcePlay(g_source);
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_beatflowy_app_engine_OpenAlAudioEngine_nativeStop(JNIEnv*, jobject) {
+Java_com_beatraxus_app_engine_OpenAlAudioEngine_nativeStop(JNIEnv*, jobject) {
     alSourceStop(g_source);
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_beatflowy_app_engine_OpenAlAudioEngine_nativeSetLooping(
+Java_com_beatraxus_app_engine_OpenAlAudioEngine_nativeSetLooping(
         JNIEnv*, jobject, jboolean loop) {
     alSourcei(g_source, AL_LOOPING, loop ? AL_TRUE : AL_FALSE);
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_beatflowy_app_engine_OpenAlAudioEngine_nativeShutdown(JNIEnv*, jobject) {
+Java_com_beatraxus_app_engine_OpenAlAudioEngine_nativeShutdown(JNIEnv*, jobject) {
     if (g_source) { alDeleteSources(1, &g_source); g_source = 0; }
     if (g_buffer) { alDeleteBuffers(1, &g_buffer); g_buffer = 0; }
     if (g_context) {
