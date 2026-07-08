@@ -179,6 +179,18 @@ class MainActivity : FragmentActivity() {
                         uri.toString().endsWith(".wav", true) || 
                         uri.toString().endsWith(".m4a", true)) {
                         viewModel.playExternalUri(uri)
+                    } else if (type == "application/json" || uri.toString().endsWith(".json", true)) {
+                        try {
+                            contentResolver.openInputStream(uri)?.use { input ->
+                                val json = input.bufferedReader().readText()
+                                val presets = com.beatflowy.app.utils.PresetExporter.parseJson(json)
+                                if (presets != null && presets.isNotEmpty()) {
+                                    viewModel.importEqPresets(presets)
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.e("MainActivity", "JSON import failed", e)
+                        }
                     }
                 }
             }

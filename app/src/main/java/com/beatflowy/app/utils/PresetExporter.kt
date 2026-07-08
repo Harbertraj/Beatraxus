@@ -26,6 +26,11 @@ data class JsonBand(
 object PresetExporter {
     private val gson = Gson()
 
+    private val standardFreqs = listOf(31.25f, 62.5f, 125f, 250f, 500f, 1000f, 2000f, 4000f, 8000f, 16000f)
+
+    private fun snapToStandardBand(freq: Float): Float =
+        standardFreqs.minByOrNull { kotlin.math.abs(it - freq) } ?: freq
+
     fun exportToCurrentJson(name: String, preamp: Float, bands: List<ParametricEqBand>): String {
         val jsonBands = bands.map { band ->
             JsonBand(
@@ -60,7 +65,7 @@ object PresetExporter {
                         ParametricEqBand(
                             id = index,
                             enabled = true,
-                            frequencyHz = jb.frequency.toFloat(),
+                            frequencyHz = snapToStandardBand(jb.frequency.toFloat()),
                             gainDb = jb.gain,
                             q = if (jb.q == 0f) 1.41f else jb.q,
                             type = when (jb.type) {
@@ -69,7 +74,12 @@ object PresetExporter {
                                 else -> EqBandType.PEAKING
                             }
                         )
-                    }
+                    }.groupBy { it.frequencyHz }
+                        .map { (_, group) ->
+                            group.first().copy(gainDb = group.map { it.gainDb }.average().toFloat())
+                        }
+                        .sortedBy { it.frequencyHz }
+                        .mapIndexed { i, band -> band.copy(id = i) }
                 )
             }
         } catch (e: Exception) {
