@@ -164,7 +164,7 @@ class LyricsRepository(private val context: Context, private val database: AppDa
         }
     }
 
-    suspend fun fetchOnline(song: Song): LyricsLoadResult? {
+    suspend fun fetchOnline(song: Song, persist: Boolean = true): LyricsLoadResult? {
         val existingOffset = lyricsDao.getLyrics(song.id)?.syncOffset ?: 0L
         val result = onlineSource.fetchLyrics(song.artist, song.title, song.album, song.durationMs)
         
@@ -179,14 +179,17 @@ class LyricsRepository(private val context: Context, private val database: AppDa
         )
 
         cache[song.id] = res
-        saveToDbIfBetter(song.id, res)
-        
-        // Auto-save to file metadata if we fetched online lyrics
-        // and the song doesn't already have them in its metadata
-        if (song.lyrics.isNullOrBlank()) {
-            embeddedSource.saveLyrics(song.uri, result.content)
-            // Also update the songs table so the app knows it now has lyrics
-            songDao.updateLyrics(song.id, result.content)
+
+        if (persist) {
+            saveToDbIfBetter(song.id, res)
+            
+            // Auto-save to file metadata if we fetched online lyrics
+            // and the song doesn't already have them in its metadata
+            if (song.lyrics.isNullOrBlank()) {
+                embeddedSource.saveLyrics(song.uri, result.content)
+                // Also update the songs table so the app knows it now has lyrics
+                songDao.updateLyrics(song.id, result.content)
+            }
         }
         
         return res
@@ -203,7 +206,7 @@ class LyricsRepository(private val context: Context, private val database: AppDa
             
             // If not, try to fetch online and cache/save
             Log.d(TAG, "Preloading lyrics for ${song.title}...")
-            fetchOnline(song)
+            fetchOnline(song, persist = false)
         }
     }
 
