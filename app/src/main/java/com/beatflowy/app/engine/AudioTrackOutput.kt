@@ -46,7 +46,7 @@ class AudioTrackOutput(
     private var dvcMode = DvcMode.DAC
     private var dvcLevel = 1f
     @Volatile private var ditherEnabled = true
-    @Volatile private var ditherType = 1
+    @Volatile private var ditherType = 2
     private var ditherLastErr = 0f
     private var ditherLastNoise = 0f
     private var ditherState0 = 0x1234ABCD   

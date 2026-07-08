@@ -48,6 +48,8 @@ import com.beatflowy.app.widget.MusicWidgetLarge
 import com.beatflowy.app.widget.MusicWidgetMedium
 import com.beatflowy.app.widget.MusicWidgetSmall
 import com.beatflowy.app.repository.DspPreferences
+import coil.imageLoader
+import coil.size.Precision
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import com.beatflowy.app.drive.DrivePlaybackHelper
@@ -83,13 +85,14 @@ class AudioPlaybackService : Service() {
     private var originalPlaylist: List<Song> = emptyList()
     private var playlist: List<Song> = emptyList()
     private var currentIndex: Int = -1
+    private var hasRestoredFromDisk: Boolean = false
 
     fun getPlaylist(): List<Song> = playlist
     fun getOriginalPlaylist(): List<Song> = originalPlaylist
     fun getCurrentIndex(): Int = currentIndex
 
     fun restorePlaylist(playlist: List<Song>, originalPlaylist: List<Song>, currentIndex: Int, positionMs: Long) {
-        if (this.playlist.isNotEmpty()) return
+        if (hasRestoredFromDisk) return
         
         this.playlist = playlist
         this.originalPlaylist = originalPlaylist
@@ -99,7 +102,13 @@ class AudioPlaybackService : Service() {
         }
         updateUpcomingSongs()
         updateNotification()
-        saveState()
+        
+        // Use sync=true here to ensure that as soon as the app successfully restores the queue,
+        // it's persisted. This helps prevent "losing" the restored state if the app crashes 
+        // or is killed shortly after launch.
+        saveState(sync = true)
+
+        hasRestoredFromDisk = true
     }
 
     private val audioDeviceCallback = object : AudioDeviceCallback() {
@@ -310,34 +319,29 @@ class AudioPlaybackService : Service() {
         // but we already do it at 50% threshold above which is Last.fm standard.
     }
 
+    private val defaultArtCache = mutableMapOf<Int, Bitmap>()
+    private fun getDefaultAlbumArt(): Bitmap {
+        val res = ImageUtils.getDefaultAlbumArtRes()
+        return defaultArtCache.getOrPut(res) {
+            BitmapFactory.decodeResource(resources, res)
+        }
+    }
+
     private suspend fun loadAlbumArt(song: Song?) {
         if (song?.id == currentAlbumArtSongId && currentAlbumArt != null) return
         val loaded = withContext(Dispatchers.IO) {
             val uri = song?.albumArtUri ?: return@withContext null
             try {
-                if (uri.scheme?.startsWith("http") == true) {
-                    val loader = ImageLoader(this@AudioPlaybackService)
-                    val request = ImageRequest.Builder(this@AudioPlaybackService)
-                        .data(uri)
-                        .size(500)
-                        .allowHardware(false)
-                        .build()
-                    val result = loader.execute(request)
-                    if (result is SuccessResult) {
-                        (result.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
-                    } else null
-                } else {
-                    contentResolver.openInputStream(uri)?.use { input ->
-                        val original = BitmapFactory.decodeStream(input)
-                        if (original != null) {
-                            val size = 500
-                            val ratio = original.width.toFloat() / original.height.toFloat()
-                            val w = if (ratio > 1) size else (size * ratio).toInt()
-                            val h = if (ratio > 1) (size / ratio).toInt() else size
-                            Bitmap.createScaledBitmap(original, w, h, true)
-                        } else null
-                    }
-                }
+                val request = ImageRequest.Builder(this@AudioPlaybackService)
+                    .data(uri)
+                    .size(500)
+                    .precision(Precision.INEXACT)
+                    .allowHardware(false)
+                    .build()
+                val result = this@AudioPlaybackService.imageLoader.execute(request)
+                if (result is SuccessResult) {
+                    (result.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
+                } else null
             } catch (e: Exception) {
                 null
             }
@@ -358,10 +362,12 @@ class AudioPlaybackService : Service() {
                 // Preload using Coil for remote/all uris to ensure it's in cache for UI
                 val request = ImageRequest.Builder(this@AudioPlaybackService)
                     .data(uri)
+                    .size(800) // Match UI size for memory cache hit
+                    .precision(Precision.INEXACT)
                     .diskCachePolicy(CachePolicy.ENABLED)
                     .memoryCachePolicy(CachePolicy.ENABLED)
                     .build()
-                ImageLoader(this@AudioPlaybackService).enqueue(request)
+                this@AudioPlaybackService.imageLoader.enqueue(request)
             } catch (e: Exception) {
                 // Ignore preloading errors
             }
@@ -1274,7 +1280,7 @@ class AudioPlaybackService : Service() {
             if (currentAlbumArt != null) {
                 builder.setLargeIcon(currentAlbumArt)
             } else {
-                builder.setLargeIcon(BitmapFactory.decodeResource(resources, ImageUtils.getDefaultAlbumArtRes()))
+                builder.setLargeIcon(getDefaultAlbumArt())
             }
 
         } else {
@@ -1360,47 +1366,78 @@ class AudioPlaybackService : Service() {
         }
     }
 
-    private fun saveState() {
+    private fun saveState(sync: Boolean = false) {
         val prefs = getSharedPreferences("beatraxus", Context.MODE_PRIVATE)
         val currentSong = playlist.getOrNull(currentIndex)
-        prefs.edit().apply {
-            if (playlist.isNotEmpty()) {
-                putString("last_queue_ids", playlist.joinToString(",") { it.id })
-                putString("last_original_queue_ids", originalPlaylist.joinToString(",") { it.id })
-                putInt("last_queue_index", currentIndex)
-            }
+        val editor = prefs.edit()
+        
+        // Ensure we only save the queue if we have valid data and a valid index.
+        // This prevents overwriting a good saved state with an incomplete/initial one.
+        if (playlist.isNotEmpty() && currentIndex in playlist.indices) {
+            editor.putString("last_queue_ids", playlist.joinToString(",") { it.id })
+            editor.putString("last_original_queue_ids", originalPlaylist.joinToString(",") { it.id })
+            editor.putInt("last_queue_index", currentIndex)
+            
             if (currentSong != null) {
-                putString("last_song_id", currentSong.id)
-                putLong("last_song_pos", engine.currentPositionMs())
+                editor.putString("last_song_id", currentSong.id)
+                editor.putLong("last_song_pos", engine.currentPositionMs())
             }
-            apply()
+        }
+        
+        if (sync) {
+            editor.commit()
+        } else {
+            editor.apply()
         }
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
-        super.onTaskRemoved(rootIntent)
-        saveState()
-        
         val currentSong = engine.playbackStateFlow.value.currentSong
         val isPlaying = engine.playbackStateFlow.value.isPlaying
         
-        // Stop playback and release engine to ensure hardware resources are freed
-        engine.stop()
-        engine.release()
-        
-        // Clear all temporary playback caches (GDrive and Telegram cached copies)
-        // If we were playing, exclude the current song so it remains cached for immediate resume
-        if (isPlaying && currentSong != null) {
-            cloudCacheManager.clearAllPlaybackCaches(excludeId = currentSong.id)
-        } else if (!isPlaying) {
-            cloudCacheManager.clearAllPlaybackCaches()
+        // Save state synchronously before the process can be killed.
+        // We use runBlocking(NonCancellable) to ensure these critical cleanup tasks
+        // are completed even if the system is aggressively killing the process.
+        runBlocking(NonCancellable) {
+            saveState(sync = true)
+            
+            // Stop playback and release engine to ensure hardware resources are freed.
+            // We don't want the engine to be left in a hanging state.
+            engine.stop()
+            
+            // Give the engine a very brief moment to actually stop if it's on a background thread
+            delay(100)
+            
+            engine.release()
+            
+            // Clear all temporary playback caches (GDrive and Telegram cached copies)
+            // If we were playing, exclude the current song so it remains cached for immediate resume
+            if (isPlaying && currentSong != null) {
+                cloudCacheManager.clearAllPlaybackCaches(excludeId = currentSong.id)
+            } else if (!isPlaying) {
+                cloudCacheManager.clearAllPlaybackCaches()
+            }
         }
+
+        // Reset internal state for potential service reuse/restart
+        hasRestoredFromDisk = false
+        playlist = emptyList()
+        originalPlaylist = emptyList()
+        currentIndex = -1
         
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
+        
+        super.onTaskRemoved(rootIntent)
     }
 
     override fun onDestroy() {
+        // Safety reset in case onTaskRemoved was skipped
+        hasRestoredFromDisk = false
+        playlist = emptyList()
+        originalPlaylist = emptyList()
+        currentIndex = -1
+
         val prefs = getSharedPreferences("beatraxus", Context.MODE_PRIVATE)
         prefs.unregisterOnSharedPreferenceChangeListener(prefListener)
 

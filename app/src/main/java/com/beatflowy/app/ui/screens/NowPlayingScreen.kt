@@ -58,8 +58,10 @@ import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
 import coil.request.CachePolicy
 import coil.request.ImageRequest
-import coil.ImageLoader
 import coil.request.SuccessResult
+import coil.ImageLoader
+import coil.imageLoader
+import coil.size.Precision
 import android.graphics.drawable.BitmapDrawable
 import android.net.Uri
 import androidx.palette.graphics.Palette
@@ -123,16 +125,21 @@ fun NowPlayingScreen(
 
     val context = LocalContext.current
     val dominantColorsCache = remember { mutableStateMapOf<String, Color>() }
-    val currentDominantColor = dominantColorsCache[song.id] ?: Color(0xFF2C2C2C)
+    val currentDominantColor by animateColorAsState(
+        targetValue = dominantColorsCache[song.id] ?: Color(0xFF2C2C2C),
+        animationSpec = tween(600),
+        label = "dominantColor"
+    )
     
     LaunchedEffect(song.id, song.albumArtUri) {
         if (dominantColorsCache.containsKey(song.id)) return@LaunchedEffect
         
-        val loader = ImageLoader(context)
+        val loader = context.imageLoader
         val request = ImageRequest.Builder(context)
             .data(song.albumArtUri)
             .allowHardware(false)
             .size(100, 100)
+            .precision(Precision.INEXACT)
             .build()
             
         val result = (loader.execute(request) as? SuccessResult)?.drawable
@@ -176,18 +183,21 @@ fun NowPlayingScreen(
     ) {
         // Vibrant Background
         AnimatedContent(
-            targetState = song,
+            targetState = song.id to song.albumArtUri,
             transitionSpec = {
-                fadeIn(tween(700)).togetherWith(fadeOut(tween(700)))
+                fadeIn(tween(300)).togetherWith(fadeOut(tween(300)))
             },
             label = "backgroundTransition",
             modifier = Modifier.fillMaxSize()
-        ) { targetSong ->
+        ) { (_, targetArtUri) ->
             AsyncImage(
                 model = ImageRequest.Builder(LocalContext.current)
-                    .data(targetSong.albumArtUri)
+                    .data(targetArtUri)
                     .diskCachePolicy(CachePolicy.ENABLED)
                     .memoryCachePolicy(CachePolicy.ENABLED)
+                    .size(256, 256) // Faster decode for background
+                    .precision(Precision.INEXACT)
+                    .crossfade(true)
                     .error(ImageUtils.getDefaultAlbumArtRes())
                     .fallback(ImageUtils.getDefaultAlbumArtRes())
                     .build(),
@@ -202,7 +212,7 @@ fun NowPlayingScreen(
                     }
                     .then(
                         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
-                            Modifier.blur(150.dp)
+                            Modifier.blur(40.dp) // Further reduced
                         } else {
                             Modifier
                         }
@@ -432,18 +442,21 @@ fun NowPlayingScreen(
                                         )
                                 ) {
                                     AnimatedContent(
-                                        targetState = song,
+                                        targetState = song.id to song.albumArtUri,
                                         transitionSpec = {
-                                            fadeIn(tween(400)).togetherWith(fadeOut(tween(400)))
+                                            fadeIn(tween(150)).togetherWith(fadeOut(tween(150)))
                                         },
                                         label = "albumArtTransition",
                                         modifier = Modifier.fillMaxSize()
-                                    ) { targetSong ->
+                                    ) { (_, targetArtUri) ->
                                         AsyncImage(
                                             model = ImageRequest.Builder(LocalContext.current)
-                                                .data(targetSong.albumArtUri)
+                                                .data(targetArtUri)
                                                 .diskCachePolicy(CachePolicy.ENABLED)
                                                 .memoryCachePolicy(CachePolicy.ENABLED)
+                                                .size(600, 600) // Lower size for foreground too, enough for most screens
+                                                .precision(Precision.INEXACT)
+                                                .crossfade(true)
                                                 .error(ImageUtils.getDefaultAlbumArtRes())
                                                 .fallback(ImageUtils.getDefaultAlbumArtRes())
                                                 .build(),
@@ -481,7 +494,7 @@ fun NowPlayingScreen(
                                 KaraokeLyricsView(
                                     lyrics = uiState.lyrics,
                                     currentIndex = uiState.lyricsCurrentIndex,
-                                    currentProgressMs = progressMs(),
+                                    progressMs = progressMs,
                                     lyricsOffsetMs = uiState.lyricsOffsetMs,
                                     isLoading = uiState.isLoadingLyrics,
                                     lyricsSource = uiState.lyricsSource,
@@ -607,33 +620,16 @@ fun NowPlayingScreen(
                                     }
                                 }
 
-                                    androidx.compose.animation.AnimatedVisibility(
+                                androidx.compose.animation.AnimatedVisibility(
                                     visible = showLyrics,
                                     enter = fadeIn(tween(600)) + expandHorizontally(tween(600)),
                                     exit = fadeOut(tween(600)) + shrinkHorizontally(tween(600))
                                 ) {
-                                    val progress = if (durationMs > 0) {
-                                        (progressMs().toFloat() / durationMs).coerceIn(0f, 1f)
-                                    } else 0f
-                                    
-                                    val seekHeight by animateDpAsState(
-                                        targetValue = 40.dp,
-                                        animationSpec = tween(600),
-                                        label = "seekHeight"
-                                    )
-
-                                    WaveformSeekBar(
-                                        progress = progress,
-                                        onProgressChange = { },
-                                        onProgressFinished = {
-                                            onSeek((it * durationMs).toLong())
-                                        },
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .height(seekHeight),
-                                        activeColor = Color.White,
-                                        inactiveColor = Color.White.copy(0.2f),
-                                        seed = song.id.hashCode()
+                                    LyricsProgressSeekBar(
+                                        progressMs = progressMs,
+                                        durationMs = durationMs,
+                                        onSeek = onSeek,
+                                        songId = song.id
                                     )
                                 }
                             }
@@ -657,33 +653,13 @@ fun NowPlayingScreen(
                                 enter = expandVertically(tween(600)) + fadeIn(tween(600)),
                                 exit = shrinkVertically(tween(600)) + fadeOut(tween(600))
                             ) {
-                                val progress = if (durationMs > 0) {
-                                    (progressMs().toFloat() / durationMs).coerceIn(0f, 1f)
-                                } else 0f
-                                
-                                val seekHeight by animateDpAsState(
-                                    targetValue = if (showLyrics) 40.dp else 44.dp,
-                                    animationSpec = tween(600),
-                                    label = "bigSeekHeight"
+                                MainProgressSeekBar(
+                                    progressMs = progressMs,
+                                    durationMs = durationMs,
+                                    onSeek = onSeek,
+                                    songId = song.id,
+                                    showLyrics = showLyrics
                                 )
-
-                                Column {
-                                    Spacer(Modifier.height(18.dp))
-                                    WaveformSeekBar(
-                                        progress = progress,
-                                        onProgressChange = { },
-                                        onProgressFinished = {
-                                            onSeek((it * durationMs).toLong())
-                                        },
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .height(seekHeight),
-                                        activeColor = Color.White,
-                                        inactiveColor = Color.White.copy(0.2f),
-                                        seed = song.id.hashCode()
-                                    )
-                                    Spacer(Modifier.height(8.dp))
-                                }
                             }
                             
                                 Row(
@@ -691,7 +667,7 @@ fun NowPlayingScreen(
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text(fmtTime(progressMs()), color = Color.White.copy(0.5f), fontSize = 12.sp, modifier = Modifier.width(45.dp))
+                                PlaybackTimerText(progressMs, true)
                                 TechnicalInfo(song, uiState)
                                 Text(fmtTime(durationMs), color = Color.White.copy(0.5f), fontSize = 12.sp, modifier = Modifier.width(45.dp), textAlign = TextAlign.End)
                             }
@@ -1130,6 +1106,86 @@ private fun PipelineInfoRow(label: String, value: String) {
             textAlign = TextAlign.End
         )
     }
+}
+
+@Composable
+private fun LyricsProgressSeekBar(
+    progressMs: () -> Long,
+    durationMs: Long,
+    onSeek: (Long) -> Unit,
+    songId: String
+) {
+    val progress = if (durationMs > 0) {
+        (progressMs().toFloat() / durationMs).coerceIn(0f, 1f)
+    } else 0f
+    
+    val seekHeight by animateDpAsState(
+        targetValue = 40.dp,
+        animationSpec = tween(600),
+        label = "seekHeight"
+    )
+
+    WaveformSeekBar(
+        progress = progress,
+        onProgressChange = { },
+        onProgressFinished = {
+            onSeek((it * durationMs).toLong())
+        },
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(seekHeight),
+        activeColor = Color.White,
+        inactiveColor = Color.White.copy(0.2f),
+        seed = songId.hashCode()
+    )
+}
+
+@Composable
+private fun MainProgressSeekBar(
+    progressMs: () -> Long,
+    durationMs: Long,
+    onSeek: (Long) -> Unit,
+    songId: String,
+    showLyrics: Boolean
+) {
+    val progress = if (durationMs > 0) {
+        (progressMs().toFloat() / durationMs).coerceIn(0f, 1f)
+    } else 0f
+    
+    val seekHeight by animateDpAsState(
+        targetValue = if (showLyrics) 40.dp else 44.dp,
+        animationSpec = tween(600),
+        label = "bigSeekHeight"
+    )
+
+    Column {
+        Spacer(Modifier.height(18.dp))
+        WaveformSeekBar(
+            progress = progress,
+            onProgressChange = { },
+            onProgressFinished = {
+                onSeek((it * durationMs).toLong())
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(seekHeight),
+            activeColor = Color.White,
+            inactiveColor = Color.White.copy(0.2f),
+            seed = songId.hashCode()
+        )
+        Spacer(Modifier.height(8.dp))
+    }
+}
+
+@Composable
+private fun PlaybackTimerText(progressMs: () -> Long, isLeading: Boolean) {
+    Text(
+        text = fmtTime(progressMs()), 
+        color = Color.White.copy(0.5f), 
+        fontSize = 12.sp, 
+        modifier = Modifier.width(45.dp),
+        textAlign = if (isLeading) TextAlign.Start else TextAlign.End
+    )
 }
 
 @Composable

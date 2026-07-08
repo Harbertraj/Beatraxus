@@ -224,7 +224,7 @@ data class DspConfig(
 
     // Limiter
     val softLimiterEnabled: Boolean = false,
-    val limiterEnabled: Boolean = true,
+    val limiterEnabled: Boolean = false,
     val limiterThresholdDb: Float = -1.0f,   // More headroom before knee engages
     val limiterAttackMs: Float = 0.5f,        // Slightly longer — avoids transient shaving
     val limiterReleaseMs: Float = 80f,        // Longer release = no micro-pumping

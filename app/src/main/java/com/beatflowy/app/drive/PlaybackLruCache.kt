@@ -73,9 +73,11 @@ class PlaybackLruCache(private val context: Context) {
     /**
      * Checks if a song is currently in the LRU cache.
      */
-    fun getCachedFile(song: Song): File? {
+    fun getCachedFile(song: Song): File? = getCachedFileById(song.id)
+
+    fun getCachedFileById(songId: String): File? {
         return synchronized(lruMap) {
-            cacheDir.listFiles { _, name -> name.startsWith("${song.id}.") }
+            cacheDir.listFiles { _, name -> name.startsWith("$songId.") }
                 ?.firstOrNull { it.length() > 0 }
         }
     }

@@ -113,7 +113,7 @@ class TdLibManager private constructor(
             apiId = id
             apiHash = this@TdLibManager.apiHash
             databaseDirectory = File(context.filesDir, "tdlib/db").absolutePath
-            filesDirectory = File(context.filesDir, "tdlib/files").absolutePath
+            filesDirectory = File(context.cacheDir, "tdlib/files").absolutePath
             
             // Ensure directories exist
             File(databaseDirectory).mkdirs()

@@ -101,7 +101,7 @@ class DitherProcessor {
     std::vector<uint32_t> lcgStateA, lcgStateB;
     std::vector<double> lastDitherErr;
     std::vector<double> lastNoise;
-    int type = 1; // 1 = TPDF
+    int type = 2; // 2 = SHAPED
     int bitDepth = 16;
     bool enabled = false;
 
@@ -1310,7 +1310,7 @@ public:
             soxr_handle(nullptr),
 #endif
             inRate(44100), outRate(44100), channels(2),
-            useSox(true), dcBlockerEnabled(true), monoEnabled(false), dvcEnabled(true), rmsDvcEnabled(true), rmsLevelerEnabled(true), limiterEnabled(true), replayGainDb(0.0f), preampDb(0.0f),
+            useSox(true), dcBlockerEnabled(true), monoEnabled(false), dvcEnabled(true), rmsDvcEnabled(true), rmsLevelerEnabled(true), limiterEnabled(false), replayGainDb(0.0f), preampDb(0.0f),
             dvcLevel(1.0f), dvcMode(0),
             bassDb(0.0f), trebleDb(0.0f), airDb(0.0f),
             balance(0.0f), stereoWidth(1.0f), crossfeedEnabled(false), crossfeedLevel(0.4f),

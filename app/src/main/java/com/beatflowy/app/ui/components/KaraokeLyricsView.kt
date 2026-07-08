@@ -50,7 +50,7 @@ import kotlin.math.abs
 fun KaraokeLyricsView(
     lyrics: List<LrcLine>,
     currentIndex: Int,
-    currentProgressMs: Long,
+    progressMs: () -> Long,
     lyricsOffsetMs: Long,
     isLoading: Boolean,
     lyricsSource: LyricsSource?,
@@ -70,6 +70,8 @@ fun KaraokeLyricsView(
     var lastInteractionTime by remember { mutableLongStateOf(0L) }
     var isLongPressing by remember { mutableStateOf(false) }
     var tempOffsetStr by remember { mutableStateOf("") }
+
+    val currentProgressMs = progressMs()
 
     // Logic to re-enable auto-scroll after manual interaction
     LaunchedEffect(isDragged) {

@@ -122,7 +122,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         dsp = com.beatflowy.app.model.DspUiState(
             customEqPresets = loadCustomEqPresets()
         ),
-        libraryMode = LibraryMode.valueOf(prefs.getString("library_mode", LibraryMode.COMBINED.name) ?: LibraryMode.COMBINED.name),
+        libraryMode = LibraryMode.valueOf(prefs.getString("library_mode", LibraryMode.LOCAL.name) ?: LibraryMode.LOCAL.name),
         metadataNetworkType = NetworkType.valueOf(prefs.getString("metadata_network_type", NetworkType.WIFI_ONLY.name) ?: NetworkType.WIFI_ONLY.name),
         dataSaverEnabled = prefs.getBoolean("data_saver_enabled", false),
         artworkEnrichmentEnabled = prefs.getBoolean("artwork_enrichment_enabled", true),
@@ -431,6 +431,21 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             lastFmRepository.username.collect { name ->
                 _uiState.update { it.copy(lastFmUsername = name) }
             }
+        }
+
+        // Auto-switch to COMBINED mode when first cloud account is added
+        viewModelScope.launch {
+            combine(
+                driveAccountRepository.accounts,
+                telegramChannelRepository.channels
+            ) { drive, tg -> drive.isNotEmpty() || tg.isNotEmpty() }
+                .distinctUntilChanged()
+                .drop(1) // Skip initial value to avoid switching on app start if accounts already exist
+                .collect { hasCloud ->
+                    if (hasCloud && _uiState.value.libraryMode == LibraryMode.LOCAL) {
+                        setLibraryMode(LibraryMode.COMBINED)
+                    }
+                }
         }
 
         // Cloud Library Counts (Reactive to selection)

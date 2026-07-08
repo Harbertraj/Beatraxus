@@ -175,9 +175,9 @@ class DspPreferences(private val context: Context) {
             compensateDvcVolumeEnabled = pref(COMPENSATE_DVC_VOLUME, false),
             ditherEnabled = pref(DITHER_ENABLED, true),
             ditherType = runCatching {
-                DitherType.valueOf(prefNullable(DITHER_TYPE) ?: DitherType.TPDF.name)
-            }.getOrDefault(DitherType.TPDF),
-            limiterEnabled = pref(LIMITER_ENABLED, true) && !pref(SOFT_LIMITER_ENABLED, false),
+                DitherType.valueOf(prefNullable(DITHER_TYPE) ?: DitherType.SHAPED.name)
+            }.getOrDefault(DitherType.SHAPED),
+            limiterEnabled = pref(LIMITER_ENABLED, false) && !pref(SOFT_LIMITER_ENABLED, false),
             softLimiterEnabled = pref(SOFT_LIMITER_ENABLED, false),
             limiterThresholdDb = pref(LIMITER_THRESHOLD_DB, -1.0f),
             limiterAttackMs = pref(LIMITER_ATTACK_MS, 0.5f),

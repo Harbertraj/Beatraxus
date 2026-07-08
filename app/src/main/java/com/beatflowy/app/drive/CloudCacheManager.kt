@@ -149,7 +149,7 @@ class CloudCacheManager(
     }
 
     private fun getCachedFileById(id: String): File? {
-        return playbackLruCache.getCachedFile(Song(id = id, uri = android.net.Uri.EMPTY, title = "", artist = "", album = "", durationMs = 0, format = "", sampleRateHz = 0))
+        return playbackLruCache.getCachedFileById(id)
     }
 
     private val tokenCache = ConcurrentHashMap<String, String>()
@@ -196,7 +196,11 @@ class CloudCacheManager(
         // 2. Start downloads for 'keepIds' if not already cached
         // Prioritize current song
         currentSong?.let { song ->
-            if (song.isCloud() && getCachedFileById(song.id) == null && !activeDownloads.containsKey(song.id)) {
+            val cached = getCachedFile(song)
+            if (cached != null) {
+                // If already in cache, just update its LRU recency
+                playbackLruCache.getOrCacheFile(song, cached, true, currentlyPlayingId)
+            } else if (song.isCloud() && !activeDownloads.containsKey(song.id)) {
                 if (song.source == SongSource.TELEGRAM && tdLib != null) {
                     startTelegramPreDownload(song, tdLib)
                 } else {
@@ -207,7 +211,12 @@ class CloudCacheManager(
 
         // Then upcoming songs
         upcomingSongs.take(5).forEach { song ->
-            if (song.isCloud() && getCachedFileById(song.id) == null && !activeDownloads.containsKey(song.id)) {
+            val cached = getCachedFile(song)
+            if (cached != null) {
+                // For pre-fetch, we don't necessarily want to bump recency, 
+                // but we should ensure it's tracked in lruMap
+                playbackLruCache.getOrCacheFile(song, cached, false, currentlyPlayingId)
+            } else if (song.isCloud() && !activeDownloads.containsKey(song.id)) {
                 if (song.source == SongSource.TELEGRAM && tdLib != null) {
                     startTelegramPreDownload(song, tdLib)
                 } else {
@@ -545,6 +554,8 @@ class CloudCacheManager(
         private val tdLib: TdLibManager
     ) : MediaDataSource() {
 
+        private var raf: RandomAccessFile? = null
+        private var currentRafPath: String? = null
         private var localPath: String? = null
         private var downloadedPrefix: Long = 0L
         private val lock = ReentrantLock()
@@ -584,6 +595,13 @@ class CloudCacheManager(
                                     // TDLib returns empty path if file is not yet available for reading
                                     localPath = file.local.path.takeIf { it.isNotBlank() }
                                     downloadedPrefix = file.local.downloadedPrefixSize.toLong()
+
+                                    // If complete, trigger unified caching
+                                    if (file.local.isDownloadingCompleted && localPath != null) {
+                                        scope.launch {
+                                            playbackLruCache.getOrCacheFile(song, File(localPath!!), false, currentlyPlayingId)
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -610,6 +628,9 @@ class CloudCacheManager(
             val totalSize = getSize()
             if (totalSize > 0 && position >= totalSize) return -1
             
+            // Check unified cache first (15-song logic)
+            getCachedFile(song)?.let { return readFromFile(it, position, buffer, offset, size) }
+
             var attempts = 0
             // Wait for TDLib to have downloaded at least up to position + size
             // AND for localPath to be available (not blank)
@@ -625,16 +646,34 @@ class CloudCacheManager(
             }
 
             val path = localPath ?: return -1
-            return try {
-                RandomAccessFile(path, "r").use { raf ->
-                    raf.seek(position)
-                    raf.read(buffer, offset, size)
+            val res = readFromFile(File(path), position, buffer, offset, size)
+
+            if (res != -1 && downloadedPrefix >= totalSize) {
+                // If it's complete, try to cache it in the unified 15-song LRU
+                scope.launch {
+                    playbackLruCache.getOrCacheFile(song, File(path), true, currentlyPlayingId)
                 }
-            } catch (e: Exception) { -1 }
+            }
+            return res
         }
 
-        override fun close() {
+        private fun readFromFile(file: File, position: Long, buffer: ByteArray, offset: Int, size: Int): Int {
+            try {
+                if (raf == null || file.absolutePath != currentRafPath) {
+                    raf?.close()
+                    raf = RandomAccessFile(file, "r")
+                    currentRafPath = file.absolutePath
+                }
+                raf?.seek(position)
+                return raf?.read(buffer, offset, size) ?: -1
+            } catch (e: Exception) { return -1 }
+        }
+
+        override fun close() = lock.withLock {
             job.cancel()
+            try { raf?.close() } catch (e: Exception) {}
+            raf = null
+            currentRafPath = null
         }
     }
 }
