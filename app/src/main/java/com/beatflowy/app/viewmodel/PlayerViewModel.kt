@@ -1790,11 +1790,15 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         val b = bandsArray.getJSONObject(i)
                         ParametricEqBand(
                             id = i,
-                            frequencyHz = b.getDouble("freq").toFloat(),
+                            frequencyHz = com.beatflowy.app.utils.PresetExporter.snapToStandardBand(b.getDouble("freq").toFloat()),
                             gainDb = b.getDouble("gain").toFloat().coerceIn(-12f, 12f),
                             q = b.getDouble("q").toFloat().coerceIn(0.1f, 10f)
                         )
                     }
+                    .groupBy { it.frequencyHz }
+                    .map { (_, group) -> group.first().copy(gainDb = group.map { it.gainDb }.average().toFloat()) }
+                    .sortedBy { it.frequencyHz }
+                    .mapIndexed { i, band -> band.copy(id = i) }
                 } else config.eqBands
 
                 config.copy(

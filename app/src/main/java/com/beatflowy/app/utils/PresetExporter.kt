@@ -28,7 +28,7 @@ object PresetExporter {
 
     private val standardFreqs = listOf(31.25f, 62.5f, 125f, 250f, 500f, 1000f, 2000f, 4000f, 8000f, 16000f)
 
-    private fun snapToStandardBand(freq: Float): Float =
+    fun snapToStandardBand(freq: Float): Float =
         standardFreqs.minByOrNull { kotlin.math.abs(it - freq) } ?: freq
 
     fun exportToCurrentJson(name: String, preamp: Float, bands: List<ParametricEqBand>): String {
