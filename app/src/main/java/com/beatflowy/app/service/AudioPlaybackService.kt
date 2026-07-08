@@ -308,7 +308,7 @@ class AudioPlaybackService : Service() {
                         lastProgressUpdateTime = 0
                     }
 
-                    updateAllWidgets(state)
+                    serviceScope.launch { updateAllWidgets(state) }
                     updateNotification()
                 }
         }
@@ -420,7 +420,7 @@ class AudioPlaybackService : Service() {
         return START_STICKY
     }
 
-    private fun updateAllWidgets(state: PlaybackState) {
+    private suspend fun updateAllWidgets(state: PlaybackState) = withContext(Dispatchers.Default) {
         val song = state.currentSong
         val title = song?.title ?: "Not Playing"
         val artist = song?.artist ?: "Beatraxus"
@@ -429,38 +429,36 @@ class AudioPlaybackService : Service() {
         val shuffleOn = state.shuffleMode
         val repeatMode = state.repeatMode.name
 
-        serviceScope.launch(Dispatchers.Default) {
-            try {
-                val context = this@AudioPlaybackService
-                val manager = GlanceAppWidgetManager(context)
-                
-                val widgetClasses = listOf(
-                    MusicWidgetSmall::class.java to MusicWidgetSmall(),
-                    MusicWidgetMedium::class.java to MusicWidgetMedium(),
-                    MusicWidgetLarge::class.java to MusicWidgetLarge()
-                )
+        try {
+            val context = this@AudioPlaybackService
+            val manager = GlanceAppWidgetManager(context)
+            
+            val widgetClasses = listOf(
+                MusicWidgetSmall::class.java to MusicWidgetSmall(),
+                MusicWidgetMedium::class.java to MusicWidgetMedium(),
+                MusicWidgetLarge::class.java to MusicWidgetLarge()
+            )
 
-                widgetClasses.forEach { (clazz, widget) ->
-                    val ids = manager.getGlanceIds(clazz)
-                    for (id in ids) {
-                        try {
-                            updateAppWidgetState(context, PreferencesGlanceStateDefinition, id) { prefs ->
-                                prefs.toMutablePreferences().apply {
-                                    set(MusicWidgetKeys.TITLE, title)
-                                    set(MusicWidgetKeys.ARTIST, artist)
-                                    set(MusicWidgetKeys.IS_PLAYING, isPlaying)
-                                    set(MusicWidgetKeys.ALBUM_ART_URI, albumArtUri)
-                                    set(MusicWidgetKeys.SHUFFLE_ON, shuffleOn)
-                                    set(MusicWidgetKeys.REPEAT_MODE, repeatMode)
-                                }.toPreferences()
-                            }
-                            widget.update(context, id)
-                        } catch (e: Exception) {
+            widgetClasses.forEach { (clazz, widget) ->
+                val ids = manager.getGlanceIds(clazz)
+                for (id in ids) {
+                    try {
+                        updateAppWidgetState(context, PreferencesGlanceStateDefinition, id) { prefs ->
+                            prefs.toMutablePreferences().apply {
+                                set(MusicWidgetKeys.TITLE, title)
+                                set(MusicWidgetKeys.ARTIST, artist)
+                                set(MusicWidgetKeys.IS_PLAYING, isPlaying)
+                                set(MusicWidgetKeys.ALBUM_ART_URI, albumArtUri)
+                                set(MusicWidgetKeys.SHUFFLE_ON, shuffleOn)
+                                set(MusicWidgetKeys.REPEAT_MODE, repeatMode)
+                            }.toPreferences()
                         }
+                        widget.update(context, id)
+                    } catch (e: Exception) {
                     }
                 }
-            } catch (e: Exception) {
             }
+        } catch (e: Exception) {
         }
     }
 
@@ -1442,9 +1440,7 @@ class AudioPlaybackService : Service() {
         prefs.unregisterOnSharedPreferenceChangeListener(prefListener)
 
         val finalState = engine.playbackStateFlow.value.copy(isPlaying = false)
-        serviceScope.launch {
-            updateAllWidgets(finalState)
-        }
+        runBlocking { updateAllWidgets(finalState) }
 
         // Ensure cloud cache is cleared on destroy if we are not just restarting
         val isPlayingLocal = engine.playbackStateFlow.value.isPlaying

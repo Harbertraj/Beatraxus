@@ -72,6 +72,11 @@ object LocalCastServer {
         }
     }
 
+    fun getArtUrl(): String? {
+        val ip = getLocalIpAddress() ?: return null
+        return "http://$ip:$port/art"
+    }
+
     private fun getLocalIpAddress(): String? {
         try {
             val interfaces = java.net.NetworkInterface.getNetworkInterfaces().toList()
@@ -129,6 +134,14 @@ object LocalCastServer {
                     return@execute
                 }
 
+                val path = requestLine.substringAfter(' ').substringBefore(' ')
+                val output = socket.getOutputStream()
+
+                if (path.startsWith("/art")) {
+                    serveArt(context, output)
+                    return@execute
+                }
+
                 // Parse Range header
                 var rangeHeader: String? = null
                 while (true) {
@@ -139,7 +152,6 @@ object LocalCastServer {
                     }
                 }
 
-                val output = socket.getOutputStream()
                 val song = currentSong
                 
                 if (song == null) {
@@ -212,7 +224,11 @@ object LocalCastServer {
                     return@execute
                 }
 
-                val mimeType = "audio/${song.format.lowercase().ifEmpty { "mpeg" }}"
+                val mimeType = when (song.format.uppercase()) {
+                    "M4A", "ALAC" -> "audio/mp4"
+                    "" -> "audio/mpeg"
+                    else -> "audio/${song.format.lowercase()}"
+                }
                 val contentLength = if (endByte != -1L) endByte - startByte + 1 else if (fileSize > 0) fileSize - startByte else -1L
 
                 if (rangeHeader != null) {
@@ -247,6 +263,43 @@ object LocalCastServer {
             } finally {
                 try { socket.close() } catch (e: Exception) {}
             }
+        }
+    }
+
+    private fun serveArt(context: Context, output: OutputStream) {
+        val song = currentSong
+        val uri = song?.albumArtUri
+        if (uri == null) {
+            sendError(output, 404, "Not Found")
+            return
+        }
+
+        try {
+            val inputStream = if (uri.scheme == "file") {
+                java.io.File(uri.path!!).inputStream()
+            } else {
+                context.contentResolver.openInputStream(uri)
+            }
+
+            if (inputStream == null) {
+                sendError(output, 404, "Not Found")
+                return
+            }
+
+            output.write("HTTP/1.1 200 OK\r\n".toByteArray())
+            output.write("Content-Type: image/jpeg\r\n".toByteArray())
+            output.write("Connection: close\r\n\r\n".toByteArray())
+
+            val buffer = ByteArray(64 * 1024)
+            var bytesRead: Int
+            while (inputStream.read(buffer).also { bytesRead = it } != -1) {
+                output.write(buffer, 0, bytesRead)
+            }
+            output.flush()
+            inputStream.close()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error serving art", e)
+            sendError(output, 500, "Internal Server Error")
         }
     }
 

@@ -1,6 +1,7 @@
 package com.beatflowy.app.cast
 
 import android.content.Context
+import android.net.Uri
 import android.util.Log
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -178,14 +179,23 @@ object CastManager {
             putString(MediaMetadata.KEY_TITLE, song.title)
             putString(MediaMetadata.KEY_ARTIST, song.artist)
             putString(MediaMetadata.KEY_ALBUM_TITLE, song.album)
-            song.albumArtUri?.let {
-                addImage(WebImage(it))
+            
+            LocalCastServer.getArtUrl()?.let { artUrl ->
+                if (song.albumArtUri != null) {
+                    addImage(WebImage(Uri.parse(artUrl)))
+                }
             }
+        }
+
+        val mime = when (song.format.uppercase()) {
+            "M4A", "ALAC" -> "audio/mp4"
+            "" -> "audio/mpeg"
+            else -> "audio/${song.format.lowercase()}"
         }
 
         val mediaInfo = MediaInfo.Builder(streamUrl)
             .setStreamType(MediaInfo.STREAM_TYPE_BUFFERED)
-            .setContentType("audio/*")
+            .setContentType(mime)
             .setMetadata(musicMetadata)
             .build()
 
