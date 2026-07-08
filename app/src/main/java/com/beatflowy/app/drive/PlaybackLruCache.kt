@@ -42,6 +42,8 @@ class PlaybackLruCache(private val context: Context) {
         val extension = sourceFile.extension.takeIf { it.isNotBlank() } ?: "cache"
         val cachedFile = File(cacheDir, "${song.id}.$extension")
 
+        var needsCopy = false
+
         synchronized(lruMap) {
             val fileExists = cachedFile.exists() && cachedFile.length() > 0
 
@@ -58,13 +60,13 @@ class PlaybackLruCache(private val context: Context) {
                 evictOldest(currentlyPlayingId)
             }
 
-            if (!fileExists) {
-                if (sourceFile.absolutePath != cachedFile.absolutePath) {
-                    sourceFile.copyTo(cachedFile, overwrite = true)
-                }
-            }
-            
+            needsCopy = !fileExists && sourceFile.absolutePath != cachedFile.absolutePath
             persistMap()
+        }
+
+        // File copy happens outside the lock so concurrent pre-fetches don't serialize on it.
+        if (needsCopy) {
+            sourceFile.copyTo(cachedFile, overwrite = true)
         }
 
         cachedFile
