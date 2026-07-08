@@ -218,6 +218,8 @@ class AudioEngine(
                     nextSession = null
                     currentSong = song
                     nextSong = null
+
+                    activeSession?.setStartFrameOffset(output.playbackPositionFrames())
                     
                     // Don't reset positionMs to 0 if we are promoting a prepared session
                     // instead, sync it with the session's current internal position.
@@ -362,6 +364,8 @@ class AudioEngine(
                     val newSessionId = activeSession?.sessionId ?: 0L
                     nextSession = null
                     nextSong = null
+
+                    activeSession?.setStartFrameOffset(output.playbackPositionFrames())
                     
                     this@AudioEngine.positionMs = activeSession?.currentRenderedPositionMs() ?: positionMs
                     

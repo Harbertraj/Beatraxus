@@ -9,6 +9,7 @@ import android.content.ContextWrapper
 import android.content.Intent
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
@@ -150,13 +151,35 @@ class MainActivity : FragmentActivity() {
             viewModel.setShowFullPlayer(true)
         }
         
-        // Handle Last.fm auth callback
-        if (intent?.action == Intent.ACTION_VIEW) {
-            val uri = intent.data
-            if (uri != null && uri.scheme == "beatflowy" && uri.host == "lastfm") {
-                val token = uri.getQueryParameter("token")
-                if (token != null) {
-                    viewModel.fetchLastFmSession(token)
+        // Handle Last.fm auth callback and external audio VIEW/SEND intents
+        if (intent?.action == Intent.ACTION_VIEW || intent?.action == Intent.ACTION_SEND) {
+            val uri = if (intent.action == Intent.ACTION_SEND) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
+                }
+            } else {
+                intent.data
+            }
+
+            if (uri != null) {
+                if (uri.scheme == "beatflowy" && uri.host == "lastfm") {
+                    val token = uri.getQueryParameter("token")
+                    if (token != null) {
+                        viewModel.fetchLastFmSession(token)
+                    }
+                } else {
+                    // Check if it's an audio file/content
+                    val type = intent.type ?: contentResolver.getType(uri)
+                    if (type?.startsWith("audio/") == true || 
+                        uri.toString().endsWith(".mp3", true) || 
+                        uri.toString().endsWith(".flac", true) || 
+                        uri.toString().endsWith(".wav", true) || 
+                        uri.toString().endsWith(".m4a", true)) {
+                        viewModel.playExternalUri(uri)
+                    }
                 }
             }
         }

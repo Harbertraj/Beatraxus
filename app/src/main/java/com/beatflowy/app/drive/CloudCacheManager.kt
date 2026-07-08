@@ -100,13 +100,20 @@ class CloudCacheManager(
 
         if (file?.local?.path?.isNotBlank() == true) {
             if (file.local.isDownloadingCompleted) {
-                return@withContext playbackLruCache.getOrCacheFile(song, File(file.local.path), true, currentlyPlayingId).absolutePath
+                val f = File(file.local.path)
+                if (f.exists()) {
+                    return@withContext playbackLruCache.getOrCacheFile(song, f, true, currentlyPlayingId).absolutePath
+                } else {
+                    Log.w(TAG, "Telegram file reported as completed but missing from disk: ${file.local.path}. Re-downloading...")
+                    try { tdLib.send(TdApi.DeleteFile(currentFileId)) } catch (_: Exception) {}
+                    tdLib.send(TdApi.DownloadFile(currentFileId, 32, 0, 0, false))
+                }
             }
             // M4A/MP4 files from Telegram (using FFmpeg mov demuxer) often have the 'moov' atom at the end,
             // causing FFmpeg to fail if opened as a partial local file. For these, we wait for the download to complete.
             val format = song.format.lowercase()
             val isMov = format == "m4a" || format == "mp4" || format.contains("alac") || song.title.contains("alac", ignoreCase = true)
-            if (!isMov) return@withContext file.local.path
+            if (!isMov && File(file.local.path).exists()) return@withContext file.local.path
         }
 
         // Wait for path to become available
@@ -115,15 +122,23 @@ class CloudCacheManager(
         while (attempts < 600) { // 30 seconds (increased from 15s to allow for ALAC completion)
             file = try { tdLib.send(TdApi.GetFile(currentFileId)) } catch (e: Exception) { null }
             if (file?.local?.path?.isNotBlank() == true) {
+                val path = file.local.path
                 if (file.local.isDownloadingCompleted) {
-                    Log.d(TAG, "Telegram file download complete for ${song.title}")
-                    return@withContext playbackLruCache.getOrCacheFile(song, File(file.local.path), true, currentlyPlayingId).absolutePath
+                    val f = File(path)
+                    if (f.exists()) {
+                        Log.d(TAG, "Telegram file download complete for ${song.title}")
+                        return@withContext playbackLruCache.getOrCacheFile(song, f, true, currentlyPlayingId).absolutePath
+                    } else {
+                        Log.w(TAG, "Telegram file completed but missing from disk in wait loop: $path")
+                        try { tdLib.send(TdApi.DeleteFile(currentFileId)) } catch (_: Exception) {}
+                        tdLib.send(TdApi.DownloadFile(currentFileId, 32, 0, 0, false))
+                    }
                 }
                 val format = song.format.lowercase()
                 val isMov = format == "m4a" || format == "mp4" || format.contains("alac") || song.title.contains("alac", ignoreCase = true)
-                if (!isMov) {
-                    Log.d(TAG, "Telegram file path available for ${song.title}: ${file.local.path}")
-                    return@withContext file.local.path
+                if (!isMov && File(path).exists()) {
+                    Log.d(TAG, "Telegram file path available for ${song.title}: $path")
+                    return@withContext path
                 }
             }
             if (attempts % 20 == 0 && file != null) {
@@ -240,8 +255,15 @@ class CloudCacheManager(
                     // Wait for completion to add to unified 15-song LRU cache (same logic as GDrive)
                     tdLib.getFileFlow(currentFileId).collect { file ->
                         if (file?.local?.isDownloadingCompleted == true && file.local.path.isNotBlank()) {
-                            playbackLruCache.getOrCacheFile(song, File(file.local.path), false, currentlyPlayingId)
-                            this@launch.cancel()
+                            val path = file.local.path
+                            if (File(path).exists()) {
+                                playbackLruCache.getOrCacheFile(song, File(path), false, currentlyPlayingId)
+                                this@launch.cancel()
+                            } else {
+                                Log.w(TAG, "Pre-download: file reported complete but missing: $path")
+                                try { tdLib.send(TdApi.DeleteFile(currentFileId)) } catch (_: Exception) {}
+                                tdLib.send(TdApi.DownloadFile(currentFileId, 32, 0, 0, false))
+                            }
                         }
                     }
                 }
@@ -264,7 +286,26 @@ class CloudCacheManager(
     }
 
     fun clearFullCache(excludeId: String? = null) {
-        clearAllPlaybackCaches(excludeId)
+        playbackLruCache.clearCache(excludeId)
+        
+        // Also clear any lingering .tmp files from cloud_cache/
+        cacheDir.listFiles { _, name -> 
+            name.endsWith(".tmp") && (excludeId == null || !name.startsWith("$excludeId."))
+        }?.forEach { it.delete() }
+
+        // Optimized TDLib cache clearing
+        if (excludeId == null) {
+            val tdlibFilesDir = File(context.cacheDir, "tdlib/files")
+            if (tdlibFilesDir.exists()) {
+                val trash = File(context.cacheDir, "tdlib_trash_${System.currentTimeMillis()}")
+                if (tdlibFilesDir.renameTo(trash)) {
+                    trash.deleteRecursively()
+                } else {
+                    tdlibFilesDir.deleteRecursively()
+                }
+                tdlibFilesDir.mkdirs()
+            }
+        }
     }
 
     fun release() {
@@ -563,44 +604,59 @@ class CloudCacheManager(
         private val scope = CoroutineScope(Dispatchers.IO + job)
 
         init {
-            if (tdLib.isReady()) {
-                scope.launch {
-                    var currentFileId = song.telegramFileId
-                    
-                    // If ID is missing or potentially stale, refresh it
-                    if (currentFileId == null || currentFileId == 0) {
-                        currentFileId = refreshFileId()
-                    }
+            scope.launch {
+                // Wait for TDLib to be ready before starting download/flow
+                tdLib.authState.first { it is com.beatflowy.app.telegram.AuthState.Ready }
+                
+                var currentFileId = song.telegramFileId
+                
+                // If ID is missing or potentially stale, refresh it
+                if (currentFileId == null || currentFileId == 0) {
+                    currentFileId = refreshFileId()
+                }
 
-                    if (currentFileId != null && currentFileId != 0) {
-                        try {
-                            tdLib.send(TdApi.DownloadFile(currentFileId, 32, 0, 0, false))
-                        } catch (e: Exception) {
-                            Log.w(TAG, "Stale fileId detected for ${song.title}, refreshing...")
-                            currentFileId = refreshFileId()
-                            if (currentFileId != null) {
-                                try {
-                                    tdLib.send(TdApi.DownloadFile(currentFileId, 32, 0, 0, false))
-                                } catch (_: Exception) {
-                                    Log.e(TAG, "Failed to download after refresh for ${song.title}")
-                                }
+                if (currentFileId != null && currentFileId != 0) {
+                    try {
+                        tdLib.send(TdApi.DownloadFile(currentFileId, 32, 0, 0, false))
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Stale fileId detected for ${song.title}, refreshing...")
+                        currentFileId = refreshFileId()
+                        if (currentFileId != null) {
+                            try {
+                                tdLib.send(TdApi.DownloadFile(currentFileId, 32, 0, 0, false))
+                            } catch (_: Exception) {
+                                Log.e(TAG, "Failed to download after refresh for ${song.title}")
                             }
                         }
                     }
-                    
-                    if (currentFileId != null && currentFileId != 0) {
-                        tdLib.getFileFlow(currentFileId).collect { file ->
-                            if (file != null) {
-                                lock.withLock {
-                                    // TDLib returns empty path if file is not yet available for reading
-                                    localPath = file.local.path.takeIf { it.isNotBlank() }
-                                    downloadedPrefix = file.local.downloadedPrefixSize.toLong()
-
-                                    // If complete, trigger unified caching
-                                    if (file.local.isDownloadingCompleted && localPath != null) {
+                }
+                
+                if (currentFileId != null && currentFileId != 0) {
+                    tdLib.getFileFlow(currentFileId).collect { file ->
+                        if (file != null) {
+                            lock.withLock {
+                                // TDLib returns empty path if file is not yet available for reading
+                                val path = file.local.path.takeIf { it.isNotBlank() }
+                                
+                                // Check if file is reported as complete but missing from disk (stale DB)
+                                if (file.local.isDownloadingCompleted && path != null) {
+                                    if (!File(path).exists()) {
+                                        Log.w(TAG, "Telegram file flow: reported complete but missing from disk: $path. Resetting.")
                                         scope.launch {
-                                            playbackLruCache.getOrCacheFile(song, File(localPath!!), false, currentlyPlayingId)
+                                            try { tdLib.send(TdApi.DeleteFile(currentFileId)) } catch (_: Exception) {}
+                                            tdLib.send(TdApi.DownloadFile(currentFileId, 32, 0, 0, false))
                                         }
+                                        return@collect
+                                    }
+                                }
+
+                                localPath = path
+                                downloadedPrefix = file.local.downloadedPrefixSize.toLong()
+
+                                // If complete, trigger unified caching
+                                if (file.local.isDownloadingCompleted && localPath != null) {
+                                    scope.launch {
+                                        playbackLruCache.getOrCacheFile(song, File(localPath!!), false, currentlyPlayingId)
                                     }
                                 }
                             }
@@ -635,17 +691,21 @@ class CloudCacheManager(
             // Wait for TDLib to have downloaded at least up to position + size
             // AND for localPath to be available (not blank)
             // Timeout reduced to 15s to prevent engine deadlocks during source switching
-            while ((localPath == null || downloadedPrefix < position + size) && attempts < 750) {
+            while ((localPath == null || downloadedPrefix < position + size || !File(localPath ?: "").exists()) && attempts < 750) {
                 try {
                     lock.unlock()
                     Thread.sleep(20) // Snappier check
                     lock.lock()
                 } catch (e: Exception) {}
                 attempts++
-                if (localPath != null && downloadedPrefix >= position + size) break
+                if (localPath != null && downloadedPrefix >= position + size && File(localPath!!).exists()) break
             }
 
             val path = localPath ?: return -1
+            if (!File(path).exists()) {
+                Log.e(TAG, "Telegram file missing at path: $path")
+                return -1
+            }
             val res = readFromFile(File(path), position, buffer, offset, size)
 
             if (res != -1 && downloadedPrefix >= totalSize) {

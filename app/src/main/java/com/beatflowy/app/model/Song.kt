@@ -234,7 +234,7 @@ data class PlayerUiState(
     val lastFmUsername: String? = null,
     val scrobblingEnabled: Boolean = true,
     // Sync Settings
-    val metadataNetworkType: NetworkType = NetworkType.WIFI_ONLY,
+    val metadataNetworkType: NetworkType = NetworkType.ASK_MOBILE,
     val dataSaverEnabled: Boolean = false,
     val artworkEnrichmentEnabled: Boolean = true,
     val syncQuality: SyncQuality = SyncQuality.MEDIUM,

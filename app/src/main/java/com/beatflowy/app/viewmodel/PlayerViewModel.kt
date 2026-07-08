@@ -123,7 +123,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             customEqPresets = loadCustomEqPresets()
         ),
         libraryMode = LibraryMode.valueOf(prefs.getString("library_mode", LibraryMode.LOCAL.name) ?: LibraryMode.LOCAL.name),
-        metadataNetworkType = NetworkType.valueOf(prefs.getString("metadata_network_type", NetworkType.WIFI_ONLY.name) ?: NetworkType.WIFI_ONLY.name),
+        metadataNetworkType = NetworkType.valueOf(prefs.getString("metadata_network_type", NetworkType.ASK_MOBILE.name) ?: NetworkType.ASK_MOBILE.name),
         dataSaverEnabled = prefs.getBoolean("data_saver_enabled", false),
         artworkEnrichmentEnabled = prefs.getBoolean("artwork_enrichment_enabled", true),
         syncQuality = SyncQuality.valueOf(prefs.getString("sync_quality", SyncQuality.MEDIUM.name) ?: SyncQuality.MEDIUM.name),
@@ -359,6 +359,14 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 _uiState.update { it.copy(telegramAuthState = state) }
                 if (state is AuthState.Ready) {
                     startTelegramLiveObservers()
+                    // Auto-sync all enabled channels when Telegram becomes ready
+                    viewModelScope.launch {
+                        telegramChannelRepository.channels.first().forEach { channel ->
+                            if (channel.enabled) {
+                                syncTelegramChannel(channel.url)
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -693,8 +701,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
                         if (restoredPlaylist.isNotEmpty()) {
                             viewModelScope.launch {
-                                // Wait for service and TDLib to be ready
-                                while (service == null || (restoredPlaylist.any { it.source == SongSource.TELEGRAM } && tdLibManager.authState.value !is AuthState.Ready)) {
+                                // Wait for service to be ready. 
+                                // We no longer block on TDLib readiness here as TelegramFileDataSource 
+                                // handles its own wait state internally now.
+                                while (service == null) {
                                     delay(200)
                                 }
                                 
@@ -713,7 +723,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         // Fallback for older versions that only saved last_song_id
                         dbSongs.find { it.id == lastSongId }?.let { lastSong ->
                             viewModelScope.launch {
-                                while (service == null || (lastSong.source == SongSource.TELEGRAM && tdLibManager.authState.value !is AuthState.Ready)) {
+                                while (service == null) {
                                     delay(200)
                                 }
                                 cloudCacheManager.setCurrentlyPlayingId(lastSong.id)
@@ -1174,6 +1184,36 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
         updateRecentlyPlayed(song.id)
         loadLyrics(song)
+    }
+
+    fun playExternalUri(uri: Uri) {
+        viewModelScope.launch {
+            // Try to find if this song is already in our loaded library
+            val existing = allSongs.value.find { it.uri.toString() == uri.toString() }
+            
+            if (existing != null) {
+                playSong(existing)
+            } else {
+                // Not in DB, create a temporary song object
+                val tempSong = Song(
+                    id = "external_${System.currentTimeMillis()}",
+                    uri = uri,
+                    title = uri.lastPathSegment ?: "External Song",
+                    artist = "External Source",
+                    album = "External",
+                    durationMs = 0,
+                    format = uri.toString().substringAfterLast('.', "mp3"),
+                    sampleRateHz = 44100,
+                    source = SongSource.LOCAL
+                )
+                
+                // Wait for service
+                while (service == null) delay(100)
+                
+                service?.playSong(tempSong)
+                setShowFullPlayer(true)
+            }
+        }
     }
 
     fun playList(songs: List<Song>, startIndex: Int) {
@@ -2919,6 +2959,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun addTelegramChannel(url: String) {
         viewModelScope.launch {
             telegramChannelRepository.addChannel(url)
+            // Trigger an initial sync for the new channel
+            syncTelegramChannel(url)
         }
     }
 
@@ -2930,6 +2972,21 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         
         val normalizedUrl = url.trim().removeSuffix("/")
         
+        val networkType = _uiState.value.metadataNetworkType
+        val context = getApplication<android.app.Application>()
+        
+        if (networkType == com.beatflowy.app.model.NetworkType.ASK_MOBILE && 
+            com.beatflowy.app.util.NetworkUtils.isMobileConnected(context) && 
+            !com.beatflowy.app.util.NetworkUtils.isWifiConnected(context)) {
+            _uiState.update { it.copy(telegramSyncErrorMessage = "Confirmation needed: Use mobile data for sync?") }
+            return
+        }
+
+        if (!com.beatflowy.app.util.NetworkUtils.isNetworkAllowed(context, networkType)) {
+            _uiState.update { it.copy(telegramSyncErrorMessage = "Waiting for allowed network (Rule: $networkType)") }
+            return
+        }
+
         enrichmentJob?.cancel()
         enrichmentJob = viewModelScope.launch(Dispatchers.IO) {
             _uiState.update { it.copy(isCloudScanning = true, scanProgress = 0f, telegramSyncErrorMessage = "Connecting...", showSyncStatusOnHome = true, isSyncFinishedRecently = false) }

@@ -23,7 +23,7 @@ class BeatraxusApplication : Application() {
     override fun onCreate() {
         super.onCreate()
 
-        // Clear temporary cloud cache on app start (effectively clearing "on close")
+        // Clear temporary cloud cache on app start
         clearTemporaryCache()
     }
 

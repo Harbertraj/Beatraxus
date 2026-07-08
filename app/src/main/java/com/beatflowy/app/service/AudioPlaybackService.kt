@@ -960,7 +960,7 @@ class AudioPlaybackService : Service() {
             val notification = NotificationCompat.Builder(this, CHANNEL_ID)
                 .setContentTitle("Syncing Music...")
                 .setContentText("Found $count songs so far")
-                .setSmallIcon(R.mipmap.ic_launcher)
+                .setSmallIcon(R.drawable.ic_search_notification)
                 .setProgress(100, (progress * 100).toInt(), false)
                 .setOngoing(true)
                 .setContentIntent(pendingIntent)
@@ -985,7 +985,7 @@ class AudioPlaybackService : Service() {
             val notification = NotificationCompat.Builder(this, CHANNEL_ID)
                 .setContentTitle("Enriching Metadata...")
                 .setContentText("Processed $current of $total songs")
-                .setSmallIcon(R.mipmap.ic_launcher)
+                .setSmallIcon(R.drawable.ic_search_notification)
                 .setProgress(100, (progress * 100).toInt(), false)
                 .setOngoing(true)
                 .setContentIntent(pendingIntent)
@@ -1262,7 +1262,7 @@ class AudioPlaybackService : Service() {
         }
 
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.mipmap.ic_launcher)
+            .setSmallIcon(R.drawable.ic_search_notification)
             .setContentIntent(pendingIntent)
             .setOngoing(state.isPlaying)
             .setPriority(NotificationCompat.PRIORITY_LOW)
@@ -1409,20 +1409,13 @@ class AudioPlaybackService : Service() {
             delay(100)
             
             engine.release()
-            
+
             // Clear all temporary playback caches (GDrive and Telegram cached copies)
             // If we were playing, exclude the current song so it remains cached for immediate resume
             if (isPlaying && currentSong != null) {
-                cloudCacheManager.clearAllPlaybackCaches(excludeId = currentSong.id)
-            } else if (!isPlaying) {
-                cloudCacheManager.clearAllPlaybackCaches()
-            }
-
-            // Also clear TDLib's raw download cache
-            val tdlibFilesDir = java.io.File(cacheDir, "tdlib/files")
-            if (tdlibFilesDir.exists()) {
-                tdlibFilesDir.deleteRecursively()
-                tdlibFilesDir.mkdirs()
+                cloudCacheManager.clearFullCache(excludeId = currentSong.id)
+            } else {
+                cloudCacheManager.clearFullCache()
             }
         }
 
@@ -1454,14 +1447,14 @@ class AudioPlaybackService : Service() {
         }
 
         // Ensure cloud cache is cleared on destroy if we are not just restarting
-        val isPlaying = engine.playbackStateFlow.value.isPlaying
-        val currentSong = engine.playbackStateFlow.value.currentSong
-        if (!isPlaying) {
+        val isPlayingLocal = engine.playbackStateFlow.value.isPlaying
+        val currentSongLocal = engine.playbackStateFlow.value.currentSong
+        if (!isPlayingLocal) {
             cloudCacheManager.clearFullCache()
-        } else if (currentSong != null) {
-            cloudCacheManager.clearFullCache(excludeId = currentSong.id)
+        } else if (currentSongLocal != null) {
+            cloudCacheManager.clearFullCache(excludeId = currentSongLocal.id)
         }
-        
+
         cloudCacheManager.release()
 
         serviceScope.cancel()

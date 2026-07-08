@@ -87,10 +87,22 @@ class PlaybackLruCache(private val context: Context) {
             val toRemove = lruMap.keys.filter { it != excludeId }
             toRemove.forEach { lruMap.remove(it) }
             persistMap()
-            
-            cacheDir.listFiles()?.forEach { file ->
-                if (excludeId == null || !file.name.startsWith("$excludeId.")) {
-                    file.delete()
+
+            if (excludeId == null) {
+                // Optimized full wipe: rename and delete is often faster than listFiles if dir is large
+                val trash = File(cacheDir.parent, "cloud_cache_trash_${System.currentTimeMillis()}")
+                if (cacheDir.renameTo(trash)) {
+                    // Start deletion in background if possible, but here we just deleteRecursively
+                    trash.deleteRecursively()
+                } else {
+                    cacheDir.deleteRecursively()
+                }
+                cacheDir.mkdirs()
+            } else {
+                cacheDir.listFiles()?.forEach { file ->
+                    if (!file.name.startsWith("$excludeId.")) {
+                        file.delete()
+                    }
                 }
             }
         }
