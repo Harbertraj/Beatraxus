@@ -1,6 +1,7 @@
 package com.beatflowy.app.engine
 
 import android.util.Log
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.locks.ReentrantReadWriteLock
 import kotlin.concurrent.withLock
 
@@ -11,7 +12,7 @@ import kotlin.concurrent.withLock
 internal class MmapAudioOutput {
 
     private var nativeHandle: Long = 0L
-    private var framesWritten: Long = 0L
+    private val framesWritten = AtomicLong(0L)
     private val lock = ReentrantReadWriteLock()
 
     init {
@@ -39,20 +40,20 @@ internal class MmapAudioOutput {
 
     fun flush() = lock.readLock().withLock {
         if (nativeHandle != 0L) nMmapFlush(nativeHandle)
-        framesWritten = 0L
+        framesWritten.set(0L)
     }
 
     fun write(data: FloatArray, offsetInSamples: Int, frameCount: Int): Int = lock.readLock().withLock {
         if (nativeHandle == 0L) return 0
         val written = nMmapWrite(nativeHandle, data, offsetInSamples, frameCount)
-        if (written > 0) framesWritten += written
+        if (written > 0) framesWritten.addAndGet(written.toLong())
         return written
     }
 
     fun writeInt(data: IntArray, offsetInSamples: Int, frameCount: Int): Int = lock.readLock().withLock {
         if (nativeHandle == 0L) return 0
         val written = nMmapWriteInt(nativeHandle, data, offsetInSamples, frameCount)
-        if (written > 0) framesWritten += written
+        if (written > 0) framesWritten.addAndGet(written.toLong())
         return written
     }
 
@@ -61,7 +62,7 @@ internal class MmapAudioOutput {
         return nMmapGetPlaybackPosition(nativeHandle)
     }
 
-    fun totalFramesWritten(): Long = lock.readLock().withLock { framesWritten }
+    fun totalFramesWritten(): Long = framesWritten.get()
 
     fun mmapActualBufferFrames(): Int = lock.readLock().withLock {
         if (nativeHandle == 0L) return 0
