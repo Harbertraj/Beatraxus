@@ -31,6 +31,12 @@ class DriveAccountRepository(private val context: Context) {
         context.dataStore.edit { preferences ->
             map.forEach { (keyName, value) ->
                 when (value) {
+                    is String -> preferences[stringPreferencesKey(keyName)] = value
+                    is Boolean -> preferences[booleanPreferencesKey(keyName)] = value
+                    is Int -> preferences[intPreferencesKey(keyName)] = value
+                    is Long -> preferences[longPreferencesKey(keyName)] = value
+                    is Float -> preferences[floatPreferencesKey(keyName)] = value
+                    is Double -> preferences[floatPreferencesKey(keyName)] = value.toFloat()
                     is List<*> -> {
                         if (value.all { it is String }) {
                             @Suppress("UNCHECKED_CAST")
