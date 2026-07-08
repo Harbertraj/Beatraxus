@@ -293,7 +293,7 @@ class TdLibManager private constructor(
                     BuildConfig.TELEGRAM_API_ID,
                     BuildConfig.TELEGRAM_API_HASH
                 ).also {
-                    Log.d("TDLib", "apiId=${BuildConfig.TELEGRAM_API_ID} apiHash=${BuildConfig.TELEGRAM_API_HASH}")
+                    // removed: this used to log apiId/apiHash in plaintext to Logcat
                     INSTANCE = it
                 }
             }

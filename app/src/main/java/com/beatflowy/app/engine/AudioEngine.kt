@@ -676,10 +676,10 @@ class AudioEngine(
                 controlMutex.withLock {
                     if (activeSession?.sessionId == session.sessionId) {
                         val next = nextSession
-                        if (next != null && next.pcmFormat != null) {
+                        val newFormat = next?.pcmFormat
+                        if (next != null && newFormat != null) {
                             // Gapless transition (no crossfade active)
                             val oldFormat = session.pcmFormat
-                            val newFormat = next.pcmFormat
 
                             activeSession = next
                             val newSessionId = next.sessionId
@@ -688,7 +688,7 @@ class AudioEngine(
                             nextSong = null
 
                             if (oldFormat != newFormat) {
-                                next.configure(newFormat!!)
+                                next.configure(newFormat)
                                 // Reconfigure output for the new format
                                 reconfigureOutput()
                             }
@@ -729,6 +729,7 @@ class AudioEngine(
         @Volatile
         var lastDecoderProgressTime = System.currentTimeMillis()
 
+        @Volatile
         var pcmFormat: PcmAudioFormat? = null
             private set
         private var basePositionMs: Long = initialStartPositionMs
