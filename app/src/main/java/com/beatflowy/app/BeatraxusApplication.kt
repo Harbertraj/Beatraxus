@@ -29,12 +29,20 @@ class BeatraxusApplication : Application() {
 
     private fun clearTemporaryCache() {
         try {
-            val cacheDir = java.io.File(cacheDir, "cloud_cache")
-            if (cacheDir.exists()) {
-                cacheDir.listFiles()?.forEach { it.delete() }
+            val cacheDirRoot = cacheDir
+            val cloudCacheDir = java.io.File(cacheDirRoot, "cloud_cache")
+            if (cloudCacheDir.exists()) {
+                cloudCacheDir.listFiles()?.forEach { it.delete() }
             }
             // Also clear the LRU map preferences
             getSharedPreferences("playback_lru_prefs", MODE_PRIVATE).edit().clear().apply()
+
+            // NEW: also clear TDLib's own raw download cache
+            val tdlibFilesDir = java.io.File(cacheDirRoot, "tdlib/files")
+            if (tdlibFilesDir.exists()) {
+                tdlibFilesDir.deleteRecursively()
+                tdlibFilesDir.mkdirs()
+            }
         } catch (e: Exception) {
             e.printStackTrace()
         }

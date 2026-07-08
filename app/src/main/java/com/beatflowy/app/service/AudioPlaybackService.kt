@@ -1417,6 +1417,13 @@ class AudioPlaybackService : Service() {
             } else if (!isPlaying) {
                 cloudCacheManager.clearAllPlaybackCaches()
             }
+
+            // Also clear TDLib's raw download cache
+            val tdlibFilesDir = java.io.File(cacheDir, "tdlib/files")
+            if (tdlibFilesDir.exists()) {
+                tdlibFilesDir.deleteRecursively()
+                tdlibFilesDir.mkdirs()
+            }
         }
 
         // Reset internal state for potential service reuse/restart
