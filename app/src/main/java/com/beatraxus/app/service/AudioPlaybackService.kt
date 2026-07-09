@@ -779,6 +779,7 @@ class AudioPlaybackService : Service() {
 
     fun runDriveScan(
         email: String,
+        allowedFormats: Set<String>,
         onProgress: (Float) -> Unit,
         onDiscoveryComplete: (List<Song>) -> Unit,
         onEnrichmentProgress: (Float, Int, Int) -> Unit,
@@ -793,7 +794,7 @@ class AudioPlaybackService : Service() {
             try {
                 val credential = driveAccountRepository.getCredential(email)
                 val scanner = com.beatraxus.app.drive.DriveLibraryScanner(application)
-                val newSongs = scanner.scanAccount(credential)
+                val newSongs = scanner.scanAccount(credential, allowedFormats)
                 
                 val existingSongs = withContext(Dispatchers.IO) {
                     songDao.getSongsByAccount(email.lowercase()).associateBy { it.id }

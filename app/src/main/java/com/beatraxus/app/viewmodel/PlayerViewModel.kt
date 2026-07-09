@@ -128,7 +128,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         artworkEnrichmentEnabled = prefs.getBoolean("artwork_enrichment_enabled", true),
         syncQuality = SyncQuality.valueOf(prefs.getString("sync_quality", SyncQuality.MEDIUM.name) ?: SyncQuality.MEDIUM.name),
         backgroundSyncEnabled = prefs.getBoolean("background_sync_enabled", true),
-        scrobblingEnabled = prefs.getBoolean("scrobbling_enabled", true)
+        scrobblingEnabled = prefs.getBoolean("scrobbling_enabled", true),
+        gdriveAllowedFormats = prefs.getStringSet("gdrive_allowed_formats", emptySet()) ?: emptySet(),
+        telegramAllowedFormats = prefs.getStringSet("telegram_allowed_formats", emptySet()) ?: emptySet()
     ))
     val uiState: StateFlow<PlayerUiState> = _uiState.asStateFlow()
 
@@ -921,6 +923,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         
         svc.runDriveScan(
             email = email,
+            allowedFormats = _uiState.value.gdriveAllowedFormats,
             onProgress = { progress ->
                 _uiState.update { it.copy(scanProgress = progress) }
             },
@@ -1903,6 +1906,16 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun setBackgroundSyncEnabled(enabled: Boolean) {
         prefs.edit().putBoolean("background_sync_enabled", enabled).apply()
         _uiState.update { it.copy(backgroundSyncEnabled = enabled) }
+    }
+
+    fun setGdriveAllowedFormats(formats: Set<String>) {
+        prefs.edit().putStringSet("gdrive_allowed_formats", formats).apply()
+        _uiState.update { it.copy(gdriveAllowedFormats = formats) }
+    }
+
+    fun setTelegramAllowedFormats(formats: Set<String>) {
+        prefs.edit().putStringSet("telegram_allowed_formats", formats).apply()
+        _uiState.update { it.copy(telegramAllowedFormats = formats) }
     }
 
     fun setPreampEnabled(enabled: Boolean) = applyDspConfig {
@@ -3041,7 +3054,13 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
                 // 2. Fast scan messages
                 Log.d("PlayerViewModel", "Scanning Telegram channel: $normalizedUrl")
-                val songs = telegramChannelRepository.scanChannel(tdLibManager, cloudCacheManager, normalizedUrl, existingSongs) { progress ->
+                val songs = telegramChannelRepository.scanChannel(
+                    tdLibManager, 
+                    cloudCacheManager, 
+                    normalizedUrl, 
+                    existingSongs,
+                    _uiState.value.telegramAllowedFormats
+                ) { progress ->
                     _uiState.update { it.copy(scanProgress = progress * 0.1f, telegramSyncErrorMessage = "Scanning messages...") } // First 10% is scanning
                 }
                 

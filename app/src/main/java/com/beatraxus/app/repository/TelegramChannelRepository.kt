@@ -169,6 +169,7 @@ class TelegramChannelRepository(private val context: Context) {
         cloudCacheManager: com.beatraxus.app.drive.CloudCacheManager,
         channelUrl: String,
         existingSongs: Map<String, Song> = emptyMap(),
+        allowedFormats: Set<String>? = null,
         onProgress: ((Float) -> Unit)? = null
     ): List<Song> {
         val username = parseTelegramChannelName(channelUrl)
@@ -203,6 +204,13 @@ class TelegramChannelRepository(private val context: Context) {
                             val audio = audioContent.audio
                             val fileId = audio.audio.id
                             
+                            val format = detectAudioFormat(audio.fileName, audio.mimeType)
+                            if (allowedFormats != null && allowedFormats.isNotEmpty() && !allowedFormats.contains(format.uppercase())) {
+                                processed++
+                                if (total > 0) onProgress?.invoke(processed.toFloat() / total)
+                                return@withPermit null
+                            }
+
                             val (fnArtist, fnTitle) = parseMetadataFromFileName(audio.fileName)
 
                             Song(
@@ -213,7 +221,7 @@ class TelegramChannelRepository(private val context: Context) {
                                 album = "Telegram: $username",
                                 folder = "Telegram: $username",
                                 durationMs = (audio.duration * 1000L),
-                                format = detectAudioFormat(audio.fileName, audio.mimeType),
+                                format = format,
                                 sampleRateHz = 44100,
                                 fileSizeBytes = audio.audio.size.toLong(),
                                 source = SongSource.TELEGRAM,
@@ -229,6 +237,13 @@ class TelegramChannelRepository(private val context: Context) {
                             val doc = docContent.document
                             val fileId = doc.document.id
                             
+                            val format = detectAudioFormat(doc.fileName, doc.mimeType)
+                            if (allowedFormats != null && allowedFormats.isNotEmpty() && !allowedFormats.contains(format.uppercase())) {
+                                processed++
+                                if (total > 0) onProgress?.invoke(processed.toFloat() / total)
+                                return@withPermit null
+                            }
+
                             val (fnArtist, fnTitle) = parseMetadataFromFileName(doc.fileName)
 
                             Song(
@@ -239,7 +254,7 @@ class TelegramChannelRepository(private val context: Context) {
                                 album = "Telegram: $username",
                                 folder = "Telegram: $username",
                                 durationMs = 0L,
-                                format = detectAudioFormat(doc.fileName, doc.mimeType),
+                                format = format,
                                 sampleRateHz = 44100,
                                 fileSizeBytes = doc.document.size.toLong(),
                                 source = SongSource.TELEGRAM,

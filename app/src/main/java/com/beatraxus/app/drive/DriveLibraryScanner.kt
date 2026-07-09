@@ -39,13 +39,21 @@ class DriveLibraryScanner(private val context: Context) {
 
         private val SUPPORTED_EXTENSIONS = AUDIO_EXTENSIONS.toHashSet()
 
-        fun isSupportedAudioFile(filename: String, mimeType: String? = null): Boolean {
+        fun isSupportedAudioFile(filename: String, mimeType: String? = null, allowedFormats: Set<String>? = null): Boolean {
             val ext = ".${filename.substringAfterLast('.', "").lowercase()}"
-            return ext in SUPPORTED_EXTENSIONS || (mimeType?.startsWith("audio/") == true)
+            val isSupported = ext in SUPPORTED_EXTENSIONS || (mimeType?.startsWith("audio/") == true)
+            if (!isSupported) return false
+            
+            if (allowedFormats == null || allowedFormats.isEmpty()) return true
+            
+            // Check if ext matches any allowed format
+            // allowedFormats will contain strings like "FLAC", "ALAC", "MP3"
+            val formatFromExt = ext.removePrefix(".").uppercase()
+            return allowedFormats.any { it.equals(formatFromExt, ignoreCase = true) }
         }
     }
 
-    fun scanAccountFlow(credential: GoogleAccountCredential): Flow<List<Song>> = flow {
+    fun scanAccountFlow(credential: GoogleAccountCredential, allowedFormats: Set<String>? = null): Flow<List<Song>> = flow {
         try {
             val driveService = buildDriveService(credential)
             val query = buildDriveQuery()
@@ -60,7 +68,7 @@ class DriveLibraryScanner(private val context: Context) {
                     .execute()
 
                 val pageSongs = result.files
-                    ?.filter { isSupportedAudioFile(it.name, it.mimeType) }
+                    ?.filter { isSupportedAudioFile(it.name, it.mimeType, allowedFormats) }
                     ?.map { file -> file.toSong(credential.selectedAccountName) }
                     ?: emptyList()
 
@@ -81,7 +89,7 @@ class DriveLibraryScanner(private val context: Context) {
         }
     }.flowOn(Dispatchers.IO)
 
-    suspend fun scanAccount(credential: GoogleAccountCredential): List<Song> =
+    suspend fun scanAccount(credential: GoogleAccountCredential, allowedFormats: Set<String>? = null): List<Song> =
         withContext(Dispatchers.IO) {
             val songs = mutableListOf<Song>()
             try {
@@ -100,7 +108,7 @@ class DriveLibraryScanner(private val context: Context) {
                         .execute()
 
                     val pageSongs = result.files
-                        ?.filter { isSupportedAudioFile(it.name, it.mimeType) }
+                        ?.filter { isSupportedAudioFile(it.name, it.mimeType, allowedFormats) }
                         ?.map { file -> file.toSong(credential.selectedAccountName) }
                         ?: emptyList()
 

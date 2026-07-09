@@ -246,7 +246,9 @@ data class PlayerUiState(
     val telegramAuthError: String? = null,
     val showTelegramPhoneForm: Boolean = false,
     val isIgnoringBatteryOptimizations: Boolean = false,
-    val isOemBatteryManagerDetected: Boolean = false
+    val isOemBatteryManagerDetected: Boolean = false,
+    val gdriveAllowedFormats: Set<String> = emptySet(),
+    val telegramAllowedFormats: Set<String> = emptySet()
 )
 {
     override fun equals(other: Any?): Boolean {
@@ -355,7 +357,9 @@ data class PlayerUiState(
                 telegramAuthError == other.telegramAuthError &&
                 showTelegramPhoneForm == other.showTelegramPhoneForm &&
                 isIgnoringBatteryOptimizations == other.isIgnoringBatteryOptimizations &&
-                isOemBatteryManagerDetected == other.isOemBatteryManagerDetected
+                isOemBatteryManagerDetected == other.isOemBatteryManagerDetected &&
+                gdriveAllowedFormats == other.gdriveAllowedFormats &&
+                telegramAllowedFormats == other.telegramAllowedFormats
     }
 
     override fun hashCode(): Int {
@@ -463,6 +467,8 @@ data class PlayerUiState(
         result = 31 * result + showTelegramPhoneForm.hashCode()
         result = 31 * result + isIgnoringBatteryOptimizations.hashCode()
         result = 31 * result + isOemBatteryManagerDetected.hashCode()
+        result = 31 * result + gdriveAllowedFormats.hashCode()
+        result = 31 * result + telegramAllowedFormats.hashCode()
         return result
     }
 }

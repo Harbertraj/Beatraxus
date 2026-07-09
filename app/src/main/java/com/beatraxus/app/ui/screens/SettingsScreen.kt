@@ -304,8 +304,15 @@ fun SettingsScreen(
                                 "DSP Enhancements" -> DspEnhancementsContent(uiState, playerViewModel, onEditValue = { editingValue = it })
                                 "Replay Gain" -> ReplayGainContent(uiState, playerViewModel, onEditValue = { editingValue = it })
                                 "Library" -> LibraryContent(uiState, playerViewModel, onShowInfo = { showInfoPopup = true })
-                                "Cloud" -> CloudContent(uiState, playerViewModel, onRequestGDriveAccount = onRequestGDriveAccount, onNavigateToGDriveSettings = { sectionStack.add("GDrive Settings") })
-                                "GDrive Settings" -> MetadataSyncContent(uiState, playerViewModel)
+                                "Cloud" -> CloudContent(
+                                    uiState, 
+                                    playerViewModel, 
+                                    onRequestGDriveAccount = onRequestGDriveAccount, 
+                                    onNavigateToGDriveSettings = { sectionStack.add("GDrive Settings") },
+                                    onNavigateToTelegramSettings = { sectionStack.add("Telegram Settings") }
+                                )
+                                "GDrive Settings" -> MetadataSyncContent(uiState, playerViewModel, isTelegram = false)
+                                "Telegram Settings" -> MetadataSyncContent(uiState, playerViewModel, isTelegram = true)
                                 "Last.fm" -> LastFmContent(uiState, playerViewModel)
                                 "About" -> AboutContent()
                                 "Backup & Restore" -> BackupRestoreContent(
@@ -2406,7 +2413,8 @@ fun CloudContent(
     uiState: PlayerUiState,
     viewModel: PlayerViewModel,
     onRequestGDriveAccount: () -> Unit,
-    onNavigateToGDriveSettings: () -> Unit
+    onNavigateToGDriveSettings: () -> Unit,
+    onNavigateToTelegramSettings: () -> Unit
 ) {
     val driveAccounts = uiState.driveAccounts
     val telegramChannels = uiState.telegramChannels
@@ -2546,6 +2554,15 @@ fun CloudContent(
             }
 
             HorizontalDivider(color = Color.White.copy(0.08f), modifier = Modifier.padding(vertical = 8.dp))
+
+            CloudSettingsButton(
+                title = "Telegram Settings",
+                subtitle = "Network, Data Saver and Sync options",
+                icon = Icons.Rounded.Settings,
+                onClick = onNavigateToTelegramSettings
+            )
+
+            Spacer(Modifier.height(8.dp))
 
             TelegramLoginCard(uiState, viewModel)
         }
@@ -3649,11 +3666,12 @@ fun BackupRestoreContent(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
-fun MetadataSyncContent(uiState: PlayerUiState, playerViewModel: PlayerViewModel) {
+fun MetadataSyncContent(uiState: PlayerUiState, playerViewModel: PlayerViewModel, isTelegram: Boolean = false) {
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         SettingsSection(
-            title = "Network Control",
+            title = if (isTelegram) "Telegram Network" else "GDrive Network",
             icon = Icons.Rounded.Wifi
         ) {
             Column(Modifier.padding(horizontal = 4.dp)) {
@@ -3680,6 +3698,59 @@ fun MetadataSyncContent(uiState: PlayerUiState, playerViewModel: PlayerViewModel
                     }
                 }
             }
+        }
+
+        SettingsSection(
+            title = "Format Sections",
+            icon = Icons.Rounded.AudioFile,
+            subtitle = if (isTelegram) "Selective Telegram format sync" else "Selective GDrive format sync"
+        ) {
+            val formats = listOf("FLAC", "ALAC", "WAV", "DSD", "DSF", "DFF", "AIFF", "APE", "WV", "TTA", "MP3", "M4A", "AAC", "OGG", "OPUS", "WMA", "MP4")
+            val allowedFormats = if (isTelegram) uiState.telegramAllowedFormats else uiState.gdriveAllowedFormats
+            
+            Text(
+                "Only sync and enrich selected formats. If none selected, all supported formats are allowed.",
+                color = Color.White.copy(0.5f),
+                fontSize = 12.sp,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+            )
+
+            FlowRow(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                formats.forEach { format ->
+                    val isSelected = allowedFormats.contains(format)
+                    FilterChip(
+                        selected = isSelected,
+                        onClick = {
+                            val newSet = if (isSelected) allowedFormats - format else allowedFormats + format
+                            if (isTelegram) {
+                                playerViewModel.setTelegramAllowedFormats(newSet)
+                            } else {
+                                playerViewModel.setGdriveAllowedFormats(newSet)
+                            }
+                        },
+                        label = { Text(format, fontSize = 11.sp) },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = PremiumAccent.copy(0.15f),
+                            selectedLabelColor = PremiumAccent,
+                            containerColor = Color.White.copy(0.04f),
+                            labelColor = Color.White.copy(0.5f)
+                        ),
+                        border = FilterChipDefaults.filterChipBorder(
+                            enabled = true,
+                            selected = isSelected,
+                            borderColor = if (isSelected) PremiumAccent.copy(0.5f) else Color.White.copy(0.1f),
+                            selectedBorderColor = PremiumAccent,
+                            borderWidth = 1.dp
+                        ),
+                        shape = RoundedCornerShape(8.dp)
+                    )
+                }
+            }
+            Spacer(Modifier.height(8.dp))
         }
 
         SettingsSection(
