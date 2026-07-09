@@ -1237,6 +1237,7 @@ fun TechnicalInfo(song: Song, uiState: com.beatraxus.app.model.PlayerUiState) {
                 val displayFormat = when {
                     rawFormat.contains("alac") || ((rawFormat == "m4a" || rawFormat == "mp4") && !isLikelyLossyM4A) -> "ALAC"
                     rawFormat.contains("dts") -> "DTS"
+                    rawFormat.contains("eac3") -> "EAC3"
                     rawFormat.contains("ac3") -> "AC3"
                     else -> rawFormat.uppercase(Locale.US)
                 }
