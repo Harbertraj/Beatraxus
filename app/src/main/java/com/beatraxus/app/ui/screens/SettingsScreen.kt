@@ -521,6 +521,7 @@ fun LastFmContent(uiState: PlayerUiState, viewModel: PlayerViewModel) {
                 Spacer(Modifier.height(8.dp))
                 Button(
                     onClick = {
+                        viewModel.onLastFmAuthStarted()
                         uriHandler.openUri("https://www.last.fm/api/auth/?api_key=$apiKey&cb=beatraxus://lastfm")
                     },
                     modifier = Modifier.fillMaxWidth(),

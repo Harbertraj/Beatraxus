@@ -59,7 +59,7 @@ configure<ApplicationExtension> {
     signingConfigs {
         create("release") {
             storeFile = localProperties.getProperty("RELEASE_STORE_FILE")?.let { file(it) }
-                ?: file("../../Beatraxus Key/key") // Fallback to relative path if property is missing
+                ?: error("Missing RELEASE_STORE_FILE in local.properties")
             storePassword = localProperties.getProperty("RELEASE_STORE_PASSWORD")
             keyAlias = localProperties.getProperty("RELEASE_KEY_ALIAS")
             keyPassword = localProperties.getProperty("RELEASE_KEY_PASSWORD")
@@ -82,8 +82,11 @@ configure<ApplicationExtension> {
         }
         debug {
             isDebuggable = true
-            // Use the release signing config for debug builds to make SHA-1 fingerprints match
-            signingConfig = signingConfigs.getByName("release")
+            // Use a dedicated debug keystore. Register its SHA-1 wherever the
+            // release SHA-1 was previously needed (e.g. Google Cloud Console
+            // OAuth client, Firebase, App Links) instead of reusing the
+            // production signing key on a debuggable build.
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
 

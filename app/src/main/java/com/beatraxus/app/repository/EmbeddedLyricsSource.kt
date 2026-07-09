@@ -3,6 +3,7 @@ package com.beatraxus.app.repository
 import android.content.Context
 import android.media.MediaMetadataRetriever
 import android.net.Uri
+import android.util.Log
 import org.jaudiotagger.audio.AudioFileIO
 import org.jaudiotagger.tag.FieldKey
 import org.jaudiotagger.tag.id3.ID3v23Frame
@@ -16,6 +17,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 class EmbeddedLyricsSource(private val context: Context) {
+    private val TAG = "EmbeddedLyricsSource"
 
     suspend fun saveLyrics(songPath: String, lyrics: String): Boolean = withContext(Dispatchers.IO) {
         val file = File(songPath)
@@ -137,7 +139,9 @@ class EmbeddedLyricsSource(private val context: Context) {
                 // For now, let's assume if it exists, we'll try to find USLT first
                 // as it's more standard for LRC content.
             }
-        } catch (e: Exception) {}
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to extract SYLT from tag", e)
+        }
         return null
     }
 

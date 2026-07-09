@@ -167,8 +167,10 @@ class MainActivity : FragmentActivity() {
             if (uri != null) {
                 if (uri.scheme == "beatraxus" && uri.host == "lastfm") {
                     val token = uri.getQueryParameter("token")
-                    if (token != null) {
+                    if (token != null && viewModel.isPendingLastFmAuthRequest()) {
                         viewModel.fetchLastFmSession(token)
+                    } else {
+                        Log.w("MainActivity", "Ignoring unsolicited lastfm callback intent")
                     }
                 } else {
                     // Check if it's an audio file/content

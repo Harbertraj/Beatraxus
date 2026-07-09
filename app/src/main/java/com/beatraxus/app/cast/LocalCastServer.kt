@@ -310,7 +310,9 @@ object LocalCastServer {
             output.write("Connection: close\r\n\r\n".toByteArray())
             output.write(message.toByteArray())
             output.flush()
-        } catch (e: Exception) {}
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to send error response: $message", e)
+        }
     }
 
     private class TelegramInputStream(
@@ -344,8 +346,10 @@ object LocalCastServer {
                 }
 
                 try {
-                    Thread.sleep(50)
-                } catch (e: Exception) {}
+                    Thread.sleep(50) // intentional: raw thread, not a coroutine
+                } catch (e: Exception) {
+                    Log.w(TAG, "Wait interrupted", e)
+                }
                 attempts++
             }
 

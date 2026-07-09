@@ -487,7 +487,9 @@ class MetadataExtractor(private val context: Context) {
                 raf.seek(subChunkStart + subChunkSize)
                 if ((subChunkSize % 2) != 0L && raf.filePointer < listEnd) raf.skipBytes(1)
             }
-        } catch (e: Exception) {}
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to parse WAV INFO list for ${song.title}", e)
+        }
         return updatedSong
     }
 

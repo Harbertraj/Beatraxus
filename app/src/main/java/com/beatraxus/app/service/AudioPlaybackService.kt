@@ -1393,45 +1393,38 @@ class AudioPlaybackService : Service() {
     override fun onTaskRemoved(rootIntent: Intent?) {
         val currentSong = engine.playbackStateFlow.value.currentSong
         val isPlaying = engine.playbackStateFlow.value.isPlaying
-        
-        // Save state synchronously before the process can be killed.
-        // We use runBlocking(NonCancellable) to ensure these critical cleanup tasks
-        // are completed even if the system is aggressively killing the process.
-        runBlocking(NonCancellable) {
-            saveState(sync = true)
-            
-            // Stop playback and release engine to ensure hardware resources are freed.
-            // We don't want the engine to be left in a hanging state.
-            engine.stopSync()
-            
-            // Give the engine a very brief moment to actually stop if it's on a background thread
-            delay(100)
-            
-            engine.release()
 
-            // Clear all temporary playback caches (GDrive and Telegram cached copies)
-            // If we were playing, exclude the current song so it remains cached for immediate resume
-            if (isPlaying && currentSong != null) {
-                cloudCacheManager.clearFullCache(excludeId = currentSong.id)
-            } else {
-                cloudCacheManager.clearFullCache()
-            }
-        }
+        // Save only the minimal state synchronously (fast, non-blocking on main thread
+        // since SharedPreferences.commit() on a small payload is cheap).
+        saveState(sync = true)
 
         // Reset internal state for potential service reuse/restart
         hasRestoredFromDisk = false
         playlist = emptyList()
         originalPlaylist = emptyList()
         currentIndex = -1
-        
+
         stopForeground(STOP_FOREGROUND_REMOVE)
-        stopSelf()
-        
+
+        // Do the heavier cleanup (engine stop/release, cache clearing) off the main thread,
+        // in a NonCancellable coroutine so it survives the service stopping.
+        serviceScope.launch(NonCancellable) {
+            engine.stopSync()
+            engine.release()
+            if (isPlaying && currentSong != null) {
+                cloudCacheManager.clearFullCache(excludeId = currentSong.id)
+            } else {
+                cloudCacheManager.clearFullCache()
+            }
+            stopSelf()
+        }
+
         super.onTaskRemoved(rootIntent)
     }
 
     override fun onDestroy() {
         // Safety reset in case onTaskRemoved was skipped
+        // (engine.release() below is now idempotent — see AudioEngine.release())
         hasRestoredFromDisk = false
         playlist = emptyList()
         originalPlaylist = emptyList()

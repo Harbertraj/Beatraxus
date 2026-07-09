@@ -502,7 +502,9 @@ class CloudCacheManager(
                         }
                     }
                 }
-            } catch (e: Exception) { }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to get song size", e)
+            }
             return -1
         }
 
@@ -526,9 +528,11 @@ class CloudCacheManager(
                 if (isSeekPending()) return -1
                 try {
                     lock.unlock()
-                    Thread.sleep(20) // Snappier check
+                    Thread.sleep(20) // Snappier check; intentional: raw thread, not a coroutine
                     lock.lock()
-                } catch (e: Exception) {}
+                } catch (e: Exception) {
+                    Log.w(TAG, "Polling loop interrupted", e)
+                }
                 attempts++
             }
 
@@ -694,9 +698,11 @@ class CloudCacheManager(
             while ((localPath == null || downloadedPrefix < position + size || !File(localPath ?: "").exists()) && attempts < 750) {
                 try {
                     lock.unlock()
-                    Thread.sleep(20) // Snappier check
+                    Thread.sleep(20) // Snappier check; intentional: raw thread, not a coroutine
                     lock.lock()
-                } catch (e: Exception) {}
+                } catch (e: Exception) {
+                    Log.w(TAG, "Polling loop interrupted", e)
+                }
                 attempts++
                 if (localPath != null && downloadedPrefix >= position + size && File(localPath!!).exists()) break
             }

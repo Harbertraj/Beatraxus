@@ -1,6 +1,7 @@
 package com.beatraxus.app.repository
 
 import android.content.Context
+import android.util.Log
 import com.beatraxus.app.model.AutoEqProfile
 import com.beatraxus.app.model.AutoEqProfileSummary
 import com.beatraxus.app.model.ParametricEqBand
@@ -14,6 +15,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 class AutoEqApiService(private val context: Context) {
+    private val TAG = "AutoEqApiService"
 
     private val userAgent = "BeatflowApp/1.0"
     private val baseUrl = "https://api.github.com/repos/jaakkopasanen/AutoEq/contents/results"
@@ -241,6 +243,8 @@ class AutoEqApiService(private val context: Context) {
             }
             
             File(dir, "$key.json").writeText(json.toString())
-        } catch (e: Exception) {}
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to cache profile: $key", e)
+        }
     }
 }

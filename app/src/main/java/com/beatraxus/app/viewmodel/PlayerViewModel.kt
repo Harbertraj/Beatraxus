@@ -28,6 +28,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicBoolean
 import com.google.api.client.googleapis.extensions.android.gms.auth.UserRecoverableAuthIOException
 import kotlin.math.roundToInt
 import com.beatraxus.app.BeatraxusApplication
@@ -81,6 +82,7 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 
 class PlayerViewModel(application: Application) : AndroidViewModel(application) {
+    private val TAG = "PlayerViewModel"
 
     private val musicRepository = MusicRepository(application)
     private val autoEqRepository = AutoEqRepository(application)
@@ -93,6 +95,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private val metadataExtractor = com.beatraxus.app.repository.MetadataExtractor(application)
     private val tdLibManager = (application as BeatraxusApplication).tdLibManager
     private val lastFmRepository = com.beatraxus.app.repository.lastfm.LastFmRepository(application)
+    private val pendingLastFmAuth = AtomicBoolean(false)
     private val networkObserver = com.beatraxus.app.util.NetworkObserver(application)
     private val backupRepository = com.beatraxus.app.repository.BackupRepository(
         application,
@@ -596,7 +599,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     if (artDir.exists()) {
                         artDir.deleteRecursively()
                     }
-                } catch (e: Exception) {}
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to clear art cache", e)
+                }
             }
             
             // 3. Force a full scan to re-cache images with new quality setting
@@ -3216,6 +3221,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             lastFmRepository.logout()
         }
     }
+
+    fun onLastFmAuthStarted() {
+        pendingLastFmAuth.set(true)
+    }
+
+    fun isPendingLastFmAuthRequest(): Boolean = pendingLastFmAuth.getAndSet(false)
 
     fun fetchLastFmSession(token: String) {
         viewModelScope.launch {

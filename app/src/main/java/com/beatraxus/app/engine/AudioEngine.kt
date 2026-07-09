@@ -97,8 +97,9 @@ class AudioEngine(
         onBufferOverflow = BufferOverflow.DROP_OLDEST
     )
 
-    private var positionMs: Long = 0L
+    @Volatile private var positionMs: Long = 0L
     private var underrunCount = 0
+    private val isReleased = AtomicBoolean(false)
     @Volatile private var dspConfig: DspConfig = DspConfig()
     private val dspRevision = AtomicLong(0L)
     private val isSeeking = AtomicBoolean(false)
@@ -436,13 +437,17 @@ class AudioEngine(
 
     fun seekTo(positionMs: Long) {
         Log.d("AudioEngine", "seekTo requested: $positionMs ms")
-        this.positionMs = positionMs
-        val session = activeSession
-        if (session != null) {
-            isSeeking.set(true)
-            session.requestSeek(positionMs)
-        } else {
-            isSeeking.set(false)
+        engineScope.launch {
+            controlMutex.withLock {
+                this@AudioEngine.positionMs = positionMs
+                val session = activeSession
+                if (session != null) {
+                    isSeeking.set(true)
+                    session.requestSeek(positionMs)
+                } else {
+                    isSeeking.set(false)
+                }
+            }
         }
     }
 
@@ -455,6 +460,10 @@ class AudioEngine(
     }
 
     fun release() {
+        if (!isReleased.compareAndSet(false, true)) {
+            Log.w(TAG, "release() called more than once — ignoring redundant call")
+            return
+        }
         runBlocking {
             stopSync()
         }
