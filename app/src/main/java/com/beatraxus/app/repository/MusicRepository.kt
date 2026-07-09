@@ -268,6 +268,9 @@ class MusicRepository(private val context: Context) {
                                             extractorMime.contains("mpeg") || extension == "mp3" -> "MP3"
                                             extractorMime.contains("ogg") || extension == "ogg" -> "OGG"
                                             extractorMime.contains("opus") || extension == "opus" -> "OPUS"
+                                            extractorMime.contains("ac3") || extension == "ac3" -> "AC3"
+                                            extractorMime.contains("eac3") || extension == "eac3" || extension == "ec3" -> "EAC3"
+                                            extractorMime.contains("dts") || extension == "dts" -> "DTS"
                                             else -> "MP3"
                                         }
                                         
@@ -432,6 +435,9 @@ class MusicRepository(private val context: Context) {
             }
             ext == "ogg" || m.contains("ogg") -> "OGG"
             ext == "opus" || m.contains("opus") -> "OPUS"
+            ext == "ac3" || m.contains("ac3") -> "AC3"
+            ext == "eac3" || ext == "ec3" || m.contains("eac3") -> "EAC3"
+            ext == "dts" || m.contains("dts") -> "DTS"
             ext == "mp3" || m.contains("mpeg") -> "MP3"
             else -> "MP3"
         }

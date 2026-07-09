@@ -24,6 +24,9 @@ internal class DecoderFactory(
         val format = song.format.lowercase()
         val isCloud = song.isCloud()
 
+        val isDolbyOrDts = format in setOf("ac3", "eac3", "dts") || format.contains("ac3") || format.contains("dts")
+        val isDsd = format == "dsd" || format == "dsf" || format == "dff" || format.contains("dsd")
+
         val durationMin = song.durationMs / 60000.0
         val sizeMb = song.fileSizeBytes / (1024.0 * 1024.0)
         val isLikelyLossyM4A = (format == "m4a" || format == "mp4" || format == "aac") &&
@@ -43,8 +46,8 @@ internal class DecoderFactory(
             // However, for Telegram we now use a specialized MediaDataSource that handles local file growth,
             // which MediaCodec handles better for WAV than FFmpeg does without complex piping.
             // We also route Telegram M4A/MP4 here to ensure ALAC support without risky/slow probing.
-            if (isExplicitAlac || (isWav && song.source != SongSource.TELEGRAM) || (isM4A && song.source == SongSource.TELEGRAM)) {
-                Log.i(TAG, "Routing Cloud (${if (isExplicitAlac) "ALAC" else if (isWav) "WAV" else "Telegram M4A"}) to FFmpeg: ${song.title}")
+            if (isExplicitAlac || isDolbyOrDts || isDsd || (isWav && song.source != SongSource.TELEGRAM) || (isM4A && song.source == SongSource.TELEGRAM)) {
+                Log.i(TAG, "Routing Cloud (${if (isDolbyOrDts) format.uppercase() else if (isDsd) "DSD" else if (isExplicitAlac) "ALAC" else "WAV"}) to FFmpeg: ${song.title}")
                 return ffmpegAlacDecoder
             }
 
@@ -76,10 +79,10 @@ internal class DecoderFactory(
 
         // 2. Local routing
         // For local files, FFmpeg is often more stable for ALAC and WAV (especially with seeking).
-        if (isAlac || isM4A || isWav || format == "audio") {
+        if (isAlac || isM4A || isWav || isDolbyOrDts || isDsd || format == "audio") {
             // Check if it's actually ALAC inside M4A container
             val probedMime = if (isM4A) probeAudioMime(song) else null
-            if (isAlac || isWav || probedMime?.contains("alac", ignoreCase = true) == true) {
+            if (isAlac || isWav || isDolbyOrDts || isDsd || probedMime?.contains("alac", ignoreCase = true) == true) {
                 Log.i(TAG, "Routing to FFmpeg (Local Lossless): ${song.title} [format=$format]")
                 return ffmpegAlacDecoder
             }

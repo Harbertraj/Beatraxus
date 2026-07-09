@@ -153,7 +153,7 @@ fun SongListItem(
                 ((durationMin > 0 && (sizeMb / durationMin) < 2.3) || (bitrate > 0 && bitrate < 400000))
 
         val isALAC = baseFormat.contains("alac") || ((baseFormat == "m4a" || baseFormat == "mp4") && !isLikelyLossyM4A)
-        val isLosslessFormat = baseFormat.contains("flac") || isALAC || baseFormat.contains("wav") || baseFormat.contains("dsd") || baseFormat.contains("aiff")
+        val isLosslessFormat = baseFormat.contains("flac") || isALAC || baseFormat.contains("wav") || baseFormat.contains("dsd") || baseFormat.contains("aiff") || baseFormat.contains("dts") || baseFormat.contains("ac3")
         val isHiRes = (bitDepth >= 24 || sampleRate > 48000) && isLosslessFormat
 
         object {

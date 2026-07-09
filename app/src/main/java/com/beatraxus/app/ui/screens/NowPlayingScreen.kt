@@ -888,7 +888,7 @@ fun AudioQualityBadge(
         ((durationMin > 0 && (sizeMb / durationMin) < 2.3) || (bitrate > 0 && bitrate < 400000))
 
     val isALAC = format.contains("alac") || ((format == "m4a" || format == "mp4") && !isLikelyLossyM4A)
-    val isLosslessFormat = format.contains("flac") || isALAC || format.contains("wav") || format.contains("dsd") || format.contains("aiff")
+    val isLosslessFormat = format.contains("flac") || isALAC || format.contains("wav") || format.contains("dsd") || format.contains("aiff") || format.contains("dts") || format.contains("ac3")
     val isHiRes = (bitDepth >= 24 || sampleRate > 48000) && isLosslessFormat
     
     val primaryColor = when {
@@ -1236,6 +1236,8 @@ fun TechnicalInfo(song: Song, uiState: com.beatraxus.app.model.PlayerUiState) {
                 
                 val displayFormat = when {
                     rawFormat.contains("alac") || ((rawFormat == "m4a" || rawFormat == "mp4") && !isLikelyLossyM4A) -> "ALAC"
+                    rawFormat.contains("dts") -> "DTS"
+                    rawFormat.contains("ac3") -> "AC3"
                     else -> rawFormat.uppercase(Locale.US)
                 }
                 append(" | $displayFormat")

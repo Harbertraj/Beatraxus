@@ -2,6 +2,7 @@ package com.beatraxus.app.drive
 
 import android.content.Context
 import com.beatraxus.app.model.Song
+import com.beatraxus.app.model.SongSource
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.Dispatchers
@@ -13,62 +14,54 @@ class PlaybackLruCache(private val context: Context) {
     private val prefs = context.getSharedPreferences("playback_lru_prefs", Context.MODE_PRIVATE)
     private val gson = Gson()
 
-    // LinkedHashMap with accessOrder = true for LRU
-    private val lruMap: LinkedHashMap<String, Long> by lazy {
-        val json = prefs.getString("lru_map", null)
-        if (json != null) {
+    private val lruMaps: MutableMap<SongSource, LinkedHashMap<String, Long>> = mutableMapOf()
+
+    private fun mapFor(source: SongSource): LinkedHashMap<String, Long> {
+        return lruMaps.getOrPut(source) { loadMap(source) }
+    }
+
+    private fun loadMap(source: SongSource): LinkedHashMap<String, Long> {
+        val json = prefs.getString("lru_map_${source.name}", null)
+        return if (json != null) {
             val type = object : TypeToken<LinkedHashMap<String, Long>>() {}.type
             try {
                 val map: LinkedHashMap<String, Long> = gson.fromJson(json, type)
-                // We need to recreate it with accessOrder = true because Gson doesn't preserve it
-                val newMap = LinkedHashMap<String, Long>(16, 0.75f, true)
-                newMap.putAll(map)
-                newMap
+                LinkedHashMap<String, Long>(16, 0.75f, true).apply { putAll(map) }
             } catch (e: Exception) {
-                LinkedHashMap<String, Long>(16, 0.75f, true)
+                LinkedHashMap(16, 0.75f, true)
             }
         } else {
-            LinkedHashMap<String, Long>(16, 0.75f, true)
+            LinkedHashMap(16, 0.75f, true)
         }
     }
 
     /**
-     * Ensures the song is in the 15-song shared LRU cache.
-     * @param isPlayback If true, updates access order (counting towards 15). 
+     * Ensures the song is in the 15-song per-source LRU cache.
+     * @param isPlayback If true, updates access order (counting towards 15).
      *                   If false (pre-fetch), ensures file exists without updating recency.
      * @param currentlyPlayingId The ID of the song currently being played, which should NEVER be evicted.
      */
     suspend fun getOrCacheFile(song: Song, sourceFile: File, isPlayback: Boolean, currentlyPlayingId: String?): File = withContext(Dispatchers.IO) {
+        val map = mapFor(song.source)
         val extension = sourceFile.extension.takeIf { it.isNotBlank() } ?: "cache"
         val cachedFile = File(cacheDir, "${song.id}.$extension")
-
         var needsCopy = false
 
-        synchronized(lruMap) {
+        synchronized(map) {
             val fileExists = cachedFile.exists() && cachedFile.length() > 0
-
             if (isPlayback) {
-                // Playback started: move to most-recent
-                lruMap[song.id] = System.currentTimeMillis()
-            } else if (!lruMap.containsKey(song.id)) {
-                // Pre-fetch and NOT in cache: add as least-recent (timestamp 0)
-                lruMap[song.id] = 0L
+                map[song.id] = System.currentTimeMillis()
+            } else if (!map.containsKey(song.id)) {
+                map[song.id] = 0L
             }
-
-            // Evict if we just added a 16th entry
-            if (lruMap.size > 15) {
-                evictOldest(currentlyPlayingId)
+            if (map.size > 15) {
+                evictOldest(map, currentlyPlayingId)
             }
-
             needsCopy = !fileExists && sourceFile.absolutePath != cachedFile.absolutePath
-            persistMap()
+            persistMap(song.source, map)
         }
 
-        // File copy happens outside the lock so concurrent pre-fetches don't serialize on it.
-        if (needsCopy) {
-            sourceFile.copyTo(cachedFile, overwrite = true)
-        }
-
+        if (needsCopy) sourceFile.copyTo(cachedFile, overwrite = true)
         cachedFile
     }
 
@@ -78,58 +71,50 @@ class PlaybackLruCache(private val context: Context) {
     fun getCachedFile(song: Song): File? = getCachedFileById(song.id)
 
     fun getCachedFileById(songId: String): File? {
-        return synchronized(lruMap) {
-            cacheDir.listFiles { _, name -> name.startsWith("$songId.") }
-                ?.firstOrNull { it.length() > 0 }
-        }
+        // Source-agnostic lookup: filenames are unique by ID
+        return cacheDir.listFiles { _, name -> name.startsWith("$songId.") }
+            ?.firstOrNull { it.length() > 0 }
     }
 
     fun clearCache(excludeId: String? = null) {
-        synchronized(lruMap) {
-            val toRemove = lruMap.keys.filter { it != excludeId }
-            toRemove.forEach { lruMap.remove(it) }
-            persistMap()
+        SongSource.values().forEach { source ->
+            val map = mapFor(source)
+            synchronized(map) {
+                val toRemove = map.keys.filter { it != excludeId }
+                toRemove.forEach { map.remove(it) }
+                persistMap(source, map)
+            }
+        }
 
-            if (excludeId == null) {
-                // Optimized full wipe: rename and delete is often faster than listFiles if dir is large
-                val trash = File(cacheDir.parent, "cloud_cache_trash_${System.currentTimeMillis()}")
-                if (cacheDir.renameTo(trash)) {
-                    // Start deletion in background if possible, but here we just deleteRecursively
-                    trash.deleteRecursively()
-                } else {
-                    cacheDir.deleteRecursively()
-                }
-                cacheDir.mkdirs()
+        if (excludeId == null) {
+            val trash = File(cacheDir.parent, "cloud_cache_trash_${System.currentTimeMillis()}")
+            if (cacheDir.renameTo(trash)) {
+                trash.deleteRecursively()
             } else {
-                cacheDir.listFiles()?.forEach { file ->
-                    if (!file.name.startsWith("$excludeId.")) {
-                        file.delete()
-                    }
+                cacheDir.deleteRecursively()
+            }
+            cacheDir.mkdirs()
+        } else {
+            cacheDir.listFiles()?.forEach { file ->
+                if (!file.name.startsWith("$excludeId.")) {
+                    file.delete()
                 }
             }
         }
     }
 
-    private fun evictOldest(currentlyPlayingId: String?) {
-        // LinkedHashMap with accessOrder=true: first entry is oldest accessed
-        val iterator = lruMap.entries.iterator()
+    private fun evictOldest(map: LinkedHashMap<String, Long>, currentlyPlayingId: String?) {
+        val iterator = map.entries.iterator()
         while (iterator.hasNext()) {
             val entry = iterator.next()
-            val oldestId = entry.key
-            
-            // Safety check: Don't evict the song that is currently playing!
-            if (oldestId == currentlyPlayingId) {
-                continue
-            }
-            
+            if (entry.key == currentlyPlayingId) continue
             iterator.remove()
-            // Find and delete the file associated with this ID
-            cacheDir.listFiles { _, name -> name.startsWith("$oldestId.") }?.forEach { it.delete() }
-            return // Successfully evicted one non-playing song
+            cacheDir.listFiles { _, name -> name.startsWith("${entry.key}.") }?.forEach { it.delete() }
+            return
         }
     }
 
-    private fun persistMap() {
-        prefs.edit().putString("lru_map", gson.toJson(lruMap)).apply()
+    private fun persistMap(source: SongSource, map: LinkedHashMap<String, Long>) {
+        prefs.edit().putString("lru_map_${source.name}", gson.toJson(map)).apply()
     }
 }

@@ -37,6 +37,9 @@ internal fun detectAudioFormat(fileName: String, mimeType: String?): String {
         "alac" -> return "ALAC"
         "aiff", "aif" -> return "AIFF"
         "dsf", "dsd" -> return "DSD"
+        "ac3" -> return "AC3"
+        "eac3", "ec3" -> return "EAC3"
+        "dts" -> return "DTS"
         "mp3" -> return "MP3"
     }
 
@@ -50,6 +53,9 @@ internal fun detectAudioFormat(fileName: String, mimeType: String?): String {
         mime.contains("aac") -> "AAC"
         mime.contains("ogg") -> "OGG"
         mime.contains("opus") -> "OPUS"
+        mime.contains("eac3") -> "EAC3"
+        mime.contains("ac3") -> "AC3"
+        mime.contains("dts") -> "DTS"
         mime.contains("mpeg") || mime.contains("mp3") -> "MP3"
         else -> "MP3"
     }

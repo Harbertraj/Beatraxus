@@ -26,9 +26,9 @@ internal class FfmpegAlacDecoder(
 
     override suspend fun canDecode(song: Song): Boolean {
         val ext = song.uri.lastPathSegment?.substringAfterLast('.', "")?.lowercase(Locale.US).orEmpty()
-        if (song.format.equals("ALAC", ignoreCase = true)) return true
+        if (song.format.equals("ALAC", ignoreCase = true) || song.format.equals("AC3", true) || song.format.equals("EAC3", true) || song.format.equals("DTS", true) || song.format.equals("DSD", true)) return true
         if (song.format.equals("WAV", ignoreCase = true)) return true
-        if (ext in setOf("alac", "m4a", "mp4", "caf", "wav", "bwf")) return true
+        if (ext in setOf("alac", "m4a", "mp4", "caf", "wav", "bwf", "ac3", "eac3", "ec3", "dts", "dsf", "dff")) return true
         return false
     }
 
@@ -39,6 +39,7 @@ internal class FfmpegAlacDecoder(
     ): DecodeResult = withContext(Dispatchers.IO) {
         val headers = resolveHeaders(request.song)
         val format = probeFormat(request.song, headers) ?: return@withContext DecodeResult.Failed("Format probe failed (ALAC/WAV)")
+        val ext = request.song.uri.lastPathSegment?.substringAfterLast('.', "")?.lowercase(Locale.US).orEmpty()
         
         val inputSource = resolveInputSource(request.song)
         if (inputSource.isBlank()) return@withContext DecodeResult.Failed("Unable to resolve input source for ${request.song.title}")
@@ -60,6 +61,15 @@ internal class FfmpegAlacDecoder(
 
         // Determine demuxer to help FFmpeg with pipes or extension-less cache files
         val demuxerHint = when {
+            format.codecName.contains("ac3", ignoreCase = true) ||
+            request.song.format.equals("AC3", ignoreCase = true) ||
+            request.song.format.equals("EAC3", ignoreCase = true) -> "ac3"
+
+            request.song.format.equals("DTS", ignoreCase = true) -> "dts"
+
+            ext == "dsf" || request.song.format.equals("DSD", ignoreCase = true) -> "dsf"
+            ext == "dff" -> "dsdiff"
+
             format.codecName.contains("alac", ignoreCase = true) || 
             request.song.format.equals("ALAC", ignoreCase = true) ||
             request.song.format.equals("M4A", ignoreCase = true) -> "mov"
