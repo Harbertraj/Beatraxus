@@ -49,11 +49,6 @@ configure<ApplicationExtension> {
         buildConfigField("String", "TELEGRAM_API_ID", "\"$telegramApiId\"")
         buildConfigField("String", "TELEGRAM_API_HASH", "\"$telegramApiHash\"")
 
-        externalNativeBuild {
-            cmake {
-                arguments += listOf("-DALSOFT_ENABLE_MODULES=OFF")
-            }
-        }
     }
 
     signingConfigs {
