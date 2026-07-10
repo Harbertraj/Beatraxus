@@ -3,6 +3,7 @@ package com.beatraxus.app.repository
 import android.net.Uri
 import com.beatraxus.app.model.Song
 import com.beatraxus.app.model.AiAnalysisDao
+import com.beatraxus.app.util.ArtistNameUtils
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
@@ -44,8 +45,21 @@ class CloudLibraryRepository(
     }
 
     override fun getArtists(): Flow<List<Triple<String, String, Uri?>>> = getSongs().map { songs ->
-        songs.groupBy { it.artist }
-            .map { (name, list) -> Triple(name, "${list.size} songs", list.first().albumArtUri) }
+        // Each song contributes to every artist it credits
+        val exploded = songs.flatMap { song ->
+            ArtistNameUtils.splitArtists(song.artist).map { artistName -> artistName to song }
+        }
+
+        exploded
+            .groupBy { (name, _) -> ArtistNameUtils.normalizeKey(name) }
+            .map { (_, pairs) ->
+                // pick the most common display-name spelling as canonical
+                val displayName = pairs.map { it.first }
+                    .groupingBy { it }.eachCount()
+                    .maxByOrNull { it.value }!!.key
+                val uniqueSongs = pairs.map { it.second }.distinctBy { it.id }
+                Triple(displayName, "${uniqueSongs.size} songs", uniqueSongs.first().albumArtUri)
+            }
             .sortedBy { it.first.lowercase() }
     }
 

@@ -552,18 +552,27 @@ class MetadataExtractor(private val context: Context) {
         if (data.isEmpty()) return null
         val encoding = data[0].toInt()
         return try {
+            val raw = data.copyOfRange(1, data.size)
             val text = when (encoding) {
-                0 -> String(data, 1, data.size - 1, Charsets.ISO_8859_1)
-                1 -> String(data, 1, data.size - 1, Charsets.UTF_16)
-                2 -> String(data, 1, data.size - 1, Charsets.UTF_16BE)
-                3 -> String(data, 1, data.size - 1, Charsets.UTF_8)
-                else -> String(data, 1, data.size - 1)
+                0 -> {
+                    // Many taggers mislabel UTF-8 content as ISO-8859-1 (encoding byte = 0).
+                    // Prefer UTF-8 when the bytes decode cleanly; fall back to ISO-8859-1 otherwise.
+                    if (isValidUtf8(raw)) String(raw, Charsets.UTF_8) else String(raw, Charsets.ISO_8859_1)
+                }
+                1 -> String(raw, Charsets.UTF_16)
+                2 -> String(raw, Charsets.UTF_16BE)
+                3 -> String(raw, Charsets.UTF_8)
+                else -> String(raw, Charsets.UTF_8)
             }
             text.trimEnd { it == '\u0000' || it.isWhitespace() }
         } catch (e: Exception) {
             null
         }
     }
+
+    private fun isValidUtf8(bytes: ByteArray): Boolean =
+        try { Charsets.UTF_8.newDecoder().decode(java.nio.ByteBuffer.wrap(bytes)); true }
+        catch (e: Exception) { false }
 
     private fun extractEmbeddedArtWithFfmpeg(songId: String, file: File): Uri? {
         val outputFile = File(File(context.filesDir, "album_art").apply { mkdirs() }, "$songId.jpg")

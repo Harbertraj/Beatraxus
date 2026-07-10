@@ -73,6 +73,7 @@ import com.beatraxus.app.repository.LyricsType
 import com.beatraxus.app.repository.DspPreferences
 import com.beatraxus.app.repository.DriveAccount
 import com.beatraxus.app.repository.TelegramChannelRepository
+import com.beatraxus.app.util.ArtistNameUtils
 import com.beatraxus.app.telegram.AuthState
 import com.beatraxus.app.telegram.TdLibManager
 import org.drinkless.tdlib.TdApi
@@ -110,6 +111,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private val favoriteDao = database.favoriteDao()
     private val songDao = database.songDao()
     private val aiAnalysisDao = database.aiAnalysisDao()
+    private val artistArtDao = database.artistArtDao()
     private val aiAnalysisEngine = com.beatraxus.app.engine.AiAnalysisEngine(application)
 
     private val aiAnalysisChannel = kotlinx.coroutines.channels.Channel<Song>(kotlinx.coroutines.channels.Channel.UNLIMITED)
@@ -205,9 +207,24 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             .sortedBy { it.first.lowercase() }
     }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    val artists = filteredSongsByMode.map { songs ->
-        songs.groupBy { it.artist }
-            .map { (name, list) -> Triple(name, "${list.size} songs", list.first().albumArtUri) }
+    val artists: StateFlow<List<Triple<String, String, Uri?>>> = filteredSongsByMode.map { songs ->
+        // Each song contributes to every artist it credits
+        val exploded = songs.flatMap { song ->
+            ArtistNameUtils.splitArtists(song.artist).map { artistName -> artistName to song }
+        }
+
+        exploded
+            .groupBy { (name, _) -> ArtistNameUtils.normalizeKey(name) }
+            .map { (_, pairs) ->
+                // pick the most common display-name spelling as canonical
+                val displayName = pairs.map { it.first }
+                    .groupingBy { it }.eachCount()
+                    .maxByOrNull { it.value }!!.key
+                val uniqueSongs = pairs.map { it.second }.distinctBy { it.id }
+                // Use embedded album art from one of the artist's own tracks as the tile image.
+                // null here signals the UI to render an initials avatar instead.
+                Triple(displayName, "${uniqueSongs.size} songs", uniqueSongs.first().albumArtUri)
+            }
             .sortedBy { it.first.lowercase() }
     }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
@@ -312,7 +329,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     .mapNotNull { id -> all.find { it.id == id } }
             }
             LibraryView.ALBUM_DETAIL -> all.filter { it.album == state.selectedItemName }
-            LibraryView.ARTIST_DETAIL -> all.filter { it.artist == state.selectedItemName }
+            LibraryView.ARTIST_DETAIL -> all.filter { song ->
+                val target = state.selectedItemName ?: return@filter false
+                ArtistNameUtils.splitArtists(song.artist)
+                    .any { ArtistNameUtils.normalizeKey(it) == ArtistNameUtils.normalizeKey(target) }
+            }
             LibraryView.FOLDER_DETAIL -> all.filter { it.folder == state.currentFolderPath }
             LibraryView.YEAR_DETAIL -> all.filter { it.year.toString() == state.selectedItemName }
             LibraryView.GENRE_DETAIL -> all.filter { it.genre == state.selectedItemName }
@@ -2516,7 +2537,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 _recentlyPlayed.value.mapNotNull { id -> modeSongs.find { it.id == id } }
             }
             LibraryView.ALBUM_DETAIL -> modeSongs.filter { it.album == state.selectedItemName }
-            LibraryView.ARTIST_DETAIL -> modeSongs.filter { it.artist == state.selectedItemName }
+            LibraryView.ARTIST_DETAIL -> modeSongs.filter { song ->
+                val target = state.selectedItemName ?: return@filter false
+                ArtistNameUtils.splitArtists(song.artist)
+                    .any { ArtistNameUtils.normalizeKey(it) == ArtistNameUtils.normalizeKey(target) }
+            }
             LibraryView.FOLDER_DETAIL -> modeSongs.filter { it.folder == state.currentFolderPath }
             LibraryView.YEAR_DETAIL -> modeSongs.filter { it.year.toString() == state.selectedItemName }
             LibraryView.GENRE_DETAIL -> modeSongs.filter { it.genre == state.selectedItemName }

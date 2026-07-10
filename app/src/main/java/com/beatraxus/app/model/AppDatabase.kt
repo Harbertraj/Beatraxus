@@ -55,7 +55,7 @@ interface RecentlyPlayedDao {
     suspend fun removeRecentlyPlayed(songId: String)
 }
 
-@Database(entities = [PlaylistEntity::class, FavoriteEntity::class, SongEntity::class, RecentlyPlayedEntity::class, LyricsEntity::class, FolderEntity::class, AiAnalysisEntity::class], version = 13, exportSchema = false)
+@Database(entities = [PlaylistEntity::class, FavoriteEntity::class, SongEntity::class, RecentlyPlayedEntity::class, LyricsEntity::class, FolderEntity::class, AiAnalysisEntity::class, ArtistArtEntity::class], version = 14, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun playlistDao(): PlaylistDao
     abstract fun favoriteDao(): FavoriteDao
@@ -64,6 +64,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun folderDao(): FolderDao
     abstract fun recentlyPlayedDao(): RecentlyPlayedDao
     abstract fun aiAnalysisDao(): AiAnalysisDao
+    abstract fun artistArtDao(): ArtistArtDao
 
     companion object {
         val MIGRATION_11_12 = object : Migration(11, 12) {
@@ -83,6 +84,18 @@ abstract class AppDatabase : RoomDatabase() {
                     "UPDATE songs SET albumArtFetchAttempted = 0 " +
                     "WHERE albumArtUriString IS NULL AND (source = 'GDRIVE' OR source = 'TELEGRAM')"
                 )
+            }
+        }
+
+        val MIGRATION_13_14 = object : Migration(13, 14) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS artist_art_cache (
+                        normalizedKey TEXT NOT NULL PRIMARY KEY,
+                        displayName TEXT NOT NULL,
+                        imageUrl TEXT,
+                        fetchedAt INTEGER NOT NULL)
+                """.trimIndent())
             }
         }
     }

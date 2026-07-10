@@ -1558,6 +1558,7 @@ fun MainScreen(
                                                                         title = artist.first, 
                                                                         subtitle = artist.second, 
                                                                         artUri = artist.third,
+                                                                        isArtistTile = true,
                                                                         isSelected = uiState.selectedIds.contains(artist.first),
                                                                         isMultiSelectMode = uiState.isMultiSelectMode,
                                                                         onClick = {
@@ -4574,6 +4575,7 @@ fun LibraryGridItem(
     artUri: android.net.Uri?,
     isSelected: Boolean = false,
     isMultiSelectMode: Boolean = false,
+    isArtistTile: Boolean = false,
     onClick: () -> Unit,
     onLongClick: () -> Unit = {}
 ) {
@@ -4596,12 +4598,17 @@ fun LibraryGridItem(
                 },
             color = Color.White.copy(0.15f)
         ) {
-            AsyncImage(
-                model = artUri,
-                contentDescription = null,
-                contentScale = ContentScale.Crop
-            )
-            
+            if (isArtistTile && artUri == null) {
+                // No embedded album art — show a deterministic initials avatar instead
+                ArtistAvatar(name = title, modifier = Modifier.fillMaxSize())
+            } else {
+                AsyncImage(
+                    model = artUri,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop
+                )
+            }
+
             if (isMultiSelectMode) {
                 Box(
                     modifier = Modifier
