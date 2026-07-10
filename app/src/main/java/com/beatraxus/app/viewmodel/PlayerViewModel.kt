@@ -655,6 +655,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                             telegramMessageId = entity.telegramMessageId,
                             telegramFileId = entity.telegramFileId,
                             isEnriched = entity.isEnriched,
+                            albumArtFetchAttempted = entity.albumArtFetchAttempted,
                             lastSyncTimestamp = entity.lastSyncTimestamp
                         )
                     }
@@ -3053,6 +3054,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         telegramMessageId = entity.telegramMessageId,
                         telegramFileId = entity.telegramFileId,
                         isEnriched = entity.isEnriched,
+                        albumArtFetchAttempted = entity.albumArtFetchAttempted,
                         lastSyncTimestamp = entity.lastSyncTimestamp
                     )
                 }.associateBy { it.id }
@@ -3099,7 +3101,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     _uiState.update { it.copy(telegramSyncErrorMessage = "Found ${songs.size} songs. Starting enrichment...") }
 
                     // 3. Deep Enrichment for new songs (fetch duration, bitrate, album art)
-                    val toEnrich = songs.filter { !it.isEnriched }
+                    val toEnrich = songs.filter {
+                        !it.isEnriched || (it.albumArtUri == null && !it.albumArtFetchAttempted)
+                    }
                     Log.d("PlayerViewModel", "Songs to enrich: ${toEnrich.size}")
                     if (toEnrich.isNotEmpty()) {
                         _uiState.update { it.copy(enrichmentStatus = "Enriching ${toEnrich.size} new Telegram songs...") }
@@ -3175,8 +3179,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             // Wait for partial download
             var attempts = 0
             var path: String? = null
+            var file: TdApi.File? = null
             while (attempts < 60) { // 3 seconds
-                val file = try { tdLibManager.send(TdApi.GetFile(fileId)) } catch (e: Exception) { null }
+                file = try { tdLibManager.send(TdApi.GetFile(fileId)) } catch (e: Exception) { null }
                 if (file != null && file.local.path.isNotBlank() && (file.local.isDownloadingCompleted || file.local.downloadedPrefixSize >= downloadSize)) {
                     path = file.local.path
                     break
@@ -3187,10 +3192,41 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             
             if (path == null) return null
             
-            val tempFile = File(path)
+            var tempFile = File(path)
             if (!tempFile.exists()) return null
-            
-            return metadataExtractor.extractMetadataFromLocalFile(song, tempFile).copy(isEnriched = true)
+
+            var enriched = metadataExtractor.extractMetadataFromLocalFile(song, tempFile)
+
+            // WAV art often lives near the END of the file (after the audio "data" chunk),
+            // which the 1MB header download won't contain. Fetch the tail too, same as
+            // the Google Drive path does, before giving up.
+            val isWav = song.format.lowercase().contains("wav")
+            val totalSize = file?.size?.toLong() ?: 0L
+            if (isWav && enriched.albumArtUri == null && totalSize > downloadSize) {
+                val tailSize = 8 * 1024 * 1024L
+                val offset = (totalSize - tailSize).coerceAtLeast(downloadSize)
+                tdLibManager.send(TdApi.DownloadFile(fileId, 32, offset, totalSize - offset, true))
+
+                var tailAttempts = 0
+                while (tailAttempts < 60) {
+                    val updated = try { tdLibManager.send(TdApi.GetFile(fileId)) } catch (e: Exception) { null }
+                    if (updated != null && (updated.local.isDownloadingCompleted || updated.local.downloadedPrefixSize >= totalSize)) {
+                        tempFile = File(updated.local.path)
+                        break
+                    }
+                    delay(50)
+                    tailAttempts++
+                }
+
+                if (tempFile.exists()) {
+                    enriched = metadataExtractor.extractMetadataFromLocalFile(song, tempFile)
+                }
+            }
+
+            return enriched.copy(
+                isEnriched = true,
+                albumArtFetchAttempted = true
+            )
         } catch (e: Exception) {
             Log.e("PlayerViewModel", "Failed to enrich Telegram song: ${song.title}", e)
             return null

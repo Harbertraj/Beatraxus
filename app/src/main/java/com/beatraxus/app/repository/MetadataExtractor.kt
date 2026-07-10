@@ -78,7 +78,8 @@ class MetadataExtractor(private val context: Context) {
         artworkEnabled: Boolean = true,
         quality: SyncQuality = SyncQuality.MEDIUM
     ): Song = withContext(Dispatchers.IO) {
-        if (song.isEnriched && !dataSaver && song.durationMs > 0) {
+        val artworkStillMissing = artworkEnabled && song.albumArtUri == null && !song.albumArtFetchAttempted
+        if (song.isEnriched && !dataSaver && song.durationMs > 0 && !artworkStillMissing) {
              return@withContext song
         }
 
@@ -264,6 +265,7 @@ class MetadataExtractor(private val context: Context) {
 
         updatedSong.copy(
             isEnriched = valid,
+            albumArtFetchAttempted = fetchArt && artworkEnabled,
             lastSyncTimestamp = System.currentTimeMillis()
         )
     }

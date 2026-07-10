@@ -28,13 +28,13 @@ internal fun detectAudioFormat(fileName: String, mimeType: String?): String {
     
     val ext = f.substringAfterLast('.', "")
     when (ext) {
-        "wav", "wave" -> return "WAV"
+        "wav", "wave", "bwf" -> return "WAV"
         "flac" -> return "FLAC"
         "m4a", "mp4" -> return "M4A"
         "aac" -> return "AAC"
         "ogg" -> return "OGG"
         "opus" -> return "OPUS"
-        "alac" -> return "ALAC"
+        "alac", "caf" -> return "ALAC"
         "aiff", "aif" -> return "AIFF"
         "dsf", "dsd" -> return "DSD"
         "ac3" -> return "AC3"
@@ -292,7 +292,8 @@ class TelegramChannelRepository(private val context: Context) {
         return m.startsWith("audio/") || 
                f.endsWith(".flac") || f.endsWith(".wav") || f.endsWith(".mp3") || 
                f.endsWith(".m4a") || f.endsWith(".alac") || f.endsWith(".ogg") || 
-               f.endsWith(".opus") || f.endsWith(".dsf") || f.endsWith(".aiff")
+               f.endsWith(".opus") || f.endsWith(".dsf") || f.endsWith(".aiff") ||
+               f.endsWith(".caf") || f.endsWith(".bwf")
     }
 
     fun observeLiveChannel(
@@ -309,29 +310,34 @@ class TelegramChannelRepository(private val context: Context) {
                 if (update is TdApi.UpdateNewMessage && update.message.chatId == chatId) {
                     val msg = update.message
                     val audioContent = msg.content as? TdApi.MessageAudio
-                    if (audioContent != null) {
-                        val audio = audioContent.audio
-                        val fileId = audio.audio.id
+                    val docContent = msg.content as? TdApi.MessageDocument
+                    
+                    if (audioContent != null || (docContent != null && isAudioMime(docContent.document.mimeType, docContent.document.fileName))) {
+                        val fileId = audioContent?.audio?.audio?.id ?: docContent!!.document.document.id
+                        val fileName = audioContent?.audio?.fileName ?: docContent!!.document.fileName
+                        val mimeType = audioContent?.audio?.mimeType ?: docContent!!.document.mimeType
+                        val fileSize = audioContent?.audio?.audio?.size?.toLong() ?: docContent!!.document.document.size.toLong()
+                        val duration = audioContent?.audio?.duration?.times(1000L) ?: 0L
                         
                         val localUri = Uri.EMPTY
-                        val realFormat = detectAudioFormat(audio.fileName, audio.mimeType)
+                        val realFormat = detectAudioFormat(fileName, mimeType)
 
-                        val (fnArtist, fnTitle) = parseMetadataFromFileName(audio.fileName)
-                        val extracted = extractFullMetadata(context, tdLib, fileId, audio.fileName, audio.mimeType, audio.audio.size.toLong())
+                        val (fnArtist, fnTitle) = parseMetadataFromFileName(fileName)
+                        val extracted = extractFullMetadata(context, tdLib, fileId, fileName, mimeType, fileSize)
 
                         val song = Song(
                             id = "tg_${chatId}_${msg.id}",
                             uri = localUri,
-                            title = extracted.title ?: audio.title.ifBlank { fnTitle ?: audio.fileName },
-                            artist = extracted.artist ?: audio.performer.ifBlank { fnArtist ?: "Unknown Artist" },
+                            title = extracted.title ?: audioContent?.audio?.title?.ifBlank { fnTitle ?: fileName } ?: (fnTitle ?: fileName),
+                            artist = extracted.artist ?: audioContent?.audio?.performer?.ifBlank { fnArtist ?: "Unknown Artist" } ?: (fnArtist ?: "Unknown Artist"),
                             album = extracted.album ?: "Telegram: $username",
                             folder = "Telegram: $username",
-                            durationMs = extracted.durationMs ?: (audio.duration * 1000L),
+                            durationMs = extracted.durationMs ?: duration,
                             format = realFormat,
                             sampleRateHz = 44100,
-                            fileSizeBytes = audio.audio.size.toLong(),
+                            fileSizeBytes = fileSize,
                             source = SongSource.TELEGRAM,
-                            albumArtUri = extracted.albumArtUri ?: downloadAlbumArtUri(tdLib, audio),
+                            albumArtUri = extracted.albumArtUri ?: audioContent?.let { downloadAlbumArtUri(tdLib, it.audio) },
                             telegramChannelUrl = channelUrl,
                             telegramChatId = chatId,
                             telegramMessageId = msg.id,

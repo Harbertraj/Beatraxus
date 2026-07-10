@@ -6,6 +6,7 @@ import android.util.Log
 import com.beatraxus.app.model.Song
 import com.beatraxus.app.model.SongSource
 import com.beatraxus.app.repository.DriveAccountRepository
+import com.beatraxus.app.telegram.AuthState
 import com.beatraxus.app.telegram.TdLibManager
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
@@ -74,6 +75,12 @@ class CloudCacheManager(
     suspend fun getTelegramFilePath(song: Song, tdLib: TdLibManager): String? = withContext(Dispatchers.IO) {
         if (song.source != SongSource.TELEGRAM) return@withContext null
 
+        tdLib.ensureClientStarted()
+        if (!tdLib.awaitTdlibReady(20000)) {
+            Log.w(TAG, "Telegram file path failed for ${song.title}: TDLib client is not active after timeout")
+            return@withContext null
+        }
+
         var currentFileId = song.telegramFileId
         if (currentFileId == null || currentFileId == 0) {
             currentFileId = refreshFileId(song, tdLib)
@@ -119,7 +126,7 @@ class CloudCacheManager(
         // Wait for path to become available
         Log.d(TAG, "Waiting for Telegram file path for ${song.title} (ID: $currentFileId)...")
         var attempts = 0
-        while (attempts < 600) { // 30 seconds (increased from 15s to allow for ALAC completion)
+        while (attempts < 2400) { // 120 seconds (increased from 30s to allow for full download of lossless songs)
             file = try { tdLib.send(TdApi.GetFile(currentFileId)) } catch (e: Exception) { null }
             if (file?.local?.path?.isNotBlank() == true) {
                 val path = file.local.path
@@ -156,7 +163,11 @@ class CloudCacheManager(
         val messageId = song.telegramMessageId ?: return null
         return try {
             val msg = tdLib.getMessage(chatId, messageId)
-            (msg.content as? TdApi.MessageAudio)?.audio?.audio?.id
+            when (val content = msg.content) {
+                is TdApi.MessageAudio -> content.audio.audio.id
+                is TdApi.MessageDocument -> content.document.document.id
+                else -> null
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to refresh Telegram fileId for ${song.title}: ${e.message}")
             null
@@ -245,6 +256,12 @@ class CloudCacheManager(
         val id = song.id
         activeDownloads[id] = downloadScope.launch {
             try {
+                tdLib.ensureClientStarted()
+                if (!tdLib.awaitTdlibReady()) {
+                    Log.w(TAG, "Telegram pre-download failed for ${song.title}: TDLib client is not active after timeout")
+                    return@launch
+                }
+
                 var currentFileId = song.telegramFileId
                 if (currentFileId == null || currentFileId == 0) {
                     currentFileId = refreshFileId(song, tdLib)
@@ -609,8 +626,14 @@ class CloudCacheManager(
 
         init {
             scope.launch {
+                // Ensure client is started before waiting
+                tdLib.ensureClientStarted()
+
                 // Wait for TDLib to be ready before starting download/flow
-                tdLib.authState.first { it is com.beatraxus.app.telegram.AuthState.Ready }
+                if (!tdLib.awaitTdlibReady()) {
+                    Log.w(TAG, "Telegram data source failed for ${song.title}: TDLib client not ready after timeout")
+                    return@launch
+                }
                 
                 var currentFileId = song.telegramFileId
                 
@@ -675,7 +698,11 @@ class CloudCacheManager(
             val messageId = song.telegramMessageId ?: return null
             return try {
                 val msg = tdLib.getMessage(chatId, messageId)
-                (msg.content as? TdApi.MessageAudio)?.audio?.audio?.id
+                when (val content = msg.content) {
+                    is TdApi.MessageAudio -> content.audio.audio.id
+                    is TdApi.MessageDocument -> content.document.document.id
+                    else -> null
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to refresh Telegram fileId for ${song.title}: ${e.message}")
                 null

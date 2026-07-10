@@ -2664,7 +2664,7 @@ private fun TelegramLoginCard(uiState: PlayerUiState, viewModel: PlayerViewModel
             }
         } else {
             when (authState) {
-                AuthState.Initializing -> {
+                AuthState.NotReady -> {
                     Box(modifier = Modifier.fillMaxWidth().height(48.dp), contentAlignment = Alignment.Center) {
                         CircularProgressIndicator(modifier = Modifier.size(24.dp), color = Color(0xFF2AABEE), strokeWidth = 2.dp)
                     }

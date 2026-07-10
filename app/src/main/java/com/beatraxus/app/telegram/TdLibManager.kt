@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 import org.drinkless.tdlib.Client
 import org.drinkless.tdlib.TdApi
 import java.io.File
@@ -17,13 +18,14 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
 sealed class AuthState {
-    object Initializing : AuthState()
+    object NotReady : AuthState()
+    object Ready : AuthState()
     object LoggedOut : AuthState()
     data class Error(val message: String) : AuthState()
+    // Keeping these for UI compatibility while debugging "Not Ready" issues
     object WaitPhoneNumber : AuthState()
     object WaitCode : AuthState()
-    object WaitPassword : AuthState() // 2FA
-    object Ready : AuthState()
+    object WaitPassword : AuthState()
 }
 
 class TdLibManager private constructor(
@@ -34,7 +36,7 @@ class TdLibManager private constructor(
 
     private var client: Client? = null
 
-    private val _authState = MutableStateFlow<AuthState>(AuthState.Initializing)
+    private val _authState = MutableStateFlow<AuthState>(AuthState.NotReady)
     val authState: StateFlow<AuthState> = _authState
 
     init {
@@ -42,13 +44,23 @@ class TdLibManager private constructor(
     }
 
     private fun startClient() {
+        if (client != null) return
         Log.d("TDLib", "Starting TDLib client...")
-        client = Client.create({ update -> handleUpdate(update) }, null, null)
+        try {
+            client = Client.create({ update -> handleUpdate(update) }, null, null)
+        } catch (e: Exception) {
+            Log.e("TDLib", "Failed to create TDLib client: ${e.message}", e)
+            _authState.value = AuthState.Error("Failed to create TDLib client: ${e.message}")
+        }
     }
 
     val updates = MutableSharedFlow<TdApi.Update>(extraBufferCapacity = 64)
 
-    fun isReady(): Boolean = _authState.value is AuthState.Ready
+    fun isReady(): Boolean {
+        val ready = _authState.value is AuthState.Ready
+        Log.d("TDLib", "isReady() check: $ready (current state: ${_authState.value::class.simpleName})")
+        return ready
+    }
 
     private val fileFlows = ConcurrentHashMap<Int, MutableStateFlow<TdApi.File?>>()
 
@@ -61,39 +73,58 @@ class TdLibManager private constructor(
 
     private fun handleUpdate(update: TdApi.Object) {
         if (update is TdApi.UpdateAuthorizationState) {
-            val authState = update.authorizationState
-            Log.d("TDLib", "Auth state changed to: ${authState::class.simpleName}")
-            when (authState) {
-                is TdApi.AuthorizationStateWaitTdlibParameters -> setParameters()
-                // In some TDLib versions this state might be named differently or handled automatically
-                // If AuthorizationStateWaitEncryptionKey is unresolved, we can try to skip it if database encryption is not used
-                /*
-                is TdApi.AuthorizationStateWaitEncryptionKey -> {
-                    client?.send(TdApi.CheckAuthenticationEncryptionKey()) { result ->
-                        if (result is TdApi.Error) {
-                            Log.e("TDLib", "CheckAuthenticationEncryptionKey failed: ${result.code} ${result.message}")
-                            _authState.value = AuthState.Error("Encryption Error: ${result.message}")
-                        }
-                    }
+            val state = update.authorizationState
+            Log.d("TDLib", "Authorization state update: ${state::class.java.simpleName}")
+            when (state) {
+                is TdApi.AuthorizationStateWaitTdlibParameters -> {
+                    Log.d("TDLib", "State: WaitTdlibParameters -> calling setParameters()")
+                    setParameters()
                 }
-                */
-                is TdApi.AuthorizationStateWaitPhoneNumber -> _authState.value = AuthState.WaitPhoneNumber
-                is TdApi.AuthorizationStateWaitCode -> _authState.value = AuthState.WaitCode
-                is TdApi.AuthorizationStateWaitPassword -> _authState.value = AuthState.WaitPassword
-                is TdApi.AuthorizationStateReady -> _authState.value = AuthState.Ready
-                is TdApi.AuthorizationStateLoggingOut -> _authState.value = AuthState.LoggedOut
-                is TdApi.AuthorizationStateClosing -> {}
-                is TdApi.AuthorizationStateClosed -> {
+                is TdApi.AuthorizationStateWaitPhoneNumber -> {
+                    Log.d("TDLib", "State: WaitPhoneNumber")
+                    _authState.value = AuthState.WaitPhoneNumber
+                }
+                is TdApi.AuthorizationStateWaitCode -> {
+                    Log.d("TDLib", "State: WaitCode")
+                    _authState.value = AuthState.WaitCode
+                }
+                is TdApi.AuthorizationStateWaitPassword -> {
+                    Log.d("TDLib", "State: WaitPassword")
+                    _authState.value = AuthState.WaitPassword
+                }
+                is TdApi.AuthorizationStateWaitRegistration -> {
+                    Log.d("TDLib", "State: WaitRegistration")
+                    _authState.value = AuthState.Error("Telegram registration required. Please log in with an existing account.")
+                }
+                is TdApi.AuthorizationStateReady -> {
+                    Log.d("TDLib", "State: Ready")
+                    _authState.value = AuthState.Ready
+                }
+                is TdApi.AuthorizationStateLoggingOut -> {
+                    Log.d("TDLib", "State: LoggingOut")
                     _authState.value = AuthState.LoggedOut
-                    // Client is dead, will be recreated on next login attempt if needed
+                }
+                is TdApi.AuthorizationStateClosing -> {
+                    Log.d("TDLib", "State: Closing")
+                }
+                is TdApi.AuthorizationStateClosed -> {
+                    Log.d("TDLib", "State: Closed -> clearing client")
+                    _authState.value = AuthState.LoggedOut
                     client = null
                 }
                 else -> {
-                    Log.d("TDLib", "Unhandled auth state: ${authState::class.simpleName}")
+                    val stateName = state::class.java.simpleName
+                    Log.d("TDLib", "Unhandled auth state: $stateName")
+                    if (stateName.contains("WaitEmail", ignoreCase = true)) {
+                        _authState.value = AuthState.Error("Email-based login is not supported in this version. Please use a phone number.")
+                    } else {
+                        // Surface unhandled states as Error for visibility
+                        _authState.value = AuthState.Error("Auth incomplete/unhandled: $stateName")
+                    }
                 }
             }
         } else if (update is TdApi.UpdateFile) {
-            fileFlows[update.file.id]?.value = update.file
+            fileFlows.getOrPut(update.file.id) { MutableStateFlow(null) }.value = update.file
             updates.tryEmit(update)
         } else if (update is TdApi.Update) {
             updates.tryEmit(update)
@@ -161,10 +192,37 @@ class TdLibManager private constructor(
         }
 
     fun ensureClientStarted() {
-        if (client == null || _authState.value is AuthState.Error) {
-            Log.d("TDLib", "ensureClientStarted: Restarting client (current state: ${_authState.value::class.simpleName})")
-            _authState.value = AuthState.Initializing
+        val currentState = _authState.value
+        if (client == null || currentState is AuthState.Error || currentState is AuthState.LoggedOut) {
+            Log.d("TDLib", "ensureClientStarted: Restarting client (current state: ${currentState::class.simpleName})")
+            _authState.value = AuthState.NotReady
+            if (client != null) {
+                // If client exists but we're in a terminal state, try to clear it
+                client = null
+            }
             startClient()
+        }
+    }
+
+    suspend fun awaitTdlibReady(timeoutMs: Long = 10000): Boolean {
+        val current = authState.value
+        if (current is AuthState.Ready) return true
+        
+        // Don't wait if we're in a state that requires user intervention
+        if (current is AuthState.WaitPhoneNumber || current is AuthState.WaitCode || 
+            current is AuthState.WaitPassword || current is AuthState.LoggedOut || 
+            current is AuthState.Error) {
+            Log.d("TDLib", "awaitTdlibReady: Immediate fail due to state ${current::class.java.simpleName}")
+            return false
+        }
+        
+        Log.d("TDLib", "awaitTdlibReady: current state is ${current::class.java.simpleName}, waiting up to ${timeoutMs}ms...")
+        return withTimeoutOrNull(timeoutMs) {
+            authState.first { it is AuthState.Ready }
+            true
+        } ?: run {
+            Log.w("TDLib", "awaitTdlibReady: Timed out. Final state: ${authState.value::class.java.simpleName}")
+            false
         }
     }
 
@@ -187,6 +245,12 @@ class TdLibManager private constructor(
      * Tries to find as many audio/document messages as possible.
      */
     suspend fun getChannelHistory(channelUsername: String, limit: Int = 500): List<TdApi.Message> {
+        ensureClientStarted()
+        if (!awaitTdlibReady(15000)) {
+            Log.e("TDLib", "getChannelHistory failed: TDLib not ready")
+            return emptyList()
+        }
+
         Log.d("TDLib", "getChannelHistory for: $channelUsername")
         // 1. Resolve username or ID or Invite to chat
         val chat = try {
@@ -269,11 +333,18 @@ class TdLibManager private constructor(
      */
     suspend fun downloadAudioFile(fileId: Int): File? {
         // Start download
-        send(TdApi.DownloadFile(fileId, 32, 0, 0, true))
+        try {
+            send(TdApi.DownloadFile(fileId, 32, 0, 0, true))
+        } catch (e: Exception) {
+            Log.e("TDLib", "DownloadFile failed for $fileId", e)
+            return null
+        }
 
-        // Wait for completion using the file flow
-        return getFileFlow(fileId).first { it?.local?.isDownloadingCompleted == true }
-            ?.local?.path?.let { File(it) }
+        // Wait for completion using the file flow with a timeout
+        return withTimeoutOrNull(60000) { // 60s timeout for audio download
+            getFileFlow(fileId).first { it?.local?.isDownloadingCompleted == true }
+                ?.local?.path?.let { File(it) }
+        }
     }
 
     fun close() {
@@ -283,8 +354,24 @@ class TdLibManager private constructor(
     }
 
     companion object {
+        init {
+            try {
+                System.loadLibrary("tdjni")
+                // Optional: set log level for TDLib
+                Client.execute(TdApi.SetLogVerbosityLevel(1))
+            } catch (e: Throwable) {
+                Log.e("TDLib", "Failed to load native library or set log level: ${e.message}")
+            }
+        }
+
         @Volatile
         private var INSTANCE: TdLibManager? = null
+
+        fun initialize(context: Context): TdLibManager {
+            val instance = getInstance(context)
+            instance.ensureClientStarted()
+            return instance
+        }
 
         fun getInstance(context: Context): TdLibManager {
             return INSTANCE ?: synchronized(this) {

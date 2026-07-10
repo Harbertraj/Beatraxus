@@ -77,11 +77,7 @@ configure<ApplicationExtension> {
         }
         debug {
             isDebuggable = true
-            // Use a dedicated debug keystore. Register its SHA-1 wherever the
-            // release SHA-1 was previously needed (e.g. Google Cloud Console
-            // OAuth client, Firebase, App Links) instead of reusing the
-            // production signing key on a debuggable build.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 

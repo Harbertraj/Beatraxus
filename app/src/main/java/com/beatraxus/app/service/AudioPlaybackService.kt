@@ -839,7 +839,9 @@ class AudioPlaybackService : Service() {
                     songDao.insertSongs(updatedNewSongs.map { it.toEntity() })
                     onDiscoveryComplete(updatedNewSongs)
                     
-                    val toEnrich = updatedNewSongs.filter { !it.isEnriched }
+                    val toEnrich = updatedNewSongs.filter {
+                        !it.isEnriched || (it.albumArtUri == null && !it.albumArtFetchAttempted)
+                    }
                     if (toEnrich.isNotEmpty()) {
                         val extractor = com.beatraxus.app.repository.MetadataExtractor(application)
                         var processed = 0
@@ -1411,6 +1413,10 @@ class AudioPlaybackService : Service() {
         serviceScope.launch(NonCancellable) {
             engine.stopSync()
             engine.release()
+
+            // Clear Telegram cache when app is fully closed (swiped away)
+            (application as? com.beatraxus.app.BeatraxusApplication)?.clearTelegramCache()
+
             if (isPlaying && currentSong != null) {
                 cloudCacheManager.clearFullCache(excludeId = currentSong.id)
             } else {
@@ -1462,3 +1468,4 @@ class AudioPlaybackService : Service() {
         super.onDestroy()
     }
 }
+

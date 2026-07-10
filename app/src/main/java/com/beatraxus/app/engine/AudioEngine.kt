@@ -804,6 +804,14 @@ class AudioEngine(
                                 delay(500)
                                 continue
                             }
+                            
+                            if (song.source == SongSource.TELEGRAM && retryCount < 1) {
+                                retryCount++
+                                Log.w("AudioEngine", "Telegram decode failed, waiting for TDLib ready and retrying...")
+                                if (tdLibManager.awaitTdlibReady(10000)) {
+                                    continue
+                                }
+                            }
 
                             logWarn("Decoder failed permanently: ${result.reason ?: "unknown"}")
                             ringBuffer.close()

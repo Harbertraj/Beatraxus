@@ -55,7 +55,7 @@ interface RecentlyPlayedDao {
     suspend fun removeRecentlyPlayed(songId: String)
 }
 
-@Database(entities = [PlaylistEntity::class, FavoriteEntity::class, SongEntity::class, RecentlyPlayedEntity::class, LyricsEntity::class, FolderEntity::class, AiAnalysisEntity::class], version = 12, exportSchema = false)
+@Database(entities = [PlaylistEntity::class, FavoriteEntity::class, SongEntity::class, RecentlyPlayedEntity::class, LyricsEntity::class, FolderEntity::class, AiAnalysisEntity::class], version = 13, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun playlistDao(): PlaylistDao
     abstract fun favoriteDao(): FavoriteDao
@@ -71,6 +71,18 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE songs ADD COLUMN telegramChatId INTEGER")
                 db.execSQL("ALTER TABLE songs ADD COLUMN telegramMessageId INTEGER")
                 db.execSQL("ALTER TABLE songs ADD COLUMN telegramFileId INTEGER")
+            }
+        }
+
+        val MIGRATION_12_13 = object : Migration(12, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE songs ADD COLUMN albumArtFetchAttempted INTEGER NOT NULL DEFAULT 0")
+                // Reset the flag for cloud songs that are missing art so they get
+                // picked up by the new enrichment pass on the next scan.
+                db.execSQL(
+                    "UPDATE songs SET albumArtFetchAttempted = 0 " +
+                    "WHERE albumArtUriString IS NULL AND (source = 'GDRIVE' OR source = 'TELEGRAM')"
+                )
             }
         }
     }
