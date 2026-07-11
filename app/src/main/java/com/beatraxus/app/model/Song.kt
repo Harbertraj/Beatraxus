@@ -105,8 +105,30 @@ enum class AudioOutputDevice(val displayName: String) {
 enum class LibraryView {
     HOME, ALL_SONGS, ALBUMS, ARTISTS, FOLDERS, YEARS, GENRES, FAVORITES, RECENTLY_PLAYED, RECENTLY_ADDED,
     ALBUM_DETAIL, ARTIST_DETAIL, FOLDER_DETAIL, YEAR_DETAIL, GENRE_DETAIL, PLAYLISTS, PLAYLIST_DETAIL,
-    CLOUD
+    CLOUD, RADIO
 }
+
+data class RadioStation(
+    val id: String,
+    val name: String,
+    val streamUrl: String,
+    val country: String,
+    val band: String,   // "FM" or "AM"
+    val favicon: String? = null
+)
+
+fun RadioStation.toSong() = Song(
+    id = "radio_$id",
+    uri = android.net.Uri.parse(streamUrl),
+    title = name,
+    artist = "$band Radio • $country",
+    album = "Live Radio",
+    durationMs = 0L,
+    format = "MP3",
+    sampleRateHz = 44100,
+    albumArtUri = favicon?.let { android.net.Uri.parse(it) },
+    source = SongSource.WEB
+)
 
 enum class SortType {
     NAME, DATE_ADDED, FILE_SIZE, DURATION
@@ -246,6 +268,7 @@ data class PlayerUiState(
     val telegramAuthState: AuthState = AuthState.LoggedOut,
     val isSubmittingTelegram: Boolean = false,
     val telegramAuthError: String? = null,
+    val castErrorMessage: String? = null,
     val showTelegramPhoneForm: Boolean = false,
     val isIgnoringBatteryOptimizations: Boolean = false,
     val isOemBatteryManagerDetected: Boolean = false,
@@ -357,6 +380,7 @@ data class PlayerUiState(
                 telegramAuthState == other.telegramAuthState &&
                 isSubmittingTelegram == other.isSubmittingTelegram &&
                 telegramAuthError == other.telegramAuthError &&
+                castErrorMessage == other.castErrorMessage &&
                 showTelegramPhoneForm == other.showTelegramPhoneForm &&
                 isIgnoringBatteryOptimizations == other.isIgnoringBatteryOptimizations &&
                 isOemBatteryManagerDetected == other.isOemBatteryManagerDetected &&
@@ -466,6 +490,7 @@ data class PlayerUiState(
         result = 31 * result + telegramAuthState.hashCode()
         result = 31 * result + isSubmittingTelegram.hashCode()
         result = 31 * result + (telegramAuthError?.hashCode() ?: 0)
+        result = 31 * result + (castErrorMessage?.hashCode() ?: 0)
         result = 31 * result + showTelegramPhoneForm.hashCode()
         result = 31 * result + isIgnoringBatteryOptimizations.hashCode()
         result = 31 * result + isOemBatteryManagerDetected.hashCode()

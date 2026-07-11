@@ -42,11 +42,14 @@ object CastManager {
 
     private var pendingSongToCast: Pair<Song, String>? = null
 
+    private var onErrorMessage: ((String) -> Unit)? = null
+
     private val selector = MediaRouteSelector.Builder()
         .addControlCategory(CastMediaControlIntent.categoryForCast(CastMediaControlIntent.DEFAULT_MEDIA_RECEIVER_APPLICATION_ID))
         .build()
 
-    fun initialize(context: Context) {
+    fun initialize(context: Context, onError: (String) -> Unit) {
+        this.onErrorMessage = onError
         try {
             castContext = CastContext.getSharedInstance(context)
             val mediaRouter = MediaRouter.getInstance(context)
@@ -90,7 +93,7 @@ object CastManager {
                         Log.d(TAG, "Casting pending song: ${song.title}")
                         LocalCastServer.currentSong = song
                         val urlToCast = LocalCastServer.start(context) ?: song.uri.toString()
-                        performLoad(session, song, urlToCast)
+                        performLoad(context, session, song, urlToCast)
                     }
                 }
                 override fun onSessionStartFailed(session: CastSession, error: Int) {
@@ -108,6 +111,12 @@ object CastManager {
                         else -> "UNKNOWN ($error)"
                     }
                     Log.e(TAG, "onSessionStartFailed: $errorReason ($error)")
+                    
+                    if (error != 2002 && error != 2150) { // Don't show error if user cancelled
+                        val deviceName = session.castDevice?.friendlyName ?: "device"
+                        onErrorMessage?.invoke("Couldn't reach $deviceName — make sure your phone and TV are on the same Wi‑Fi network")
+                    }
+
                     isConnected = false
                     pendingSongToCast = null
                     LocalCastServer.stop()
@@ -136,7 +145,7 @@ object CastManager {
                     pendingSongToCast?.let { (song, _) ->
                         LocalCastServer.currentSong = song
                         val urlToCast = LocalCastServer.start(context) ?: song.uri.toString()
-                        performLoad(session, song, urlToCast)
+                        performLoad(context, session, song, urlToCast)
                     }
                 }
                 override fun onSessionResumeFailed(session: CastSession, error: Int) {
@@ -160,14 +169,14 @@ object CastManager {
         if (currentSession?.isConnected == true && mediaRouter.selectedRoute.id == route.id) {
             LocalCastServer.currentSong = song
             val urlToCast = LocalCastServer.start(context) ?: song.uri.toString()
-            performLoad(currentSession, song, urlToCast)
+            performLoad(context, currentSession, song, urlToCast)
         } else {
             pendingSongToCast = Pair(song, streamUrl)
             mediaRouter.selectRoute(route)
         }
     }
 
-    private fun performLoad(session: CastSession, song: Song, streamUrl: String) {
+    private fun performLoad(context: Context, session: CastSession, song: Song, streamUrl: String) {
         val remoteMediaClient = session.remoteMediaClient ?: run {
             Log.e(TAG, "RemoteMediaClient is null")
             return
@@ -180,7 +189,7 @@ object CastManager {
             putString(MediaMetadata.KEY_ARTIST, song.artist)
             putString(MediaMetadata.KEY_ALBUM_TITLE, song.album)
             
-            LocalCastServer.getArtUrl()?.let { artUrl ->
+            LocalCastServer.getArtUrl(context)?.let { artUrl ->
                 if (song.albumArtUri != null) {
                     addImage(WebImage(Uri.parse(artUrl)))
                 }
@@ -205,6 +214,8 @@ object CastManager {
                     Log.d(TAG, "Media load command sent successfully")
                 } else {
                     Log.e(TAG, "Failed to load media: ${result.status.statusMessage} (Code: ${result.status.statusCode})")
+                    val deviceName = session.castDevice?.friendlyName ?: "device"
+                    onErrorMessage?.invoke("Couldn't reach $deviceName — make sure your phone and TV are on the same Wi‑Fi network")
                 }
             }
         pendingSongToCast = null

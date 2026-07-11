@@ -131,7 +131,9 @@ class MainActivity : FragmentActivity() {
         
         // Start library loading after the first frame is drawn to avoid UI jank on startup
         window.decorView.post {
-            com.beatraxus.app.cast.CastManager.initialize(this@MainActivity)
+            com.beatraxus.app.cast.CastManager.initialize(this@MainActivity) { error ->
+                viewModel.setCastErrorMessage(error)
+            }
             if (!viewModel.uiState.value.isFirstRun) {
                 // Post again to ensure the activity is fully settled before starting intensive I/O
                 window.decorView.postDelayed({

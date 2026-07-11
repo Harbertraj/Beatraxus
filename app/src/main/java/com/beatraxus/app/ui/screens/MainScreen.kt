@@ -100,6 +100,11 @@ import coil.request.ImageRequest
 import com.beatraxus.app.model.LibraryMode
 import com.beatraxus.app.model.LibraryView
 import com.beatraxus.app.model.SortType
+import com.beatraxus.app.model.RadioStation
+import com.beatraxus.app.model.toSong
+import com.beatraxus.app.repository.RadioBrowserApi
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import com.beatraxus.app.ui.components.*
 import com.beatraxus.app.ui.theme.*
 import com.beatraxus.app.viewmodel.PlayerViewModel
@@ -199,6 +204,7 @@ fun MainScreen(
         LibraryView.RECENTLY_PLAYED -> Color(0xFF40C4FF)
         LibraryView.RECENTLY_ADDED -> Color(0xFF00E676)
         LibraryView.CLOUD -> Color(0xFF1A73E8)
+        LibraryView.RADIO -> Color(0xFF00B8D4)
     }
     val viewAccentColor by animateColorAsState(
         targetValue = targetAccentColor,
@@ -216,7 +222,15 @@ fun MainScreen(
     val searchResults by viewModel.searchResults.collectAsStateWithLifecycle()
     val favorites by viewModel.favorites.collectAsStateWithLifecycle()
     val deleteRequest by viewModel.deleteRequest.collectAsStateWithLifecycle()
+    val snackbarHostState = remember { SnackbarHostState() }
     val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
+
+    LaunchedEffect(uiState.castErrorMessage) {
+        uiState.castErrorMessage?.let { msg ->
+            snackbarHostState.showSnackbar(msg)
+            viewModel.setCastErrorMessage(null)
+        }
+    }
 
     val activeItemsCount by remember(uiState.currentView, uiState.isSearchActive, songs, albums, artists, folders, years, genres, playlists, searchResults) {
         derivedStateOf {
@@ -275,7 +289,7 @@ fun MainScreen(
     val favoritesListState = rememberLazyListState()
     val recentlyAddedListState = rememberLazyListState()
     val recentlyPlayedListState = rememberLazyListState()
-    
+
     val albumDetailListState = rememberLazyListState()
     val albumDetailGridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
     val artistDetailListState = rememberLazyListState()
@@ -323,7 +337,7 @@ fun MainScreen(
     }
 
     var showFullPlayer by rememberSaveable { mutableStateOf(false) }
-    
+
     // Sink UI state from ViewModel
     LaunchedEffect(uiState.showFullPlayer) {
         if (uiState.showFullPlayer) {
@@ -457,7 +471,7 @@ fun MainScreen(
                     onSelectView = { view ->
                         viewModel.setLibraryView(view)
                     },
-                    onSetLibraryMode = { mode -> 
+                    onSetLibraryMode = { mode ->
                         showDrawer = false // Auto close when library mode changes
                         // Delay the mode change slightly to allow the drawer animation to start
                         // and avoid simultaneous heavy recomposition of both drawer and main content
@@ -540,6 +554,7 @@ fun MainScreen(
             ) {
                 Scaffold(
                     containerColor = Color.Transparent,
+                    snackbarHost = { SnackbarHost(snackbarHostState) },
                     topBar = {}
                 ) { paddingValues ->
                     // FIX 3: Wrap Column + mini player in Box so mini player can float at bottom
@@ -586,6 +601,7 @@ fun MainScreen(
                                     LibraryView.YEAR_DETAIL -> uiState.selectedItemName ?: "YEAR"
                                     LibraryView.GENRE_DETAIL -> uiState.selectedItemName ?: "GENRE"
                                     LibraryView.CLOUD -> "CLOUD"
+                                    LibraryView.RADIO -> "RADIO"
                                 }
                                 val titleIcon = when (uiState.currentView) {
                                     LibraryView.HOME -> Icons.Rounded.Home
@@ -606,11 +622,12 @@ fun MainScreen(
                                     LibraryView.GENRE_DETAIL -> Icons.Rounded.GridView
                                     LibraryView.PLAYLIST_DETAIL -> Icons.AutoMirrored.Rounded.PlaylistPlay
                                     LibraryView.CLOUD -> Icons.Rounded.Cloud
+                                    LibraryView.RADIO -> Icons.Rounded.Radio
                                 }
 
                                 // Menu icon on the left
                                 IconButton(
-                                    onClick = { 
+                                    onClick = {
                                         showDrawer = !showDrawer
                                     },
                                     modifier = Modifier.align(Alignment.CenterStart).size(42.dp)
@@ -669,7 +686,7 @@ fun MainScreen(
                                                     color = Color.White,
                                                     letterSpacing = 1.sp
                                                 )
-                                                
+
                                                 // Unique Music Planet Icon (Custom drawn for premium look)
                                                 Box(
                                                     modifier = Modifier
@@ -771,15 +788,15 @@ fun MainScreen(
                                                         .size(26.dp)
                                                         .background(
                                                             if (isDetailView) viewAccentColor.copy(alpha = 0.15f)
-                                                            else Color.Transparent, 
+                                                            else Color.Transparent,
                                                             CircleShape
                                                         ),
                                                     contentAlignment = Alignment.Center
                                                 ) {
                                                     Icon(
-                                                        titleIcon, 
-                                                        null, 
-                                                        tint = viewAccentColor, 
+                                                        titleIcon,
+                                                        null,
+                                                        tint = viewAccentColor,
                                                         modifier = Modifier.size(if (isDetailView) 16.dp else 20.dp)
                                                     )
                                                 }
@@ -1204,7 +1221,7 @@ fun MainScreen(
                                                                             song = item,
                                                                             trackNumber = currentNumber,
                                                                             isPlaying = uiState.currentSong?.id == item.id,
-                                                                            onClick = { 
+                                                                            onClick = {
                                                                                 if (uiState.isMultiSelectMode) {
                                                                                     viewModel.toggleSongSelection(item.id)
                                                                                 } else {
@@ -1382,8 +1399,8 @@ fun MainScreen(
                                                             }
 
                                                             if (songs.size > 20) {
-                                                                val songTitles = remember(songs) { 
-                                                                    songs.map { it.title } 
+                                                                val songTitles = remember(songs) {
+                                                                    songs.map { it.title }
                                                                 }
                                                                 AlphabetScroller(
                                                                     modifier = Modifier
@@ -1413,8 +1430,8 @@ fun MainScreen(
                                                             items(albums, key = { it.first + it.second }) { album ->
                                                                 Box(Modifier.animateItem()) {
                                                                     LibraryGridItem(
-                                                                        title = album.first, 
-                                                                        subtitle = album.second, 
+                                                                        title = album.first,
+                                                                        subtitle = album.second,
                                                                         artUri = album.third,
                                                                         isSelected = uiState.selectedIds.contains(album.first),
                                                                         isMultiSelectMode = uiState.isMultiSelectMode,
@@ -1490,8 +1507,8 @@ fun MainScreen(
                                                                 }
 
                                                                 if (albumSongs.size > 20) {
-                                                                    val songTitles = remember(albumSongs) { 
-                                                                        albumSongs.map { it.title } 
+                                                                    val songTitles = remember(albumSongs) {
+                                                                        albumSongs.map { it.title }
                                                                     }
                                                                     AlphabetScroller(
                                                                         modifier = Modifier
@@ -1555,8 +1572,8 @@ fun MainScreen(
                                                             items(artists, key = { it.first }) { artist ->
                                                                 Box(Modifier.animateItem()) {
                                                                     LibraryGridItem(
-                                                                        title = artist.first, 
-                                                                        subtitle = artist.second, 
+                                                                        title = artist.first,
+                                                                        subtitle = artist.second,
                                                                         artUri = artist.third,
                                                                         isArtistTile = true,
                                                                         isSelected = uiState.selectedIds.contains(artist.first),
@@ -1633,8 +1650,8 @@ fun MainScreen(
                                                                 }
 
                                                                 if (artistSongs.size > 20) {
-                                                                    val songTitles = remember(artistSongs) { 
-                                                                        artistSongs.map { it.title } 
+                                                                    val songTitles = remember(artistSongs) {
+                                                                        artistSongs.map { it.title }
                                                                     }
                                                                     AlphabetScroller(
                                                                         modifier = Modifier
@@ -1697,8 +1714,8 @@ fun MainScreen(
                                                         items(folders, key = { it.first }) { folder ->
                                                             Box(Modifier.animateItem()) {
                                                                 LibraryGridItem(
-                                                                    title = folder.second, 
-                                                                    subtitle = folder.first, 
+                                                                    title = folder.second,
+                                                                    subtitle = folder.first,
                                                                     artUri = folder.third,
                                                                     isSelected = uiState.selectedIds.contains(folder.first),
                                                                     isMultiSelectMode = uiState.isMultiSelectMode,
@@ -1774,8 +1791,8 @@ fun MainScreen(
                                                                 }
 
                                                                 if (folderSongs.size > 20) {
-                                                                    val songTitles = remember(folderSongs) { 
-                                                                        folderSongs.map { it.title } 
+                                                                    val songTitles = remember(folderSongs) {
+                                                                        folderSongs.map { it.title }
                                                                     }
                                                                     AlphabetScroller(
                                                                         modifier = Modifier
@@ -1838,8 +1855,8 @@ fun MainScreen(
                                                         items(years, key = { it.first }) { year ->
                                                             Box(Modifier.animateItem()) {
                                                                 LibraryGridItem(
-                                                                    title = year.first, 
-                                                                    subtitle = year.second, 
+                                                                    title = year.first,
+                                                                    subtitle = year.second,
                                                                     artUri = year.third,
                                                                     isSelected = uiState.selectedIds.contains(year.first),
                                                                     isMultiSelectMode = uiState.isMultiSelectMode,
@@ -1914,8 +1931,8 @@ fun MainScreen(
                                                                 }
 
                                                                 if (yearSongs.size > 20) {
-                                                                    val songTitles = remember(yearSongs) { 
-                                                                        yearSongs.map { it.title } 
+                                                                    val songTitles = remember(yearSongs) {
+                                                                        yearSongs.map { it.title }
                                                                     }
                                                                     AlphabetScroller(
                                                                         modifier = Modifier
@@ -1978,7 +1995,7 @@ fun MainScreen(
                                                         items(genres, key = { it.first }) { genre ->
                                                             Box(Modifier.animateItem()) {
                                                                 GenreGridItem(
-                                                                    title = genre.first, 
+                                                                    title = genre.first,
                                                                     subtitle = genre.second,
                                                                     isSelected = uiState.selectedIds.contains(genre.first),
                                                                     isMultiSelectMode = uiState.isMultiSelectMode,
@@ -2053,8 +2070,8 @@ fun MainScreen(
                                                                 }
 
                                                                 if (genreSongs.size > 20) {
-                                                                    val songTitles = remember(genreSongs) { 
-                                                                        genreSongs.map { it.title } 
+                                                                    val songTitles = remember(genreSongs) {
+                                                                        genreSongs.map { it.title }
                                                                     }
                                                                     AlphabetScroller(
                                                                         modifier = Modifier
@@ -2138,8 +2155,8 @@ fun MainScreen(
                                                             items(playlists, key = { it.name }) { playlist ->
                                                                 Box(Modifier.animateItem()) {
                                                                     LibraryGridItem(
-                                                                        title = playlist.name, 
-                                                                        subtitle = "${playlist.songIds.size} songs", 
+                                                                        title = playlist.name,
+                                                                        subtitle = "${playlist.songIds.size} songs",
                                                                         artUri = null,
                                                                         isSelected = uiState.selectedIds.contains(playlist.id),
                                                                         isMultiSelectMode = uiState.isMultiSelectMode,
@@ -2217,8 +2234,8 @@ fun MainScreen(
                                                                 }
 
                                                                 if (playlistSongs.size > 20) {
-                                                                    val songTitles = remember(playlistSongs) { 
-                                                                        playlistSongs.map { it.title } 
+                                                                    val songTitles = remember(playlistSongs) {
+                                                                        playlistSongs.map { it.title }
                                                                     }
                                                                     AlphabetScroller(
                                                                         modifier = Modifier
@@ -2323,8 +2340,8 @@ fun MainScreen(
                                                                 }
 
                                                                 if (favSongs.size > 20) {
-                                                                    val songTitles = remember(favSongs) { 
-                                                                        favSongs.map { it.title } 
+                                                                    val songTitles = remember(favSongs) {
+                                                                        favSongs.map { it.title }
                                                                     }
                                                                     AlphabetScroller(
                                                                         modifier = Modifier
@@ -2371,6 +2388,69 @@ fun MainScreen(
                                                                             )
                                                                         }
                                                                     }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                LibraryView.RADIO -> {
+                                                    var radioStations by remember { mutableStateOf<List<RadioStation>>(emptyList()) }
+                                                    var isLoading by remember { mutableStateOf(false) }
+                                                    var searchCountry by rememberSaveable { mutableStateOf("USA") }
+
+                                                    LaunchedEffect(searchCountry) {
+                                                        isLoading = true
+                                                        radioStations = withContext(Dispatchers.IO) {
+                                                            RadioBrowserApi.stationsByCountry(searchCountry)
+                                                        }
+                                                        isLoading = false
+                                                    }
+
+                                                    Column(Modifier.fillMaxSize()) {
+                                                        Surface(
+                                                            modifier = Modifier.fillMaxWidth().padding(16.dp),
+                                                            color = Color.White.copy(0.05f),
+                                                            shape = RoundedCornerShape(12.dp)
+                                                        ) {
+                                                            Row(
+                                                                Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                                                verticalAlignment = Alignment.CenterVertically
+                                                            ) {
+                                                                Icon(Icons.Rounded.Search, null, tint = Color.White.copy(0.5f), modifier = Modifier.size(20.dp))
+                                                                Spacer(Modifier.width(8.dp))
+                                                                BasicTextField(
+                                                                    value = searchCountry,
+                                                                    onValueChange = { searchCountry = it },
+                                                                    textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 16.sp),
+                                                                    modifier = Modifier.weight(1f),
+                                                                    cursorBrush = SolidColor(Color.White),
+                                                                    decorationBox = { innerTextField ->
+                                                                        if (searchCountry.isEmpty()) {
+                                                                            Text("Enter Country (e.g. USA, France)...", color = Color.White.copy(0.3f), fontSize = 16.sp)
+                                                                        }
+                                                                        innerTextField()
+                                                                    }
+                                                                )
+                                                            }
+                                                        }
+
+                                                        if (isLoading) {
+                                                            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                                                CircularProgressIndicator(color = viewAccentColor)
+                                                            }
+                                                        } else {
+                                                            LazyColumn(
+                                                                modifier = Modifier.fillMaxSize(),
+                                                                contentPadding = PaddingValues(bottom = 120.dp)
+                                                            ) {
+                                                                itemsIndexed(radioStations, key = { _, station -> station.id }) { index, station ->
+                                                                    val song = station.toSong()
+                                                                    SongListItem(
+                                                                        song = song,
+                                                                        isPlaying = uiState.isPlaying && uiState.currentSong?.id == song.id,
+                                                                        trackNumber = index + 1,
+                                                                        onClick = { viewModel.playSong(song) }
+                                                                    )
                                                                 }
                                                             }
                                                         }
@@ -2445,8 +2525,8 @@ fun MainScreen(
                                                                     LibraryView.CLOUD
                                                                 )
                                                                 if (uiState.currentView in viewsWithAlphabet && songs.size > 20) {
-                                                                    val songTitles = remember(songs) { 
-                                                                        songs.map { it.title } 
+                                                                    val songTitles = remember(songs) {
+                                                                        songs.map { it.title }
                                                                     }
                                                                     AlphabetScroller(
                                                                         modifier = Modifier
@@ -3075,8 +3155,8 @@ fun CastSheetContent(
             }
             Spacer(Modifier.width(14.dp))
             Text(
-                "CAST TO DEVICE", 
-                color = Color.White, 
+                "CAST TO DEVICE",
+                color = Color.White,
                 fontWeight = FontWeight.Black,
                 fontSize = 14.sp,
                 letterSpacing = 1.sp
@@ -3131,8 +3211,8 @@ fun CastSheetContent(
                         Spacer(Modifier.width(14.dp))
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                route.name, 
-                                color = Color.White, 
+                                route.name,
+                                color = Color.White,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 15.sp,
                                 maxLines = 1,
@@ -3179,7 +3259,7 @@ fun CastSheetContent(
                             fontSize = 14.sp
                         )
                     }
-                    
+
                     IconButton(
                         onClick = { com.beatraxus.app.cast.CastManager.stopCast(); onDismiss() },
                         modifier = Modifier
@@ -3256,9 +3336,9 @@ fun LayoutDensityPopup(
                     letterSpacing = 1.sp
                 )
             }
-            
+
             Spacer(Modifier.height(24.dp))
-            
+
             Box(contentAlignment = Alignment.Center) {
                 Slider(
                     value = currentVal,
@@ -3279,9 +3359,9 @@ fun LayoutDensityPopup(
                     modifier = Modifier.height(24.dp)
                 )
             }
-            
+
             Spacer(Modifier.height(16.dp))
-            
+
             Box(
                 modifier = Modifier
                     .size(40.dp)
@@ -3397,7 +3477,7 @@ fun CloudDrivePopup(
                                 overflow = TextOverflow.Ellipsis
                             )
                         }
-                        
+
                         Surface(
                             onClick = { onRefreshAccount(account.email) },
                             color = AccentBlue.copy(0.15f),
@@ -3428,7 +3508,7 @@ fun CloudDrivePopup(
                     letterSpacing = 1.sp,
                     modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
                 )
-                
+
                 enabledChannels.forEach { channel ->
                     Row(
                         modifier = Modifier
@@ -3503,14 +3583,14 @@ fun HomeScreen(
 
     val calendar = java.util.Calendar.getInstance()
     val hour = calendar.get(java.util.Calendar.HOUR_OF_DAY)
-    
+
     val greeting = when (hour) {
         in 5..11 -> "Good Morning"
         in 12..16 -> "Good Afternoon"
         in 17..20 -> "Good Evening"
         else -> "Good Night"
     }
-    
+
     val greetingIcon = when (hour) {
         in 5..11 -> Icons.Rounded.WbSunny
         in 12..16 -> Icons.Rounded.LightMode
@@ -3524,7 +3604,7 @@ fun HomeScreen(
         in 17..20 -> listOf(Color(0xFFFF5E62).copy(0.15f), Color(0xFFB91D73).copy(0.05f))
         else -> listOf(Color(0xFF5E5CE6).copy(0.18f), Color(0xFF131B2A).copy(0.08f))
     }
-    
+
     val deviceName = "Audiophile"
 
     LazyColumn(
@@ -3541,10 +3621,10 @@ fun HomeScreen(
                     .clip(RoundedCornerShape(24.dp))
                     .background(Color.Black.copy(alpha = 0.9f))
                     .border(
-                        0.5.dp, 
+                        0.5.dp,
                         Brush.verticalGradient(
                             listOf(Color.White.copy(0.15f), Color.White.copy(0.05f))
-                        ), 
+                        ),
                         RoundedCornerShape(24.dp)
                     )
             ) {
@@ -3572,9 +3652,9 @@ fun HomeScreen(
                                 modifier = Modifier.size(24.dp)
                             )
                         }
-                        
+
                         Spacer(Modifier.width(16.dp))
-                        
+
                         Column(verticalArrangement = Arrangement.Center) {
                             Text(
                                 text = "$greeting,",
@@ -3592,7 +3672,7 @@ fun HomeScreen(
                             )
                         }
                     }
-                    
+
                     // Compact Shuffle Button
                     Surface(
                         onClick = { viewModel.shuffleAndPlay() },
@@ -3610,9 +3690,9 @@ fun HomeScreen(
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
-                                Icons.Rounded.Shuffle, 
-                                null, 
-                                tint = Color.White, 
+                                Icons.Rounded.Shuffle,
+                                null,
+                                tint = Color.White,
                                 modifier = Modifier.size(18.dp)
                             )
                         }
@@ -3647,7 +3727,7 @@ fun HomeScreen(
                             ),
                             RoundedCornerShape(24.dp)
                         )
-                        .clickable { 
+                        .clickable {
                             if (uiState.selectedTelegramChannelUrl != null) {
                                 viewModel.setLibraryViewTelegram(uiState.selectedTelegramChannelUrl!!)
                             } else {
@@ -3716,9 +3796,9 @@ fun HomeScreen(
                                         modifier = Modifier.size(18.dp)
                                     )
                                 }
-                                
+
                                 Spacer(Modifier.width(12.dp))
-                                
+
                                 IconButton(
                                     onClick = { showCloudPopup = true },
                                     modifier = Modifier
@@ -3738,7 +3818,7 @@ fun HomeScreen(
                         }
 
                         Spacer(Modifier.height(16.dp))
-                        
+
                         val statusText = if (uiState.isCloudScanning) {
                             uiState.enrichmentStatus ?: uiState.driveErrorMessage ?: uiState.telegramSyncErrorMessage ?: "Syncing..."
                         } else if (uiState.isSyncFinishedRecently) {
@@ -3857,12 +3937,12 @@ fun HomeScreen(
 
         // Your Genres
         if (genres.isNotEmpty()) {
-            item { 
+            item {
                 HomeSectionHeader(
                     title = "Your Genres",
                     actionText = "Edit",
                     actionIcon = Icons.Rounded.Edit
-                ) 
+                )
             }
             item {
                 LazyRow(
@@ -3967,7 +4047,7 @@ fun HomeScreen(
                                     overflow = TextOverflow.Ellipsis
                                 )
                             }
-                            
+
                             Box(
                                 modifier = Modifier
                                     .align(Alignment.BottomEnd)
@@ -4068,10 +4148,10 @@ private fun MoodTile(mood: MoodData, onClick: () -> Unit) {
                 )
             )
             .border(
-                1.dp, 
+                1.dp,
                 Brush.verticalGradient(
                     listOf(Color.White.copy(0.15f), Color.Transparent)
-                ), 
+                ),
                 RoundedCornerShape(20.dp)
             )
             .clickable { onClick() }
@@ -4084,7 +4164,7 @@ private fun MoodTile(mood: MoodData, onClick: () -> Unit) {
             fontSize = 15.sp,
             modifier = Modifier.align(Alignment.TopStart)
         )
-        
+
         Icon(
             imageVector = mood.icon,
             contentDescription = null,
@@ -4197,7 +4277,7 @@ fun HomeSongCard(song: com.beatraxus.app.model.Song, onClick: () -> Unit) {
                     .clip(RoundedCornerShape(10.dp)),
                 contentScale = ContentScale.Crop
             )
-            
+
             Column(
                 modifier = Modifier
                     .weight(1f)
@@ -4770,7 +4850,7 @@ fun SortDropdown(
                     fontSize = 11.sp,
                     letterSpacing = 1.2.sp
                 )
-                
+
                 Box(
                     modifier = Modifier
                         .size(22.dp)
@@ -4788,7 +4868,7 @@ fun SortDropdown(
                     )
                 }
             }
-            
+
             listOf(
                 Triple("Name", SortType.NAME, Icons.Rounded.SortByAlpha),
                 Triple("Date Added", SortType.DATE_ADDED, Icons.Rounded.CalendarToday),
@@ -4874,7 +4954,8 @@ fun SlideDrawerMenu(
             DrawerMenuItem("Playlists", LibraryView.PLAYLISTS, Icons.AutoMirrored.Rounded.PlaylistPlay, Color(0xFFFDD835)),
             DrawerMenuItem("Favorite Songs", LibraryView.FAVORITES, Icons.Rounded.Favorite, Color(0xFFFF5252)),
             DrawerMenuItem("Recently Added", LibraryView.RECENTLY_ADDED, Icons.Rounded.NewReleases, Color(0xFF00E676)),
-            DrawerMenuItem("Recently Played", LibraryView.RECENTLY_PLAYED, Icons.Rounded.History, Color(0xFF40C4FF))
+            DrawerMenuItem("Recently Played", LibraryView.RECENTLY_PLAYED, Icons.Rounded.History, Color(0xFF40C4FF)),
+            DrawerMenuItem("Radio", LibraryView.RADIO, Icons.Rounded.Radio, Color(0xFF00B8D4))
         ).filter { item ->
             !(item.view == LibraryView.FOLDERS && libraryMode == LibraryMode.CLOUD)
         }
@@ -4926,7 +5007,7 @@ fun SlideDrawerMenu(
                         )
                         if (isPlaying) {
                             val notesTransition = rememberInfiniteTransition(label = "notes")
-                            
+
                             val note1X by notesTransition.animateFloat(
                                 initialValue = 0.1f, targetValue = 0.9f,
                                 animationSpec = infiniteRepeatable(tween(6000), RepeatMode.Reverse), label = "n1x"
@@ -5041,7 +5122,7 @@ fun SlideDrawerMenu(
                             (item.view == LibraryView.PLAYLISTS && currentView == LibraryView.PLAYLIST_DETAIL)
 
                     val itemBg = if (isSelected) item.color.copy(0.3f) else Color.White.copy(0.1f)
-                    
+
                     Surface(
                         color = itemBg,
                         shape = RoundedCornerShape(18.dp),
@@ -5091,7 +5172,7 @@ fun SlideDrawerMenu(
                         modifier = Modifier
                             .weight(1f)
                             .height(52.dp)
-                            .clickable { 
+                            .clickable {
                                 android.widget.Toast.makeText(context, "Coming soon", android.widget.Toast.LENGTH_SHORT).show()
                             }
                     ) {

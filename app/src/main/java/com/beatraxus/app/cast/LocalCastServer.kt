@@ -2,6 +2,7 @@ package com.beatraxus.app.cast
 
 import android.content.Context
 import android.net.Uri
+import android.net.wifi.WifiManager
 import android.util.Log
 import com.beatraxus.app.model.Song
 import com.beatraxus.app.model.SongSource
@@ -22,16 +23,24 @@ object LocalCastServer {
     private val threadPool = Executors.newCachedThreadPool()
     private var isRunning = false
     private var port = 8080
+    private var multicastLock: WifiManager.MulticastLock? = null
 
     var currentSong: Song? = null
 
     fun start(context: Context): String? {
-        if (isRunning) return getUrl()
+        if (isRunning) return getUrl(context)
         
         try {
             serverSocket = ServerSocket(0) // Let system pick an available port
             port = serverSocket!!.localPort
             isRunning = true
+
+            // Acquire MulticastLock (Fix E)
+            val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+            multicastLock = wifi.createMulticastLock("beatraxus_cast").apply {
+                setReferenceCounted(true)
+                acquire()
+            }
             
             threadPool.execute {
                 while (isRunning) {
@@ -44,7 +53,7 @@ object LocalCastServer {
                 }
             }
             
-            val url = getUrl()
+            val url = getUrl(context)
             Log.d(TAG, "Server started on $url")
             return url
         } catch (e: Exception) {
@@ -61,23 +70,51 @@ object LocalCastServer {
             Log.e(TAG, "Error closing server socket", e)
         }
         serverSocket = null
+
+        multicastLock?.let {
+            if (it.isHeld) it.release()
+        }
+        multicastLock = null
     }
 
-    private fun getUrl(): String? {
+    private fun getUrl(context: Context): String? {
         return try {
-            val ip = getLocalIpAddress()
-            if (ip != null) "http://$ip:$port/stream" else null
+            val ip = getLocalIpAddress(context)
+            val sid = currentSong?.id
+            if (ip != null) "http://$ip:$port/stream${if (sid != null) "?sid=$sid" else ""}" else null
         } catch (e: Exception) {
             null
         }
     }
 
-    fun getArtUrl(): String? {
-        val ip = getLocalIpAddress() ?: return null
+    fun getArtUrl(context: Context): String? {
+        val ip = getLocalIpAddress(context) ?: return null
         return "http://$ip:$port/art"
     }
 
-    private fun getLocalIpAddress(): String? {
+    private fun getLocalIpAddress(context: Context): String? {
+        try {
+            // Fix A — Correct IP selection. Replace the hotspot‑first logic with 
+            // "prefer the interface that owns the device's active Wi‑Fi network"
+            val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+            val activeNetwork = cm.activeNetwork
+            if (activeNetwork != null) {
+                val linkProperties = cm.getLinkProperties(activeNetwork)
+                val ip = linkProperties?.linkAddresses
+                    ?.map { it.address }
+                    ?.firstOrNull { it is java.net.Inet4Address && !it.isLoopbackAddress }
+                    ?.hostAddress
+                if (ip != null) return ip
+            }
+
+            return fallbackScan()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error getting local IP", e)
+        }
+        return fallbackScan()
+    }
+
+    private fun fallbackScan(): String? {
         try {
             val interfaces = java.net.NetworkInterface.getNetworkInterfaces().toList()
             
@@ -96,7 +133,7 @@ object LocalCastServer {
                 }
             }
 
-            // 2. Fallback to any non-loopback IPv4 address, preferring 192.168.43.1 (default Android hotspot)
+            // 2. Fallback to any non-loopback IPv4 address
             var fallbackIp: String? = null
             for (iface in interfaces) {
                 if (!iface.isUp || iface.isLoopback) continue
@@ -106,20 +143,15 @@ object LocalCastServer {
                     val addr = addresses.nextElement()
                     val hostAddress = addr.hostAddress
                     if (addr is java.net.Inet4Address && hostAddress != null) {
-                        Log.d(TAG, "Found interface: ${iface.name} -> $hostAddress")
-                        if (hostAddress == "192.168.43.1") {
-                            Log.d(TAG, "Detected default Android hotspot IP, using it.")
-                            return hostAddress
-                        }
+                        if (hostAddress == "192.168.43.1") return hostAddress
                         if (fallbackIp == null) fallbackIp = hostAddress
                     }
                 }
             }
             return fallbackIp
         } catch (e: Exception) {
-            Log.e(TAG, "Error getting local IP", e)
+            return null
         }
-        return null
     }
 
     private fun handleRequest(context: Context, socket: Socket) {
@@ -134,11 +166,31 @@ object LocalCastServer {
                     return@execute
                 }
 
-                val path = requestLine.substringAfter(' ').substringBefore(' ')
+                val fullPath = requestLine.substringAfter(' ').substringBefore(' ')
+                val path = fullPath.substringBefore('?')
+                val query = fullPath.substringAfter('?', "")
                 val output = socket.getOutputStream()
 
                 if (path.startsWith("/art")) {
                     serveArt(context, output)
+                    return@execute
+                }
+
+                // Fix D — Tag requests to avoid the skip race.
+                val requestedSid = if (query.contains("sid=")) {
+                    query.substringAfter("sid=").substringBefore('&')
+                } else null
+
+                val song = currentSong
+                
+                if (song == null) {
+                    sendError(output, 404, "Not Found")
+                    return@execute
+                }
+
+                if (requestedSid != null && requestedSid != song.id) {
+                    Log.w(TAG, "Rejecting request for stale SID: $requestedSid (Current: ${song.id})")
+                    sendError(output, 403, "Stale Request")
                     return@execute
                 }
 
@@ -150,13 +202,6 @@ object LocalCastServer {
                     if (line.startsWith("Range: bytes=")) {
                         rangeHeader = line.substring("Range: bytes=".length)
                     }
-                }
-
-                val song = currentSong
-                
-                if (song == null) {
-                    sendError(output, 404, "Not Found")
-                    return@execute
                 }
 
                 val fileSize = song.fileSizeBytes

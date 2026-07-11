@@ -78,6 +78,7 @@ import com.beatraxus.app.telegram.AuthState
 import com.beatraxus.app.telegram.TdLibManager
 import org.drinkless.tdlib.TdApi
 import com.beatraxus.app.service.AudioPlaybackService
+import com.beatraxus.app.cast.CastManager
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
@@ -324,6 +325,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             LibraryView.GENRES -> emptyList()
             LibraryView.FAVORITES -> all.filter { it.isFavorite }
             LibraryView.RECENTLY_ADDED -> all.sortedByDescending { it.dateAdded }
+            LibraryView.RADIO -> emptyList()
             LibraryView.RECENTLY_PLAYED -> {
                 recentIds.filter { it != state.currentSong?.id }
                     .mapNotNull { id -> all.find { it.id == id } }
@@ -352,6 +354,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     it.isCloud()
                 }
             }
+            else -> emptyList()
         }
         
         if (debouncedQuery.isNotEmpty()) {
@@ -573,6 +576,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun setErrorMessage(message: String?) {
         _uiState.update { it.copy(errorMessage = message) }
+    }
+
+    fun setCastErrorMessage(message: String?) {
+        _uiState.update { it.copy(castErrorMessage = message) }
     }
 
 
@@ -1370,7 +1377,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             LibraryView.HOME, LibraryView.ALL_SONGS, LibraryView.ALBUM_DETAIL, LibraryView.ARTIST_DETAIL,
             LibraryView.FOLDER_DETAIL, LibraryView.YEAR_DETAIL, LibraryView.GENRE_DETAIL,
             LibraryView.PLAYLIST_DETAIL, LibraryView.FAVORITES, LibraryView.RECENTLY_ADDED,
-            LibraryView.RECENTLY_PLAYED, LibraryView.CLOUD -> songs.value.map { it.id }
+            LibraryView.RECENTLY_PLAYED, LibraryView.CLOUD, LibraryView.RADIO -> songs.value.map { it.id }
             
             LibraryView.ALBUMS -> albums.value.map { it.first }
             LibraryView.ARTISTS -> artists.value.map { it.first }
@@ -1378,6 +1385,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             LibraryView.YEARS -> years.value.map { it.first }
             LibraryView.GENRES -> genres.value.map { it.first }
             LibraryView.PLAYLISTS -> playlists.value.map { it.id }
+            else -> emptyList()
         }
         
         _uiState.update { state ->
@@ -1685,6 +1693,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun togglePlayPause() {
+        if (CastManager.isConnected) {
+            if (_uiState.value.isPlaying) CastManager.pause() else CastManager.play()
+            return
+        }
         service?.let { svc ->
             svc.togglePlayPause()
         } ?: _uiState.update { it.copy(isPlaying = !it.isPlaying) }

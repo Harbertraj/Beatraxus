@@ -581,8 +581,6 @@ class AudioPlaybackService : Service() {
             } else {
                 com.beatraxus.app.cast.CastManager.play()
             }
-            // Update local state so UI reflects change immediately
-            _playbackStateFlow.update { it.copy(isPlaying = !it.isPlaying) }
             return
         }
 
