@@ -22,6 +22,7 @@ class AiAnalysisEngine(private val context: Context) {
     private var languageInterpreter: Interpreter? = null
     private var moodInterpreter: Interpreter? = null
     private val onlineAiService = GenreApiService()
+    private val moodApiService = com.beatraxus.app.repository.MoodApiService() // NEW
     
     init {
         try {
@@ -73,9 +74,25 @@ class AiAnalysisEngine(private val context: Context) {
             val langResult = runInference(languageInterpreter, features.spectralData)
             val language = LANGUAGES[langResult.primaryIndex]
             
-            // 4. Run AI Inference for Mood
+            // 4. Run AI Inference for Mood (TFLite)
             val moodResult = runInference(moodInterpreter, features.spectralData)
-            val mood = MOODS[moodResult.primaryIndex]
+            val primaryMoodRaw = MOODS[moodResult.primaryIndex]
+            val mood = mapToUiMood(primaryMoodRaw)
+
+            // 4b. Combine local model + beat/BPM rules + Last.fm community tags
+            // into a multi-label mood set, so one song can belong to several moods.
+            val finalMoods = linkedSetOf<String>()
+            finalMoods.add(mood)
+            if (moodResult.secondaryConfidence > 0.35f) {
+                finalMoods.add(mapToUiMood(MOODS[moodResult.secondaryIndex]))
+            }
+            finalMoods.addAll(bpmMoods(features.tempoBpm))
+            try {
+                finalMoods.addAll(moodApiService.fetchAccurateMoodTags(song.artist, song.title))
+            } catch (e: Exception) {
+                Log.e(TAG, "Last.fm mood lookup failed for ${song.title}", e)
+            }
+            val moodTags = finalMoods.joinToString(",")
             
             // 5. Generate AI EQ Profile
             val aiEq = generateAiEq(
@@ -94,6 +111,7 @@ class AiAnalysisEngine(private val context: Context) {
                 languageConfidence = langResult.primaryConfidence,
                 mood = mood,
                 moodConfidence = moodResult.primaryConfidence,
+                moodTags = moodTags,
                 lufs = features.lufs,
                 rms = features.rms,
                 peak = features.peak,
@@ -225,6 +243,24 @@ class AiAnalysisEngine(private val context: Context) {
         private val MOODS = listOf(
             "Calm", "Relaxing", "Happy", "Energetic", "Aggressive", "Romantic", "Sad", "Motivational", "Party", "Workout", "Focus", "Sleep", "Meditation", "Emotional", "Epic", "Dark", "Uplifting"
         )
+
+        // Merge near-duplicate raw classes into the 15 moods shown in the UI
+        private val MOOD_UI_MAP = mapOf(
+            "Relaxing" to "Calm",
+            "Uplifting" to "Happy"
+        )
+        fun mapToUiMood(raw: String): String = MOOD_UI_MAP[raw] ?: raw
+
+        // Beat/BPM-based mood rules — this is the "beat analysis" part
+        fun bpmMoods(bpm: Float): List<String> = buildList {
+            when {
+                bpm in 1f..70f    -> { add("Sleep"); add("Calm"); add("Meditation") }
+                bpm in 70f..95f   -> { add("Calm"); add("Romantic"); add("Sad") }
+                bpm in 95f..115f  -> { add("Happy"); add("Focus") }
+                bpm in 115f..135f -> { add("Motivational"); add("Party"); add("Epic") }
+                bpm >= 135f       -> { add("Energetic"); add("Workout"); add("Aggressive") }
+            }
+        }
     }
 }
 

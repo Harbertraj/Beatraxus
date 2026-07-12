@@ -77,6 +77,8 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.ui.zIndex
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -3580,6 +3582,41 @@ fun HomeScreen(
     val genres by viewModel.genres.collectAsStateWithLifecycle()
     val allSongs by viewModel.allSongs.collectAsStateWithLifecycle()
     val aiAnalysis by viewModel.aiAnalysis.collectAsStateWithLifecycle()
+    var showAllMoodsDialog by remember { mutableStateOf(false) }
+
+    val allMoods = remember {
+        listOf(
+            MoodData("Sleep", Icons.Rounded.Bedtime, Color(0xFF5E5CE6), listOf("Sleep", "Ambient", "Calm")),
+            MoodData("Calm", Icons.Rounded.SelfImprovement, Color(0xFF32D74B), listOf("Calm", "Relaxing", "Chill", "Acoustic")),
+            MoodData("Focus", Icons.Rounded.CenterFocusStrong, Color(0xFF00F2FF), listOf("Focus", "Classical", "Lofi")),
+            MoodData("Energetic", Icons.Rounded.FlashOn, Color(0xFFFFD60A), listOf("Energy", "EDM", "Dance")),
+            MoodData("Workout", Icons.Rounded.FitnessCenter, Color(0xFFFF6B00), listOf("Workout", "Gym", "Hip-Hop")),
+            MoodData("Happy", Icons.Rounded.SentimentVerySatisfied, Color(0xFFFFC107), listOf("Happy", "Pop", "Feel Good")),
+            MoodData("Sad", Icons.Rounded.WaterDrop, Color(0xFF5C6BC0), listOf("Sad", "Blues", "Ballad")),
+            MoodData("Romantic", Icons.Rounded.Favorite, Color(0xFFFF4081), listOf("Romantic", "Love", "R&B")),
+            MoodData("Party", Icons.Rounded.Celebration, Color(0xFFE040FB), listOf("Party", "Dance", "Club")),
+            MoodData("Motivational", Icons.Rounded.EmojiEvents, Color(0xFFFF9100), listOf("Motivational", "Inspirational")),
+            MoodData("Aggressive", Icons.Rounded.Whatshot, Color(0xFFFF1744), listOf("Aggressive", "Metal", "Rock")),
+            MoodData("Meditation", Icons.Rounded.Spa, Color(0xFF00BFA5), listOf("Meditation", "Yoga", "Ambient")),
+            MoodData("Emotional", Icons.Rounded.TheaterComedy, Color(0xFF7C4DFF), listOf("Emotional", "Soul")),
+            MoodData("Epic", Icons.Rounded.Landscape, Color(0xFFFF6D00), listOf("Epic", "Soundtrack", "Cinematic")),
+            MoodData("Dark", Icons.Rounded.NightsStay, Color(0xFF37474F), listOf("Dark", "Gothic", "Industrial"))
+        )
+    }
+
+    // Accurate mood matching: prefer AI+BPM+Last.fm moodTags, fall back to
+    // keyword matching only for songs that haven't been analyzed yet.
+    fun playMood(mood: MoodData) {
+        val moodSongs = allSongs.filter { song ->
+            val tags = aiAnalysis[song.id]?.moodTags
+            if (!tags.isNullOrBlank()) {
+                tags.split(",").any { it.trim().equals(mood.label, ignoreCase = true) }
+            } else {
+                mood.keywords.any { kw -> kw.lowercase() in song.genre.lowercase() || kw.lowercase() in song.title.lowercase() }
+            }
+        }
+        if (moodSongs.isNotEmpty()) viewModel.playList(moodSongs.shuffled(), 0)
+    }
 
     val calendar = java.util.Calendar.getInstance()
     val hour = calendar.get(java.util.Calendar.HOUR_OF_DAY)
@@ -3911,26 +3948,15 @@ fun HomeScreen(
             HomeSectionHeader(
                 title = "Browse by Mood",
                 actionText = "See All",
-                actionIcon = Icons.Rounded.KeyboardArrowRight
+                actionIcon = Icons.Rounded.KeyboardArrowRight,
+                onActionClick = { showAllMoodsDialog = true }
             )
             LazyRow(
                 contentPadding = PaddingValues(horizontal = 16.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                val moods = listOf(
-                    MoodData("Sleep", Icons.Rounded.Bedtime, Color(0xFF5E5CE6), listOf("Sleep", "Ambient", "Chill", "Calm")),
-                    MoodData("Focus", Icons.Rounded.CenterFocusStrong, Color(0xFF00F2FF), listOf("Focus", "Classical", "Lofi")),
-                    MoodData("Energy", Icons.Rounded.FlashOn, Color(0xFFFFD60A), listOf("Energy", "Workout", "Rock")),
-                    MoodData("Relax", Icons.Rounded.SelfImprovement, Color(0xFF32D74B), listOf("Relax", "Jazz", "Soul"))
-                )
-
-                items(moods) { mood ->
-                    MoodTile(mood) {
-                        val moodSongs = allSongs.filter { song ->
-                            mood.keywords.any { it.lowercase() in song.genre.lowercase() || it.lowercase() in song.title.lowercase() }
-                        }
-                        if (moodSongs.isNotEmpty()) viewModel.playList(moodSongs.shuffled(), 0)
-                    }
+                items(allMoods) { mood ->
+                    MoodTile(mood) { playMood(mood) }
                 }
             }
         }
@@ -4127,6 +4153,14 @@ fun HomeScreen(
             }
         }
     }
+
+    if (showAllMoodsDialog) {
+        AllMoodsDialog(
+            moods = allMoods,
+            onDismiss = { showAllMoodsDialog = false },
+            onMoodClick = { mood -> playMood(mood); showAllMoodsDialog = false }
+        )
+    }
 }
 
 private data class MoodData(
@@ -4137,10 +4171,13 @@ private data class MoodData(
 )
 
 @Composable
-private fun MoodTile(mood: MoodData, onClick: () -> Unit) {
+private fun MoodTile(
+    mood: MoodData,
+    modifier: Modifier = Modifier.size(width = 130.dp, height = 100.dp),
+    onClick: () -> Unit
+) {
     Box(
-        modifier = Modifier
-            .size(width = 130.dp, height = 100.dp)
+        modifier = modifier
             .clip(RoundedCornerShape(20.dp))
             .background(
                 Brush.verticalGradient(
@@ -4174,6 +4211,51 @@ private fun MoodTile(mood: MoodData, onClick: () -> Unit) {
                 .align(Alignment.BottomEnd)
                 .offset(x = 10.dp, y = 10.dp)
         )
+    }
+}
+
+@Composable
+private fun AllMoodsDialog(
+    moods: List<MoodData>,
+    onDismiss: () -> Unit,
+    onMoodClick: (MoodData) -> Unit
+) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.97f))
+        ) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(20.dp, 24.dp, 20.dp, 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("All Moods", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Rounded.Close, contentDescription = "Close", tint = Color.White)
+                    }
+                }
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(2),
+                    contentPadding = PaddingValues(20.dp, 8.dp, 20.dp, 40.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    items(moods) { mood ->
+                        MoodTile(
+                            mood = mood,
+                            modifier = Modifier.fillMaxWidth().height(110.dp)
+                        ) { onMoodClick(mood) }
+                    }
+                }
+            }
+        }
     }
 }
 

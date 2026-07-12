@@ -5,14 +5,13 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -24,48 +23,75 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.beatraxus.app.viewmodel.PlayerViewModel
 import kotlinx.coroutines.delay
+import kotlin.math.cos
+import kotlin.math.min
+import kotlin.math.sin
 
 /**
- * App-launch splash. Every field here reuses the existing brand palette
- * (BgDeep / AccentBlue / 0xFF7C4DFF) and the existing PremiumGlows()
- * background so it reads as part of the same app as WelcomeScreen, not a
- * separate bolted-on screen.
+ * App-launch splash. Design language: rotating vinyl record + spectrum-style
+ * loading ring, matching the WelcomeScreen brand gradient. Transition off
+ * this screen is driven by real state (PlayerUiState.isLoadingLibrary),
+ * not a fixed timer — it waits for the library/main screen to actually be
+ * ready, with a sane minimum display time and a safety-timeout fallback.
  */
 @Composable
-fun LoadingScreen(onLoadingFinished: () -> Unit) {
+fun LoadingScreen(
+    viewModel: PlayerViewModel,
+    onLoadingFinished: () -> Unit
+) {
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val infinite = rememberInfiniteTransition(label = "loadingLoop")
 
-    // Slow ambient background pulse — mirrors WelcomeScreen's gradientShift
-    val glowPulse by infinite.animateFloat(
-        initialValue = 0f, targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(6000, easing = LinearEasing), RepeatMode.Reverse),
-        label = "glowPulse"
-    )
-
-    // Progress ring rotation — continuous, professional "spinner" feel
-    val ringRotation by infinite.animateFloat(
+    // Vinyl rotation — slow, continuous, like a record actually spinning
+    val vinylRotation by infinite.animateFloat(
         initialValue = 0f, targetValue = 360f,
-        animationSpec = infiniteRepeatable(tween(1400, easing = LinearEasing), RepeatMode.Restart),
-        label = "ringRotation"
+        animationSpec = infiniteRepeatable(tween(2600, easing = LinearEasing), RepeatMode.Restart),
+        label = "vinylRotation"
     )
 
-    // Equalizer bars inside the emblem (the "music" half of the mark)
-    val barPulse by infinite.animateFloat(
-        initialValue = 0.4f, targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(700, easing = EaseInOutSine), RepeatMode.Reverse),
-        label = "barPulse"
+    // Sweep phase for the spectrum ring — the actual "loading" indicator
+    val sweepPhase by infinite.animateFloat(
+        initialValue = 0f, targetValue = 360f,
+        animationSpec = infiniteRepeatable(tween(1500, easing = LinearEasing), RepeatMode.Restart),
+        label = "sweepPhase"
     )
 
-    // Entrance animation for the whole content block
     val entrance = remember { Animatable(0f) }
-    // Determinate progress bar synced to the real minimum-display duration
-    val progress = remember { Animatable(0f) }
+
+    // ---- Real readiness tracking (mirrors the hasStartedScanning pattern
+    // already used in WelcomeScreen) instead of guessing with a delay. ----
+    var hasLibraryLoadStarted by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(uiState.isLoadingLibrary) {
+        if (uiState.isLoadingLibrary) hasLibraryLoadStarted = true
+    }
 
     LaunchedEffect(Unit) {
         entrance.animateTo(1f, tween(500, easing = FastOutSlowInEasing))
-        progress.animateTo(1f, tween(1600, easing = FastOutSlowInEasing))
-        delay(150)
+
+        val minDisplayMs = 1400L   // keeps the animation from flashing on fast devices
+        val maxWaitMs = 6000L      // safety net so a stuck state can never trap the user
+        val pollMs = 80L
+        var elapsed = 0L
+
+        while (elapsed < maxWaitMs) {
+            // Ready when: a library load actually ran and finished, OR the
+            // library already had songs going into this screen (the
+            // first-run path, where WelcomeScreen's own scan already
+            // populated it), OR a terminal state (no permission / no
+            // library) means there's nothing left to wait for.
+            val libraryFinishedLoading = hasLibraryLoadStarted && !uiState.isLoadingLibrary
+            val alreadyPopulated = !uiState.isLoadingLibrary && uiState.scanCount > 0
+            val terminalState = uiState.permissionDenied || uiState.showScanOptions
+
+            if ((libraryFinishedLoading || alreadyPopulated || terminalState) && elapsed >= minDisplayMs) {
+                break
+            }
+            delay(pollMs)
+            elapsed += pollMs
+        }
         onLoadingFinished()
     }
 
@@ -73,14 +99,11 @@ fun LoadingScreen(onLoadingFinished: () -> Unit) {
         modifier = Modifier
             .fillMaxSize()
             .background(
-                Brush.verticalGradient(
-                    listOf(Color(0xFF060608), Color(0xFF0E0E14), Color(0xFF060608))
-                )
+                Brush.verticalGradient(listOf(Color(0xFF060608), Color(0xFF0E0E14), Color(0xFF060608)))
             ),
         contentAlignment = Alignment.Center
     ) {
-        // Reuses the exact same premium background glow used on WelcomeScreen
-        PremiumGlows(infinite)
+        PremiumGlows(infinite) // reuses the same ambient glow as WelcomeScreen
 
         Column(
             modifier = Modifier.graphicsLayer {
@@ -91,156 +114,120 @@ fun LoadingScreen(onLoadingFinished: () -> Unit) {
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
 
-            // ---------- Emblem: rotating ring + gradient badge + mark ----------
-            Box(contentAlignment = Alignment.Center, modifier = Modifier.size(168.dp)) {
+            Box(contentAlignment = Alignment.Center, modifier = Modifier.size(196.dp)) {
 
-                // Rotating progress ring
+                // ---- Spectrum / VU sweep ring (the loading indicator) ----
                 Canvas(modifier = Modifier.fillMaxSize()) {
-                    rotate(ringRotation) {
-                        drawArc(
-                            brush = Brush.sweepGradient(
-                                listOf(
-                                    Color.Transparent,
-                                    Color(0xFF1E88E5),
-                                    Color(0xFF7C4DFF),
-                                    Color.Transparent
-                                )
-                            ),
-                            startAngle = 0f,
-                            sweepAngle = 300f,
-                            useCenter = false,
-                            style = Stroke(width = 2.5.dp.toPx(), cap = StrokeCap.Round)
-                        )
+                    val segments = 40
+                    val radius = min(size.width, size.height) / 2f - 6.dp.toPx()
+                    val tickLen = 10.dp.toPx()
+                    for (i in 0 until segments) {
+                        val angle = (360f / segments) * i
+                        var diff = ((angle - sweepPhase + 540f) % 360f) - 180f
+                        diff = kotlin.math.abs(diff)
+                        val proximity = (1f - (diff / 55f)).coerceIn(0f, 1f)
+                        val alpha = 0.12f + proximity * 0.88f
+                        val len = tickLen * (0.6f + proximity * 0.4f)
+                        rotate(angle, pivot = center) {
+                            drawLine(
+                                brush = Brush.linearGradient(
+                                    listOf(Color(0xFF7C4DFF), Color(0xFF1E88E5))
+                                ),
+                                start = Offset(center.x, center.y - radius),
+                                end = Offset(center.x, center.y - radius + len),
+                                strokeWidth = 2.5.dp.toPx(),
+                                cap = StrokeCap.Round,
+                                alpha = alpha
+                            )
+                        }
                     }
                 }
 
-                // Solid gradient badge
+                // ---- Vinyl record ----
                 Box(
                     modifier = Modifier
-                        .size(124.dp)
+                        .size(148.dp)
+                        .graphicsLayer { rotationZ = vinylRotation }
                         .clip(CircleShape)
-                        .background(
-                            Brush.linearGradient(
-                                listOf(Color(0xFF7C4DFF), Color(0xFF1E88E5))
-                            )
-                        ),
+                        .background(Color(0xFF16161F)),
                     contentAlignment = Alignment.Center
                 ) {
-                    // The mark itself: a single flowing "wing/flame" arc (dragon)
-                    // resting above a row of equalizer bars (music) — one
-                    // cohesive glyph instead of two competing motifs.
-                    Canvas(modifier = Modifier.size(72.dp)) {
-                        val w = size.width
-                        val h = size.height
-
-                        // Wing / flame silhouette — symmetric, geometric, no
-                        // literal cartoon dragon; reads as a clean logo mark.
-                        val wing = Path().apply {
-                            moveTo(w * 0.5f, h * 0.06f)
-                            cubicTo(
-                                w * 0.30f, h * 0.10f,
-                                w * 0.08f, h * 0.28f,
-                                w * 0.14f, h * 0.46f
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        // Grooves
+                        val grooveCount = 7
+                        for (g in 1..grooveCount) {
+                            val r = (size.minDimension / 2f) * (g / (grooveCount + 1.5f))
+                            drawCircle(
+                                color = Color.White.copy(alpha = 0.05f),
+                                radius = r,
+                                style = Stroke(width = 1.dp.toPx())
                             )
-                            cubicTo(
-                                w * 0.20f, h * 0.40f,
-                                w * 0.30f, h * 0.38f,
-                                w * 0.38f, h * 0.42f
-                            )
-                            cubicTo(
-                                w * 0.34f, h * 0.30f,
-                                w * 0.40f, h * 0.18f,
-                                w * 0.5f, h * 0.06f
-                            )
-                            close()
                         }
-                        val wingMirror = Path().apply {
-                            moveTo(w * 0.5f, h * 0.06f)
-                            cubicTo(
-                                w * 0.70f, h * 0.10f,
-                                w * 0.92f, h * 0.28f,
-                                w * 0.86f, h * 0.46f
-                            )
-                            cubicTo(
-                                w * 0.80f, h * 0.40f,
-                                w * 0.70f, h * 0.38f,
-                                w * 0.62f, h * 0.42f
-                            )
-                            cubicTo(
-                                w * 0.66f, h * 0.30f,
-                                w * 0.60f, h * 0.18f,
-                                w * 0.5f, h * 0.06f
-                            )
-                            close()
-                        }
-                        drawPath(wing, color = Color.White.copy(alpha = 0.95f))
-                        drawPath(wingMirror, color = Color.White.copy(alpha = 0.95f))
-
-                        // Equalizer bars — the "music" half, animated with barPulse
-                        val barCount = 5
-                        val barW = w * 0.07f
-                        val gap = w * 0.045f
-                        val totalW = barCount * barW + (barCount - 1) * gap
-                        var x = (w - totalW) / 2f
-                        val heights = listOf(0.5f, 0.8f, 1f, 0.8f, 0.5f)
-                        heights.forEach { hf ->
-                            val barH = h * 0.34f * hf * barPulse
-                            drawRoundRect(
-                                color = Color.White.copy(alpha = 0.95f),
-                                topLeft = Offset(x, h * 0.92f - barH),
-                                size = Size(barW, barH),
-                                cornerRadius = androidx.compose.ui.geometry.CornerRadius(barW / 2f)
-                            )
-                            x += barW + gap
-                        }
+                        // Faint reflection streak for a "pressed vinyl" feel
+                        drawArc(
+                            color = Color.White.copy(alpha = 0.04f),
+                            startAngle = -40f,
+                            sweepAngle = 50f,
+                            useCenter = false,
+                            style = Stroke(width = size.minDimension * 0.28f)
+                        )
                     }
+
+                    // Label with the brand mark, scaled down
+                    Box(
+                        modifier = Modifier
+                            .size(62.dp)
+                            .clip(CircleShape)
+                            .background(Brush.linearGradient(listOf(Color(0xFF7C4DFF), Color(0xFF1E88E5)))),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        BrandMark(sizeDp = 34.dp)
+                    }
+
+                    // Spindle hole
+                    Box(
+                        modifier = Modifier
+                            .size(6.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFF060608))
+                    )
+                }
+
+                // ---- Tonearm resting on the record (static, decorative) ----
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    val pivot = Offset(size.width * 0.86f, size.height * 0.10f)
+                    val tip = Offset(size.width * 0.60f, size.height * 0.42f)
+                    val armPath = Path().apply {
+                        moveTo(pivot.x, pivot.y)
+                        lineTo(tip.x, tip.y)
+                    }
+                    drawCircle(color = Color.White.copy(alpha = 0.5f), radius = 5.dp.toPx(), center = pivot)
+                    drawPath(
+                        path = armPath,
+                        color = Color.White.copy(alpha = 0.5f),
+                        style = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round)
+                    )
+                    drawCircle(color = Color.White.copy(alpha = 0.7f), radius = 3.5.dp.toPx(), center = tip)
                 }
             }
 
-            Spacer(Modifier.height(32.dp))
+            Spacer(Modifier.height(30.dp))
 
             Text(
                 text = "BEATRAXUS",
                 style = TextStyle(
-                    color = Color.White,
-                    fontSize = 22.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 7.sp
+                    color = Color.White, fontSize = 22.sp,
+                    fontWeight = FontWeight.Bold, letterSpacing = 7.sp
                 )
             )
             Text(
-                text = "PRECISION AUDIO ENGINE",
+                text = "CALIBRATING BIT-PERFECT PATH",
                 style = TextStyle(
-                    color = Color.White.copy(alpha = 0.45f),
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Medium,
-                    letterSpacing = 3.sp
+                    color = Color.White.copy(alpha = 0.45f), fontSize = 11.sp,
+                    fontWeight = FontWeight.Medium, letterSpacing = 2.5.sp
                 ),
                 modifier = Modifier.padding(top = 8.dp)
             )
-
-            Spacer(Modifier.height(36.dp))
-
-            // ---------- Determinate progress bar ----------
-            Box(
-                modifier = Modifier
-                    .width(140.dp)
-                    .height(3.dp)
-                    .clip(RoundedCornerShape(2.dp))
-                    .background(Color.White.copy(alpha = 0.08f))
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth(progress.value)
-                        .fillMaxHeight()
-                        .clip(RoundedCornerShape(2.dp))
-                        .background(
-                            Brush.horizontalGradient(
-                                listOf(Color(0xFF7C4DFF), Color(0xFF1E88E5))
-                            )
-                        )
-                )
-            }
         }
     }
 }

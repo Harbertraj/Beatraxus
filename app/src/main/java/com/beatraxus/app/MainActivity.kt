@@ -428,6 +428,7 @@ fun BeatraxusApp(
                 exitTransition = { fadeOut(tween(500)) }
             ) {
                 LoadingScreen(
+                    viewModel = viewModel,
                     onLoadingFinished = {
                         navController.navigate(Screen.Main.route) {
                             popUpTo("loading") { inclusive = true }

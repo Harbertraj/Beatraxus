@@ -33,6 +33,7 @@ data class AiAnalysisEntity(
     // Mood
     val mood: String,
     val moodConfidence: Float,
+    val moodTags: String = "", // NEW: comma-separated list, e.g. "Sleep,Calm,Meditation"
     
     // Loudness & Dynamics
     val lufs: Float,

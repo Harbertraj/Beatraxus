@@ -55,7 +55,7 @@ interface RecentlyPlayedDao {
     suspend fun removeRecentlyPlayed(songId: String)
 }
 
-@Database(entities = [PlaylistEntity::class, FavoriteEntity::class, SongEntity::class, RecentlyPlayedEntity::class, LyricsEntity::class, FolderEntity::class, AiAnalysisEntity::class, ArtistArtEntity::class], version = 14, exportSchema = false)
+@Database(entities = [PlaylistEntity::class, FavoriteEntity::class, SongEntity::class, RecentlyPlayedEntity::class, LyricsEntity::class, FolderEntity::class, AiAnalysisEntity::class, ArtistArtEntity::class], version = 15, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun playlistDao(): PlaylistDao
     abstract fun favoriteDao(): FavoriteDao
@@ -96,6 +96,12 @@ abstract class AppDatabase : RoomDatabase() {
                         imageUrl TEXT,
                         fetchedAt INTEGER NOT NULL)
                 """.trimIndent())
+            }
+        }
+
+        val MIGRATION_14_15 = object : Migration(14, 15) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE song_ai_analysis ADD COLUMN moodTags TEXT NOT NULL DEFAULT ''")
             }
         }
     }

@@ -529,6 +529,15 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
 
+        // Trigger AI analysis for local songs with missing mood data
+        viewModelScope.launch(Dispatchers.Default) {
+            delay(4000)
+            val analyzed = aiAnalysisDao.getAllAnalysisFlow().first().associateBy { it.songId }
+            _songs.value.filter { it.source == SongSource.LOCAL }
+                .filter { analyzed[it.id] == null || analyzed[it.id]?.moodTags.isNullOrBlank() }
+                .forEach { aiAnalysisChannel.send(it) }
+        }
+
         checkBatteryOptimizations()
     }
 
