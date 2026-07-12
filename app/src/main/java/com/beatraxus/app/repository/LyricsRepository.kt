@@ -7,9 +7,11 @@ import com.beatraxus.app.model.LrcLine
 import com.beatraxus.app.model.LyricsEntity
 import com.beatraxus.app.model.Song
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
 
@@ -197,16 +199,31 @@ class LyricsRepository(private val context: Context, private val database: AppDa
 
     suspend fun preloadLyrics(songs: List<Song>) = withContext(Dispatchers.IO) {
         for (song in songs) {
-            // Check if already in cache (memory or DB)
-            if (cache.containsKey(song.id)) continue
-            if (lyricsDao.getLyrics(song.id) != null) continue
+            if (!isActive) break
+
+            // Check if we already have synced/word-by-word lyrics in any of our sources
             
-            // Check if it has metadata lyrics already
-            if (!song.lyrics.isNullOrBlank()) continue
+            // 1. Memory cache check
+            val memCached = cache[song.id]
+            if (memCached != null && (memCached.type == LyricsType.WORD_BY_WORD || memCached.type == LyricsType.SYNCED)) continue
             
-            // If not, try to fetch online and cache/save
+            // 2. Database check
+            val dbEntry = lyricsDao.getLyrics(song.id)
+            val dbType = dbEntry?.let { determineType(it.lyrics) } ?: LyricsType.PLAIN
+            if (dbType == LyricsType.WORD_BY_WORD || dbType == LyricsType.SYNCED) continue
+            
+            // 3. Metadata check
+            if (!song.lyrics.isNullOrBlank()) {
+                val metaType = determineType(song.lyrics)
+                if (metaType == LyricsType.WORD_BY_WORD || metaType == LyricsType.SYNCED) continue
+            }
+            
+            // If we only have plain lyrics or no lyrics, attempt online fetch
             Log.d(TAG, "Preloading lyrics for ${song.title}...")
-            fetchOnline(song, persist = false)
+            fetchOnline(song, persist = true)
+            
+            // Brief delay to avoid hitting the API too fast
+            delay(300)
         }
     }
 

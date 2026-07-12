@@ -115,6 +115,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private val aiAnalysisEngine = com.beatraxus.app.engine.AiAnalysisEngine(application)
 
     private val aiAnalysisChannel = kotlinx.coroutines.channels.Channel<Song>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+    private val musicBrainzService = com.beatraxus.app.repository.MusicBrainzService() // NEW
+    private val yearEnrichmentChannel = kotlinx.coroutines.channels.Channel<Song>(kotlinx.coroutines.channels.Channel.UNLIMITED) // NEW
 
     private val prefs = application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE)
 
@@ -429,6 +431,30 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
 
+        // Year enrichment via MusicBrainz for songs with no tagged year
+        // (these currently show up bundled together under "0" in the Years library).
+        viewModelScope.launch(Dispatchers.Default) {
+            delay(3000)
+            for (song in yearEnrichmentChannel) {
+                try {
+                    val year = musicBrainzService.fetchReleaseYear(song.artist, song.title, song.album)
+                    if (year != null && year != song.year) {
+                        val updatedSong = song.copy(year = year)
+                        withContext(Dispatchers.IO) {
+                            songDao.insertSong(updatedSong.toEntity())
+                        }
+                        _songs.update { current ->
+                            current.map { if (it.id == song.id) updatedSong else it }
+                        }
+                    }
+                } catch (t: Throwable) {
+                    Log.e("PlayerViewModel", "MusicBrainz year lookup failed for ${song.title}: ${t.message}", t)
+                }
+                // MusicBrainz anonymous rate limit: ~1 request/second
+                delay(1100)
+            }
+        }
+
         // DSP settings
         viewModelScope.launch {
             dspPreferences.dspConfig.collect { config ->
@@ -539,6 +565,13 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
 
         checkBatteryOptimizations()
+
+        // Catch-up pass: enqueue any already-scanned song that's still missing a year
+        viewModelScope.launch(Dispatchers.Default) {
+            delay(5000)
+            _songs.value.filter { it.source == SongSource.LOCAL && it.year == 0 }
+                .forEach { yearEnrichmentChannel.send(it) }
+        }
     }
 
     private fun checkBatteryOptimizations() {
@@ -874,8 +907,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                                 updateRecentlyPlayed(pbState.currentSong.id)
                                 handleSongChangeForSleepTimer(pbState.currentSong)
                                 fetchOnlineInfo(pbState.currentSong)
-                                if (_uiState.value.showLyrics) {
-                                    loadLyrics(pbState.currentSong)
+                                loadLyrics(pbState.currentSong)
+                                // Ensure preloading is triggered on song change
+                                service?.let { svc ->
+                                    preloadUpcomingLyrics(svc.getUpcomingSongs().take(15))
                                 }
                             } else {
                                 _uiState.update {
@@ -898,7 +933,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 svc.upcomingSongs.collect { songs ->
                     _uiState.update { it.copy(upcomingSongs = songs) }
                     if (songs.isNotEmpty()) {
-                        preloadUpcomingLyrics(songs.take(10))
+                        preloadUpcomingLyrics(songs.take(15))
                     }
                 }
             }
@@ -986,6 +1021,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 // AI Analysis for cloud song after enrichment
                 viewModelScope.launch(Dispatchers.Default) {
                     aiAnalysisChannel.send(updatedSong)
+                    if (updatedSong.year == 0) yearEnrichmentChannel.send(updatedSong) // NEW
                 }
 
                 _songs.update { current ->
@@ -1056,6 +1092,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                             toAnalyze.forEach { song ->
                                 try {
                                     aiAnalysisChannel.send(song)
+                                    if (song.year == 0) yearEnrichmentChannel.send(song) // NEW
                                 } catch (e: Exception) {
                                     Log.e("PlayerViewModel", "Failed to queue song for analysis", e)
                                 }
@@ -1111,6 +1148,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         if (index % 10 == 0) {
                             aiAnalysisChannel.send(song)
                         }
+                        if (song.year == 0) yearEnrichmentChannel.send(song) // NEW — check every song's year, not just every 10th
                     }
                 }
 
@@ -1173,6 +1211,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         if (index < 30) {
                             aiAnalysisChannel.send(song)
                         }
+                        if (song.year == 0) yearEnrichmentChannel.send(song) // NEW
                     }
                 }
 

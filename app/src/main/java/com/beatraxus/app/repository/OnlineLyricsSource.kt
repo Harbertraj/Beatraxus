@@ -41,6 +41,7 @@ data class LrcLibResponse(
 )
 
 class OnlineLyricsSource {
+
     private val client = okhttp3.OkHttpClient.Builder()
         .addInterceptor { chain ->
             val request = chain.request().newBuilder()
