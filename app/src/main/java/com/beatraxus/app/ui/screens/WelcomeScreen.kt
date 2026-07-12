@@ -393,7 +393,7 @@ fun WelcomeScreen(
                                     .blur(40.dp)
                             )
 
-                            // 4. Main Thunder Icon with Shape
+                            // 4. Main Brand Mark — custom wordless "B" monogram over a waveform arc
                             Box(
                                 modifier = Modifier
                                     .size(140.dp)
@@ -403,16 +403,14 @@ fun WelcomeScreen(
                                         alpha = thunderAlpha * iconAlpha
                                         shadowElevation = 30f
                                     }
-                                    .background(Color.White.copy(alpha = 0.15f), CircleShape)
-                                    .border(1.5.dp, Color.White.copy(alpha = 0.3f), CircleShape),
+                                    .background(
+                                        Brush.linearGradient(listOf(Color(0xFF7C4DFF), Color(0xFF1E88E5))),
+                                        CircleShape
+                                    )
+                                    .border(1.5.dp, Color.White.copy(alpha = 0.35f), CircleShape),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.FlashOn,
-                                    contentDescription = null,
-                                    tint = Color.White,
-                                    modifier = Modifier.size(90.dp)
-                                )
+                                BrandMark(sizeDp = 78.dp)
                             }
                         }
 
@@ -433,7 +431,7 @@ fun WelcomeScreen(
 
                             if (showQuestion) {
                                 TypewriterText(
-                                    text = "Why did it take so long to install me?",
+                                    text = "Precision audio, built for listeners who notice everything.",
                                     style = TextStyle(
                                         color = Color.White.copy(alpha = 0.5f),
                                         fontSize = 13.sp,
@@ -452,9 +450,8 @@ fun WelcomeScreen(
                             // Music-themed animated phrases
                             var musicPhraseIndex by remember { mutableIntStateOf(0) }
                             val musicPhrases = listOf(
-                                "Feel the Rhythm", "Hear the Soul", "Deep Bass Awaits",
-                                "Crystal Clear Sound", "Your Music, Evolved",
-                                "You are Magic", "Sonic Bliss", "Pure Audio"
+                                "Studio-Grade Fidelity", "Bit-Perfect Playback", "Zero-Latency DSP",
+                                "Lossless by Design", "Engineered for Detail", "Your Library, Elevated"
                             )
 
                             LaunchedEffect(showTitle) {
@@ -539,12 +536,12 @@ fun WelcomeScreen(
                                                 scaleX = buttonScale
                                                 scaleY = buttonScale
                                             }
-                                            .shadow(20.dp, RoundedCornerShape(32.dp), spotColor = Color(0xFF7C4DFF))
-                                            .clip(RoundedCornerShape(32.dp))
+                                            .shadow(12.dp, RoundedCornerShape(28.dp), spotColor = Color(0xFF7C4DFF))
                                             .background(
                                                 Brush.horizontalGradient(
-                                                    listOf(Color(0xFF1E88E5), Color(0xFF7C4DFF))
-                                                )
+                                                    listOf(Color(0xFF7C4DFF), Color(0xFF1E88E5))
+                                                ),
+                                                RoundedCornerShape(28.dp)
                                             )
                                             .clickable(
                                                 interactionSource = buttonInteractionSource,
@@ -559,21 +556,6 @@ fun WelcomeScreen(
                                             .padding(horizontal = 48.dp, vertical = 20.dp),
                                         contentAlignment = Alignment.Center
                                     ) {
-                                        // Step 3: Highlight Sweep
-                                        Canvas(modifier = Modifier.matchParentSize()) {
-                                            drawRect(
-                                                brush = Brush.linearGradient(
-                                                    colors = listOf(
-                                                        Color.Transparent,
-                                                        Color.White.copy(alpha = 0.2f),
-                                                        Color.Transparent
-                                                    ),
-                                                    start = Offset(buttonHighlightSweep, 0f),
-                                                    end = Offset(buttonHighlightSweep + 100f, size.height)
-                                                )
-                                            )
-                                        }
-
                                         Text(
                                             if (uiState.permissionDenied) "GRANT PERMISSION" else "ENTER THE FLOW",
                                             color = Color.White,
@@ -1037,13 +1019,38 @@ fun PremiumGlows(transition: InfiniteTransition) {
 }
 
 @Composable
+fun BrandMark(sizeDp: androidx.compose.ui.unit.Dp) {
+    Canvas(modifier = Modifier.size(sizeDp)) {
+        val w = size.width
+        val h = size.height
+        // Stylized "B" built from two overlapping soundwave bars — a real
+        // mark instead of a stock system icon.
+        val barWidths = listOf(0.10f, 0.16f, 0.22f, 0.16f, 0.10f)
+        val barHeights = listOf(0.35f, 0.65f, 1.0f, 0.65f, 0.35f)
+        val gap = w * 0.06f
+        var x = w * 0.08f
+        barWidths.forEachIndexed { i, wf ->
+            val barW = w * wf * 0.7f
+            val barH = h * barHeights[i]
+            drawRoundRect(
+                color = Color.White,
+                topLeft = Offset(x, (h - barH) / 2f),
+                size = androidx.compose.ui.geometry.Size(barW, barH),
+                cornerRadius = androidx.compose.ui.geometry.CornerRadius(barW / 2f)
+            )
+            x += barW + gap
+        }
+    }
+}
+
+@Composable
 fun FloatingMusicElements(floatAnim: Float) {
     // Kept for compatibility if needed, but no longer used in main layout
 }
 
 @Composable
 fun CentralPopIcons(infiniteTransition: InfiniteTransition, parentAlpha: Float) {
-    val icons = listOf("♫", "♪", "♬", "♩", "🎶", "⚡", "✨", "🎵")
+    val icons = listOf("♪", "♫", "♩", "♬")
     val density = LocalDensity.current
     
     Box(modifier = Modifier.size(240.dp), contentAlignment = Alignment.Center) {

@@ -47,6 +47,7 @@ import com.beatraxus.app.service.AudioPlaybackService
 import com.beatraxus.app.ui.screens.MainScreen
 import com.beatraxus.app.ui.screens.SettingsScreen
 import com.beatraxus.app.ui.screens.WelcomeScreen
+import com.beatraxus.app.ui.screens.LoadingScreen
 
 import com.beatraxus.app.ui.components.dsp.DspScreen
 import androidx.compose.ui.Modifier
@@ -401,7 +402,7 @@ fun BeatraxusApp(
     Box(Modifier.fillMaxSize()) {
         NavHost(
             navController = navController,
-            startDestination = if (uiState.isFirstRun) "welcome" else Screen.Main.route
+            startDestination = if (uiState.isFirstRun) "welcome" else "loading"
         ) {
             composable(
                 "welcome",
@@ -415,9 +416,21 @@ fun BeatraxusApp(
                     onFinish = {
                         if (navController.currentBackStackEntry?.destination?.route == "welcome") {
                             viewModel.setFirstRunComplete()
-                            navController.navigate(Screen.Main.route) {
+                            navController.navigate("loading") {
                                 popUpTo("welcome") { inclusive = true }
                             }
+                        }
+                    }
+                )
+            }
+            composable(
+                "loading",
+                exitTransition = { fadeOut(tween(500)) }
+            ) {
+                LoadingScreen(
+                    onLoadingFinished = {
+                        navController.navigate(Screen.Main.route) {
+                            popUpTo("loading") { inclusive = true }
                         }
                     }
                 )
