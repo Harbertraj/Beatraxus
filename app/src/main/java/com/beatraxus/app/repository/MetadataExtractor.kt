@@ -146,6 +146,14 @@ class MetadataExtractor(private val context: Context) {
         var updatedSong = song
         val format = song.format.lowercase()
         val isWav = format.contains("wav")
+        
+        // Guard against ALAC files which cause native crashes in MediaMetadataRetriever/MediaCodec on some devices
+        val isAlacPossible = format == "alac" || format == "m4a" || format == "mp4" || format == "audio"
+        if (isAlacPossible && isAlacFile(localFile)) {
+            updatedSong = updatedSong.copy(format = "ALAC")
+            // Skip MediaMetadataRetriever for ALAC to prevent crash
+            return@withContext extractMetadataWithFFprobe(updatedSong, localFile)
+        }
 
         val retriever = android.media.MediaMetadataRetriever()
         try {
@@ -590,6 +598,30 @@ class MetadataExtractor(private val context: Context) {
             Uri.fromFile(outputFile)
         } else {
             null
+        }
+    }
+
+    private fun isAlacFile(file: File): Boolean {
+        val extractor = android.media.MediaExtractor()
+        return try {
+            extractor.setDataSource(file.absolutePath)
+            var foundAlac = false
+            for (i in 0 until extractor.trackCount) {
+                val format = extractor.getTrackFormat(i)
+                val mime = format.getString(android.media.MediaFormat.KEY_MIME) ?: ""
+                if (mime.contains("alac", ignoreCase = true)) {
+                    foundAlac = true
+                    break
+                }
+            }
+            foundAlac
+        } catch (e: Exception) {
+            // If extractor fails, check bitrate as fallback
+            val path = file.absolutePath.lowercase()
+            if (path.endsWith(".alac") || path.endsWith(".caf")) return true
+            false
+        } finally {
+            try { extractor.release() } catch (e: Exception) {}
         }
     }
 

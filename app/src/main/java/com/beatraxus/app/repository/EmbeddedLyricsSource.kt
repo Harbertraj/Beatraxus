@@ -96,6 +96,12 @@ class EmbeddedLyricsSource(private val context: Context) {
         
         // Fallback for content URIs or cloud URIs using MediaMetadataRetriever
         try {
+            val mimeType = context.contentResolver.getType(uri)
+            if (mimeType == "audio/alac" || mimeType == "audio/mp4") {
+                // Skip ALAC to prevent native crash in MediaMetadataRetriever
+                return@withContext null
+            }
+
             val retriever = MediaMetadataRetriever()
             retriever.setDataSource(context, uri)
             // METADATA_KEY_LYRIC is 23 (added in API 31)

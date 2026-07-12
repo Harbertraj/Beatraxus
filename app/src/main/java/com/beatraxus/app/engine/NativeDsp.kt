@@ -242,8 +242,9 @@ class NativeDsp : AutoCloseable {
         // Guard against ALAC files which cause native SIGSEGV due to MediaCodec config failures
         val mimeType = context.contentResolver.getType(uri)
         val extension = uri.path?.substringAfterLast('.', "")?.lowercase()
+        
         val isAlac = mimeType == "audio/alac" || extension == "alac" || 
-                    ((extension == "m4a" || mimeType == "audio/mp4") && isAlacEncoded(context, uri))
+                    isAlacEncoded(context, uri, extension)
 
         if (isAlac) {
             android.util.Log.w("NativeDsp", "Skipping feature extraction for ALAC to avoid native crash: $uri")
@@ -269,18 +270,26 @@ class NativeDsp : AutoCloseable {
         }
     }
 
-    private fun isAlacEncoded(context: android.content.Context, uri: android.net.Uri): Boolean {
-        val retriever = android.media.MediaMetadataRetriever()
+    private fun isAlacEncoded(context: android.content.Context, uri: android.net.Uri, extension: String?): Boolean {
+        val extractor = android.media.MediaExtractor()
         return try {
-            retriever.setDataSource(context, uri)
-            val mime = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_MIMETYPE)
-            val bitrate = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_BITRATE)?.toIntOrNull() ?: 0
-            // ALAC often reports as audio/alac or audio/mp4 with high bitrate (>500kbps)
-            mime == "audio/alac" || (mime == "audio/mp4" && bitrate > 500000)
+            extractor.setDataSource(context, uri, null)
+            var foundAlac = false
+            for (i in 0 until extractor.trackCount) {
+                val format = extractor.getTrackFormat(i)
+                val mime = format.getString(android.media.MediaFormat.KEY_MIME) ?: ""
+                if (mime.contains("alac", ignoreCase = true)) {
+                    foundAlac = true
+                    break
+                }
+            }
+            foundAlac
         } catch (e: Exception) {
-            false
+            // If extractor fails, check extension as last resort. 
+            // Do NOT use MediaMetadataRetriever here as it may crash the process.
+            extension == "alac" || extension == "caf"
         } finally {
-            try { retriever.release() } catch (e: Exception) {}
+            try { extractor.release() } catch (e: Exception) {}
         }
     }
 

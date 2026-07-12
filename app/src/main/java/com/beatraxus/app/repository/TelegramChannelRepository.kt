@@ -19,6 +19,8 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import org.drinkless.tdlib.TdApi
 import org.json.JSONObject
+import com.arthenica.ffmpegkit.FFprobeKit
+import com.arthenica.ffmpegkit.ReturnCode
 
 private val Context.telegramDataStore: DataStore<Preferences> by preferencesDataStore(name = "telegram_channels")
 
@@ -137,6 +139,13 @@ private suspend fun extractFullMetadata(
         }
         
         val path = waitForDownload(tdLib, fileId, 3000) ?: return@withContext ExtractedMetadata()
+        
+        // Guard against ALAC files which cause native crashes in MediaMetadataRetriever on some devices
+        if (format == "ALAC") {
+            Log.d("TelegramRepo", "Skipping MediaMetadataRetriever for ALAC file: $fileName")
+            return@withContext extractMetadataWithFfprobe(path)
+        }
+
         val retriever = android.media.MediaMetadataRetriever()
         try {
             retriever.setDataSource(path)
@@ -167,6 +176,36 @@ private suspend fun extractFullMetadata(
     } catch (e: Exception) {
         ExtractedMetadata()
     }
+}
+
+private fun extractMetadataWithFfprobe(path: String): ExtractedMetadata {
+    val session = FFprobeKit.execute("-v quiet -print_format json -show_format -show_streams $path")
+    if (ReturnCode.isSuccess(session.returnCode)) {
+        try {
+            val json = JSONObject(session.output ?: "{}")
+            val formatJson = json.optJSONObject("format")
+            val tags = formatJson?.optJSONObject("tags")
+            val duration = (formatJson?.optString("duration")?.toDoubleOrNull() ?: 0.0) * 1000.0
+
+            fun getTag(vararg keys: String): String? {
+                for (key in keys) {
+                    val value = tags?.optString(key).takeIf { !it.isNullOrBlank() }
+                    if (value != null) return value
+                }
+                return null
+            }
+
+            return ExtractedMetadata(
+                title = getTag("title", "TITLE"),
+                artist = getTag("artist", "ARTIST"),
+                album = getTag("album", "ALBUM"),
+                durationMs = duration.toLong()
+            )
+        } catch (e: Exception) {
+            // ignore
+        }
+    }
+    return ExtractedMetadata()
 }
 
 class TelegramChannelRepository(private val context: Context) {

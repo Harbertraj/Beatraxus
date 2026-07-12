@@ -146,9 +146,12 @@ class MusicRepository(private val context: Context) {
                     val shouldReadRetriever = fullScan || isLosslessCandidate || raw.bitrate <= 0 || 
                                             raw.genre.isBlank() || raw.genre.equals("unknown", ignoreCase = true)
                     
+                    // CRITICAL: Guard against ALAC files which cause native crashes in MediaMetadataRetriever/MediaCodec on some devices
+                    val isAlacDetected = if (isLosslessCandidate) isAlacFile(context, uri) else false
+                    
                     var sampleRate = guessSampleRate(raw.mime, raw.path)
                     var bitDepth = guessBitDepth(raw.mime, raw.path, raw.size, raw.duration)
-                    var formatName = mimeToFormat(raw.mime, raw.path, bitDepth)
+                    var formatName = if (isAlacDetected) "ALAC" else mimeToFormat(raw.mime, raw.path, bitDepth)
                     var genre = raw.genre.ifEmpty { "Unknown" }
                     val fallbackAlbumArt = ContentUris.withAppendedId(
                         Uri.parse("content://media/external/audio/albumart"),
@@ -162,7 +165,7 @@ class MusicRepository(private val context: Context) {
                     var composer: String? = null
                     var lyrics: String? = null
 
-                    if (shouldReadRetriever) {
+                    if (shouldReadRetriever && !isAlacDetected) {
                         val retriever = MediaMetadataRetriever()
                         try {
                             retriever.setDataSource(context, uri)
@@ -352,6 +355,27 @@ class MusicRepository(private val context: Context) {
         if (raw.bitrate <= 0) return true
         if (raw.genre.isBlank() || raw.genre.equals("unknown", ignoreCase = true)) return true
         return raw.albumId <= 0L
+    }
+
+    private fun isAlacFile(context: Context, uri: Uri): Boolean {
+        val extractor = android.media.MediaExtractor()
+        return try {
+            extractor.setDataSource(context, uri, null)
+            var foundAlac = false
+            for (i in 0 until extractor.trackCount) {
+                val format = extractor.getTrackFormat(i)
+                val mime = format.getString(android.media.MediaFormat.KEY_MIME) ?: ""
+                if (mime.contains("alac", ignoreCase = true)) {
+                    foundAlac = true
+                    break
+                }
+            }
+            foundAlac
+        } catch (e: Exception) {
+            false
+        } finally {
+            try { extractor.release() } catch (e: Exception) {}
+        }
     }
 
     private fun guessSampleRate(mime: String, path: String): Int = when {
