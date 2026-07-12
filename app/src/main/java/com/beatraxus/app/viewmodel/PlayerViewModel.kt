@@ -79,7 +79,6 @@ import com.beatraxus.app.telegram.TdLibManager
 import org.drinkless.tdlib.TdApi
 import com.beatraxus.app.service.AudioPlaybackService
 import com.beatraxus.app.cast.CastManager
-import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 
@@ -180,7 +179,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
         songs.filter { song ->
             when (song.source) {
-                SongSource.GDRIVE -> song.driveAccountEmail == null || song.driveAccountEmail!!.lowercase() in enabledDriveEmails
+                SongSource.GDRIVE -> song.driveAccountEmail == null || song.driveAccountEmail.lowercase() in enabledDriveEmails
                 SongSource.TELEGRAM -> song.telegramChannelUrl == null || song.telegramChannelUrl in enabledTgUrls
                 else -> true
             }
@@ -349,7 +348,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     it.source == com.beatraxus.app.model.SongSource.TELEGRAM && it.telegramChannelUrl == state.selectedTelegramChannelUrl
                 } else if (state.selectedItemName != null) {
                     it.source == com.beatraxus.app.model.SongSource.GDRIVE &&
-                            it.driveAccountEmail?.lowercase() == state.selectedItemName.lowercase()
+                            it.driveAccountEmail.equals(state.selectedItemName, ignoreCase = true)
                 } else {
                     it.isCloud()
                 }
@@ -855,7 +854,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                                 // If it's a new song, we can't trust 'it.bitrate' etc. yet as they might belong to the previous song.
                                 // But if the engine has already updated for the new song, we should keep it.
                                 bitrate = if (sameSong) (if (it.bitrate > 0) it.bitrate else pbState.currentSong?.bitrate ?: 0) else pbState.currentSong?.bitrate ?: 0,
-                                format = if (sameSong) (if (it.format.isNotBlank()) it.format else pbState.currentSong?.format ?: "") else pbState.currentSong?.format ?: "",
+                                format = if (sameSong) it.format.ifBlank { pbState.currentSong?.format ?: "" } else pbState.currentSong?.format ?: "",
                                 bitDepth = if (sameSong) it.bitDepth else pbState.currentSong?.bitDepth ?: 16,
                                 inputSampleRate = if (sameSong) it.inputSampleRate else pbState.currentSong?.sampleRateHz ?: 44100
                             )
@@ -2566,7 +2565,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     it.source == com.beatraxus.app.model.SongSource.TELEGRAM && it.telegramChannelUrl == state.selectedTelegramChannelUrl
                 } else if (state.selectedItemName != null) {
                     it.source == com.beatraxus.app.model.SongSource.GDRIVE &&
-                            it.driveAccountEmail?.lowercase() == state.selectedItemName.lowercase()
+                            it.driveAccountEmail.equals(state.selectedItemName, ignoreCase = true)
                 } else {
                     it.isCloud()
                 }
