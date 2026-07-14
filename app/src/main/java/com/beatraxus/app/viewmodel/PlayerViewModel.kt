@@ -252,8 +252,13 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     val years = filteredSongsByMode.map { songs ->
         songs.groupBy { it.year }
-            .map { (year, list) -> Triple(year.toString(), "${list.size} songs", list.first().albumArtUri) }
-            .sortedByDescending { it.first }
+            .map { (year, list) ->
+                val yearStr = if (year == 0) "Unknown" else year.toString()
+                Triple(yearStr, "${list.size} songs", list.first().albumArtUri)
+            }
+            .sortedWith(compareByDescending<Triple<String, String, Uri?>> { 
+                if (it.first == "Unknown") "0000" else it.first 
+            })
     }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val genres = filteredSongsByMode.map { songs ->
@@ -338,7 +343,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     .any { ArtistNameUtils.normalizeKey(it) == ArtistNameUtils.normalizeKey(target) }
             }
             LibraryView.FOLDER_DETAIL -> all.filter { it.folder == state.currentFolderPath }
-            LibraryView.YEAR_DETAIL -> all.filter { it.year.toString() == state.selectedItemName }
+            LibraryView.YEAR_DETAIL -> all.filter { 
+                val yearStr = if (it.year == 0) "Unknown" else it.year.toString()
+                yearStr == state.selectedItemName 
+            }
             LibraryView.GENRE_DETAIL -> all.filter { it.genre == state.selectedItemName }
             LibraryView.PLAYLISTS -> emptyList()
             LibraryView.PLAYLIST_DETAIL -> {
@@ -1461,7 +1469,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         LibraryView.ALBUMS -> selected.contains(song.album)
                         LibraryView.ARTISTS -> selected.contains(song.artist)
                         LibraryView.FOLDERS -> selected.contains(song.folder)
-                        LibraryView.YEARS -> selected.contains(song.year.toString())
+                        LibraryView.YEARS -> {
+                            val yearStr = if (song.year == 0) "Unknown" else song.year.toString()
+                            selected.contains(yearStr)
+                        }
                         LibraryView.GENRES -> selected.contains(song.genre)
                         else -> false
                     }
@@ -1499,7 +1510,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         LibraryView.ALBUMS -> selected.contains(song.album)
                         LibraryView.ARTISTS -> selected.contains(song.artist)
                         LibraryView.FOLDERS -> selected.contains(song.folder)
-                        LibraryView.YEARS -> selected.contains(song.year.toString())
+                        LibraryView.YEARS -> {
+                            val yearStr = if (song.year == 0) "Unknown" else song.year.toString()
+                            selected.contains(yearStr)
+                        }
                         LibraryView.GENRES -> selected.contains(song.genre)
                         else -> false
                     }
@@ -1531,7 +1545,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         LibraryView.ALBUMS -> selected.contains(song.album)
                         LibraryView.ARTISTS -> selected.contains(song.artist)
                         LibraryView.FOLDERS -> selected.contains(song.folder)
-                        LibraryView.YEARS -> selected.contains(song.year.toString())
+                        LibraryView.YEARS -> {
+                            val yearStr = if (song.year == 0) "Unknown" else song.year.toString()
+                            selected.contains(yearStr)
+                        }
                         LibraryView.GENRES -> selected.contains(song.genre)
                         else -> false
                     }
@@ -1596,7 +1613,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                             LibraryView.ALBUMS -> selectedIds.contains(song.album)
                             LibraryView.ARTISTS -> selectedIds.contains(song.artist)
                             LibraryView.FOLDERS -> selectedIds.contains(song.folder)
-                            LibraryView.YEARS -> selectedIds.contains(song.year.toString())
+                            LibraryView.YEARS -> {
+                                val yearStr = if (song.year == 0) "Unknown" else song.year.toString()
+                                selectedIds.contains(yearStr)
+                            }
                             LibraryView.GENRES -> selectedIds.contains(song.genre)
                             else -> false
                         }
@@ -2158,6 +2178,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         applyDspConfig { it.copy(usbExclusiveEnabled = enabled) }
     }
 
+    fun setHardwareVolumeMode(enabled: Boolean) {
+        applyDspConfig { it.copy(hardwareVolumeEnabled = enabled) }
+    }
+
     fun setBitPerfectMode(enabled: Boolean) {
         applyDspConfig { config ->
             if (!enabled) {
@@ -2168,6 +2192,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     bitPerfectUnbypassResample = false,
                     bitPerfectUnbypassSoxr = false,
                     bitPerfectUnbypassReverb = false,
+                    bitPerfectUnbypassSpatial = false,
                     bitPerfectUnbypassDithering = false,
                     bitPerfectUnbypassFloat64 = false,
                     bitPerfectUnbypassLimiter = false
@@ -2183,6 +2208,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 config.bitPerfectUnbypassResample &&
                 config.bitPerfectUnbypassSoxr &&
                 config.bitPerfectUnbypassReverb &&
+                config.bitPerfectUnbypassSpatial &&
                 config.bitPerfectUnbypassDithering &&
                 config.bitPerfectUnbypassFloat64 &&
                 config.bitPerfectUnbypassLimiter
@@ -2194,6 +2220,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 bitPerfectUnbypassResample = false,
                 bitPerfectUnbypassSoxr = false,
                 bitPerfectUnbypassReverb = false,
+                bitPerfectUnbypassSpatial = false,
                 bitPerfectUnbypassDithering = false,
                 bitPerfectUnbypassFloat64 = false,
                 bitPerfectUnbypassLimiter = false
@@ -2217,6 +2244,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun setBitPerfectUnbypassReverb(enabled: Boolean) = applyDspConfig {
         checkBitPerfectUnbypassLogic(it.copy(bitPerfectUnbypassReverb = enabled))
+    }
+
+    fun setBitPerfectUnbypassSpatial(enabled: Boolean) = applyDspConfig {
+        checkBitPerfectUnbypassLogic(it.copy(bitPerfectUnbypassSpatial = enabled))
     }
 
     fun setBitPerfectUnbypassDithering(enabled: Boolean) = applyDspConfig {

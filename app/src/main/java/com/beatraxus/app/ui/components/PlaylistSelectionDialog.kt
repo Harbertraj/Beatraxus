@@ -110,7 +110,7 @@ fun PlaylistSelectionDialog(
                             }
                         }
 
-                        items(playlists) { playlist ->
+                        items(playlists, key = { it.id }) { playlist ->
                             Surface(
                                 modifier = Modifier
                                     .fillMaxWidth()

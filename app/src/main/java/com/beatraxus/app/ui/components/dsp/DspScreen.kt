@@ -1822,6 +1822,8 @@ private fun PremiumSoundStageCard(
 ) {
     val density = LocalDensity.current
     val config = uiState.dsp.config
+    val isSpatialBypassed = config.bitPerfectEnabled && !config.bitPerfectUnbypassSpatial
+    val spatialActive = config.spatialAudioEnabled && !isSpatialBypassed
 
     data class StageNode(
         val name: String,
@@ -1850,6 +1852,26 @@ private fun PremiumSoundStageCard(
             .padding(bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp)
     ) {
+        // Spatial Audio Title
+        Box(
+            modifier = Modifier
+                .align(Alignment.CenterHorizontally)
+                .background(
+                    Color.White.copy(0.05f),
+                    RoundedCornerShape(12.dp)
+                )
+                .border(1.dp, Color.White.copy(0.1f), RoundedCornerShape(12.dp))
+                .padding(horizontal = 16.dp, vertical = 6.dp)
+        ) {
+            Text(
+                text = "SPATIAL AUDIO",
+                color = PremiumAccent,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Black,
+                letterSpacing = 2.sp
+            )
+        }
+
         // 2. Main Visualization
         BoxWithConstraints(
             modifier = Modifier
@@ -1904,7 +1926,7 @@ private fun PremiumSoundStageCard(
                 modifier = Modifier
                     .size(140.dp)
                     .clip(CircleShape)
-                    .graphicsLayer { alpha = if (config.spatialAudioEnabled) 1f else 0.4f },
+                    .graphicsLayer { alpha = if (spatialActive) 1f else 0.4f },
                 contentAlignment = Alignment.Center
             ) {
                 // Background Glow
@@ -1921,11 +1943,11 @@ private fun PremiumSoundStageCard(
                 
                 // Character Container with Depth
                 Surface(
-                    onClick = { viewModel.setSpatialAudioEnabled(!config.spatialAudioEnabled) },
+                    onClick = { if (!isSpatialBypassed) viewModel.setSpatialAudioEnabled(!config.spatialAudioEnabled) },
                     modifier = Modifier.size(90.dp),
                     shape = CircleShape,
                     color = Color(0xFF161B22),
-                    border = BorderStroke(1.5.dp, if (config.spatialAudioEnabled) PremiumAccent.copy(0.4f) else Color.White.copy(0.1f)),
+                    border = BorderStroke(1.5.dp, if (spatialActive) PremiumAccent.copy(0.4f) else Color.White.copy(0.1f)),
                     shadowElevation = 16.dp
                 ) {
                     Box(contentAlignment = Alignment.Center) {
@@ -1975,7 +1997,7 @@ private fun PremiumSoundStageCard(
                 val cardAngleRad = (nodeTemplate.az - 90f) * PI.toFloat() / 180f
 
                 // Premium Dot
-                if (config.spatialAudioEnabled) {
+                if (spatialActive) {
                     Box(
                         modifier = Modifier
                             .size(11.dp)
@@ -2002,12 +2024,12 @@ private fun PremiumSoundStageCard(
 
                 Surface(
                     onClick = { viewModel.selectSoundStageNode(nodeTemplate.name) },
-                    enabled = config.spatialAudioEnabled,
+                    enabled = spatialActive,
                     modifier = Modifier
                         .graphicsLayer {
                             translationX = cardRadius * cos(cardAngleRad)
                             translationY = cardRadius * sin(cardAngleRad)
-                            alpha = if (config.spatialAudioEnabled) 1f else 0.5f
+                            alpha = if (spatialActive) 1f else 0.5f
                             if (isSelected) {
                                 scaleX = 1.05f
                                 scaleY = 1.05f
@@ -2084,7 +2106,7 @@ private fun PremiumSoundStageCard(
                 .background(Color(0xFF0D1117).copy(0.6f))
                 .border(1.dp, Color.White.copy(0.05f), RoundedCornerShape(24.dp))
                 .padding(16.dp)
-                .graphicsLayer { alpha = if (config.spatialAudioEnabled) 1f else 0.4f },
+                .graphicsLayer { alpha = if (spatialActive) 1f else 0.4f },
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             Row(
@@ -2105,9 +2127,9 @@ private fun PremiumSoundStageCard(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     // Compact Text Buttons with Icons
-                    SoundStageActionChip("RESET", Icons.Rounded.Refresh, enabled = config.spatialAudioEnabled, onClick = { viewModel.setSoundStagePosition(0f, 0f, 2.0f) })
-                    SoundStageActionChip("AUTO", Icons.Rounded.AutoAwesome, isAccent = true, enabled = config.spatialAudioEnabled, onClick = { viewModel.setSoundStagePosition(0f, 0f, 3.5f) })
-                    SoundStageActionChip("DIST", Icons.Rounded.Straighten, enabled = config.spatialAudioEnabled, onClick = { viewModel.setSoundStageDistance(2.0f) })
+                    SoundStageActionChip("RESET", Icons.Rounded.Refresh, enabled = spatialActive, onClick = { viewModel.setSoundStagePosition(0f, 0f, 2.0f) })
+                    SoundStageActionChip("AUTO", Icons.Rounded.AutoAwesome, isAccent = true, enabled = spatialActive, onClick = { viewModel.setSoundStagePosition(0f, 0f, 3.5f) })
+                    SoundStageActionChip("DIST", Icons.Rounded.Straighten, enabled = spatialActive, onClick = { viewModel.setSoundStageDistance(2.0f) })
                 }
             }
 
@@ -2142,7 +2164,7 @@ private fun PremiumSoundStageCard(
                         range = 0f..360f,
                         valueText = { "${it.toInt()}°" },
                         onValueChange = viewModel::setSoundStageAzimuth,
-                        enabled = config.spatialAudioEnabled,
+                        enabled = spatialActive,
                         onEditValue = onEditValue
                     )
                     SoundStageSliderRow(
@@ -2151,7 +2173,7 @@ private fun PremiumSoundStageCard(
                         range = 0.3f..15f,
                         valueText = { String.format(Locale.US, "%.2f m", it) },
                         onValueChange = viewModel::setSoundStageDistance,
-                        enabled = config.spatialAudioEnabled,
+                        enabled = spatialActive,
                         onEditValue = onEditValue
                     )
                     SoundStageSliderRow(
@@ -2160,7 +2182,7 @@ private fun PremiumSoundStageCard(
                         range = -90f..90f,
                         valueText = { "${it.toInt()}°" },
                         onValueChange = viewModel::setSoundStageElevation,
-                        enabled = config.spatialAudioEnabled,
+                        enabled = spatialActive,
                         onEditValue = onEditValue
                     )
                 }
@@ -2174,9 +2196,9 @@ private fun PremiumSoundStageCard(
                         .clip(CircleShape)
                         .background(Color.Black.copy(0.3f))
                         .border(1.5.dp, Color.White.copy(0.1f), CircleShape)
-                        .graphicsLayer { alpha = if (config.spatialAudioEnabled) 1f else 0.4f }
-                        .pointerInput(config.spatialAudioEnabled, config.soundStageSelectedNode) {
-                            if (!config.spatialAudioEnabled) return@pointerInput
+                        .graphicsLayer { alpha = if (spatialActive) 1f else 0.4f }
+                        .pointerInput(spatialActive, config.soundStageSelectedNode) {
+                            if (!spatialActive) return@pointerInput
                             val centerX = size.width / 2f
                             val centerY = size.height / 2f
                             val maxRadius = size.width / 2f
@@ -2203,8 +2225,8 @@ private fun PremiumSoundStageCard(
                                 onTap = { offset -> updatePos(offset.x, offset.y) }
                             )
                         }
-                        .pointerInput(config.spatialAudioEnabled, config.soundStageSelectedNode) {
-                            if (!config.spatialAudioEnabled) return@pointerInput
+                        .pointerInput(spatialActive, config.soundStageSelectedNode) {
+                            if (!spatialActive) return@pointerInput
                             val centerX = size.width / 2f
                             val centerY = size.height / 2f
                             val maxRadius = size.width / 2f
@@ -2253,10 +2275,10 @@ private fun PremiumSoundStageCard(
                             .size(24.dp)
                             .shadow(8.dp, CircleShape, ambientColor = PremiumAccent, spotColor = PremiumAccent)
                             .background(Color(0xFF1A1A24), CircleShape)
-                            .border(2.dp, if (config.spatialAudioEnabled) PremiumAccent else Color.Gray, CircleShape),
+                            .border(2.dp, if (spatialActive) PremiumAccent else Color.Gray, CircleShape),
                         contentAlignment = Alignment.Center
                     ) {
-                        Box(modifier = Modifier.size(8.dp).background(if (config.spatialAudioEnabled) PremiumAccent else Color.Gray, CircleShape))
+                        Box(modifier = Modifier.size(8.dp).background(if (spatialActive) PremiumAccent else Color.Gray, CircleShape))
                     }
                 }
             }
@@ -2284,10 +2306,26 @@ private fun PremiumSoundStageCard(
                     fontSize = 10.sp,
                     letterSpacing = 1.sp
                 )
-                PremiumSwitch(
-                    checked = config.spatialAudioEnabled,
-                    onCheckedChange = { viewModel.setSpatialAudioEnabled(it) }
-                )
+                if (isSpatialBypassed) {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(Color.White.copy(0.05f))
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            "BYPASSED",
+                            color = Color.White.copy(0.3f),
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Black
+                        )
+                    }
+                } else {
+                    PremiumSwitch(
+                        checked = config.spatialAudioEnabled,
+                        onCheckedChange = { viewModel.setSpatialAudioEnabled(it) }
+                    )
+                }
             }
 
             Column {
@@ -2297,12 +2335,12 @@ private fun PremiumSoundStageCard(
                     range = 0f..1f,
                     valueText = { "${(it * 100).toInt()}%" },
                     onValueChange = viewModel::setSpatialAudioIntensity,
-                    enabled = config.spatialAudioEnabled,
+                    enabled = spatialActive,
                     onEditValue = onEditValue
                 )
                 Text(
                     "Overall blend intensity.",
-                    color = if (config.spatialAudioEnabled) Color.White.copy(0.4f) else Color.White.copy(0.2f),
+                    color = if (spatialActive) Color.White.copy(0.4f) else Color.White.copy(0.2f),
                     fontSize = 9.sp,
                     lineHeight = 12.sp,
                     modifier = Modifier.padding(top = 4.dp)
@@ -2310,26 +2348,26 @@ private fun PremiumSoundStageCard(
             }
 
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("HRTF Mode", modifier = Modifier.weight(1f), color = if (config.spatialAudioEnabled) Color.White.copy(0.9f) else Color.White.copy(0.3f), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                Text("HRTF Mode", modifier = Modifier.weight(1f), color = if (spatialActive) Color.White.copy(0.9f) else Color.White.copy(0.3f), fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 
                 var expanded by remember { mutableStateOf(false) }
                 ExposedDropdownMenuBox(
                     expanded = expanded,
-                    onExpandedChange = { if (config.spatialAudioEnabled) expanded = it },
+                    onExpandedChange = { if (spatialActive) expanded = it },
                     modifier = Modifier.weight(1.8f)
                 ) {
                     Surface(
                         modifier = Modifier.menuAnchor(),
                         shape = RoundedCornerShape(10.dp),
                         color = Color.White.copy(0.04f),
-                        border = BorderStroke(1.dp, Color.White.copy(if (config.spatialAudioEnabled) 0.1f else 0.05f))
+                        border = BorderStroke(1.dp, Color.White.copy(if (spatialActive) 0.1f else 0.05f))
                     ) {
                         Row(
                             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(config.hrtfMode.displayName, color = if (config.spatialAudioEnabled) Color.White else Color.White.copy(0.3f), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Text(config.hrtfMode.displayName, color = if (spatialActive) Color.White else Color.White.copy(0.3f), fontSize = 12.sp, fontWeight = FontWeight.Bold)
                             ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded)
                         }
                     }
@@ -2364,12 +2402,12 @@ private fun PremiumSoundStageCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column {
-                    Text("Center Vocal Lock", color = if (config.spatialAudioEnabled) Color.White else Color.White.copy(0.3f), fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    Text("Keep mono content anchored", color = Color.White.copy(if (config.spatialAudioEnabled) 0.5f else 0.2f), fontSize = 10.sp)
+                    Text("Center Vocal Lock", color = if (spatialActive) Color.White else Color.White.copy(0.3f), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    Text("Keep mono content anchored", color = Color.White.copy(if (spatialActive) 0.5f else 0.2f), fontSize = 10.sp)
                 }
                 PremiumSwitch(
                     checked = config.soundStageCenterLock > 0.5f,
-                    enabled = config.spatialAudioEnabled || config.soundStageEnabled,
+                    enabled = (spatialActive || config.soundStageEnabled) && !isSpatialBypassed,
                     onCheckedChange = { viewModel.setSoundStageCenterLock(if (it) 1f else 0f) }
                 )
             }
@@ -2380,11 +2418,11 @@ private fun PremiumSoundStageCard(
                 range = 0f..2f,
                 valueText = { "${(it * 100).toInt()}%" },
                 onValueChange = viewModel::setSpatialStageWidth,
-                enabled = config.spatialAudioEnabled,
+                enabled = spatialActive,
                 onEditValue = onEditValue
             )
 
-            Text("ROOM ACOUSTICS", color = Color.White.copy(if (config.spatialAudioEnabled) 0.4f else 0.2f), fontWeight = FontWeight.Black, fontSize = 10.sp, letterSpacing = 1.sp)
+            Text("ROOM ACOUSTICS", color = Color.White.copy(if (spatialActive) 0.4f else 0.2f), fontWeight = FontWeight.Black, fontSize = 10.sp, letterSpacing = 1.sp)
             
             SoundStageSliderRow(
                 title = "Room Size",
@@ -2392,7 +2430,7 @@ private fun PremiumSoundStageCard(
                 range = 0f..1f,
                 valueText = { "${(it * 100).toInt()}%" },
                 onValueChange = viewModel::setReverbRoomSize,
-                enabled = config.spatialAudioEnabled,
+                enabled = spatialActive,
                 onEditValue = onEditValue
             )
 
@@ -2402,7 +2440,7 @@ private fun PremiumSoundStageCard(
                 range = 0f..1f,
                 valueText = { "${(it * 100).toInt()}%" },
                 onValueChange = viewModel::setReverbDamping,
-                enabled = config.spatialAudioEnabled,
+                enabled = spatialActive,
                 onEditValue = onEditValue
             )
 
@@ -2412,7 +2450,7 @@ private fun PremiumSoundStageCard(
                 range = 0f..1f,
                 valueText = { "${(it * 100).toInt()}%" },
                 onValueChange = viewModel::setReverbAmount,
-                enabled = config.spatialAudioEnabled,
+                enabled = spatialActive,
                 onEditValue = onEditValue
             )
         }

@@ -7,11 +7,14 @@ import com.beatraxus.app.model.LrcLine
 import com.beatraxus.app.model.LyricsEntity
 import com.beatraxus.app.model.Song
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
 
@@ -37,6 +40,8 @@ class LyricsRepository(private val context: Context, private val database: AppDa
     private val songDao = database.songDao()
     
     private val cache = ConcurrentHashMap<String, LyricsLoadResult>()
+    private val notFoundCache = ConcurrentHashMap<String, Long>() // songId -> timestamp
+    private val NOT_FOUND_TTL_MS = 24 * 60 * 60 * 1000L // don't retry for 24h
 
     suspend fun saveLyrics(songId: String, lyricsText: String, offset: Long = 0L) {
         lyricsDao.insertLyrics(LyricsEntity(songId, lyricsText, syncOffset = offset))
@@ -167,10 +172,19 @@ class LyricsRepository(private val context: Context, private val database: AppDa
     }
 
     suspend fun fetchOnline(song: Song, persist: Boolean = true): LyricsLoadResult? {
+        val notFoundAt = notFoundCache[song.id]
+        if (notFoundAt != null && System.currentTimeMillis() - notFoundAt < NOT_FOUND_TTL_MS) {
+            return null // known "not found" recently — skip the network round trip
+        }
+
         val existingOffset = lyricsDao.getLyrics(song.id)?.syncOffset ?: 0L
         val result = onlineSource.fetchLyrics(song.artist, song.title, song.album, song.durationMs)
         
-        if (result == null) return null
+        if (result == null) {
+            notFoundCache[song.id] = System.currentTimeMillis()
+            return null
+        }
+        notFoundCache.remove(song.id)
 
         val res = LyricsLoadResult(
             lines = LrcParser.parse(result.content),
@@ -198,33 +212,38 @@ class LyricsRepository(private val context: Context, private val database: AppDa
     }
 
     suspend fun preloadLyrics(songs: List<Song>) = withContext(Dispatchers.IO) {
-        for (song in songs) {
-            if (!isActive) break
+        val semaphore = Semaphore(3) // up to 3 fetches in flight at once
+        
+        songs.map { song ->
+            async {
+                if (!isActive) return@async
 
-            // Check if we already have synced/word-by-word lyrics in any of our sources
-            
-            // 1. Memory cache check
-            val memCached = cache[song.id]
-            if (memCached != null && (memCached.type == LyricsType.WORD_BY_WORD || memCached.type == LyricsType.SYNCED)) continue
-            
-            // 2. Database check
-            val dbEntry = lyricsDao.getLyrics(song.id)
-            val dbType = dbEntry?.let { determineType(it.lyrics) } ?: LyricsType.PLAIN
-            if (dbType == LyricsType.WORD_BY_WORD || dbType == LyricsType.SYNCED) continue
-            
-            // 3. Metadata check
-            if (!song.lyrics.isNullOrBlank()) {
-                val metaType = determineType(song.lyrics)
-                if (metaType == LyricsType.WORD_BY_WORD || metaType == LyricsType.SYNCED) continue
+                // Check if we already have synced/word-by-word lyrics in any of our sources
+                
+                // 1. Memory cache check
+                val memCached = cache[song.id]
+                if (memCached != null && (memCached.type == LyricsType.WORD_BY_WORD || memCached.type == LyricsType.SYNCED)) return@async
+                
+                // 2. Database check
+                val dbEntry = lyricsDao.getLyrics(song.id)
+                val dbType = dbEntry?.let { determineType(it.lyrics) } ?: LyricsType.PLAIN
+                if (dbType == LyricsType.WORD_BY_WORD || dbType == LyricsType.SYNCED) return@async
+                
+                // 3. Metadata check
+                if (!song.lyrics.isNullOrBlank()) {
+                    val metaType = determineType(song.lyrics)
+                    if (metaType == LyricsType.WORD_BY_WORD || metaType == LyricsType.SYNCED) return@async
+                }
+                
+                // If we only have plain lyrics or no lyrics, attempt online fetch with concurrency limit
+                semaphore.withPermit {
+                    Log.d(TAG, "Preloading lyrics for ${song.title}...")
+                    fetchOnline(song, persist = true)
+                    // Brief delay between batches to be nice to the API
+                    delay(500)
+                }
             }
-            
-            // If we only have plain lyrics or no lyrics, attempt online fetch
-            Log.d(TAG, "Preloading lyrics for ${song.title}...")
-            fetchOnline(song, persist = true)
-            
-            // Brief delay to avoid hitting the API too fast
-            delay(300)
-        }
+        }.forEach { it.await() }
     }
 
     private suspend fun saveToDbIfBetter(songId: String, newResult: LyricsLoadResult) {

@@ -30,7 +30,7 @@ class CloudCacheManager(
     private val TAG = "CloudCacheManager"
     private val cacheDir = File(context.cacheDir, "cloud_cache").apply { mkdirs() }
     private val downloadScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-    private val playbackLruCache = PlaybackLruCache(context)
+    private val playbackLruCache = PlaybackLruCache.getInstance(context)
     
     // Use ConcurrentHashMap for thread-safe access from media threads
     private val activeDownloads = ConcurrentHashMap<String, Job>()
@@ -109,7 +109,10 @@ class CloudCacheManager(
             if (file.local.isDownloadingCompleted) {
                 val f = File(file.local.path)
                 if (f.exists()) {
-                    return@withContext playbackLruCache.getOrCacheFile(song, f, true, currentlyPlayingId).absolutePath
+                    val cachedFile = playbackLruCache.getOrCacheFile(song, f, true, currentlyPlayingId)
+                    // Once safely in cloud_cache, remove from TDLib to free up space and ensure 15-song limit
+                    try { tdLib.send(TdApi.DeleteFile(currentFileId)) } catch (_: Exception) {}
+                    return@withContext cachedFile.absolutePath
                 } else {
                     Log.w(TAG, "Telegram file reported as completed but missing from disk: ${file.local.path}. Re-downloading...")
                     try { tdLib.send(TdApi.DeleteFile(currentFileId)) } catch (_: Exception) {}
@@ -134,7 +137,10 @@ class CloudCacheManager(
                     val f = File(path)
                     if (f.exists()) {
                         Log.d(TAG, "Telegram file download complete for ${song.title}")
-                        return@withContext playbackLruCache.getOrCacheFile(song, f, true, currentlyPlayingId).absolutePath
+                        val cachedFile = playbackLruCache.getOrCacheFile(song, f, true, currentlyPlayingId)
+                        // Once safely in cloud_cache, remove from TDLib to free up space and ensure 15-song limit
+                        try { tdLib.send(TdApi.DeleteFile(currentFileId)) } catch (_: Exception) {}
+                        return@withContext cachedFile.absolutePath
                     } else {
                         Log.w(TAG, "Telegram file completed but missing from disk in wait loop: $path")
                         try { tdLib.send(TdApi.DeleteFile(currentFileId)) } catch (_: Exception) {}
@@ -275,6 +281,8 @@ class CloudCacheManager(
                             val path = file.local.path
                             if (File(path).exists()) {
                                 playbackLruCache.getOrCacheFile(song, File(path), false, currentlyPlayingId)
+                                // Move to unified cloud_cache and clear TDLib internal copy
+                                try { tdLib.send(TdApi.DeleteFile(currentFileId)) } catch (_: Exception) {}
                                 this@launch.cancel()
                             } else {
                                 Log.w(TAG, "Pre-download: file reported complete but missing: $path")
@@ -684,6 +692,8 @@ class CloudCacheManager(
                                 if (file.local.isDownloadingCompleted && localPath != null) {
                                     scope.launch {
                                         playbackLruCache.getOrCacheFile(song, File(localPath!!), false, currentlyPlayingId)
+                                        // Once in cloud_cache, clear TDLib internal copy
+                                        try { tdLib.send(TdApi.DeleteFile(file.id)) } catch (_: Exception) {}
                                     }
                                 }
                             }
@@ -743,8 +753,12 @@ class CloudCacheManager(
 
             if (res != -1 && downloadedPrefix >= totalSize) {
                 // If it's complete, try to cache it in the unified 15-song LRU
+                val fid = song.telegramFileId
                 scope.launch {
                     playbackLruCache.getOrCacheFile(song, File(path), true, currentlyPlayingId)
+                    if (fid != null && fid != 0) {
+                        try { tdLib.send(TdApi.DeleteFile(fid)) } catch (_: Exception) {}
+                    }
                 }
             }
             return res

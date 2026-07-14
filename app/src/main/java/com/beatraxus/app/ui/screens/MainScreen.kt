@@ -2154,7 +2154,7 @@ fun MainScreen(
                                                             horizontalArrangement = Arrangement.spacedBy(if (categoryGridColumns >= 3) 8.dp else 16.dp),
                                                             verticalArrangement = Arrangement.spacedBy(if (categoryGridColumns >= 3) 8.dp else 16.dp)
                                                         ) {
-                                                            items(playlists, key = { it.name }) { playlist ->
+                                                            items(playlists, key = { it.id }) { playlist ->
                                                                 Box(Modifier.animateItem()) {
                                                                     LibraryGridItem(
                                                                         title = playlist.name,
@@ -2398,9 +2398,10 @@ fun MainScreen(
                                                 LibraryView.RADIO -> {
                                                     var radioStations by remember { mutableStateOf<List<RadioStation>>(emptyList()) }
                                                     var isLoading by remember { mutableStateOf(false) }
-                                                    var searchCountry by rememberSaveable { mutableStateOf("USA") }
+                                                    var searchCountry by rememberSaveable { mutableStateOf("") }
 
                                                     LaunchedEffect(searchCountry) {
+                                                        if (searchCountry.isBlank()) return@LaunchedEffect
                                                         isLoading = true
                                                         radioStations = withContext(Dispatchers.IO) {
                                                             RadioBrowserApi.stationsByCountry(searchCountry)
@@ -2976,7 +2977,6 @@ fun MainScreen(
                     playlistDialogSong = null
                 },
                 onCreateNew = { name ->
-                    viewModel.createPlaylist(name)
                     if (playlistDialogSong != null) {
                         viewModel.addSongToPlaylist(name, playlistDialogSong!!.id)
                     } else {

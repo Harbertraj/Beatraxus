@@ -9,15 +9,28 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 
-class PlaybackLruCache(private val context: Context) {
+class PlaybackLruCache private constructor(private val context: Context) {
     private val cacheDir = File(context.cacheDir, "cloud_cache").apply { mkdirs() }
     private val prefs = context.getSharedPreferences("playback_lru_prefs", Context.MODE_PRIVATE)
     private val gson = Gson()
 
     private val lruMaps: MutableMap<SongSource, LinkedHashMap<String, Long>> = mutableMapOf()
 
+    companion object {
+        @Volatile
+        private var INSTANCE: PlaybackLruCache? = null
+
+        fun getInstance(context: Context): PlaybackLruCache {
+            return INSTANCE ?: synchronized(this) {
+                INSTANCE ?: PlaybackLruCache(context.applicationContext).also { INSTANCE = it }
+            }
+        }
+    }
+
     private fun mapFor(source: SongSource): LinkedHashMap<String, Long> {
-        return lruMaps.getOrPut(source) { loadMap(source) }
+        return synchronized(lruMaps) {
+            lruMaps.getOrPut(source) { loadMap(source) }
+        }
     }
 
     private fun loadMap(source: SongSource): LinkedHashMap<String, Long> {

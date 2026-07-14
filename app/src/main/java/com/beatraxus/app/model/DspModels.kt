@@ -211,6 +211,7 @@ data class DspConfig(
     val bitPerfectUnbypassResample: Boolean = false,
     val bitPerfectUnbypassSoxr: Boolean = false,
     val bitPerfectUnbypassReverb: Boolean = false,
+    val bitPerfectUnbypassSpatial: Boolean = false,
     val bitPerfectUnbypassDithering: Boolean = false,
     val bitPerfectUnbypassFloat64: Boolean = false,
     val bitPerfectUnbypassLimiter: Boolean = false,

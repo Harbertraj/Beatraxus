@@ -951,6 +951,8 @@ fun DspEnhancementsContent(
     ) {
         UsbDirectModeCard(uiState = uiState, viewModel = viewModel)
 
+        HardwareVolumeCard(uiState = uiState, viewModel = viewModel)
+
         BitPerfectCard(uiState = uiState, viewModel = viewModel)
 
         DvcCard(uiState = uiState, viewModel = viewModel)
@@ -1010,18 +1012,35 @@ fun DspEnhancementsContent(
                 }
             }
 
+            val isSpatialBypassed = config.bitPerfectEnabled && !config.bitPerfectUnbypassSpatial
             SettingsSection(
                 title = "SPATIAL AUDIO",
                 icon = Icons.Rounded.SpatialAudioOff,
-                isActive = config.spatialAudioEnabled,
+                isActive = config.spatialAudioEnabled && !isSpatialBypassed,
                 headerActions = {
-                    PremiumSwitch(
-                        checked = config.spatialAudioEnabled,
-                        onCheckedChange = { viewModel.setSpatialAudioEnabled(it) }
-                    )
+                    if (isSpatialBypassed) {
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Color.White.copy(0.05f))
+                                .padding(horizontal = 10.dp, vertical = 5.dp)
+                        ) {
+                            Text(
+                                "BYPASSED",
+                                color = TextWhite.copy(0.3f),
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    } else {
+                        PremiumSwitch(
+                            checked = config.spatialAudioEnabled,
+                            onCheckedChange = { viewModel.setSpatialAudioEnabled(it) }
+                        )
+                    }
                 }
             ) {
-                if (config.spatialAudioEnabled) {
+                if (config.spatialAudioEnabled && !isSpatialBypassed) {
                     DspSliderRow(
                         title = "Intensity",
                         value = config.spatialAudioIntensity,
@@ -1035,7 +1054,8 @@ fun DspEnhancementsContent(
                     )
                 } else {
                     Text(
-                        "Parametric binaural engine that simulates natural speaker placement. Recommended for headphones (pick either Spatial or Crossfeed, not both).",
+                        if (isSpatialBypassed) "Spatial Audio engine is currently bypassed because Bit-Perfect mode is active."
+                        else "Parametric binaural engine that simulates natural speaker placement. Recommended for headphones (pick either Spatial or Crossfeed, not both).",
                         color = TextWhite.copy(0.7f),
                         fontSize = 14.sp,
                         lineHeight = 18.sp
@@ -1139,6 +1159,42 @@ private fun UsbDirectModeCard(uiState: PlayerUiState, viewModel: PlayerViewModel
 
 
 @Composable
+private fun HardwareVolumeCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
+    val config = uiState.dsp.config
+    val isActive = config.hardwareVolumeEnabled
+
+    SettingsSection(
+        title = "HARDWARE VOLUME",
+        icon = Icons.Rounded.VolumeUp,
+        isActive = isActive,
+        subtitle = if (isActive)
+            "App-side digital gain disabled — volume handled by the device/DAC"
+        else
+            "App applies digital volume scaling (DVC)",
+        headerActions = {
+            PremiumSwitch(
+                checked = isActive,
+                onCheckedChange = { viewModel.setHardwareVolumeMode(it) }
+            )
+        }
+    ) {
+        Text(
+            "When enabled, the app never scales the digital signal for volume — " +
+            "it always sends full-scale audio and relies on your device's own " +
+            "volume control (hardware buttons / system volume / DAC volume knob) " +
+            "instead. This avoids any possible digital attenuation of the bitstream. " +
+            "Note: this does not yet route volume through a dedicated hardware " +
+            "volume-control command to external DACs — it only guarantees the app " +
+            "itself applies zero digital gain.",
+            color = TextWhite.copy(0.7f),
+            fontSize = 12.sp,
+            lineHeight = 16.sp
+        )
+    }
+}
+
+
+@Composable
 private fun UsbInfoChip(
     label: String,
     value: String,
@@ -1206,11 +1262,62 @@ private fun BitPerfectCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
                 ) {
                     StatChip("RATE", "${uiState.inputSampleRate / 1000}kHz")
                     StatChip("DEPTH", "${uiState.bitDepth}-bit")
-                    StatChip("DSP", "OFF")
+                    StatChip("DSP", if (config.bitPerfectUnbypassEq || config.bitPerfectUnbypassReverb || config.bitPerfectUnbypassSpatial) "HYBRID" else "OFF")
+                }
+
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        "SELECTIVE DSP UNBYPASS",
+                        color = PremiumAccent.copy(0.7f),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Black,
+                        letterSpacing = 1.2.sp
+                    )
+                    
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        UnbypassChip(
+                            label = "Equalizer",
+                            selected = config.bitPerfectUnbypassEq,
+                            onToggle = { viewModel.setBitPerfectUnbypassEq(it) }
+                        )
+                        UnbypassChip(
+                            label = "Spatial Audio",
+                            selected = config.bitPerfectUnbypassSpatial,
+                            onToggle = { viewModel.setBitPerfectUnbypassSpatial(it) }
+                        )
+                        UnbypassChip(
+                            label = "Reverb",
+                            selected = config.bitPerfectUnbypassReverb,
+                            onToggle = { viewModel.setBitPerfectUnbypassReverb(it) }
+                        )
+                        UnbypassChip(
+                            label = "Limiter",
+                            selected = config.bitPerfectUnbypassLimiter,
+                            onToggle = { viewModel.setBitPerfectUnbypassLimiter(it) }
+                        )
+                        UnbypassChip(
+                            label = "Resampler",
+                            selected = config.bitPerfectUnbypassResample,
+                            onToggle = { viewModel.setBitPerfectUnbypassResample(it) }
+                        )
+                        UnbypassChip(
+                            label = "Dither",
+                            selected = config.bitPerfectUnbypassDithering,
+                            onToggle = { viewModel.setBitPerfectUnbypassDithering(it) }
+                        )
+                    }
+                    
+                    Text(
+                        "Enabling unbypass options allows specific DSP effects to run even in Bit-Perfect mode. If all are enabled, Bit-Perfect mode will automatically turn off.",
+                        color = TextWhite.copy(0.45f),
+                        fontSize = 11.sp,
+                        lineHeight = 15.sp
+                    )
                 }
             }
-
-
         }
     }
 }
@@ -2091,6 +2198,53 @@ fun ReplayGainContent(
 
 
 @Composable
+private fun LibraryStatItem(
+    modifier: Modifier = Modifier,
+    icon: ImageVector,
+    count: Int,
+    label: String,
+    backgroundColor: Color,
+    iconColor: Color
+) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(Color.White.copy(0.04f))
+            .border(1.dp, Color.White.copy(0.06f), RoundedCornerShape(16.dp))
+            .padding(vertical = 14.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Box(
+            modifier = Modifier
+                .size(38.dp)
+                .glassIconBackground(backgroundColor.copy(alpha = 0.15f), CircleShape, backgroundColor.copy(alpha = 0.2f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = iconColor,
+                modifier = Modifier.size(20.dp)
+            )
+        }
+        Spacer(Modifier.height(10.dp))
+        Text(
+            text = count.toString(),
+            color = Color.White,
+            fontSize = 17.sp,
+            fontWeight = FontWeight.Bold
+        )
+        Text(
+            text = label,
+            color = Color.White.copy(0.5f),
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium
+        )
+    }
+}
+
+@Composable
 fun LibraryContent(uiState: PlayerUiState, viewModel: PlayerViewModel, onShowInfo: () -> Unit) {
     Column(modifier = Modifier.fillMaxWidth()) {
         Box(
@@ -2144,6 +2298,38 @@ fun LibraryContent(uiState: PlayerUiState, viewModel: PlayerViewModel, onShowInf
                     trackColor = Color.Transparent
                 )
             }
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            LibraryStatItem(
+                modifier = Modifier.weight(1f),
+                icon = Icons.Rounded.MusicNote,
+                count = uiState.scanCount,
+                label = "Songs",
+                backgroundColor = Color(0xFF0A84FF),
+                iconColor = Color(0xFF0A84FF)
+            )
+            LibraryStatItem(
+                modifier = Modifier.weight(1f),
+                icon = Icons.Rounded.Album,
+                count = uiState.albumCount,
+                label = "Albums",
+                backgroundColor = Color(0xFFFF2D55),
+                iconColor = Color(0xFFFF2D55)
+            )
+            LibraryStatItem(
+                modifier = Modifier.weight(1f),
+                icon = Icons.Rounded.Person,
+                count = uiState.artistCount,
+                label = "Artists",
+                backgroundColor = Color(0xFF30D158),
+                iconColor = Color(0xFF30D158)
+            )
         }
 
         val error = uiState.errorMessage

@@ -1,8 +1,51 @@
 package com.beatraxus.app.repository
 
+import android.content.Context
+import android.net.Uri
+import java.io.FileInputStream
 import java.io.RandomAccessFile
+import java.nio.ByteBuffer
+import java.nio.channels.FileChannel
 
 object WavArtHelper {
+
+    interface WavSource : AutoCloseable {
+        fun length(): Long
+        fun position(): Long
+        fun seek(pos: Long)
+        fun skip(n: Long)
+        fun readFully(bytes: ByteArray)
+        fun read(): Int
+    }
+
+    private class RafSource(private val raf: RandomAccessFile) : WavSource {
+        override fun length() = raf.length()
+        override fun position() = raf.filePointer
+        override fun seek(pos: Long) = raf.seek(pos)
+        override fun skip(n: Long) { raf.skipBytes(n.toInt()) }
+        override fun readFully(bytes: ByteArray) = raf.readFully(bytes)
+        override fun read() = raf.read()
+        override fun close() { /* handled by caller */ }
+    }
+
+    private class ChannelSource(private val channel: FileChannel) : WavSource {
+        override fun length() = channel.size()
+        override fun position() = channel.position()
+        override fun seek(pos: Long) { channel.position(pos) }
+        override fun skip(n: Long) { channel.position(channel.position() + n) }
+        override fun readFully(bytes: ByteArray) {
+            val buf = ByteBuffer.wrap(bytes)
+            while (buf.hasRemaining()) {
+                if (channel.read(buf) == -1) throw java.io.EOFException()
+            }
+        }
+        override fun read(): Int {
+            val buf = ByteBuffer.allocate(1)
+            return if (channel.read(buf) == -1) -1 else buf.get(0).toInt() and 0xFF
+        }
+        override fun close() { /* handled by caller */ }
+    }
+
     /**
      * Extracts embedded album art (APIC from ID3 or DISP chunk) from a WAV file.
      * Works with partial/sparse files if the relevant chunks are downloaded.
@@ -10,74 +53,101 @@ object WavArtHelper {
     fun extractArt(path: String): ByteArray? {
         return try {
             RandomAccessFile(path, "r").use { raf ->
-                val len = raf.length()
-                if (len < 12) return null
-                
-                // WAV files are RIFF containers
-                if (readFourCc(raf) != "RIFF") return null
-                raf.skipBytes(4) // skip RIFF size
-                if (readFourCc(raf) != "WAVE") return null
-                
-                while (raf.filePointer + 8 <= len) {
-                    val chunkIdRaw = readFourCc(raf)
-                    val chunkSize = readLittleEndianInt(raf).toLong().and(0xFFFFFFFFL)
-                    val chunkStart = raf.filePointer
-                    
-                    val chunkId = chunkIdRaw.trim().uppercase()
-
-                    // Safety break for holes in sparse cloud files
-                    if (chunkIdRaw.all { it == '\u0000' } && chunkSize == 0L) {
-                        // If we hit a hole, jump to the footer area (last 8MB) where tags usually live in WAV
-                        if (raf.filePointer < len - 8_388_608L) {
-                            raf.seek(len - 8_388_608L)
-                            continue
-                        }
-                        break
-                    }
-
-                    if (chunkSize > len - chunkStart) break
-
-                    when (chunkId) {
-                        "ID3" -> {
-                            val bytes = ByteArray(chunkSize.toInt())
-                            raf.readFully(bytes)
-                            extractApicFromId3(bytes)?.let { return it }
-                        }
-                        "DISP" -> {
-                            if (chunkSize > 4) {
-                                raf.skipBytes(4)
-                                val artSize = (chunkSize - 4).toInt()
-                                val bytes = ByteArray(artSize)
-                                raf.readFully(bytes)
-                                if (bytes.isNotEmpty()) return bytes
-                            }
-                        }
-                    }
-                    
-                    raf.seek(chunkStart + chunkSize)
-                    // WAV chunks are word-aligned
-                    if ((chunkSize % 2) != 0L && raf.filePointer < len) {
-                        raf.skipBytes(1)
-                    }
-                }
-                null
+                extractArtFromSource(RafSource(raf))
             }
         } catch (e: Exception) {
             null
         }
     }
 
-    fun readFourCc(raf: RandomAccessFile): String {
+    /**
+     * Extracts album art using ContentResolver and Uri, allowing access to cloud files.
+     */
+    fun extractArt(context: Context, uri: Uri): ByteArray? {
+        return try {
+            context.contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
+                FileInputStream(pfd.fileDescriptor).use { fis ->
+                    extractArtFromSource(ChannelSource(fis.channel))
+                }
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun extractArtFromSource(source: WavSource): ByteArray? {
+        return try {
+            val len = source.length()
+            if (len < 12) return null
+            
+            // WAV files are RIFF containers
+            if (readFourCc(source) != "RIFF") return null
+            source.skip(4) // skip RIFF size
+            if (readFourCc(source) != "WAVE") return null
+            
+            while (source.position() + 8 <= len) {
+                val chunkIdRaw = readFourCc(source)
+                val chunkSize = readLittleEndianInt(source).toLong().and(0xFFFFFFFFL)
+                val chunkStart = source.position()
+                
+                val chunkId = chunkIdRaw.trim().uppercase()
+
+                // Safety break for holes in sparse cloud files
+                if (chunkIdRaw.all { it == '\u0000' } && chunkSize == 0L) {
+                    // If we hit a hole, jump to the footer area (last 8MB) where tags usually live in WAV
+                    if (source.position() < len - 8_388_608L) {
+                        source.seek(len - 8_388_608L)
+                        continue
+                    }
+                    break
+                }
+
+                if (chunkSize > len - chunkStart) break
+
+                when (chunkId) {
+                    "ID3" -> {
+                        val bytes = ByteArray(chunkSize.toInt())
+                        source.readFully(bytes)
+                        extractApicFromId3(bytes)?.let { return it }
+                    }
+                    "DISP" -> {
+                        if (chunkSize > 4) {
+                            source.skip(4)
+                            val artSize = (chunkSize - 4).toInt()
+                            val bytes = ByteArray(artSize)
+                            source.readFully(bytes)
+                            if (bytes.isNotEmpty()) return bytes
+                        }
+                    }
+                }
+                
+                source.seek(chunkStart + chunkSize)
+                // WAV chunks are word-aligned
+                if ((chunkSize % 2) != 0L && source.position() < len) {
+                    source.skip(1)
+                }
+            }
+            null
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    fun readFourCc(raf: RandomAccessFile): String = readFourCc(RafSource(raf))
+
+    fun readFourCc(source: WavSource): String {
         val bytes = ByteArray(4)
-        raf.readFully(bytes)
+        source.readFully(bytes)
         return String(bytes, Charsets.US_ASCII)
     }
 
-    fun readLittleEndianInt(raf: RandomAccessFile): Int {
-        val b0 = raf.read()
-        val b1 = raf.read()
-        val b2 = raf.read()
-        val b3 = raf.read()
+    fun readLittleEndianInt(raf: RandomAccessFile): Int = readLittleEndianInt(RafSource(raf))
+
+    fun readLittleEndianInt(source: WavSource): Int {
+        val b0 = source.read()
+        val b1 = source.read()
+        val b2 = source.read()
+        val b3 = source.read()
         return (b0 and 0xFF) or ((b1 and 0xFF) shl 8) or ((b2 and 0xFF) shl 16) or ((b3 and 0xFF) shl 24)
     }
 

@@ -164,6 +164,7 @@ class MusicRepository(private val context: Context) {
                     var discNumber: Int? = null
                     var composer: String? = null
                     var lyrics: String? = null
+                    var extractedYear = raw.year
 
                     if (shouldReadRetriever && !isAlacDetected) {
                         val retriever = MediaMetadataRetriever()
@@ -176,6 +177,15 @@ class MusicRepository(private val context: Context) {
                             composer = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_COMPOSER)
                             // METADATA_KEY_LYRIC = 23
                             lyrics = retriever.extractMetadata(23)
+
+                            if (extractedYear <= 0) {
+                                val dateStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DATE)
+                                    ?: retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_YEAR)
+                                if (!dateStr.isNullOrBlank()) {
+                                    // Extract first 4 digits
+                                    extractedYear = dateStr.filter { it.isDigit() }.take(4).toIntOrNull() ?: 0
+                                }
+                            }
 
                             if (genre == "Unknown") {
                                 genre = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_GENRE) ?: "Unknown"
@@ -190,7 +200,7 @@ class MusicRepository(private val context: Context) {
                                     albumArtUri = cacheEmbeddedAlbumArt(raw.id, raw.albumId, artBytes, forceRefresh = fullScan)
                                 } else if (extension == "wav") {
                                     // Special handling for WAV files which often fail with MediaMetadataRetriever
-                                    val wavArt = extractEmbeddedArtFromWavFile(raw.path, raw.id, raw.albumId)
+                                    val wavArt = extractEmbeddedArtFromWavFile(uri, raw.path, raw.id, raw.albumId)
                                     if (wavArt != null) albumArtUri = wavArt
                                 }
                                 
@@ -312,7 +322,7 @@ class MusicRepository(private val context: Context) {
                         bitrate = if (raw.bitrate > 0) raw.bitrate else 0,
                         fileSizeBytes = raw.size,
                         albumArtUri = albumArtUri,
-                        year = raw.year,
+                        year = extractedYear,
                         genre = genre,
                         dateAdded = raw.dateAdded,
                         folder = raw.path.substringBeforeLast("/", "Unknown"),
@@ -487,10 +497,13 @@ class MusicRepository(private val context: Context) {
         }
     }
 
-    private fun extractEmbeddedArtFromWavFile(path: String, mediaStoreId: Long, albumId: Long): Uri? {
-        if (path.isBlank()) return null
+    private fun extractEmbeddedArtFromWavFile(uri: Uri, path: String, mediaStoreId: Long, albumId: Long): Uri? {
         return runCatching {
-            val art = WavArtHelper.extractArt(path)
+            val art = if (path.isNotBlank()) {
+                WavArtHelper.extractArt(path) ?: WavArtHelper.extractArt(context, uri)
+            } else {
+                WavArtHelper.extractArt(context, uri)
+            }
             if (art != null) {
                 cacheEmbeddedAlbumArt(mediaStoreId, albumId, art, forceRefresh = true)
             } else {

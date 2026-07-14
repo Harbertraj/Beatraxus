@@ -1,10 +1,13 @@
 package com.beatraxus.app.repository
 
 import android.util.Log
+import androidx.annotation.Keep
 import com.beatraxus.app.model.LrcLine
 import com.google.gson.annotations.SerializedName
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.withContext
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
@@ -13,13 +16,14 @@ import retrofit2.http.Query
 import kotlin.math.abs
 import kotlin.math.max
 
+@Keep
 interface LrcLibService {
     @GET("api/get")
     suspend fun getLyrics(
         @Query("artist_name") artist: String,
         @Query("track_name") title: String,
         @Query("album_name") album: String?,
-        @Query("duration") duration: Double?
+        @Query("duration") duration: Int?
     ): LrcLibResponse
 
     @GET("api/search")
@@ -28,21 +32,25 @@ interface LrcLibService {
     ): List<LrcLibResponse>
 }
 
+@Keep
 data class LrcLibResponse(
-    @SerializedName("id") val id: Int,
-    @SerializedName("name") val name: String?,
-    @SerializedName("trackName") val trackName: String?,
-    @SerializedName("artistName") val artistName: String?,
-    @SerializedName("albumName") val albumName: String?,
-    @SerializedName("duration") val duration: Double?,
-    @SerializedName("instrumental") val instrumental: Boolean,
-    @SerializedName("plainLyrics") val plainLyrics: String?,
-    @SerializedName("syncedLyrics") val syncedLyrics: String?
+    @SerializedName("id") val id: Int = 0,
+    @SerializedName("name") val name: String? = null,
+    @SerializedName("trackName") val trackName: String? = null,
+    @SerializedName("artistName") val artistName: String? = null,
+    @SerializedName("albumName") val albumName: String? = null,
+    @SerializedName("duration") val duration: Double? = null,
+    @SerializedName("instrumental") val instrumental: Boolean = false,
+    @SerializedName("plainLyrics") val plainLyrics: String? = null,
+    @SerializedName("syncedLyrics") val syncedLyrics: String? = null
 )
 
 class OnlineLyricsSource {
 
     private val client = okhttp3.OkHttpClient.Builder()
+        .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+        .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+        .writeTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
         .addInterceptor { chain ->
             val request = chain.request().newBuilder()
                 .header("User-Agent", "Beatraxus Music Player (https://github.com/beatraxus/beatraxus)")
@@ -65,56 +73,44 @@ class OnlineLyricsSource {
         durationMs: Long
     ): LyricsResult? = withContext(Dispatchers.IO) {
         val durationSec = (durationMs / 1000).toInt()
-        var bestResult: LyricsResult? = null
 
-        // ── 1. Precise get (exact metadata match by lrclib) ───────────────────────
-        if (durationSec > 0) {
+        // Fire both requests AT THE SAME TIME instead of one after another.
+        val preciseDeferred = async {
+            if (durationSec <= 0) return@async null
             runCatching {
-                val response = lrcLibService.getLyrics(artist, title, album, durationSec.toDouble())
+                val response = lrcLibService.getLyrics(artist, title, album, durationSec)
                 if (isValidResponse(response)) {
                     val resDur = response.duration?.toInt() ?: 0
-                    // Accept only if duration is within 3s of actual song length
-                    if (abs(resDur - durationSec) <= 3) {
-                        val result = createResultFromResponse(response)
-                        if (result.type == LyricsType.WORD_BY_WORD) {
-                            return@withContext result // Found best type, return immediately
-                        }
-                        bestResult = result
+                    if (abs(resDur - durationSec) <= 3) createResultFromResponse(response) else null
+                } else null
+            }.onFailure { e -> Log.e("OnlineLyricsSource", "Precise fetch failed: ${e.message}") }
+                .getOrNull()
+        }
+
+        val searchDeferred = async {
+            runCatching {
+                val query = buildString {
+                    append(artist.take(40)); append(" "); append(title.take(40))
+                }
+                val searchResults = lrcLibService.searchLyrics(query)
+                searchResults
+                    .filter { isValidResponse(it) }
+                    .mapNotNull { res ->
+                        val score = calculateScore(res, artist, title, album, durationSec)
+                        if (score >= 0.55) res to score else null
                     }
-                }
-            }
+                    .maxByOrNull { it.second }
+                    ?.first
+                    ?.let { createResultFromResponse(it) }
+            }.onFailure { e -> Log.e("OnlineLyricsSource", "Search failed: ${e.message}") }
+                .getOrNull()
         }
 
-        // ── 2. Search with multi-result scoring ───────────────────────────────────
-        runCatching {
-            val query = buildString {
-                append(artist.take(40))
-                append(" ")
-                append(title.take(40))
-            }
-            val searchResults = lrcLibService.searchLyrics(query)
+        val precise = preciseDeferred.await()
+        val search = searchDeferred.await()
 
-            val bestMatch = searchResults
-                .filter { isValidResponse(it) }
-                .mapNotNull { res ->
-                    val score = calculateScore(res, artist, title, album, durationSec)
-                    if (score >= 0.55) res to score else null   // raised threshold
-                }
-                .maxByOrNull { it.second }
-                ?.first
-
-            if (bestMatch != null) {
-                val searchResult = createResultFromResponse(bestMatch)
-                // Use search result if it's better than precise match or if precise match failed
-                if (bestResult == null || searchResult.type.ordinal > bestResult!!.type.ordinal) {
-                    return@withContext searchResult
-                }
-            }
-        }.onFailure { e ->
-            Log.e("OnlineLyricsSource", "Search failed: ${e.message}")
-        }
-
-        bestResult
+        // Pick the best of whichever came back: WORD_BY_WORD > SYNCED > PLAIN
+        listOfNotNull(precise, search).maxByOrNull { it.type.ordinal }
     }
 
     private fun isValidResponse(res: LrcLibResponse): Boolean {

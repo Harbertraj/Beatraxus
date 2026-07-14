@@ -86,6 +86,7 @@ internal class AudioDspPipeline(
         val isBitPerfect = config.bitPerfectEnabled
         val anyUnbypassed = config.bitPerfectUnbypassEq || config.bitPerfectUnbypassResample ||
                 config.bitPerfectUnbypassSoxr || config.bitPerfectUnbypassReverb ||
+                config.bitPerfectUnbypassSpatial ||
                 config.bitPerfectUnbypassDithering || config.bitPerfectUnbypassFloat64 ||
                 config.bitPerfectUnbypassLimiter
 
@@ -248,7 +249,8 @@ private class NativeDspProcessor(
         )
 
         dsp.setCrossfeed(if (!isBP) cfg.crossfeedEnabled else false, cfg.crossfeedLevel)
-        val spatialActive = if (!isBP) (cfg.spatialAudioEnabled || cfg.soundStageEnabled) else false
+        val spatialUnbypassed = !isBP || cfg.bitPerfectUnbypassSpatial
+        val spatialActive = if (spatialUnbypassed) (cfg.spatialAudioEnabled || cfg.soundStageEnabled) else false
         dsp.setSpatialEnabled(spatialActive)
         
         // Separation logic: 
