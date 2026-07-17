@@ -3,6 +3,7 @@ package com.beatraxus.app.repository
 import android.content.Context
 import android.net.Uri
 import android.util.Log
+import kotlinx.coroutines.flow.first
 import com.beatraxus.app.model.Song
 import com.beatraxus.app.model.SongSource
 import com.beatraxus.app.model.SyncQuality
@@ -40,7 +41,7 @@ class MetadataExtractor(private val context: Context) {
 
     suspend fun extractCloudMetadataBatch(
         songs: List<Song>,
-        credential: GoogleAccountCredential,
+        credential: GoogleAccountCredential?,
         onProgress: (suspend (Song) -> Unit)? = null
     ): List<Song> = withContext(Dispatchers.IO) {
         val prefs = context.getSharedPreferences("beatraxus", Context.MODE_PRIVATE)
@@ -78,20 +79,20 @@ class MetadataExtractor(private val context: Context) {
         artworkEnabled: Boolean = true,
         quality: SyncQuality = SyncQuality.MEDIUM
     ): Song = withContext(Dispatchers.IO) {
+        if (!song.isCloud()) return@withContext song
+        
+        // Skip enrichment if already done and no artwork missing
         val artworkStillMissing = artworkEnabled && song.albumArtUri == null && !song.albumArtFetchAttempted
         if (song.isEnriched && !dataSaver && song.durationMs > 0 && !artworkStillMissing) {
              return@withContext song
         }
 
-        if (song.source != SongSource.GDRIVE || song.driveFileId == null || credential == null) return@withContext song
-        
-        // Speedup UNDONE: Every song now performs its own full extraction to ensure 100% accuracy
         return@withContext fetchSongSpecificMetadata(song, credential, true, artworkEnabled, quality)
     }
 
     private suspend fun fetchSongSpecificMetadata(
         song: Song, 
-        credential: GoogleAccountCredential,
+        credential: GoogleAccountCredential?,
         fetchArt: Boolean = true,
         artworkEnabled: Boolean = true,
         quality: SyncQuality = SyncQuality.MEDIUM
@@ -102,28 +103,24 @@ class MetadataExtractor(private val context: Context) {
         val tempFile = File(context.cacheDir, "metadata_temp_${song.id}$extension")
         
         try {
-            // Reverted to full header sizes for accuracy
             val headerSize = when(quality) {
                 SyncQuality.LOW -> 1024_000L
                 SyncQuality.MEDIUM -> 4_194_304L
                 SyncQuality.HIGH -> 8_388_608L
             }
 
-            downloadPart(song.driveFileId!!, tempFile, credential, "bytes=0-${headerSize - 1}", 0L)
+            downloadCloudPart(song, tempFile, credential, 0L, headerSize - 1)
 
-            // Step 7: Increased footer size to 8MB to catch larger embedded artwork in WAVs
             if (isWav && song.fileSizeBytes > headerSize) {
-                val footerSize = 8_388_608L // Increased from 4MB
+                val footerSize = 8_388_608L
                 val start = (song.fileSizeBytes - footerSize).coerceAtLeast(0L)
-                downloadPart(song.driveFileId, tempFile, credential, "bytes=$start-${song.fileSizeBytes - 1}", start)
+                downloadCloudPart(song, tempFile, credential, start, song.fileSizeBytes - 1)
             }
 
             var updatedSong = extractMetadataFromLocalFile(song, tempFile, fetchArt, artworkEnabled)
 
-            // Step 7 Fallback: If art is still missing for a large WAV, download the full file as a last resort
             if (isWav && fetchArt && artworkEnabled && updatedSong.albumArtUri == null && song.fileSizeBytes > (headerSize + 8_388_608L)) {
-                Log.i(TAG, "Album art missing for large WAV ${song.title}, triggering full-file fallback (Last Resort)")
-                downloadPart(song.driveFileId!!, tempFile, credential, null, 0L)
+                downloadCloudPart(song, tempFile, credential, 0L, song.fileSizeBytes - 1)
                 updatedSong = extractMetadataFromLocalFile(song, tempFile, fetchArt, artworkEnabled)
             }
 
@@ -134,6 +131,75 @@ class MetadataExtractor(private val context: Context) {
             return@withContext song
         } finally {
             if (tempFile.exists()) tempFile.delete()
+        }
+    }
+
+    private suspend fun downloadCloudPart(
+        song: Song,
+        dest: File,
+        credential: GoogleAccountCredential?,
+        start: Long,
+        end: Long
+    ) = withContext(Dispatchers.IO) {
+        try {
+            val range = "bytes=$start-$end"
+            val url = when (song.source) {
+                SongSource.GDRIVE -> URL("https://www.googleapis.com/drive/v3/files/${song.driveFileId}?alt=media")
+                SongSource.DROPBOX -> URL("https://content.dropboxapi.com/2/files/download")
+                SongSource.ONEDRIVE -> URL("https://graph.microsoft.com/v1.0/me/drive/items/${song.onedriveFileId}/content")
+                SongSource.BOX -> URL("https://api.box.com/2.0/files/${song.boxFileId}/content")
+                SongSource.NEXTCLOUD -> URL(song.uri.toString())
+                else -> null
+            } ?: return@withContext
+
+            val connection = url.openConnection() as java.net.HttpURLConnection
+            connection.setRequestProperty("Range", range)
+            connection.setRequestProperty("User-Agent", "Beatraxus/3.0")
+
+            when (song.source) {
+                SongSource.GDRIVE -> {
+                    val token = credential?.getToken()
+                    if (token != null) connection.setRequestProperty("Authorization", "Bearer $token")
+                }
+                SongSource.DROPBOX -> {
+                    val repo = DropboxAccountRepository(context)
+                    val token = repo.getAccessToken(song.dropboxAccountEmail ?: "")
+                    if (token != null) {
+                        connection.setRequestProperty("Authorization", "Bearer $token")
+                        connection.setRequestProperty("Dropbox-API-Arg", "{\"path\": \"${song.dropboxFileId}\"}")
+                    }
+                }
+                SongSource.NEXTCLOUD -> {
+                    val repo = NextcloudAccountRepository(context)
+                    val accounts = repo.accounts.first()
+                    val account = accounts.find { it.username == song.nextcloudAccountEmail }
+                    if (account != null) {
+                        val auth = android.util.Base64.encodeToString(
+                            "${account.username}:${account.appPassword}".toByteArray(),
+                            android.util.Base64.NO_WRAP
+                        )
+                        connection.setRequestProperty("Authorization", "Basic $auth")
+                    }
+                }
+                else -> {}
+            }
+            
+            connection.connect()
+
+            if (connection.responseCode == 200 || connection.responseCode == 206) {
+                RandomAccessFile(dest, "rw").use { raf ->
+                    raf.seek(start)
+                    connection.inputStream.use { input ->
+                        val buffer = ByteArray(8192)
+                        var readCount: Int
+                        while (input.read(buffer).also { readCount = it } != -1) {
+                            raf.write(buffer, 0, readCount)
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "downloadCloudPart failed: ${e.message}")
         }
     }
 
@@ -318,37 +384,6 @@ class MetadataExtractor(private val context: Context) {
         }
     }
 
-    private suspend fun downloadPart(fileId: String, dest: File, credential: GoogleAccountCredential, range: String?, offset: Long) = withContext(Dispatchers.IO) {
-        try {
-            val token = credential.getToken() ?: return@withContext
-            val url = URL("https://www.googleapis.com/drive/v3/files/$fileId?alt=media")
-            val connection = url.openConnection() as HttpURLConnection
-            connection.setRequestProperty("Authorization", "Bearer $token")
-            if (range != null) {
-                connection.setRequestProperty("Range", range)
-            }
-            connection.connect()
-
-            if (connection.responseCode == 200 || connection.responseCode == 206) {
-                var raf: RandomAccessFile? = null
-                try {
-                    raf = RandomAccessFile(dest, "rw")
-                    raf.seek(offset)
-                    connection.inputStream.use { input ->
-                        val buffer = ByteArray(8192)
-                        var readCount: Int
-                        while (input.read(buffer).also { readCount = it } != -1) {
-                            raf.write(buffer, 0, readCount)
-                        }
-                    }
-                } finally {
-                    try { raf?.close() } catch (e: Exception) {}
-                }
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "downloadPart failed: ${e.message}")
-        }
-    }
 
     private fun extractMetadataWithFFprobe(song: Song, file: File): Song {
         val session = FFprobeKit.execute("-v quiet -print_format json -show_format -show_streams ${file.absolutePath}")

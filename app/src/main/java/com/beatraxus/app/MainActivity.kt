@@ -112,6 +112,11 @@ class MainActivity : FragmentActivity() {
         bindAudioService()
     }
 
+    override fun onResume() {
+        super.onResume()
+        viewModel.handleDropboxAuth()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         frameJankMonitor = FrameJankMonitor("BeatraxusFrameMonitor")

@@ -5,7 +5,6 @@ import java.util.Properties
 
 plugins {
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")
     id("com.google.devtools.ksp")
     id("org.jetbrains.kotlin.plugin.compose")
 }
@@ -18,13 +17,13 @@ if (localPropertiesFile.exists()) {
 
 configure<ApplicationExtension> {
     namespace = "com.beatraxus.app"
-    compileSdk = 35
+    compileSdk = 36
     ndkVersion = "26.1.10909125"
 
     defaultConfig {
         applicationId = "com.beatraxus.app"
         minSdk = 26
-        targetSdk = 35
+        targetSdk = 36
         versionCode = 8
         versionName = "3.0.0-stable"
 
@@ -48,6 +47,18 @@ configure<ApplicationExtension> {
         val telegramApiHash = localProperties.getProperty("TELEGRAM_API_HASH", "")
         buildConfigField("String", "TELEGRAM_API_ID", "\"$telegramApiId\"")
         buildConfigField("String", "TELEGRAM_API_HASH", "\"$telegramApiHash\"")
+
+        val dropboxAppKey = localProperties.getProperty("DROPBOX_APP_KEY", "")
+        buildConfigField("String", "DROPBOX_APP_KEY", "\"$dropboxAppKey\"")
+        manifestPlaceholders["DROPBOX_APP_KEY"] = dropboxAppKey
+
+        val onedriveClientId = localProperties.getProperty("ONEDRIVE_CLIENT_ID", "")
+        buildConfigField("String", "ONEDRIVE_CLIENT_ID", "\"$onedriveClientId\"")
+
+        val boxClientId = localProperties.getProperty("BOX_CLIENT_ID", "")
+        val boxClientSecret = localProperties.getProperty("BOX_CLIENT_SECRET", "")
+        buildConfigField("String", "BOX_CLIENT_ID", "\"$boxClientId\"")
+        buildConfigField("String", "BOX_CLIENT_SECRET", "\"$boxClientSecret\"")
 
     }
 
@@ -113,7 +124,7 @@ configure<ApplicationExtension> {
 
     packaging {
         jniLibs {
-            useLegacyPackaging = false
+            useLegacyPackaging = true
         }
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
@@ -208,6 +219,7 @@ dependencies {
     implementation("androidx.glance:glance-appwidget:1.1.1")
     implementation("androidx.glance:glance-material3:1.1.1")
     implementation("androidx.datastore:datastore-preferences:1.1.1")
+    implementation("androidx.security:security-crypto:1.1.0")
 
     implementation("androidx.work:work-runtime-ktx:2.9.0")
 
@@ -239,4 +251,30 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.7.3")
     implementation("net.jthink:jaudiotagger:3.0.1")
     implementation("com.github.tdlibx:td:1.8.56")
+
+    // Dropbox
+    implementation("com.dropbox.core:dropbox-core-sdk:8.0.1")
+    implementation("com.dropbox.core:dropbox-android-sdk:8.0.1")
+
+    // OneDrive / Microsoft Graph
+    implementation("com.microsoft.identity.client:msal:5.5.0")
+    implementation("com.microsoft.graph:microsoft-graph:5.80.0")
+
+    // Box
+    implementation("com.box:box-android-sdk:5.0.0")
+
+    // Nextcloud (WebDAV) — no vendor SDK needed, use Sardine (pure WebDAV client)
+    implementation("com.github.thegrizzlylabs:sardine-android:0.8")
+
+    // SMB/CIFS
+    implementation("com.hierynomus:smbj:0.13.0")
+
+    // FTP/SFTP
+    implementation("commons-net:commons-net:3.11.1")       // FTP
+    implementation("com.hierynomus:sshj:0.38.0")           // SFTP (SSH-based)
+
+    configurations.all {
+        exclude(group = "xpp3", module = "xpp3")
+        exclude(group = "xmlpull", module = "xmlpull")
+    }
 }

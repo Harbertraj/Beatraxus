@@ -207,6 +207,8 @@ fun MainScreen(
         LibraryView.RECENTLY_ADDED -> Color(0xFF00E676)
         LibraryView.CLOUD -> Color(0xFF1A73E8)
         LibraryView.RADIO -> Color(0xFF00B8D4)
+        LibraryView.SMB_NAS -> Color(0xFF546E7A)
+        LibraryView.FTP_SFTP -> Color(0xFF8D6E63)
     }
     val viewAccentColor by animateColorAsState(
         targetValue = targetAccentColor,
@@ -604,6 +606,8 @@ fun MainScreen(
                                     LibraryView.GENRE_DETAIL -> uiState.selectedItemName ?: "GENRE"
                                     LibraryView.CLOUD -> "CLOUD"
                                     LibraryView.RADIO -> "RADIO"
+                                    LibraryView.SMB_NAS -> "SMB/NAS"
+                                    LibraryView.FTP_SFTP -> "FTP/SFTP"
                                 }
                                 val titleIcon = when (uiState.currentView) {
                                     LibraryView.HOME -> Icons.Rounded.Home
@@ -625,6 +629,8 @@ fun MainScreen(
                                     LibraryView.PLAYLIST_DETAIL -> Icons.AutoMirrored.Rounded.PlaylistPlay
                                     LibraryView.CLOUD -> Icons.Rounded.Cloud
                                     LibraryView.RADIO -> Icons.Rounded.Radio
+                                    LibraryView.SMB_NAS -> Icons.Rounded.Storage
+                                    LibraryView.FTP_SFTP -> Icons.Rounded.NetworkCheck
                                 }
 
                                 // Menu icon on the left
@@ -2394,6 +2400,12 @@ fun MainScreen(
                                                             }
                                                         }
                                                     }
+                                                }
+                                                LibraryView.SMB_NAS -> {
+                                                    SmbBrowserScreen(uiState, viewModel)
+                                                }
+                                                LibraryView.FTP_SFTP -> {
+                                                    FtpBrowserScreen(uiState, viewModel)
                                                 }
                                                 LibraryView.RADIO -> {
                                                     var radioStations by remember { mutableStateOf<List<RadioStation>>(emptyList()) }
@@ -5037,7 +5049,9 @@ fun SlideDrawerMenu(
             DrawerMenuItem("Favorite Songs", LibraryView.FAVORITES, Icons.Rounded.Favorite, Color(0xFFFF5252)),
             DrawerMenuItem("Recently Added", LibraryView.RECENTLY_ADDED, Icons.Rounded.NewReleases, Color(0xFF00E676)),
             DrawerMenuItem("Recently Played", LibraryView.RECENTLY_PLAYED, Icons.Rounded.History, Color(0xFF40C4FF)),
-            DrawerMenuItem("Radio", LibraryView.RADIO, Icons.Rounded.Radio, Color(0xFF00B8D4))
+            DrawerMenuItem("Radio", LibraryView.RADIO, Icons.Rounded.Radio, Color(0xFF00B8D4)),
+            DrawerMenuItem("SMB / NAS", LibraryView.SMB_NAS, Icons.Rounded.Storage, Color(0xFF546E7A)),
+            DrawerMenuItem("FTP / SFTP", LibraryView.FTP_SFTP, Icons.Rounded.Dns, Color(0xFF8D6E63))
         ).filter { item ->
             !(item.view == LibraryView.FOLDERS && libraryMode == LibraryMode.CLOUD)
         }

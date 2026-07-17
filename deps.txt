@@ -1,0 +1,10 @@
+
+Welcome to Gradle 9.6.1!
+
+Here are the highlights of this release:
+ - Improved Configuration Cache hit rates
+ - Additional CLI rendering options
+ - Important project hierarchy lookup deprecations
+
+For more details see https://docs.gradle.org/9.6.1/release-notes.html
+

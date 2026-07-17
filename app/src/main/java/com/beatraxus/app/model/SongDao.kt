@@ -40,6 +40,18 @@ interface SongDao {
     @Query("DELETE FROM songs WHERE LOWER(driveAccountEmail) = LOWER(:email)")
     suspend fun deleteSongsByAccount(email: String)
 
+    @Query("DELETE FROM songs WHERE LOWER(dropboxAccountEmail) = LOWER(:email)")
+    suspend fun deleteSongsByDropboxAccount(email: String)
+
+    @Query("DELETE FROM songs WHERE LOWER(onedriveAccountEmail) = LOWER(:email)")
+    suspend fun deleteSongsByOneDriveAccount(email: String)
+
+    @Query("DELETE FROM songs WHERE LOWER(boxAccountEmail) = LOWER(:email)")
+    suspend fun deleteSongsByBoxAccount(email: String)
+
+    @Query("DELETE FROM songs WHERE LOWER(nextcloudAccountEmail) = LOWER(:email)")
+    suspend fun deleteSongsByNextcloudAccount(email: String)
+
     @Query("DELETE FROM songs WHERE folder = :folderPath OR folder LIKE :folderPath || '/%'")
     suspend fun deleteSongsInFolder(folderPath: String)
 

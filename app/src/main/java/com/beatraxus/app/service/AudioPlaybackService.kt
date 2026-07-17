@@ -53,6 +53,11 @@ import coil.size.Precision
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import com.beatraxus.app.drive.DrivePlaybackHelper
+import com.beatraxus.app.drive.DriveLibraryScanner
+import com.beatraxus.app.drive.DropboxLibraryScanner
+import com.beatraxus.app.drive.OneDriveLibraryScanner
+import com.beatraxus.app.drive.BoxLibraryScanner
+import com.beatraxus.app.drive.NextcloudLibraryScanner
 import com.beatraxus.app.model.SongSource
 import com.beatraxus.app.repository.DriveAccountRepository
 import android.net.Uri
@@ -149,7 +154,18 @@ class AudioPlaybackService : Service() {
         scrobblingEnabled = prefs.getBoolean("scrobbling_enabled", true)
 
         dspPreferences = DspPreferences(this)
-        cloudCacheManager = com.beatraxus.app.drive.CloudCacheManager(this, driveAccountRepository)
+        cloudCacheManager = com.beatraxus.app.drive.CloudCacheManager(
+            this,
+            driveAccountRepository,
+            dropboxAccountRepository,
+            onedriveAccountRepository,
+            boxAccountRepository,
+            nextcloudAccountRepository,
+            smbConnectionRepository,
+            ftpConnectionRepository,
+            smbFolderBrowser,
+            ftpFolderBrowser
+        )
         audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         audioOutput = AudioTrackOutput(this)
         val application = (application as com.beatraxus.app.BeatraxusApplication)
@@ -465,6 +481,14 @@ class AudioPlaybackService : Service() {
     override fun onBind(intent: Intent): IBinder = binder
 
     private val driveAccountRepository by lazy { DriveAccountRepository(this) }
+    private val dropboxAccountRepository by lazy { com.beatraxus.app.repository.DropboxAccountRepository(this) }
+    private val onedriveAccountRepository by lazy { com.beatraxus.app.repository.OneDriveAccountRepository(this) }
+    private val boxAccountRepository by lazy { com.beatraxus.app.repository.BoxAccountRepository(this) }
+    private val nextcloudAccountRepository by lazy { com.beatraxus.app.repository.NextcloudAccountRepository(this) }
+    private val smbConnectionRepository by lazy { com.beatraxus.app.repository.SmbConnectionRepository(this) }
+    private val ftpConnectionRepository by lazy { com.beatraxus.app.repository.FtpConnectionRepository(this) }
+    private val smbFolderBrowser by lazy { com.beatraxus.app.network.SmbFolderBrowser() }
+    private val ftpFolderBrowser by lazy { com.beatraxus.app.network.FtpFolderBrowser() }
     private val musicRepository by lazy { com.beatraxus.app.repository.MusicRepository(this) }
     private val songDao by lazy { (application as com.beatraxus.app.BeatraxusApplication).database.songDao() }
     private val lastFmRepository by lazy { com.beatraxus.app.repository.lastfm.LastFmRepository(this) }
@@ -871,6 +895,171 @@ class AudioPlaybackService : Service() {
                 } else {
                     onError(e.message ?: "Drive scan failed: ${e.message}", null)
                 }
+            } finally {
+                releaseScanWakeLock()
+            }
+        }
+    }
+
+    fun runDropboxScan(
+        account: com.beatraxus.app.repository.DropboxAccount,
+        allowedFormats: Set<String>,
+        onProgress: (Float) -> Unit,
+        onDiscoveryComplete: (List<Song>) -> Unit,
+        onSongUpdated: (Song) -> Unit,
+        onComplete: (String) -> Unit,
+        onError: (String) -> Unit
+    ) {
+        if (libraryScanJob?.isActive == true) return
+        libraryScanJob = serviceScope.launch(Dispatchers.Default) {
+            acquireScanWakeLock()
+            try {
+                val scanner = com.beatraxus.app.drive.DropboxLibraryScanner(application)
+                val discovered = mutableListOf<Song>()
+                val token = dropboxAccountRepository.getAccessToken(account.email) ?: throw Exception("Failed to get access token")
+                scanner.scanAccountFlow(token, account.email, allowedFormats).collect { page ->
+                    discovered.addAll(page)
+                    withContext(Dispatchers.IO) {
+                        songDao.insertSongs(page.map { it.toEntity() })
+                    }
+                    onDiscoveryComplete(page)
+                }
+
+                if (discovered.isNotEmpty()) {
+                    val toEnrich = discovered.filter { !it.isEnriched }
+                    if (toEnrich.isNotEmpty()) {
+                        val extractor = com.beatraxus.app.repository.MetadataExtractor(application)
+                        var processed = 0
+                        val total = toEnrich.size
+                        
+                        extractor.extractCloudMetadataBatch(toEnrich, null) { updatedSong ->
+                            processed++
+                            val progress = processed.toFloat() / total.toFloat()
+                            onProgress(progress)
+                            updateEnrichingProgress(progress, processed, total)
+                            
+                            songDao.insertSong(updatedSong.toEntity())
+                            onSongUpdated(updatedSong)
+                        }
+                        updateEnrichingProgress(1.0f, total, total)
+                    }
+                }
+                onComplete("Dropbox sync complete. Found ${discovered.size} songs.")
+            } catch (e: Exception) {
+                onError(e.message ?: "Dropbox scan failed")
+            } finally {
+                releaseScanWakeLock()
+            }
+        }
+    }
+
+    fun runOneDriveScan(
+        account: com.beatraxus.app.repository.OneDriveAccount,
+        allowedFormats: Set<String>,
+        onProgress: (Float) -> Unit,
+        onDiscoveryComplete: (List<Song>) -> Unit,
+        onSongUpdated: (Song) -> Unit,
+        onComplete: (String) -> Unit,
+        onError: (String) -> Unit
+    ) {
+        if (libraryScanJob?.isActive == true) return
+        libraryScanJob = serviceScope.launch(Dispatchers.Default) {
+            acquireScanWakeLock()
+            try {
+                val token = onedriveAccountRepository.getAccessToken(account.email)
+                if (token == null) {
+                    onError("Failed to get OneDrive access token")
+                    return@launch
+                }
+
+                val scanner = com.beatraxus.app.drive.OneDriveLibraryScanner(application)
+                val graphClient = com.microsoft.graph.requests.GraphServiceClient.builder()
+                    .authenticationProvider { _ ->
+                        java.util.concurrent.CompletableFuture.completedFuture(token)
+                    }
+                    .buildClient()
+
+                var totalFound = 0
+                scanner.scanAccountFlow(graphClient, account.email, allowedFormats).collect { page ->
+                    totalFound += page.size
+                    withContext(Dispatchers.IO) {
+                        songDao.insertSongs(page.map { it.toEntity() })
+                    }
+                    onDiscoveryComplete(page)
+                }
+
+                if (totalFound > 0) {
+                    // Similar enrichment logic as GDrive/Dropbox could be added here
+                }
+                
+                onComplete("OneDrive sync complete. Found $totalFound songs.")
+            } catch (e: Exception) {
+                onError(e.message ?: "OneDrive scan failed")
+            } finally {
+                releaseScanWakeLock()
+            }
+        }
+    }
+
+    fun runBoxScan(
+        account: com.beatraxus.app.repository.BoxAccount,
+        allowedFormats: Set<String>,
+        onProgress: (Float) -> Unit,
+        onDiscoveryComplete: (List<Song>) -> Unit,
+        onSongUpdated: (Song) -> Unit,
+        onComplete: (String) -> Unit,
+        onError: (String) -> Unit
+    ) {
+        if (libraryScanJob?.isActive == true) return
+        libraryScanJob = serviceScope.launch(Dispatchers.Default) {
+            acquireScanWakeLock()
+            try {
+                val session = com.box.androidsdk.content.models.BoxSession(application)
+                // session.setUserId(account.userId)
+                val scanner = com.beatraxus.app.drive.BoxLibraryScanner(application)
+                var totalFound = 0
+                scanner.scanAccountFlow(session, account.email, allowedFormats).collect { discovered ->
+                    totalFound += discovered.size
+                    withContext(Dispatchers.IO) {
+                        songDao.insertSongs(discovered.map { it.toEntity() })
+                    }
+                    onDiscoveryComplete(discovered)
+                }
+                onComplete("Box sync complete. Found $totalFound songs.")
+            } catch (e: Exception) {
+                onError(e.message ?: "Box scan failed")
+            } finally {
+                releaseScanWakeLock()
+            }
+        }
+    }
+
+    fun runNextcloudScan(
+        account: com.beatraxus.app.repository.NextcloudAccount,
+        allowedFormats: Set<String>,
+        onProgress: (Float) -> Unit,
+        onDiscoveryComplete: (List<Song>) -> Unit,
+        onSongUpdated: (Song) -> Unit,
+        onComplete: (String) -> Unit,
+        onError: (String) -> Unit
+    ) {
+        if (libraryScanJob?.isActive == true) return
+        libraryScanJob = serviceScope.launch(Dispatchers.Default) {
+            acquireScanWakeLock()
+            try {
+                val scanner = com.beatraxus.app.drive.NextcloudLibraryScanner(application)
+                var totalFound = 0
+                // Nextcloud scanner needs credentials
+                scanner.scanAccountFlow(account.serverUrl, account.username, account.appPassword, allowedFormats).collect { discovered ->
+                    totalFound += discovered.size
+                    withContext(Dispatchers.IO) {
+                        songDao.insertSongs(discovered.map { it.toEntity() })
+                    }
+                    onDiscoveryComplete(discovered)
+                }
+                onComplete("Nextcloud sync complete. Found $totalFound songs.")
+            } catch (e: Exception) {
+                onError(e.message ?: "Nextcloud scan failed")
             } finally {
                 releaseScanWakeLock()
             }

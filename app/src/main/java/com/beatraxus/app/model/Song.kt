@@ -5,7 +5,7 @@ import com.beatraxus.app.model.OutputMode
 import com.beatraxus.app.repository.LyricsSource
 import com.beatraxus.app.telegram.AuthState
 
-enum class SongSource { LOCAL, GDRIVE, WEB, TELEGRAM }
+enum class SongSource { LOCAL, GDRIVE, WEB, TELEGRAM, DROPBOX, ONEDRIVE, BOX, NEXTCLOUD, SMB, FTP }
 
 data class Song(
     val id: String,
@@ -37,6 +37,14 @@ data class Song(
     val source: SongSource = SongSource.LOCAL,
     val driveFileId: String? = null,
     val driveAccountEmail: String? = null,
+    val dropboxFileId: String? = null,
+    val dropboxAccountEmail: String? = null,
+    val onedriveFileId: String? = null,
+    val onedriveAccountEmail: String? = null,
+    val boxFileId: String? = null,
+    val boxAccountEmail: String? = null,
+    val nextcloudFileId: String? = null,
+    val nextcloudAccountEmail: String? = null,
     val telegramChannelUrl: String? = null,
     val telegramChatId: Long? = null,
     val telegramMessageId: Long? = null,
@@ -45,9 +53,10 @@ data class Song(
     val albumArtFetchAttempted: Boolean = false,
     val lastSyncTimestamp: Long = 0L
 ) {
-    fun isCloud(): Boolean = source == SongSource.GDRIVE || 
-                            source == SongSource.TELEGRAM || 
-                            source == SongSource.WEB
+    fun isCloud(): Boolean = source in setOf(
+        SongSource.GDRIVE, SongSource.TELEGRAM,
+        SongSource.DROPBOX, SongSource.ONEDRIVE, SongSource.BOX, SongSource.NEXTCLOUD
+    )
 }
 
 fun Song.toEntity() = SongEntity(
@@ -105,7 +114,7 @@ enum class AudioOutputDevice(val displayName: String) {
 enum class LibraryView {
     HOME, ALL_SONGS, ALBUMS, ARTISTS, FOLDERS, YEARS, GENRES, FAVORITES, RECENTLY_PLAYED, RECENTLY_ADDED,
     ALBUM_DETAIL, ARTIST_DETAIL, FOLDER_DETAIL, YEAR_DETAIL, GENRE_DETAIL, PLAYLISTS, PLAYLIST_DETAIL,
-    CLOUD, RADIO
+    CLOUD, RADIO, SMB_NAS, FTP_SFTP
 }
 
 data class RadioStation(
@@ -150,6 +159,10 @@ enum class SyncQuality {
     LOW, MEDIUM, HIGH
 }
 
+enum class CloudProvider {
+    GDRIVE, TELEGRAM, DROPBOX, ONEDRIVE, BOX, NEXTCLOUD
+}
+
 data class PlayerUiState(
     val currentSong: Song? = null,
     val isPlaying: Boolean = false,
@@ -180,6 +193,10 @@ data class PlayerUiState(
     val permissionDenied: Boolean = false,
     val errorMessage: String? = null,
     val driveErrorMessage: String? = null,
+    val dropboxErrorMessage: String? = null,
+    val onedriveErrorMessage: String? = null,
+    val boxErrorMessage: String? = null,
+    val nextcloudErrorMessage: String? = null,
     val telegramSyncErrorMessage: String? = null,
     val shuffleMode: Boolean = false,
     val repeatMode: Int = 0, // 0: Off, 1: One, 2: All
@@ -253,7 +270,13 @@ data class PlayerUiState(
     val libraryMode: LibraryMode = LibraryMode.LOCAL,
     // Cloud
     val driveAccounts: List<com.beatraxus.app.repository.DriveAccount> = emptyList(),
+    val dropboxAccounts: List<com.beatraxus.app.repository.DropboxAccount> = emptyList(),
+    val onedriveAccounts: List<com.beatraxus.app.repository.OneDriveAccount> = emptyList(),
+    val boxAccounts: List<com.beatraxus.app.repository.BoxAccount> = emptyList(),
+    val nextcloudAccounts: List<com.beatraxus.app.repository.NextcloudAccount> = emptyList(),
     val telegramChannels: List<TelegramChannel> = emptyList(),
+    val smbServers: List<com.beatraxus.app.repository.SmbServer> = emptyList(),
+    val ftpServers: List<com.beatraxus.app.repository.FtpServer> = emptyList(),
     // Last.fm
     val lastFmUsername: String? = null,
     val scrobblingEnabled: Boolean = true,
@@ -306,6 +329,10 @@ data class PlayerUiState(
                 permissionDenied == other.permissionDenied &&
                 errorMessage == other.errorMessage &&
                 driveErrorMessage == other.driveErrorMessage &&
+                dropboxErrorMessage == other.dropboxErrorMessage &&
+                onedriveErrorMessage == other.onedriveErrorMessage &&
+                boxErrorMessage == other.boxErrorMessage &&
+                nextcloudErrorMessage == other.nextcloudErrorMessage &&
                 telegramSyncErrorMessage == other.telegramSyncErrorMessage &&
                 shuffleMode == other.shuffleMode &&
                 repeatMode == other.repeatMode &&
@@ -367,7 +394,13 @@ data class PlayerUiState(
                 selectedTelegramChannelUrl == other.selectedTelegramChannelUrl &&
                 libraryMode == other.libraryMode &&
                 driveAccounts == other.driveAccounts &&
+                dropboxAccounts == other.dropboxAccounts &&
+                onedriveAccounts == other.onedriveAccounts &&
+                boxAccounts == other.boxAccounts &&
+                nextcloudAccounts == other.nextcloudAccounts &&
                 telegramChannels == other.telegramChannels &&
+                smbServers == other.smbServers &&
+                ftpServers == other.ftpServers &&
                 lastFmUsername == other.lastFmUsername &&
                 scrobblingEnabled == other.scrobblingEnabled &&
                 metadataNetworkType == other.metadataNetworkType &&
@@ -416,6 +449,10 @@ data class PlayerUiState(
         result = 31 * result + permissionDenied.hashCode()
         result = 31 * result + (errorMessage?.hashCode() ?: 0)
         result = 31 * result + (driveErrorMessage?.hashCode() ?: 0)
+        result = 31 * result + (dropboxErrorMessage?.hashCode() ?: 0)
+        result = 31 * result + (onedriveErrorMessage?.hashCode() ?: 0)
+        result = 31 * result + (boxErrorMessage?.hashCode() ?: 0)
+        result = 31 * result + (nextcloudErrorMessage?.hashCode() ?: 0)
         result = 31 * result + (telegramSyncErrorMessage?.hashCode() ?: 0)
         result = 31 * result + shuffleMode.hashCode()
         result = 31 * result + repeatMode
@@ -477,7 +514,13 @@ data class PlayerUiState(
         result = 31 * result + (selectedTelegramChannelUrl?.hashCode() ?: 0)
         result = 31 * result + libraryMode.hashCode()
         result = 31 * result + driveAccounts.hashCode()
+        result = 31 * result + dropboxAccounts.hashCode()
+        result = 31 * result + onedriveAccounts.hashCode()
+        result = 31 * result + boxAccounts.hashCode()
+        result = 31 * result + nextcloudAccounts.hashCode()
         result = 31 * result + telegramChannels.hashCode()
+        result = 31 * result + smbServers.hashCode()
+        result = 31 * result + ftpServers.hashCode()
         result = 31 * result + (lastFmUsername?.hashCode() ?: 0)
         result = 31 * result + scrobblingEnabled.hashCode()
         result = 31 * result + metadataNetworkType.hashCode()

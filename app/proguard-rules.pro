@@ -211,3 +211,16 @@
 # Google API Client JSON models
 -keep class * extends com.google.api.client.json.GenericJson { *; }
 -keep class com.google.api.services.** { *; }
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MISSING CLASSES FIXES
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Net Engio (referenced from mbassy)
+-dontwarn javax.el.**
+
+# Reactor / BlockHound
+-dontwarn reactor.blockhound.**
+
+# Crypto / EdDSA
+-dontwarn sun.security.x509.**

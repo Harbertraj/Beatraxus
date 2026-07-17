@@ -91,8 +91,27 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private val lyricsRepository = LyricsRepository(application, (application as BeatraxusApplication).database)
     private val dspPreferences = DspPreferences(application)
     private val driveAccountRepository = com.beatraxus.app.repository.DriveAccountRepository(application)
+    private val dropboxAccountRepository = com.beatraxus.app.repository.DropboxAccountRepository(application)
+    private val onedriveAccountRepository = com.beatraxus.app.repository.OneDriveAccountRepository(application)
+    private val boxAccountRepository = com.beatraxus.app.repository.BoxAccountRepository(application)
+    private val nextcloudAccountRepository = com.beatraxus.app.repository.NextcloudAccountRepository(application)
+    private val smbConnectionRepository = com.beatraxus.app.repository.SmbConnectionRepository(application)
+    private val ftpConnectionRepository = com.beatraxus.app.repository.FtpConnectionRepository(application)
+    private val smbFolderBrowser = com.beatraxus.app.network.SmbFolderBrowser()
+    private val ftpFolderBrowser = com.beatraxus.app.network.FtpFolderBrowser()
     private val telegramChannelRepository = TelegramChannelRepository(application)
-    private val cloudCacheManager = com.beatraxus.app.drive.CloudCacheManager(application, driveAccountRepository)
+    private val cloudCacheManager = com.beatraxus.app.drive.CloudCacheManager(
+        application,
+        driveAccountRepository,
+        dropboxAccountRepository,
+        onedriveAccountRepository,
+        boxAccountRepository,
+        nextcloudAccountRepository,
+        smbConnectionRepository,
+        ftpConnectionRepository,
+        smbFolderBrowser,
+        ftpFolderBrowser
+    )
     private val metadataExtractor = com.beatraxus.app.repository.MetadataExtractor(application)
     private val tdLibManager = (application as BeatraxusApplication).tdLibManager
     private val lastFmRepository = com.beatraxus.app.repository.lastfm.LastFmRepository(application)
@@ -113,6 +132,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private val aiAnalysisDao = database.aiAnalysisDao()
     private val artistArtDao = database.artistArtDao()
     private val aiAnalysisEngine = com.beatraxus.app.engine.AiAnalysisEngine(application)
+
+    val smbServers = smbConnectionRepository.connections
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val ftpServers = ftpConnectionRepository.connections
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     private val aiAnalysisChannel = kotlinx.coroutines.channels.Channel<Song>(kotlinx.coroutines.channels.Channel.UNLIMITED)
     private val musicBrainzService = com.beatraxus.app.repository.MusicBrainzService() // NEW
@@ -174,14 +199,35 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         allSongs,
         favorites,
         driveAccountRepository.accounts,
+        dropboxAccountRepository.accounts,
+        onedriveAccountRepository.accounts,
+        boxAccountRepository.accounts,
+        nextcloudAccountRepository.accounts,
         telegramChannelRepository.channels
-    ) { songs, favoriteIds, driveAccounts, tgChannels ->
+    ) { args ->
+        val songs = args[0] as List<Song>
+        val favoriteIds = args[1] as Set<String>
+        val driveAccounts = args[2] as List<com.beatraxus.app.repository.DriveAccount>
+        val dropboxAccounts = args[3] as List<com.beatraxus.app.repository.DropboxAccount>
+        val onedriveAccounts = args[4] as List<com.beatraxus.app.repository.OneDriveAccount>
+        val boxAccounts = args[5] as List<com.beatraxus.app.repository.BoxAccount>
+        val nextcloudAccounts = args[6] as List<com.beatraxus.app.repository.NextcloudAccount>
+        val tgChannels = args[7] as List<com.beatraxus.app.model.TelegramChannel>
+
         val enabledDriveEmails = driveAccounts.filter { it.enabled }.map { it.email.lowercase() }.toSet()
+        val enabledDropboxEmails = dropboxAccounts.filter { it.enabled }.map { it.email.lowercase() }.toSet()
+        val enabledOnedriveEmails = onedriveAccounts.filter { it.enabled }.map { it.email.lowercase() }.toSet()
+        val enabledBoxEmails = boxAccounts.filter { it.enabled }.map { it.email.lowercase() }.toSet()
+        val enabledNextcloudUsernames = nextcloudAccounts.filter { it.enabled }.map { it.username.lowercase() }.toSet()
         val enabledTgUrls = tgChannels.filter { it.enabled }.map { it.url }.toSet()
 
         songs.filter { song ->
             when (song.source) {
                 SongSource.GDRIVE -> song.driveAccountEmail == null || song.driveAccountEmail.lowercase() in enabledDriveEmails
+                SongSource.DROPBOX -> song.dropboxAccountEmail == null || song.dropboxAccountEmail.lowercase() in enabledDropboxEmails
+                SongSource.ONEDRIVE -> song.onedriveAccountEmail == null || song.onedriveAccountEmail.lowercase() in enabledOnedriveEmails
+                SongSource.BOX -> song.boxAccountEmail == null || song.boxAccountEmail.lowercase() in enabledBoxEmails
+                SongSource.NEXTCLOUD -> song.nextcloudAccountEmail == null || song.nextcloudAccountEmail.lowercase() in enabledNextcloudUsernames
                 SongSource.TELEGRAM -> song.telegramChannelUrl == null || song.telegramChannelUrl in enabledTgUrls
                 else -> true
             }
@@ -357,8 +403,15 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 if (state.selectedTelegramChannelUrl != null) {
                     it.source == com.beatraxus.app.model.SongSource.TELEGRAM && it.telegramChannelUrl == state.selectedTelegramChannelUrl
                 } else if (state.selectedItemName != null) {
-                    it.source == com.beatraxus.app.model.SongSource.GDRIVE &&
-                            it.driveAccountEmail.equals(state.selectedItemName, ignoreCase = true)
+                    val target = state.selectedItemName.lowercase()
+                    when (it.source) {
+                        SongSource.GDRIVE -> it.driveAccountEmail?.lowercase() == target
+                        SongSource.DROPBOX -> it.dropboxAccountEmail?.lowercase() == target
+                        SongSource.ONEDRIVE -> it.onedriveAccountEmail?.lowercase() == target
+                        SongSource.BOX -> it.boxAccountEmail?.lowercase() == target
+                        SongSource.NEXTCLOUD -> it.nextcloudAccountEmail?.lowercase() == target
+                        else -> false
+                    }
                 } else {
                     it.isCloud()
                 }
@@ -463,6 +516,18 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
 
+        // Collect SMB/FTP servers and update UI state
+        viewModelScope.launch {
+            smbServers.collect { servers ->
+                _uiState.update { it.copy(smbServers = servers) }
+            }
+        }
+        viewModelScope.launch {
+            ftpServers.collect { servers ->
+                _uiState.update { it.copy(ftpServers = servers) }
+            }
+        }
+
         // DSP settings
         viewModelScope.launch {
             dspPreferences.dspConfig.collect { config ->
@@ -483,6 +548,26 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
         viewModelScope.launch {
+            dropboxAccountRepository.accounts.collect { accounts ->
+                _uiState.update { it.copy(dropboxAccounts = accounts) }
+            }
+        }
+        viewModelScope.launch {
+            onedriveAccountRepository.accounts.collect { accounts ->
+                _uiState.update { it.copy(onedriveAccounts = accounts) }
+            }
+        }
+        viewModelScope.launch {
+            boxAccountRepository.accounts.collect { accounts ->
+                _uiState.update { it.copy(boxAccounts = accounts) }
+            }
+        }
+        viewModelScope.launch {
+            nextcloudAccountRepository.accounts.collect { accounts ->
+                _uiState.update { it.copy(nextcloudAccounts = accounts) }
+            }
+        }
+        viewModelScope.launch {
             telegramChannelRepository.channels.collect { channels ->
                 _uiState.update { it.copy(telegramChannels = channels) }
             }
@@ -494,7 +579,27 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
         viewModelScope.launch {
             com.beatraxus.app.drive.DrivePlaybackHelper.errorState.collect { error ->
-                _uiState.update { it.copy(errorMessage = error) }
+                _uiState.update { it.copy(driveErrorMessage = error) }
+            }
+        }
+        viewModelScope.launch {
+            com.beatraxus.app.drive.DropboxPlaybackHelper.errorState.collect { error ->
+                _uiState.update { it.copy(dropboxErrorMessage = error) }
+            }
+        }
+        viewModelScope.launch {
+            com.beatraxus.app.drive.OneDrivePlaybackHelper.errorState.collect { error ->
+                _uiState.update { it.copy(onedriveErrorMessage = error) }
+            }
+        }
+        viewModelScope.launch {
+            com.beatraxus.app.drive.BoxPlaybackHelper.errorState.collect { error ->
+                _uiState.update { it.copy(boxErrorMessage = error) }
+            }
+        }
+        viewModelScope.launch {
+            com.beatraxus.app.drive.NextcloudPlaybackHelper.errorState.collect { error ->
+                _uiState.update { it.copy(nextcloudErrorMessage = error) }
             }
         }
         viewModelScope.launch {
@@ -507,8 +612,22 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             combine(
                 driveAccountRepository.accounts,
+                dropboxAccountRepository.accounts,
+                onedriveAccountRepository.accounts,
+                boxAccountRepository.accounts,
+                nextcloudAccountRepository.accounts,
                 telegramChannelRepository.channels
-            ) { drive, tg -> drive.isNotEmpty() || tg.isNotEmpty() }
+            ) { args ->
+                val drive = args[0] as List<com.beatraxus.app.repository.DriveAccount>
+                val dropbox = args[1] as List<com.beatraxus.app.repository.DropboxAccount>
+                val onedrive = args[2] as List<com.beatraxus.app.repository.OneDriveAccount>
+                val box = args[3] as List<com.beatraxus.app.repository.BoxAccount>
+                val nextcloud = args[4] as List<com.beatraxus.app.repository.NextcloudAccount>
+                val tg = args[5] as List<com.beatraxus.app.model.TelegramChannel>
+
+                drive.isNotEmpty() || dropbox.isNotEmpty() || onedrive.isNotEmpty() || 
+                box.isNotEmpty() || nextcloud.isNotEmpty() || tg.isNotEmpty()
+            }
                 .distinctUntilChanged()
                 .drop(1) // Skip initial value to avoid switching on app start if accounts already exist
                 .collect { hasCloud ->
@@ -982,6 +1101,38 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun removeDropboxAccount(email: String) {
+        viewModelScope.launch {
+            dropboxAccountRepository.removeAccount(email)
+            songDao.deleteSongsByDropboxAccount(email.lowercase())
+            _songs.update { current -> current.filterNot { it.dropboxAccountEmail?.lowercase() == email.lowercase() } }
+        }
+    }
+
+    fun removeOneDriveAccount(email: String) {
+        viewModelScope.launch {
+            onedriveAccountRepository.removeAccount(email)
+            songDao.deleteSongsByOneDriveAccount(email.lowercase())
+            _songs.update { current -> current.filterNot { it.onedriveAccountEmail?.lowercase() == email.lowercase() } }
+        }
+    }
+
+    fun removeBoxAccount(email: String) {
+        viewModelScope.launch {
+            boxAccountRepository.removeAccount(email)
+            songDao.deleteSongsByBoxAccount(email.lowercase())
+            _songs.update { current -> current.filterNot { it.boxAccountEmail?.lowercase() == email.lowercase() } }
+        }
+    }
+
+    fun removeNextcloudAccount(serverUrl: String, username: String) {
+        viewModelScope.launch {
+            nextcloudAccountRepository.removeAccount(serverUrl, username)
+            songDao.deleteSongsByNextcloudAccount(username.lowercase())
+            _songs.update { current -> current.filterNot { it.nextcloudAccountEmail?.lowercase() == username.lowercase() } }
+        }
+    }
+
 
     private var enrichmentJob: Job? = null
 
@@ -1066,6 +1217,381 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun toggleDriveAccountEnabled(email: String, enabled: Boolean) {
         viewModelScope.launch {
             driveAccountRepository.updateAccountEnabled(email, enabled)
+        }
+    }
+
+    fun startDropboxLogin(context: android.content.Context) {
+        val appKey = com.beatraxus.app.BuildConfig.DROPBOX_APP_KEY
+        if (appKey.isBlank()) {
+            _uiState.update { it.copy(errorMessage = "Dropbox App Key is not configured") }
+            return
+        }
+        com.dropbox.core.android.Auth.startOAuth2Authentication(context, appKey)
+    }
+
+    fun handleDropboxAuth() {
+        val token = com.dropbox.core.android.Auth.getOAuth2Token()
+        if (token != null) {
+            viewModelScope.launch {
+                try {
+                    val client = com.dropbox.core.v2.DbxClientV2(
+                        com.dropbox.core.DbxRequestConfig.newBuilder("Beatraxus").build(),
+                        token
+                    )
+                    val account = withContext(Dispatchers.IO) { client.users().currentAccount }
+                    val dropboxAccount = com.beatraxus.app.repository.DropboxAccount(
+                        email = account.email,
+                        accountName = account.name.displayName,
+                        photoUrl = account.profilePhotoUrl,
+                        enabled = true
+                    )
+                    val credential = com.dropbox.core.oauth.DbxCredential(token)
+                    val credentialJson = com.dropbox.core.oauth.DbxCredential.Writer.writeToString(credential)
+                    dropboxAccountRepository.addAccount(dropboxAccount, credentialJson)
+                    scanDropboxAccount(dropboxAccount.email)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Dropbox login failed", e)
+                    _uiState.update { it.copy(errorMessage = "Dropbox login failed: ${e.message}") }
+                }
+            }
+        }
+    }
+
+    fun scanDropboxAccount(email: String) {
+        val svc = service ?: return
+        val account = _uiState.value.dropboxAccounts.find { it.email == email } ?: return
+        
+        _uiState.update { it.copy(isCloudScanning = true, scanProgress = 0f, showSyncStatusOnHome = true, isSyncFinishedRecently = false) }
+        
+        svc.runDropboxScan(
+            account = account,
+            allowedFormats = _uiState.value.gdriveAllowedFormats, // Reuse GDrive formats for now
+            onProgress = { progress -> _uiState.update { it.copy(scanProgress = progress) } },
+            onDiscoveryComplete = { discovered ->
+                _songs.update { current ->
+                    val discoveredIds = discovered.map { it.id }.toSet()
+                    (current.filter { it.id !in discoveredIds } + discovered).sortedBy { it.title }
+                }
+            },
+            onSongUpdated = { updated ->
+                _songs.update { current ->
+                    current.map { if (it.id == updated.id) updated else it }
+                }
+            },
+            onComplete = { msg ->
+                _uiState.update { it.copy(isCloudScanning = false, scanProgress = 1f, isSyncFinishedRecently = true) }
+                startSyncDismissTimer()
+            },
+            onError = { err ->
+                _uiState.update { it.copy(isCloudScanning = false, errorMessage = err) }
+            }
+        )
+    }
+
+    private var onedriveAuthClient: com.microsoft.identity.client.ISingleAccountPublicClientApplication? = null
+
+    fun startOneDriveLogin(activity: android.app.Activity) {
+        viewModelScope.launch {
+            try {
+                if (onedriveAuthClient == null) {
+                    onedriveAuthClient = com.microsoft.identity.client.PublicClientApplication.createSingleAccountPublicClientApplication(
+                        activity,
+                        com.beatraxus.app.R.raw.msal_config
+                    )
+                }
+
+                onedriveAuthClient?.signIn(activity, null, arrayOf("Files.Read", "User.Read"), object : com.microsoft.identity.client.AuthenticationCallback {
+                    override fun onSuccess(authenticationResult: com.microsoft.identity.client.IAuthenticationResult) {
+                        viewModelScope.launch {
+                            val account = authenticationResult.account
+                            val onedriveAccount = com.beatraxus.app.repository.OneDriveAccount(
+                                email = account.username,
+                                accountName = account.username,
+                                photoUrl = null,
+                                tenantId = account.tenantId,
+                                enabled = true
+                            )
+                            onedriveAccountRepository.addAccount(onedriveAccount)
+                            scanOneDriveAccount(onedriveAccount.email)
+                        }
+                    }
+
+                    override fun onError(exception: com.microsoft.identity.client.exception.MsalException) {
+                        _uiState.update { it.copy(errorMessage = "OneDrive login failed: ${exception.message}") }
+                    }
+
+                    override fun onCancel() {
+                        Log.d(TAG, "OneDrive login cancelled")
+                    }
+                })
+            } catch (e: Exception) {
+                Log.e(TAG, "OneDrive init failed", e)
+                _uiState.update { it.copy(errorMessage = "OneDrive init failed: ${e.message}") }
+            }
+        }
+    }
+
+    fun scanOneDriveAccount(email: String) {
+        val svc = service ?: return
+        val account = _uiState.value.onedriveAccounts.find { it.email == email } ?: return
+        
+        _uiState.update { it.copy(isCloudScanning = true, scanProgress = 0f, showSyncStatusOnHome = true, isSyncFinishedRecently = false) }
+        
+        // We need to pass the client to the service or have the service manage it.
+        // For simplicity, let's assume service handles its own auth client or we pass tokens.
+        svc.runOneDriveScan(
+            account = account,
+            allowedFormats = _uiState.value.gdriveAllowedFormats,
+            onProgress = { progress -> _uiState.update { it.copy(scanProgress = progress) } },
+            onDiscoveryComplete = { discovered ->
+                _songs.update { current ->
+                    val discoveredIds = discovered.map { it.id }.toSet()
+                    (current.filter { it.id !in discoveredIds } + discovered).sortedBy { it.title }
+                }
+            },
+            onSongUpdated = { updated ->
+                _songs.update { current ->
+                    current.map { if (it.id == updated.id) updated else it }
+                }
+            },
+            onComplete = { msg ->
+                _uiState.update { it.copy(isCloudScanning = false, scanProgress = 1f, isSyncFinishedRecently = true) }
+                startSyncDismissTimer()
+            },
+            onError = { err ->
+                _uiState.update { it.copy(isCloudScanning = false, errorMessage = err) }
+            }
+        )
+    }
+
+    fun startBoxLogin(activity: android.app.Activity) {
+        val clientId = com.beatraxus.app.BuildConfig.BOX_CLIENT_ID
+        val clientSecret = com.beatraxus.app.BuildConfig.BOX_CLIENT_SECRET
+        if (clientId.isBlank()) {
+            _uiState.update { it.copy(errorMessage = "Box Client ID is not configured") }
+            return
+        }
+
+        // Initialize BoxConfig
+        com.box.androidsdk.content.BoxConfig.CLIENT_ID = clientId
+        com.box.androidsdk.content.BoxConfig.CLIENT_SECRET = clientSecret
+
+        val session = com.box.androidsdk.content.models.BoxSession(activity)
+        session.authenticate().addOnCompletedListener {
+            if (it.isSuccess) {
+                viewModelScope.launch {
+                    try {
+                        val user = withContext(Dispatchers.IO) { 
+                            com.box.androidsdk.content.BoxApiUser(session).currentUserInfoRequest.send()
+                        }
+                        val boxUser = user as com.box.androidsdk.content.models.BoxUser
+                        val boxAccount = com.beatraxus.app.repository.BoxAccount(
+                            email = boxUser.login,
+                            accountName = boxUser.name ?: "Box User",
+                            photoUrl = null,
+                            userId = boxUser.id,
+                            enabled = true
+                        )
+                        boxAccountRepository.addAccount(boxAccount)
+                        scanBoxAccount(boxAccount.email)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Box user fetch failed", e)
+                    }
+                }
+            } else {
+                _uiState.update { it.copy(errorMessage = "Box login failed") }
+            }
+        }
+    }
+
+    fun scanBoxAccount(email: String) {
+        val svc = service ?: return
+        val account = _uiState.value.boxAccounts.find { it.email == email } ?: return
+        
+        _uiState.update { it.copy(isCloudScanning = true, scanProgress = 0f, showSyncStatusOnHome = true, isSyncFinishedRecently = false) }
+        
+        svc.runBoxScan(
+            account = account,
+            allowedFormats = _uiState.value.gdriveAllowedFormats,
+            onProgress = { progress -> _uiState.update { it.copy(scanProgress = progress) } },
+            onDiscoveryComplete = { discovered ->
+                _songs.update { current ->
+                    val discoveredIds = discovered.map { it.id }.toSet()
+                    (current.filter { it.id !in discoveredIds } + discovered).sortedBy { it.title }
+                }
+            },
+            onSongUpdated = { updated ->
+                _songs.update { current ->
+                    current.map { if (it.id == updated.id) updated else it }
+                }
+            },
+            onComplete = { msg ->
+                _uiState.update { it.copy(isCloudScanning = false, scanProgress = 1f, isSyncFinishedRecently = true) }
+                startSyncDismissTimer()
+            },
+            onError = { err ->
+                _uiState.update { it.copy(isCloudScanning = false, errorMessage = err) }
+            }
+        )
+    }
+
+    fun addNextcloudAccount(server: String, user: String, pass: String) {
+        viewModelScope.launch {
+            val nextcloudAccount = com.beatraxus.app.repository.NextcloudAccount(
+                serverUrl = server,
+                username = user,
+                appPassword = pass,
+                displayName = "$user @ ${server.substringAfter("://").substringBefore("/")}",
+                enabled = true
+            )
+            nextcloudAccountRepository.addAccount(nextcloudAccount)
+            scanNextcloudAccount(nextcloudAccount.serverUrl, nextcloudAccount.username)
+        }
+    }
+
+    fun scanNextcloudAccount(serverUrl: String, username: String) {
+        val svc = service ?: return
+        val account = _uiState.value.nextcloudAccounts.find { it.serverUrl == serverUrl && it.username == username } ?: return
+        
+        _uiState.update { it.copy(isCloudScanning = true, scanProgress = 0f, showSyncStatusOnHome = true, isSyncFinishedRecently = false) }
+        
+        svc.runNextcloudScan(
+            account = account,
+            allowedFormats = _uiState.value.gdriveAllowedFormats,
+            onProgress = { progress -> _uiState.update { it.copy(scanProgress = progress) } },
+            onDiscoveryComplete = { discovered ->
+                _songs.update { current ->
+                    val discoveredIds = discovered.map { it.id }.toSet()
+                    (current.filter { it.id !in discoveredIds } + discovered).sortedBy { it.title }
+                }
+            },
+            onSongUpdated = { updated ->
+                _songs.update { current ->
+                    current.map { if (it.id == updated.id) updated else it }
+                }
+            },
+            onComplete = { msg ->
+                _uiState.update { it.copy(isCloudScanning = false, scanProgress = 1f, isSyncFinishedRecently = true) }
+                startSyncDismissTimer()
+            },
+            onError = { err ->
+                _uiState.update { it.copy(isCloudScanning = false, errorMessage = err) }
+            }
+        )
+    }
+
+    fun toggleDropboxAccountEnabled(email: String, enabled: Boolean) {
+        viewModelScope.launch {
+            dropboxAccountRepository.updateAccountEnabled(email, enabled)
+        }
+    }
+
+    fun toggleOneDriveAccountEnabled(email: String, enabled: Boolean) {
+        viewModelScope.launch {
+            onedriveAccountRepository.updateAccountEnabled(email, enabled)
+        }
+    }
+
+    fun toggleBoxAccountEnabled(email: String, enabled: Boolean) {
+        viewModelScope.launch {
+            boxAccountRepository.updateAccountEnabled(email, enabled)
+        }
+    }
+
+    // SMB
+    fun addSmbServer(server: com.beatraxus.app.repository.SmbServer) {
+        viewModelScope.launch {
+            smbConnectionRepository.addConnection(server)
+        }
+    }
+
+    fun removeSmbServer(id: String) {
+        viewModelScope.launch {
+            smbConnectionRepository.removeConnection(id)
+        }
+    }
+
+    fun updateSmbServerEnabled(id: String, enabled: Boolean) {
+        viewModelScope.launch {
+            smbConnectionRepository.updateConnectionEnabled(id, enabled)
+        }
+    }
+
+    suspend fun connectSmb(server: com.beatraxus.app.repository.SmbServer): Boolean {
+        return smbFolderBrowser.connect(server)
+    }
+
+    suspend fun listSmbFolder(path: String): List<com.beatraxus.app.network.SmbEntry> {
+        return smbFolderBrowser.listFolder(path)
+    }
+
+    // FTP
+    fun addFtpServer(server: com.beatraxus.app.repository.FtpServer) {
+        viewModelScope.launch {
+            ftpConnectionRepository.addConnection(server)
+        }
+    }
+
+    fun removeFtpServer(id: String) {
+        viewModelScope.launch {
+            ftpConnectionRepository.removeConnection(id)
+        }
+    }
+
+    fun updateFtpServerEnabled(id: String, enabled: Boolean) {
+        viewModelScope.launch {
+            ftpConnectionRepository.updateConnectionEnabled(id, enabled)
+        }
+    }
+
+    suspend fun connectFtp(server: com.beatraxus.app.repository.FtpServer): Boolean {
+        return ftpFolderBrowser.connect(server)
+    }
+
+    suspend fun listFtpFolder(path: String): List<com.beatraxus.app.network.FtpEntry> {
+        return ftpFolderBrowser.listFolder(path)
+    }
+
+    fun playSmbFile(server: com.beatraxus.app.repository.SmbServer, entry: com.beatraxus.app.network.SmbEntry) {
+        val song = Song(
+            id = "smb_${server.id}_${entry.fullPath}".hashCode().toString(),
+            uri = Uri.parse("smb://${server.host}/${server.shareName}/${entry.fullPath}"),
+            title = entry.name,
+            artist = server.displayName,
+            album = "SMB Share",
+            durationMs = 0, // Unknown
+            format = entry.name.substringAfterLast(".", "Unknown").uppercase(),
+            sampleRateHz = 44100,
+            fileSizeBytes = entry.size,
+            source = SongSource.SMB
+        )
+        playSong(song)
+    }
+
+    fun playFtpFile(server: com.beatraxus.app.repository.FtpServer, entry: com.beatraxus.app.network.FtpEntry) {
+        val scheme = when (server.protocol) {
+            com.beatraxus.app.repository.FtpProtocol.SFTP -> "sftp"
+            com.beatraxus.app.repository.FtpProtocol.FTPS -> "ftps"
+            com.beatraxus.app.repository.FtpProtocol.FTP -> "ftp"
+        }
+        val song = Song(
+            id = "ftp_${server.id}_${entry.fullPath}".hashCode().toString(),
+            uri = Uri.parse("$scheme://${server.host}/${entry.fullPath}"),
+            title = entry.name,
+            artist = server.displayName,
+            album = "FTP Server",
+            durationMs = 0,
+            format = entry.name.substringAfterLast(".", "Unknown").uppercase(),
+            sampleRateHz = 44100,
+            fileSizeBytes = entry.size,
+            source = SongSource.FTP
+        )
+        playSong(song)
+    }
+
+    fun toggleNextcloudAccountEnabled(serverUrl: String, username: String, enabled: Boolean) {
+        viewModelScope.launch {
+            nextcloudAccountRepository.updateAccountEnabled(serverUrl, username, enabled)
         }
     }
 
@@ -2643,8 +3169,15 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 if (state.selectedTelegramChannelUrl != null) {
                     it.source == com.beatraxus.app.model.SongSource.TELEGRAM && it.telegramChannelUrl == state.selectedTelegramChannelUrl
                 } else if (state.selectedItemName != null) {
-                    it.source == com.beatraxus.app.model.SongSource.GDRIVE &&
-                            it.driveAccountEmail.equals(state.selectedItemName, ignoreCase = true)
+                    val target = state.selectedItemName.lowercase()
+                    when (it.source) {
+                        SongSource.GDRIVE -> it.driveAccountEmail?.lowercase() == target
+                        SongSource.DROPBOX -> it.dropboxAccountEmail?.lowercase() == target
+                        SongSource.ONEDRIVE -> it.onedriveAccountEmail?.lowercase() == target
+                        SongSource.BOX -> it.boxAccountEmail?.lowercase() == target
+                        SongSource.NEXTCLOUD -> it.nextcloudAccountEmail?.lowercase() == target
+                        else -> false
+                    }
                 } else {
                     it.isCloud()
                 }

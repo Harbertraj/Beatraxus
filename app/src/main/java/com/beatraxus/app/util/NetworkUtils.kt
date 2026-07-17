@@ -26,4 +26,13 @@ object NetworkUtils {
             NetworkType.ASK_MOBILE -> isWifiConnected(context) // For now, assume ASK_MOBILE means "block mobile until asked"
         }
     }
+
+    fun formatFileSize(size: Long): String {
+        if (size <= 0) return "0 B"
+        val units = arrayOf("B", "KB", "MB", "GB", "TB")
+        val digitGroups = (Math.log10(size.toDouble()) / Math.log10(1024.0)).toInt()
+        return java.util.Locale.US.let { locale ->
+            String.format(locale, "%.1f %s", size / Math.pow(1024.0, digitGroups.toDouble()), units[digitGroups])
+        }
+    }
 }

@@ -177,23 +177,18 @@ internal class DecoderFactory(
     }
 
     private fun resolveDirectUrl(song: Song): String {
-        return if (song.source == com.beatraxus.app.model.SongSource.GDRIVE) {
-            "https://www.googleapis.com/drive/v3/files/${song.driveFileId}?alt=media"
-        } else {
-            song.uri.toString()
+        return when (song.source) {
+            SongSource.GDRIVE -> "https://www.googleapis.com/drive/v3/files/${song.driveFileId}?alt=media"
+            SongSource.DROPBOX -> song.uri.toString()
+            SongSource.ONEDRIVE -> "https://graph.microsoft.com/v1.0/me/drive/items/${song.onedriveFileId}/content"
+            SongSource.BOX -> "https://api.box.com/2.0/files/${song.boxFileId}/content"
+            SongSource.NEXTCLOUD -> song.uri.toString()
+            else -> song.uri.toString()
         }
     }
 
     private suspend fun resolveHeaders(song: Song): Map<String, String> {
-        val headers = mutableMapOf<String, String>()
-        headers["User-Agent"] = "Beatraxus/2.8"
-        if (song.source == com.beatraxus.app.model.SongSource.GDRIVE && song.driveAccountEmail != null) {
-            val token = driveAccountRepository.getAccessToken(song.driveAccountEmail)
-            if (token != null) {
-                headers["Authorization"] = "Bearer $token"
-            }
-        }
-        return headers
+        return cloudCacheManager.getCloudHeaders(song)
     }
 
     private companion object {

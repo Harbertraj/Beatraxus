@@ -309,10 +309,18 @@ fun SettingsScreen(
                                     playerViewModel, 
                                     onRequestGDriveAccount = onRequestGDriveAccount, 
                                     onNavigateToGDriveSettings = { sectionStack.add("GDrive Settings") },
-                                    onNavigateToTelegramSettings = { sectionStack.add("Telegram Settings") }
+                                    onNavigateToTelegramSettings = { sectionStack.add("Telegram Settings") },
+                                    onNavigateToDropboxSettings = { sectionStack.add("Dropbox Settings") },
+                                    onNavigateToOneDriveSettings = { sectionStack.add("OneDrive Settings") },
+                                    onNavigateToBoxSettings = { sectionStack.add("Box Settings") },
+                                    onNavigateToNextcloudSettings = { sectionStack.add("Nextcloud Settings") }
                                 )
-                                "GDrive Settings" -> MetadataSyncContent(uiState, playerViewModel, isTelegram = false)
-                                "Telegram Settings" -> MetadataSyncContent(uiState, playerViewModel, isTelegram = true)
+                                "GDrive Settings" -> MetadataSyncContent(uiState, playerViewModel, provider = com.beatraxus.app.model.CloudProvider.GDRIVE)
+                                "Telegram Settings" -> MetadataSyncContent(uiState, playerViewModel, provider = com.beatraxus.app.model.CloudProvider.TELEGRAM)
+                                "Dropbox Settings" -> MetadataSyncContent(uiState, playerViewModel, provider = com.beatraxus.app.model.CloudProvider.DROPBOX)
+                                "OneDrive Settings" -> MetadataSyncContent(uiState, playerViewModel, provider = com.beatraxus.app.model.CloudProvider.ONEDRIVE)
+                                "Box Settings" -> MetadataSyncContent(uiState, playerViewModel, provider = com.beatraxus.app.model.CloudProvider.BOX)
+                                "Nextcloud Settings" -> MetadataSyncContent(uiState, playerViewModel, provider = com.beatraxus.app.model.CloudProvider.NEXTCLOUD)
                                 "Last.fm" -> LastFmContent(uiState, playerViewModel)
                                 "About" -> AboutContent()
                                 "Backup & Restore" -> BackupRestoreContent(
@@ -2601,9 +2609,17 @@ fun CloudContent(
     viewModel: PlayerViewModel,
     onRequestGDriveAccount: () -> Unit,
     onNavigateToGDriveSettings: () -> Unit,
-    onNavigateToTelegramSettings: () -> Unit
+    onNavigateToTelegramSettings: () -> Unit,
+    onNavigateToDropboxSettings: () -> Unit,
+    onNavigateToOneDriveSettings: () -> Unit,
+    onNavigateToBoxSettings: () -> Unit,
+    onNavigateToNextcloudSettings: () -> Unit
 ) {
     val driveAccounts = uiState.driveAccounts
+    val dropboxAccounts = uiState.dropboxAccounts
+    val onedriveAccounts = uiState.onedriveAccounts
+    val boxAccounts = uiState.boxAccounts
+    val nextcloudAccounts = uiState.nextcloudAccounts
     val telegramChannels = uiState.telegramChannels
 
     DisposableEffect(Unit) {
@@ -2613,7 +2629,22 @@ fun CloudContent(
     }
 
     var driveQuery by remember { mutableStateOf("") }
+    var dropboxQuery by remember { mutableStateOf("") }
+    var onedriveQuery by remember { mutableStateOf("") }
+    var boxQuery by remember { mutableStateOf("") }
+    var nextcloudQuery by remember { mutableStateOf("") }
     var telegramUrl by remember { mutableStateOf("") }
+    var showNextcloudDialog by remember { mutableStateOf(false) }
+
+    if (showNextcloudDialog) {
+        NextcloudLoginDialog(
+            onDismiss = { showNextcloudDialog = false },
+            onConfirm = { server, user, pass ->
+                viewModel.addNextcloudAccount(server, user, pass)
+                showNextcloudDialog = false
+            }
+        )
+    }
 
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         SettingsSection(
@@ -2660,8 +2691,12 @@ fun CloudContent(
             if (filteredDrive.isNotEmpty()) {
                 Spacer(Modifier.height(4.dp))
                 filteredDrive.forEach { account ->
-                    ConnectedAccountRow(
-                        account = account,
+                    CloudAccountRow(
+                        name = account.accountName,
+                        email = account.email,
+                        enabled = account.enabled,
+                        icon = Icons.Rounded.Person,
+                        iconColor = Color(0xFF1A73E8),
                         onSync = { viewModel.scanDriveAccount(account.email) },
                         onToggle = { enabled -> viewModel.toggleDriveAccountEnabled(account.email, enabled) },
                         onRemove = { viewModel.removeDriveAccount(account.email) }
@@ -2752,6 +2787,287 @@ fun CloudContent(
             Spacer(Modifier.height(8.dp))
 
             TelegramLoginCard(uiState, viewModel)
+        }
+
+        // --- DROPBOX ---
+        SettingsSection(
+            title = "DROPBOX",
+            icon = Icons.Rounded.CloudQueue,
+            isActive = true,
+            subtitle = "Enrichment rules, network and data saver"
+        ) {
+            val context = LocalContext.current
+            OutlinedTextField(
+                value = dropboxQuery,
+                onValueChange = { dropboxQuery = it },
+                modifier = Modifier.fillMaxWidth(),
+                placeholder = { Text("Search or add account...", color = Color.Gray, fontSize = 14.sp) },
+                trailingIcon = {
+                    TextButton(onClick = { viewModel.startDropboxLogin(context) }) {
+                        Text("Add", color = Color(0xFF0061FF), fontWeight = FontWeight.Bold)
+                    }
+                },
+                shape = RoundedCornerShape(10.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = Color(0xFF0061FF).copy(0.5f),
+                    unfocusedBorderColor = Color.White.copy(0.1f),
+                    focusedContainerColor = Color.Black.copy(0.2f),
+                    unfocusedContainerColor = Color.Black.copy(0.2f),
+                    cursorColor = Color(0xFF0061FF)
+                ),
+                singleLine = true,
+                textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 14.sp)
+            )
+
+            uiState.dropboxErrorMessage?.let { error ->
+                Text(
+                    text = error,
+                    color = if (error.contains("failed", ignoreCase = true)) Color.Red else Color(0xFF0061FF),
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(top = 4.dp, start = 4.dp)
+                )
+            }
+
+            val filtered = dropboxAccounts.filter {
+                it.email.contains(dropboxQuery, ignoreCase = true) || it.accountName.contains(dropboxQuery, ignoreCase = true)
+            }
+
+            if (filtered.isNotEmpty()) {
+                Spacer(Modifier.height(4.dp))
+                filtered.forEach { account ->
+                    CloudAccountRow(
+                        name = account.accountName,
+                        email = account.email,
+                        enabled = account.enabled,
+                        icon = Icons.Rounded.CloudQueue,
+                        iconColor = Color(0xFF0061FF),
+                        onSync = { viewModel.scanDropboxAccount(account.email) },
+                        onToggle = { enabled -> viewModel.toggleDropboxAccountEnabled(account.email, enabled) },
+                        onRemove = { viewModel.removeDropboxAccount(account.email) }
+                    )
+                }
+            }
+
+            HorizontalDivider(color = Color.White.copy(0.08f), modifier = Modifier.padding(vertical = 8.dp))
+
+            CloudSettingsButton(
+                title = "Dropbox Settings",
+                subtitle = "Network, Data Saver and Sync options",
+                icon = Icons.Rounded.Settings,
+                onClick = onNavigateToDropboxSettings
+            )
+        }
+
+        // --- ONEDRIVE ---
+        SettingsSection(
+            title = "ONEDRIVE",
+            icon = Icons.Rounded.CloudCircle,
+            isActive = true,
+            subtitle = "Enrichment rules, network and data saver"
+        ) {
+            val context = LocalContext.current
+            OutlinedTextField(
+                value = onedriveQuery,
+                onValueChange = { onedriveQuery = it },
+                modifier = Modifier.fillMaxWidth(),
+                placeholder = { Text("Search or add account...", color = Color.Gray, fontSize = 14.sp) },
+                trailingIcon = {
+                    TextButton(onClick = { 
+                        val activity = context.findActivity()
+                        if (activity != null) viewModel.startOneDriveLogin(activity)
+                    }) {
+                        Text("Add", color = Color(0xFF0078D4), fontWeight = FontWeight.Bold)
+                    }
+                },
+                shape = RoundedCornerShape(10.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = Color(0xFF0078D4).copy(0.5f),
+                    unfocusedBorderColor = Color.White.copy(0.1f),
+                    focusedContainerColor = Color.Black.copy(0.2f),
+                    unfocusedContainerColor = Color.Black.copy(0.2f),
+                    cursorColor = Color(0xFF0078D4)
+                ),
+                singleLine = true,
+                textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 14.sp)
+            )
+
+            uiState.onedriveErrorMessage?.let { error ->
+                Text(
+                    text = error,
+                    color = if (error.contains("failed", ignoreCase = true)) Color.Red else Color(0xFF0078D4),
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(top = 4.dp, start = 4.dp)
+                )
+            }
+
+            val filtered = onedriveAccounts.filter {
+                it.email.contains(onedriveQuery, ignoreCase = true) || it.accountName.contains(onedriveQuery, ignoreCase = true)
+            }
+
+            if (filtered.isNotEmpty()) {
+                Spacer(Modifier.height(4.dp))
+                filtered.forEach { account ->
+                    CloudAccountRow(
+                        name = account.accountName,
+                        email = account.email,
+                        enabled = account.enabled,
+                        icon = Icons.Rounded.CloudCircle,
+                        iconColor = Color(0xFF0078D4),
+                        onSync = { viewModel.scanOneDriveAccount(account.email) },
+                        onToggle = { enabled -> viewModel.toggleOneDriveAccountEnabled(account.email, enabled) },
+                        onRemove = { viewModel.removeOneDriveAccount(account.email) }
+                    )
+                }
+            }
+
+            HorizontalDivider(color = Color.White.copy(0.08f), modifier = Modifier.padding(vertical = 8.dp))
+
+            CloudSettingsButton(
+                title = "OneDrive Settings",
+                subtitle = "Network, Data Saver and Sync options",
+                icon = Icons.Rounded.Settings,
+                onClick = onNavigateToOneDriveSettings
+            )
+        }
+
+        // --- BOX ---
+        SettingsSection(
+            title = "BOX",
+            icon = Icons.Rounded.ViewInAr,
+            isActive = true,
+            subtitle = "Enrichment rules, network and data saver"
+        ) {
+            val context = LocalContext.current
+            OutlinedTextField(
+                value = boxQuery,
+                onValueChange = { boxQuery = it },
+                modifier = Modifier.fillMaxWidth(),
+                placeholder = { Text("Search or add account...", color = Color.Gray, fontSize = 14.sp) },
+                trailingIcon = {
+                    TextButton(onClick = { 
+                        val activity = context.findActivity()
+                        if (activity != null) viewModel.startBoxLogin(activity)
+                    }) {
+                        Text("Add", color = Color(0xFF0061D5), fontWeight = FontWeight.Bold)
+                    }
+                },
+                shape = RoundedCornerShape(10.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = Color(0xFF0061D5).copy(0.5f),
+                    unfocusedBorderColor = Color.White.copy(0.1f),
+                    focusedContainerColor = Color.Black.copy(0.2f),
+                    unfocusedContainerColor = Color.Black.copy(0.2f),
+                    cursorColor = Color(0xFF0061D5)
+                ),
+                singleLine = true,
+                textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 14.sp)
+            )
+
+            uiState.boxErrorMessage?.let { error ->
+                Text(
+                    text = error,
+                    color = if (error.contains("failed", ignoreCase = true)) Color.Red else Color(0xFF0061D5),
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(top = 4.dp, start = 4.dp)
+                )
+            }
+
+            val filtered = boxAccounts.filter {
+                it.email.contains(boxQuery, ignoreCase = true) || it.accountName.contains(boxQuery, ignoreCase = true)
+            }
+
+            if (filtered.isNotEmpty()) {
+                Spacer(Modifier.height(4.dp))
+                filtered.forEach { account ->
+                    CloudAccountRow(
+                        name = account.accountName,
+                        email = account.email,
+                        enabled = account.enabled,
+                        icon = Icons.Rounded.ViewInAr,
+                        iconColor = Color(0xFF0061D5),
+                        onSync = { viewModel.scanBoxAccount(account.email) },
+                        onToggle = { enabled -> viewModel.toggleBoxAccountEnabled(account.email, enabled) },
+                        onRemove = { viewModel.removeBoxAccount(account.email) }
+                    )
+                }
+            }
+
+            HorizontalDivider(color = Color.White.copy(0.08f), modifier = Modifier.padding(vertical = 8.dp))
+
+            CloudSettingsButton(
+                title = "Box Settings",
+                subtitle = "Network, Data Saver and Sync options",
+                icon = Icons.Rounded.Settings,
+                onClick = onNavigateToBoxSettings
+            )
+        }
+
+        // --- NEXTCLOUD ---
+        SettingsSection(
+            title = "NEXTCLOUD",
+            icon = Icons.Rounded.Storage,
+            isActive = true,
+            subtitle = "Enrichment rules, network and data saver"
+        ) {
+            OutlinedTextField(
+                value = nextcloudQuery,
+                onValueChange = { nextcloudQuery = it },
+                modifier = Modifier.fillMaxWidth(),
+                placeholder = { Text("Search or add account...", color = Color.Gray, fontSize = 14.sp) },
+                trailingIcon = {
+                    TextButton(onClick = { showNextcloudDialog = true }) {
+                        Text("Add", color = Color(0xFF0082C9), fontWeight = FontWeight.Bold)
+                    }
+                },
+                shape = RoundedCornerShape(10.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = Color(0xFF0082C9).copy(0.5f),
+                    unfocusedBorderColor = Color.White.copy(0.1f),
+                    focusedContainerColor = Color.Black.copy(0.2f),
+                    unfocusedContainerColor = Color.Black.copy(0.2f),
+                    cursorColor = Color(0xFF0082C9)
+                ),
+                singleLine = true,
+                textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 14.sp)
+            )
+
+            uiState.nextcloudErrorMessage?.let { error ->
+                Text(
+                    text = error,
+                    color = if (error.contains("failed", ignoreCase = true)) Color.Red else Color(0xFF0082C9),
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(top = 4.dp, start = 4.dp)
+                )
+            }
+
+            val filtered = nextcloudAccounts.filter {
+                it.username.contains(nextcloudQuery, ignoreCase = true) || it.displayName.contains(nextcloudQuery, ignoreCase = true)
+            }
+
+            if (filtered.isNotEmpty()) {
+                Spacer(Modifier.height(4.dp))
+                filtered.forEach { account ->
+                    CloudAccountRow(
+                        name = account.displayName,
+                        email = account.username,
+                        enabled = account.enabled,
+                        icon = Icons.Rounded.Storage,
+                        iconColor = Color(0xFF0082C9),
+                        onSync = { viewModel.scanNextcloudAccount(account.serverUrl, account.username) },
+                        onToggle = { enabled -> viewModel.toggleNextcloudAccountEnabled(account.serverUrl, account.username, enabled) },
+                        onRemove = { viewModel.removeNextcloudAccount(account.serverUrl, account.username) }
+                    )
+                }
+            }
+
+            HorizontalDivider(color = Color.White.copy(0.08f), modifier = Modifier.padding(vertical = 8.dp))
+
+            CloudSettingsButton(
+                title = "Nextcloud Settings",
+                subtitle = "Network, Data Saver and Sync options",
+                icon = Icons.Rounded.Settings,
+                onClick = onNavigateToNextcloudSettings
+            )
         }
     }
 }
@@ -3084,8 +3400,12 @@ private fun TelegramChannelRow(
 
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-private fun ConnectedAccountRow(
-    account: DriveAccount,
+private fun CloudAccountRow(
+    name: String,
+    email: String,
+    enabled: Boolean,
+    icon: ImageVector,
+    iconColor: Color,
     onSync: () -> Unit,
     onToggle: (Boolean) -> Unit,
     onRemove: () -> Unit
@@ -3105,17 +3425,17 @@ private fun ConnectedAccountRow(
         Box(
             modifier = Modifier
                 .size(44.dp)
-                .background(Color(0xFF1A73E8).copy(0.15f), CircleShape),
+                .background(iconColor.copy(0.15f), CircleShape),
             contentAlignment = Alignment.Center
         ) {
-            Icon(Icons.Rounded.Person, contentDescription = null, tint = Color(0xFF1A73E8), modifier = Modifier.size(24.dp))
+            Icon(icon, contentDescription = null, tint = iconColor, modifier = Modifier.size(24.dp))
         }
 
         Spacer(Modifier.width(16.dp))
 
         Column(modifier = Modifier.weight(1f)) {
-            Text(account.accountName, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-            Text(account.email, color = Color.White.copy(0.5f), fontSize = 12.sp)
+            Text(name, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            Text(email, color = Color.White.copy(0.5f), fontSize = 12.sp)
         }
 
         if (showDelete) {
@@ -3127,7 +3447,7 @@ private fun ConnectedAccountRow(
                 Icon(Icons.Rounded.Sync, "Sync", tint = Color.White.copy(0.6f))
             }
             PremiumSwitch(
-                checked = account.enabled,
+                checked = enabled,
                 onCheckedChange = onToggle
             )
         }
@@ -3855,10 +4175,28 @@ fun BackupRestoreContent(
 
 @OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
-fun MetadataSyncContent(uiState: PlayerUiState, playerViewModel: PlayerViewModel, isTelegram: Boolean = false) {
+fun MetadataSyncContent(uiState: PlayerUiState, playerViewModel: PlayerViewModel, provider: com.beatraxus.app.model.CloudProvider) {
+    val title = when(provider) {
+        com.beatraxus.app.model.CloudProvider.GDRIVE -> "GDrive Network"
+        com.beatraxus.app.model.CloudProvider.TELEGRAM -> "Telegram Network"
+        com.beatraxus.app.model.CloudProvider.DROPBOX -> "Dropbox Network"
+        com.beatraxus.app.model.CloudProvider.ONEDRIVE -> "OneDrive Network"
+        com.beatraxus.app.model.CloudProvider.BOX -> "Box Network"
+        com.beatraxus.app.model.CloudProvider.NEXTCLOUD -> "Nextcloud Network"
+    }
+
+    val formatSubtitle = when(provider) {
+        com.beatraxus.app.model.CloudProvider.GDRIVE -> "Selective GDrive format sync"
+        com.beatraxus.app.model.CloudProvider.TELEGRAM -> "Selective Telegram format sync"
+        com.beatraxus.app.model.CloudProvider.DROPBOX -> "Selective Dropbox format sync"
+        com.beatraxus.app.model.CloudProvider.ONEDRIVE -> "Selective OneDrive format sync"
+        com.beatraxus.app.model.CloudProvider.BOX -> "Selective Box format sync"
+        com.beatraxus.app.model.CloudProvider.NEXTCLOUD -> "Selective Nextcloud format sync"
+    }
+
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         SettingsSection(
-            title = if (isTelegram) "Telegram Network" else "GDrive Network",
+            title = title,
             icon = Icons.Rounded.Wifi
         ) {
             Column(Modifier.padding(horizontal = 4.dp)) {
@@ -3890,10 +4228,10 @@ fun MetadataSyncContent(uiState: PlayerUiState, playerViewModel: PlayerViewModel
         SettingsSection(
             title = "Format Sections",
             icon = Icons.Rounded.AudioFile,
-            subtitle = if (isTelegram) "Selective Telegram format sync" else "Selective GDrive format sync"
+            subtitle = formatSubtitle
         ) {
             val formats = listOf("FLAC", "ALAC", "WAV", "DSD", "DSF", "DFF", "AIFF", "APE", "WV", "TTA", "MP3", "M4A", "AAC", "OGG", "OPUS", "WMA", "MP4")
-            val allowedFormats = if (isTelegram) uiState.telegramAllowedFormats else uiState.gdriveAllowedFormats
+            val allowedFormats = if (provider == com.beatraxus.app.model.CloudProvider.TELEGRAM) uiState.telegramAllowedFormats else uiState.gdriveAllowedFormats
             
             Text(
                 "Only sync and enrich selected formats. If none selected, all supported formats are allowed.",
@@ -3913,7 +4251,7 @@ fun MetadataSyncContent(uiState: PlayerUiState, playerViewModel: PlayerViewModel
                         selected = isSelected,
                         onClick = {
                             val newSet = if (isSelected) allowedFormats - format else allowedFormats + format
-                            if (isTelegram) {
+                            if (provider == com.beatraxus.app.model.CloudProvider.TELEGRAM) {
                                 playerViewModel.setTelegramAllowedFormats(newSet)
                             } else {
                                 playerViewModel.setGdriveAllowedFormats(newSet)
@@ -4094,4 +4432,64 @@ private fun BufferSizeSliderRow(title: String, value: Float, range: ClosedFloati
         }
         Slider(value = value, onValueChange = onValueChange, valueRange = range, steps = steps, colors = SliderDefaults.colors(activeTrackColor = PrimaryCyan, inactiveTrackColor = Color.White.copy(0.1f), thumbColor = PrimaryCyan), modifier = Modifier.padding(top = 4.dp))
     }
+}
+
+@Composable
+fun NextcloudLoginDialog(
+    onDismiss: () -> Unit,
+    onConfirm: (String, String, String) -> Unit
+) {
+    var server by remember { mutableStateOf("https://") }
+    var user by remember { mutableStateOf("") }
+    var pass by remember { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Color(0xFF15161A),
+        title = { Text("Nextcloud Login", color = Color.White, fontWeight = FontWeight.Bold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedTextField(
+                    value = server,
+                    onValueChange = { server = it },
+                    label = { Text("Server URL") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = PremiumAccent, unfocusedBorderColor = Color.White.copy(0.1f))
+                )
+                OutlinedTextField(
+                    value = user,
+                    onValueChange = { user = it },
+                    label = { Text("Username") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = PremiumAccent, unfocusedBorderColor = Color.White.copy(0.1f))
+                )
+                OutlinedTextField(
+                    value = pass,
+                    onValueChange = { pass = it },
+                    label = { Text("App Password") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = PremiumAccent, unfocusedBorderColor = Color.White.copy(0.1f))
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { if (server.isNotBlank() && user.isNotBlank()) onConfirm(server, user, pass) },
+                colors = ButtonDefaults.buttonColors(containerColor = PremiumAccent)
+            ) { Text("ADD ACCOUNT", color = Color.Black) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("CANCEL", color = Color.White.copy(0.6f)) }
+        }
+    )
+}
+
+fun android.content.Context.findActivity(): android.app.Activity? = when (this) {
+    is android.app.Activity -> this
+    is android.content.ContextWrapper -> baseContext.findActivity()
+    else -> null
 }

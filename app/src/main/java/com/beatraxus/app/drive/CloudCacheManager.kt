@@ -25,7 +25,15 @@ import kotlin.concurrent.withLock
 
 class CloudCacheManager(
     private val context: Context,
-    private val driveAccountRepository: DriveAccountRepository
+    private val driveAccountRepository: DriveAccountRepository,
+    private val dropboxAccountRepository: com.beatraxus.app.repository.DropboxAccountRepository,
+    private val onedriveAccountRepository: com.beatraxus.app.repository.OneDriveAccountRepository,
+    private val boxAccountRepository: com.beatraxus.app.repository.BoxAccountRepository,
+    private val nextcloudAccountRepository: com.beatraxus.app.repository.NextcloudAccountRepository,
+    private val smbConnectionRepository: com.beatraxus.app.repository.SmbConnectionRepository,
+    private val ftpConnectionRepository: com.beatraxus.app.repository.FtpConnectionRepository,
+    private val smbFolderBrowser: com.beatraxus.app.network.SmbFolderBrowser,
+    private val ftpFolderBrowser: com.beatraxus.app.network.FtpFolderBrowser
 ) {
     private val TAG = "CloudCacheManager"
     private val cacheDir = File(context.cacheDir, "cloud_cache").apply { mkdirs() }
@@ -63,6 +71,9 @@ class CloudCacheManager(
     ): MediaDataSource? {
         if (song.source == SongSource.TELEGRAM) {
             return TelegramFileDataSource(song, tdLib)
+        }
+        if (song.source == SongSource.SMB || song.source == SongSource.FTP) {
+            return NetworkFolderDataSource(song, isSeekPending)
         }
         if (!song.isCloud()) return null
         return StreamingCacheDataSource(song, isSeekPending)
@@ -353,26 +364,32 @@ class CloudCacheManager(
     }
 
     private suspend fun downloadSong(song: Song) {
-        if (!song.isCloud()) return
+        if (!song.isCloud() && song.source != SongSource.SMB && song.source != SongSource.FTP) return
         
         val tempFile = File(cacheDir, "${song.id}.tmp")
         val finalFile = File(cacheDir, "${song.id}.cache")
 
         try {
-            val url = resolveDownloadUrl(song) ?: return
-            
-            val totalSize = if (song.fileSizeBytes > 0) song.fileSizeBytes else {
-                // Fetch size if unknown
-                val request = Request.Builder().url(url).head().build()
-                okHttpClient.newCall(request).execute().use { it.header("Content-Length")?.toLong() ?: 0L }
-            }
-
-            if (totalSize <= 0) {
-                downloadSequential(url, song, tempFile)
-            } else if (totalSize < 1024 * 1024 * 2) { // Less than 2MB, just do sequential
-                downloadSequential(url, song, tempFile)
+            if (song.source == SongSource.SMB) {
+                downloadSmb(song, tempFile)
+            } else if (song.source == SongSource.FTP) {
+                downloadFtp(song, tempFile)
             } else {
-                downloadParallel(url, song, tempFile, totalSize)
+                val url = resolveDownloadUrl(song) ?: return
+                
+                val totalSize = if (song.fileSizeBytes > 0) song.fileSizeBytes else {
+                    // Fetch size if unknown
+                    val request = Request.Builder().url(url).head().build()
+                    okHttpClient.newCall(request).execute().use { it.header("Content-Length")?.toLong() ?: 0L }
+                }
+
+                if (totalSize <= 0) {
+                    downloadSequential(url, song, tempFile)
+                } else if (totalSize < 1024 * 1024 * 2) { // Less than 2MB, just do sequential
+                    downloadSequential(url, song, tempFile)
+                } else {
+                    downloadParallel(url, song, tempFile, totalSize)
+                }
             }
 
             if (tempFile.exists() && tempFile.length() > 0) {
@@ -387,16 +404,53 @@ class CloudCacheManager(
         }
     }
 
-    private suspend fun downloadSequential(url: String, song: Song, tempFile: File) {
-        val requestBuilder = Request.Builder().url(url)
-        if (song.source == SongSource.GDRIVE && song.driveAccountEmail != null) {
-            val email = song.driveAccountEmail
-            val token = tokenCache[email] ?: driveAccountRepository.getAccessToken(email)
-            if (token != null) {
-                requestBuilder.header("Authorization", "Bearer $token")
-                tokenCache[email] = token
+    private suspend fun downloadSmb(song: Song, tempFile: File) = withContext(Dispatchers.IO) {
+        val uri = song.uri
+        val host = uri.host ?: return@withContext
+        val shareName = uri.pathSegments.firstOrNull() ?: return@withContext
+        val filePath = uri.pathSegments.drop(1).joinToString("/")
+        
+        val connections = smbConnectionRepository.connections.first()
+        val server = connections.find { it.host == host && it.shareName == shareName } ?: return@withContext
+        
+        if (smbFolderBrowser.connect(server)) {
+            smbFolderBrowser.openStream(filePath)?.use { input ->
+                FileOutputStream(tempFile).use { output ->
+                    input.copyTo(output)
+                }
             }
         }
+    }
+
+    private suspend fun downloadFtp(song: Song, tempFile: File) = withContext(Dispatchers.IO) {
+        val uri = song.uri
+        val host = uri.host ?: return@withContext
+        val filePath = uri.path?.removePrefix("/") ?: return@withContext
+        val protocol = when (uri.scheme) {
+            "sftp" -> com.beatraxus.app.repository.FtpProtocol.SFTP
+            "ftps" -> com.beatraxus.app.repository.FtpProtocol.FTPS
+            else -> com.beatraxus.app.repository.FtpProtocol.FTP
+        }
+        
+        val connections = ftpConnectionRepository.connections.first()
+        val server = connections.find { it.host == host && it.protocol == protocol } ?: return@withContext
+        
+        if (ftpFolderBrowser.connect(server)) {
+            ftpFolderBrowser.openStream(filePath)?.use { input ->
+                FileOutputStream(tempFile).use { output ->
+                    input.copyTo(output)
+                }
+                if (protocol != com.beatraxus.app.repository.FtpProtocol.SFTP) {
+                    ftpFolderBrowser.completePendingCommand()
+                }
+            }
+        }
+    }
+
+    private suspend fun downloadSequential(url: String, song: Song, tempFile: File) {
+        val requestBuilder = Request.Builder().url(url)
+        val headers = getCloudHeaders(song)
+        headers.forEach { (k, v) -> requestBuilder.header(k, v) }
 
         withContext(Dispatchers.IO) {
             okHttpClient.newCall(requestBuilder.build()).execute().use { response ->
@@ -418,11 +472,7 @@ class CloudCacheManager(
     private suspend fun downloadParallel(url: String, song: Song, tempFile: File, totalSize: Long) = coroutineScope {
         val chunkSize = 2 * 1024 * 1024L // 2MB chunks
         val chunks = (totalSize + chunkSize - 1) / chunkSize
-        val email = song.driveAccountEmail
-        val token = if (song.source == SongSource.GDRIVE && email != null) {
-            tokenCache[email] ?: driveAccountRepository.getAccessToken(email)
-        } else null
-        if (token != null && email != null) tokenCache[email] = token
+        val headers = getCloudHeaders(song)
 
         RandomAccessFile(tempFile, "rw").use { raf ->
             raf.setLength(totalSize)
@@ -440,7 +490,7 @@ class CloudCacheManager(
                                 .url(url)
                                 .header("Range", "bytes=$start-$end")
                             
-                            if (token != null) requestBuilder.header("Authorization", "Bearer $token")
+                            headers.forEach { (k, v) -> requestBuilder.header(k, v) }
 
                             okHttpClient.newCall(requestBuilder.build()).execute().use { response ->
                                 if (response.isSuccessful) {
@@ -469,12 +519,75 @@ class CloudCacheManager(
         }
     }
 
+    suspend fun getCloudHeaders(song: Song): Map<String, String> {
+        val headers = mutableMapOf<String, String>()
+        headers["User-Agent"] = "Beatraxus/3.0"
+        
+        when (song.source) {
+            SongSource.GDRIVE -> {
+                val email = song.driveAccountEmail ?: return headers
+                val token = tokenCache[email] ?: driveAccountRepository.getAccessToken(email)
+                if (token != null) {
+                    headers["Authorization"] = "Bearer $token"
+                    tokenCache[email] = token
+                }
+            }
+            SongSource.DROPBOX -> {
+                val email = song.dropboxAccountEmail ?: return headers
+                val token = dropboxAccountRepository.getAccessToken(email)
+                if (token != null) {
+                    headers["Authorization"] = "Bearer $token"
+                }
+            }
+            SongSource.ONEDRIVE -> {
+                val email = song.onedriveAccountEmail ?: return headers
+                val token = onedriveAccountRepository.getAccessToken(email)
+                if (token != null) {
+                    headers["Authorization"] = "Bearer $token"
+                }
+            }
+            SongSource.BOX -> {
+                val email = song.boxAccountEmail ?: return headers
+                val token = boxAccountRepository.getAccessToken(email)
+                if (token != null) {
+                    headers["Authorization"] = "Bearer $token"
+                }
+            }
+            SongSource.NEXTCLOUD -> {
+                val email = song.nextcloudAccountEmail ?: return headers
+                val accounts = nextcloudAccountRepository.accounts.first()
+                val account = accounts.find { it.username == email }
+                if (account != null) {
+                    val auth = android.util.Base64.encodeToString(
+                        "${account.username}:${account.appPassword}".toByteArray(),
+                        android.util.Base64.NO_WRAP
+                    )
+                    headers["Authorization"] = "Basic $auth"
+                }
+            }
+            SongSource.SMB, SongSource.FTP -> {
+                // TODO: Add auth headers for SMB/FTP if needed
+            }
+            else -> {}
+        }
+        return headers
+    }
+
     private fun resolveDownloadUrl(song: Song): String? {
-        return if (song.source == SongSource.GDRIVE) {
-            if (song.driveFileId == null || song.driveAccountEmail == null) null
-            else "https://www.googleapis.com/drive/v3/files/${song.driveFileId}?alt=media"
-        } else {
-            song.uri.toString()
+        return when (song.source) {
+            SongSource.GDRIVE -> {
+                if (song.driveFileId == null || song.driveAccountEmail == null) null
+                else "https://www.googleapis.com/drive/v3/files/${song.driveFileId}?alt=media"
+            }
+            SongSource.DROPBOX -> {
+                // For Dropbox, we usually need to call the SDK or use a special URL
+                // Let's use the one from the scanner if it's there
+                song.uri.toString()
+            }
+            SongSource.ONEDRIVE -> "https://graph.microsoft.com/v1.0/me/drive/items/${song.onedriveFileId}/content"
+            SongSource.BOX -> "https://api.box.com/2.0/files/${song.boxFileId}/content"
+            SongSource.NEXTCLOUD, SongSource.SMB, SongSource.FTP -> song.uri.toString()
+            else -> song.uri.toString()
         }
     }
 
@@ -486,18 +599,13 @@ class CloudCacheManager(
         private var size: Long = -1L
         private var currentRafPath: String? = null
         private val lock = ReentrantLock()
-        private var accessToken: String? = null
-        private var tokenFetched = false
+        private var headers: Map<String, String>? = null
 
-        private fun getOrFetchToken(): String? {
-            if (isSeekPending()) return null
-            if (tokenFetched) return accessToken
-            val email = song.driveAccountEmail
-            if (song.source == SongSource.GDRIVE && email != null) {
-                accessToken = tokenCache[email] ?: runBlocking { driveAccountRepository.getAccessToken(email) }
-            }
-            tokenFetched = true
-            return accessToken
+        private suspend fun getOrFetchHeaders(): Map<String, String> {
+            if (isSeekPending()) return emptyMap()
+            if (headers != null) return headers!!
+            headers = getCloudHeaders(song)
+            return headers!!
         }
 
         override fun getSize(): Long = lock.withLock {
@@ -515,8 +623,8 @@ class CloudCacheManager(
             try {
                 val url = resolveDownloadUrl(song) ?: return -1
                 val requestBuilder = Request.Builder().url(url)
-                val token = getOrFetchToken()
-                if (token != null) requestBuilder.header("Authorization", "Bearer $token")
+                val h = runBlocking { getOrFetchHeaders() }
+                h.forEach { (k, v) -> requestBuilder.header(k, v) }
 
                 okHttpClient.newCall(requestBuilder.head().build()).execute().use { response ->
                     if (response.isSuccessful) {
@@ -593,8 +701,8 @@ class CloudCacheManager(
                     .url(url)
                     .header("Range", "bytes=$position-$endPos")
                 
-                val token = getOrFetchToken()
-                if (token != null) requestBuilder.header("Authorization", "Bearer $token")
+                val h = runBlocking { getOrFetchHeaders() }
+                h.forEach { (k, v) -> requestBuilder.header(k, v) }
 
                 okHttpClient.newCall(requestBuilder.build()).execute().use { response ->
                     if (!response.isSuccessful) return -1
@@ -783,4 +891,67 @@ class CloudCacheManager(
             currentRafPath = null
         }
     }
+
+    private inner class NetworkFolderDataSource(
+        private val song: Song,
+        private val isSeekPending: () -> Boolean
+    ) : MediaDataSource() {
+        private var raf: RandomAccessFile? = null
+        private var currentRafPath: String? = null
+        private val lock = ReentrantLock()
+
+        override fun getSize(): Long = song.fileSizeBytes
+
+        override fun readAt(position: Long, buffer: ByteArray, offset: Int, size: Int): Int = lock.withLock {
+            if (isSeekPending()) return -1
+            
+            getCachedFile(song)?.let { return readFromFile(it, position, buffer, offset, size) }
+
+            val tmpFile = File(cacheDir, "${song.id}.tmp")
+            if (!tmpFile.exists() && !activeDownloads.containsKey(song.id)) {
+                startDownload(song)
+            }
+
+            var attempts = 0
+            val maxWaitAttempts = if (position == 0L) 100 else 50
+            while (position + size > tmpFile.length() && activeDownloads.containsKey(song.id) && attempts < maxWaitAttempts) {
+                if (isSeekPending()) return -1
+                try {
+                    lock.unlock()
+                    Thread.sleep(20)
+                    lock.lock()
+                } catch (e: Exception) {
+                    Log.w(TAG, "Polling loop interrupted", e)
+                }
+                attempts++
+            }
+
+            if (tmpFile.exists() && position < tmpFile.length()) {
+                val available = (tmpFile.length() - position).toInt()
+                val toRead = if (available < size) available else size
+                if (toRead > 0) return readFromFile(tmpFile, position, buffer, offset, toRead)
+            }
+
+            return -1
+        }
+
+        private fun readFromFile(file: File, position: Long, buffer: ByteArray, offset: Int, size: Int): Int {
+            try {
+                if (raf == null || file.absolutePath != currentRafPath) {
+                    raf?.close()
+                    raf = RandomAccessFile(file, "r")
+                    currentRafPath = file.absolutePath
+                }
+                raf?.seek(position)
+                return raf?.read(buffer, offset, size) ?: -1
+            } catch (e: Exception) { return -1 }
+        }
+
+        override fun close() = lock.withLock {
+            try { raf?.close() } catch (e: Exception) {}
+            raf = null
+            currentRafPath = null
+        }
+    }
 }
+

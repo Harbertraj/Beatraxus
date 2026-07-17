@@ -7,6 +7,7 @@ import android.util.Log
 import com.beatraxus.app.model.Song
 import com.beatraxus.app.model.SongSource
 import com.beatraxus.app.telegram.TdLibManager
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.drinkless.tdlib.TdApi
 import java.io.InputStream
@@ -240,8 +241,46 @@ object LocalCastServer {
                                 request.executeMediaAsInputStream()
                             } else null
                         }
-                        SongSource.WEB -> {
+                        SongSource.WEB, SongSource.DROPBOX, SongSource.ONEDRIVE, SongSource.BOX, SongSource.NEXTCLOUD, SongSource.SMB, SongSource.FTP -> {
                             val connection = java.net.URL(song.uri.toString()).openConnection()
+                            
+                            // Add headers if available
+                            if (song.source != SongSource.WEB) {
+                                runBlocking {
+                                    val headers = when (song.source) {
+                                        SongSource.DROPBOX -> {
+                                            val repo = com.beatraxus.app.repository.DropboxAccountRepository(context)
+                                            val token = repo.getAccessToken(song.dropboxAccountEmail ?: "")
+                                            if (token != null) mapOf("Authorization" to "Bearer $token") else emptyMap()
+                                        }
+                                        SongSource.ONEDRIVE -> {
+                                            val repo = com.beatraxus.app.repository.OneDriveAccountRepository(context)
+                                            val token = repo.getAccessToken(song.onedriveAccountEmail ?: "")
+                                            if (token != null) mapOf("Authorization" to "Bearer $token") else emptyMap()
+                                        }
+                                        SongSource.BOX -> {
+                                            val repo = com.beatraxus.app.repository.BoxAccountRepository(context)
+                                            val token = repo.getAccessToken(song.boxAccountEmail ?: "")
+                                            if (token != null) mapOf("Authorization" to "Bearer $token") else emptyMap()
+                                        }
+                                        SongSource.NEXTCLOUD -> {
+                                            val repo = com.beatraxus.app.repository.NextcloudAccountRepository(context)
+                                            val accounts = repo.accounts.first()
+                                            val account = accounts.find { it.username == song.nextcloudAccountEmail }
+                                            if (account != null) {
+                                                val auth = android.util.Base64.encodeToString(
+                                                    "${account.username}:${account.appPassword}".toByteArray(),
+                                                    android.util.Base64.NO_WRAP
+                                                )
+                                                mapOf("Authorization" to "Basic $auth")
+                                            } else emptyMap()
+                                        }
+                                        else -> emptyMap()
+                                    }
+                                    headers.forEach { (k, v) -> connection.setRequestProperty(k, v) }
+                                }
+                            }
+
                             if (rangeHeader != null) {
                                 connection.setRequestProperty("Range", "bytes=$startByte-${if (endByte != -1L) endByte else ""}")
                             }

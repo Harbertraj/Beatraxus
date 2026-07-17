@@ -17,7 +17,14 @@ class CloudLibraryRepository(
     private val allAnalysis = aiAnalysisDao.getAllAnalysisFlow()
 
     override fun getSongs(): Flow<List<Song>> = combine(allSongs, selectedEmail) { songs, email ->
-        songs.filter { it.isCloud() && (email == null || it.driveAccountEmail == email) }
+        songs.filter { song ->
+            song.isCloud() && (email == null || 
+                song.driveAccountEmail == email || 
+                song.dropboxAccountEmail == email || 
+                song.onedriveAccountEmail == email || 
+                song.boxAccountEmail == email || 
+                song.nextcloudAccountEmail == email)
+        }
     }
 
     override fun getMoods(): Flow<List<Triple<String, String, Uri?>>> = 
