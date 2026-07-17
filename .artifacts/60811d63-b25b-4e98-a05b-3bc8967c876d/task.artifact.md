@@ -1,0 +1,10 @@
+- [x] Update `AudioPlaybackService` to handle `isAutoAdvance` flag
+    - [x] Update `performTrackChange` signature and implementation
+    - [x] Update `next()` and `previous()`
+    - [x] Update `handleCompletion()` to pass `isAutoAdvance = true`
+- [x] Improve `AudioEngine` gapless promotion logic
+    - [x] Update `renderLoop` to promote sessions during probing
+    - [x] Ensure `setStartFrameOffset` and position syncing are handled for early promotion
+- [ ] Verify changes
+    - [ ] Manual check of auto-advance gap
+    - [ ] Manual check of button debounce

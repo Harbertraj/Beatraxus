@@ -413,10 +413,10 @@ class AudioPlaybackService : Service() {
                 val song = playlist.getOrNull(currentIndex)
                 if (song != null) engine.play(song)
             }
-            RepeatMode.ALL -> next()
+            RepeatMode.ALL -> next(isAutoAdvance = true)
             RepeatMode.OFF -> {
                 if (playlist.isNotEmpty() && currentIndex < playlist.size - 1) {
-                    next()
+                    next(isAutoAdvance = true)
                 } else {
                     engine.stop()
                     abandonAudioFocus()
@@ -626,15 +626,15 @@ class AudioPlaybackService : Service() {
         }
     }
 
-    fun next() {
-        performTrackChange(1)
+    fun next(isAutoAdvance: Boolean = false) {
+        performTrackChange(1, isAutoAdvance)
     }
 
-    fun previous() {
-        performTrackChange(-1)
+    fun previous(isAutoAdvance: Boolean = false) {
+        performTrackChange(-1, isAutoAdvance)
     }
     
-    private fun performTrackChange(delta: Int) {
+    private fun performTrackChange(delta: Int, isAutoAdvance: Boolean = false) {
         if (playlist.isEmpty()) return
         
         playbackJob?.cancel()
@@ -655,7 +655,9 @@ class AudioPlaybackService : Service() {
         saveState()
         
         playbackJob = serviceScope.launch {
-            delay(150)
+            if (!isAutoAdvance) {
+                delay(150)
+            }
             if (isActive && requestAudioFocus()) {
                 engine.play(nextSong)
             }

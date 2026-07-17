@@ -54,6 +54,11 @@
 }
 
 # Retrofit Kotlin Coroutine Support
+-keep,allowobfuscation,allowshrinking class kotlin.coroutines.Continuation
+-if interface * { @retrofit2.http.* <methods>; }
+-keep,allowobfuscation interface <1>
+-dontwarn retrofit2.KotlinExtensions
+-dontwarn retrofit2.KotlinExtensions$*
 -keepnames class kotlinx.coroutines.internal.MainDispatcherFactory {}
 -keepnames class kotlinx.coroutines.CoroutineExceptionHandler {}
 -keepclassmembers class kotlinx.coroutines.** {
@@ -224,3 +229,70 @@
 
 # Crypto / EdDSA
 -dontwarn sun.security.x509.**
+
+# ══════════════════════════════════════════════════════════════════════════════
+# DROPBOX SDK
+# ══════════════════════════════════════════════════════════════════════════════
+-keep class com.dropbox.core.** { *; }
+-keepclassmembers class com.dropbox.core.** { *; }
+-dontwarn com.dropbox.core.**
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MICROSOFT MSAL + GRAPH (OneDrive)
+# ══════════════════════════════════════════════════════════════════════════════
+-keep class com.microsoft.identity.client.** { *; }
+-keep class com.microsoft.identity.common.** { *; }
+-keep class com.microsoft.graph.** { *; }
+-keep interface com.microsoft.graph.** { *; }
+-keepclassmembers class com.microsoft.identity.client.** { *; }
+-keepattributes *Annotation*
+-dontwarn com.microsoft.identity.**
+-dontwarn com.microsoft.graph.**
+# MSAL reads its config from res/raw/msal_config.json — keep the class it deserializes into
+-keep class com.microsoft.identity.client.PublicClientApplicationConfiguration { *; }
+
+# ══════════════════════════════════════════════════════════════════════════════
+# BOX SDK
+# ══════════════════════════════════════════════════════════════════════════════
+-keep class com.box.androidsdk.content.** { *; }
+-keep class com.box.androidsdk.content.models.** { *; }
+-keepclassmembers class com.box.androidsdk.content.models.** { *; }
+-dontwarn com.box.androidsdk.**
+# Box models are Gson-parsed by field name via BoxJsonObject reflection
+-keepclassmembers class * extends com.box.androidsdk.content.models.BoxJsonObject { *; }
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SARDINE (Nextcloud / WebDAV)
+# ══════════════════════════════════════════════════════════════════════════════
+-keep class com.thegrizzlylabs.sardineandroid.** { *; }
+-dontwarn com.thegrizzlylabs.sardineandroid.**
+# Sardine parses WebDAV XML (PROPFIND) via JAXB-style annotated model classes — must
+# survive both renaming and member stripping or multistatus parsing returns empty results
+-keepclassmembers class com.thegrizzlylabs.sardineandroid.model.** { *; }
+-dontwarn javax.xml.bind.**
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SMBJ (SMB/NAS)
+# ══════════════════════════════════════════════════════════════════════════════
+-keep class com.hierynomus.smbj.** { *; }
+-keep class com.hierynomus.mssmb2.** { *; }
+-keep class com.hierynomus.mserref.** { *; }
+-keep class com.hierynomus.msdtyp.** { *; }
+-keep class com.hierynomus.msfscc.** { *; }
+-keep class com.hierynomus.protocol.** { *; }
+-keep class com.hierynomus.security.** { *; }
+-keep class com.hierynomus.asn1.** { *; }
+-dontwarn com.hierynomus.**
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SSHJ (SFTP) + COMMONS-NET (FTP/FTPS)
+# ══════════════════════════════════════════════════════════════════════════════
+-keep class net.schmizz.sshj.** { *; }
+-keep class net.schmizz.concurrent.** { *; }
+-dontwarn net.schmizz.**
+-keep class org.apache.commons.net.** { *; }
+-dontwarn org.apache.commons.net.**
+# sshj/smbj both use Bouncy Castle for crypto — keep it or key exchange silently fails
+-keep class org.bouncycastle.** { *; }
+-dontwarn org.bouncycastle.**
+-keepattributes InnerClasses
