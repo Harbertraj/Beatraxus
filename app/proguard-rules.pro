@@ -272,6 +272,21 @@
 -dontwarn javax.xml.bind.**
 
 # ══════════════════════════════════════════════════════════════════════════════
+# MBASSY (event bus used internally by smbj's SMBClient)
+# ══════════════════════════════════════════════════════════════════════════════
+# mbassy scans @Handler methods via reflection and instantiates internal
+# Subscription wrapper classes through a specific constructor signature.
+# Without keeping the whole package (including constructors), R8 renames/strips
+# that constructor and subscribe() throws MessageBusException at runtime.
+-keep class net.engio.mbassy.** { *; }
+-keepclassmembers class net.engio.mbassy.** { *; }
+-keepclasseswithmembers class net.engio.mbassy.** {
+    <init>(...);
+}
+-keepattributes RuntimeVisibleAnnotations,RuntimeInvisibleAnnotations
+-dontwarn net.engio.mbassy.**
+
+# ══════════════════════════════════════════════════════════════════════════════
 # SMBJ (SMB/NAS)
 # ══════════════════════════════════════════════════════════════════════════════
 -keep class com.hierynomus.smbj.** { *; }
