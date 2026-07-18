@@ -280,7 +280,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         val parentPath = state.currentFolderPath
         if (parentPath == null) {
             songs.groupBy { it.folder }
-                .map { (path, list) -> 
+                .map { (path, list) ->
                     val firstSong = list.first()
                     if (firstSong.source == com.beatraxus.app.model.SongSource.GDRIVE) {
                         Triple(path, "GDRIVE", firstSong.albumArtUri)
@@ -302,8 +302,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 val yearStr = if (year == 0) "Unknown" else year.toString()
                 Triple(yearStr, "${list.size} songs", list.first().albumArtUri)
             }
-            .sortedWith(compareByDescending<Triple<String, String, Uri?>> { 
-                if (it.first == "Unknown") "0000" else it.first 
+            .sortedWith(compareByDescending<Triple<String, String, Uri?>> {
+                if (it.first == "Unknown") "0000" else it.first
             })
     }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
@@ -332,22 +332,22 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     val searchResults = combine(filteredSongsByMode, debouncedSearchQuery) { all, query ->
         if (query.isEmpty()) return@combine emptyList<Any>()
         val list = mutableListOf<Any>()
-        
+
         val matchedSongs = all.filter { it.title.contains(query, ignoreCase = true) }
         if (matchedSongs.isNotEmpty()) {
             list.add("Songs")
             list.addAll(matchedSongs.take(20))
         }
-        
+
         val matchedAlbums = all.filter { it.album.contains(query, ignoreCase = true) }
             .distinctBy { it.album }
         if (matchedAlbums.isNotEmpty()) {
             list.add("Albums")
-            matchedAlbums.take(10).forEach { 
-                list.add(Triple(it.album, it.artist, it.albumArtUri)) 
+            matchedAlbums.take(10).forEach {
+                list.add(Triple(it.album, it.artist, it.albumArtUri))
             }
         }
-        
+
         val matchedArtists = all.filter { it.artist.contains(query, ignoreCase = true) }
             .distinctBy { it.artist }
         if (matchedArtists.isNotEmpty()) {
@@ -389,9 +389,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     .any { ArtistNameUtils.normalizeKey(it) == ArtistNameUtils.normalizeKey(target) }
             }
             LibraryView.FOLDER_DETAIL -> all.filter { it.folder == state.currentFolderPath }
-            LibraryView.YEAR_DETAIL -> all.filter { 
+            LibraryView.YEAR_DETAIL -> all.filter {
                 val yearStr = if (it.year == 0) "Unknown" else it.year.toString()
-                yearStr == state.selectedItemName 
+                yearStr == state.selectedItemName
             }
             LibraryView.GENRE_DETAIL -> all.filter { it.genre == state.selectedItemName }
             LibraryView.PLAYLISTS -> emptyList()
@@ -418,12 +418,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             }
             else -> emptyList()
         }
-        
+
         if (debouncedQuery.isNotEmpty()) {
             filtered = filtered.filter {
                 it.title.contains(debouncedQuery, ignoreCase = true) ||
-                    it.artist.contains(debouncedQuery, ignoreCase = true) ||
-                    it.album.contains(debouncedQuery, ignoreCase = true)
+                        it.artist.contains(debouncedQuery, ignoreCase = true) ||
+                        it.album.contains(debouncedQuery, ignoreCase = true)
             }
         }
 
@@ -472,7 +472,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     val analysis = aiAnalysisEngine.analyzeSong(song)
                     if (analysis != null) {
                         aiAnalysisDao.insertAnalysis(analysis)
-                        
+
                         // If AI found a better genre, update the song in DB and Memory
                         if (analysis.genre.isNotEmpty() && analysis.genre != song.genre) {
                             val updatedSong = song.copy(genre = analysis.genre)
@@ -531,11 +531,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         // DSP settings
         viewModelScope.launch {
             dspPreferences.dspConfig.collect { config ->
-                _uiState.update { 
+                _uiState.update {
                     it.copy(dsp = it.dsp.copy(
                         config = config,
                         activeOutputDeviceLabel = dspPreferences.getCurrentDeviceLabel()
-                    )) 
+                    ))
                 }
                 service?.updateDspConfig(config)
             }
@@ -625,8 +625,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 val nextcloud = args[4] as List<com.beatraxus.app.repository.NextcloudAccount>
                 val tg = args[5] as List<com.beatraxus.app.model.TelegramChannel>
 
-                drive.isNotEmpty() || dropbox.isNotEmpty() || onedrive.isNotEmpty() || 
-                box.isNotEmpty() || nextcloud.isNotEmpty() || tg.isNotEmpty()
+                drive.isNotEmpty() || dropbox.isNotEmpty() || onedrive.isNotEmpty() ||
+                        box.isNotEmpty() || nextcloud.isNotEmpty() || tg.isNotEmpty()
             }
                 .distinctUntilChanged()
                 .drop(1) // Skip initial value to avoid switching on app start if accounts already exist
@@ -640,7 +640,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         // Cloud Library Counts (Reactive to selection)
         viewModelScope.launch(Dispatchers.Default) {
             combine(
-                allSongs, 
+                allSongs,
                 _uiState.map { it.selectedCloudEmail }.distinctUntilChanged(),
                 _uiState.map { it.selectedTelegramChannelUrl }.distinctUntilChanged()
             ) { songs, email, telegramUrl ->
@@ -705,12 +705,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         val pm = getApplication<Application>().getSystemService(PowerManager::class.java)
         val packageName = getApplication<Application>().packageName
         val ignoring = pm.isIgnoringBatteryOptimizations(packageName)
-        
+
         val manufacturer = android.os.Build.MANUFACTURER.lowercase()
-        val isOem = manufacturer.contains("oppo") || 
-                    manufacturer.contains("realme") || 
-                    manufacturer.contains("oneplus") || 
-                    manufacturer.contains("oplus")
+        val isOem = manufacturer.contains("oppo") ||
+                manufacturer.contains("realme") ||
+                manufacturer.contains("oneplus") ||
+                manufacturer.contains("oplus")
 
         _uiState.update { it.copy(
             isIgnoringBatteryOptimizations = ignoring,
@@ -725,7 +725,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         getApplication<Application>().startActivity(intent)
-        
+
         // Refresh state after a delay as the user might have accepted
         viewModelScope.launch {
             delay(2000)
@@ -762,7 +762,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun onDeleteSuccess() {
         val ids = pendingDeleteIds
         if (ids.isEmpty()) return
-        
+
         viewModelScope.launch {
             songDao.deleteSongsByIds(ids)
             _songs.update { currentSongs ->
@@ -770,7 +770,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             }
             pendingDeleteIds = emptyList()
             setMultiSelectMode(false)
-            
+
             // If the current song was deleted, skip it
             if (ids.contains(_uiState.value.currentSong?.id)) {
                 skipToNext()
@@ -787,7 +787,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 prefs.edit().putBoolean("use_original_quality_art", enabled).commit()
             }
             _uiState.update { it.copy(useOriginalQualityArt = enabled) }
-            
+
             // 2. Clear cached album art so it can be re-extracted with the new quality setting
             withContext(Dispatchers.IO) {
                 try {
@@ -799,7 +799,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     Log.w(TAG, "Failed to clear art cache", e)
                 }
             }
-            
+
             // 3. Force a full scan to re-cache images with new quality setting
             startFullScan()
         }
@@ -811,7 +811,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun loadLibrary() {
         if (libraryLoadJob?.isActive == true) return
-        
+
         libraryLoadJob = viewModelScope.launch {
             _uiState.update { it.copy(permissionDenied = false, isLoadingLibrary = true) }
             try {
@@ -861,7 +861,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     if (dbSongs.isNotEmpty()) {
                         setFirstRunComplete()
                     } else {
-                        _uiState.update { 
+                        _uiState.update {
                             if (it.isScanning) it.copy(isLoadingLibrary = false)
                             else it.copy(isLoadingLibrary = false, showScanOptions = true)
                         }
@@ -873,7 +873,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     val sortedSongs = withContext(Dispatchers.Default) {
                         dbSongs.sortedBy { it.title }
                     }
-                    
+
                     // Check if cached album art still exists. If not, we need a refresh.
                     val cacheWiped = dbSongs.any { song ->
                         val artUri = song.albumArtUri
@@ -888,7 +888,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                             !exists
                         } else false
                     }
-                    
+
                     _songs.value = sortedSongs
 
                     // Restore last queue and playing song
@@ -911,14 +911,14 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                                 while (service == null) {
                                     delay(200)
                                 }
-                                
+
                                 // Ensure currently playing ID is set for cache exclusion BEFORE restore
                                 if (lastIndex in restoredPlaylist.indices) {
                                     cloudCacheManager.setCurrentlyPlayingId(restoredPlaylist[lastIndex].id)
                                 } else if (lastSongId != null) {
                                     cloudCacheManager.setCurrentlyPlayingId(lastSongId)
                                 }
-                                
+
                                 service?.restorePlaylist(restoredPlaylist, restoredOriginalPlaylist, lastIndex, lastPos)
                                 _progressMs.value = lastPos
                             }
@@ -936,12 +936,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                             }
                         }
                     }
-                    
+
                     if (cacheWiped) {
                         startFullScan()
                         return@launch
                     }
-                    
+
                     // After loading from DB, we stop here to avoid automatic "sync" (quickScan) on startup
                     _uiState.update { it.copy(isLoadingLibrary = false) }
                     return@launch
@@ -968,92 +968,92 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         serviceObserversJob = viewModelScope.launch {
             launch {
                 svc.audioStateFlow.collect { audioState ->
-                        _uiState.update {
-                            // Only update if the engine is reporting for the same song we think is current
-                            if (audioState.songId != null && audioState.songId != it.currentSong?.id) {
-                                return@update it
-                            }
-                            it.copy(
-                                inputSampleRate = audioState.sampleRate,
-                                outputSampleRate = audioState.outputSampleRate,
-                                outputBitDepth = audioState.outputBitDepth,
-                                bitDepth = if (audioState.bitDepth > 0) audioState.bitDepth else it.currentSong?.bitDepth ?: 16,
-                                bitrate = if (audioState.bitrate > 0) audioState.bitrate else it.currentSong?.bitrate ?: 0,
-                                format = audioState.codec.ifBlank { it.currentSong?.format ?: "" },
-                                outputDevice = audioState.outputDevice,
-                                pipelineOutputPath = audioState.outputPath,
-                                pipelineDvcEnabled = audioState.dynamicVolumeControlActive,
-                                pipelineResamplerEnabled = audioState.resamplerActive,
-                                pipelineResamplerType = audioState.resamplerType,
-                                pipelineActiveEffects = audioState.activeEffects,
-                                pipelineSummary = audioState.pipelineSummary,
-                                autoEqProfileName = audioState.autoEqProfileName,
-                                dsp = it.dsp.copy(
-                                    currentHeadroomDb = audioState.headroomDb,
-                                    currentLatencyFrames = audioState.latencyFrames,
-                                    currentDitherType = audioState.ditherType,
-                                    currentEqMode = audioState.eqMode
-                                )
-                            )
+                    _uiState.update {
+                        // Only update if the engine is reporting for the same song we think is current
+                        if (audioState.songId != null && audioState.songId != it.currentSong?.id) {
+                            return@update it
                         }
+                        it.copy(
+                            inputSampleRate = audioState.sampleRate,
+                            outputSampleRate = audioState.outputSampleRate,
+                            outputBitDepth = audioState.outputBitDepth,
+                            bitDepth = if (audioState.bitDepth > 0) audioState.bitDepth else it.currentSong?.bitDepth ?: 16,
+                            bitrate = if (audioState.bitrate > 0) audioState.bitrate else it.currentSong?.bitrate ?: 0,
+                            format = audioState.codec.ifBlank { it.currentSong?.format ?: "" },
+                            outputDevice = audioState.outputDevice,
+                            pipelineOutputPath = audioState.outputPath,
+                            pipelineDvcEnabled = audioState.dynamicVolumeControlActive,
+                            pipelineResamplerEnabled = audioState.resamplerActive,
+                            pipelineResamplerType = audioState.resamplerType,
+                            pipelineActiveEffects = audioState.activeEffects,
+                            pipelineSummary = audioState.pipelineSummary,
+                            autoEqProfileName = audioState.autoEqProfileName,
+                            dsp = it.dsp.copy(
+                                currentHeadroomDb = audioState.headroomDb,
+                                currentLatencyFrames = audioState.latencyFrames,
+                                currentDitherType = audioState.ditherType,
+                                currentEqMode = audioState.eqMode
+                            )
+                        )
                     }
+                }
             }
             launch {
                 svc.playbackStateFlow.collect { pbState ->
-                        val prevSongId = _uiState.value.currentSong?.id
-                        val nextSongId = pbState.currentSong?.id
-                        val resetProgress = nextSongId == null || nextSongId != prevSongId
+                    val prevSongId = _uiState.value.currentSong?.id
+                    val nextSongId = pbState.currentSong?.id
+                    val resetProgress = nextSongId == null || nextSongId != prevSongId
 
-                        // Reset progress BEFORE updating UI state to avoid race condition
-                        if (resetProgress) {
-                            _progressMs.value = 0L
+                    // Reset progress BEFORE updating UI state to avoid race condition
+                    if (resetProgress) {
+                        _progressMs.value = 0L
+                    }
+
+                    _uiState.update {
+                        val sameSong = it.currentSong?.id == pbState.currentSong?.id
+                        if (!sameSong) {
+                            cloudCacheManager.setCurrentlyPlayingId(pbState.currentSong?.id)
                         }
 
-                        _uiState.update {
-                            val sameSong = it.currentSong?.id == pbState.currentSong?.id
-                            if (!sameSong) {
-                                cloudCacheManager.setCurrentlyPlayingId(pbState.currentSong?.id)
+                        it.copy(
+                            isPlaying = pbState.isPlaying,
+                            currentSong = pbState.currentSong,
+                            shuffleMode = pbState.shuffleMode,
+                            repeatMode = pbState.repeatMode.ordinal,
+                            // If it's a new song, we can't trust 'it.bitrate' etc. yet as they might belong to the previous song.
+                            // But if the engine has already updated for the new song, we should keep it.
+                            bitrate = if (sameSong) (if (it.bitrate > 0) it.bitrate else pbState.currentSong?.bitrate ?: 0) else pbState.currentSong?.bitrate ?: 0,
+                            format = if (sameSong) it.format.ifBlank { pbState.currentSong?.format ?: "" } else pbState.currentSong?.format ?: "",
+                            bitDepth = if (sameSong) it.bitDepth else pbState.currentSong?.bitDepth ?: 16,
+                            inputSampleRate = if (sameSong) it.inputSampleRate else pbState.currentSong?.sampleRateHz ?: 44100
+                        )
+                    }
+
+                    if (resetProgress) {
+                        if (pbState.currentSong != null) {
+                            updateRecentlyPlayed(pbState.currentSong.id)
+                            handleSongChangeForSleepTimer(pbState.currentSong)
+                            fetchOnlineInfo(pbState.currentSong)
+                            loadLyrics(pbState.currentSong)
+                            // Ensure preloading is triggered on song change
+                            service?.let { svc ->
+                                preloadUpcomingLyrics(svc.getUpcomingSongs().take(15))
                             }
-                            
-                            it.copy(
-                                isPlaying = pbState.isPlaying,
-                                currentSong = pbState.currentSong,
-                                shuffleMode = pbState.shuffleMode,
-                                repeatMode = pbState.repeatMode.ordinal,
-                                // If it's a new song, we can't trust 'it.bitrate' etc. yet as they might belong to the previous song.
-                                // But if the engine has already updated for the new song, we should keep it.
-                                bitrate = if (sameSong) (if (it.bitrate > 0) it.bitrate else pbState.currentSong?.bitrate ?: 0) else pbState.currentSong?.bitrate ?: 0,
-                                format = if (sameSong) it.format.ifBlank { pbState.currentSong?.format ?: "" } else pbState.currentSong?.format ?: "",
-                                bitDepth = if (sameSong) it.bitDepth else pbState.currentSong?.bitDepth ?: 16,
-                                inputSampleRate = if (sameSong) it.inputSampleRate else pbState.currentSong?.sampleRateHz ?: 44100
-                            )
-                        }
-
-                        if (resetProgress) {
-                            if (pbState.currentSong != null) {
-                                updateRecentlyPlayed(pbState.currentSong.id)
-                                handleSongChangeForSleepTimer(pbState.currentSong)
-                                fetchOnlineInfo(pbState.currentSong)
-                                loadLyrics(pbState.currentSong)
-                                // Ensure preloading is triggered on song change
-                                service?.let { svc ->
-                                    preloadUpcomingLyrics(svc.getUpcomingSongs().take(15))
-                                }
-                            } else {
-                                _uiState.update {
-                                    it.copy(
-                                        lyrics = emptyList(), 
-                                        lyricsCurrentIndex = -1, 
-                                        lyricsCurrentSongId = null,
-                                        lastFmTrackInfo = null,
-                                        lastFmArtistInfo = null,
-                                        lastFmAlbumInfo = null
-                                    )
-                                }
+                        } else {
+                            _uiState.update {
+                                it.copy(
+                                    lyrics = emptyList(),
+                                    lyricsCurrentIndex = -1,
+                                    lyricsCurrentSongId = null,
+                                    lastFmTrackInfo = null,
+                                    lastFmArtistInfo = null,
+                                    lastFmAlbumInfo = null
+                                )
                             }
                         }
+                    }
 
-                        if (pbState.isPlaying) startProgressPolling() else stopProgressPolling()
+                    if (pbState.isPlaying) startProgressPolling() else stopProgressPolling()
                 }
             }
             launch {
@@ -1142,9 +1142,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         val svc = service ?: return
         val networkType = _uiState.value.metadataNetworkType
         val context = getApplication<Application>()
-        
-        if (networkType == com.beatraxus.app.model.NetworkType.ASK_MOBILE && 
-            com.beatraxus.app.util.NetworkUtils.isMobileConnected(context) && 
+
+        if (networkType == com.beatraxus.app.model.NetworkType.ASK_MOBILE &&
+            com.beatraxus.app.util.NetworkUtils.isMobileConnected(context) &&
             !com.beatraxus.app.util.NetworkUtils.isWifiConnected(context)) {
             _uiState.update { it.copy(driveErrorMessage = "Confirmation needed: Use mobile data for sync?") }
             return
@@ -1156,7 +1156,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
 
         _uiState.update { it.copy(isCloudScanning = true, scanProgress = 0f, driveErrorMessage = "Starting Drive scan...", showSyncStatusOnHome = true, isSyncFinishedRecently = false) }
-        
+
         svc.runDriveScan(
             email = email,
             allowedFormats = _uiState.value.gdriveAllowedFormats,
@@ -1260,9 +1260,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun scanDropboxAccount(email: String) {
         val svc = service ?: return
         val account = _uiState.value.dropboxAccounts.find { it.email == email } ?: return
-        
+
         _uiState.update { it.copy(isCloudScanning = true, scanProgress = 0f, showSyncStatusOnHome = true, isSyncFinishedRecently = false) }
-        
+
         svc.runDropboxScan(
             account = account,
             allowedFormats = _uiState.value.gdriveAllowedFormats, // Reuse GDrive formats for now
@@ -1334,9 +1334,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun scanOneDriveAccount(email: String) {
         val svc = service ?: return
         val account = _uiState.value.onedriveAccounts.find { it.email == email } ?: return
-        
+
         _uiState.update { it.copy(isCloudScanning = true, scanProgress = 0f, showSyncStatusOnHome = true, isSyncFinishedRecently = false) }
-        
+
         // We need to pass the client to the service or have the service manage it.
         // For simplicity, let's assume service handles its own auth client or we pass tokens.
         svc.runOneDriveScan(
@@ -1381,7 +1381,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             if (it.isSuccess) {
                 viewModelScope.launch {
                     try {
-                        val user = withContext(Dispatchers.IO) { 
+                        val user = withContext(Dispatchers.IO) {
                             com.box.androidsdk.content.BoxApiUser(session).currentUserInfoRequest.send()
                         }
                         val boxUser = user as com.box.androidsdk.content.models.BoxUser
@@ -1407,9 +1407,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun scanBoxAccount(email: String) {
         val svc = service ?: return
         val account = _uiState.value.boxAccounts.find { it.email == email } ?: return
-        
+
         _uiState.update { it.copy(isCloudScanning = true, scanProgress = 0f, showSyncStatusOnHome = true, isSyncFinishedRecently = false) }
-        
+
         svc.runBoxScan(
             account = account,
             allowedFormats = _uiState.value.gdriveAllowedFormats,
@@ -1452,9 +1452,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun scanNextcloudAccount(serverUrl: String, username: String) {
         val svc = service ?: return
         val account = _uiState.value.nextcloudAccounts.find { it.serverUrl == serverUrl && it.username == username } ?: return
-        
+
         _uiState.update { it.copy(isCloudScanning = true, scanProgress = 0f, showSyncStatusOnHome = true, isSyncFinishedRecently = false) }
-        
+
         svc.runNextcloudScan(
             account = account,
             allowedFormats = _uiState.value.gdriveAllowedFormats,
@@ -1619,7 +1619,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 if (hasChanges) {
                     val cloudSongs = _songs.value.filter { it.source != SongSource.LOCAL }
                     _songs.value = (results + cloudSongs).sortedBy { it.title }
-                    
+
                     if (newSongs.isNotEmpty()) {
                         viewModelScope.launch(Dispatchers.Default) {
                             val toAnalyze = if (_uiState.value.isFirstRun) newSongs.take(20) else newSongs
@@ -1636,15 +1636,15 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 }
 
                 updateLibraryCounts(results)
-                
+
                 _uiState.update { it.copy(
-                    isLoadingLibrary = false, 
+                    isLoadingLibrary = false,
                     isScanning = false,
                     errorMessage = message,
                     musicFolders = musicRepository.getMusicFolders(),
                     blockedFolders = musicRepository.getBlockedFolders()
                 ) }
-                
+
                 viewModelScope.launch {
                     delay(2000)
                     _uiState.update { it.copy(errorMessage = null) }
@@ -1658,9 +1658,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun startFullScan() {
         val svc = service ?: return
-        
+
         _uiState.update { it.copy(isScanning = true, isFullScanning = true, scanProgress = 0f, scanCount = 0, showScanOptions = false, errorMessage = null) }
-        
+
         svc.runLocalScan(
             fullScan = true,
             currentSongs = _songs.value,
@@ -1675,7 +1675,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             onComplete = { results, _, _, message, _ ->
                 val cloudSongs = _songs.value.filter { it.source != SongSource.LOCAL }
                 _songs.value = (results + cloudSongs).sortedBy { it.title }
-                
+
                 // AI Analysis for all songs in full scan
                 viewModelScope.launch(Dispatchers.Default) {
                     results.forEachIndexed { index, song ->
@@ -1687,7 +1687,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 }
 
                 updateLibraryCounts(results)
-                
+
                 _uiState.update {
                     it.copy(
                         isScanning = false,
@@ -1718,11 +1718,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             _uiState.update { it.copy(errorMessage = "No folders added to scan") }
             return
         }
-        
+
         val svc = service ?: return
-        
+
         _uiState.update { it.copy(isScanning = true, scanProgress = 0f, scanCount = 0, albumCount = 0, artistCount = 0, showScanOptions = false, errorMessage = null) }
-        
+
         svc.runFolderScan(
             folders = folders,
             onProgress = { progress, count, albums, artists ->
@@ -1738,7 +1738,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 val newLocalIds = results.map { it.id }.toSet()
                 val unchanged = currentSongs.filter { it.id !in newLocalIds }
                 _songs.value = (unchanged + results).sortedBy { it.title }
-                
+
                 // AI Analysis for added folders scan
                 viewModelScope.launch(Dispatchers.Default) {
                     results.forEachIndexed { index, song ->
@@ -1751,7 +1751,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
                 updateLibraryCounts(_songs.value.filter { it.source == SongSource.LOCAL })
                 _uiState.update { it.copy(
-                    isScanning = false, 
+                    isScanning = false,
                     scanProgress = 1.0f,
                     errorMessage = message
                 ) }
@@ -1759,7 +1759,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 if (_uiState.value.isFirstRun) {
                     setFirstRunComplete()
                 }
-                
+
                 viewModelScope.launch {
                     delay(2000)
                     _uiState.update { it.copy(errorMessage = null) }
@@ -1780,7 +1780,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun playSong(song: Song) {
         val list = songs.value
         val index = list.indexOfFirst { it.id == song.id }
-        
+
         // Save song ID immediately to prefs so it persists even if playback fails/service isn't ready
         prefs?.edit()?.putString("last_song_id", song.id)?.apply()
 
@@ -1808,7 +1808,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             // Try to find if this song is already in our loaded library
             val existing = allSongs.value.find { it.uri.toString() == uri.toString() }
-            
+
             if (existing != null) {
                 playSong(existing)
             } else {
@@ -1824,10 +1824,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     sampleRateHz = 44100,
                     source = SongSource.LOCAL
                 )
-                
+
                 // Wait for service
                 while (service == null) delay(100)
-                
+
                 service?.playSong(tempSong)
                 setShowFullPlayer(true)
             }
@@ -1859,15 +1859,15 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
 
     fun setLibraryView(view: LibraryView, itemName: String? = null) {
-        _uiState.update { 
+        _uiState.update {
             val isDetailView = view in listOf(
-                LibraryView.ALBUM_DETAIL, LibraryView.ARTIST_DETAIL, 
+                LibraryView.ALBUM_DETAIL, LibraryView.ARTIST_DETAIL,
                 LibraryView.FOLDER_DETAIL, LibraryView.GENRE_DETAIL, LibraryView.YEAR_DETAIL,
                 LibraryView.PLAYLIST_DETAIL
             )
             it.copy(
                 previousView = it.currentView,
-                currentView = view, 
+                currentView = view,
                 selectedItemName = itemName,
                 isSearchActive = false,
                 isMultiSelectMode = false,
@@ -1875,14 +1875,14 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 selectedTelegramChannelUrl = null, // Clear telegram when changing view or account
                 currentFolderPath = if (view == LibraryView.FOLDER_DETAIL) it.currentFolderPath else null,
                 wasSearchingBeforeDetail = if (isDetailView) it.isSearchActive else it.wasSearchingBeforeDetail
-            ) 
+            )
         }
     }
 
     fun setLibraryViewTelegram(url: String) {
         val normalizedUrl = url.trim().removeSuffix("/")
         _uiState.update { it.copy(
-            selectedTelegramChannelUrl = normalizedUrl, 
+            selectedTelegramChannelUrl = normalizedUrl,
             selectedItemName = null, // Clear drive account
             currentView = LibraryView.CLOUD,
             isSearchActive = false
@@ -1916,7 +1916,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun navigateToFolder(path: String, name: String) {
-        _uiState.update { 
+        _uiState.update {
             it.copy(
                 previousView = it.currentView,
                 currentView = LibraryView.FOLDER_DETAIL,
@@ -1924,7 +1924,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 currentFolderPath = path,
                 wasSearchingBeforeDetail = it.isSearchActive,
                 isSearchActive = false
-            ) 
+            )
         }
     }
 
@@ -1937,7 +1937,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun toggleSongSelection(songId: String) {
-        _uiState.update { 
+        _uiState.update {
             val current = it.selectedIds
             val updated = if (current.contains(songId)) current - songId else current + songId
             it.copy(selectedIds = updated)
@@ -1945,7 +1945,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun toggleItemSelection(id: String) {
-        _uiState.update { 
+        _uiState.update {
             val current = it.selectedIds
             val updated = if (current.contains(id)) current - id else current + id
             it.copy(selectedIds = updated)
@@ -1959,7 +1959,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             LibraryView.FOLDER_DETAIL, LibraryView.YEAR_DETAIL, LibraryView.GENRE_DETAIL,
             LibraryView.PLAYLIST_DETAIL, LibraryView.FAVORITES, LibraryView.RECENTLY_ADDED,
             LibraryView.RECENTLY_PLAYED, LibraryView.CLOUD, LibraryView.RADIO -> songs.value.map { it.id }
-            
+
             LibraryView.ALBUMS -> albums.value.map { it.first }
             LibraryView.ARTISTS -> artists.value.map { it.first }
             LibraryView.FOLDERS -> folders.value.map { it.first }
@@ -1968,7 +1968,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             LibraryView.PLAYLISTS -> playlists.value.map { it.id }
             else -> emptyList()
         }
-        
+
         _uiState.update { state ->
             val allSelected = itemsToSelect.all { state.selectedIds.contains(it) }
             val newSelection = if (allSelected) emptySet() else itemsToSelect.toSet()
@@ -2086,7 +2086,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         if (songsToShare.isNotEmpty()) {
             val uris = ArrayList<Uri>()
             songsToShare.forEach { uris.add(it.uri) }
-            
+
             val intent = android.content.Intent(android.content.Intent.ACTION_SEND_MULTIPLE).apply {
                 type = "audio/*"
                 putParcelableArrayListExtra(android.content.Intent.EXTRA_STREAM, uris)
@@ -2107,7 +2107,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun deleteSelectedSongs() {
         val selectedIds = _uiState.value.selectedIds.toList()
         if (selectedIds.isEmpty()) return
-        
+
         viewModelScope.launch {
             val songsToDelete = allSongs.value.filter { it.id in selectedIds }
             pendingDeleteIds = selectedIds
@@ -2124,11 +2124,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun addSelectedToPlaylist(playlistName: String) {
         val selectedIds = _uiState.value.selectedIds
         if (selectedIds.isEmpty()) return
-        
+
         viewModelScope.launch {
             val currentPlaylists = playlists.value
             val existing = currentPlaylists.find { it.name == playlistName }
-            
+
             val songIdsToAdd = when (_uiState.value.currentView) {
                 LibraryView.PLAYLISTS -> {
                     playlists.value.filter { selectedIds.contains(it.id) }.flatMap { it.songIds }
@@ -2341,7 +2341,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         val updated = transform(_uiState.value.dsp.config)
         _uiState.update { it.copy(dsp = it.dsp.copy(config = updated, autoEqError = null)) }
         service?.updateDspConfig(updated)
-        
+
         dspSaveJob?.cancel()
         dspSaveJob = viewModelScope.launch {
             delay(500) // Debounce saving to disk
@@ -2402,7 +2402,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             put("airDb", config.airDb)
             put("limiterEnabled", config.limiterEnabled)
             put("limiterThresholdDb", config.limiterThresholdDb)
-            
+
             val bandsArray = JSONArray()
             config.eqBands.forEach { band ->
                 bandsArray.put(JSONObject().apply {
@@ -2430,10 +2430,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                             q = b.getDouble("q").toFloat().coerceIn(0.1f, 10f)
                         )
                     }
-                    .groupBy { it.frequencyHz }
-                    .map { (_, group) -> group.first().copy(gainDb = group.map { it.gainDb }.average().toFloat()) }
-                    .sortedBy { it.frequencyHz }
-                    .mapIndexed { i, band -> band.copy(id = i) }
+                        .groupBy { it.frequencyHz }
+                        .map { (_, group) -> group.first().copy(gainDb = group.map { it.gainDb }.average().toFloat()) }
+                        .sortedBy { it.frequencyHz }
+                        .mapIndexed { i, band -> band.copy(id = i) }
                 } else config.eqBands
 
                 config.copy(
@@ -2552,7 +2552,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun setPreampEnabled(enabled: Boolean) = applyDspConfig {
         if (it.settingsLocked) return@applyDspConfig it
-        it.copy(preampEnabled = enabled, autoEqProfile = null, autoEqEnabled = false) 
+        it.copy(preampEnabled = enabled, autoEqProfile = null, autoEqEnabled = false)
     }
     fun setPreampDb(value: Float) = applyDspConfig {
         if (it.settingsLocked) return@applyDspConfig it
@@ -2594,8 +2594,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         if (_uiState.value.dsp.config.settingsLocked) return
         val preset = _uiState.value.dsp.customEqPresets.firstOrNull { it.name == name } ?: return
         applyDspConfig { it.copy(
-            eqEnabled = true, 
-            eqBands = preset.bands, 
+            eqEnabled = true,
+            eqBands = preset.bands,
             preampDb = preset.preampDb,
             preampEnabled = true,
             autoEqEnabled = false,
@@ -2659,14 +2659,14 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun setCrossfeedEnabled(enabled: Boolean) = applyDspConfig { it.copy(crossfeedEnabled = enabled) }
     fun setCrossfeedLevel(value: Float) = applyDspConfig { it.copy(crossfeedLevel = value.coerceIn(0f, 1f), crossfeedEnabled = true) }
     fun setSpatialAudioEnabled(enabled: Boolean) { applyDspConfig { it.copy(spatialAudioEnabled = enabled) } }
-    fun setSpatialTouchEnabled(enabled: Boolean) { 
-        applyDspConfig { 
+    fun setSpatialTouchEnabled(enabled: Boolean) {
+        applyDspConfig {
             if (enabled) {
                 it.copy(spatialTouchEnabled = true, soundStageEnabled = true)
             } else {
                 it.copy(spatialTouchEnabled = false)
             }
-        } 
+        }
     }
     fun setSpatialAudioIntensity(value: Float) { applyDspConfig { it.copy(spatialAudioIntensity = value.coerceIn(0f, 1f)) } }
 
@@ -2832,12 +2832,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun setDvcMode(mode: DvcMode) = applyDspConfig { it.copy(dvcMode = mode) }
     fun setDvcLevel(level: Float) = applyDspConfig { it.copy(dvcLevel = level.coerceIn(0f, 1f)) }
     fun setCompensateDvcVolumeEnabled(enabled: Boolean) = applyDspConfig { it.copy(compensateDvcVolumeEnabled = enabled) }
-    fun setSoftLimiterEnabled(enabled: Boolean) = applyDspConfig { 
+    fun setSoftLimiterEnabled(enabled: Boolean) = applyDspConfig {
         if (enabled) it.copy(softLimiterEnabled = true, limiterEnabled = false)
         else it.copy(softLimiterEnabled = false)
     }
 
-    fun setLimiterEnabled(enabled: Boolean) = applyDspConfig { 
+    fun setLimiterEnabled(enabled: Boolean) = applyDspConfig {
         if (enabled) it.copy(limiterEnabled = true, softLimiterEnabled = false)
         else it.copy(limiterEnabled = false)
     }
@@ -2898,9 +2898,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun setEqMasterGainDb(gain: Float) {
-        applyDspConfig { 
+        applyDspConfig {
             if (it.settingsLocked) return@applyDspConfig it
-            it.copy(eqMasterGainDb = gain) 
+            it.copy(eqMasterGainDb = gain)
         }
     }
 
@@ -2985,7 +2985,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 val filteredOnline = onlineResults.filter { online ->
                     localResults.none { it.name.equals(online.name, ignoreCase = true) }
                 }
-                
+
                 _uiState.update { state ->
                     val combined = (state.dsp.autoEqResults + filteredOnline)
                         .sortedBy { it.name.lowercase(java.util.Locale.US) }
@@ -3203,9 +3203,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun forceSearchLyricsOnline() {
         val song = _uiState.value.currentSong ?: return
         lyricsJob?.cancel()
-        
+
         _uiState.update { it.copy(isLoadingLyrics = true) }
-        
+
         lyricsJob = viewModelScope.launch {
             try {
                 val result = lyricsRepository.fetchOnline(song)
@@ -3257,7 +3257,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         lyricsJob = viewModelScope.launch {
             lyricsRepository.getLyrics(song).collect { state ->
                 if (!isActive || _uiState.value.currentSong?.id != song.id) return@collect
-                
+
                 when (state) {
                     is LyricsState.Loading -> {
                         _uiState.update { it.copy(isLoadingLyrics = true) }
@@ -3321,10 +3321,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private fun updateLyricsIndex(currentMs: Long) {
         val state = _uiState.value
         if (state.lyrics.isEmpty()) return
-        
+
         val adjustedMs = currentMs + state.lyricsOffsetMs
         val index = state.lyrics.findLast { it.startTime <= adjustedMs }?.let { state.lyrics.indexOf(it) } ?: -1
-        
+
         if (index != state.lyricsCurrentIndex) {
             _uiState.update { it.copy(lyricsCurrentIndex = index) }
         }
@@ -3344,7 +3344,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             if (_progressMs.value != pos) {
                 _progressMs.value = pos
                 updateLyricsIndex(pos)
-                
+
                 // Periodically save position (every 5 seconds)
                 val now = System.currentTimeMillis()
                 if (now - lastPositionSaveTime > 5000) {
@@ -3381,7 +3381,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         sleepTimerJob?.cancel()
         if (seconds <= 0 && playCount <= 0) {
             _uiState.update { it.copy(
-                isSleepTimerActive = false, 
+                isSleepTimerActive = false,
                 sleepTimerRemainingSeconds = 0,
                 sleepTimerPlayCount = 0,
                 sleepTimerRemainingPlayCount = 0
@@ -3390,20 +3390,20 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
 
         _uiState.update { it.copy(
-            isSleepTimerActive = true, 
+            isSleepTimerActive = true,
             sleepTimerRemainingSeconds = seconds,
             sleepTimerFinishTrack = finishTrack,
             sleepTimerPlayCount = playCount,
             sleepTimerRemainingPlayCount = playCount
         ) }
-        
+
         if (seconds > 0) {
             sleepTimerJob = viewModelScope.launch {
                 while (_uiState.value.sleepTimerRemainingSeconds > 0) {
                     delay(1000)
                     _uiState.update { it.copy(sleepTimerRemainingSeconds = it.sleepTimerRemainingSeconds - 1) }
                 }
-                
+
                 // Timer expired
                 if (_uiState.value.sleepTimerFinishTrack) {
                     // We wait for song completion - handled in playbackStateFlow observer
@@ -3420,7 +3420,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private var onlineInfoJob: Job? = null
     fun fetchOnlineInfo(song: Song) {
         val isCurrent = song.id == _uiState.value.currentSong?.id
-        
+
         onlineInfoJob?.cancel()
         onlineInfoJob = viewModelScope.launch {
             if (isCurrent) {
@@ -3428,19 +3428,19 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             } else {
                 _uiState.update { it.copy(isSelectedLoadingOnlineInfo = true) }
             }
-            
+
             try {
                 val username = lastFmRepository.username.first()
                 val trackInfo = lastFmRepository.getTrackInfo(song.artist, song.title, username)
-                
+
                 var albumInfo: com.beatraxus.app.repository.lastfm.LastFmAlbum? = null
                 if (song.album.isNotEmpty() && !song.album.contains("Unknown", ignoreCase = true)) {
                     albumInfo = lastFmRepository.getAlbumInfo(song.artist, song.album)
                 }
-                
+
                 val artistInfo = lastFmRepository.getArtistInfo(song.artist)
-                
-                _uiState.update { 
+
+                _uiState.update {
                     if (isCurrent) {
                         it.copy(
                             lastFmTrackInfo = trackInfo,
@@ -3458,7 +3458,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     }
                 }
             } catch (e: Exception) {
-                _uiState.update { 
+                _uiState.update {
                     if (isCurrent) it.copy(isLoadingOnlineInfo = false)
                     else it.copy(isSelectedLoadingOnlineInfo = false)
                 }
@@ -3471,7 +3471,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         if (!state.isSleepTimerActive) return
 
         var shouldStop = false
-        
+
         // 1. Handle Play Count
         if (state.sleepTimerRemainingPlayCount > 0) {
             val remaining = state.sleepTimerRemainingPlayCount - 1
@@ -3501,7 +3501,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun stopSleepTimer() {
         sleepTimerJob?.cancel()
         _uiState.update { it.copy(
-            isSleepTimerActive = false, 
+            isSleepTimerActive = false,
             sleepTimerRemainingSeconds = 0,
             sleepTimerPlayCount = 0,
             sleepTimerRemainingPlayCount = 0
@@ -3539,15 +3539,15 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun submitTelegramPhone(phone: String) {
         if (_uiState.value.isSubmittingTelegram) return
-        
+
         val trimmedPhone = phone.trim()
-        
+
         // Basic Validation
         if (!trimmedPhone.startsWith("+")) {
             _uiState.update { it.copy(telegramAuthError = "Phone number must include country code starting with '+' (e.g. +1234567890)") }
             return
         }
-        
+
         if (trimmedPhone.length < 8) {
             _uiState.update { it.copy(telegramAuthError = "Phone number is too short.") }
             return
@@ -3640,14 +3640,14 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             _uiState.update { it.copy(telegramSyncErrorMessage = "Telegram is not connected. Please log in first.") }
             return
         }
-        
+
         val normalizedUrl = url.trim().removeSuffix("/")
-        
+
         val networkType = _uiState.value.metadataNetworkType
         val context = getApplication<android.app.Application>()
-        
-        if (networkType == com.beatraxus.app.model.NetworkType.ASK_MOBILE && 
-            com.beatraxus.app.util.NetworkUtils.isMobileConnected(context) && 
+
+        if (networkType == com.beatraxus.app.model.NetworkType.ASK_MOBILE &&
+            com.beatraxus.app.util.NetworkUtils.isMobileConnected(context) &&
             !com.beatraxus.app.util.NetworkUtils.isWifiConnected(context)) {
             _uiState.update { it.copy(telegramSyncErrorMessage = "Confirmation needed: Use mobile data for sync?") }
             return
@@ -3664,7 +3664,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             try {
                 val channelName = normalizedUrl.substringAfterLast("/")
                 Log.d("PlayerViewModel", "Starting Telegram sync for: $normalizedUrl")
-                
+
                 // 1. Get existing songs for this channel
                 val existingSongs = songDao.getSongsByTelegramChannel(normalizedUrl).map { entity ->
                     // ... (rest of normalization logic)
@@ -3710,20 +3710,20 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 // 2. Fast scan messages
                 Log.d("PlayerViewModel", "Scanning Telegram channel: $normalizedUrl")
                 val songs = telegramChannelRepository.scanChannel(
-                    tdLibManager, 
-                    cloudCacheManager, 
-                    normalizedUrl, 
+                    tdLibManager,
+                    cloudCacheManager,
+                    normalizedUrl,
                     existingSongs,
                     _uiState.value.telegramAllowedFormats
                 ) { progress ->
                     _uiState.update { it.copy(scanProgress = progress * 0.1f, telegramSyncErrorMessage = "Scanning messages...") } // First 10% is scanning
                 }
-                
+
                 Log.d("PlayerViewModel", "Scan complete. Found ${songs.size} songs.")
-                
+
                 if (songs.isNotEmpty()) {
                     Log.d("PlayerViewModel", "Updating UI with ${songs.size} songs")
-                    
+
                     // Identify missing songs
                     val newSongIds = songs.map { it.id }.toSet()
                     val songsToDelete = existingSongs.filterKeys { it !in newSongIds }.keys.toList()
@@ -3739,13 +3739,13 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     withContext(Dispatchers.IO) {
                         songDao.insertSongs(entities)
                     }
-                    
+
                     _songs.update { current ->
                         val updatedIds = songs.map { it.id }.toSet()
                         val unchanged = current.filter { it.id !in updatedIds && it.id !in songsToDelete }
                         (unchanged + songs).sortedBy { it.title }
                     }
-                    
+
                     _uiState.update { it.copy(telegramSyncErrorMessage = "Found ${songs.size} songs. Starting enrichment...") }
 
                     // 3. Deep Enrichment for new songs (fetch duration, bitrate, album art)
@@ -3755,18 +3755,18 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     Log.d("PlayerViewModel", "Songs to enrich: ${toEnrich.size}")
                     if (toEnrich.isNotEmpty()) {
                         _uiState.update { it.copy(enrichmentStatus = "Enriching ${toEnrich.size} new Telegram songs...") }
-                        
+
                         val enrichedCount = AtomicInteger(0)
                         val enrichmentSemaphore = Semaphore(30)
-                        
+
                         toEnrich.map { song ->
                             async {
                                 enrichmentSemaphore.withPermit {
                                     if (!isActive) return@async
-                                    
+
                                     val currentCount = enrichedCount.get() + 1
                                     Log.d("PlayerViewModel", "Enriching [$currentCount/${toEnrich.size}]: ${song.title}")
-                                    
+
                                     val enriched = extractTelegramMetadata(song)
                                     if (enriched != null) {
                                         withContext(Dispatchers.IO) {
@@ -3780,7 +3780,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                                             }
                                         }
                                     }
-                                    
+
                                     val processedCount = enrichedCount.incrementAndGet()
                                     val enrichmentProgress = 0.1f + (processedCount.toFloat() / toEnrich.size.toFloat() * 0.9f)
                                     _uiState.update { it.copy(scanProgress = enrichmentProgress) }
@@ -3818,12 +3818,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     private suspend fun extractTelegramMetadata(song: Song): Song? {
         val fileId = song.telegramFileId ?: return null
-        
+
         try {
             // Download first 1MB for metadata
             val downloadSize = 1024 * 1024L
             tdLibManager.send(TdApi.DownloadFile(fileId, 32, 0, downloadSize, true))
-            
+
             // Wait for partial download
             var attempts = 0
             var path: String? = null
@@ -3837,9 +3837,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 delay(50)
                 attempts++
             }
-            
+
             if (path == null) return null
-            
+
             var tempFile = File(path)
             if (!tempFile.exists()) return null
 
@@ -3908,9 +3908,18 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun onLastFmAuthStarted() {
         pendingLastFmAuth.set(true)
+        // Persisted too: the browser-based flow backgrounds the whole app, and on
+        // real devices (unlike a debugger-attached debug session) the process is
+        // often killed before the "beatraxus://lastfm" callback returns, which
+        // would otherwise silently wipe this flag.
+        com.beatraxus.app.repository.lastfm.LastFmRepository.markAuthPending(getApplication())
     }
 
-    fun isPendingLastFmAuthRequest(): Boolean = pendingLastFmAuth.getAndSet(false)
+    fun isPendingLastFmAuthRequest(): Boolean {
+        val inMemory = pendingLastFmAuth.getAndSet(false)
+        val persisted = com.beatraxus.app.repository.lastfm.LastFmRepository.consumePendingAuth(getApplication())
+        return inMemory || persisted
+    }
 
     fun fetchLastFmSession(token: String) {
         viewModelScope.launch {

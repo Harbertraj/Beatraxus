@@ -42,6 +42,40 @@ class LastFmRepository(private val context: Context) {
     companion object {
         private val SESSION_KEY = stringPreferencesKey("session_key")
         private val USERNAME = stringPreferencesKey("username")
+
+        // ── Process-death-safe "auth pending" flag ──────────────────────────
+        // Login opens an external browser (uriHandler.openUri), which fully
+        // backgrounds the app. On real devices this frequently lets Android
+        // kill the process before the "beatraxus://lastfm" callback returns,
+        // which used to wipe the in-memory AtomicBoolean guard and cause the
+        // callback to be silently dropped ("Ignoring unsolicited lastfm
+        // callback intent"). Persisting the flag (with an expiry window) to
+        // plain, synchronous SharedPreferences survives that process death.
+        private const val AUTH_PREFS_NAME = "lastfm_auth_state"
+        private const val KEY_PENDING_SINCE = "pending_auth_since"
+        private const val PENDING_WINDOW_MS = 15 * 60 * 1000L // 15 minutes
+
+        /** Call right before launching the external Last.fm auth browser flow. */
+        fun markAuthPending(context: Context) {
+            context.getSharedPreferences(AUTH_PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putLong(KEY_PENDING_SINCE, System.currentTimeMillis())
+                .commit() // synchronous: must hit disk before we lose focus to the browser
+        }
+
+        /**
+         * Call when the "beatraxus://lastfm" deep link comes back. Returns true
+         * only if a login was actually started recently (protects against
+         * replayed/unsolicited deep links), regardless of whether the process
+         * survived in between.
+         */
+        fun consumePendingAuth(context: Context): Boolean {
+            val prefs = context.getSharedPreferences(AUTH_PREFS_NAME, Context.MODE_PRIVATE)
+            val startedAt = prefs.getLong(KEY_PENDING_SINCE, -1L)
+            prefs.edit().remove(KEY_PENDING_SINCE).apply()
+            if (startedAt <= 0L) return false
+            return (System.currentTimeMillis() - startedAt) <= PENDING_WINDOW_MS
+        }
     }
 
     suspend fun exportPreferences(): Map<String, Any> {
@@ -109,7 +143,7 @@ class LastFmRepository(private val context: Context) {
         )
         album?.let { params["album"] = it }
         durationMs?.let { params["duration"] = (it / 1000).toString() }
-        
+
         val sig = generateSignature(params)
         try {
             val response = service.updateNowPlaying(
@@ -173,7 +207,7 @@ class LastFmRepository(private val context: Context) {
         val digest = md.digest(input.toByteArray(Charsets.UTF_8))
         return digest.joinToString("") { "%02x".format(it) }
     }
-    
+
     suspend fun getArtistInfo(artist: String) = try {
         service.getArtistInfo(apiKey = apiKey, artist = artist).artist
     } catch (e: Exception) {

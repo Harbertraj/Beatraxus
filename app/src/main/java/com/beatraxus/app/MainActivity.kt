@@ -120,7 +120,7 @@ class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         frameJankMonitor = FrameJankMonitor("BeatraxusFrameMonitor")
-        
+
         // Enable edge-to-edge
         WindowCompat.setDecorFitsSystemWindows(window, false)
 
@@ -134,7 +134,7 @@ class MainActivity : FragmentActivity() {
                 )
             }
         }
-        
+
         // Start library loading after the first frame is drawn to avoid UI jank on startup
         window.decorView.post {
             com.beatraxus.app.cast.CastManager.initialize(this@MainActivity) { error ->
@@ -158,7 +158,7 @@ class MainActivity : FragmentActivity() {
         if (intent?.getBooleanExtra("open_now_playing", false) == true) {
             viewModel.setShowFullPlayer(true)
         }
-        
+
         // Handle Last.fm auth callback and external audio VIEW/SEND intents
         if (intent?.action == Intent.ACTION_VIEW || intent?.action == Intent.ACTION_SEND) {
             val uri = if (intent.action == Intent.ACTION_SEND) {
@@ -183,10 +183,10 @@ class MainActivity : FragmentActivity() {
                 } else {
                     // Check if it's an audio file/content
                     val type = intent.type ?: contentResolver.getType(uri)
-                    if (type?.startsWith("audio/") == true || 
-                        uri.toString().endsWith(".mp3", true) || 
-                        uri.toString().endsWith(".flac", true) || 
-                        uri.toString().endsWith(".wav", true) || 
+                    if (type?.startsWith("audio/") == true ||
+                        uri.toString().endsWith(".mp3", true) ||
+                        uri.toString().endsWith(".flac", true) ||
+                        uri.toString().endsWith(".wav", true) ||
                         uri.toString().endsWith(".m4a", true)) {
                         viewModel.playExternalUri(uri)
                     } else if (type == "application/json" || uri.toString().endsWith(".json", true)) {
@@ -307,10 +307,22 @@ fun BeatraxusApp(
     }
 
     val driveSignInOptions = remember {
+        // NOTE: requestIdToken() was intentionally removed. This app never reads
+        // account.idToken anywhere (it only uses email/displayName/photoUrl plus
+        // GoogleAccountCredential's own OAuth access token for Drive scopes).
+        // requestIdToken() forces Play Services to additionally validate a
+        // separate "Web application" OAuth client against this app's signing
+        // certificate (SHA-1) in Google Cloud Console. If that specific SHA-1
+        // registration is missing or stale for the certificate actually signing
+        // the shipped release build — most commonly because Play App Signing
+        // re-signs the app with a *different* key than your local upload/release
+        // keystore — sign-in fails in release with an ApiException status code
+        // 10 (DEVELOPER_ERROR), even though the exact same flow works fine in a
+        // locally-run debug session. Dropping requestIdToken() removes that
+        // entire failure mode since it isn't needed for what this app does.
         GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
             .requestEmail()
             .requestScopes(Scope(DriveScopes.DRIVE_READONLY), Scope(DriveScopes.DRIVE_METADATA_READONLY))
-            .requestIdToken(context.getString(R.string.default_web_client_id))
             .build()
     }
 
@@ -328,10 +340,10 @@ fun BeatraxusApp(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         Log.i("MainActivity", "Drive account launcher result: ${result.resultCode}")
-        
+
         // Even if not RESULT_OK, try to get the account/task to see if there's an error status
         val task = result.data?.let { GoogleSignIn.getSignedInAccountFromIntent(it) }
-        
+
         if (result.resultCode == Activity.RESULT_OK && result.data != null) {
             try {
                 val account = task?.getResult(ApiException::class.java)
@@ -361,13 +373,21 @@ fun BeatraxusApp(
                     task.getResult(ApiException::class.java)
                 } catch (e: ApiException) {
                     Log.e("MainActivity", "Google sign in error status: ${e.statusCode}")
-                    viewModel.setErrorMessage("Sign in failed: Status code ${e.statusCode}. Ensure SHA-1 is registered.")
+                    val message = if (e.statusCode == com.google.android.gms.common.api.CommonStatusCodes.DEVELOPER_ERROR) {
+                        "Sign in failed (DEVELOPER_ERROR). The SHA-1 fingerprint of the certificate signing THIS build " +
+                                "isn't registered as an Android OAuth client in Google Cloud Console for com.beatraxus.app. " +
+                                "If this build was installed from Play, register the SHA-1 shown under Play Console > " +
+                                "Setup > App integrity (Play App Signing key) — it differs from your local upload/release key."
+                    } else {
+                        "Sign in failed: Status code ${e.statusCode}."
+                    }
+                    viewModel.setErrorMessage(message)
                     return@rememberLauncherForActivityResult
                 } catch (e: Exception) {
                     Log.e("MainActivity", "Error parsing sign in result", e)
                 }
             }
-            
+
             if (result.resultCode == Activity.RESULT_CANCELED) {
                 Log.d("MainActivity", "Google sign in canceled by user or failed internally")
             } else {
@@ -450,7 +470,7 @@ fun BeatraxusApp(
                     } else {
                         fadeIn(tween(400, easing = FastOutSlowInEasing)) +
                                 slideIntoContainer(
-                                    towards = AnimatedContentTransitionScope.SlideDirection.End, 
+                                    towards = AnimatedContentTransitionScope.SlideDirection.End,
                                     animationSpec = tween(400, easing = FastOutSlowInEasing)
                                 )
                     }
@@ -458,7 +478,7 @@ fun BeatraxusApp(
                 exitTransition = {
                     fadeOut(tween(400, easing = FastOutSlowInEasing)) +
                             slideOutOfContainer(
-                                towards = AnimatedContentTransitionScope.SlideDirection.Start, 
+                                towards = AnimatedContentTransitionScope.SlideDirection.Start,
                                 animationSpec = tween(400, easing = FastOutSlowInEasing)
                             )
                 },
