@@ -1999,18 +1999,17 @@ private fun LimiterCard(
                 if (config.limiterEnabled) {
                     HorizontalDivider(color = Color.White.copy(0.05f))
 
-                    // 3. Power-Amp Mode: disables the soft knee + attack/release
-                    // smoothing, so the limiter only clamps true peaks — same
-                    // behavior as a basic power-amp / stock music player limiter.
+                    // 3. Special Mode: disables the soft knee + attack/release
+                    // smoothing, so the limiter only clamps true peaks.
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Power-Amp Mode", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                            Text("Special Mode", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                             Text(
-                                "Off = musical soft-knee + smoothed release. On = clamps peaks only, no coloration (like a power amp limiter).",
+                                "Off = musical soft-knee + smoothed release. On = clamps peaks only, no coloration.",
                                 color = Color.White.copy(0.5f),
                                 fontSize = 11.sp
                             )
@@ -2033,7 +2032,7 @@ private fun LimiterCard(
                     ) {
                         if (config.limiterHardModeEnabled) {
                             Text(
-                                "Attack/Release are ignored in Power-Amp Mode (gain snaps instantly). Threshold still sets the clamp ceiling.",
+                                "Attack/Release are ignored in Special Mode (gain snaps instantly). Threshold still sets the clamp ceiling.",
                                 color = Color.White.copy(0.4f),
                                 fontSize = 10.sp,
                                 fontStyle = FontStyle.Italic
