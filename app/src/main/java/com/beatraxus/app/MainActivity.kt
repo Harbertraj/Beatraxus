@@ -353,23 +353,18 @@ fun BeatraxusApp(
     }
 
     val driveSignInOptions = remember {
-        // NOTE: requestIdToken() was intentionally removed. This app never reads
-        // account.idToken anywhere (it only uses email/displayName/photoUrl plus
-        // GoogleAccountCredential's own OAuth access token for Drive scopes).
-        // requestIdToken() forces Play Services to additionally validate a
-        // separate "Web application" OAuth client against this app's signing
-        // certificate (SHA-1) in Google Cloud Console. If that specific SHA-1
-        // registration is missing or stale for the certificate actually signing
-        // the shipped release build — most commonly because Play App Signing
-        // re-signs the app with a *different* key than your local upload/release
-        // keystore — sign-in fails in release with an ApiException status code
-        // 10 (DEVELOPER_ERROR), even though the exact same flow works fine in a
-        // locally-run debug session. Dropping requestIdToken() removes that
-        // entire failure mode since it isn't needed for what this app does.
-        GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+        val builder = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
             .requestEmail()
             .requestScopes(Scope(DriveScopes.DRIVE_READONLY), Scope(DriveScopes.DRIVE_METADATA_READONLY))
-            .build()
+
+        // IMPORTANT: For requestIdToken, we MUST use the WEB Client ID,
+        // not the Android Client ID. This is a common cause of Status 10 errors.
+        val webClientId = BuildConfig.GOOGLE_WEB_CLIENT_ID
+        if (webClientId.isNotEmpty()) {
+            builder.requestIdToken(webClientId)
+        }
+        
+        builder.build()
     }
 
     val googleSignInClient = remember(context, driveSignInOptions) {

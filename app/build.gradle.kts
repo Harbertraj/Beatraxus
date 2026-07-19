@@ -63,6 +63,9 @@ configure<ApplicationExtension> {
         val googleClientId = localProperties.getProperty("GOOGLE_CLIENT_ID", "")
         buildConfigField("String", "GOOGLE_CLIENT_ID", "\"$googleClientId\"")
 
+        val googleWebClientId = localProperties.getProperty("GOOGLE_WEB_CLIENT_ID", "")
+        buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", "\"$googleWebClientId\"")
+
     }
 
     signingConfigs {

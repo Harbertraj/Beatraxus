@@ -108,6 +108,7 @@
 -keep class com.google.android.gms.common.api.Status { *; }
 -keep class com.google.android.gms.auth.api.signin.GoogleSignInOptions { *; }
 -keep class com.google.android.gms.auth.api.signin.GoogleSignInAccount { *; }
+-keep class com.google.android.gms.common.api.ApiException { *; }
 -dontwarn com.google.android.gms.**
 
 # Crucial: Keep Parcelable CREATORs for GMS IPC
@@ -139,8 +140,9 @@
 -keepattributes Signature,RuntimeVisibleAnnotations,AnnotationDefault,EnclosingMethod,InnerClasses
 -keep class com.google.api.client.json.gson.GsonFactory { *; }
 -keep class com.google.api.client.http.javanet.NetHttpTransport { *; }
--keepnames class com.google.api.client.googleapis.extensions.android.gms.auth.GoogleAccountCredential
--keepnames class com.google.api.client.googleapis.extensions.android.gms.auth.UserRecoverableAuthIOException
+-keep class com.google.api.client.googleapis.extensions.android.gms.auth.GoogleAccountCredential { *; }
+-keep class com.google.api.client.googleapis.extensions.android.gms.auth.UserRecoverableAuthIOException { *; }
+-keep class com.google.api.client.googleapis.extensions.android.gms.auth.GooglePlayServicesAvailabilityIOException { *; }
 
 # Resolve missing classes from Apache HttpClient used by Google API Client
 -dontwarn javax.naming.**

@@ -1,0 +1,4 @@
+- `[x]` Strengthen R8/ProGuard rules for Google Auth and Drive
+- `[x]` Update Google Sign-In options to explicitly use Client ID
+- `[x]` Verify build config fields for Google Client ID
+- `[x]` Add more descriptive error logging for Sign-In failures
