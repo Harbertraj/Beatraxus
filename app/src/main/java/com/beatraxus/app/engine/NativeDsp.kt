@@ -208,6 +208,10 @@ class NativeDsp : AutoCloseable {
         if (nativeHandle != 0L) nSetLimiterParams(nativeHandle, thresholdDb, attackMs, releaseMs)
     }
 
+    fun setLimiterHardMode(enabled: Boolean) = lock.readLock().withLock {
+        if (nativeHandle != 0L) nSetLimiterHardMode(nativeHandle, enabled)
+    }
+
     fun setBitDepth(bitDepth: Int) = lock.readLock().withLock {
         if (nativeHandle != 0L) nSetBitDepth(nativeHandle, bitDepth)
     }
@@ -354,6 +358,7 @@ class NativeDsp : AutoCloseable {
     private external fun nSetSoftLimiter(handle: Long, enabled: Boolean)
     private external fun nSetLimiter(handle: Long, enabled: Boolean)
     private external fun nSetLimiterParams(handle: Long, thresholdDb: Float, attackMs: Float, releaseMs: Float)
+    private external fun nSetLimiterHardMode(handle: Long, enabled: Boolean)
     private external fun nSetBitDepth(handle: Long, bitDepth: Int)
     private external fun nSetDither(handle: Long, enabled: Boolean, bitDepth: Int)
     private external fun nSetDitherType(handle: Long, type: Int)

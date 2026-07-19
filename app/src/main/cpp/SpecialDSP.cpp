@@ -738,6 +738,7 @@ class LookaheadLimiter {
     double attackCoeff = 0.0;
     int currentSampleRate = 48000;
     int currentChannels = 2;
+    bool hardMode = false; // true = power-amp style: no soft knee, no envelope smoothing
 
 public:
     void init(int sampleRate, int channels) {
@@ -765,6 +766,10 @@ public:
         releaseCoeff = std::exp(-1.0 / (safeReleaseMs / 1000.0 * currentSampleRate));
     }
 
+    void setHardMode(bool enabled) {
+        hardMode = enabled;
+    }
+
     template<typename T>
     void process(T* data, int frames, int channels) {
         if (delaySize == 0) return;
@@ -779,24 +784,36 @@ public:
             // 1. Required gain to hit ceiling
             double targetGain = 1.0;
             if (maxPeak > 1e-6) {
-                // Soft-knee (quadratic) 6dB width
-                // Transition starts at -7dB, ends at -1dB
-                double peakDb = 20.0 * std::log10((double)maxPeak + 1e-9);
-                double ceilingDb = 20.0 * std::log10(ceiling);
-                double kneeDb = 6.0;
+                if (hardMode) {
+                    // Sharp threshold: untouched below ceiling, clamped exactly
+                    // at it above — no soft-knee gain reduction pre-ceiling.
+                    if ((double)maxPeak > ceiling) {
+                        targetGain = ceiling / (double)maxPeak;
+                    }
+                } else {
+                    // Soft-knee (quadratic) 6dB width
+                    // Transition starts at -7dB, ends at -1dB
+                    double peakDb = 20.0 * std::log10((double)maxPeak + 1e-9);
+                    double ceilingDb = 20.0 * std::log10(ceiling);
+                    double kneeDb = 6.0;
 
-                if (peakDb > ceilingDb + kneeDb / 2.0) {
-                    targetGain = std::pow(10.0, (ceilingDb - peakDb) / 20.0);
-                } else if (peakDb > ceilingDb - kneeDb / 2.0) {
-                    // Quadratic knee formula
-                    double diff = peakDb - (ceilingDb - kneeDb / 2.0);
-                    double reductionDb = (diff * diff) / (2.0 * kneeDb);
-                    targetGain = std::pow(10.0, -reductionDb / 20.0);
+                    if (peakDb > ceilingDb + kneeDb / 2.0) {
+                        targetGain = std::pow(10.0, (ceilingDb - peakDb) / 20.0);
+                    } else if (peakDb > ceilingDb - kneeDb / 2.0) {
+                        // Quadratic knee formula
+                        double diff = peakDb - (ceilingDb - kneeDb / 2.0);
+                        double reductionDb = (diff * diff) / (2.0 * kneeDb);
+                        targetGain = std::pow(10.0, -reductionDb / 20.0);
+                    }
                 }
             }
 
             // 2. Envelope follower (Adjustable Attack, Adjustable Release)
-            if (targetGain < gainEnvelope) {
+            if (hardMode) {
+                // No smoothing — gain snaps immediately to whatever's needed
+                // this sample, like a plain peak clamp / power-amp limiter.
+                gainEnvelope = targetGain;
+            } else if (targetGain < gainEnvelope) {
                 gainEnvelope = targetGain + (gainEnvelope - targetGain) * attackCoeff;
             } else {
                 gainEnvelope = targetGain + (gainEnvelope - targetGain) * releaseCoeff;
@@ -1716,6 +1733,10 @@ public:
         limiterReleaseMs = releaseMs;
         limiter.setParams((double)thresholdDb, (double)attackMs, (double)releaseMs);
     }
+    void setLimiterHardMode(bool enabled) {
+        limiterHardModeEnabled = enabled;
+        limiter.setHardMode(enabled);
+    }
     void muteReverb() { reverb.mute(); reverbAmount = 0.0f; }
     void setBitDepth(int bd) { bitDepth = bd; }
     void setDither(bool enabled, int bd) { dither.setEnabled(enabled, bd); }
@@ -1793,6 +1814,7 @@ private:
     // Pre-computed ramp coefficient (computed once on init, not per buffer)
     double dvcRampCoeff = 0.0;
     bool limiterEnabled, softLimiterEnabled = false;
+    bool limiterHardModeEnabled = false;
     float limiterThresholdDb = -0.2f, limiterAttackMs = 5.0f, limiterReleaseMs = 100.0f;
     float cutoffRatio; int soxrQuality;
     bool float64Enabled;
@@ -2226,6 +2248,9 @@ JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetLimiter(JNIEn
 JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetSoftLimiter(JNIEnv* env, jobject thiz, jlong handle, jboolean enabled) { if (handle) ((DSP*)handle)->setSoftLimiter(enabled); }
 JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetLimiterParams(JNIEnv* env, jobject thiz, jlong handle, jfloat thresholdDb, jfloat attackMs, jfloat releaseMs) {
     if (handle) ((DSP*)handle)->setLimiterParams(thresholdDb, attackMs, releaseMs);
+}
+JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetLimiterHardMode(JNIEnv* env, jobject thiz, jlong handle, jboolean enabled) {
+    if (handle) ((DSP*)handle)->setLimiterHardMode(enabled);
 }
 JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetSpeed(JNIEnv* env, jobject thiz, jlong handle, jfloat speed, jboolean preservePitch) {
     if (handle) ((DSP*)handle)->setSpeed(speed, preservePitch);

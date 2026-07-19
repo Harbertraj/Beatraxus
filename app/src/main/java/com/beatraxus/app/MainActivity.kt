@@ -14,6 +14,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
 import android.util.Log
+import java.security.MessageDigest
 import androidx.fragment.app.FragmentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -117,8 +118,53 @@ class MainActivity : FragmentActivity() {
         viewModel.handleDropboxAuth()
     }
 
+    /**
+     * Logs the SHA-1 / SHA-256 fingerprint of the certificate that actually signed
+     * THIS running build (whatever that is — local debug key, local release key, a
+     * CI-built key, or a key Google Play re-signed the app with). Google Sign-In
+     * (used for Drive) fails with ApiException status 10 (DEVELOPER_ERROR) unless
+     * this exact fingerprint is registered as an "Android" OAuth 2.0 Client ID for
+     * package `com.beatraxus.app` in Google Cloud Console. Telegram (API ID/hash)
+     * and Last.fm (custom URI scheme callback) do NOT check this at all, which is
+     * exactly why they can work while Drive alone fails.
+     *
+     * Filter Logcat for tag "SigningCert" (works in release builds too — logcat
+     * isn't gated by isDebuggable).
+     */
+    private fun logSigningCertFingerprints() {
+        try {
+            @Suppress("DEPRECATION")
+            val signatures: Array<android.content.pm.Signature>? =
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    val info = packageManager.getPackageInfo(
+                        packageName, PackageManager.GET_SIGNING_CERTIFICATES
+                    ).signingInfo
+                    if (info?.hasMultipleSigners() == true) info.apkContentsSigners else info?.signingCertificateHistory
+                } else {
+                    packageManager.getPackageInfo(packageName, PackageManager.GET_SIGNATURES).signatures
+                }
+
+            signatures?.forEachIndexed { index, signature ->
+                val certBytes = signature.toByteArray()
+                val sha1 = MessageDigest.getInstance("SHA-1").digest(certBytes)
+                    .joinToString(":") { "%02X".format(it) }
+                val sha256 = MessageDigest.getInstance("SHA-256").digest(certBytes)
+                    .joinToString(":") { "%02X".format(it) }
+                Log.i("SigningCert", "── signer #$index for $packageName ──")
+                Log.i("SigningCert", "SHA-1:   $sha1")
+                Log.i("SigningCert", "SHA-256: $sha256")
+            }
+            if (signatures.isNullOrEmpty()) {
+                Log.w("SigningCert", "No signing certificates found for $packageName")
+            }
+        } catch (e: Exception) {
+            Log.e("SigningCert", "Failed to read signing certificate", e)
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        logSigningCertFingerprints() // See Logcat tag "SigningCert" — compare against Google Cloud Console
         frameJankMonitor = FrameJankMonitor("BeatraxusFrameMonitor")
 
         // Enable edge-to-edge

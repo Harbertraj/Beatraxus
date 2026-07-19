@@ -323,6 +323,7 @@ private class NativeDspProcessor(
         dsp.setSoftLimiter(cfg.softLimiterEnabled && limiterUnbypassed)
         dsp.setLimiter(cfg.limiterEnabled && limiterUnbypassed)
         dsp.setLimiterParams(cfg.limiterThresholdDb, cfg.limiterAttackMs, cfg.limiterReleaseMs)
+        dsp.setLimiterHardMode(cfg.limiterHardModeEnabled)
 
         val ditherUnbypassed = !isBP || cfg.bitPerfectUnbypassDithering
         val shouldDither = cfg.ditherEnabled && ditherUnbypassed &&

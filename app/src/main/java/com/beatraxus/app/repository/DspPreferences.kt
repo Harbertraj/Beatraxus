@@ -183,6 +183,7 @@ class DspPreferences(private val context: Context) {
             limiterThresholdDb = pref(LIMITER_THRESHOLD_DB, -1.0f),
             limiterAttackMs = pref(LIMITER_ATTACK_MS, 0.5f),
             limiterReleaseMs = pref(LIMITER_RELEASE_MS, 80f),
+            limiterHardModeEnabled = pref(LIMITER_HARD_MODE_ENABLED, false),
             settingsLocked = pref(SETTINGS_LOCKED, false),
             playbackSpeed = pref(PLAYBACK_SPEED, 1.0f),
             preservePitch = pref(PRESERVE_PITCH, true),
@@ -300,6 +301,7 @@ class DspPreferences(private val context: Context) {
             set(LIMITER_ATTACK_MS, config.limiterAttackMs)
             set(LIMITER_RELEASE_MS, config.limiterReleaseMs)
             set(SOFT_LIMITER_ENABLED, config.softLimiterEnabled)
+            set(LIMITER_HARD_MODE_ENABLED, config.limiterHardModeEnabled)
             set(SETTINGS_LOCKED, config.settingsLocked)
             set(PLAYBACK_SPEED, config.playbackSpeed)
             set(PRESERVE_PITCH, config.preservePitch)
@@ -453,6 +455,7 @@ class DspPreferences(private val context: Context) {
                 set(LIMITER_ATTACK_MS, config.limiterAttackMs)
                 set(LIMITER_RELEASE_MS, config.limiterReleaseMs)
                 set(SOFT_LIMITER_ENABLED, config.softLimiterEnabled)
+                set(LIMITER_HARD_MODE_ENABLED, config.limiterHardModeEnabled)
                 set(SETTINGS_LOCKED, config.settingsLocked)
                 set(PLAYBACK_SPEED, config.playbackSpeed)
                 set(PRESERVE_PITCH, config.preservePitch)
@@ -650,6 +653,7 @@ class DspPreferences(private val context: Context) {
         private val LIMITER_THRESHOLD_DB = floatPreferencesKey("limiter_threshold_db")
         private val LIMITER_ATTACK_MS = floatPreferencesKey("limiter_attack_ms")
         private val LIMITER_RELEASE_MS = floatPreferencesKey("limiter_release_ms")
+        private val LIMITER_HARD_MODE_ENABLED = booleanPreferencesKey("limiter_hard_mode_enabled")
         private val MONO_ENABLED = booleanPreferencesKey("mono_enabled")
         private val SOFT_LIMITER_ENABLED = booleanPreferencesKey("soft_limiter_enabled")
         private val SETTINGS_LOCKED = booleanPreferencesKey("settings_locked")

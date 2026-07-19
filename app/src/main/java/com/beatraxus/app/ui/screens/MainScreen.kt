@@ -2412,11 +2412,17 @@ fun MainScreen(
                                                     var isLoading by remember { mutableStateOf(false) }
                                                     var searchCountry by rememberSaveable { mutableStateOf("") }
 
+                                                    // Default view: popular Tamil stations, loaded immediately —
+                                                    // no need to type anything. Typing a country overrides this
+                                                    // with a country-specific search.
                                                     LaunchedEffect(searchCountry) {
-                                                        if (searchCountry.isBlank()) return@LaunchedEffect
                                                         isLoading = true
                                                         radioStations = withContext(Dispatchers.IO) {
-                                                            RadioBrowserApi.stationsByCountry(searchCountry)
+                                                            if (searchCountry.isBlank()) {
+                                                                RadioBrowserApi.tamilStations(limit = 150)
+                                                            } else {
+                                                                RadioBrowserApi.stationsByCountry(searchCountry)
+                                                            }
                                                         }
                                                         isLoading = false
                                                     }
@@ -2441,7 +2447,7 @@ fun MainScreen(
                                                                     cursorBrush = SolidColor(Color.White),
                                                                     decorationBox = { innerTextField ->
                                                                         if (searchCountry.isEmpty()) {
-                                                                            Text("Enter Country (e.g. USA, France)...", color = Color.White.copy(0.3f), fontSize = 16.sp)
+                                                                            Text("Showing Tamil stations — type a country to search others...", color = Color.White.copy(0.3f), fontSize = 14.sp)
                                                                         }
                                                                         innerTextField()
                                                                     }

@@ -1,6 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
-    <base-config cleartextTrafficPermitted="false">
+    <!--
+      cleartextTrafficPermitted is true here specifically because the Radio
+      feature streams arbitrary internet radio URLs (via Radio-Browser's
+      community catalog), and a large fraction of those — especially smaller
+      community/regional stations — are still served over plain HTTP, not
+      HTTPS. This does NOT weaken security for anything else: Google Sign-In,
+      Last.fm, Dropbox/Box/OneDrive, and Nextcloud/WebDAV all only ever use
+      HTTPS endpoints regardless of this setting, and TLS certificate
+      validation (via the system trust store below) still fully applies
+      wherever HTTPS is used. This setting only additionally allows plain-HTTP
+      connections where a given radio stream (or a user's own local NAS/FTP
+      target) genuinely requires it.
+    -->
+    <base-config cleartextTrafficPermitted="true">
         <trust-anchors>
             <certificates src="system" />
         </trust-anchors>

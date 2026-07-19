@@ -229,6 +229,11 @@ data class DspConfig(
     val limiterThresholdDb: Float = -1.0f,   // More headroom before knee engages
     val limiterAttackMs: Float = 0.5f,        // Slightly longer — avoids transient shaving
     val limiterReleaseMs: Float = 80f,        // Longer release = no micro-pumping
+    // When true: no soft knee (sharp threshold right at the ceiling) and no
+    // attack/release envelope smoothing (gain snaps instantly instead of
+    // ramping over time) — i.e. a plain peak-only clamp, like a power-amp/
+    // basic music player limiter, instead of the default "musical" limiter.
+    val limiterHardModeEnabled: Boolean = false,
 
     // Dither
     val ditherEnabled: Boolean = true,

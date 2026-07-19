@@ -126,9 +126,9 @@ class AudioEngine(
                 val state = playbackStateFlow.value
                 val currentPos = positionMs
                 val now = System.currentTimeMillis()
-                
+
                 var shouldRecover = false
-                
+
                 if (userIntentPlaying.get()) {
                     if (!state.isPlaying) {
                         // Case 1: Playback state flipped to paused unexpectedly
@@ -138,12 +138,12 @@ class AudioEngine(
                         // Case 2: Stuck detection. isPlaying is true, but position isn't advancing.
                         if (currentPos == lastStuckPosition) {
                             val session = activeSession
-                            val isBuffering = session != null && !session.decoderCompleted && 
-                                             (now - session.lastDecoderProgressTime > 2000) &&
-                                             state.currentSong.isCloud()
-                            
+                            val isBuffering = session != null && !session.decoderCompleted &&
+                                    (now - session.lastDecoderProgressTime > 2000) &&
+                                    state.currentSong.isCloud()
+
                             val timeout = if (isBuffering) 15000 else 4000
-                            
+
                             if (lastStuckCheckTime > 0 && now - lastStuckCheckTime > timeout) {
                                 Log.w(TAG, "Playback appears stuck (position unchanged for ${timeout/1000}s at $currentPos ms). Buffering=$isBuffering")
                                 shouldRecover = true
@@ -167,7 +167,7 @@ class AudioEngine(
                         if (recoveryAttempts > 0) recoveryAttempts = 0
                     }
                 }
-                
+
                 delay(1000)
             }
         }
@@ -181,18 +181,18 @@ class AudioEngine(
         }
 
         Log.i(TAG, "Recovering playback for ${song.title} at $pos ms")
-        
+
         // Full hardware and session reset
         output.stop()
         output.flush()
-        
+
         controlMutex.withLock {
             stopSessionsInternal()
             underrunCount = 0
             _playbackStateFlow.update { it.copy(isPlaying = true) }
             startSessionInternal(song, pos)
         }
-        
+
         output.start()
     }
 
@@ -221,16 +221,16 @@ class AudioEngine(
                     nextSong = null
 
                     activeSession?.setStartFrameOffset(output.playbackPositionFrames())
-                    
+
                     // Don't reset positionMs to 0 if we are promoting a prepared session
                     // instead, sync it with the session's current internal position.
                     this@AudioEngine.positionMs = activeSession?.currentRenderedPositionMs() ?: 0L
-                    
+
                     userIntentPlaying.set(true)
                     recoveryAttempts = 0
                     updateAudioStateForSong(song)
                     _playbackStateFlow.update { it.copy(currentSong = song, isPlaying = true, sessionId = newSessionId) }
-                    
+
                     // Trigger output reconfiguration for the promoted session
                     val fmt = activeSession?.pcmFormat
                     if (fmt != null) {
@@ -240,7 +240,7 @@ class AudioEngine(
                         // The session will automatically call configure() and start() once the decoder 
                         // identifies the stream format.
                     }
-                    
+
                     // Stop old session after promotion to avoid gap
                     oldSession?.stop()
                     return@withLock
@@ -280,7 +280,7 @@ class AudioEngine(
     private suspend fun preloadNextInternal(song: Song) {
         controlMutex.withLock {
             if (nextSong?.id == song.id && nextSession != null) return@withLock
-            
+
             // Log.d(TAG, "Preloading next song: ${song.title}")
             nextSong = song
             nextSession?.stop()
@@ -303,14 +303,14 @@ class AudioEngine(
                     _playbackStateFlow.update { it.copy(currentSong = song) }
                     return@withLock
                 }
-                
+
                 // If it's not already preloaded, clear and start preloading
                 if (nextSong?.id != song.id) {
                     nextSession?.stop()
                     nextSession = null
                     nextSong = null
                 }
-                
+
                 // Stop current session if different
                 if (activeSession?.song?.id != song.id) {
                     activeSession?.stop()
@@ -321,7 +321,7 @@ class AudioEngine(
                 positionMs = startPositionMs
                 updateAudioStateForSong(song)
                 _playbackStateFlow.update { it.copy(currentSong = song, isPlaying = false) }
-                
+
                 if (activeSession == null && nextSession == null) {
                     // Preload immediately while holding lock to avoid race with play()
                     val sessionId = currentSessionId.incrementAndGet()
@@ -367,13 +367,13 @@ class AudioEngine(
                     nextSong = null
 
                     activeSession?.setStartFrameOffset(output.playbackPositionFrames())
-                    
+
                     this@AudioEngine.positionMs = activeSession?.currentRenderedPositionMs() ?: positionMs
-                    
+
                     userIntentPlaying.set(true)
                     recoveryAttempts = 0
                     _playbackStateFlow.update { it.copy(isPlaying = true, sessionId = newSessionId) }
-                    
+
                     val fmt = activeSession?.pcmFormat
                     if (fmt != null) {
                         activeSession?.configure(fmt)
@@ -382,7 +382,7 @@ class AudioEngine(
                         // The session will automatically call configure() and start() once the decoder 
                         // identifies the stream format.
                     }
-                    
+
                     oldSession?.stop()
                     return@withLock
                 }
@@ -518,7 +518,7 @@ class AudioEngine(
             bufferCount = config.outputBufferCount,
             postFadeFrames = (config.postFadeBufferMs * sourceSampleRate) / 1000
         )
-        
+
         // Forward MMAP Exclusive Mode
         output.setMmapExclusiveMode(
             enabled = config.outputMode == OutputMode.MMAP_EXCLUSIVE,
@@ -603,6 +603,11 @@ class AudioEngine(
                         val newSessionId = activeSession?.sessionId ?: 0L
                         nextSession = null
                         currentSong = activeSession?.song
+                        // Without this, currentRenderedPositionMs() on the promoted session
+                        // computes elapsed frames against startFrameOffset captured back when
+                        // it was preloaded (seconds/minutes ago), producing a huge garbage
+                        // position (e.g. showing "3245:14" instead of the real elapsed time).
+                        activeSession?.setStartFrameOffset(output.totalFramesWritten())
                         updateAudioStateForSong(currentSong!!)
                         this@AudioEngine.positionMs = 0L
                         _playbackStateFlow.update { it.copy(currentSong = currentSong, sessionId = newSessionId) }
@@ -617,7 +622,7 @@ class AudioEngine(
             val sampleCount = targetSession.ringBuffer.read(localBuffer, localBuffer.size)
             if (sampleCount > 0) {
                 val currentRevision = dspRevision.get()
-                
+
                 val processed = targetSession.dspLock.readLock().withLock {
                     if (appliedDspRevision != currentRevision) {
                         targetSession.dspPipeline.updateConfig(dspConfig)
@@ -632,12 +637,12 @@ class AudioEngine(
                         if (outSampleCount > 0) {
                             val remainingMs = outSession.song.durationMs - outSession.currentRenderedPositionMs()
                             val t = computeCrossfadeProgress(remainingMs, crossfadeDurationS)
-                            
+
                             // Equal-power crossfade curves: sqrt(t) and sqrt(1-t)
                             for (i in 0 until outSampleCount step format.channels) {
                                 val gainOut = kotlin.math.sqrt(t)
                                 val gainIn = kotlin.math.sqrt(1f - t)
-                                
+
                                 for (c in 0 until format.channels) {
                                     val idx = i + c
                                     if (idx < sampleCount) {
@@ -653,7 +658,7 @@ class AudioEngine(
 
                     targetSession.dspPipeline.process(localBuffer, sampleCount, format.channels, format.sampleRate)
                 }
-                
+
                 val frames = processed.sampleCount / format.channels
                 var writtenFramesTotal = 0
 
@@ -752,7 +757,7 @@ class AudioEngine(
         private var lastOutputRate = 0
         private var lastOutputBitDepth = 0
         val dspLock = ReentrantReadWriteLock()
-        
+
         @Volatile
         var dspPipeline = AudioDspPipeline.create(44_100, 44_100, 2, output.outputBitDepth(), this@AudioEngine.dspConfig, song)
 
@@ -804,7 +809,7 @@ class AudioEngine(
                                 delay(500)
                                 continue
                             }
-                            
+
                             if (song.source == SongSource.TELEGRAM && retryCount < 1) {
                                 retryCount++
                                 Log.w("AudioEngine", "Telegram decode failed, waiting for TDLib ready and retrying...")
@@ -851,7 +856,7 @@ class AudioEngine(
 
         suspend fun requestOutputRestart() {
             val format = pcmFormat ?: return
-            
+
             // Capture current position synchronously before launching reconfiguration.
             // This ensures playback progress is preserved when output is re-initialized.
             basePositionMs = currentRenderedPositionMs()
@@ -871,9 +876,9 @@ class AudioEngine(
             if (activeSession?.sessionId == this.sessionId) {
                 val targetRate = resolveTargetSampleRate(format.sampleRate, dspConfig)
                 val targetBitDepth = if (dspConfig.outputMode == OutputMode.HI_RES) 32 else dspConfig.sampleFormat.bitDepth
-                
+
                 val outputConfigChanged = targetRate != lastOutputRate || targetBitDepth != lastOutputBitDepth
-                
+
                 if (formatChanged || outputConfigChanged) {
                     ringBuffer.clear()
                     output.flush()
@@ -893,7 +898,7 @@ class AudioEngine(
                 if (!output.init(format.sampleRate, format.channels, format.bitDepth, format.isDoP)) {
                     logWarn("Audio output initialization failed")
                 }
-                
+
                 // Hardware position was just reset by init(), so we reset our offset to match.
                 startFrameOffset = output.playbackPositionFrames()
 
@@ -960,15 +965,15 @@ class AudioEngine(
         suspend fun refreshDspPipeline(format: PcmAudioFormat) {
             val actualOutputRate = output.outputSampleRate().takeIf { it > 0 } ?: resolveTargetSampleRate(format.sampleRate, dspConfig)
             val currentBitDepth = output.outputBitDepth()
-            
-                // 1. Swap/Update pipeline synchronously so the next render loop uses correct parameters
+
+            // 1. Swap/Update pipeline synchronously so the next render loop uses correct parameters
             val oldPipelineToRelease = dspLock.writeLock().withLock {
                 val current = dspPipeline
-                
+
                 if (current.inputSampleRate == format.sampleRate &&
                     current.outputSampleRate == actualOutputRate &&
                     current.channels == format.channels) {
-                    
+
                     current.updateOutputBitDepth(currentBitDepth)
                     current.updateConfig(dspConfig)
                     appliedDspRevision = dspRevision.get()
@@ -988,7 +993,7 @@ class AudioEngine(
                     current
                 }
             }
-            
+
             // Release old pipeline outside of lock
             oldPipelineToRelease?.release()
 
