@@ -349,6 +349,22 @@ class AudioTrackOutput(
                 val isPlaying = oldTrack.playState == AudioTrack.PLAYSTATE_PLAYING
                 if (isPlaying) newTrack.play()
                 audioTrack = newTrack
+                // BUGFIX: The new AudioTrack's playbackHeadPosition always restarts at 0,
+                // while lastPlaybackHeadPosition/playbackHeadWraps/playbackHeadOffset still
+                // reference the OLD track. On the very next read, head(0) < lastPlaybackHeadPosition
+                // (the old track's large value), which getAbsolutePlaybackHeadPositionInternal()
+                // misreads as a 32-bit counter wraparound and increments playbackHeadWraps.
+                // That single spurious wrap adds (1 shl 32) frames (~1623 minutes at 44.1kHz) to
+                // every position calculated afterwards — producing the bogus huge seekbar/duration
+                // values (e.g. "1493:30") seen after switching to a track with the same
+                // sample rate/channels/performance mode (the "seamless" path). Reset the tracking
+                // state here exactly like the non-seamless branch below already does.
+                synchronized(stateLock) {
+                    totalFramesWritten = 0L
+                    playbackHeadWraps = 0L
+                    lastPlaybackHeadPosition = 0
+                    playbackHeadOffset = 0L
+                }
                 try {
                     oldTrack.pause()
                     oldTrack.flush()
@@ -456,6 +472,7 @@ class AudioTrackOutput(
                 totalFramesWritten = 0L
                 playbackHeadWraps = 0L
                 lastPlaybackHeadPosition = 0
+                playbackHeadOffset = 0L
             }
         }
     }
