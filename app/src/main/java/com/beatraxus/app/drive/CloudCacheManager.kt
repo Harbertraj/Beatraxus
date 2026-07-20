@@ -42,11 +42,58 @@ class CloudCacheManager(
     
     // Use ConcurrentHashMap for thread-safe access from media threads
     private val activeDownloads = ConcurrentHashMap<String, Job>()
+    private val activeWindows = ConcurrentHashMap<String, WindowBuffer>()
     private val mutex = Mutex()
     private var currentlyPlayingId: String? = null
     
     fun setCurrentlyPlayingId(id: String?) {
         currentlyPlayingId = id
+    }
+
+    /**
+     * Represents a rolling-window cache for a single active song.
+     * Uses a circular buffer (8MB) to store a contiguous region of the file.
+     */
+    private inner class WindowBuffer(val song: Song) {
+        val buffer = ByteArray(8 * 1024 * 1024) // 8MB scratch buffer
+        val BUFFER_SIZE = buffer.size
+        
+        var startPos: Long = -1L // Absolute file position of buffer start
+        var endPos: Long = -1L   // Absolute file position of data end (exclusive)
+        var isFetching = false
+        var totalSize: Long = -1L
+        
+        val lock = ReentrantLock()
+        val condition = lock.newCondition()
+        var prefetchJob: Job? = null
+
+        fun contains(pos: Long, size: Int): Boolean {
+            return startPos != -1L && pos >= startPos && (pos + size) <= endPos
+        }
+
+        // Circular buffer write
+        fun write(filePos: Long, src: ByteArray, length: Int) {
+            val startIdx = (filePos % BUFFER_SIZE).toInt()
+            val remaining = BUFFER_SIZE - startIdx
+            if (length <= remaining) {
+                System.arraycopy(src, 0, buffer, startIdx, length)
+            } else {
+                System.arraycopy(src, 0, buffer, startIdx, remaining)
+                System.arraycopy(src, remaining, buffer, 0, length - remaining)
+            }
+        }
+
+        // Circular buffer read
+        fun read(filePos: Long, dest: ByteArray, offset: Int, length: Int) {
+            val startIdx = (filePos % BUFFER_SIZE).toInt()
+            val remaining = BUFFER_SIZE - startIdx
+            if (length <= remaining) {
+                System.arraycopy(buffer, startIdx, dest, offset, length)
+            } else {
+                System.arraycopy(buffer, startIdx, dest, offset, remaining)
+                System.arraycopy(buffer, remaining, dest, offset + remaining, length - remaining)
+            }
+        }
     }
 
     private val okHttpClient = OkHttpClient.Builder()
@@ -226,7 +273,7 @@ class CloudCacheManager(
             }
         }
 
-        // 1. Cancel downloads for songs no longer in 'keepIds'
+        // 1. Cancel full downloads for songs no longer in 'keepIds'
         val toCancel = activeDownloads.keys - keepIds
         if (toCancel.isNotEmpty()) {
             Log.d(TAG, "Cancelling ${toCancel.size} downloads not in keepIds: $toCancel (currentlyPlaying=$currentlyPlayingId)")
@@ -236,35 +283,107 @@ class CloudCacheManager(
             activeDownloads.remove(id)
         }
 
-        // 2. Start downloads for 'keepIds' if not already cached
+        // 2. Prune rolling window buffers no longer in keepIds
+        val windowsToRemove = activeWindows.keys - keepIds
+        windowsToRemove.forEach { id ->
+            activeWindows[id]?.lock?.withLock {
+                activeWindows[id]?.prefetchJob?.cancel()
+            }
+            activeWindows.remove(id)
+        }
+
+        // 3. Start downloads/priming for 'keepIds' if not already cached
         // Prioritize current song
         currentSong?.let { song ->
             val cached = getCachedFile(song)
             if (cached != null) {
                 // If already in cache, just update its LRU recency
                 playbackLruCache.getOrCacheFile(song, cached, true, currentlyPlayingId)
-            } else if (song.isCloud() && !activeDownloads.containsKey(song.id)) {
+            } else if (song.isCloud()) {
                 if (song.source == SongSource.TELEGRAM && tdLib != null) {
-                    startTelegramPreDownload(song, tdLib)
+                    if (!activeDownloads.containsKey(song.id)) startTelegramPreDownload(song, tdLib)
+                } else if (song.source == SongSource.SMB || song.source == SongSource.FTP) {
+                    if (!activeDownloads.containsKey(song.id)) startDownload(song)
                 } else {
-                    startDownload(song)
+                    // HTTP Cloud (GDrive, Dropbox, etc.): Prime first 2MB window instead of full download
+                    primeWindow(song)
                 }
             }
         }
 
-        // Then upcoming songs
+        // 4. For upcoming songs, we ONLY bump recency if already cached.
+        // We NO LONGER trigger eager full-file downloads (startDownload) for upcoming songs.
         upcomingSongs.take(5).forEach { song ->
             val cached = getCachedFile(song)
             if (cached != null) {
                 // For pre-fetch, we don't necessarily want to bump recency, 
                 // but we should ensure it's tracked in lruMap
                 playbackLruCache.getOrCacheFile(song, cached, false, currentlyPlayingId)
-            } else if (song.isCloud() && !activeDownloads.containsKey(song.id)) {
-                if (song.source == SongSource.TELEGRAM && tdLib != null) {
-                    startTelegramPreDownload(song, tdLib)
-                } else {
-                    startDownload(song)
+            }
+            // Logic change: We no longer call startDownload(song) for upcoming songs 
+            // to fulfill the "do NOT fetch entire upcoming songs" requirement.
+        }
+    }
+
+    /**
+     * Primes the window for a song (initial 2MB fetch).
+     */
+    private fun primeWindow(song: Song) {
+        val window = activeWindows.getOrPut(song.id) { WindowBuffer(song) }
+        window.lock.withLock {
+            if (window.startPos == -1L) {
+                window.startPos = 0
+                window.endPos = 0
+                window.isFetching = true
+                window.prefetchJob = downloadScope.launch {
+                    fetchWindowRange(song, window, 0, 2 * 1024 * 1024)
                 }
+            }
+        }
+    }
+
+    /**
+     * Fetches a specific range from the network into the WindowBuffer.
+     */
+    private suspend fun fetchWindowRange(song: Song, window: WindowBuffer, start: Long, length: Long) {
+        try {
+            val url = resolveDownloadUrl(song) ?: return
+            val end = start + length - 1
+            val requestBuilder = Request.Builder()
+                .url(url)
+                .header("Range", "bytes=$start-$end")
+            
+            val h = getCloudHeaders(song)
+            h.forEach { (k, v) -> requestBuilder.header(k, v) }
+
+            okHttpClient.newCall(requestBuilder.build()).execute().use { response ->
+                if (!response.isSuccessful) return
+                val body = response.body ?: return
+                val input = body.byteStream()
+                val tempBuffer = ByteArray(65536)
+                var bytesRead = 0
+                while (currentCoroutineContext().isActive && input.read(tempBuffer).also { bytesRead = it } != -1) {
+                    window.lock.withLock {
+                        val writePos = window.endPos
+                        window.write(writePos, tempBuffer, bytesRead)
+                        window.endPos += bytesRead
+                        
+                        // Maintain 8MB bounded size: shift startPos forward if we exceed capacity
+                        if (window.endPos - window.startPos > window.BUFFER_SIZE) {
+                            window.startPos = window.endPos - window.BUFFER_SIZE
+                        }
+                        window.condition.signalAll()
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            if (e !is CancellationException) {
+                Log.e(TAG, "Window fetch failed for ${song.title}: ${e.message}")
+            }
+        } finally {
+            window.lock.withLock {
+                window.isFetching = false
+                window.condition.signalAll()
             }
         }
     }
@@ -601,6 +720,9 @@ class CloudCacheManager(
         private val lock = ReentrantLock()
         private var headers: Map<String, String>? = null
 
+        // Get or create the shared window buffer for this song
+        private val window = activeWindows.getOrPut(song.id) { WindowBuffer(song) }
+
         private suspend fun getOrFetchHeaders(): Map<String, String> {
             if (isSeekPending()) return emptyMap()
             if (headers != null) return headers!!
@@ -613,11 +735,13 @@ class CloudCacheManager(
             if (size != -1L) return size
             if (song.fileSizeBytes > 0) {
                 size = song.fileSizeBytes
+                window.totalSize = size
                 return size
             }
             val cacheFile = getCachedFile(song)
             if (cacheFile != null) {
                 size = cacheFile.length()
+                window.totalSize = size
                 return size
             }
             try {
@@ -631,6 +755,7 @@ class CloudCacheManager(
                         val contentLength = response.header("Content-Length")?.toLongOrNull()
                         if (contentLength != null && contentLength > 0) {
                             size = contentLength
+                            window.totalSize = size
                             return size
                         }
                     }
@@ -646,36 +771,77 @@ class CloudCacheManager(
             val totalSize = getSize()
             if (totalSize > 0 && position >= totalSize) return -1
             
+            // Strategy A: If full file is cached, read from it directly
             getCachedFile(song)?.let { return readFromFile(it, position, buffer, offset, size) }
 
-            val tmpFile = File(cacheDir, "${song.id}.tmp")
-            if (!tmpFile.exists() && !activeDownloads.containsKey(song.id)) {
-                startDownload(song)
-            }
+            // Strategy B: Use rolling-window buffer
+            return readFromWindow(position, buffer, offset, size)
+        }
 
-            var attempts = 0
-            // PERFORMANCE: Wait more patiently for the download to start or catch up.
-            // For seeks, we also wait a bit to avoid falling back to network if the cache is close.
-            val maxWaitAttempts = if (position == 0L) 100 else 50 // 2s for start, 1s for subsequent
-            while (position + size > tmpFile.length() && activeDownloads.containsKey(song.id) && attempts < maxWaitAttempts) {
-                if (isSeekPending()) return -1
-                try {
-                    lock.unlock()
-                    Thread.sleep(20) // Snappier check; intentional: raw thread, not a coroutine
-                    lock.lock()
-                } catch (e: Exception) {
-                    Log.w(TAG, "Polling loop interrupted", e)
+        private fun readFromWindow(position: Long, outBuffer: ByteArray, offset: Int, size: Int): Int {
+            window.lock.withLock {
+                // If seek is outside current window or window is empty
+                if (window.startPos == -1L || position < window.startPos || position >= window.endPos) {
+                    // DISCARD: Discard old window and fetch fresh window starting at position
+                    refreshWindow(position)
                 }
-                attempts++
-            }
 
-            if (tmpFile.exists() && position < tmpFile.length()) {
-                val available = (tmpFile.length() - position).toInt()
-                val toRead = if (available < size) available else size
-                if (toRead > 0) return readFromFile(tmpFile, position, buffer, offset, toRead)
-            }
+                // Wait if current request exceeds available buffered data but fetch is in progress
+                var attempts = 0
+                while (position + size > window.endPos && window.isFetching && attempts < 150) {
+                    if (isSeekPending()) return -1
+                    try {
+                        window.condition.await(20, TimeUnit.MILLISECONDS)
+                    } catch (e: InterruptedException) {
+                        return -1
+                    }
+                    attempts++
+                }
 
-            return readFromNetwork(position, buffer, offset, size)
+                // Serve from window if data is available
+                if (position >= window.startPos && position < window.endPos) {
+                    val available = (window.endPos - position).toInt()
+                    val toRead = minOf(size, available)
+                    
+                    // Copy from circular ring buffer
+                    window.read(position, outBuffer, offset, toRead)
+                    
+                    // Background-extend: Trigger prefetch if consumed more than half of forward region
+                    checkPrefetch(position)
+                    
+                    return toRead
+                }
+            }
+            
+            // Fallback to direct network read only if window mechanism fails completely
+            return readFromNetwork(position, outBuffer, offset, size)
+        }
+
+        private fun refreshWindow(position: Long) {
+            window.prefetchJob?.cancel()
+            window.startPos = position
+            window.endPos = position
+            window.isFetching = true
+            
+            // Fetch a fresh window starting at position, sized to the full BUFFER_SIZE (8MB)
+            window.prefetchJob = downloadScope.launch {
+                fetchWindowRange(song, window, position, window.BUFFER_SIZE.toLong())
+            }
+        }
+
+        private fun checkPrefetch(currentPos: Long) {
+            // forwardBuffered is distance from current read to end of window
+            val forwardBuffered = window.endPos - currentPos
+            val totalSize = window.totalSize
+            
+            // If less than half the window (4MB) is left, prefetch next 2MB chunk
+            if (forwardBuffered < 4 * 1024 * 1024 && !window.isFetching && (totalSize == -1L || window.endPos < totalSize)) {
+                window.isFetching = true
+                window.prefetchJob = downloadScope.launch {
+                    // Background-extend the window forward by 2MB
+                    fetchWindowRange(song, window, window.endPos, 2 * 1024 * 1024)
+                }
+            }
         }
 
         private fun readFromFile(file: File, position: Long, buffer: ByteArray, offset: Int, size: Int): Int {
@@ -695,7 +861,7 @@ class CloudCacheManager(
                 val url = resolveDownloadUrl(song) ?: return -1
                 // Optimization: Request slightly more to reduce number of requests
                 val fetchSize = if (size < 131072) 131072 else size 
-                val endPos = if (size > 0) position + fetchSize - 1 else position + 1024*1024
+                val endPos = position + fetchSize - 1
 
                 val requestBuilder = Request.Builder()
                     .url(url)
