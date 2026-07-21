@@ -147,6 +147,10 @@ class AudioPlaybackService : Service() {
         fun getService(): AudioPlaybackService = this@AudioPlaybackService
     }
 
+    /** Current AudioTrack session id for live-meter taps (Music Detail Inspector, Phase 6),
+     *  or 0 if unavailable (e.g. MMAP-exclusive output, or no active track yet). */
+    fun getAudioSessionId(): Int = if (::audioOutput.isInitialized) audioOutput.getAudioSessionId() else 0
+
     override fun onCreate() {
         super.onCreate()
         val prefs = getSharedPreferences("beatraxus", Context.MODE_PRIVATE)
@@ -600,7 +604,11 @@ class AudioPlaybackService : Service() {
         playbackJob?.cancel()
 
         if (com.beatraxus.app.cast.CastManager.isConnected) {
-            if (engine.playbackStateFlow.value.isPlaying) {
+            // NOTE: engine.playbackStateFlow reflects the *local* player, which is deliberately
+            // paused while casting — it's always false here, so this must not be used to decide
+            // play vs pause. _playbackStateFlow is kept in sync with the TV's real state via
+            // CastManager.castMediaStatus (see the collector above), so use that instead.
+            if (_playbackStateFlow.value.isPlaying) {
                 com.beatraxus.app.cast.CastManager.pause()
             } else {
                 com.beatraxus.app.cast.CastManager.play()
@@ -1373,8 +1381,22 @@ class AudioPlaybackService : Service() {
                 _audioStateFlow.value = state
             }
         }
+
+        // Lets CastManager auto-load "whatever is currently playing" if the user connects to a
+        // TV through the system Cast icon rather than an explicit "cast this song" action.
+        com.beatraxus.app.cast.CastManager.nowPlayingProvider = {
+            engine.playbackStateFlow.value.currentSong?.let { song ->
+                song to engine.currentPositionMs()
+            }
+        }
     }
-    val currentPositionMs get() = engine.currentPositionMs()
+
+    val currentPositionMs: Long
+        get() = if (com.beatraxus.app.cast.CastManager.isConnected) {
+            com.beatraxus.app.cast.CastManager.currentPositionMs()
+        } else {
+            engine.currentPositionMs()
+        }
 
     fun playSong(song: Song) {
         playbackJob?.cancel()

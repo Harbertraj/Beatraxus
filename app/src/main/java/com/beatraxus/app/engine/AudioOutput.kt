@@ -26,4 +26,9 @@ interface AudioOutput {
     fun outputDeviceLabel(): String
     fun estimatedLatencyMs(): Int
     fun release()
+    /** Android audio session id for the active AudioTrack, or -1/0 (AudioManager.ERROR /
+     *  AUDIO_SESSION_ID_GENERATE) when unavailable, e.g. during MMAP-exclusive output where
+     *  there is no regular mixer session to attach a Visualizer to. Used by the Music Detail
+     *  Inspector's live meters (Phase 6). */
+    fun getAudioSessionId(): Int
 }

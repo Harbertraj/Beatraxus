@@ -734,6 +734,12 @@ class AudioTrackOutput(
 
     override fun isMmapActive(): Boolean = lifecycleLock.readLock().withLock { usingMmap }
 
+    override fun getAudioSessionId(): Int = lifecycleLock.readLock().withLock {
+        // MMAP-exclusive path bypasses the regular mixer track Visualizer taps into.
+        if (usingMmap) return@withLock 0
+        audioTrack?.audioSessionId ?: 0
+    }
+
     override fun mmapActualBufferFrames(): Int = lifecycleLock.readLock().withLock { mmapOutput?.mmapActualBufferFrames() ?: 0 }
 
     private fun resolveBestEncoding(bitDepth: Int, channelConfig: Int): Int {

@@ -47,15 +47,17 @@ class AiAnalysisEngine(private val context: Context) {
         }
     }
 
-    suspend fun analyzeSong(song: Song): AiAnalysisEntity? = withContext(Dispatchers.Default) {
-        if (song.source != SongSource.LOCAL) return@withContext null // Skip cloud/telegram songs for AI analysis to avoid native crashes on web URIs
+    suspend fun analyzeSong(song: Song): SongAnalysisResult = withContext(Dispatchers.Default) {
+        // Skip cloud/telegram songs for AI analysis to avoid native crashes on web URIs.
+        // The quality-analysis pass (Phase 3) mirrors this same guard.
+        if (song.source != SongSource.LOCAL) return@withContext SongAnalysisResult(null, null)
 
         try {
             // 1. Extract audio features using native C++ engine
             // We analyze the first 60 seconds as requested
             val features = NativeDsp().use { dsp ->
                 dsp.extractFeatures(context, song.uri, 60)
-            } ?: return@withContext null
+            } ?: return@withContext SongAnalysisResult(null, null)
             
             // 2. Run AI Inference for Genre (Local + Online)
             val genreResult = runInference(genreInterpreter, features.spectralData)
@@ -101,7 +103,7 @@ class AiAnalysisEngine(private val context: Context) {
                 features.bassScore, features.midScore, features.trebleScore
             )
             
-            AiAnalysisEntity(
+            val entity = AiAnalysisEntity(
                 songId = song.id,
                 genre = primaryGenre,
                 genreConfidence = genreResult.primaryConfidence,
@@ -134,12 +136,13 @@ class AiAnalysisEngine(private val context: Context) {
                 analysisVersion = 1,
                 lastAnalyzed = System.currentTimeMillis()
             )
+            SongAnalysisResult(entity, features)
         } catch (e: Exception) {
             Log.e(TAG, "Error analyzing song ${song.title}", e)
-            null
+            SongAnalysisResult(null, null)
         } catch (t: Throwable) {
             Log.e(TAG, "Fatal error analyzing song ${song.title}", t)
-            null
+            SongAnalysisResult(null, null)
         }
     }
 
@@ -274,5 +277,18 @@ data class AudioFeatures(
     val trebleScore: Float,
     val stereoWidth: Float,
     val tempoBpm: Float,
-    val spectralData: FloatArray // Pre-processed for TFLite
+    val spectralData: FloatArray, // Pre-processed for TFLite
+    // NEW: quality-analysis extensions (Phase 1)
+    val truePeakDb: Float = 0f,
+    val clippedSamplePct: Float = 0f,
+    val freqRangeLowHz: Float = 0f,
+    val freqRangeHighHz: Float = 0f
+)
+
+/** Result of [AiAnalysisEngine.analyzeSong], bundling the AI entity with the raw
+ *  [AudioFeatures] used to build it so callers (e.g. the quality-analysis scan step)
+ *  can reuse the same native analysis pass instead of extracting features twice. */
+data class SongAnalysisResult(
+    val aiAnalysis: AiAnalysisEntity?,
+    val features: AudioFeatures?
 )

@@ -204,6 +204,7 @@ data class PlayerUiState(
     val selectedItemName: String? = null, // For Album name, Artist name etc.
     val showFullPlayer: Boolean = false,
     val showQueue: Boolean = false,
+    val showSongInfo: Boolean = false,
     val previousSongs: List<Song> = emptyList(),
     val upcomingSongs: List<Song> = emptyList(),
     val searchQuery: String = "",
@@ -212,6 +213,7 @@ data class PlayerUiState(
     val selectedIds: Set<String> = emptySet(),
     val sortType: SortType = SortType.NAME,
     val isAscending: Boolean = true,
+    val qualityTierFilter: String? = null, // null = "All"; else "Excellent"/"Good"/"Fair"/"Poor"
     val viewMode: ViewMode = ViewMode.LIST,
     val isSearchActive: Boolean = false,
     val bitDepth: Int = 16,
@@ -340,6 +342,7 @@ data class PlayerUiState(
                 selectedItemName == other.selectedItemName &&
                 showFullPlayer == other.showFullPlayer &&
                 showQueue == other.showQueue &&
+                showSongInfo == other.showSongInfo &&
                 upcomingSongs == other.upcomingSongs &&
                 searchQuery == other.searchQuery &&
                 isMultiSelectMode == other.isMultiSelectMode &&
@@ -460,6 +463,7 @@ data class PlayerUiState(
         result = 31 * result + (selectedItemName?.hashCode() ?: 0)
         result = 31 * result + showFullPlayer.hashCode()
         result = 31 * result + showQueue.hashCode()
+        result = 31 * result + showSongInfo.hashCode()
         result = 31 * result + upcomingSongs.hashCode()
         result = 31 * result + searchQuery.hashCode()
         result = 31 * result + isMultiSelectMode.hashCode()

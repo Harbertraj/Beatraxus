@@ -935,163 +935,184 @@ public:
     }
 };
 
-// ===================== SOUND STAGE ENGINE (3D Spatialization) =====================
-class SoundStageEngine {
-    static constexpr double REFERENCE_DISTANCE = 2.0; // unity gain at this distance
-    std::vector<double> delayBufL, delayBufR;
-    size_t delaySize = 0, writePos = 0;
-    double azimuthDeg = 0.0;       // 0-360, 0 = front
-    double elevationDeg = 0.0;     // -90 to +90
-    double distanceM = 2.0;        // meters
-    double widthAmount = 1.0;
-    double centerLockAmount = 0.0; // 0 = off, 1 = full mid/side lock
-    double airAbsorbState = 0.0;   // 1-pole lowpass state for distance darkening
-    double intensity = 0.0;        // 0 = bypass
+// ===================== 3D AUDIO STAGE ENGINE =====================
+// Replaces the old per-instrument-node SoundStageEngine/BandSplitter pair with a single,
+// full-band engine driven by six global parameters (Width/Depth/Height/Distance/CenterFocus/
+// RoomReflections) plus a small set of virtual speaker positions used only to derive the
+// perceived stereo "opening angle" (dragging a speaker in the UI audibly widens/narrows the
+// image). All parameters are smoothed sample-by-sample to avoid zipper/click artifacts on
+// rapid slider or drag updates.
+class Audio3DStageEngine {
+    static constexpr int MAX_SPEAKERS = 8;
+    struct SpeakerPos { double azimuthDeg = 0.0; double elevationDeg = 0.0; double distanceM = 2.0; };
+    SpeakerPos speakers[MAX_SPEAKERS];
+    int numKnownSpeakers = 0;
+
+    // Smoothed parameter state (target set from control thread, current ramps in audio thread)
+    double targetWidth = 1.0, curWidth = 1.0;
+    double targetDepth = 0.5, curDepth = 0.5;
+    double targetHeight = 0.0, curHeight = 0.0;
+    double targetDistance = 1.0, curDistance = 1.0;
+    double targetCenterFocus = 0.5, curCenterFocus = 0.5;
+    double targetRoomReflections = 0.2, curRoomReflections = 0.2;
+    double targetSpatialIntensity = 1.0, curSpatialIntensity = 1.0;
+    bool engineEnabled = false;
+
+    // Depth: short additional delay + HF damping, proportional to how "far back" content is placed
+    std::vector<double> depthDelayL, depthDelayR;
+    size_t depthDelaySize = 0, depthWritePos = 0;
+    double depthLpStateL = 0.0, depthLpStateR = 0.0;
+
+    // Room reflections: 4 short comb-style taps, deliberately simpler/cheaper than the
+    // dedicated Freeverb engine used on the Reverb page — do not confuse the two.
+    static constexpr int NUM_REFLECTIONS = 4;
+    std::vector<double> reflBufL[NUM_REFLECTIONS];
+    std::vector<double> reflBufR[NUM_REFLECTIONS];
+    size_t reflSize[NUM_REFLECTIONS] = {0, 0, 0, 0};
+    size_t reflPos[NUM_REFLECTIONS] = {0, 0, 0, 0};
+
     int currentSampleRate = 48000;
 
 public:
     void init(int sampleRate) {
         currentSampleRate = sampleRate;
-        delaySize = (size_t)std::ceil(0.0008 * sampleRate) + 4; // max ITD ~0.8ms
-        delayBufL.assign(delaySize, 0.0);
-        delayBufR.assign(delaySize, 0.0);
-        writePos = 0;
-        airAbsorbState = 0.0;
+
+        depthDelaySize = (size_t)std::ceil(0.025 * sampleRate) + 4; // up to ~25ms of depth delay
+        depthDelayL.assign(depthDelaySize, 0.0);
+        depthDelayR.assign(depthDelaySize, 0.0);
+        depthWritePos = 0;
+        depthLpStateL = 0.0;
+        depthLpStateR = 0.0;
+
+        static const double reflMs[NUM_REFLECTIONS] = {7.0, 13.0, 19.0, 29.0};
+        for (int i = 0; i < NUM_REFLECTIONS; i++) {
+            reflSize[i] = (size_t)std::ceil((reflMs[i] / 1000.0) * sampleRate) + 2;
+            reflBufL[i].assign(reflSize[i], 0.0);
+            reflBufR[i].assign(reflSize[i], 0.0);
+            reflPos[i] = 0;
+        }
     }
 
-    void setIntensity(double value) { intensity = std::clamp(value, 0.0, 1.0); }
-    void setPosition(double az, double el, double dist) {
-        azimuthDeg = az; elevationDeg = el; distanceM = std::max(0.3, dist);
-    }
-    void setWidth(double w) { widthAmount = w; }
-    void setCenterLock(double amount) { centerLockAmount = std::clamp(amount, 0.0, 1.0); }
+    void setEnabled(bool enabled) { engineEnabled = enabled; }
+    bool isEnabled() const { return engineEnabled; }
 
-    bool isActive() const {
-        return intensity > 0.0001 || std::abs(widthAmount - 1.0) > 0.001;
+    void setParams(double width, double depth, double height, double distance,
+                    double centerFocus, double roomReflections) {
+        targetWidth = std::clamp(width, 0.0, 2.0);
+        targetDepth = std::clamp(depth, 0.0, 1.0);
+        targetHeight = std::clamp(height, -1.0, 1.0);
+        targetDistance = std::clamp(distance, 0.3, 3.0);
+        targetCenterFocus = std::clamp(centerFocus, 0.0, 1.0);
+        targetRoomReflections = std::clamp(roomReflections, 0.0, 1.0);
     }
-    double getIntensity() const { return intensity; }
-    double getWidth() const { return widthAmount; }
+
+    void setWidth(double width) { targetWidth = std::clamp(width, 0.0, 2.0); }
+    void setCenterLock(double centerFocus) { targetCenterFocus = std::clamp(centerFocus, 0.0, 1.0); }
+    void setSpatialIntensity(double intensity) { targetSpatialIntensity = std::clamp(intensity, 0.0, 1.0); }
+
+    void setSpeakerPosition(int index, double azimuthDeg, double elevationDeg, double distanceM) {
+        if (index < 0 || index >= MAX_SPEAKERS) return;
+        speakers[index].azimuthDeg = azimuthDeg;
+        speakers[index].elevationDeg = elevationDeg;
+        speakers[index].distanceM = std::max(0.3, distanceM);
+        if (index + 1 > numKnownSpeakers) numKnownSpeakers = index + 1;
+    }
 
     void process(double& left, double& right) {
-        // Run if 3D intensity is active OR width expansion is active
-        if (intensity <= 0.0001 && std::abs(widthAmount - 1.0) <= 0.001) return;
+        if (!engineEnabled) return;
 
-        // 1. Mid/Side split
+        // ---- Parameter smoothing (one-pole, ~a few ms) to avoid zipper/click artifacts ----
+        const double smoothCoeff = 0.002;
+        curWidth += (targetWidth - curWidth) * smoothCoeff;
+        curDepth += (targetDepth - curDepth) * smoothCoeff;
+        curHeight += (targetHeight - curHeight) * smoothCoeff;
+        curDistance += (targetDistance - curDistance) * smoothCoeff;
+        curCenterFocus += (targetCenterFocus - curCenterFocus) * smoothCoeff;
+        curRoomReflections += (targetRoomReflections - curRoomReflections) * smoothCoeff;
+        curSpatialIntensity += (targetSpatialIntensity - curSpatialIntensity) * smoothCoeff;
+
+        // ---- Derive a physical "opening angle" from the first two virtual speakers ----
+        // Default stereo triangle is +/-30deg (60deg total spread); dragging a speaker
+        // wider/narrower scales the Width processing on top of the Width knob itself, so the
+        // visual drag interaction has an audible effect even with Width held constant.
+        double spreadFactor = 1.0;
+        if (numKnownSpeakers >= 2) {
+            double spreadDeg = std::clamp(std::abs(speakers[1].azimuthDeg - speakers[0].azimuthDeg), 5.0, 180.0);
+            spreadFactor = spreadDeg / 60.0;
+        }
+
+        // ---- 1. Width: mid/side stereo scaling ----
         double mid = (left + right) * 0.5;
         double side = (left - right) * 0.5;
+        double widenedSide = side * curWidth * spreadFactor;
 
-        // 2. Apply Width Expansion (The "Soundstage" knob effect)
-        // This affects the base stereo image without coloration.
-        double expandedSide = side * widthAmount;
-        double dryL = mid + expandedSide;
-        double dryR = mid - expandedSide;
+        // ---- 2. Center focus: blend the wide (processed) and mono-safe (unprocessed) side ----
+        // signal so center-panned/mono content stays anchored as focus increases toward 1.0.
+        double focusedSide = widenedSide * (1.0 - curCenterFocus) + side * curCenterFocus;
+        double wideL = mid + focusedSide;
+        double wideR = mid - focusedSide;
 
-        // 3. If 3D Spatial Audio intensity is 0, we are done (Pure Width Expansion)
-        if (intensity <= 0.0001) {
-            left = dryL;
-            right = dryR;
-            return;
-        }
+        // ---- 3. Depth: a short extra delay + gentle HF damping proportional to how far ----
+        // back the stage is pushed (reuses the same delay-line-from-distance idea the old
+        // per-node engine used, applied once to the full signal instead of per band).
+        int depthDelaySamples = (int)std::round((curDepth * 18.0 / 1000.0) * currentSampleRate);
+        depthDelaySamples = std::clamp(depthDelaySamples, 0, (int)depthDelaySize - 1);
 
-        // 4. Calculate 3D Spatialized Version (The "Wet" signal)
-        // Azimuth -> ITD/ILD
-        double azRad = azimuthDeg * M_PI / 180.0;
-        double itdSamples = std::sin(azRad) * 0.0008 * currentSampleRate;
-        double ildL = 1.0 - std::max(0.0, std::sin(azRad)) * 0.3;
-        double ildR = 1.0 - std::max(0.0, -std::sin(azRad)) * 0.3;
+        depthDelayL[depthWritePos] = wideL;
+        depthDelayR[depthWritePos] = wideR;
+        size_t readPos = (depthWritePos + depthDelaySize - (size_t)depthDelaySamples) % depthDelaySize;
+        double delayedL = depthDelayL[readPos];
+        double delayedR = depthDelayR[readPos];
+        depthWritePos = (depthWritePos + 1) % depthDelaySize;
 
-        delayBufL[writePos] = expandedSide;
-        delayBufR[writePos] = expandedSide;
-        double readPos = (double)writePos - std::abs(itdSamples);
-        if (readPos < 0) readPos += (double)delaySize;
-        size_t r0 = (size_t)readPos % delaySize;
-        double delayedSide = (itdSamples >= 0) ? delayBufL[r0] : delayBufR[r0];
+        double depthMixL = wideL * (1.0 - curDepth) + delayedL * curDepth;
+        double depthMixR = wideR * (1.0 - curDepth) + delayedR * curDepth;
 
-        double sideL = (itdSamples >= 0) ? expandedSide : delayedSide;
-        double sideR = (itdSamples >= 0) ? delayedSide : expandedSide;
+        // Apply Spatial Intensity blend: 1.0 = full 3D, 0.0 = only width expansion
+        depthMixL = wideL * (1.0 - curSpatialIntensity) + depthMixL * curSpatialIntensity;
+        depthMixR = wideR * (1.0 - curSpatialIntensity) + depthMixR * curSpatialIntensity;
 
-        // Constant power ILD normalization
-        double pwrSide = (ildL * ildL + ildR * ildR) * 0.5;
-        double ildMakeup = (pwrSide > 0.001) ? 1.0 / std::sqrt(pwrSide) : 1.0;
-        sideL *= (ildL * ildMakeup);
-        sideR *= (ildR * ildMakeup);
+        double lpCoeff = 0.15 + curDepth * 0.35; // deeper placement -> darker (more damping)
+        depthLpStateL += (depthMixL - depthLpStateL) * lpCoeff;
+        depthLpStateR += (depthMixR - depthLpStateR) * lpCoeff;
+        double depthedL = depthMixL * (1.0 - curDepth * 0.5) + depthLpStateL * (curDepth * 0.5);
+        double depthedR = depthMixR * (1.0 - curDepth * 0.5) + depthLpStateR * (curDepth * 0.5);
 
-        writePos = (writePos + 1) % delaySize;
+        // ---- 4. Height: lightweight elevation cue ----
+        // True binaural elevation relies on pinna-notch HRTF filtering, which this engine does
+        // not implement. As a cheap, practical substitute we nudge a crude high-frequency
+        // residual (signal minus its own lowpassed version) up or down with Height, which
+        // reads perceptually as "brighter/higher" vs "darker/lower" — an approximation, not
+        // physically accurate elevation synthesis.
+        double hfEstL = depthedL - depthLpStateL;
+        double hfEstR = depthedR - depthLpStateR;
+        double heightedL = depthedL + hfEstL * curHeight * 0.35;
+        double heightedR = depthedR + hfEstR * curHeight * 0.35;
 
-        // Distance simulation (Inverse falloff + Air absorption)
-        double distGain = 1.0 / (1.0 + (distanceM - REFERENCE_DISTANCE) * 0.1);
-        distGain = std::clamp(distGain, 0.5, 1.5);
+        // ---- 5. Distance: overall perceived distance via inverse-falloff-style gain ----
+        double distGain = 1.0 / (1.0 + (curDistance - 1.0) * 0.35);
+        distGain = std::clamp(distGain, 0.35, 1.4);
+        double distancedL = heightedL * distGain;
+        double distancedR = heightedR * distGain;
 
-        if (distanceM > REFERENCE_DISTANCE) {
-            double absorbCoeff = std::clamp(1.0 - ((distanceM - REFERENCE_DISTANCE) / 13.0), 0.4, 0.98);
-            airAbsorbState = airAbsorbState * (1.0 - absorbCoeff) + mid * absorbCoeff;
-        } else {
-            airAbsorbState = mid;
-        }
-
-        // Elevation presence tilt
-        double elevTilt = 1.0 + (elevationDeg / 90.0) * 0.12;
-
-        // Recombine wet signals
-        double positionedMid = mid * (1.0 - centerLockAmount) + airAbsorbState * centerLockAmount;
-        double wetL = (positionedMid + sideL) * distGain * elevTilt;
-        double wetR = (positionedMid - sideR) * distGain * elevTilt;
-
-        // 5. Final Blend: (Width Expanded Stereo) -> (3D Spatialized Stage)
-        // This ensures the "Soundstage" knob doesn't pan vocals if 3D intensity is low.
-        left = dryL * (1.0 - intensity) + wetL * intensity;
-        right = dryR * (1.0 - intensity) + wetR * intensity;
-    }
-};
-
-struct BandSplitter {
-    // 2nd-order Linkwitz-Riley (2x cascaded Butterworth) for 5-band split
-    // L/R channels each get independent state
-    struct LR2 {
-        double b0, b1, b2, a1, a2;
-        double z1[2], z2[2];
-        void init(double hz, double sr, bool hiPass) {
-            double wc = 2.0 * M_PI * hz / sr;
-            double k = std::tan(wc * 0.5);
-            double k2 = k * k;
-            double denom = k2 + std::sqrt(2.0) * k + 1.0;
-            if (!hiPass) {
-                b0 = k2/denom; b1 = 2*b0; b2 = b0;
-            } else {
-                b0 = 1.0/denom; b1 = -2*b0; b2 = b0;
+        // ---- 6. Room reflections: small, cheap early-reflections network (2-4 short ----
+        // comb taps with feedback proportional to amount) — intentionally separate from, and
+        // does not call into, the full Freeverb engine used on the Reverb page.
+        double reflSumL = 0.0, reflSumR = 0.0;
+        if (curRoomReflections > 0.0005) {
+            static const double reflGains[NUM_REFLECTIONS] = {0.5, 0.4, 0.32, 0.22};
+            for (int i = 0; i < NUM_REFLECTIONS; i++) {
+                reflBufL[i][reflPos[i]] = distancedL + reflSumL * 0.2;
+                reflBufR[i][reflPos[i]] = distancedR + reflSumR * 0.2;
+                size_t nextPos = (reflPos[i] + 1) % reflSize[i];
+                reflSumL += reflBufL[i][nextPos] * reflGains[i];
+                reflSumR += reflBufR[i][nextPos] * reflGains[i];
+                reflPos[i] = nextPos;
             }
-            a1 = 2*(k2-1)/denom; a2 = (k2-std::sqrt(2.0)*k+1.0)/denom;
-            z1[0]=z1[1]=z2[0]=z2[1]=0.0;
         }
-        double process(double in, int ch) {
-            double out = b0*in + z1[ch];
-            z1[ch] = b1*in - a1*out + z2[ch];
-            z2[ch] = b2*in - a2*out;
-            return out;
-        }
-    } lp1, hp1, lp2, hp2, lp3, hp3, lp4, hp4;
-
-    void init(int sampleRate) {
-        lp1.init(150,  sampleRate, false); hp1.init(150,  sampleRate, true);
-        lp2.init(400,  sampleRate, false); hp2.init(400,  sampleRate, true);
-        lp3.init(1000, sampleRate, false); hp3.init(1000, sampleRate, true);
-        lp4.init(3000, sampleRate, false); hp4.init(3000, sampleRate, true);
-    }
-    void reset() {
-        for (auto* f : {&lp1,&hp1,&lp2,&hp2,&lp3,&hp3,&lp4,&hp4})
-            f->z1[0]=f->z1[1]=f->z2[0]=f->z2[1]=0.0;
-    }
-
-    void split(double in, int ch, double bands[5]) {
-        double lo1 = lp1.process(in, ch);
-        double hi1 = hp1.process(in, ch);
-        double lo2 = lp2.process(hi1, ch);
-        double hi2 = hp2.process(hi1, ch);
-        double lo3 = lp3.process(hi2, ch);
-        double hi3 = hp3.process(hi2, ch);
-        double lo4 = lp4.process(hi3, ch);
-        double hi4 = hp4.process(hi3, ch);
-        bands[0]=lo1; bands[1]=lo2; bands[2]=lo3; bands[3]=lo4; bands[4]=hi4;
+        double reflAmount = curRoomReflections * 0.35; // kept subtle vs. the full Reverb page
+        left = distancedL + reflSumL * reflAmount;
+        right = distancedR + reflSumR * reflAmount;
     }
 };
 
@@ -1334,7 +1355,7 @@ public:
             reverbAmount(0.0f),
             reverbType(0), reverbPredelayMs(0.0f), reverbWidth(1.0f),
             reverbDamping(0.5f), reverbRoomSize(0.5f),
-            soundStageEnabled(false),
+            audio3DStageEnabled(false),
             bitDepth(16), cutoffRatio(0.97f),
             soxrQuality(3), float64Enabled(false),
             headroomManagementEnabled(true),
@@ -1375,8 +1396,7 @@ public:
         levelerReleaseCoeff = 1.0 - std::exp(-1.0 / (1.500 * inRate));
 
         dcBlocker.init(inRate, channels); reverb.init(inRate); crossfeed.init(inRate);
-        for(int i=0; i<5; i++) soundStages[i].init(inRate);
-        splitter.init(inRate);
+        audio3DStage.init(inRate);
         limiter.init(inRate, channels);
         dither.init(channels);
         limiter.setParams((double)limiterThresholdDb, (double)limiterAttackMs, (double)limiterReleaseMs);
@@ -1513,52 +1533,12 @@ public:
         if (crossfeedEnabled && channels >= 2) {
             for (int f = 0; f < inFrames; f++) crossfeed.process(input[f * channels], input[f * channels + 1], crossfeedLevel);
         }
-        if (soundStageEnabled && channels >= 2) {
-            bool anyActive = false;
-            bool anyIntensity = false;
-            bool allWidthsSame = true;
-            double firstWidth = soundStages[0].getWidth();
-
-            for (int b = 0; b < 5; b++) {
-                if (soundStages[b].isActive()) anyActive = true;
-                if (soundStages[b].getIntensity() > 0.0001) anyIntensity = true;
-                if (std::abs(soundStages[b].getWidth() - firstWidth) > 0.001) allWidthsSame = false;
-            }
-
-            if (anyActive) {
-                if (!anyIntensity && allWidthsSame) {
-                    // Optimization: If no 3D intensity is active and all band widths are the same,
-                    // we can perform a single-pass stereo expansion. This bypasses the 5-band
-                    // Linkwitz-Riley splitter, ensuring ZERO frequency coloration (perfect transparency)
-                    // when the Soundstage knob is at 0 (or only doing uniform width expansion).
-                    T w = (T)firstWidth;
-                    for (int f = 0; f < inFrames; f++) {
-                        int lIdx = f * channels, rIdx = f * channels + 1;
-                        T mid = (input[lIdx] + input[rIdx]) * (T)0.5;
-                        T side = (input[lIdx] - input[rIdx]) * (T)0.5;
-                        side *= w;
-                        input[lIdx] = mid + side;
-                        input[rIdx] = mid - side;
-                    }
-                } else {
-                    // Multi-band processing: required if 3D spatialization is active OR
-                    // if different frequency bands have different width settings.
-                    for (int f = 0; f < inFrames; f++) {
-                        int lIdx = f * channels, rIdx = f * channels + 1;
-                        double l = (double)input[lIdx], r = (double)input[rIdx];
-                        double lBands[5], rBands[5];
-                        splitter.split(l, 0, lBands);
-                        splitter.split(r, 1, rBands);
-
-                        double sumL = 0, sumR = 0;
-                        for (int b = 0; b < 5; b++) {
-                            double bL = lBands[b], bR = rBands[b];
-                            soundStages[b].process(bL, bR);
-                            sumL += bL; sumR += bR;
-                        }
-                        input[lIdx] = (T)sumL; input[rIdx] = (T)sumR;
-                    }
-                }
+        if (audio3DStageEnabled && channels >= 2 && audio3DStage.isEnabled()) {
+            for (int f = 0; f < inFrames; f++) {
+                int lIdx = f * channels, rIdx = f * channels + 1;
+                double l = (double)input[lIdx], r = (double)input[rIdx];
+                audio3DStage.process(l, r);
+                input[lIdx] = (T)l; input[rIdx] = (T)r;
             }
         }
         if (reverbAmount > 0.001f) {
@@ -1695,7 +1675,6 @@ public:
         }
     }
     void setDvcMode(int mode) { dvcMode = mode; }
-    void setSpatial(float b, float w) { balance = b; stereoWidth = w; }
     void setCrossfeed(bool enabled, float level) { crossfeedEnabled = enabled; crossfeedLevel = std::clamp(level, 0.0f, 1.0f); }
     void setReverb(float amount) { reverbAmount = amount; reverb.setWet(amount); }
     void setReverbType(int type) {
@@ -1710,15 +1689,22 @@ public:
     void setReverbParams(float roomSize, float damping) {
         reverbRoomSize = roomSize; reverbDamping = damping; reverb.setRoomSize(roomSize); reverb.setDamping(damping);
     }
-    void setSpatialEnabled(bool enabled) { soundStageEnabled = enabled; if(!enabled) splitter.reset(); }
-    void setSpatialIntensity(float intensity) {
-        for(int i=0; i<5; i++) soundStages[i].setIntensity((double)intensity);
+    void setAudio3DStageEnabled(bool enabled) {
+        audio3DStageEnabled = enabled;
+        audio3DStage.setEnabled(enabled);
     }
-    void setSoundStageNodePosition(int bandIdx, float az, float el, float dist) {
-        if(bandIdx >= 0 && bandIdx < 5) soundStages[bandIdx].setPosition(az, el, dist);
+    void setAudio3DStageParams(float width, float depth, float height, float distance,
+                                float centerFocus, float roomReflections) {
+        audio3DStage.setParams((double)width, (double)depth, (double)height,
+                                (double)distance, (double)centerFocus, (double)roomReflections);
     }
-    void setSoundStageWidth(float w) { for(int i=0; i<5; i++) soundStages[i].setWidth(w); }
-    void setSoundStageCenterLock(float amount) { for(int i=0; i<5; i++) soundStages[i].setCenterLock(amount); }
+    void setSoundStageWidth(float width) { audio3DStage.setWidth((double)width); }
+    void setSoundStageCenterLock(float amount) { audio3DStage.setCenterLock((double)amount); }
+    void setSpatialIntensity(float intensity) { audio3DStage.setSpatialIntensity((double)intensity); }
+
+    void setAudio3DSpeakerPosition(int index, float az, float el, float dist) {
+        audio3DStage.setSpeakerPosition(index, (double)az, (double)el, (double)dist);
+    }
     void setLimiter(bool enabled) {
         limiterEnabled = enabled;
         if (enabled) softLimiterEnabled = false;
@@ -1750,6 +1736,10 @@ public:
     }
     void setBand(int index, float freq, float gainDb, float Q, int type) {
         eq.setBand(index, freq, gainDb, Q, type);
+    }
+    void setSpatial(float b, float w) {
+        balance = b;
+        stereoWidth = w;
     }
     void setEqEnabled(bool enabled) { eq.setEnabled(enabled); }
     void setEqPhaseMode(bool linearPhase) { eq.setPhaseMode(linearPhase); }
@@ -1835,9 +1825,8 @@ private:
     EqEngine aiEq; // New AI EQ Engine
     EqEngine simEq; // Headphone simulation EQ (Phase 3.5)
     BiquadState toneFilters[3]; LookaheadLimiter limiter; Bs2b crossfeed;
-    SoundStageEngine soundStages[5];
-    BandSplitter splitter;
-    bool soundStageEnabled;
+    Audio3DStageEngine audio3DStage;
+    bool audio3DStageEnabled;
     bool crossfeedEnabled; float crossfeedLevel; Freeverb reverb; float reverbAmount; int reverbType;
     float reverbPredelayMs; float reverbWidth; float reverbDamping; float reverbRoomSize;
     float balance, stereoWidth;    int bitDepth;
@@ -1865,6 +1854,11 @@ struct AnalysisResults {
     float stereoWidth;
     float tempoBpm;
     std::vector<float> spectralData; // For TFLite input
+    // NEW: quality-analysis extensions
+    float truePeakDb;       // estimated true (inter-sample) peak in dBFS
+    float clippedSamplePct; // % of samples at or above ~-0.18 dBFS (0.0-100.0)
+    float freqRangeLowHz;   // lowest frequency with meaningful energy
+    float freqRangeHighHz;  // highest frequency with meaningful energy
 };
 
 class AudioAnalyzer {
@@ -1892,6 +1886,12 @@ public:
         // LUFS state
         double lufsSum[2] = {0, 0};
 
+        // NEW: clipping + true-peak state
+        long long clippedCount = 0;
+        const float kClipThreshold = 0.98f; // ~ -0.18 dBFS
+        float oversampledPeak = 0.0f;
+        float prevL = 0.0f, prevR = 0.0f;
+
         // Spectral state
         int fftSize = 2048;
         kiss_fft_state fft;
@@ -1913,6 +1913,25 @@ public:
             sumSq[0] += (double)l * l;
             sumSq[1] += (double)r * r;
             sideEnergy += (double)(l - r) * (l - r);
+
+            // Clipping detection (cheap: raw sample-domain threshold)
+            if (std::abs(l) >= kClipThreshold || std::abs(r) >= kClipThreshold) {
+                clippedCount++;
+            }
+
+            // True-peak estimate: 4x linear-interpolation oversampling between
+            // consecutive sample pairs to catch inter-sample peaks. O(n), same pass.
+            oversampledPeak = std::max(oversampledPeak, std::abs(l));
+            oversampledPeak = std::max(oversampledPeak, std::abs(r));
+            if (f > 0) {
+                for (int k = 1; k < 4; k++) {
+                    float t = k / 4.0f;
+                    float il = prevL + (l - prevL) * t;
+                    float ir = prevR + (r - prevR) * t;
+                    oversampledPeak = std::max({oversampledPeak, std::abs(il), std::abs(ir)});
+                }
+            }
+            prevL = l; prevR = r;
 
             // Apply LUFS K-weighting
             double fl = (double)l, fr = (double)r;
@@ -1976,6 +1995,10 @@ public:
         res.dynamicRange = std::clamp(res.dynamicRange, 0.0f, 60.0f);
         res.stereoWidth = (float)(sideEnergy / (sumSq[0] + sumSq[1] + 1e-10));
 
+        // NEW: clipping + true peak
+        res.clippedSamplePct = frames > 0 ? (float)(100.0 * clippedCount / (double)frames) : 0.0f;
+        res.truePeakDb = 20.0f * std::log10(oversampledPeak + 1e-9f);
+
         // LUFS Calculation (Simplified ITU-R BS.1770)
         double meanSqL = lufsSum[0] / frames;
         double meanSqR = lufsSum[1] / frames;
@@ -1997,8 +2020,29 @@ public:
                     sum += magSum[b * binsPerBucket + i];
                 res.spectralData[b] = (float)(sum / binsPerBucket / std::max(1, fftCount));
             }
+
+            // Frequency range: find first/last bin within -60 dB of the peak bin.
+            double peakMag = 0.0;
+            for (double m : magSum) peakMag = std::max(peakMag, m);
+            double threshold = peakMag * std::pow(10.0, -60.0 / 20.0);
+            int lowBin = -1, highBin = -1;
+            for (int i = 0; i < (int)magSum.size(); i++) {
+                if (magSum[i] >= threshold) { lowBin = i; break; }
+            }
+            for (int i = (int)magSum.size() - 1; i >= 0; i--) {
+                if (magSum[i] >= threshold) { highBin = i; break; }
+            }
+            if (lowBin >= 0 && highBin >= 0) {
+                res.freqRangeLowHz = (float)((double)lowBin * sampleRate / fftSize);
+                res.freqRangeHighHz = (float)((double)highBin * sampleRate / fftSize);
+            } else {
+                res.freqRangeLowHz = 0.0f;
+                res.freqRangeHighHz = 0.0f;
+            }
         } else {
             res.spectralData.assign(128, 0.0f);
+            res.freqRangeLowHz = 0.0f;
+            res.freqRangeHighHz = 0.0f;
         }
         return res;
     }
@@ -2020,9 +2064,15 @@ JNIEXPORT jobject JNICALL Java_com_beatraxus_app_engine_NativeDsp_nExtractFeatur
         }
 
         jclass featuresClass = env->FindClass("com/beatraxus/app/engine/AudioFeatures");
-        if (!featuresClass) return nullptr;
-        jmethodID constructor = env->GetMethodID(featuresClass, "<init>", "(FFFFFFFFF[F)V");
-        if (!constructor) return nullptr;
+        if (!featuresClass) {
+            __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, "Failed to find AudioFeatures class");
+            return nullptr;
+        }
+        jmethodID constructor = env->GetMethodID(featuresClass, "<init>", "(FFFFFFFFF[FFFFF)V");
+        if (!constructor) {
+            __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, "Failed to find AudioFeatures constructor");
+            return nullptr;
+        }
         jfloatArray spectralData = env->NewFloatArray(128);
         float dummy[128] = {0};
         env->SetFloatArrayRegion(spectralData, 0, 128, dummy);
@@ -2037,7 +2087,11 @@ JNIEXPORT jobject JNICALL Java_com_beatraxus_app_engine_NativeDsp_nExtractFeatur
             0.3f,   // Treble
             1.0f,   // Stereo
             120.0f, // Tempo
-            spectralData
+            spectralData,
+            0.0f,     // truePeakDb (dummy for DSD - already lossless/DSD, no clipping concept here)
+            0.0f,     // clippedSamplePct
+            20.0f,    // freqRangeLowHz
+            22000.0f  // freqRangeHighHz
         );
     }
 
@@ -2140,13 +2194,22 @@ JNIEXPORT jobject JNICALL Java_com_beatraxus_app_engine_NativeDsp_nExtractFeatur
     AnalysisResults res = analyzer.analyze(pcm.data(), pcm.size() / channels, channels);
 
     jclass featuresClass = env->FindClass("com/beatraxus/app/engine/AudioFeatures");
-    jmethodID constructor = env->GetMethodID(featuresClass, "<init>", "(FFFFFFFFF[F)V");
+    if (!featuresClass) {
+        __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, "Failed to find AudioFeatures class");
+        return nullptr;
+    }
+    jmethodID constructor = env->GetMethodID(featuresClass, "<init>", "(FFFFFFFFF[FFFFF)V");
+    if (!constructor) {
+        __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, "Failed to find AudioFeatures constructor");
+        return nullptr;
+    }
     jfloatArray spectralData = env->NewFloatArray(res.spectralData.size());
     env->SetFloatArrayRegion(spectralData, 0, res.spectralData.size(), res.spectralData.data());
 
     return env->NewObject(featuresClass, constructor,
         res.lufs, res.rms, res.peak, res.dynamicRange, res.bassScore, res.midScore, res.trebleScore,
-        res.stereoWidth, res.tempoBpm, spectralData
+        res.stereoWidth, res.tempoBpm, spectralData,
+        res.truePeakDb, res.clippedSamplePct, res.freqRangeLowHz, res.freqRangeHighHz
     );
 }
 
@@ -2171,6 +2234,9 @@ JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nDestroy(JNIEnv* 
 JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nInitResampler(JNIEnv* env, jobject thiz, jlong handle, jfloat inputSR, jint channels, jfloat targetSR) { if (handle) ((DSP*)handle)->init((int)inputSR, (int)targetSR, channels); }
 JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetVolume(JNIEnv* env, jobject thiz, jlong handle, jfloat volume) { if (handle) ((DSP*)handle)->setVolume(volume); }
 JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetTone(JNIEnv* env, jobject thiz, jlong handle, jfloat bass, jfloat treble, jfloat air) { if (handle) ((DSP*)handle)->setTone(bass, treble, air); }
+JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetSpatial(JNIEnv* env, jobject thiz, jlong handle, jfloat balance, jfloat widen) { if (handle) ((DSP*)handle)->setSpatial(balance, widen); }
+JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetSpatialEnabled(JNIEnv* env, jobject thiz, jlong handle, jboolean enabled) { if (handle) ((DSP*)handle)->setAudio3DStageEnabled(enabled); }
+JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetSpatialIntensity(JNIEnv* env, jobject thiz, jlong handle, jfloat intensity) { if (handle) ((DSP*)handle)->setSpatialIntensity(intensity); }
 JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetBand(JNIEnv* env, jobject thiz, jlong handle, jint index, jfloat freq, jfloat gainDb, jfloat Q, jint type) { if (handle) ((DSP*)handle)->setBand(index, freq, gainDb, Q, type); }
 JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetEqEnabled(JNIEnv* env, jobject thiz, jlong handle, jboolean enabled) { if (handle) ((DSP*)handle)->setEqEnabled(enabled); }
 JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetEqPhaseMode(JNIEnv* env, jobject thiz, jlong handle, jboolean linearPhase) { if (handle) ((DSP*)handle)->setEqPhaseMode(linearPhase); }
@@ -2222,21 +2288,20 @@ JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nInit(JNIEnv* env
 JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nProcess(JNIEnv* env, jobject thiz, jlong handle, jfloatArray data, jint frames) {
     if (!handle) return; jfloat* body = env->GetFloatArrayElements(data, 0); ((DSP*)handle)->processInPlace(body, frames); env->ReleaseFloatArrayElements(data, body, 0);
 }
-JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetSpatial(JNIEnv* env, jobject thiz, jlong handle, jfloat balance, jfloat widen) { if (handle) ((DSP*)handle)->setSpatial(balance, widen); }
-JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetSpatialEnabled(JNIEnv* env, jobject thiz, jlong handle, jboolean enabled) {
-    if (handle) ((DSP*)handle)->setSpatialEnabled(enabled);
-}
-JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetSpatialIntensity(JNIEnv* env, jobject thiz, jlong handle, jfloat intensity) {
-    if (handle) ((DSP*)handle)->setSpatialIntensity(intensity);
-}
-JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetSoundStageNodePosition(JNIEnv* env, jobject thiz, jlong handle, jint bandIdx, jfloat az, jfloat el, jfloat dist) {
-    if (handle) ((DSP*)handle)->setSoundStageNodePosition(bandIdx, az, el, dist);
+JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetAudio3DStageEnabled(JNIEnv* env, jobject thiz, jlong handle, jboolean enabled) {
+    if (handle) ((DSP*)handle)->setAudio3DStageEnabled(enabled);
 }
 JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetSoundStageWidth(JNIEnv* env, jobject thiz, jlong handle, jfloat width) {
     if (handle) ((DSP*)handle)->setSoundStageWidth(width);
 }
 JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetSoundStageCenterLock(JNIEnv* env, jobject thiz, jlong handle, jfloat amount) {
     if (handle) ((DSP*)handle)->setSoundStageCenterLock(amount);
+}
+JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetAudio3DStageParams(JNIEnv* env, jobject thiz, jlong handle, jfloat width, jfloat depth, jfloat height, jfloat distance, jfloat centerFocus, jfloat roomReflections) {
+    if (handle) ((DSP*)handle)->setAudio3DStageParams(width, depth, height, distance, centerFocus, roomReflections);
+}
+JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetSoundStageNodePosition(JNIEnv* env, jobject thiz, jlong handle, jint index, jfloat az, jfloat el, jfloat dist) {
+    if (handle) ((DSP*)handle)->setAudio3DSpeakerPosition(index, az, el, dist);
 }
 JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetReverb(JNIEnv* env, jobject thiz, jlong handle, jfloat amount) { if (handle) ((DSP*)handle)->setReverb(amount); }
 JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetReverbType(JNIEnv* env, jobject thiz, jlong handle, jint type) { if (handle) ((DSP*)handle)->setReverbType(type); }

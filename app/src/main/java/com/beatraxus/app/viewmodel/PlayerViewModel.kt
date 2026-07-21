@@ -37,16 +37,17 @@ import com.beatraxus.app.model.PlaylistEntity
 import com.beatraxus.app.model.FavoriteEntity
 import com.beatraxus.app.model.AutoEqProfileSummary
 import com.beatraxus.app.model.DspConfig
-import com.beatraxus.app.model.HrtfMode
 import com.beatraxus.app.model.DvcMode
 import com.beatraxus.app.model.ParametricEqBand
 import com.beatraxus.app.model.SavedEqPreset
-import com.beatraxus.app.model.SoundStageNodePosition
 import com.beatraxus.app.model.ReplayGainOption
 import com.beatraxus.app.model.ReplayGainSource
 import com.beatraxus.app.model.ResamplerMode
 import com.beatraxus.app.model.LibraryView
 import com.beatraxus.app.model.defaultEqBands
+import com.beatraxus.app.model.SoundStagePreset
+import com.beatraxus.app.model.SoundStageNodePosition
+import com.beatraxus.app.model.HrtfMode
 import com.beatraxus.app.model.Playlist
 import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.ExoPlayer
@@ -131,6 +132,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private val songDao = database.songDao()
     private val aiAnalysisDao = database.aiAnalysisDao()
     private val artistArtDao = database.artistArtDao()
+    private val songQualityDao = database.songQualityDao()
     private val aiAnalysisEngine = com.beatraxus.app.engine.AiAnalysisEngine(application)
 
     val smbServers = smbConnectionRepository.connections
@@ -190,6 +192,18 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     val aiAnalysis: StateFlow<Map<String, com.beatraxus.app.model.AiAnalysisEntity>> = aiAnalysisDao.getAllAnalysisFlow()
         .map { list -> list.associateBy { it.songId } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
+
+    val songQuality: StateFlow<Map<String, com.beatraxus.app.model.SongQualityEntity>> = songQualityDao.getAllQualityFlow()
+        .map { list -> list.associateBy { it.songId } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
+
+    /** Loads a single song + its quality entity by id, for the Music Detail Inspector screen. */
+    fun songQualityFlow(songId: String): Flow<com.beatraxus.app.model.SongQualityEntity?> =
+        songQualityDao.getQualityFlow(songId)
+
+    /** Looks up a single song by id as a Flow, for the Music Detail Inspector screen. */
+    fun songByIdFlow(songId: String): Flow<Song?> =
+        allSongsWithFavorites.map { list -> list.find { it.id == songId } }
 
     private val _songs = MutableStateFlow<List<Song>>(emptyList())
     val allSongs: StateFlow<List<Song>> = _songs.asStateFlow()
@@ -359,7 +373,13 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         list
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    val songs: StateFlow<List<Song>> = combine(allSongsWithFavorites, _uiState, debouncedSearchQuery, _recentlyPlayed, playlists) { allSongsList, state, debouncedQuery, recentIds, pls ->
+    // Pairs the song list with the quality map so the library filter (Phase 4) can
+    // join on qualityTier without a 6-argument combine().
+    private val allSongsWithQuality = combine(allSongsWithFavorites, songQualityDao.getAllQualityFlow()) { list, qualityList ->
+        list to qualityList.associateBy { it.songId }
+    }
+
+    val songs: StateFlow<List<Song>> = combine(allSongsWithQuality, _uiState, debouncedSearchQuery, _recentlyPlayed, playlists) { (allSongsList, qualityMap), state, debouncedQuery, recentIds, pls ->
         val mode = state.libraryMode
         val all = when (mode) {
             LibraryMode.LOCAL -> allSongsList.filter { it.source == SongSource.LOCAL }
@@ -427,6 +447,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
 
+        if (state.qualityTierFilter != null) {
+            filtered = filtered.filter { qualityMap[it.id]?.qualityTier == state.qualityTierFilter }
+        }
+
         val comparator = when (state.sortType) {
             com.beatraxus.app.model.SortType.NAME -> compareBy<Song> { it.title.lowercase() }
             com.beatraxus.app.model.SortType.DATE_ADDED -> compareBy { it.dateAdded }
@@ -469,7 +493,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
             for (song in aiAnalysisChannel) {
                 try {
-                    val analysis = aiAnalysisEngine.analyzeSong(song)
+                    // Runs the native DSP feature extraction ONCE per song; both the AI
+                    // entity and the quality entity below are built from this same result
+                    // so scanning doesn't get twice as slow.
+                    val result = aiAnalysisEngine.analyzeSong(song)
+                    val analysis = result.aiAnalysis
                     if (analysis != null) {
                         aiAnalysisDao.insertAnalysis(analysis)
                         
@@ -483,6 +511,43 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                                 current.map { if (it.id == song.id) updatedSong else it }
                             }
                         }
+                    }
+
+                    // Quality analysis (Phase 3) — same LOCAL-only guard as analyzeSong,
+                    // since result.features is null for skipped/failed songs.
+                    val features = result.features
+                    if (features != null) {
+                        val scored = com.beatraxus.app.engine.QualityScorer.score(
+                            bitrateKbps = song.bitrate,
+                            sampleRateHz = song.sampleRateHz,
+                            bitDepth = song.bitDepth,
+                            codec = song.format,
+                            lufs = features.lufs,
+                            dynamicRange = features.dynamicRange,
+                            truePeakDb = features.truePeakDb,
+                            clippedSamplePct = features.clippedSamplePct,
+                            stereoWidth = features.stereoWidth
+                        )
+                        songQualityDao.upsertQuality(
+                            com.beatraxus.app.model.SongQualityEntity(
+                                songId = song.id,
+                                bitrateKbps = song.bitrate,
+                                sampleRateHz = song.sampleRateHz,
+                                bitDepth = song.bitDepth,
+                                codec = song.format,
+                                lufs = features.lufs,
+                                dynamicRange = features.dynamicRange,
+                                truePeakDb = features.truePeakDb,
+                                clippedSamplePct = features.clippedSamplePct,
+                                stereoWidth = features.stereoWidth,
+                                freqRangeLowHz = features.freqRangeLowHz,
+                                freqRangeHighHz = features.freqRangeHighHz,
+                                qualityScore = scored.score,
+                                qualityTier = scored.tier,
+                                analysisVersion = 1,
+                                lastAnalyzed = System.currentTimeMillis()
+                            )
+                        )
                     }
                 } catch (t: Throwable) {
                     Log.e("PlayerViewModel", "AI Analysis failed for ${song.title}: ${t.message}", t)
@@ -2209,6 +2274,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         _uiState.update { it.copy(showFullPlayer = show) }
     }
 
+    fun setShowSongInfo(show: Boolean) {
+        _uiState.update { it.copy(showSongInfo = show) }
+    }
+
     fun setSettingsIconPosition(x: Float, y: Float) {
         _uiState.update { it.copy(settingsIconX = x, settingsIconY = y) }
     }
@@ -2658,43 +2727,87 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun setReverbPredelay(value: Float) = applyDspConfig { it.copy(reverbPredelayMs = value.coerceIn(0f, 1000f)) }
     fun setCrossfeedEnabled(enabled: Boolean) = applyDspConfig { it.copy(crossfeedEnabled = enabled) }
     fun setCrossfeedLevel(value: Float) = applyDspConfig { it.copy(crossfeedLevel = value.coerceIn(0f, 1f), crossfeedEnabled = true) }
-    fun setSpatialAudioEnabled(enabled: Boolean) { applyDspConfig { it.copy(spatialAudioEnabled = enabled) } }
-    fun setSpatialTouchEnabled(enabled: Boolean) { 
-        applyDspConfig { 
-            if (enabled) {
-                it.copy(spatialTouchEnabled = true, soundStageEnabled = true)
-            } else {
-                it.copy(spatialTouchEnabled = false)
-            }
-        } 
-    }
-    fun setSpatialAudioIntensity(value: Float) { applyDspConfig { it.copy(spatialAudioIntensity = value.coerceIn(0f, 1f)) } }
+    
+    fun setSpatialAudioEnabled(enabled: Boolean) = applyDspConfig { it.copy(spatialAudioEnabled = enabled) }
+    fun setSoundStageEnabled(enabled: Boolean) = applyDspConfig { it.copy(soundStageEnabled = enabled) }
+    fun setSpatialAudioIntensity(value: Float) = applyDspConfig { it.copy(spatialAudioIntensity = value.coerceIn(0f, 1f)) }
+    fun setHrtfMode(mode: HrtfMode) = applyDspConfig { it.copy(hrtfMode = mode) }
+    fun setSoundStageWidth(value: Float) = applyDspConfig { it.copy(soundStageWidth = value.coerceIn(0f, 2f)) }
+    fun setSpatialStageWidth(value: Float) = applyDspConfig { it.copy(spatialStageWidth = value.coerceIn(0f, 2f)) }
+    fun setSoundStageCenterLock(value: Float) = applyDspConfig { it.copy(soundStageCenterLock = value.coerceIn(0f, 1f)) }
+    
+    fun selectSoundStageNode(node: String) = _uiState.update { it.copy(dsp = it.dsp.copy(config = it.dsp.config.copy(soundStageSelectedNode = node))) }
 
-    fun selectSoundStageNode(name: String) { applyDspConfig { it.copy(soundStageSelectedNode = name) } }
-
-    private fun updateSelectedNode(transform: (SoundStageNodePosition) -> SoundStageNodePosition) {
+    fun setSoundStagePosition(azimuth: Float, elevation: Float, distance: Float) {
         applyDspConfig { cfg ->
-            val current = cfg.soundStageNodePositions[cfg.soundStageSelectedNode] ?: SoundStageNodePosition()
-            cfg.copy(soundStageNodePositions = cfg.soundStageNodePositions + (cfg.soundStageSelectedNode to transform(current)))
+            val node = cfg.soundStageSelectedNode
+            val newPositions = cfg.soundStageNodePositions.toMutableMap()
+            newPositions[node] = SoundStageNodePosition(azimuth, elevation, distance)
+            cfg.copy(soundStageNodePositions = newPositions)
         }
     }
 
-    fun setSoundStageAzimuth(value: Float) = updateSelectedNode { it.copy(azimuth = value.coerceIn(0f, 360f)) }
-    fun setSoundStageElevation(value: Float) = updateSelectedNode { it.copy(elevation = value.coerceIn(-90f, 90f)) }
-    fun setSoundStageDistance(value: Float) = updateSelectedNode { it.copy(distance = value.coerceIn(0.3f, 15f)) }
-
-    fun setSoundStagePosition(azimuth: Float, elevation: Float, distance: Float) {
-        updateSelectedNode { it.copy(
-            azimuth = azimuth.coerceIn(0f, 360f),
-            elevation = elevation.coerceIn(-90f, 90f),
-            distance = distance.coerceIn(0.3f, 15f)
-        ) }
+    fun setSoundStageAzimuth(azimuth: Float) {
+        applyDspConfig { cfg ->
+            val node = cfg.soundStageSelectedNode
+            val pos = cfg.soundStageNodePositions[node] ?: SoundStageNodePosition()
+            val newPositions = cfg.soundStageNodePositions.toMutableMap()
+            newPositions[node] = pos.copy(azimuth = azimuth)
+            cfg.copy(soundStageNodePositions = newPositions)
+        }
     }
-    fun setSoundStageEnabled(enabled: Boolean) = applyDspConfig { it.copy(soundStageEnabled = enabled) }
-    fun setSoundStageWidth(value: Float) { applyDspConfig { it.copy(soundStageWidth = value.coerceIn(0f, 2f), soundStageEnabled = true) } }
-    fun setSpatialStageWidth(value: Float) { applyDspConfig { it.copy(spatialStageWidth = value.coerceIn(0f, 2f)) } }
-    fun setSoundStageCenterLock(value: Float) { applyDspConfig { it.copy(soundStageCenterLock = value.coerceIn(0f, 1f)) } }
-    fun setHrtfMode(mode: HrtfMode) = applyDspConfig { it.copy(hrtfMode = mode) }
+
+    fun setSoundStageElevation(elevation: Float) {
+        applyDspConfig { cfg ->
+            val node = cfg.soundStageSelectedNode
+            val pos = cfg.soundStageNodePositions[node] ?: SoundStageNodePosition()
+            val newPositions = cfg.soundStageNodePositions.toMutableMap()
+            newPositions[node] = pos.copy(elevation = elevation)
+            cfg.copy(soundStageNodePositions = newPositions)
+        }
+    }
+
+    fun setSoundStageDistance(distance: Float) {
+        applyDspConfig { cfg ->
+            val node = cfg.soundStageSelectedNode
+            val pos = cfg.soundStageNodePositions[node] ?: SoundStageNodePosition()
+            val newPositions = cfg.soundStageNodePositions.toMutableMap()
+            newPositions[node] = pos.copy(distance = distance)
+            cfg.copy(soundStageNodePositions = newPositions)
+        }
+    }
+
+    fun saveSoundStagePreset(name: String) {
+        applyDspConfig { cfg ->
+            val newPreset = SoundStagePreset(
+                name = name,
+                soundStageWidth = cfg.soundStageWidth,
+                spatialStageWidth = cfg.spatialStageWidth,
+                soundStageCenterLock = cfg.soundStageCenterLock,
+                nodePositions = cfg.soundStageNodePositions
+            )
+            cfg.copy(soundStagePresets = cfg.soundStagePresets.filter { it.name != name } + newPreset)
+        }
+    }
+
+    fun loadSoundStagePreset(name: String) {
+        applyDspConfig { cfg ->
+            val preset = cfg.soundStagePresets.find { it.name == name } ?: return@applyDspConfig cfg
+            cfg.copy(
+                soundStageWidth = preset.soundStageWidth,
+                spatialStageWidth = preset.spatialStageWidth,
+                soundStageCenterLock = preset.soundStageCenterLock,
+                soundStageNodePositions = preset.nodePositions
+            )
+        }
+    }
+
+    fun deleteSoundStagePreset(name: String) {
+        applyDspConfig { cfg ->
+            cfg.copy(soundStagePresets = cfg.soundStagePresets.filter { it.name != name })
+        }
+    }
+
     fun setDcBlockerEnabled(enabled: Boolean) = applyDspConfig { it.copy(dcBlockerEnabled = enabled) }
     fun setMonoEnabled(enabled: Boolean) = applyDspConfig { it.copy(monoEnabled = enabled) }
 
@@ -3120,6 +3233,15 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun setSortType(sortType: SortType) {
         _uiState.update { it.copy(sortType = sortType) }
+    }
+
+    /** Current AudioTrack session id for the Music Detail Inspector's live meters (Phase 6),
+     *  or 0 if playback isn't active / the service isn't bound yet. */
+    fun getCurrentAudioSessionId(): Int = service?.getAudioSessionId() ?: 0
+
+    /** Phase 4: library filter by audio-quality tier. Pass null for "All". */
+    fun setQualityTierFilter(tier: String?) {
+        _uiState.update { it.copy(qualityTierFilter = tier) }
     }
 
     fun toggleSortOrder() {

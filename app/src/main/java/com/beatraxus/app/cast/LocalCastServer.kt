@@ -28,6 +28,28 @@ object LocalCastServer {
 
     var currentSong: Song? = null
 
+    /**
+     * Skips exactly [bytesToSkip] bytes from [stream]. InputStream.skip() is allowed to skip
+     * fewer bytes than requested (very common on network streams), so we loop and fall back to
+     * reading-and-discarding when skip() stalls. Used when a cloud host ignores our Range
+     * request and sends the whole file from byte 0 instead of from where we asked.
+     */
+    private fun skipFully(stream: InputStream, bytesToSkip: Long) {
+        var remaining = bytesToSkip
+        val discard = ByteArray(64 * 1024)
+        while (remaining > 0) {
+            val skipped = stream.skip(remaining)
+            if (skipped > 0) {
+                remaining -= skipped
+                continue
+            }
+            val toRead = minOf(remaining, discard.size.toLong()).toInt()
+            val read = stream.read(discard, 0, toRead)
+            if (read <= 0) break // stream ended early — nothing more we can do
+            remaining -= read
+        }
+    }
+
     fun start(context: Context): String? {
         if (isRunning) return getUrl(context)
         
@@ -90,7 +112,11 @@ object LocalCastServer {
 
     fun getArtUrl(context: Context): String? {
         val ip = getLocalIpAddress(context) ?: return null
-        return "http://$ip:$port/art"
+        // Tag with the song id so the URL changes every time the song changes.
+        // Without this, the Cast receiver / TV image cache keeps showing the first
+        // album art it ever loaded from this fixed "/art" endpoint.
+        val sid = currentSong?.id
+        return "http://$ip:$port/art${if (sid != null) "?sid=$sid" else ""}"
     }
 
     private fun getLocalIpAddress(context: Context): String? {
@@ -228,63 +254,138 @@ object LocalCastServer {
                             if (song.driveAccountEmail != null && song.driveFileId != null) {
                                 val repo = com.beatraxus.app.repository.DriveAccountRepository(context)
                                 val credential = repo.getCredential(song.driveAccountEmail)
-                                val driveService = com.google.api.services.drive.Drive.Builder(
+
+                                fun buildDriveService() = com.google.api.services.drive.Drive.Builder(
                                     com.google.api.client.extensions.android.http.AndroidHttp.newCompatibleTransport(),
                                     com.google.api.client.json.gson.GsonFactory.getDefaultInstance(),
-                                    credential
+                                    com.google.api.client.http.HttpRequestInitializer { request ->
+                                        credential.initialize(request)
+                                        // Fix: no timeouts were set before, so a slow/unresponsive
+                                        // Drive request could hang indefinitely instead of failing
+                                        // fast and letting the cast load error out cleanly.
+                                        request.connectTimeout = 8000
+                                        request.readTimeout = 15000
+                                    }
                                 ).setApplicationName("Beatraxus").build()
-                                
-                                val request = driveService.files().get(song.driveFileId)
-                                if (rangeHeader != null) {
-                                    request.requestHeaders.range = "bytes=$startByte-${if (endByte != -1L) endByte else ""}"
+
+                                fun attempt(): Pair<Int, InputStream>? {
+                                    val driveService = buildDriveService()
+                                    val request = driveService.files().get(song.driveFileId)
+                                    if (rangeHeader != null) {
+                                        request.requestHeaders.range = "bytes=$startByte-${if (endByte != -1L) endByte else ""}"
+                                    }
+                                    val response = request.executeMedia()
+                                    return response.statusCode to response.content
                                 }
-                                request.executeMediaAsInputStream()
+
+                                var result = try {
+                                    attempt()
+                                } catch (e: Exception) {
+                                    Log.w(TAG, "Drive request failed, retrying once", e)
+                                    try { attempt() } catch (e2: Exception) {
+                                        Log.e(TAG, "Drive request failed on retry", e2)
+                                        null
+                                    }
+                                }
+
+                                result?.let { (code, stream) ->
+                                    // Fix: this used to always tell the receiver "206 Partial
+                                    // Content" no matter what Drive actually returned. If Drive
+                                    // ignores the Range header and sends the whole file (200),
+                                    // we now skip to the requested offset ourselves so the bytes
+                                    // we hand back always match the Content-Range we declare.
+                                    if (rangeHeader != null && code == 200 && startByte > 0) {
+                                        Log.w(TAG, "Drive ignored Range header — skipping $startByte bytes manually")
+                                        skipFully(stream, startByte)
+                                    }
+                                    stream
+                                }
                             } else null
                         }
                         SongSource.WEB, SongSource.DROPBOX, SongSource.ONEDRIVE, SongSource.BOX, SongSource.NEXTCLOUD, SongSource.SMB, SongSource.FTP -> {
-                            val connection = java.net.URL(song.uri.toString()).openConnection()
-                            
-                            // Add headers if available
-                            if (song.source != SongSource.WEB) {
-                                runBlocking {
-                                    val headers = when (song.source) {
-                                        SongSource.DROPBOX -> {
-                                            val repo = com.beatraxus.app.repository.DropboxAccountRepository(context)
-                                            val token = repo.getAccessToken(song.dropboxAccountEmail ?: "")
-                                            if (token != null) mapOf("Authorization" to "Bearer $token") else emptyMap()
-                                        }
-                                        SongSource.ONEDRIVE -> {
-                                            val repo = com.beatraxus.app.repository.OneDriveAccountRepository(context)
-                                            val token = repo.getAccessToken(song.onedriveAccountEmail ?: "")
-                                            if (token != null) mapOf("Authorization" to "Bearer $token") else emptyMap()
-                                        }
-                                        SongSource.BOX -> {
-                                            val repo = com.beatraxus.app.repository.BoxAccountRepository(context)
-                                            val token = repo.getAccessToken(song.boxAccountEmail ?: "")
-                                            if (token != null) mapOf("Authorization" to "Bearer $token") else emptyMap()
-                                        }
-                                        SongSource.NEXTCLOUD -> {
-                                            val repo = com.beatraxus.app.repository.NextcloudAccountRepository(context)
-                                            val accounts = repo.accounts.first()
-                                            val account = accounts.find { it.username == song.nextcloudAccountEmail }
-                                            if (account != null) {
-                                                val auth = android.util.Base64.encodeToString(
-                                                    "${account.username}:${account.appPassword}".toByteArray(),
-                                                    android.util.Base64.NO_WRAP
-                                                )
-                                                mapOf("Authorization" to "Basic $auth")
-                                            } else emptyMap()
-                                        }
-                                        else -> emptyMap()
+                            fun authHeader(): Pair<String, String>? = when (song.source) {
+                                SongSource.DROPBOX -> runBlocking {
+                                    val repo = com.beatraxus.app.repository.DropboxAccountRepository(context)
+                                    repo.getAccessToken(song.dropboxAccountEmail ?: "")
+                                }?.let { "Authorization" to "Bearer $it" }
+                                SongSource.ONEDRIVE -> runBlocking {
+                                    val repo = com.beatraxus.app.repository.OneDriveAccountRepository(context)
+                                    repo.getAccessToken(song.onedriveAccountEmail ?: "")
+                                }?.let { "Authorization" to "Bearer $it" }
+                                SongSource.BOX -> runBlocking {
+                                    val repo = com.beatraxus.app.repository.BoxAccountRepository(context)
+                                    repo.getAccessToken(song.boxAccountEmail ?: "")
+                                }?.let { "Authorization" to "Bearer $it" }
+                                SongSource.NEXTCLOUD -> {
+                                    val repo = com.beatraxus.app.repository.NextcloudAccountRepository(context)
+                                    val account = runBlocking { repo.accounts.first() }
+                                        .find { it.username == song.nextcloudAccountEmail }
+                                    account?.let {
+                                        val auth = android.util.Base64.encodeToString(
+                                            "${it.username}:${it.appPassword}".toByteArray(),
+                                            android.util.Base64.NO_WRAP
+                                        )
+                                        "Authorization" to "Basic $auth"
                                     }
-                                    headers.forEach { (k, v) -> connection.setRequestProperty(k, v) }
                                 }
+                                else -> null
                             }
 
-                            if (rangeHeader != null) {
-                                connection.setRequestProperty("Range", "bytes=$startByte-${if (endByte != -1L) endByte else ""}")
+                            fun openConnection(): java.net.URLConnection {
+                                val conn = java.net.URL(song.uri.toString()).openConnection()
+                                // Fix: no timeouts were set before, so a slow/unresponsive cloud
+                                // host could hang forever instead of failing fast.
+                                conn.connectTimeout = 8000
+                                conn.readTimeout = 15000
+                                if (song.source != SongSource.WEB) {
+                                    authHeader()?.let { (k, v) -> conn.setRequestProperty(k, v) }
+                                }
+                                if (rangeHeader != null) {
+                                    conn.setRequestProperty("Range", "bytes=$startByte-${if (endByte != -1L) endByte else ""}")
+                                }
+                                return conn
                             }
-                            connection.inputStream
+
+                            var connection = openConnection()
+
+                            if (connection is java.net.HttpURLConnection) {
+                                var http = connection as java.net.HttpURLConnection
+                                var code = http.responseCode
+
+                                // Fix: cloud auth tokens can be cached/stale; retry once with a
+                                // freshly fetched token before giving up. This is the #1 reason
+                                // cloud songs silently fail to cast while local files always work.
+                                if ((code == 401 || code == 403) &&
+                                    song.source in setOf(SongSource.DROPBOX, SongSource.ONEDRIVE, SongSource.BOX)
+                                ) {
+                                    Log.w(TAG, "Auth failed ($code) for ${song.source}, retrying with a fresh token")
+                                    http.disconnect()
+                                    http = openConnection() as java.net.HttpURLConnection
+                                    code = http.responseCode
+                                }
+
+                                if (code !in 200..299) {
+                                    Log.e(TAG, "Cloud source returned HTTP $code for ${song.title}")
+                                    http.disconnect()
+                                    null
+                                } else {
+                                    val stream = http.inputStream
+                                    // Fix: this used to always assume a Range request got a 206
+                                    // response. If the host ignores Range and returns 200 (sending
+                                    // the whole file from byte 0), skip to the requested offset
+                                    // ourselves so the bytes match the Content-Range we declare
+                                    // further down — otherwise the receiver gets a stream that
+                                    // doesn't match the header we sent it and refuses to play it.
+                                    if (rangeHeader != null && code == 200 && startByte > 0) {
+                                        Log.w(TAG, "Remote ignored Range header (200, not 206) — skipping $startByte bytes manually")
+                                        skipFully(stream, startByte)
+                                    }
+                                    stream
+                                }
+                            } else {
+                                // Non-HTTP connection (e.g. ftp://) — no status code to check.
+                                connection.inputStream
+                            }
                         }
                         SongSource.TELEGRAM -> {
                             val application = context.applicationContext as com.beatraxus.app.BeatraxusApplication

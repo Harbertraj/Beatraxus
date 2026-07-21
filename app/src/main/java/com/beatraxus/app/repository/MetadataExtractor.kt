@@ -218,7 +218,14 @@ class MetadataExtractor(private val context: Context) {
         if (isAlacPossible && isAlacFile(localFile)) {
             updatedSong = updatedSong.copy(format = "ALAC")
             // Skip MediaMetadataRetriever for ALAC to prevent crash
-            return@withContext extractMetadataWithFFprobe(updatedSong, localFile)
+            var alacResult = extractMetadataWithFFprobe(updatedSong, localFile)
+            if (fetchArt && artworkEnabled && alacResult.albumArtUri == null) {
+                val ffmpegArt = extractEmbeddedArtWithFfmpeg(song.id, localFile)
+                if (ffmpegArt != null) {
+                    alacResult = alacResult.copy(albumArtUri = ffmpegArt)
+                }
+            }
+            return@withContext alacResult
         }
 
         val retriever = android.media.MediaMetadataRetriever()

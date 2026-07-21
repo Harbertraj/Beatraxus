@@ -55,7 +55,7 @@ interface RecentlyPlayedDao {
     suspend fun removeRecentlyPlayed(songId: String)
 }
 
-@Database(entities = [PlaylistEntity::class, FavoriteEntity::class, SongEntity::class, RecentlyPlayedEntity::class, LyricsEntity::class, FolderEntity::class, AiAnalysisEntity::class, ArtistArtEntity::class], version = 15, exportSchema = false)
+@Database(entities = [PlaylistEntity::class, FavoriteEntity::class, SongEntity::class, RecentlyPlayedEntity::class, LyricsEntity::class, FolderEntity::class, AiAnalysisEntity::class, ArtistArtEntity::class, SongQualityEntity::class], version = 16, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun playlistDao(): PlaylistDao
     abstract fun favoriteDao(): FavoriteDao
@@ -65,6 +65,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun recentlyPlayedDao(): RecentlyPlayedDao
     abstract fun aiAnalysisDao(): AiAnalysisDao
     abstract fun artistArtDao(): ArtistArtDao
+    abstract fun songQualityDao(): SongQualityDao
 
     companion object {
         val MIGRATION_11_12 = object : Migration(11, 12) {
@@ -102,6 +103,31 @@ abstract class AppDatabase : RoomDatabase() {
         val MIGRATION_14_15 = object : Migration(14, 15) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE song_ai_analysis ADD COLUMN moodTags TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
+        val MIGRATION_15_16 = object : Migration(15, 16) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS song_quality (
+                        songId TEXT NOT NULL PRIMARY KEY,
+                        bitrateKbps INTEGER NOT NULL,
+                        sampleRateHz INTEGER NOT NULL,
+                        bitDepth INTEGER NOT NULL,
+                        codec TEXT NOT NULL,
+                        lufs REAL NOT NULL,
+                        dynamicRange REAL NOT NULL,
+                        truePeakDb REAL NOT NULL,
+                        clippedSamplePct REAL NOT NULL,
+                        stereoWidth REAL NOT NULL,
+                        freqRangeLowHz REAL NOT NULL,
+                        freqRangeHighHz REAL NOT NULL,
+                        qualityScore INTEGER NOT NULL,
+                        qualityTier TEXT NOT NULL,
+                        analysisVersion INTEGER NOT NULL,
+                        lastAnalyzed INTEGER NOT NULL)
+                """.trimIndent())
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_song_quality_songId ON song_quality(songId)")
             }
         }
     }

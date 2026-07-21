@@ -44,8 +44,17 @@ object CastManager {
 
     private var onErrorMessage: ((String) -> Unit)? = null
 
+    /**
+     * Set by AudioPlaybackService. Lets CastManager know what is currently playing locally
+     * (song + position in ms) so that if the user connects to a TV via the system Cast icon
+     * (which does not go through castSong()), we still have something to load automatically.
+     */
+    var nowPlayingProvider: (() -> Pair<Song, Long>?)? = null
+
     private val selector = MediaRouteSelector.Builder()
-        .addControlCategory(CastMediaControlIntent.categoryForCast(CastMediaControlIntent.DEFAULT_MEDIA_RECEIVER_APPLICATION_ID))
+        .addControlCategory(
+            CastMediaControlIntent.categoryForCast(com.beatraxus.app.CastOptionsProvider.CAST_APP_ID)
+        )
         .build()
 
     fun initialize(context: Context, onError: (String) -> Unit) {
@@ -89,11 +98,17 @@ object CastManager {
 
                     LocalCastServer.start(context)
 
-                    pendingSongToCast?.let { (song, _) ->
-                        Log.d(TAG, "Casting pending song: ${song.title}")
-                        LocalCastServer.currentSong = song
-                        val urlToCast = LocalCastServer.start(context) ?: song.uri.toString()
-                        performLoad(context, session, song, urlToCast)
+                    val explicitPending = pendingSongToCast?.first
+                    val (songToLoad, startPositionMs) = when {
+                        explicitPending != null -> explicitPending to 0L
+                        else -> nowPlayingProvider?.invoke() ?: (null to 0L)
+                    }
+
+                    if (songToLoad != null) {
+                        Log.d(TAG, "Casting song on session start: ${songToLoad.title}")
+                        LocalCastServer.currentSong = songToLoad
+                        val urlToCast = LocalCastServer.start(context) ?: songToLoad.uri.toString()
+                        performLoad(context, session, songToLoad, urlToCast, startPositionMs)
                     }
                 }
                 override fun onSessionStartFailed(session: CastSession, error: Int) {
@@ -142,10 +157,16 @@ object CastManager {
                     
                     LocalCastServer.start(context)
 
-                    pendingSongToCast?.let { (song, _) ->
-                        LocalCastServer.currentSong = song
-                        val urlToCast = LocalCastServer.start(context) ?: song.uri.toString()
-                        performLoad(context, session, song, urlToCast)
+                    val explicitPending = pendingSongToCast?.first
+                    val (songToLoad, startPositionMs) = when {
+                        explicitPending != null -> explicitPending to 0L
+                        else -> nowPlayingProvider?.invoke() ?: (null to 0L)
+                    }
+
+                    if (songToLoad != null) {
+                        LocalCastServer.currentSong = songToLoad
+                        val urlToCast = LocalCastServer.start(context) ?: songToLoad.uri.toString()
+                        performLoad(context, session, songToLoad, urlToCast, startPositionMs)
                     }
                 }
                 override fun onSessionResumeFailed(session: CastSession, error: Int) {
@@ -176,19 +197,27 @@ object CastManager {
         }
     }
 
-    private fun performLoad(context: Context, session: CastSession, song: Song, streamUrl: String) {
+    private fun performLoad(
+        context: Context,
+        session: CastSession,
+        song: Song,
+        streamUrl: String,
+        startPositionMs: Long = 0L
+    ) {
         val remoteMediaClient = session.remoteMediaClient ?: run {
             Log.e(TAG, "RemoteMediaClient is null")
             return
         }
 
-        Log.d(TAG, "Attempting to load media: $streamUrl")
+        Log.d(TAG, "Attempting to load media: $streamUrl (startPositionMs=$startPositionMs)")
 
         val musicMetadata = MediaMetadata(MediaMetadata.MEDIA_TYPE_MUSIC_TRACK).apply {
             putString(MediaMetadata.KEY_TITLE, song.title)
             putString(MediaMetadata.KEY_ARTIST, song.artist)
             putString(MediaMetadata.KEY_ALBUM_TITLE, song.album)
-            
+
+            // getArtUrl() now returns a URL tagged with the song id (?sid=...), so each new
+            // song gets a distinct URL and the receiver's image cache can't serve stale art.
             LocalCastServer.getArtUrl(context)?.let { artUrl ->
                 if (song.albumArtUri != null) {
                     addImage(WebImage(Uri.parse(artUrl)))
@@ -208,7 +237,13 @@ object CastManager {
             .setMetadata(musicMetadata)
             .build()
 
-        remoteMediaClient.load(MediaLoadRequestData.Builder().setMediaInfo(mediaInfo).build())
+        val loadRequest = MediaLoadRequestData.Builder()
+            .setMediaInfo(mediaInfo)
+            .setAutoplay(true)
+            .setCurrentTime(startPositionMs.coerceAtLeast(0L))
+            .build()
+
+        remoteMediaClient.load(loadRequest)
             .setResultCallback { result ->
                 if (result.status.isSuccess) {
                     Log.d(TAG, "Media load command sent successfully")
@@ -239,6 +274,16 @@ object CastManager {
             .setPosition(position)
             .build()
         castContext?.sessionManager?.currentCastSession?.remoteMediaClient?.seek(options)
+    }
+
+    /**
+     * The TV's real playback position (interpolated by the Cast SDK between status updates).
+     * Use this instead of the local player's position whenever isConnected == true, or the
+     * on-screen progress bar / runtime will show the phone's frozen local position instead
+     * of what's actually happening on the TV.
+     */
+    fun currentPositionMs(): Long {
+        return castContext?.sessionManager?.currentCastSession?.remoteMediaClient?.approximateStreamPosition ?: 0L
     }
 
     fun next() {

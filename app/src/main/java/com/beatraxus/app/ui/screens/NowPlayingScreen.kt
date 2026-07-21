@@ -108,6 +108,8 @@ fun NowPlayingScreen(
     isFavorite: Boolean,
     onFavoriteClick: () -> Unit,
     onNavigateToAlbum: (String) -> Unit,
+    onNavigateToInspector: (String) -> Unit = {},
+    onToggleSongInfo: (Boolean) -> Unit = {},
     onToggleLyrics: () -> Unit = {},
     onAdjustOffset: (Long) -> Unit = {},
     onSetLyricsOffset: (Long) -> Unit = {},
@@ -121,7 +123,6 @@ fun NowPlayingScreen(
     val showQueue = uiState.showQueue
     val showLyrics = uiState.showLyrics
     var showSleepTimerSheet by remember { mutableStateOf(false) }
-    var showSongInfo by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
     val dominantColorsCache = remember { mutableStateMapOf<String, Color>() }
@@ -327,7 +328,7 @@ fun NowPlayingScreen(
                             modifier = Modifier.padding(end = 12.dp)
                         ) { queueVisible ->
                             if (!queueVisible) {
-                                IconButton(onClick = { showSongInfo = true }) {
+                                IconButton(onClick = { onToggleSongInfo(true) }) {
                                     Icon(
                                         Icons.Rounded.Info,
                                         null,
@@ -857,14 +858,15 @@ fun NowPlayingScreen(
             )
         }
 
-        if (showSongInfo) {
+        if (uiState.showSongInfo) {
             SongInfoDialog(
                 song = song,
                 lastFmTrackInfo = uiState.lastFmTrackInfo,
                 lastFmArtistInfo = uiState.lastFmArtistInfo,
                 lastFmAlbumInfo = uiState.lastFmAlbumInfo,
                 isLoadingInfo = uiState.isLoadingOnlineInfo,
-                onDismiss = { showSongInfo = false }
+                onDismiss = { onToggleSongInfo(false) },
+                onOpenInspector = { onNavigateToInspector(it.id) }
             )
         }
     }

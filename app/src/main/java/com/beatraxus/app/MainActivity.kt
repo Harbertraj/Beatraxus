@@ -36,6 +36,8 @@ import androidx.core.content.ContextCompat
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.NavType
+import androidx.navigation.navArgument
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions
 import com.google.android.gms.common.api.ApiException
@@ -328,6 +330,7 @@ sealed class Screen(val route: String) {
     object Main      : Screen("main")
     object Settings  : Screen("settings")
     object Dsp       : Screen("dsp")
+    object Inspector : Screen("inspector")
 }
 
 @Composable
@@ -533,7 +536,8 @@ fun BeatraxusApp(
                 MainScreen(
                     viewModel            = viewModel,
                     onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
-                    onNavigateToDsp      = { navController.navigate(Screen.Dsp.route) }
+                    onNavigateToDsp      = { navController.navigate(Screen.Dsp.route) },
+                    onNavigateToInspector = { songId -> navController.navigate("inspector/$songId") }
                 )
             }
             composable(
@@ -591,6 +595,33 @@ fun BeatraxusApp(
                 DspScreen(
                     viewModel = viewModel,
                     onBack = {
+                        navController.popBackStack()
+                    }
+                )
+            }
+            composable(
+                "inspector/{songId}",
+                arguments = listOf(navArgument("songId") { type = NavType.StringType }),
+                enterTransition = {
+                    slideIntoContainer(
+                        towards = AnimatedContentTransitionScope.SlideDirection.Start,
+                        animationSpec = tween(400, easing = FastOutSlowInEasing)
+                    ) + fadeIn(tween(400))
+                },
+                exitTransition = {
+                    slideOutOfContainer(
+                        towards = AnimatedContentTransitionScope.SlideDirection.End,
+                        animationSpec = tween(400, easing = FastOutSlowInEasing)
+                    ) + fadeOut(tween(400))
+                }
+            ) { backStackEntry ->
+                val songId = backStackEntry.arguments?.getString("songId") ?: return@composable
+                com.beatraxus.app.ui.screens.MusicDetailInspectorScreen(
+                    songId = songId,
+                    viewModel = viewModel,
+                    onBack = {
+                        viewModel.setShowFullPlayer(true)
+                        viewModel.setShowSongInfo(true)
                         navController.popBackStack()
                     }
                 )

@@ -21,6 +21,7 @@ import androidx.compose.ui.window.Dialog
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import androidx.compose.material.icons.rounded.Album
+import androidx.compose.material.icons.rounded.Insights
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import com.beatraxus.app.model.Song
 import com.beatraxus.app.repository.lastfm.LastFmRepository
@@ -38,7 +39,8 @@ fun SongInfoDialog(
     lastFmArtistInfo: LastFmArtistDetail? = null,
     lastFmAlbumInfo: LastFmAlbum? = null,
     isLoadingInfo: Boolean = false,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    onOpenInspector: ((Song) -> Unit)? = null
 ) {
     val context = LocalContext.current
 
@@ -56,13 +58,32 @@ fun SongInfoDialog(
                     .fillMaxSize()
                     .padding(20.dp)
             ) {
-                Text(
-                    "Song Details",
-                    color = Color.White,
-                    fontSize = 22.sp,
-                    fontWeight = FontWeight.Black,
-                    modifier = Modifier.padding(bottom = 16.dp)
-                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 16.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "Song Details",
+                        color = Color.White,
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.Black
+                    )
+                    if (onOpenInspector != null) {
+                        IconButton(onClick = {
+                            onOpenInspector(song)
+                            onDismiss()
+                        }) {
+                            Icon(
+                                imageVector = androidx.compose.material.icons.Icons.Rounded.Insights,
+                                contentDescription = "Inspector",
+                                tint = AccentBlue
+                            )
+                        }
+                    }
+                }
 
                 Column(
                     modifier = Modifier

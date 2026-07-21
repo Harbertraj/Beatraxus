@@ -188,7 +188,8 @@ enum class MainSheetType {
 fun MainScreen(
     viewModel: PlayerViewModel,
     onNavigateToSettings: () -> Unit,
-    onNavigateToDsp: () -> Unit
+    onNavigateToDsp: () -> Unit,
+    onNavigateToInspector: (String) -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val progressMs by viewModel.progressMs.collectAsStateWithLifecycle()
@@ -2907,6 +2908,10 @@ fun MainScreen(
                                     viewModel.setLibraryView(com.beatraxus.app.model.LibraryView.GENRE_DETAIL, song.genre)
                                     selectedSongForOptions = null
                                 },
+                                onOpenInspector = { s ->
+                                    onNavigateToInspector(s.id)
+                                    selectedSongForOptions = null
+                                },
                                 lastFmTrackInfo = uiState.lastFmTrackInfo,
                                 lastFmArtistInfo = uiState.lastFmArtistInfo,
                                 lastFmAlbumInfo = uiState.lastFmAlbumInfo,
@@ -3119,6 +3124,10 @@ fun MainScreen(
                     viewModel.setLibraryView(com.beatraxus.app.model.LibraryView.ALBUM_DETAIL, album)
                     showFullPlayer = false
                 },
+                onNavigateToInspector = { songId ->
+                    onNavigateToInspector(songId)
+                },
+                onToggleSongInfo = { viewModel.setShowSongInfo(it) },
                 onToggleLyrics = { viewModel.toggleLyrics() },
                 onAdjustOffset = { viewModel.adjustLyricsOffset(it) },
                 onSetLyricsOffset = { viewModel.setLyricsOffset(it) },
@@ -5389,6 +5398,45 @@ fun SortSheetContent(
                 Text(label, color = if (isSelected) Color.White else Color.White.copy(0.7f), fontSize = 15.sp, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium)
             }
         }
+
+        // Phase 4: quality-tier filter chips (audio quality analyzer). Shown for the
+        // main song list views where a per-song SongQualityEntity is meaningful.
+        if (uiState.currentView == com.beatraxus.app.model.LibraryView.ALL_SONGS ||
+            uiState.currentView == com.beatraxus.app.model.LibraryView.FAVORITES ||
+            uiState.currentView == com.beatraxus.app.model.LibraryView.RECENTLY_ADDED
+        ) {
+            Spacer(Modifier.height(20.dp))
+            Text("QUALITY", color = Color.White.copy(0.5f), fontWeight = FontWeight.Black, fontSize = 12.sp, letterSpacing = 1.sp)
+            Spacer(Modifier.height(8.dp))
+            androidx.compose.foundation.lazy.LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(listOf(null, "Excellent", "Good", "Fair", "Poor")) { tier ->
+                    val isSelected = uiState.qualityTierFilter == tier
+                    Row(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(if (isSelected) AccentBlue.copy(0.18f) else Color.White.copy(0.04f))
+                            .border(
+                                1.dp,
+                                if (isSelected) AccentBlue.copy(0.6f) else Color.White.copy(0.08f),
+                                RoundedCornerShape(20.dp)
+                            )
+                            .clickable { viewModel.setQualityTierFilter(tier) }
+                            .padding(horizontal = 14.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            tier ?: "All",
+                            color = if (isSelected) Color.White else Color.White.copy(0.7f),
+                            fontSize = 13.sp,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                        )
+                    }
+                }
+            }
+        }
+
         Spacer(Modifier.height(16.dp))
     }
 }

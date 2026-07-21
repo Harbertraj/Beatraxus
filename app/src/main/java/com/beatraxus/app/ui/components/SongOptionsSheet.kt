@@ -57,6 +57,7 @@ fun SongOptionsSheet(
     onGoToAlbum: () -> Unit,
     onGoToFolder: () -> Unit,
     onGoToGenre: () -> Unit,
+    onOpenInspector: (Song) -> Unit = {},
     lastFmTrackInfo: LastFmTrack? = null,
     lastFmArtistInfo: LastFmArtistDetail? = null,
     lastFmAlbumInfo: LastFmAlbum? = null,
@@ -230,7 +231,8 @@ fun SongOptionsSheet(
                     lastFmArtistInfo = if (isCurrent) lastFmArtistInfo else selectedLastFmArtistInfo,
                     lastFmAlbumInfo = if (isCurrent) lastFmAlbumInfo else selectedLastFmAlbumInfo,
                     isLoadingInfo = if (isCurrent) isLoadingInfo else isSelectedLoading,
-                    onDismiss = { showInfoOverlay = false }
+                    onDismiss = { showInfoOverlay = false },
+                    onOpenInspector = onOpenInspector
                 )
             }
         }

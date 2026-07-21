@@ -48,6 +48,14 @@ data class SavedEqPreset(
     val preampDb: Float = 0f
 )
 
+data class SoundStagePreset(
+    val name: String,
+    val soundStageWidth: Float = 1.0f,
+    val spatialStageWidth: Float = 1.0f,
+    val soundStageCenterLock: Float = 0f,
+    val nodePositions: Map<String, SoundStageNodePosition> = emptyMap()
+)
+
 data class SoundStageNodePosition(
     val azimuth: Float = 0f,
     val elevation: Float = 0f,
@@ -215,6 +223,9 @@ data class DspConfig(
     val bitPerfectUnbypassDithering: Boolean = false,
     val bitPerfectUnbypassFloat64: Boolean = false,
     val bitPerfectUnbypassLimiter: Boolean = false,
+
+    // Sound Stage Presets
+    val soundStagePresets: List<SoundStagePreset> = emptyList(),
 
     // MMAP — enabled state is derived from outputMode == MMAP_EXCLUSIVE
     // mmapExclusiveEnabled field removed to avoid dual source-of-truth conflict
