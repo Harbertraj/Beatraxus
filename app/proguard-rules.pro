@@ -35,7 +35,14 @@
 # RETROFIT + OKHTTP + GSON
 # ══════════════════════════════════════════════════════════════════════════════
 
--keepattributes Signature, RuntimeVisibleAnnotations, AnnotationDefault, EnclosingMethod, InnerClasses
+-keepattributes Signature, RuntimeVisibleAnnotations, RuntimeVisibleParameterAnnotations, AnnotationDefault, EnclosingMethod, InnerClasses
+
+# Retrofit reads @Query/@Path/@Body etc. off METHOD PARAMETERS via reflection at runtime.
+# That's a different class-file attribute (RuntimeVisibleParameterAnnotations) than the
+# RuntimeVisibleAnnotations kept above (which only covers class/method/field annotations).
+# Without it explicitly listed here, R8 can strip it, and Retrofit silently builds requests
+# with missing query parameters in release builds only (debug/no-minify keeps everything by
+# default, which is why this class of bug only ever shows up in the signed release build).
 
 -keep class retrofit2.** { *; }
 -keepclassmembers interface * {

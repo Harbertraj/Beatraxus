@@ -62,7 +62,13 @@ import kotlin.math.abs
 private suspend fun LazyListState.bouncyScrollToItem(index: Int, targetOffset: Int) {
     val itemInfo = layoutInfo.visibleItemsInfo.firstOrNull { it.index == index }
     if (itemInfo == null) {
-        scrollToItem(index, targetOffset)
+        // LazyListState.scrollToItem's scrollOffset uses the OPPOSITE sign convention from
+        // our targetOffset: passing a positive scrollOffset here pushes the item further
+        // *past* the top of the viewport (final position = -scrollOffset). Our targetOffset
+        // below is defined as the literal desired final on-screen position, so it must be
+        // negated when handing off to the real API — otherwise a jump-scroll (e.g. seeking
+        // far ahead) lands the item mirrored above/below where the bouncy path would put it.
+        scrollToItem(index, -targetOffset)
         return
     }
     val delta = (itemInfo.offset - targetOffset).toFloat()
@@ -129,8 +135,13 @@ fun KaraokeLyricsView(
                 // Centering: put the active line at the vertical midpoint of the lyrics area
                 // (this Box spans exactly from the top title bar to the bottom seek bar area),
                 // so the active line always sits accurately in the middle, not near the top.
+                // targetOffset is the literal desired final on-screen top position of the
+                // item, so this must be positive (containerHeight / 2 below the viewport's
+                // top edge) — a negative value here pushes the line above the visible area,
+                // which is what caused the active line to disappear off the top on normal
+                // (non-jump) line changes.
                 val offset = (containerHeight * 0.5f).toInt()
-                listState.bouncyScrollToItem(index = currentIndex, targetOffset = -offset)
+                listState.bouncyScrollToItem(index = currentIndex, targetOffset = offset)
             }
         }
     }
