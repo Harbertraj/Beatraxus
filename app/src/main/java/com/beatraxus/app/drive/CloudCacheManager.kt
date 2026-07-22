@@ -443,14 +443,14 @@ class CloudCacheManager(
                 }
                 if (currentFileId != null && currentFileId != 0) {
                     try {
-                        tdLib.send(TdApi.DownloadFile(currentFileId, 32, 0, TELEGRAM_INITIAL_WINDOW_BYTES.toInt(), false))
+                        tdLib.send(TdApi.DownloadFile(currentFileId, 32, 0L, TELEGRAM_INITIAL_WINDOW_BYTES, false))
                         activeTelegramFileIds[song.id] = currentFileId
                     } catch (e: Exception) {
                         Log.w(TAG, "Telegram windowed download failed for ${song.title}, refreshing fileId: ${e.message}")
                         val refreshed = refreshFileId(song, tdLib)
                         if (refreshed != null && refreshed != 0) {
                             try {
-                                tdLib.send(TdApi.DownloadFile(refreshed, 32, 0, TELEGRAM_INITIAL_WINDOW_BYTES.toInt(), false))
+                                tdLib.send(TdApi.DownloadFile(refreshed, 32, 0L, TELEGRAM_INITIAL_WINDOW_BYTES, false))
                                 activeTelegramFileIds[song.id] = refreshed
                             } catch (_: Exception) {
                                 Log.e(TAG, "Failed to prime Telegram window after refresh for ${song.title}")
@@ -1067,7 +1067,7 @@ class CloudCacheManager(
          */
         private suspend fun requestWindow(fileId: Int, limit: Long) {
             try {
-                tdLib.send(TdApi.DownloadFile(fileId, 32, 0, limit.toInt(), false))
+                tdLib.send(TdApi.DownloadFile(fileId, 32, 0L, limit, false))
                 activeTelegramFileIds[song.id] = fileId
                 requestedPrefixEnd = if (limit <= 0L) Long.MAX_VALUE else limit
             } catch (e: Exception) {
@@ -1077,7 +1077,7 @@ class CloudCacheManager(
                     activeFileId = refreshed
                     activeTelegramFileIds[song.id] = refreshed
                     try {
-                        tdLib.send(TdApi.DownloadFile(refreshed, 32, 0, limit.toInt(), false))
+                        tdLib.send(TdApi.DownloadFile(refreshed, 32, 0L, limit, false))
                         requestedPrefixEnd = if (limit <= 0L) Long.MAX_VALUE else limit
                     } catch (_: Exception) {
                         Log.e(TAG, "Failed to download after refresh for ${song.title}")
