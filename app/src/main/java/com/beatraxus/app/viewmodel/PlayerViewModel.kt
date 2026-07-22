@@ -2272,6 +2272,14 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         _uiState.update { it.copy(showFullPlayer = show) }
     }
 
+    fun setShowSongInfo(show: Boolean) {
+        _uiState.update { it.copy(showSongInfo = show) }
+    }
+
+    fun setPendingInspectorReturn(song: com.beatraxus.app.model.Song?) {
+        _uiState.update { it.copy(pendingInspectorReturnSong = song) }
+    }
+
     fun setSettingsIconPosition(x: Float, y: Float) {
         _uiState.update { it.copy(settingsIconX = x, settingsIconY = y) }
     }
@@ -2722,6 +2730,54 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun setCrossfeedEnabled(enabled: Boolean) = applyDspConfig { it.copy(crossfeedEnabled = enabled) }
     fun setCrossfeedLevel(value: Float) = applyDspConfig { it.copy(crossfeedLevel = value.coerceIn(0f, 1f), crossfeedEnabled = true) }
     
+    fun setSpatialAudioEnabled(enabled: Boolean) = applyDspConfig { it.copy(spatialAudioEnabled = enabled) }
+    fun setSpatialAudioIntensity(value: Float) = applyDspConfig { it.copy(spatialAudioIntensity = value) }
+    fun setSpatialStageWidth(value: Float) = applyDspConfig { it.copy(spatialStageWidth = value) }
+    fun setHrtfMode(mode: com.beatraxus.app.model.HrtfMode) = applyDspConfig { it.copy(hrtfMode = mode) }
+    fun setSoundStageEnabled(enabled: Boolean) = applyDspConfig { it.copy(soundStageEnabled = enabled) }
+    fun setSoundStageWidth(value: Float) = applyDspConfig { it.copy(soundStageWidth = value) }
+    fun setSoundStageCenterLock(value: Float) = applyDspConfig { it.copy(soundStageCenterLock = value) }
+    fun selectSoundStageNode(node: String) = applyDspConfig { it.copy(soundStageSelectedNode = node) }
+    
+    fun setSoundStagePosition(azimuth: Float, elevation: Float, distance: Float) {
+        applyDspConfig { cfg ->
+            val node = cfg.soundStageSelectedNode
+            val updatedMap = cfg.soundStageNodePositions.toMutableMap()
+            updatedMap[node] = com.beatraxus.app.model.SoundStageNodePosition(azimuth, elevation, distance)
+            cfg.copy(soundStageNodePositions = updatedMap)
+        }
+    }
+    
+    fun setSoundStageAzimuth(value: Float) {
+        applyDspConfig { cfg ->
+            val node = cfg.soundStageSelectedNode
+            val pos = cfg.soundStageNodePositions[node] ?: com.beatraxus.app.model.SoundStageNodePosition()
+            val updatedMap = cfg.soundStageNodePositions.toMutableMap()
+            updatedMap[node] = pos.copy(azimuth = value)
+            cfg.copy(soundStageNodePositions = updatedMap)
+        }
+    }
+    
+    fun setSoundStageElevation(value: Float) {
+        applyDspConfig { cfg ->
+            val node = cfg.soundStageSelectedNode
+            val pos = cfg.soundStageNodePositions[node] ?: com.beatraxus.app.model.SoundStageNodePosition()
+            val updatedMap = cfg.soundStageNodePositions.toMutableMap()
+            updatedMap[node] = pos.copy(elevation = value)
+            cfg.copy(soundStageNodePositions = updatedMap)
+        }
+    }
+    
+    fun setSoundStageDistance(value: Float) {
+        applyDspConfig { cfg ->
+            val node = cfg.soundStageSelectedNode
+            val pos = cfg.soundStageNodePositions[node] ?: com.beatraxus.app.model.SoundStageNodePosition()
+            val updatedMap = cfg.soundStageNodePositions.toMutableMap()
+            updatedMap[node] = pos.copy(distance = value)
+            cfg.copy(soundStageNodePositions = updatedMap)
+        }
+    }
+
     fun setAudio3DStageEnabled(enabled: Boolean) = applyDspConfig { it.copy(audio3DStageEnabled = enabled) }
     fun setAudio3DWidth(value: Float) = applyDspConfig { it.copy(audio3DWidth = value.coerceIn(0f, 2f)) }
     fun setAudio3DDepth(value: Float) = applyDspConfig { it.copy(audio3DDepth = value.coerceIn(0f, 1f)) }

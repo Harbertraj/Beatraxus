@@ -1020,7 +1020,7 @@ fun DspEnhancementsContent(
                 }
             }
 
-            val isSpatialBypassed = config.bitPerfectEnabled && !config.bitPerfectUnbypassSpatial
+            val isSpatialBypassed = config.bitPerfectEnabled && !config.bitPerfectUnbypass3DStage
             SettingsSection(
                 title = "SPATIAL AUDIO",
                 icon = Icons.Rounded.SpatialAudioOff,
@@ -1270,7 +1270,7 @@ private fun BitPerfectCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
                 ) {
                     StatChip("RATE", "${uiState.inputSampleRate / 1000}kHz")
                     StatChip("DEPTH", "${uiState.bitDepth}-bit")
-                    StatChip("DSP", if (config.bitPerfectUnbypassEq || config.bitPerfectUnbypassReverb || config.bitPerfectUnbypassSpatial) "HYBRID" else "OFF")
+                    StatChip("DSP", if (config.bitPerfectUnbypassEq || config.bitPerfectUnbypassReverb || config.bitPerfectUnbypass3DStage) "HYBRID" else "OFF")
                 }
 
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -1293,8 +1293,8 @@ private fun BitPerfectCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
                         )
                         UnbypassChip(
                             label = "Spatial Audio",
-                            selected = config.bitPerfectUnbypassSpatial,
-                            onToggle = { viewModel.setBitPerfectUnbypassSpatial(it) }
+                            selected = config.bitPerfectUnbypass3DStage,
+                            onToggle = { viewModel.setBitPerfectUnbypass3DStage(it) }
                         )
                         UnbypassChip(
                             label = "Reverb",

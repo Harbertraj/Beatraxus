@@ -204,6 +204,8 @@ data class PlayerUiState(
     val selectedItemName: String? = null, // For Album name, Artist name etc.
     val showFullPlayer: Boolean = false,
     val showQueue: Boolean = false,
+    val showSongInfo: Boolean = false, // one-shot "sink" flag: tells NowPlayingScreen to reopen its info dialog
+    val pendingInspectorReturnSong: Song? = null, // set when Inspector was opened from a song's options sheet (list context), so back-navigation reopens that sheet's info overlay instead of the Now Playing screen
     val previousSongs: List<Song> = emptyList(),
     val upcomingSongs: List<Song> = emptyList(),
     val searchQuery: String = "",
@@ -342,6 +344,8 @@ data class PlayerUiState(
                 selectedItemName == other.selectedItemName &&
                 showFullPlayer == other.showFullPlayer &&
                 showQueue == other.showQueue &&
+                showSongInfo == other.showSongInfo &&
+                pendingInspectorReturnSong == other.pendingInspectorReturnSong &&
                 upcomingSongs == other.upcomingSongs &&
                 searchQuery == other.searchQuery &&
                 isMultiSelectMode == other.isMultiSelectMode &&
@@ -463,6 +467,8 @@ data class PlayerUiState(
         result = 31 * result + (selectedItemName?.hashCode() ?: 0)
         result = 31 * result + showFullPlayer.hashCode()
         result = 31 * result + showQueue.hashCode()
+        result = 31 * result + showSongInfo.hashCode()
+        result = 31 * result + (pendingInspectorReturnSong?.hashCode() ?: 0)
         result = 31 * result + upcomingSongs.hashCode()
         result = 31 * result + searchQuery.hashCode()
         result = 31 * result + isMultiSelectMode.hashCode()

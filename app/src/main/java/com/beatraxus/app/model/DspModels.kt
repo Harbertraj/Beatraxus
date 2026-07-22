@@ -62,6 +62,24 @@ data class SoundStageNodePosition(
     val distance: Float = 2.0f
 )
 
+data class Audio3DSpeakerPosition(
+    val id: String,
+    val azimuthDeg: Float = 0f,
+    val elevationDeg: Float = 0f,
+    val distance: Float = 1.0f
+)
+
+data class Audio3DStagePreset(
+    val name: String,
+    val width: Float = 1.0f,
+    val depth: Float = 1.0f,
+    val height: Float = 0.0f,
+    val distance: Float = 1.0f,
+    val centerFocus: Float = 0.0f,
+    val roomReflections: Float = 0.0f,
+    val speakerPositions: List<Audio3DSpeakerPosition> = emptyList()
+)
+
 enum class SampleFormat(val displayName: String, val bitDepth: Int) {
     AUTO("Auto", 0),
     PCM_16BIT("16-bit", 16),
@@ -219,13 +237,24 @@ data class DspConfig(
     val bitPerfectUnbypassResample: Boolean = false,
     val bitPerfectUnbypassSoxr: Boolean = false,
     val bitPerfectUnbypassReverb: Boolean = false,
-    val bitPerfectUnbypassSpatial: Boolean = false,
+    val bitPerfectUnbypass3DStage: Boolean = false,
     val bitPerfectUnbypassDithering: Boolean = false,
     val bitPerfectUnbypassFloat64: Boolean = false,
     val bitPerfectUnbypassLimiter: Boolean = false,
 
     // Sound Stage Presets
     val soundStagePresets: List<SoundStagePreset> = emptyList(),
+
+    // Audio 3D Stage
+    val audio3DStageEnabled: Boolean = false,
+    val audio3DWidth: Float = 1.0f,
+    val audio3DDepth: Float = 1.0f,
+    val audio3DHeight: Float = 0.0f,
+    val audio3DDistance: Float = 1.0f,
+    val audio3DCenterFocus: Float = 0.0f,
+    val audio3DRoomReflections: Float = 0.0f,
+    val audio3DSpeakerPositions: List<Audio3DSpeakerPosition> = emptyList(),
+    val audio3DPresets: List<Audio3DStagePreset> = emptyList(),
 
     // MMAP — enabled state is derived from outputMode == MMAP_EXCLUSIVE
     // mmapExclusiveEnabled field removed to avoid dual source-of-truth conflict

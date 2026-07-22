@@ -109,6 +109,8 @@ fun NowPlayingScreen(
     onFavoriteClick: () -> Unit,
     onNavigateToAlbum: (String) -> Unit,
     onNavigateToInspector: (String) -> Unit = {},
+    onSetShowSongInfoConsumed: () -> Unit = {},
+    onClearPendingInspectorReturn: () -> Unit = {},
     onToggleLyrics: () -> Unit = {},
     onAdjustOffset: (Long) -> Unit = {},
     onSetLyricsOffset: (Long) -> Unit = {},
@@ -123,6 +125,17 @@ fun NowPlayingScreen(
     val showLyrics = uiState.showLyrics
     var showSleepTimerSheet by remember { mutableStateOf(false) }
     var showSongInfo by remember { mutableStateOf(false) }
+
+    // Sink the one-shot ViewModel flag: MainActivity sets uiState.showSongInfo = true right
+    // before popping back from the Inspector screen (when it was opened from here). Local
+    // `remember` state doesn't survive this screen leaving/re-entering composition across
+    // navigation, so we mirror it back in from the ViewModel, then clear the flag.
+    LaunchedEffect(uiState.showSongInfo) {
+        if (uiState.showSongInfo) {
+            showSongInfo = true
+            onSetShowSongInfoConsumed()
+        }
+    }
 
     val context = LocalContext.current
     val dominantColorsCache = remember { mutableStateMapOf<String, Color>() }
@@ -867,7 +880,10 @@ fun NowPlayingScreen(
                 lastFmAlbumInfo = uiState.lastFmAlbumInfo,
                 isLoadingInfo = uiState.isLoadingOnlineInfo,
                 onDismiss = { showSongInfo = false },
-                onOpenInspector = { onNavigateToInspector(it.id) }
+                onOpenInspector = {
+                    onClearPendingInspectorReturn()
+                    onNavigateToInspector(it.id)
+                }
             )
         }
     }

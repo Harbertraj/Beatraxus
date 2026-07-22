@@ -352,6 +352,16 @@ fun MainScreen(
     }
     var activeMainSheet by remember { mutableStateOf<MainSheetType?>(null) }
     var selectedSongForOptions by remember { mutableStateOf<com.beatraxus.app.model.Song?>(null) }
+    var reopenSongOptionsInfo by remember { mutableStateOf(false) }
+
+    LaunchedEffect(uiState.pendingInspectorReturnSong) {
+        val pendingSong = uiState.pendingInspectorReturnSong
+        if (pendingSong != null) {
+            selectedSongForOptions = pendingSong
+            reopenSongOptionsInfo = true
+            viewModel.setPendingInspectorReturn(null)
+        }
+    }
     var showPlaylistDialog by remember { mutableStateOf(false) }
     var playlistDialogSong by remember { mutableStateOf<com.beatraxus.app.model.Song?>(null) }
     var playlistToDelete by remember { mutableStateOf<com.beatraxus.app.model.Playlist?>(null) }
@@ -2869,6 +2879,7 @@ fun MainScreen(
                             SongOptionsSheet(
                                 song = song,
                                 currentPlayingSong = uiState.currentSong,
+                                initialShowInfoOverlay = reopenSongOptionsInfo.also { reopenSongOptionsInfo = false },
                                 onDismiss = { selectedSongForOptions = null },
                                 onPlayNext = {
                                     viewModel.playNext(song)
@@ -2909,6 +2920,7 @@ fun MainScreen(
                                     selectedSongForOptions = null
                                 },
                                 onOpenInspector = { s ->
+                                    viewModel.setPendingInspectorReturn(s)
                                     onNavigateToInspector(s.id)
                                     selectedSongForOptions = null
                                 },
@@ -3127,6 +3139,8 @@ fun MainScreen(
                 onNavigateToInspector = { songId ->
                     onNavigateToInspector(songId)
                 },
+                onSetShowSongInfoConsumed = { viewModel.setShowSongInfo(false) },
+                onClearPendingInspectorReturn = { viewModel.setPendingInspectorReturn(null) },
                 onToggleLyrics = { viewModel.toggleLyrics() },
                 onAdjustOffset = { viewModel.adjustLyricsOffset(it) },
                 onSetLyricsOffset = { viewModel.setLyricsOffset(it) },

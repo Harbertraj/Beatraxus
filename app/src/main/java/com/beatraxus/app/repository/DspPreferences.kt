@@ -108,7 +108,7 @@ class DspPreferences(private val context: Context) {
             bitPerfectUnbypassResample = pref(BIT_PERFECT_UNBYPASS_RESAMPLE, false),
             bitPerfectUnbypassSoxr = pref(BIT_PERFECT_UNBYPASS_SOXR, false),
             bitPerfectUnbypassReverb = pref(BIT_PERFECT_UNBYPASS_REVERB, false),
-            bitPerfectUnbypassSpatial = pref(BIT_PERFECT_UNBYPASS_SPATIAL, false),
+            bitPerfectUnbypass3DStage = pref(BIT_PERFECT_UNBYPASS_3D_STAGE, false),
             bitPerfectUnbypassDithering = pref(BIT_PERFECT_UNBYPASS_DITHERING, false),
             bitPerfectUnbypassFloat64 = pref(BIT_PERFECT_UNBYPASS_FLOAT64, false),
             bitPerfectUnbypassLimiter = pref(BIT_PERFECT_UNBYPASS_LIMITER, false),
@@ -232,7 +232,7 @@ class DspPreferences(private val context: Context) {
             set(BIT_PERFECT_UNBYPASS_RESAMPLE, config.bitPerfectUnbypassResample)
             set(BIT_PERFECT_UNBYPASS_SOXR, config.bitPerfectUnbypassSoxr)
             set(BIT_PERFECT_UNBYPASS_REVERB, config.bitPerfectUnbypassReverb)
-            set(BIT_PERFECT_UNBYPASS_SPATIAL, config.bitPerfectUnbypassSpatial)
+            set(BIT_PERFECT_UNBYPASS_3D_STAGE, config.bitPerfectUnbypass3DStage)
             set(BIT_PERFECT_UNBYPASS_DITHERING, config.bitPerfectUnbypassDithering)
             set(BIT_PERFECT_UNBYPASS_FLOAT64, config.bitPerfectUnbypassFloat64)
             set(BIT_PERFECT_UNBYPASS_LIMITER, config.bitPerfectUnbypassLimiter)
@@ -386,7 +386,7 @@ class DspPreferences(private val context: Context) {
                 set(BIT_PERFECT_UNBYPASS_RESAMPLE, config.bitPerfectUnbypassResample)
                 set(BIT_PERFECT_UNBYPASS_SOXR, config.bitPerfectUnbypassSoxr)
                 set(BIT_PERFECT_UNBYPASS_REVERB, config.bitPerfectUnbypassReverb)
-                set(BIT_PERFECT_UNBYPASS_SPATIAL, config.bitPerfectUnbypassSpatial)
+                set(BIT_PERFECT_UNBYPASS_3D_STAGE, config.bitPerfectUnbypass3DStage)
                 set(BIT_PERFECT_UNBYPASS_DITHERING, config.bitPerfectUnbypassDithering)
                 set(BIT_PERFECT_UNBYPASS_FLOAT64, config.bitPerfectUnbypassFloat64)
                 set(BIT_PERFECT_UNBYPASS_LIMITER, config.bitPerfectUnbypassLimiter)
@@ -585,7 +585,7 @@ class DspPreferences(private val context: Context) {
         private val BIT_PERFECT_UNBYPASS_RESAMPLE = booleanPreferencesKey("bit_perfect_unbypass_resample")
         private val BIT_PERFECT_UNBYPASS_SOXR = booleanPreferencesKey("bit_perfect_unbypass_soxr")
         private val BIT_PERFECT_UNBYPASS_REVERB = booleanPreferencesKey("bit_perfect_unbypass_reverb")
-        private val BIT_PERFECT_UNBYPASS_SPATIAL = booleanPreferencesKey("bit_perfect_unbypass_spatial")
+        private val BIT_PERFECT_UNBYPASS_3D_STAGE = booleanPreferencesKey("bit_perfect_unbypass_3d_stage")
         private val BIT_PERFECT_UNBYPASS_DITHERING = booleanPreferencesKey("bit_perfect_unbypass_dithering")
         private val BIT_PERFECT_UNBYPASS_FLOAT64 = booleanPreferencesKey("bit_perfect_unbypass_float64")
         private val BIT_PERFECT_UNBYPASS_LIMITER = booleanPreferencesKey("bit_perfect_unbypass_limiter")

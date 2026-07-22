@@ -620,8 +620,16 @@ fun BeatraxusApp(
                     songId = songId,
                     viewModel = viewModel,
                     onBack = {
-                        viewModel.setShowFullPlayer(true)
-                        viewModel.setShowSongInfo(true)
+                        if (viewModel.uiState.value.pendingInspectorReturnSong == null) {
+                            // Opened from the Now Playing screen's own info icon: return there
+                            // with the info dialog reopened.
+                            viewModel.setShowFullPlayer(true)
+                            viewModel.setShowSongInfo(true)
+                        }
+                        // else: opened from a song's long-press/three-dot options sheet — leave
+                        // showFullPlayer alone so we land back on whatever list screen was
+                        // showing; MainScreen reopens that song's options sheet (with its info
+                        // overlay) via the pendingInspectorReturnSong flag.
                         navController.popBackStack()
                     }
                 )

@@ -1822,7 +1822,7 @@ private fun PremiumSoundStageCard(
 ) {
     val density = LocalDensity.current
     val config = uiState.dsp.config
-    val isSpatialBypassed = config.bitPerfectEnabled && !config.bitPerfectUnbypassSpatial
+    val isSpatialBypassed = config.bitPerfectEnabled && !config.bitPerfectUnbypass3DStage
     val spatialActive = config.spatialAudioEnabled && !isSpatialBypassed
 
     data class StageNode(

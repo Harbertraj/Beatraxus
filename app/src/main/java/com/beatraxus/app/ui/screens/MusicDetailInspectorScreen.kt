@@ -85,6 +85,7 @@ fun MusicDetailInspectorScreen(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
+                    .statusBarsPadding()
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = 16.dp)
             ) {

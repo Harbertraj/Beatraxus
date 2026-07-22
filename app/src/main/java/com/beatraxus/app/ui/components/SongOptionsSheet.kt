@@ -65,9 +65,10 @@ fun SongOptionsSheet(
     selectedLastFmTrackInfo: LastFmTrack? = null,
     selectedLastFmArtistInfo: LastFmArtistDetail? = null,
     selectedLastFmAlbumInfo: LastFmAlbum? = null,
-    isSelectedLoading: Boolean = false
+    isSelectedLoading: Boolean = false,
+    initialShowInfoOverlay: Boolean = false
 ) {
-    var showInfoOverlay by remember { mutableStateOf(false) }
+    var showInfoOverlay by remember { mutableStateOf(initialShowInfoOverlay) }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
