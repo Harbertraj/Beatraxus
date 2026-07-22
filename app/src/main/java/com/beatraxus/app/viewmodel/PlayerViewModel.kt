@@ -4079,6 +4079,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         } catch (e: Exception) {
             Log.e("PlayerViewModel", "Failed to enrich Telegram song: ${song.title}", e)
             return null
+        } finally {
+            try { tdLibManager.send(TdApi.DeleteFile(fileId)) } catch (_: Exception) {}
         }
     }
 

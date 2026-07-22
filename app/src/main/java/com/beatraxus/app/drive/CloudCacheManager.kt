@@ -43,6 +43,7 @@ class CloudCacheManager(
     // Use ConcurrentHashMap for thread-safe access from media threads
     private val activeDownloads = ConcurrentHashMap<String, Job>()
     private val activeWindows = ConcurrentHashMap<String, WindowBuffer>()
+    private val activeTelegramFileIds = ConcurrentHashMap<String, Int>()
     private val mutex = Mutex()
     private var currentlyPlayingId: String? = null
     
@@ -186,10 +187,7 @@ class CloudCacheManager(
             if (file.local.isDownloadingCompleted) {
                 val f = File(file.local.path)
                 if (f.exists()) {
-                    val cachedFile = playbackLruCache.getOrCacheFile(song, f, true, currentlyPlayingId)
-                    // Once safely in cloud_cache, remove from TDLib to free up space and ensure 15-song limit
-                    try { tdLib.send(TdApi.DeleteFile(currentFileId)) } catch (_: Exception) {}
-                    return@withContext cachedFile.absolutePath
+                    return@withContext file.local.path
                 } else {
                     Log.w(TAG, "Telegram file reported as completed but missing from disk: ${file.local.path}. Re-downloading...")
                     try { tdLib.send(TdApi.DeleteFile(currentFileId)) } catch (_: Exception) {}
@@ -214,10 +212,7 @@ class CloudCacheManager(
                     val f = File(path)
                     if (f.exists()) {
                         Log.d(TAG, "Telegram file download complete for ${song.title}")
-                        val cachedFile = playbackLruCache.getOrCacheFile(song, f, true, currentlyPlayingId)
-                        // Once safely in cloud_cache, remove from TDLib to free up space and ensure 15-song limit
-                        try { tdLib.send(TdApi.DeleteFile(currentFileId)) } catch (_: Exception) {}
-                        return@withContext cachedFile.absolutePath
+                        return@withContext path
                     } else {
                         Log.w(TAG, "Telegram file completed but missing from disk in wait loop: $path")
                         try { tdLib.send(TdApi.DeleteFile(currentFileId)) } catch (_: Exception) {}
@@ -300,6 +295,9 @@ class CloudCacheManager(
         toCancel.forEach { id ->
             activeDownloads[id]?.cancel()
             activeDownloads.remove(id)
+            activeTelegramFileIds.remove(id)?.let { fileId ->
+                tdLib?.let { td -> downloadScope.launch { try { td.send(TdApi.DeleteFile(fileId)) } catch (_: Exception) {} } }
+            }
         }
 
         // 2. Prune rolling window buffers no longer in keepIds
@@ -309,6 +307,9 @@ class CloudCacheManager(
                 activeWindows[id]?.prefetchJob?.cancel()
             }
             activeWindows.remove(id)
+            activeTelegramFileIds.remove(id)?.let { fileId ->
+                tdLib?.let { td -> downloadScope.launch { try { td.send(TdApi.DeleteFile(fileId)) } catch (_: Exception) {} } }
+            }
         }
 
         // 3. Start downloads/priming for 'keepIds' if not already cached
@@ -442,13 +443,15 @@ class CloudCacheManager(
                 }
                 if (currentFileId != null && currentFileId != 0) {
                     try {
-                        tdLib.send(TdApi.DownloadFile(currentFileId, 32, 0, TELEGRAM_INITIAL_WINDOW_BYTES.toInt(), false))
+                        tdLib.send(TdApi.DownloadFile(currentFileId, 32, 0L, TELEGRAM_INITIAL_WINDOW_BYTES, false))
+                        activeTelegramFileIds[song.id] = currentFileId
                     } catch (e: Exception) {
                         Log.w(TAG, "Telegram windowed download failed for ${song.title}, refreshing fileId: ${e.message}")
                         val refreshed = refreshFileId(song, tdLib)
                         if (refreshed != null && refreshed != 0) {
                             try {
-                                tdLib.send(TdApi.DownloadFile(refreshed, 32, 0, TELEGRAM_INITIAL_WINDOW_BYTES.toInt(), false))
+                                tdLib.send(TdApi.DownloadFile(refreshed, 32, 0L, TELEGRAM_INITIAL_WINDOW_BYTES, false))
+                                activeTelegramFileIds[song.id] = refreshed
                             } catch (_: Exception) {
                                 Log.e(TAG, "Failed to prime Telegram window after refresh for ${song.title}")
                             }
@@ -484,20 +487,19 @@ class CloudCacheManager(
                 }
                 if (currentFileId != null && currentFileId != 0) {
                     tdLib.send(TdApi.DownloadFile(currentFileId, 32, 0, 0, false))
+                    activeTelegramFileIds[song.id] = currentFileId
                     
                     // Wait for completion to add to unified 15-song LRU cache (same logic as GDrive)
                     tdLib.getFileFlow(currentFileId).collect { file ->
                         if (file?.local?.isDownloadingCompleted == true && file.local.path.isNotBlank()) {
                             val path = file.local.path
                             if (File(path).exists()) {
-                                playbackLruCache.getOrCacheFile(song, File(path), false, currentlyPlayingId)
-                                // Move to unified cloud_cache and clear TDLib internal copy
-                                try { tdLib.send(TdApi.DeleteFile(currentFileId)) } catch (_: Exception) {}
                                 this@launch.cancel()
                             } else {
                                 Log.w(TAG, "Pre-download: file reported complete but missing: $path")
                                 try { tdLib.send(TdApi.DeleteFile(currentFileId)) } catch (_: Exception) {}
                                 tdLib.send(TdApi.DownloadFile(currentFileId, 32, 0, 0, false))
+                                activeTelegramFileIds[song.id] = currentFileId
                             }
                         }
                     }
@@ -547,6 +549,7 @@ class CloudCacheManager(
         downloadScope.cancel()
         activeDownloads.values.forEach { it.cancel() }
         activeDownloads.clear()
+        activeTelegramFileIds.clear()
         tokenCache.clear()
     }
 
@@ -1016,6 +1019,7 @@ class CloudCacheManager(
 
                 if (currentFileId != null && currentFileId != 0) {
                     activeFileId = currentFileId
+                    activeTelegramFileIds[song.id] = currentFileId
                     // Streamable formats: request only the initial window, like GDrive's
                     // primeWindow(). readAt() extends this forward as playback progresses.
                     // M4A/MP4/ALAC: keep requesting the whole file, unchanged from before.
@@ -1049,9 +1053,7 @@ class CloudCacheManager(
                                 // If complete, trigger unified caching
                                 if (file.local.isDownloadingCompleted && localPath != null) {
                                     scope.launch {
-                                        playbackLruCache.getOrCacheFile(song, File(localPath!!), false, currentlyPlayingId)
                                         // Once in cloud_cache, clear TDLib internal copy
-                                        try { tdLib.send(TdApi.DeleteFile(file.id)) } catch (_: Exception) {}
                                     }
                                 }
                             }
@@ -1067,15 +1069,17 @@ class CloudCacheManager(
          */
         private suspend fun requestWindow(fileId: Int, limit: Long) {
             try {
-                tdLib.send(TdApi.DownloadFile(fileId, 32, 0, limit.toInt(), false))
+                tdLib.send(TdApi.DownloadFile(fileId, 32, 0L, limit, false))
+                activeTelegramFileIds[song.id] = fileId
                 requestedPrefixEnd = if (limit <= 0L) Long.MAX_VALUE else limit
             } catch (e: Exception) {
                 Log.w(TAG, "Stale fileId detected for ${song.title}, refreshing...")
                 val refreshed = refreshFileId()
                 if (refreshed != null && refreshed != 0) {
                     activeFileId = refreshed
+                    activeTelegramFileIds[song.id] = refreshed
                     try {
-                        tdLib.send(TdApi.DownloadFile(refreshed, 32, 0, limit.toInt(), false))
+                        tdLib.send(TdApi.DownloadFile(refreshed, 32, 0L, limit, false))
                         requestedPrefixEnd = if (limit <= 0L) Long.MAX_VALUE else limit
                     } catch (_: Exception) {
                         Log.e(TAG, "Failed to download after refresh for ${song.title}")
@@ -1166,10 +1170,6 @@ class CloudCacheManager(
                 // If it's complete, try to cache it in the unified 15-song LRU
                 val fid = song.telegramFileId
                 scope.launch {
-                    playbackLruCache.getOrCacheFile(song, File(path), true, currentlyPlayingId)
-                    if (fid != null && fid != 0) {
-                        try { tdLib.send(TdApi.DeleteFile(fid)) } catch (_: Exception) {}
-                    }
                 }
             }
             return res
