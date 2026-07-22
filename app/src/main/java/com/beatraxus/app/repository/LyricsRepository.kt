@@ -10,6 +10,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.isActive
@@ -135,6 +136,10 @@ class LyricsRepository(private val context: Context, private val database: AppDa
             emit(LyricsState.Error("No lyrics found"))
         }
     }.flowOn(Dispatchers.IO)
+        .catch { e ->
+            Log.e(TAG, "getLyrics flow crashed unexpectedly for ${song.title}", e)
+            emit(LyricsState.Error("Lyrics lookup failed: ${e.message ?: "unknown error"}"))
+        }
 
     private suspend fun getCachedLyrics(song: Song): LyricsLoadResult? {
         cache[song.id]?.let { return it }
@@ -171,10 +176,12 @@ class LyricsRepository(private val context: Context, private val database: AppDa
         }
     }
 
-    suspend fun fetchOnline(song: Song, persist: Boolean = true): LyricsLoadResult? {
-        val notFoundAt = notFoundCache[song.id]
-        if (notFoundAt != null && System.currentTimeMillis() - notFoundAt < NOT_FOUND_TTL_MS) {
-            return null // known "not found" recently — skip the network round trip
+    suspend fun fetchOnline(song: Song, persist: Boolean = true, forceRefresh: Boolean = false): LyricsLoadResult? {
+        if (!forceRefresh) {
+            val notFoundAt = notFoundCache[song.id]
+            if (notFoundAt != null && System.currentTimeMillis() - notFoundAt < NOT_FOUND_TTL_MS) {
+                return null // known "not found" recently — skip the network round trip
+            }
         }
 
         val existingOffset = lyricsDao.getLyrics(song.id)?.syncOffset ?: 0L

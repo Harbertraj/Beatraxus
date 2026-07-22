@@ -45,9 +45,7 @@ import com.beatraxus.app.model.ReplayGainSource
 import com.beatraxus.app.model.ResamplerMode
 import com.beatraxus.app.model.LibraryView
 import com.beatraxus.app.model.defaultEqBands
-import com.beatraxus.app.model.SoundStagePreset
-import com.beatraxus.app.model.SoundStageNodePosition
-import com.beatraxus.app.model.HrtfMode
+import com.beatraxus.app.model.Audio3DStagePreset
 import com.beatraxus.app.model.Playlist
 import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.ExoPlayer
@@ -2274,10 +2272,6 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         _uiState.update { it.copy(showFullPlayer = show) }
     }
 
-    fun setShowSongInfo(show: Boolean) {
-        _uiState.update { it.copy(showSongInfo = show) }
-    }
-
     fun setSettingsIconPosition(x: Float, y: Float) {
         _uiState.update { it.copy(settingsIconX = x, settingsIconY = y) }
     }
@@ -2728,83 +2722,57 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun setCrossfeedEnabled(enabled: Boolean) = applyDspConfig { it.copy(crossfeedEnabled = enabled) }
     fun setCrossfeedLevel(value: Float) = applyDspConfig { it.copy(crossfeedLevel = value.coerceIn(0f, 1f), crossfeedEnabled = true) }
     
-    fun setSpatialAudioEnabled(enabled: Boolean) = applyDspConfig { it.copy(spatialAudioEnabled = enabled) }
-    fun setSoundStageEnabled(enabled: Boolean) = applyDspConfig { it.copy(soundStageEnabled = enabled) }
-    fun setSpatialAudioIntensity(value: Float) = applyDspConfig { it.copy(spatialAudioIntensity = value.coerceIn(0f, 1f)) }
-    fun setHrtfMode(mode: HrtfMode) = applyDspConfig { it.copy(hrtfMode = mode) }
-    fun setSoundStageWidth(value: Float) = applyDspConfig { it.copy(soundStageWidth = value.coerceIn(0f, 2f)) }
-    fun setSpatialStageWidth(value: Float) = applyDspConfig { it.copy(spatialStageWidth = value.coerceIn(0f, 2f)) }
-    fun setSoundStageCenterLock(value: Float) = applyDspConfig { it.copy(soundStageCenterLock = value.coerceIn(0f, 1f)) }
+    fun setAudio3DStageEnabled(enabled: Boolean) = applyDspConfig { it.copy(audio3DStageEnabled = enabled) }
+    fun setAudio3DWidth(value: Float) = applyDspConfig { it.copy(audio3DWidth = value.coerceIn(0f, 2f)) }
+    fun setAudio3DDepth(value: Float) = applyDspConfig { it.copy(audio3DDepth = value.coerceIn(0f, 1f)) }
+    fun setAudio3DHeight(value: Float) = applyDspConfig { it.copy(audio3DHeight = value.coerceIn(-1f, 1f)) }
+    fun setAudio3DDistance(value: Float) = applyDspConfig { it.copy(audio3DDistance = value.coerceIn(0.3f, 3f)) }
+    fun setAudio3DCenterFocus(value: Float) = applyDspConfig { it.copy(audio3DCenterFocus = value.coerceIn(0f, 1f)) }
+    fun setAudio3DRoomReflections(value: Float) = applyDspConfig { it.copy(audio3DRoomReflections = value.coerceIn(0f, 1f)) }
     
-    fun selectSoundStageNode(node: String) = _uiState.update { it.copy(dsp = it.dsp.copy(config = it.dsp.config.copy(soundStageSelectedNode = node))) }
-
-    fun setSoundStagePosition(azimuth: Float, elevation: Float, distance: Float) {
+    fun setSpeakerPosition(id: String, azimuth: Float, elevation: Float, distance: Float) {
         applyDspConfig { cfg ->
-            val node = cfg.soundStageSelectedNode
-            val newPositions = cfg.soundStageNodePositions.toMutableMap()
-            newPositions[node] = SoundStageNodePosition(azimuth, elevation, distance)
-            cfg.copy(soundStageNodePositions = newPositions)
+            val newList = cfg.audio3DSpeakerPositions.map { 
+                if (it.id == id) it.copy(azimuthDeg = azimuth, elevationDeg = elevation, distance = distance) else it 
+            }
+            cfg.copy(audio3DSpeakerPositions = newList)
         }
     }
 
-    fun setSoundStageAzimuth(azimuth: Float) {
+    fun saveAudio3DPreset(name: String) {
         applyDspConfig { cfg ->
-            val node = cfg.soundStageSelectedNode
-            val pos = cfg.soundStageNodePositions[node] ?: SoundStageNodePosition()
-            val newPositions = cfg.soundStageNodePositions.toMutableMap()
-            newPositions[node] = pos.copy(azimuth = azimuth)
-            cfg.copy(soundStageNodePositions = newPositions)
-        }
-    }
-
-    fun setSoundStageElevation(elevation: Float) {
-        applyDspConfig { cfg ->
-            val node = cfg.soundStageSelectedNode
-            val pos = cfg.soundStageNodePositions[node] ?: SoundStageNodePosition()
-            val newPositions = cfg.soundStageNodePositions.toMutableMap()
-            newPositions[node] = pos.copy(elevation = elevation)
-            cfg.copy(soundStageNodePositions = newPositions)
-        }
-    }
-
-    fun setSoundStageDistance(distance: Float) {
-        applyDspConfig { cfg ->
-            val node = cfg.soundStageSelectedNode
-            val pos = cfg.soundStageNodePositions[node] ?: SoundStageNodePosition()
-            val newPositions = cfg.soundStageNodePositions.toMutableMap()
-            newPositions[node] = pos.copy(distance = distance)
-            cfg.copy(soundStageNodePositions = newPositions)
-        }
-    }
-
-    fun saveSoundStagePreset(name: String) {
-        applyDspConfig { cfg ->
-            val newPreset = SoundStagePreset(
+            val newPreset = Audio3DStagePreset(
                 name = name,
-                soundStageWidth = cfg.soundStageWidth,
-                spatialStageWidth = cfg.spatialStageWidth,
-                soundStageCenterLock = cfg.soundStageCenterLock,
-                nodePositions = cfg.soundStageNodePositions
+                width = cfg.audio3DWidth,
+                depth = cfg.audio3DDepth,
+                height = cfg.audio3DHeight,
+                distance = cfg.audio3DDistance,
+                centerFocus = cfg.audio3DCenterFocus,
+                roomReflections = cfg.audio3DRoomReflections,
+                speakerPositions = cfg.audio3DSpeakerPositions
             )
-            cfg.copy(soundStagePresets = cfg.soundStagePresets.filter { it.name != name } + newPreset)
+            cfg.copy(audio3DPresets = cfg.audio3DPresets.filter { it.name != name } + newPreset)
         }
     }
 
-    fun loadSoundStagePreset(name: String) {
+    fun loadAudio3DPreset(name: String) {
         applyDspConfig { cfg ->
-            val preset = cfg.soundStagePresets.find { it.name == name } ?: return@applyDspConfig cfg
+            val preset = cfg.audio3DPresets.find { it.name == name } ?: return@applyDspConfig cfg
             cfg.copy(
-                soundStageWidth = preset.soundStageWidth,
-                spatialStageWidth = preset.spatialStageWidth,
-                soundStageCenterLock = preset.soundStageCenterLock,
-                soundStageNodePositions = preset.nodePositions
+                audio3DWidth = preset.width,
+                audio3DDepth = preset.depth,
+                audio3DHeight = preset.height,
+                audio3DDistance = preset.distance,
+                audio3DCenterFocus = preset.centerFocus,
+                audio3DRoomReflections = preset.roomReflections,
+                audio3DSpeakerPositions = preset.speakerPositions
             )
         }
     }
 
-    fun deleteSoundStagePreset(name: String) {
+    fun deleteAudio3DPreset(name: String) {
         applyDspConfig { cfg ->
-            cfg.copy(soundStagePresets = cfg.soundStagePresets.filter { it.name != name })
+            cfg.copy(audio3DPresets = cfg.audio3DPresets.filter { it.name != name })
         }
     }
 
@@ -2831,7 +2799,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     bitPerfectUnbypassResample = false,
                     bitPerfectUnbypassSoxr = false,
                     bitPerfectUnbypassReverb = false,
-                    bitPerfectUnbypassSpatial = false,
+                    bitPerfectUnbypass3DStage = false,
                     bitPerfectUnbypassDithering = false,
                     bitPerfectUnbypassFloat64 = false,
                     bitPerfectUnbypassLimiter = false
@@ -2847,7 +2815,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 config.bitPerfectUnbypassResample &&
                 config.bitPerfectUnbypassSoxr &&
                 config.bitPerfectUnbypassReverb &&
-                config.bitPerfectUnbypassSpatial &&
+                config.bitPerfectUnbypass3DStage &&
                 config.bitPerfectUnbypassDithering &&
                 config.bitPerfectUnbypassFloat64 &&
                 config.bitPerfectUnbypassLimiter
@@ -2859,7 +2827,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 bitPerfectUnbypassResample = false,
                 bitPerfectUnbypassSoxr = false,
                 bitPerfectUnbypassReverb = false,
-                bitPerfectUnbypassSpatial = false,
+                bitPerfectUnbypass3DStage = false,
                 bitPerfectUnbypassDithering = false,
                 bitPerfectUnbypassFloat64 = false,
                 bitPerfectUnbypassLimiter = false
@@ -2885,8 +2853,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         checkBitPerfectUnbypassLogic(it.copy(bitPerfectUnbypassReverb = enabled))
     }
 
-    fun setBitPerfectUnbypassSpatial(enabled: Boolean) = applyDspConfig {
-        checkBitPerfectUnbypassLogic(it.copy(bitPerfectUnbypassSpatial = enabled))
+    fun setBitPerfectUnbypass3DStage(enabled: Boolean) = applyDspConfig {
+        checkBitPerfectUnbypassLogic(it.copy(bitPerfectUnbypass3DStage = enabled))
     }
 
     fun setBitPerfectUnbypassDithering(enabled: Boolean) = applyDspConfig {
@@ -3327,26 +3295,40 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         val song = _uiState.value.currentSong ?: return
         lyricsJob?.cancel()
         
-        _uiState.update { it.copy(isLoadingLyrics = true) }
+        _uiState.update { it.copy(isLoadingLyrics = true, lyricsErrorMessage = null) }
         
         lyricsJob = viewModelScope.launch {
             try {
-                val result = lyricsRepository.fetchOnline(song)
+                // forceRefresh = true: this is an explicit user action, so it must always hit
+                // the network — bypassing the 24h "recently not found" cache that's there to
+                // avoid spamming the API on automatic/background lookups.
+                val result = lyricsRepository.fetchOnline(song, forceRefresh = true)
                 if (result != null) {
                     _uiState.update {
                         it.copy(
                             lyrics = result.lines,
                             lyricsCurrentIndex = -1,
                             isLoadingLyrics = false,
-                            lyricsSource = result.source
+                            lyricsSource = result.source,
+                            lyricsErrorMessage = null
                         )
                     }
                 } else {
-                    _uiState.update { it.copy(isLoadingLyrics = false) }
-                    // Maybe show a toast or error?
+                    _uiState.update {
+                        it.copy(
+                            isLoadingLyrics = false,
+                            lyricsErrorMessage = "No lyrics found online for this song"
+                        )
+                    }
                 }
             } catch (e: Exception) {
-                _uiState.update { it.copy(isLoadingLyrics = false) }
+                Log.e("PlayerViewModel", "forceSearchLyricsOnline failed for ${song.title}", e)
+                _uiState.update {
+                    it.copy(
+                        isLoadingLyrics = false,
+                        lyricsErrorMessage = "Couldn't reach the lyrics service — check your connection and try again"
+                    )
+                }
             }
         }
     }
@@ -3400,7 +3382,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                             it.copy(
                                 isLoadingLyrics = false,
                                 lyrics = emptyList(),
-                                lyricsSource = null
+                                lyricsSource = null,
+                                // Only the .catch{}-driven crash path sets a message here (an
+                                // unexpected exception); the routine "no lyrics found anywhere"
+                                // case is not itself an error worth alarming the user about, and
+                                // is left for the empty-state "tap to search online" hint instead.
+                                lyricsErrorMessage = state.message.takeIf { msg -> msg.startsWith("Lyrics lookup failed") }
                             )
                         }
                     }
@@ -3446,7 +3433,15 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         if (state.lyrics.isEmpty()) return
         
         val adjustedMs = currentMs + state.lyricsOffsetMs
-        val index = state.lyrics.findLast { it.startTime <= adjustedMs }?.let { state.lyrics.indexOf(it) } ?: -1
+        // NOTE: previously this was `lyrics.findLast { ... }?.let { lyrics.indexOf(it) }`, which
+        // re-locates the found line by structural equality. If two lines share the same
+        // startTime + text (duplicate lines happen in real-world LRC/synced-lyrics files —
+        // e.g. a repeated chorus line that a source duplicated with the same timestamp),
+        // indexOf() returns the FIRST match instead of the one findLast() actually found,
+        // silently pointing the highlighted line at an earlier lyric than the one actually
+        // due — this is a real, intermittent "lyrics fall out of sync" cause. indexOfLast
+        // does the same predicate search in one pass and always returns the correct position.
+        val index = state.lyrics.indexOfLast { it.startTime <= adjustedMs }
         
         if (index != state.lyricsCurrentIndex) {
             _uiState.update { it.copy(lyricsCurrentIndex = index) }

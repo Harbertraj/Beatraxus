@@ -8,6 +8,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.scroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.layout.*
@@ -46,6 +47,37 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 
+/**
+ * Spring-based alternative to LazyListState.animateScrollToItem, which only offers a fixed
+ * (non-bouncy) easing curve. Uses LazyListState.scroll{}'s dispatchRawDelta, the standard
+ * Compose mechanism for driving a scroll from a custom AnimationSpec — same pattern used
+ * for e.g. fling/snap behaviors that need something other than the built-in animation.
+ *
+ * Falls back to an instant snap for jumps to an item that isn't currently laid out at all
+ * (e.g. the user scrubbed the seek bar far ahead) — bouncing across a large off-screen
+ * distance wouldn't read as an intentional "line change" animation, just a slow scroll.
+ */
+private suspend fun LazyListState.bouncyScrollToItem(index: Int, targetOffset: Int) {
+    val itemInfo = layoutInfo.visibleItemsInfo.firstOrNull { it.index == index }
+    if (itemInfo == null) {
+        scrollToItem(index, targetOffset)
+        return
+    }
+    val delta = (itemInfo.offset - targetOffset).toFloat()
+    if (abs(delta) < 1f) return
+
+    scroll {
+        var previous = 0f
+        Animatable(0f).animateTo(
+            targetValue = delta,
+            animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow)
+        ) {
+            dispatchRawDelta(value - previous)
+            previous = value
+        }
+    }
+}
+
 @Composable
 fun KaraokeLyricsView(
     lyrics: List<LrcLine>,
@@ -59,7 +91,8 @@ fun KaraokeLyricsView(
     modifier: Modifier = Modifier,
     onSetOffset: (Long) -> Unit = {},
     onSwipeDown: () -> Unit = {},
-    onSearchOnline: (() -> Unit)? = null
+    onSearchOnline: (() -> Unit)? = null,
+    lyricsErrorMessage: String? = null
 ) {
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -93,7 +126,7 @@ fun KaraokeLyricsView(
             scope.launch {
                 // Centering: Active line at ~8% from the top (moved even higher up)
                 val offset = (containerHeight * 0.08f).toInt()
-                listState.animateScrollToItem(index = currentIndex, scrollOffset = -offset)
+                listState.bouncyScrollToItem(index = currentIndex, targetOffset = -offset)
             }
         }
     }
@@ -140,7 +173,22 @@ fun KaraokeLyricsView(
                     style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.Bold
                 )
-                if (lyricsSource == null) {
+                if (lyricsErrorMessage != null) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        lyricsErrorMessage,
+                        color = Color(0xFFFF8A80).copy(alpha = 0.85f),
+                        style = MaterialTheme.typography.bodyMedium,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        modifier = Modifier.padding(horizontal = 24.dp)
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "Tap to retry",
+                        color = Color.White.copy(alpha = 0.3f),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                } else if (lyricsSource == null) {
                     Spacer(Modifier.height(8.dp))
                     Text(
                         "Tap to search online",
@@ -177,6 +225,7 @@ fun KaraokeLyricsView(
                     SyncedLyricLine(
                         line = line,
                         isCurrent = isCurrent,
+                        distance = distance,
                         progressInLine = lineProgress,
                         targetAlpha = lineAlpha,
                         isWordByWord = line.wordTimings != null,
@@ -300,6 +349,7 @@ fun KaraokeLyricsView(
 fun SyncedLyricLine(
     line: LrcLine,
     isCurrent: Boolean,
+    distance: Int,
     progressInLine: Long,
     targetAlpha: Float,
     isWordByWord: Boolean,
@@ -311,22 +361,39 @@ fun SyncedLyricLine(
         animationSpec = tween(durationMillis = 600),
         label = "alpha"
     )
-    
-    // Bouncy scale for the active line
+
+    // Bouncy scale for EVERY line, not just the active one — as currentIndex changes, every
+    // visible line's `distance` shifts by one, so they all spring toward their new target
+    // scale together instead of only the active line moving. The line becoming active gets
+    // the springiest, most "poppy" overshoot (HighBouncy); background lines settle with a
+    // gentler bounce (MediumBouncy) so the effect reads as a cascade, not everything popping
+    // at once.
+    val targetScale = when {
+        isCurrent -> 1.08f
+        distance == 1 -> 0.97f
+        distance == 2 -> 0.93f
+        else -> 0.90f
+    }
     val animatedScale by animateFloatAsState(
-        targetValue = if (isCurrent) 1.06f else 1.0f,
+        targetValue = targetScale,
         animationSpec = spring(
-            dampingRatio = Spring.DampingRatioLowBouncy,
+            dampingRatio = if (isCurrent) Spring.DampingRatioHighBouncy else Spring.DampingRatioMediumBouncy,
             stiffness = Spring.StiffnessLow
         ),
         label = "lineScale"
     )
 
-    // Unique upward movement animation when line becomes active
+    // Bouncy vertical settle for every line — farther lines "stack" down slightly more, so
+    // when the active line advances, the whole visible group bounces into its new resting
+    // position instead of only the highlighted line moving.
+    val targetOffset = when {
+        isCurrent -> 0f
+        else -> (distance.coerceAtMost(4) * 5f)
+    }
     val verticalOffset by animateFloatAsState(
-        targetValue = if (isCurrent) 0f else 8f,
+        targetValue = targetOffset,
         animationSpec = spring(
-            dampingRatio = Spring.DampingRatioLowBouncy,
+            dampingRatio = if (isCurrent) Spring.DampingRatioHighBouncy else Spring.DampingRatioMediumBouncy,
             stiffness = Spring.StiffnessLow
         ),
         label = "upwardMovement"

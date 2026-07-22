@@ -204,7 +204,6 @@ data class PlayerUiState(
     val selectedItemName: String? = null, // For Album name, Artist name etc.
     val showFullPlayer: Boolean = false,
     val showQueue: Boolean = false,
-    val showSongInfo: Boolean = false,
     val previousSongs: List<Song> = emptyList(),
     val upcomingSongs: List<Song> = emptyList(),
     val searchQuery: String = "",
@@ -255,6 +254,7 @@ data class PlayerUiState(
     val isLoadingLyrics: Boolean = false,
     val lyricsCurrentSongId: String? = null,
     val lyricsSource: LyricsSource? = null,
+    val lyricsErrorMessage: String? = null, // surfaced to UI on a failed manual "search online" (was previously swallowed silently)
     val sleepTimerRemainingSeconds: Int = 0,
     val isSleepTimerActive: Boolean = false,
     val sleepTimerFinishTrack: Boolean = false,
@@ -342,7 +342,6 @@ data class PlayerUiState(
                 selectedItemName == other.selectedItemName &&
                 showFullPlayer == other.showFullPlayer &&
                 showQueue == other.showQueue &&
-                showSongInfo == other.showSongInfo &&
                 upcomingSongs == other.upcomingSongs &&
                 searchQuery == other.searchQuery &&
                 isMultiSelectMode == other.isMultiSelectMode &&
@@ -384,6 +383,7 @@ data class PlayerUiState(
                 isLoadingLyrics == other.isLoadingLyrics &&
                 lyricsCurrentSongId == other.lyricsCurrentSongId &&
                 lyricsSource == other.lyricsSource &&
+                lyricsErrorMessage == other.lyricsErrorMessage &&
                 sleepTimerRemainingSeconds == other.sleepTimerRemainingSeconds &&
                 isSleepTimerActive == other.isSleepTimerActive &&
                 sleepTimerFinishTrack == other.sleepTimerFinishTrack &&
@@ -463,7 +463,6 @@ data class PlayerUiState(
         result = 31 * result + (selectedItemName?.hashCode() ?: 0)
         result = 31 * result + showFullPlayer.hashCode()
         result = 31 * result + showQueue.hashCode()
-        result = 31 * result + showSongInfo.hashCode()
         result = 31 * result + upcomingSongs.hashCode()
         result = 31 * result + searchQuery.hashCode()
         result = 31 * result + isMultiSelectMode.hashCode()
@@ -505,6 +504,7 @@ data class PlayerUiState(
         result = 31 * result + isLoadingLyrics.hashCode()
         result = 31 * result + (lyricsCurrentSongId?.hashCode() ?: 0)
         result = 31 * result + (lyricsSource?.hashCode() ?: 0)
+        result = 31 * result + (lyricsErrorMessage?.hashCode() ?: 0)
         result = 31 * result + sleepTimerRemainingSeconds
         result = 31 * result + isSleepTimerActive.hashCode()
         result = 31 * result + sleepTimerFinishTrack.hashCode()

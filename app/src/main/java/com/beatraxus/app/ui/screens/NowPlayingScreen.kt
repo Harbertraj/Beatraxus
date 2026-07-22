@@ -109,7 +109,6 @@ fun NowPlayingScreen(
     onFavoriteClick: () -> Unit,
     onNavigateToAlbum: (String) -> Unit,
     onNavigateToInspector: (String) -> Unit = {},
-    onToggleSongInfo: (Boolean) -> Unit = {},
     onToggleLyrics: () -> Unit = {},
     onAdjustOffset: (Long) -> Unit = {},
     onSetLyricsOffset: (Long) -> Unit = {},
@@ -123,6 +122,7 @@ fun NowPlayingScreen(
     val showQueue = uiState.showQueue
     val showLyrics = uiState.showLyrics
     var showSleepTimerSheet by remember { mutableStateOf(false) }
+    var showSongInfo by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
     val dominantColorsCache = remember { mutableStateMapOf<String, Color>() }
@@ -328,7 +328,7 @@ fun NowPlayingScreen(
                             modifier = Modifier.padding(end = 12.dp)
                         ) { queueVisible ->
                             if (!queueVisible) {
-                                IconButton(onClick = { onToggleSongInfo(true) }) {
+                                IconButton(onClick = { showSongInfo = true }) {
                                     Icon(
                                         Icons.Rounded.Info,
                                         null,
@@ -504,7 +504,8 @@ fun NowPlayingScreen(
                                     onSetOffset = onSetLyricsOffset,
                                     modifier = Modifier.fillMaxSize(),
                                     onSwipeDown = { onClose() },
-                                    onSearchOnline = onSearchLyricsOnline
+                                    onSearchOnline = onSearchLyricsOnline,
+                                    lyricsErrorMessage = uiState.lyricsErrorMessage
                                 )
                             }
                         }
@@ -858,14 +859,14 @@ fun NowPlayingScreen(
             )
         }
 
-        if (uiState.showSongInfo) {
+        if (showSongInfo) {
             SongInfoDialog(
                 song = song,
                 lastFmTrackInfo = uiState.lastFmTrackInfo,
                 lastFmArtistInfo = uiState.lastFmArtistInfo,
                 lastFmAlbumInfo = uiState.lastFmAlbumInfo,
                 isLoadingInfo = uiState.isLoadingOnlineInfo,
-                onDismiss = { onToggleSongInfo(false) },
+                onDismiss = { showSongInfo = false },
                 onOpenInspector = { onNavigateToInspector(it.id) }
             )
         }
