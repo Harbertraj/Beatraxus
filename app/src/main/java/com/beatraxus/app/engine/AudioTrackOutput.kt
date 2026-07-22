@@ -38,6 +38,13 @@ class AudioTrackOutput(
     private var activeMode = OutputMode.HI_RES
     private var outputDeviceName = OutputDeviceType.SPEAKER.displayName
     private var preferredDevice: AudioDeviceInfo? = null
+
+    // Live-meter tap: a cheap copy of the most recent PCM window, stashed on every write()/
+    // writeInt() call before it goes to the mixer/MMAP path. This is what lets the Inspector's
+    // Live Meters work during MMAP-exclusive output, where android.media.audiofx.Visualizer
+    // has nothing to attach to.
+    @Volatile private var liveCaptureSamples: FloatArray? = null
+    @Volatile private var liveCaptureChannels: Int = 2
     private var currentEncoding = AudioFormat.ENCODING_PCM_FLOAT
     private var currentPerformanceMode = AudioTrack.PERFORMANCE_MODE_NONE
     private var currentBytesPerSample = 4
@@ -535,6 +542,8 @@ class AudioTrackOutput(
             val track = audioTrack
             val isMmap = usingMmap
 
+            if (frameCount > 0) stashLiveCaptureFloat(data, offsetInSamples, frameCount * channels, channels)
+
             if (isMmap && mmap != null) return mmap.write(data, offsetInSamples, frameCount)
             if (track == null) return 0
 
@@ -585,6 +594,7 @@ class AudioTrackOutput(
         lifecycleLock.readLock().withLock {
             val mmap = mmapOutput
             val track = audioTrack
+            if (frameCount > 0) stashLiveCaptureInt(data, offsetInSamples, frameCount * channels, channels, currentEncoding)
             if (usingMmap && mmap != null) return mmap.writeInt(data, offsetInSamples, frameCount)
             if (track == null) return 0
 
@@ -738,6 +748,41 @@ class AudioTrackOutput(
         // MMAP-exclusive path bypasses the regular mixer track Visualizer taps into.
         if (usingMmap) return@withLock 0
         audioTrack?.audioSessionId ?: 0
+    }
+
+    override fun captureLiveWindow(): AudioOutput.LiveCapture? {
+        val snapshot = liveCaptureSamples ?: return null
+        return AudioOutput.LiveCapture(snapshot, liveCaptureChannels)
+    }
+
+    /** Stashes a bounded copy of a normalized float PCM window for [captureLiveWindow].
+     *  Called from write() before the mmap/mixer branch, so it covers both output paths
+     *  uniformly. Cheap (array copy only) and never throws into the audio path. */
+    private fun stashLiveCaptureFloat(data: FloatArray, offsetInSamples: Int, sampleCount: Int, ch: Int) {
+        try {
+            val len = sampleCount.coerceAtMost(4096)
+            if (len <= 0) return
+            val snap = FloatArray(len)
+            System.arraycopy(data, offsetInSamples, snap, 0, len)
+            liveCaptureSamples = snap
+            liveCaptureChannels = ch
+        } catch (_: Exception) {}
+    }
+
+    /** Same as [stashLiveCaptureFloat] but for the Int-PCM write path (bit-perfect integer
+     *  output), normalizing samples to -1f..1f based on the active encoding's bit width. */
+    private fun stashLiveCaptureInt(data: IntArray, offsetInSamples: Int, sampleCount: Int, ch: Int, encoding: Int) {
+        try {
+            val len = sampleCount.coerceAtMost(4096)
+            if (len <= 0) return
+            val divisor = if (encoding == AudioFormat.ENCODING_PCM_32BIT) 2147483648f else 8388608f
+            val snap = FloatArray(len)
+            for (i in 0 until len) {
+                snap[i] = (data[offsetInSamples + i] / divisor).coerceIn(-1f, 1f)
+            }
+            liveCaptureSamples = snap
+            liveCaptureChannels = ch
+        } catch (_: Exception) {}
     }
 
     override fun mmapActualBufferFrames(): Int = lifecycleLock.readLock().withLock { mmapOutput?.mmapActualBufferFrames() ?: 0 }

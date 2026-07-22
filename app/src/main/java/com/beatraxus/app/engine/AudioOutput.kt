@@ -28,7 +28,18 @@ interface AudioOutput {
     fun release()
     /** Android audio session id for the active AudioTrack, or -1/0 (AudioManager.ERROR /
      *  AUDIO_SESSION_ID_GENERATE) when unavailable, e.g. during MMAP-exclusive output where
-     *  there is no regular mixer session to attach a Visualizer to. Used by the Music Detail
-     *  Inspector's live meters (Phase 6). */
+     *  there is no regular mixer session to attach a Visualizer to. Kept for compatibility;
+     *  the Music Detail Inspector's live meters now use [captureLiveWindow] instead, since
+     *  that works in every output mode including MMAP-exclusive. */
     fun getAudioSessionId(): Int
+
+    /** Most recent normalized (-1f..1f) PCM window handed to [write]/[writeInt], interleaved
+     *  by [LiveCapture.channels]. Captured directly from the PCM pipeline rather than via
+     *  android.media.audiofx.Visualizer, so — unlike Visualizer — it is available during
+     *  MMAP-exclusive (bit-perfect) output too, since there is no dependency on a mixer
+     *  session. Returns null before the first buffer has been written. Used by the Music
+     *  Detail Inspector's Live Meters panel. */
+    fun captureLiveWindow(): LiveCapture?
+
+    data class LiveCapture(val samples: FloatArray, val channels: Int)
 }

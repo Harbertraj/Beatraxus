@@ -745,12 +745,21 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
 
-        // Trigger AI analysis for local songs with missing mood data
+        // Trigger AI analysis for local songs with missing mood data OR a missing quality
+        // entity. Previously this only checked moodTags, so a song that already had mood
+        // data from an older scan (before the Quality feature existed) would never get
+        // re-queued — its SongQualityEntity would never be created, and the Inspector's
+        // "Overall Quality" card would show "Analyzing on next scan…" forever, since there
+        // was never actually a scan coming for it.
         viewModelScope.launch(Dispatchers.Default) {
             delay(4000)
             val analyzed = aiAnalysisDao.getAllAnalysisFlow().first().associateBy { it.songId }
+            val qualityDone = songQualityDao.getAllQualityFlow().first().associateBy { it.songId }
             _songs.value.filter { it.source == SongSource.LOCAL }
-                .filter { analyzed[it.id] == null || analyzed[it.id]?.moodTags.isNullOrBlank() }
+                .filter {
+                    (analyzed[it.id] == null || analyzed[it.id]?.moodTags.isNullOrBlank()) ||
+                        qualityDone[it.id] == null
+                }
                 .forEach { aiAnalysisChannel.send(it) }
         }
 
@@ -3262,6 +3271,19 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     /** Current AudioTrack session id for the Music Detail Inspector's live meters (Phase 6),
      *  or 0 if playback isn't active / the service isn't bound yet. */
     fun getCurrentAudioSessionId(): Int = service?.getAudioSessionId() ?: 0
+
+    /** MMAP-safe live PCM window for the Inspector's Live Meters — see
+     *  [com.beatraxus.app.engine.AudioOutput.captureLiveWindow]. */
+    fun captureLiveWindow(): com.beatraxus.app.engine.AudioOutput.LiveCapture? = service?.captureLiveWindow()
+
+    /** Kicks off quality analysis for a single song right away instead of waiting for the
+     *  next periodic catch-up pass — used by the Inspector screen when it opens on a song
+     *  that has no SongQualityEntity yet, so "Analyzing on next scan…" doesn't get stuck
+     *  waiting for a scan that may never queue that particular song again (see the
+     *  qualityDone filter below). Safe to call repeatedly; upserts on completion. */
+    fun requestQualityAnalysis(song: Song) {
+        viewModelScope.launch(Dispatchers.Default) { aiAnalysisChannel.send(song) }
+    }
 
     /** Phase 4: library filter by audio-quality tier. Pass null for "All". */
     fun setQualityTierFilter(tier: String?) {

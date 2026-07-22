@@ -1,7 +1,12 @@
 package com.beatraxus.app.ui.screens
 
-import android.media.audiofx.Visualizer
+import androidx.activity.compose.BackHandler
 import android.os.Build
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -39,8 +44,12 @@ import com.beatraxus.app.engine.WaveformExtractor
 import com.beatraxus.app.model.Song
 import com.beatraxus.app.model.SongQualityEntity
 import com.beatraxus.app.viewmodel.PlayerViewModel
+import kotlinx.coroutines.delay
 import kotlin.math.abs
 import kotlin.math.sqrt
+import kotlin.math.PI
+import kotlin.math.cos
+import kotlin.math.sin
 
 /**
  * Music Detail Inspector — an "audiophile lab" reading of a single track. Deliberately
@@ -72,6 +81,22 @@ fun MusicDetailInspectorScreen(
     val song by remember(songId) { viewModel.songByIdFlow(songId) }.collectAsState(initial = null)
     val quality by remember(songId) { viewModel.songQualityFlow(songId) }.collectAsState(initial = null)
     val uiState by viewModel.uiState.collectAsState()
+    val progressMs by viewModel.progressMs.collectAsState()
+
+    // System/gesture back must behave identically to the on-screen back arrow (which
+    // restores the Now Playing info dialog / options-sheet state via onBack below) —
+    // previously the system back button just popped the nav stack directly and skipped
+    // that restoration.
+    BackHandler(onBack = onBack)
+
+    // If this song hasn't been scored yet, kick off analysis immediately rather than
+    // waiting for the next periodic scan (which may never queue this song again — see
+    // requestQualityAnalysis in PlayerViewModel).
+    LaunchedEffect(songId, quality) {
+        if (quality == null) {
+            song?.let { viewModel.requestQualityAnalysis(it) }
+        }
+    }
 
     Box(modifier = Modifier.fillMaxSize().background(InspectorPalette.Bg)) {
         val currentSong = song
@@ -81,6 +106,9 @@ fun MusicDetailInspectorScreen(
             }
         } else {
             AmbientBackdrop(currentSong)
+
+            val isCurrentlyPlaying = uiState.currentSong?.id == currentSong.id && uiState.isPlaying
+            val isCurrentSong = uiState.currentSong?.id == currentSong.id
 
             Column(
                 modifier = Modifier
@@ -95,12 +123,16 @@ fun MusicDetailInspectorScreen(
                 QualityScoreCard(quality)
 
                 Spacer(Modifier.height(14.dp))
-                WaveformCard(currentSong)
+                WaveformCard(
+                    song = currentSong,
+                    isCurrentSong = isCurrentSong,
+                    isPlaying = isCurrentlyPlaying,
+                    progressMs = progressMs
+                )
 
                 Spacer(Modifier.height(14.dp))
                 SpectrogramCard(currentSong)
 
-                val isCurrentlyPlaying = uiState.currentSong?.id == currentSong.id && uiState.isPlaying
                 Spacer(Modifier.height(14.dp))
                 LiveMetersCard(viewModel, isActive = isCurrentlyPlaying, quality = quality)
 
@@ -184,6 +216,7 @@ private fun InstrumentCard(
     accent: Color,
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     modifier: Modifier = Modifier,
+    trailing: (@Composable () -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit
 ) {
     Column(
@@ -213,6 +246,10 @@ private fun InstrumentCard(
             }
             Spacer(Modifier.width(10.dp))
             Text(label, color = accent, fontSize = 12.sp, fontWeight = FontWeight.Black, letterSpacing = 1.2.sp)
+            if (trailing != null) {
+                Spacer(Modifier.weight(1f))
+                trailing()
+            }
         }
         Spacer(Modifier.height(12.dp))
         content()
@@ -356,7 +393,7 @@ private fun tierColor(tier: String): Color = when (tier) {
 // 3. Waveform — filled gradient envelope, decoded + cached by WaveformExtractor
 // ---------------------------------------------------------------------------
 @Composable
-private fun WaveformCard(song: Song) {
+private fun WaveformCard(song: Song, isCurrentSong: Boolean, isPlaying: Boolean, progressMs: Long) {
     val context = LocalContext.current
     var data by remember(song.id) { mutableStateOf<WaveformExtractor.WaveformData?>(null) }
     var failed by remember(song.id) { mutableStateOf(false) }
@@ -368,7 +405,24 @@ private fun WaveformCard(song: Song) {
         if (result == null) failed = true else data = result
     }
 
-    InstrumentCard(label = "WAVEFORM", accent = InspectorPalette.Waveform, icon = Icons.Rounded.GraphicEq) {
+    // Live progress fraction along the track — only meaningful while this is the song
+    // actually loaded in the player. Turns the (still statically-decoded) waveform shape
+    // into a live playback readout: a moving playhead plus a played/unplayed split, the
+    // same way the shape stays fixed but the progress on a DAW's overview track is live.
+    val progressFraction = if (isCurrentSong && song.durationMs > 0) {
+        (progressMs.toFloat() / song.durationMs.toFloat()).coerceIn(0f, 1f)
+    } else null
+
+    InstrumentCard(
+        label = "WAVEFORM",
+        accent = InspectorPalette.Waveform,
+        icon = Icons.Rounded.GraphicEq,
+        trailing = {
+            if (isCurrentSong && isPlaying) {
+                LiveBadge(InspectorPalette.Waveform)
+            }
+        }
+    ) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -378,7 +432,7 @@ private fun WaveformCard(song: Song) {
             val d = data
             when {
                 d != null -> Canvas(modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp, vertical = 6.dp)) {
-                    drawWaveform(d.minPeaks, d.maxPeaks, InspectorPalette.Waveform)
+                    drawWaveform(d.minPeaks, d.maxPeaks, InspectorPalette.Waveform, progressFraction)
                 }
                 failed -> Text(
                     "Waveform unavailable for this file",
@@ -396,7 +450,34 @@ private fun WaveformCard(song: Song) {
     }
 }
 
-private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawWaveform(min: FloatArray, max: FloatArray, color: Color) {
+/** Small pulsing-dot "LIVE" chip used on cards that reflect real-time playback state. */
+@Composable
+private fun LiveBadge(color: Color) {
+    val infinite = rememberInfiniteTransition(label = "live-pulse")
+    val alpha by infinite.animateFloat(
+        initialValue = 0.35f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(700), RepeatMode.Reverse),
+        label = "live-pulse-alpha"
+    )
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            modifier = Modifier
+                .size(6.dp)
+                .clip(CircleShape)
+                .background(color.copy(alpha = alpha))
+        )
+        Spacer(Modifier.width(5.dp))
+        Text("LIVE", color = color, fontSize = 9.sp, fontWeight = FontWeight.Black, letterSpacing = 0.8.sp)
+    }
+}
+
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawWaveform(
+    min: FloatArray,
+    max: FloatArray,
+    color: Color,
+    progressFraction: Float?
+) {
     if (min.isEmpty()) return
     val w = size.width
     val h = size.height
@@ -405,12 +486,18 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawWaveform(min: F
     val gradient = Brush.verticalGradient(
         colors = listOf(color, color.copy(alpha = 0.35f), color)
     )
+    val playedX = progressFraction?.let { it * w }
     for (i in min.indices) {
         val x = i * step
         val yTop = midY - (max[i].coerceIn(-1f, 1f) * midY)
         val yBottom = midY - (min[i].coerceIn(-1f, 1f) * midY)
+        // Bars ahead of the live playhead are dimmed so the played portion reads clearly,
+        // the same convention as a streaming-app seek waveform.
+        val barBrush = if (playedX != null && x > playedX) {
+            Brush.verticalGradient(listOf(color.copy(0.22f), color.copy(0.12f), color.copy(0.22f)))
+        } else gradient
         drawLine(
-            brush = gradient,
+            brush = barBrush,
             start = Offset(x, yTop),
             end = Offset(x, yBottom),
             strokeWidth = step.coerceAtLeast(1.2f),
@@ -419,6 +506,15 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawWaveform(min: F
     }
     // Center reference line — classic DAW waveform look.
     drawLine(color.copy(alpha = 0.25f), Offset(0f, midY), Offset(w, midY), strokeWidth = 1f)
+
+    if (playedX != null) {
+        drawLine(
+            color = Color.White.copy(alpha = 0.9f),
+            start = Offset(playedX, 0f),
+            end = Offset(playedX, h),
+            strokeWidth = 2f
+        )
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -433,7 +529,14 @@ private fun SpectrogramCard(song: Song) {
         data = WaveformExtractor.getOrExtract(context, song.id, song.uri)
     }
 
-    InstrumentCard(label = "SPECTROGRAM", accent = InspectorPalette.Spectrogram, icon = Icons.Rounded.Equalizer) {
+    val lossless = remember(song.format) { isLosslessFormat(song.format) }
+
+    InstrumentCard(
+        label = "SPECTROGRAM",
+        accent = InspectorPalette.Spectrogram,
+        icon = Icons.Rounded.Equalizer,
+        trailing = { LosslessBadge(lossless) }
+    ) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -489,6 +592,34 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawSpectrogram(fra
     }
 }
 
+/** Format check reused from the same convention as SongListItem/NowPlayingScreen's
+ *  lossless badge, so the Inspector agrees with the rest of the app about what counts
+ *  as lossless. */
+private fun isLosslessFormat(format: String): Boolean {
+    val f = format.lowercase()
+    return f.contains("flac") || f.contains("alac") || f.contains("wav") ||
+        f.contains("dsd") || f.contains("aiff") || f.contains("dts") || f.contains("ac3") ||
+        f.contains("ape") || f.contains("wv")
+}
+
+@Composable
+private fun LosslessBadge(isLossless: Boolean) {
+    val color = if (isLossless) Color(0xFF43E97B) else Color.White.copy(alpha = 0.35f)
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(color.copy(alpha = if (isLossless) 0.15f else 0.06f))
+            .padding(horizontal = 8.dp, vertical = 4.dp)
+    ) {
+        Text("LOSSLESS", color = color, fontSize = 9.sp, fontWeight = FontWeight.Black, letterSpacing = 0.6.sp)
+        if (isLossless) {
+            Spacer(Modifier.width(4.dp))
+            Icon(Icons.Rounded.Check, contentDescription = "Lossless", tint = color, modifier = Modifier.size(11.dp))
+        }
+    }
+}
+
 /** Classic thermal/spectrogram palette: near-black → blue → teal → green → yellow → red. */
 private fun thermalColor(mag: Float): Color {
     val stops = listOf(
@@ -524,17 +655,26 @@ private fun lerpColor(a: Color, b: Color, t: Float): Color {
 // 5. Live meters during playback — VU-style green/yellow/red FFT bars, phase
 // correlation, level meters.
 //
-// Uses android.media.audiofx.Visualizer attached to the current playback's AudioTrack
-// session id (AudioTrackOutput.getAudioSessionId() was added alongside this feature —
-// this codebase's custom AudioTrack pipeline had no existing Visualizer tap). Capture
-// is mixed-down (post-mix), so "phase" below is a correlation proxy, not true L/R —
-// called out in the UI rather than fabricating fake per-channel data. Peak/RMS here
-// are a fast windowed approximation ("approx."); the exact ITU-R BS.1770 LUFS is the
-// static "Overall" figure from the native analysis shown in the Quality card above.
+// Reads AudioTrackOutput.captureLiveWindow() (via PlayerViewModel) instead of
+// android.media.audiofx.Visualizer. Visualizer only taps the regular mixer session, so it
+// went dark during MMAP-exclusive (bit-perfect) output — which is exactly why this card
+// used to show "Live meters aren't available for the current output mode." Reading
+// straight from the PCM pipeline instead means these meters now work in every output
+// mode. Capture is mixed-down for the spectrum/level math, so "phase" below is a
+// correlation proxy, not true L/R — called out in the UI rather than fabricating fake
+// per-channel data. Peak/RMS here are a fast windowed approximation ("approx."); the
+// exact ITU-R BS.1770 LUFS is the static "Overall" figure in the Quality card above.
 // ---------------------------------------------------------------------------
+private const val LIVE_FFT_SIZE = 512
+
 @Composable
 private fun LiveMetersCard(viewModel: PlayerViewModel, isActive: Boolean, quality: SongQualityEntity?) {
-    InstrumentCard(label = "LIVE METERS", accent = InspectorPalette.LiveMeters, icon = Icons.Rounded.Speed) {
+    InstrumentCard(
+        label = "LIVE METERS",
+        accent = InspectorPalette.LiveMeters,
+        icon = Icons.Rounded.Speed,
+        trailing = { if (isActive) LiveBadge(InspectorPalette.LiveMeters) }
+    ) {
         if (!isActive) {
             Text(
                 "Play this track to see live FFT, phase, and level meters.",
@@ -549,82 +689,67 @@ private fun LiveMetersCard(viewModel: PlayerViewModel, isActive: Boolean, qualit
         var correlation by remember { mutableStateOf(0f) }
         var rmsDb by remember { mutableStateOf(-60f) }
         var peakDb by remember { mutableStateOf(-60f) }
-        var visualizerError by remember { mutableStateOf(false) }
+        var noSignalYet by remember { mutableStateOf(true) }
 
-        DisposableEffect(Unit) {
-            var visualizer: Visualizer? = null
-            try {
-                val sessionId = viewModel.getCurrentAudioSessionId()
-                if (sessionId != 0) {
-                    visualizer = Visualizer(sessionId).apply {
-                        captureSize = Visualizer.getCaptureSizeRange()[1].coerceAtMost(1024)
-                        setDataCaptureListener(object : Visualizer.OnDataCaptureListener {
-                            override fun onWaveFormDataCapture(v: Visualizer?, waveform: ByteArray?, samplingRate: Int) {
-                                if (waveform == null) return
-                                var sumSq = 0.0
-                                var peak = 0
-                                var corrSum = 0.0
-                                var i = 0
-                                while (i < waveform.size) {
-                                    val a = (waveform[i].toInt() and 0xFF) - 128
-                                    val b = if (i + 1 < waveform.size) (waveform[i + 1].toInt() and 0xFF) - 128 else a
-                                    sumSq += (a * a).toDouble()
-                                    peak = kotlin.math.max(peak, abs(a))
-                                    corrSum += (a * b).toDouble()
-                                    i += 2
-                                }
-                                val n = (waveform.size / 2).coerceAtLeast(1)
-                                val rms = sqrt(sumSq / n) / 128.0
-                                rmsDb = (20.0 * kotlin.math.log10(rms.coerceAtLeast(1e-6))).toFloat()
-                                peakDb = (20.0 * kotlin.math.log10((peak / 128.0).coerceAtLeast(1e-6))).toFloat()
-                                correlation = (corrSum / (n * 128.0 * 128.0)).toFloat().coerceIn(-1f, 1f)
-                            }
+        LaunchedEffect(viewModel) {
+            val ring = FloatArray(LIVE_FFT_SIZE)
+            var ringPos = 0
+            while (true) {
+                val capture = viewModel.captureLiveWindow()
+                if (capture != null && capture.samples.isNotEmpty()) {
+                    noSignalYet = false
+                    val ch = capture.channels.coerceAtLeast(1)
+                    val frames = capture.samples.size / ch
+                    if (frames > 0) {
+                        var sumSq = 0.0
+                        var peak = 0f
+                        var corrSum = 0.0
+                        for (f in 0 until frames) {
+                            val l = capture.samples[f * ch]
+                            val r = if (ch > 1) capture.samples[f * ch + 1] else l
+                            val mono = (l + r) * 0.5f
+                            ring[ringPos] = mono
+                            ringPos = (ringPos + 1) % LIVE_FFT_SIZE
+                            if (abs(l) > peak) peak = abs(l)
+                            if (abs(r) > peak) peak = abs(r)
+                            sumSq += (mono * mono).toDouble()
+                            corrSum += (l * r).toDouble()
+                        }
+                        val rms = sqrt(sumSq / frames)
+                        rmsDb = (20.0 * kotlin.math.log10(rms.coerceAtLeast(1e-6))).toFloat()
+                        peakDb = (20.0 * kotlin.math.log10(peak.toDouble().coerceAtLeast(1e-6))).toFloat()
+                        correlation = (corrSum / frames).toFloat().coerceIn(-1f, 1f)
 
-                            override fun onFftDataCapture(v: Visualizer?, fft: ByteArray?, samplingRate: Int) {
-                                if (fft == null) return
-                                val bars = FloatArray(32)
-                                val binsPerBar = ((fft.size / 2) / bars.size).coerceAtLeast(1)
-                                for (b in bars.indices) {
-                                    var sum = 0f
-                                    for (i in 0 until binsPerBar) {
-                                        val idx = (b * binsPerBar + i) * 2
-                                        if (idx + 1 < fft.size) {
-                                            val re = fft[idx].toFloat()
-                                            val im = fft[idx + 1].toFloat()
-                                            sum += sqrt(re * re + im * im)
-                                        }
-                                    }
-                                    bars[b] = (sum / binsPerBar / 128f).coerceIn(0f, 1f)
-                                }
-                                fftBars = bars
-                                peakBars = FloatArray(32) { i -> maxOf(bars[i], peakBars.getOrElse(i) { 0f } * 0.92f) }
+                        val windowed = FloatArray(LIVE_FFT_SIZE) { idx ->
+                            val sample = ring[(ringPos + idx) % LIVE_FFT_SIZE]
+                            val hann = 0.5f - 0.5f * cos(2.0 * PI * idx / (LIVE_FFT_SIZE - 1)).toFloat()
+                            sample * hann
+                        }
+                        val mags = fftMagnitude(windowed)
+                        val bars = FloatArray(32)
+                        val binsPerBar = (mags.size / bars.size).coerceAtLeast(1)
+                        for (b in bars.indices) {
+                            var s = 0f
+                            for (i in 0 until binsPerBar) {
+                                val idx = b * binsPerBar + i
+                                if (idx < mags.size) s += mags[idx]
                             }
-                        }, Visualizer.getMaxCaptureRate() / 2, true, true)
-                        enabled = true
+                            bars[b] = (s / binsPerBar / (LIVE_FFT_SIZE / 4f)).coerceIn(0f, 1f)
+                        }
+                        fftBars = bars
+                        peakBars = FloatArray(32) { i -> maxOf(bars[i], peakBars.getOrElse(i) { 0f } * 0.92f) }
                     }
-                } else {
-                    visualizerError = true
                 }
-            } catch (t: Throwable) {
-                visualizerError = true
-            }
-
-            onDispose {
-                // Visualizer is a real system resource — must be released or it leaks.
-                try {
-                    visualizer?.enabled = false
-                    visualizer?.release()
-                } catch (_: Exception) {}
+                delay(45)
             }
         }
 
-        if (visualizerError) {
+        if (noSignalYet) {
             Text(
-                "Live meters aren't available for the current output mode.",
+                "Waiting for playback signal…",
                 color = Color.White.copy(0.4f),
                 fontSize = 12.sp
             )
-            return@InstrumentCard
         }
 
         Text("FFT SPECTRUM", color = Color.White.copy(0.4f), fontSize = 10.sp, fontWeight = FontWeight.Bold)
@@ -670,6 +795,64 @@ private fun LiveMetersCard(viewModel: PlayerViewModel, isActive: Boolean, qualit
             fontSize = 10.sp
         )
     }
+}
+
+/** Minimal iterative radix-2 Cooley-Tukey FFT. `real` must have power-of-two length.
+ *  Returns magnitude for the positive-frequency bins (0 until n/2). Not a general-purpose
+ *  DSP utility — sized and tuned specifically for the Live Meters spectrum bars. */
+private fun fftMagnitude(real: FloatArray): FloatArray {
+    val n = real.size
+    val re = real.copyOf()
+    val im = FloatArray(n)
+
+    var j = 0
+    for (i in 1 until n) {
+        var bit = n shr 1
+        while (j and bit != 0) {
+            j = j xor bit
+            bit = bit shr 1
+        }
+        j = j or bit
+        if (i < j) {
+            val tr = re[i]; re[i] = re[j]; re[j] = tr
+            val ti = im[i]; im[i] = im[j]; im[j] = ti
+        }
+    }
+
+    var len = 2
+    while (len <= n) {
+        val ang = -2.0 * PI / len
+        val wr = cos(ang).toFloat()
+        val wi = sin(ang).toFloat()
+        var i = 0
+        while (i < n) {
+            var curWr = 1f
+            var curWi = 0f
+            for (k in 0 until len / 2) {
+                val uRe = re[i + k]
+                val uIm = im[i + k]
+                val vRe = re[i + k + len / 2] * curWr - im[i + k + len / 2] * curWi
+                val vIm = re[i + k + len / 2] * curWi + im[i + k + len / 2] * curWr
+                re[i + k] = uRe + vRe
+                im[i + k] = uIm + vIm
+                re[i + k + len / 2] = uRe - vRe
+                im[i + k + len / 2] = uIm - vIm
+                val nextWr = curWr * wr - curWi * wi
+                val nextWi = curWr * wi + curWi * wr
+                curWr = nextWr
+                curWi = nextWi
+            }
+            i += len
+        }
+        len = len shl 1
+    }
+
+    val half = n / 2
+    val mags = FloatArray(half)
+    for (i in 0 until half) {
+        mags[i] = sqrt(re[i] * re[i] + im[i] * im[i])
+    }
+    return mags
 }
 
 /** Classic VU meter gradient: green low, yellow mid, red near clipping. */

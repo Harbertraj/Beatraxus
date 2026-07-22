@@ -1,6 +1,7 @@
 package com.beatraxus.app.ui.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -72,14 +73,29 @@ fun SongInfoDialog(
                         fontWeight = FontWeight.Black
                     )
                     if (onOpenInspector != null) {
-                        IconButton(onClick = {
-                            onOpenInspector(song)
-                            onDismiss()
-                        }) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(50))
+                                .background(AccentBlue.copy(alpha = 0.12f))
+                                .clickable {
+                                    onOpenInspector(song)
+                                    onDismiss()
+                                }
+                                .padding(start = 12.dp, end = 14.dp, top = 6.dp, bottom = 6.dp)
+                        ) {
                             Icon(
                                 imageVector = androidx.compose.material.icons.Icons.Rounded.Insights,
-                                contentDescription = "Inspector",
-                                tint = AccentBlue
+                                contentDescription = null,
+                                tint = AccentBlue,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                "Inspect",
+                                color = AccentBlue,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold
                             )
                         }
                     }

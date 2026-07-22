@@ -151,6 +151,9 @@ class AudioPlaybackService : Service() {
      *  or 0 if unavailable (e.g. MMAP-exclusive output, or no active track yet). */
     fun getAudioSessionId(): Int = if (::audioOutput.isInitialized) audioOutput.getAudioSessionId() else 0
 
+    fun captureLiveWindow(): com.beatraxus.app.engine.AudioOutput.LiveCapture? =
+        if (::audioOutput.isInitialized) audioOutput.captureLiveWindow() else null
+
     override fun onCreate() {
         super.onCreate()
         val prefs = getSharedPreferences("beatraxus", Context.MODE_PRIVATE)
