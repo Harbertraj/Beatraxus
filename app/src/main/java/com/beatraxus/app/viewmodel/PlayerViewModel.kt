@@ -3410,7 +3410,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 lyrics = emptyList(),
                 lyricsCurrentIndex = -1,
                 lyricsCurrentSongId = song.id,
-                isLoadingLyrics = false,
+                // Start in the Loading state (not false) as soon as the song changes. If this
+                // stays false here, the lyrics screen briefly renders its "No lyrics found"
+                // empty state (isLoading == false && lyrics.isEmpty()) for the one frame before
+                // the flow below emits LyricsState.Loading — visible as a flash of "no lyrics"
+                // on every song change even when embedded/online lyrics are about to load fine.
+                isLoadingLyrics = true,
                 lyricsSource = null
             )
         }

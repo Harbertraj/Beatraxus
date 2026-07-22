@@ -341,12 +341,24 @@ fun NowPlayingScreen(
                             modifier = Modifier.padding(end = 12.dp)
                         ) { queueVisible ->
                             if (!queueVisible) {
-                                IconButton(onClick = { showSongInfo = true }) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(50))
+                                        .clickable(onClick = { showSongInfo = true })
+                                        .padding(horizontal = 4.dp, vertical = 6.dp)
+                                ) {
                                     Icon(
                                         Icons.Rounded.Info,
                                         null,
                                         tint = Color.White.copy(alpha = 0.8f),
                                         modifier = Modifier.size(28.dp)
+                                    )
+                                    Spacer(Modifier.width(4.dp))
+                                    Text(
+                                        "Inspect",
+                                        color = Color.White.copy(alpha = 0.8f),
+                                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold)
                                     )
                                 }
                             } else {

@@ -126,8 +126,10 @@ fun KaraokeLyricsView(
     LaunchedEffect(currentIndex, autoScrollEnabled, containerHeight) {
         if (autoScrollEnabled && currentIndex in lyrics.indices && containerHeight > 0) {
             scope.launch {
-                // Centering: Active line at ~8% from the top (moved even higher up)
-                val offset = (containerHeight * 0.08f).toInt()
+                // Centering: put the active line at the vertical midpoint of the lyrics area
+                // (this Box spans exactly from the top title bar to the bottom seek bar area),
+                // so the active line always sits accurately in the middle, not near the top.
+                val offset = (containerHeight * 0.5f).toInt()
                 listState.bouncyScrollToItem(index = currentIndex, targetOffset = -offset)
             }
         }

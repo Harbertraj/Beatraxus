@@ -15,6 +15,7 @@ import retrofit2.http.GET
 import retrofit2.http.Query
 import kotlin.math.abs
 import kotlin.math.max
+import kotlin.math.roundToInt
 
 @Keep
 interface LrcLibService {
@@ -72,7 +73,7 @@ class OnlineLyricsSource {
         album: String?,
         durationMs: Long
     ): LyricsResult? = withContext(Dispatchers.IO) {
-        val durationSec = (durationMs / 1000).toInt()
+        val durationSec = (durationMs / 1000.0).roundToInt()
 
         // Fire both requests AT THE SAME TIME instead of one after another.
         val preciseDeferred = async {
@@ -80,7 +81,7 @@ class OnlineLyricsSource {
             runCatching {
                 val response = lrcLibService.getLyrics(artist, title, album, durationSec)
                 if (isValidResponse(response)) {
-                    val resDur = response.duration?.toInt() ?: 0
+                    val resDur = response.duration?.roundToInt() ?: 0
                     if (abs(resDur - durationSec) <= 3) createResultFromResponse(response) else null
                 } else null
             }.onFailure { e -> Log.e("OnlineLyricsSource", "Precise fetch failed: ${e.message}") }
@@ -97,7 +98,7 @@ class OnlineLyricsSource {
                     .filter { isValidResponse(it) }
                     .mapNotNull { res ->
                         val score = calculateScore(res, artist, title, album, durationSec)
-                        if (score >= 0.55) res to score else null
+                        if (score >= 0.65) res to score else null
                     }
                     .maxByOrNull { it.second }
                     ?.first
@@ -141,16 +142,23 @@ class OnlineLyricsSource {
         durationSec: Int
     ): Double {
         // 1. Reject bad matches
-        val resDuration = res.duration?.toInt() ?: 0
-        // Reject if duration differs by more than 4s OR more than 3% of song length
-        val maxAllowedGap = maxOf(4, (durationSec * 0.03).toInt())
+        val resDuration = res.duration?.roundToInt() ?: 0
+        // Reject if duration differs by more than 3s OR more than 2% of song length — a
+        // different recording (remix/cover/live version) of the same title will almost always
+        // drift outside this, which is exactly the case we need to reject: it can still "have"
+        // synced lyrics, just synced to a different take, producing timestamps that don't
+        // actually line up with what's playing.
+        val maxAllowedGap = maxOf(3, (durationSec * 0.02).toInt())
         if (abs(resDuration - durationSec) > maxAllowedGap) return 0.0
-        
+
         val titleSim = similarity(title, res.trackName ?: "")
-        if (titleSim < 0.5) return 0.0
+        if (titleSim < 0.65) return 0.0
 
         // 2. Calculate weighted score
         val artistSim = similarity(artist, res.artistName ?: "")
+        // A near-total artist mismatch is a strong signal this is the wrong recording entirely
+        // (e.g. a cover by a different artist), even if title/duration happen to line up.
+        if (artistSim < 0.35) return 0.0
         val albumSim = if (album != null && res.albumName != null) similarity(album, res.albumName) else 1.0
         
         val durationScore = (1.0 - (abs(resDuration - durationSec) / 5.0)).coerceAtLeast(0.0)

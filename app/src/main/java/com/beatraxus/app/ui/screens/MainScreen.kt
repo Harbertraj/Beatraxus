@@ -5125,9 +5125,10 @@ fun SlideDrawerMenu(
                             modifier = Modifier
                                 .align(Alignment.TopEnd)
                                 .padding(12.dp)
-                                .size(32.dp)
-                                .background(Color.White.copy(0.05f), CircleShape)
-                                .padding(4.dp)
+                                .size(32.dp),
+                            tint = if (com.beatraxus.app.cast.CastManager.isConnected ||
+                                com.beatraxus.app.cast.CastManager.availableDevices.isNotEmpty()
+                            ) Color.White else Color.Black
                         )
                         if (isPlaying) {
                             val notesTransition = rememberInfiniteTransition(label = "notes")
