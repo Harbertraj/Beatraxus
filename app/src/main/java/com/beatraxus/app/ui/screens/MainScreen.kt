@@ -3127,7 +3127,6 @@ fun MainScreen(
                 onNavigateToInspector = { songId ->
                     onNavigateToInspector(songId)
                 },
-                onToggleSongInfo = { viewModel.setShowSongInfo(it) },
                 onToggleLyrics = { viewModel.toggleLyrics() },
                 onAdjustOffset = { viewModel.adjustLyricsOffset(it) },
                 onSetLyricsOffset = { viewModel.setLyricsOffset(it) },
