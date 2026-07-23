@@ -47,7 +47,13 @@ internal class DecoderFactory(
             // which MediaCodec handles better for WAV than FFmpeg does without complex piping.
             // We also route Telegram M4A/MP4 here to ensure ALAC support without risky/slow probing.
             if (isExplicitAlac || isDolbyOrDts || isDsd || (isWav && song.source != SongSource.TELEGRAM) || (isM4A && song.source == SongSource.TELEGRAM)) {
-                Log.i(TAG, "Routing Cloud (${if (isDolbyOrDts) format.uppercase() else if (isDsd) "DSD" else if (isExplicitAlac) "ALAC" else "WAV"}) to FFmpeg: ${song.title}")
+                val reason = when {
+                    isDolbyOrDts -> format.uppercase()
+                    isDsd -> "DSD"
+                    isExplicitAlac || (isM4A && song.source == SongSource.TELEGRAM) -> "ALAC"
+                    else -> "WAV"
+                }
+                Log.i(TAG, "Routing Cloud ($reason) to FFmpeg: ${song.title}")
                 return ffmpegAlacDecoder
             }
 

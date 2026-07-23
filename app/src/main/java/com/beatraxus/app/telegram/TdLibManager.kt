@@ -27,6 +27,9 @@ sealed class AuthState {
     object WaitPhoneNumber : AuthState()
     object WaitCode : AuthState()
     object WaitPassword : AuthState()
+    object WaitOtherDeviceConfirmation : AuthState()
+    object WaitEmailAddress : AuthState()
+    object WaitEmailCode : AuthState()
 }
 
 class TdLibManager private constructor(
@@ -95,6 +98,18 @@ class TdLibManager private constructor(
                     Log.d("TDLib", "State: WaitPassword")
                     _authState.value = AuthState.WaitPassword
                 }
+                is TdApi.AuthorizationStateWaitOtherDeviceConfirmation -> {
+                    Log.d("TDLib", "State: WaitOtherDeviceConfirmation")
+                    _authState.value = AuthState.WaitOtherDeviceConfirmation
+                }
+                is TdApi.AuthorizationStateWaitEmailAddress -> {
+                    Log.d("TDLib", "State: WaitEmailAddress")
+                    _authState.value = AuthState.WaitEmailAddress
+                }
+                is TdApi.AuthorizationStateWaitEmailCode -> {
+                    Log.d("TDLib", "State: WaitEmailCode")
+                    _authState.value = AuthState.WaitEmailCode
+                }
                 is TdApi.AuthorizationStateWaitRegistration -> {
                     Log.d("TDLib", "State: WaitRegistration")
                     _authState.value = AuthState.Error("Telegram registration required. Please log in with an existing account.")
@@ -139,6 +154,7 @@ class TdLibManager private constructor(
         }
     }
 
+    private val setParamsRetryCount = java.util.concurrent.atomic.AtomicInteger(0)
     private fun setParameters() {
         val id = apiId.toIntOrNull() ?: 0
         if (id == 0 || apiHash.isBlank()) {
@@ -165,15 +181,23 @@ class TdLibManager private constructor(
             systemLanguageCode = java.util.Locale.getDefault().language
             deviceModel = android.os.Build.MODEL
             applicationVersion = "1.0"
-            // If enableStorageOptimizer is unresolved, it might be named differently or missing in this build
-            // useStorageOptimizer = true
         }
         
         client?.send(params) { result ->
             if (result is TdApi.Error) {
                 Log.e("TDLib", "SetTdlibParameters failed: ${result.code} ${result.message}")
-                _authState.value = AuthState.Error("TDLib Init Failed: ${result.message}")
+                if (result.message.contains("DATABASE_LOCK_FAILED", ignoreCase = true) && setParamsRetryCount.get() < 3) {
+                    val attempt = setParamsRetryCount.incrementAndGet()
+                    Log.w("TDLib", "Database locked, retrying in 1s... (Attempt $attempt)")
+                    managerScope.launch {
+                        delay(1000)
+                        setParameters()
+                    }
+                } else {
+                    _authState.value = AuthState.Error("TDLib Init Failed: ${result.message}")
+                }
             } else {
+                setParamsRetryCount.set(0)
                 // Optimize network for faster downloads
                 client?.send(TdApi.SetOption("is_network_unmetered", TdApi.OptionValueBoolean(true))) {}
                 client?.send(TdApi.SetOption("ignore_background_networking", TdApi.OptionValueBoolean(true))) {}

@@ -1,6 +1,7 @@
 package com.beatraxus.app.drive
 
 import android.content.Context
+import android.util.Log
 import com.beatraxus.app.model.Song
 import com.beatraxus.app.model.SongSource
 import com.google.gson.Gson
@@ -17,6 +18,9 @@ class PlaybackLruCache private constructor(private val context: Context) {
     private val lruMaps: MutableMap<SongSource, LinkedHashMap<String, Long>> = mutableMapOf()
 
     companion object {
+        private const val DEFAULT_MAX_CACHED_SONGS = 5
+        private const val TELEGRAM_MAX_CACHED_SONGS = 3
+
         @Volatile
         private var INSTANCE: PlaybackLruCache? = null
 
@@ -27,9 +31,15 @@ class PlaybackLruCache private constructor(private val context: Context) {
         }
     }
 
+    private fun getMaxCachedSongs(source: SongSource): Int {
+        return if (source == SongSource.TELEGRAM) TELEGRAM_MAX_CACHED_SONGS else DEFAULT_MAX_CACHED_SONGS
+    }
+
     private fun mapFor(source: SongSource): LinkedHashMap<String, Long> {
         return synchronized(lruMaps) {
-            lruMaps.getOrPut(source) { loadMap(source) }
+            lruMaps.getOrPut(source) { 
+                loadMap(source).also { evictOldest(it, null, source) }
+            }
         }
     }
 
@@ -49,8 +59,8 @@ class PlaybackLruCache private constructor(private val context: Context) {
     }
 
     /**
-     * Ensures the song is in the 15-song per-source LRU cache.
-     * @param isPlayback If true, updates access order (counting towards 15).
+     * Ensures the song is in the 5-song per-source LRU cache.
+     * @param isPlayback If true, updates access order (counting towards 5).
      *                   If false (pre-fetch), ensures file exists without updating recency.
      * @param currentlyPlayingId The ID of the song currently being played, which should NEVER be evicted.
      */
@@ -67,8 +77,9 @@ class PlaybackLruCache private constructor(private val context: Context) {
             } else if (!map.containsKey(song.id)) {
                 map[song.id] = 0L
             }
-            if (map.size > 15) {
-                evictOldest(map, currentlyPlayingId)
+            val limit = getMaxCachedSongs(song.source)
+            if (map.size > limit) {
+                evictOldest(map, currentlyPlayingId, song.source)
             }
             needsCopy = !fileExists && sourceFile.absolutePath != cachedFile.absolutePath
             persistMap(song.source, map)
@@ -116,14 +127,40 @@ class PlaybackLruCache private constructor(private val context: Context) {
         }
     }
 
-    private fun evictOldest(map: LinkedHashMap<String, Long>, currentlyPlayingId: String?) {
+    /**
+     * Aggressively reconciles the cache for a specific source.
+     * Removes any entries from the LRU map not in [keepIds] and deletes their files.
+     */
+    fun reconcileSource(source: SongSource, keepIds: Set<String>) {
+        val map = mapFor(source)
+        synchronized(map) {
+            val toRemove = map.keys.filter { it !in keepIds }
+            if (toRemove.isEmpty()) {
+                Log.d("PlaybackLruCache", "Reconciling $source cache: All ${map.size} songs are in keep list.")
+                return
+            }
+            
+            Log.d("PlaybackLruCache", "Reconciling $source cache. Keeping: $keepIds, Evicting ${toRemove.size} songs: $toRemove")
+            
+            toRemove.forEach { id ->
+                map.remove(id)
+                cacheDir.listFiles { _, name -> name.startsWith("$id.") }?.forEach { file ->
+                    Log.d("PlaybackLruCache", "Deleting evicted $source file: ${file.name}")
+                    file.delete()
+                }
+            }
+            persistMap(source, map)
+        }
+    }
+
+    private fun evictOldest(map: LinkedHashMap<String, Long>, currentlyPlayingId: String?, source: SongSource) {
         val iterator = map.entries.iterator()
-        while (iterator.hasNext()) {
+        val limit = getMaxCachedSongs(source)
+        while (iterator.hasNext() && map.size > limit) {
             val entry = iterator.next()
             if (entry.key == currentlyPlayingId) continue
             iterator.remove()
             cacheDir.listFiles { _, name -> name.startsWith("${entry.key}.") }?.forEach { it.delete() }
-            return
         }
     }
 

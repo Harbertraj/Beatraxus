@@ -129,8 +129,8 @@ class LyricsRepository(private val context: Context, private val database: AppDa
 
         // ── 4. Best available fallback ─────────────────────────────────────────────
         if (bestResult != null) {
-            Log.d(TAG, "Falling back to ${bestResult!!.type} lyrics for ${song.title}")
-            emit(LyricsState.Success(bestResult!!))
+            Log.d(TAG, "Falling back to ${bestResult.type} lyrics for ${song.title}")
+            emit(LyricsState.Success(bestResult))
         } else {
             Log.e(TAG, "No lyrics found for ${song.title}")
             emit(LyricsState.Error("No lyrics found"))

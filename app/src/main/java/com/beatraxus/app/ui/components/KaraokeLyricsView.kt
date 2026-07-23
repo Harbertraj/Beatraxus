@@ -78,7 +78,7 @@ private suspend fun LazyListState.bouncyScrollToItem(index: Int, targetOffset: I
         var previous = 0f
         Animatable(0f).animateTo(
             targetValue = delta,
-            animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow)
+            animationSpec = spring(dampingRatio = Spring.DampingRatioHighBouncy, stiffness = Spring.StiffnessLow)
         ) {
             dispatchRawDelta(value - previous)
             previous = value
@@ -140,7 +140,8 @@ fun KaraokeLyricsView(
                 // top edge) — a negative value here pushes the line above the visible area,
                 // which is what caused the active line to disappear off the top on normal
                 // (non-jump) line changes.
-                val offset = (containerHeight * 0.5f).toInt()
+                // UPDATED: Changed from 0.5f to 0.35f to move current lyric higher up.
+                val offset = (containerHeight * 0.35f).toInt()
                 listState.bouncyScrollToItem(index = currentIndex, targetOffset = offset)
             }
         }
@@ -393,7 +394,7 @@ fun SyncedLyricLine(
         targetValue = targetScale,
         animationSpec = spring(
             dampingRatio = if (isCurrent) Spring.DampingRatioHighBouncy else Spring.DampingRatioMediumBouncy,
-            stiffness = Spring.StiffnessLow
+            stiffness = if (isCurrent) Spring.StiffnessVeryLow else Spring.StiffnessLow
         ),
         label = "lineScale"
     )
@@ -409,7 +410,7 @@ fun SyncedLyricLine(
         targetValue = targetOffset,
         animationSpec = spring(
             dampingRatio = if (isCurrent) Spring.DampingRatioHighBouncy else Spring.DampingRatioMediumBouncy,
-            stiffness = Spring.StiffnessLow
+            stiffness = if (isCurrent) Spring.StiffnessVeryLow else Spring.StiffnessLow
         ),
         label = "upwardMovement"
     )

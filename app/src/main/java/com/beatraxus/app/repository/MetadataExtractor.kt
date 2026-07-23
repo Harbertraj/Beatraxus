@@ -31,7 +31,7 @@ import java.util.concurrent.ConcurrentHashMap
 class MetadataExtractor(private val context: Context) {
 
     private val TAG = "MetadataExtractor"
-    private val batchSemaphore = Semaphore(30) // Increased to 30 parallel workers for maximum speed as requested
+    private val batchSemaphore = Semaphore(50) // Increased to 50 parallel workers for maximum speed as requested
     private val onlineGenreService = GenreApiService()
     
     // Global tracking to prevent multiple batches from processing the same song
@@ -60,6 +60,11 @@ class MetadataExtractor(private val context: Context) {
                             val updated = extractCloudMetadata(song, credential, dataSaver, artworkEnabled, quality)
                             onProgress?.invoke(updated)
                             updated
+                        } catch (e: Exception) {
+                            if (e is CancellationException) throw e
+                            Log.e(TAG, "Failed to enrich song ${song.id}: ${e.message}")
+                            // Return original song on failure so the batch can continue
+                            song
                         } finally {
                             inProgressSongs.remove(song.id)
                         }

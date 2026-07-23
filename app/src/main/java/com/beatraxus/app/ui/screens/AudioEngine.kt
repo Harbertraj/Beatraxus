@@ -138,11 +138,19 @@ class AudioEngine(
                         // Case 2: Stuck detection. isPlaying is true, but position isn't advancing.
                         if (currentPos == lastStuckPosition) {
                             val session = activeSession
+                            val isCloud = state.currentSong.isCloud()
+                            val isTelegram = state.currentSong.source == SongSource.TELEGRAM
+                            
                             val isBuffering = session != null && !session.decoderCompleted &&
                                     (now - session.lastDecoderProgressTime > 2000) &&
-                                    state.currentSong.isCloud()
+                                    isCloud
 
-                            val timeout = if (isBuffering) 15000 else 4000
+                            // Telegram songs can take longer to "prime" their sparse file/path
+                            val timeout = when {
+                                isTelegram -> 45000 // 45s for Telegram
+                                isBuffering -> 20000 // 20s for other cloud
+                                else -> 4000 // 4s for local/stuck
+                            }
 
                             if (lastStuckCheckTime > 0 && now - lastStuckCheckTime > timeout) {
                                 Log.w(TAG, "Playback appears stuck (position unchanged for ${timeout/1000}s at $currentPos ms). Buffering=$isBuffering")

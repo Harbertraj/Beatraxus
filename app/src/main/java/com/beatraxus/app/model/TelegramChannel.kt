@@ -4,7 +4,8 @@ data class TelegramChannel(
     val url: String,       // e.g. https://t.me/channelname
     val name: String,      // display name parsed from URL
     val enabled: Boolean = true,
-    val addedAt: Long = System.currentTimeMillis()
+    val addedAt: Long = System.currentTimeMillis(),
+    val lastSyncTimestamp: Long = 0L
 )
 
 fun parseTelegramChannelName(url: String): String {

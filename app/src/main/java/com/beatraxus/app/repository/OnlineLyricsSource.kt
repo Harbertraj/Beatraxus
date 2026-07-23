@@ -75,43 +75,35 @@ class OnlineLyricsSource {
     ): LyricsResult? = withContext(Dispatchers.IO) {
         val durationSec = (durationMs / 1000.0).roundToInt()
 
-        // Fire both requests AT THE SAME TIME instead of one after another.
-        val preciseDeferred = async {
-            if (durationSec <= 0) return@async null
+        // We'll collect all candidates with their scores and pick the absolute best.
+        val candidates = mutableListOf<Pair<LrcLibResponse, Double>>()
+
+        // 1. Try precise "get" request
+        if (durationSec > 0) {
             runCatching {
                 val response = lrcLibService.getLyrics(artist, title, album, durationSec)
                 if (isValidResponse(response)) {
-                    val resDur = response.duration?.roundToInt() ?: 0
-                    if (abs(resDur - durationSec) <= 3) createResultFromResponse(response) else null
-                } else null
-            }.onFailure { e -> Log.e("OnlineLyricsSource", "Precise fetch failed: ${e.message}") }
-                .getOrNull()
-        }
-
-        val searchDeferred = async {
-            runCatching {
-                val query = buildString {
-                    append(artist.take(40)); append(" "); append(title.take(40))
+                    val score = calculateScore(response, artist, title, album, durationSec)
+                    if (score > 0.7) candidates.add(response to score)
                 }
-                val searchResults = lrcLibService.searchLyrics(query)
-                searchResults
-                    .filter { isValidResponse(it) }
-                    .mapNotNull { res ->
-                        val score = calculateScore(res, artist, title, album, durationSec)
-                        if (score >= 0.65) res to score else null
-                    }
-                    .maxByOrNull { it.second }
-                    ?.first
-                    ?.let { createResultFromResponse(it) }
-            }.onFailure { e -> Log.e("OnlineLyricsSource", "Search failed: ${e.message}") }
-                .getOrNull()
+            }.onFailure { Log.e("OnlineLyricsSource", "Precise fetch failed: ${it.message}") }
         }
 
-        val precise = preciseDeferred.await()
-        val search = searchDeferred.await()
+        // 2. Try search-based request (broader)
+        runCatching {
+            val query = "${normalize(artist)} ${normalize(title)}".take(80)
+            val searchResults = lrcLibService.searchLyrics(query)
+            searchResults.filter { isValidResponse(it) }.forEach { res ->
+                val score = calculateScore(res, artist, title, album, durationSec)
+                if (score > 0.65) candidates.add(res to score)
+            }
+        }.onFailure { Log.e("OnlineLyricsSource", "Search failed: ${it.message}") }
 
-        // Pick the best of whichever came back: WORD_BY_WORD > SYNCED > PLAIN
-        listOfNotNull(precise, search).maxByOrNull { it.type.ordinal }
+        // Pick the candidate with the highest score.
+        // If scores are very close, synced lyrics are preferred (handled via bonus in calculateScore).
+        candidates.maxByOrNull { it.second }?.first?.let { 
+            createResultFromResponse(it) 
+        }
     }
 
     private fun isValidResponse(res: LrcLibResponse): Boolean {
@@ -141,35 +133,30 @@ class OnlineLyricsSource {
         album: String?,
         durationSec: Int
     ): Double {
-        // 1. Reject bad matches
         val resDuration = res.duration?.roundToInt() ?: 0
-        // Reject if duration differs by more than 3s OR more than 2% of song length — a
-        // different recording (remix/cover/live version) of the same title will almost always
-        // drift outside this, which is exactly the case we need to reject: it can still "have"
-        // synced lyrics, just synced to a different take, producing timestamps that don't
-        // actually line up with what's playing.
-        val maxAllowedGap = maxOf(3, (durationSec * 0.02).toInt())
-        if (abs(resDuration - durationSec) > maxAllowedGap) return 0.0
-
-        val titleSim = similarity(title, res.trackName ?: "")
-        if (titleSim < 0.65) return 0.0
-
-        // 2. Calculate weighted score
-        val artistSim = similarity(artist, res.artistName ?: "")
-        // A near-total artist mismatch is a strong signal this is the wrong recording entirely
-        // (e.g. a cover by a different artist), even if title/duration happen to line up.
-        if (artistSim < 0.35) return 0.0
-        val albumSim = if (album != null && res.albumName != null) similarity(album, res.albumName) else 1.0
         
-        val durationScore = (1.0 - (abs(resDuration - durationSec) / 5.0)).coerceAtLeast(0.0)
+        // Stricter duration matching: different recordings (live, radio edit) usually 
+        // differ by more than 2-3 seconds.
+        val durationDiff = abs(resDuration - durationSec)
+        if (durationDiff > 4 && durationSec > 0) return 0.0
+        
+        val titleSim = similarity(title, res.trackName ?: "")
+        if (titleSim < 0.7) return 0.0
 
-        // Weights: Title (40%), Artist (30%), Album (10%), Duration (20%)
+        val artistSim = similarity(artist, res.artistName ?: "")
+        if (artistSim < 0.5) return 0.0
+        
+        val albumSim = if (album != null && res.albumName != null) similarity(album, res.albumName) else 0.8
+        
+        // Scoring formula
+        val durationScore = (1.0 - (durationDiff / 5.0)).coerceAtLeast(0.0)
+        
         var totalScore = (titleSim * 0.4) + (artistSim * 0.3) + (albumSim * 0.1) + (durationScore * 0.2)
 
-        // Priority bonus for better types (STRICT PRIORITY: ELRC > LRC > PLAIN)
+        // Type Bonus: We strongly prefer synced lyrics IF they match the song well.
         if (!res.syncedLyrics.isNullOrBlank()) {
             val isWordByWord = res.syncedLyrics.contains(Regex("<\\d+:\\d+[.:]\\d+>"))
-            totalScore += if (isWordByWord) 0.5 else 0.2
+            totalScore += if (isWordByWord) 0.3 else 0.15
         }
 
         return totalScore
@@ -188,9 +175,9 @@ class OnlineLyricsSource {
 
     private fun normalize(text: String): String {
         return text.lowercase(Locale.ROOT)
-            .replace(Regex("\\(.*?\\)"), "")
-            .replace(Regex("\\[.*?\\]"), "")
-            .replace(Regex("(?i)feat\\.?|ft\\.?|remix|official|video|audio|lyrics"), "")
+            .replace(Regex("\\(.*?\\)"), "") // Remove anything in parentheses
+            .replace(Regex("\\[.*?\\]"), "") // Remove anything in brackets
+            .replace(Regex("(?i)\\b(remastered|remaster|live|radio edit|official|video|audio|lyrics|feat\\.?|ft\\.?)\\b"), "")
             .replace(Regex("[^a-z0-9\\s]"), "")
             .replace(Regex("\\s+"), " ")
             .trim()

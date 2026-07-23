@@ -11,8 +11,16 @@ class BeatraxusApplication : Application() {
             this,
             AppDatabase::class.java,
             "beatraxus_db"
-        ).addMigrations(AppDatabase.MIGRATION_11_12, AppDatabase.MIGRATION_12_13, AppDatabase.MIGRATION_13_14, AppDatabase.MIGRATION_14_15, AppDatabase.MIGRATION_15_16)
-         .fallbackToDestructiveMigration()
+        ).addMigrations(
+            AppDatabase.MIGRATION_11_12, 
+            AppDatabase.MIGRATION_12_13, 
+            AppDatabase.MIGRATION_13_14, 
+            AppDatabase.MIGRATION_14_15, 
+            AppDatabase.MIGRATION_15_16,
+            AppDatabase.MIGRATION_16_17,
+            AppDatabase.MIGRATION_17_18
+        )
+         .fallbackToDestructiveMigration(false)
          .build()
     }
 
@@ -57,8 +65,9 @@ class BeatraxusApplication : Application() {
             // Also clear the LRU map preferences
             getSharedPreferences("playback_lru_prefs", MODE_PRIVATE).edit().clear().apply()
 
-            // Clear TDLib's own raw download cache
-            clearTelegramCache()
+            // DO NOT clear TDLib's internal raw download cache (clearTelegramCache()) here anymore.
+            // TDLib manages its own files and deleting them manually causes "File not found" errors
+            // when trying to play songs after an app restart.
         } catch (e: Exception) {
             e.printStackTrace()
         }

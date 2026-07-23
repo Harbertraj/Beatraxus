@@ -1943,7 +1943,8 @@ private fun PremiumSoundStageCard(
                 
                 // Character Container with Depth
                 Surface(
-                    onClick = { if (!isSpatialBypassed) viewModel.setSpatialAudioEnabled(!config.spatialAudioEnabled) },
+                    onClick = { if (!isSpatialBypassed) viewModel.
+                    setSpatialAudioEnabled(!config.spatialAudioEnabled) },
                     modifier = Modifier.size(90.dp),
                     shape = CircleShape,
                     color = Color(0xFF161B22),

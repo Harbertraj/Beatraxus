@@ -55,7 +55,7 @@ interface RecentlyPlayedDao {
     suspend fun removeRecentlyPlayed(songId: String)
 }
 
-@Database(entities = [PlaylistEntity::class, FavoriteEntity::class, SongEntity::class, RecentlyPlayedEntity::class, LyricsEntity::class, FolderEntity::class, AiAnalysisEntity::class, ArtistArtEntity::class, SongQualityEntity::class], version = 16, exportSchema = false)
+@Database(entities = [PlaylistEntity::class, FavoriteEntity::class, SongEntity::class, RecentlyPlayedEntity::class, LyricsEntity::class, FolderEntity::class, AiAnalysisEntity::class, ArtistArtEntity::class, SongQualityEntity::class], version = 18, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun playlistDao(): PlaylistDao
     abstract fun favoriteDao(): FavoriteDao
@@ -128,6 +128,20 @@ abstract class AppDatabase : RoomDatabase() {
                         lastAnalyzed INTEGER NOT NULL)
                 """.trimIndent())
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_song_quality_songId ON song_quality(songId)")
+            }
+        }
+
+        val MIGRATION_16_17 = object : Migration(16, 17) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE songs ADD COLUMN telegramChannelUrl TEXT")
+                db.execSQL("ALTER TABLE songs ADD COLUMN isEnriched INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE songs ADD COLUMN lastSyncTimestamp INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        val MIGRATION_17_18 = object : Migration(17, 18) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE songs ADD COLUMN lyricsOffsetMs INTEGER NOT NULL DEFAULT 0")
             }
         }
     }

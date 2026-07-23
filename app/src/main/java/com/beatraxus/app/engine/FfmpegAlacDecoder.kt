@@ -86,7 +86,7 @@ internal class FfmpegAlacDecoder(
             add("-nostdin")
             addAll(listOf("-v", "info")) 
 
-            if (headers.isNotEmpty()) {
+            if (headers.isNotEmpty() && inputSource.startsWith("http")) {
                 val headerStr = headers.map { "${it.key}: ${it.value}" }.joinToString("\r\n") + "\r\n"
                 add("-headers")
                 add(headerStr)

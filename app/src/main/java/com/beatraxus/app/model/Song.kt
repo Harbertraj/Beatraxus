@@ -51,7 +51,8 @@ data class Song(
     val telegramFileId: Int? = null,
     val isEnriched: Boolean = false,
     val albumArtFetchAttempted: Boolean = false,
-    val lastSyncTimestamp: Long = 0L
+    val lastSyncTimestamp: Long = 0L,
+    val lyricsOffsetMs: Long = 0L
 ) {
     fun isCloud(): Boolean = source in setOf(
         SongSource.GDRIVE, SongSource.TELEGRAM,
@@ -94,7 +95,8 @@ fun Song.toEntity() = SongEntity(
     telegramFileId = telegramFileId,
     isEnriched = isEnriched,
     albumArtFetchAttempted = albumArtFetchAttempted,
-    lastSyncTimestamp = lastSyncTimestamp
+    lastSyncTimestamp = lastSyncTimestamp,
+    lyricsOffsetMs = lyricsOffsetMs
 )
 
 data class Playlist(

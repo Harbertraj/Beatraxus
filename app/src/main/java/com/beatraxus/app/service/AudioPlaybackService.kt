@@ -884,18 +884,21 @@ class AudioPlaybackService : Service() {
                         
                         onStatusUpdate("Enriching $total new songs...")
 
-                        extractor.extractCloudMetadataBatch(toEnrich, credential) { updatedSong ->
-                            processed++
-                            val progress = processed.toFloat() / total.toFloat()
-                            onProgress(progress)
-                            onEnrichmentProgress(progress, processed, total)
-                            updateEnrichingProgress(progress, processed, total)
-                            
-                            songDao.insertSong(updatedSong.toEntity())
-                            onSongUpdated(updatedSong)
+                        try {
+                            extractor.extractCloudMetadataBatch(toEnrich, credential) { updatedSong ->
+                                processed++
+                                val progress = processed.toFloat() / total.toFloat()
+                                onProgress(progress)
+                                onEnrichmentProgress(progress, processed, total)
+                                updateEnrichingProgress(progress, processed, total)
+                                
+                                songDao.insertSong(updatedSong.toEntity())
+                                onSongUpdated(updatedSong)
+                            }
+                        } finally {
+                            onStatusUpdate(null)
+                            updateEnrichingProgress(1.0f, total, total)
                         }
-                        onStatusUpdate(null)
-                        updateEnrichingProgress(1.0f, total, total)
                     }
                     onComplete("Synced ${newSongs.size} songs from $email")
                 } else {
@@ -1627,9 +1630,6 @@ class AudioPlaybackService : Service() {
         serviceScope.launch(NonCancellable) {
             engine.stopSync()
             engine.release()
-
-            // Clear Telegram cache when app is fully closed (swiped away)
-            (application as? com.beatraxus.app.BeatraxusApplication)?.clearTelegramCache()
 
             if (isPlaying && currentSong != null) {
                 cloudCacheManager.clearFullCache(excludeId = currentSong.id)

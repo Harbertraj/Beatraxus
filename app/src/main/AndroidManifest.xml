@@ -108,7 +108,7 @@
             android:name=".service.AudioPlaybackService"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback|dataSync"
-            android:stopWithTask="true">
+            android:stopWithTask="false">
             <intent-filter>
                 <action android:name="android.intent.action.MEDIA_BUTTON" />
             </intent-filter>

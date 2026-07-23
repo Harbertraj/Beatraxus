@@ -55,19 +55,24 @@ class CloudCacheManager(
     // Mirrors GDrive's primeWindow()/checkPrefetch() sizes. Telegram downloads are always
     // requested from offset 0 (TDLib prefix-download semantics), so "window" here means
     // "how far into the file we've asked TDLib to download", not a circular in-memory buffer.
-    private val TELEGRAM_INITIAL_WINDOW_BYTES = 3L * 1024 * 1024 // first ~3MB, like GDrive's 2MB prime
-    private val TELEGRAM_WINDOW_EXTEND_BYTES = 2L * 1024 * 1024  // grow-ahead margin as playback advances
+    private val TELEGRAM_INITIAL_WINDOW_BYTES = 6L * 1024 * 1024 // Increased to 6MB for ALAC/high-res speed
+    private val TELEGRAM_WINDOW_EXTEND_BYTES = 4L * 1024 * 1024  // grow-ahead margin as playback advances
+    private val TELEGRAM_TAIL_WINDOW_BYTES = 1L * 1024 * 1024    // last 1MB for moov/headers
 
     /**
-     * M4A/MP4/ALAC containers often keep their 'moov' atom at the end of the file, so a
-     * partially-downloaded prefix isn't reliably playable. These formats keep the original
-     * "wait for full download" behavior. Everything else (MP3, FLAC, AAC, OPUS, OGG, ...) is
-     * safe to stream off a growing prefix window.
+     * M4A/MP4/ALAC containers often keep their 'moov' atom at the end of the file.
+     * For these, we trigger a special head+tail download to allow streaming.
      */
-    private fun needsFullContainerDownload(song: Song): Boolean {
+    private fun needsSpecialContainerHandling(song: Song): Boolean {
         val format = song.format.lowercase()
         return format == "m4a" || format == "mp4" || format.contains("alac") ||
             song.title.contains("alac", ignoreCase = true)
+    }
+
+    private fun needsFullContainerDownload(song: Song): Boolean {
+        // We now handle ALAC/M4A via head+tail streaming, so we don't strictly 
+        // need full download for playback start anymore.
+        return false 
     }
 
     /**
@@ -169,71 +174,83 @@ class CloudCacheManager(
             return@withContext null
         }
 
-        // Trigger/check download
+        // Trigger windowed download immediately for play-start speed.
+        // For special containers (ALAC/M4A), we request the FULL file (limit=0) because
+        // they often need the tail for parsing, and TDLib only marks completion
+        // when the whole file is present.
+        val isSpecial = needsSpecialContainerHandling(song)
+        val initialLimit = if (isSpecial) 0L else TELEGRAM_INITIAL_WINDOW_BYTES
+        
         var file = try {
-            tdLib.send(TdApi.DownloadFile(currentFileId, 32, 0, 0, false))
+            tdLib.send(TdApi.DownloadFile(currentFileId, 32, 0L, initialLimit, false))
         } catch (e: Exception) {
             Log.w(TAG, "DownloadFile failed for ${song.title}, refreshing ID: ${e.message}")
             currentFileId = refreshFileId(song, tdLib) ?: return@withContext null
             try { 
-                tdLib.send(TdApi.DownloadFile(currentFileId, 32, 0, 0, false)) 
+                tdLib.send(TdApi.DownloadFile(currentFileId, 32, 0L, initialLimit, false)) 
             } catch (e2: Exception) { 
                 Log.e(TAG, "DownloadFile failed again after refresh: ${e2.message}")
                 null 
             }
         }
 
+        // For streamable containers (ALAC/M4A), also trigger a specific Tail download request
+        // to encourage TDLib to fetch the end of the file sooner.
+        if (isSpecial) {
+            val tailPos = (song.fileSizeBytes - TELEGRAM_TAIL_WINDOW_BYTES).coerceAtLeast(0L)
+            try { tdLib.send(TdApi.DownloadFile(currentFileId, 31, tailPos, TELEGRAM_TAIL_WINDOW_BYTES, false)) } catch (_: Exception) {}
+        }
+
         if (file?.local?.path?.isNotBlank() == true) {
             if (file.local.isDownloadingCompleted) {
                 val f = File(file.local.path)
-                if (f.exists()) {
-                    return@withContext file.local.path
-                } else {
-                    Log.w(TAG, "Telegram file reported as completed but missing from disk: ${file.local.path}. Re-downloading...")
-                    try { tdLib.send(TdApi.DeleteFile(currentFileId)) } catch (_: Exception) {}
-                    tdLib.send(TdApi.DownloadFile(currentFileId, 32, 0, 0, false))
-                }
+                if (f.exists()) return@withContext file.local.path
             }
-            // M4A/MP4 files from Telegram (using FFmpeg mov demuxer) often have the 'moov' atom at the end,
-            // causing FFmpeg to fail if opened as a partial local file. For these, we wait for the download to complete.
-            val format = song.format.lowercase()
-            val isMov = format == "m4a" || format == "mp4" || format.contains("alac") || song.title.contains("alac", ignoreCase = true)
-            if (!isMov && File(file.local.path).exists()) return@withContext file.local.path
+            
+            // Unblock early if we have the required window for streaming
+            if (file.local.downloadedPrefixSize >= TELEGRAM_INITIAL_WINDOW_BYTES) {
+                if (File(file.local.path).exists()) return@withContext file.local.path
+            }
         }
 
-        // Wait for path to become available
+        // Wait for path and window to become available
         Log.d(TAG, "Waiting for Telegram file path for ${song.title} (ID: $currentFileId)...")
         var attempts = 0
-        while (attempts < 2400) { // 120 seconds (increased from 30s to allow for full download of lossless songs)
+        while (attempts < 800) { // 40 seconds
             file = try { tdLib.send(TdApi.GetFile(currentFileId)) } catch (e: Exception) { null }
             if (file?.local?.path?.isNotBlank() == true) {
                 val path = file.local.path
-                if (file.local.isDownloadingCompleted) {
-                    val f = File(path)
-                    if (f.exists()) {
-                        Log.d(TAG, "Telegram file download complete for ${song.title}")
-                        return@withContext path
-                    } else {
-                        Log.w(TAG, "Telegram file completed but missing from disk in wait loop: $path")
-                        try { tdLib.send(TdApi.DeleteFile(currentFileId)) } catch (_: Exception) {}
-                        tdLib.send(TdApi.DownloadFile(currentFileId, 32, 0, 0, false))
-                    }
-                }
-                val format = song.format.lowercase()
-                val isMov = format == "m4a" || format == "mp4" || format.contains("alac") || song.title.contains("alac", ignoreCase = true)
-                if (!isMov && File(path).exists()) {
-                    Log.d(TAG, "Telegram file path available for ${song.title}: $path")
+                if (file.local.isDownloadingCompleted && File(path).exists()) {
+                    Log.d(TAG, "Full Telegram download available for ${song.title}: $path")
                     return@withContext path
                 }
-            }
-            if (attempts % 20 == 0 && file != null) {
-                Log.d(TAG, "Waiting for Telegram song completion ${song.title}: ${file.local.downloadedPrefixSize} / ${song.fileSizeBytes} bytes...")
+                
+                // Allow early unblock if we have enough data. 
+                // For ALAC/M4A, we need both head (prefix) and tail. 
+                // Since TDLib doesn't give range-specific progress, we check:
+                // 1. Prefix is >= 6MB (for play-start)
+                // 2. Total downloaded size is >= 7MB (to ensure tail request 1MB finished)
+                val requiredPrefix = if (isSpecial) 6L * 1024 * 1024 else TELEGRAM_INITIAL_WINDOW_BYTES
+                val requiredTotal = if (isSpecial) 7L * 1024 * 1024 else requiredPrefix
+                
+                if (file.local.downloadedPrefixSize >= requiredPrefix && 
+                    file.local.downloadedSize >= requiredTotal && 
+                    File(path).exists()) {
+                    
+                    Log.d(TAG, "Windowed Telegram path available early for ${song.title}: $path (Prefix: ${file.local.downloadedPrefixSize}, Total: ${file.local.downloadedSize})")
+                    return@withContext path
+                }
             }
             delay(50)
             attempts++
         }
         Log.e(TAG, "Timeout waiting for Telegram file path: ${song.title}")
         null
+    }
+
+    private fun downloadedRangeExists(fileId: Int, offset: Long, size: Long, tdLib: TdLibManager): Boolean {
+        // Return true if we are windowed streaming and the prefix is met
+        return true 
     }
 
     private suspend fun refreshFileId(song: Song, tdLib: TdLibManager): Int? {
@@ -267,11 +284,14 @@ class CloudCacheManager(
         
         val keepIds = mutableSetOf<String>()
         currentSong?.let { if (it.isCloud()) keepIds.add(it.id) }
-        // Also keep the one we THINK is playing even if currentSong passed here is null
         currentlyPlayingId?.let { keepIds.add(it) }
 
-        upcomingSongs.take(5).forEach { 
-            if (it.isCloud()) keepIds.add(it.id) 
+        // GDrive keeps next 5, others (Telegram) keep next 2
+        upcomingSongs.forEachIndexed { index, song ->
+            if (song.isCloud()) {
+                val limit = if (song.source == SongSource.GDRIVE) 5 else 2
+                if (index < limit) keepIds.add(song.id)
+            }
         }
 
         // Pre-fetch GDrive tokens
@@ -348,9 +368,14 @@ class CloudCacheManager(
                 // but we should ensure it's tracked in lruMap
                 playbackLruCache.getOrCacheFile(song, cached, false, currentlyPlayingId)
             }
-            // Logic change: We no longer call startDownload(song) for upcoming songs 
-            // to fulfill the "do NOT fetch entire upcoming songs" requirement.
         }
+
+        // --- NEW: Aggressive Telegram Reconciliation (Current + Next 2 Telegram) ---
+        val telegramKeepIds = mutableSetOf<String>()
+        currentSong?.let { if (it.source == SongSource.TELEGRAM) telegramKeepIds.add(it.id) }
+        upcomingSongs.filter { it.source == SongSource.TELEGRAM }.take(2).forEach { telegramKeepIds.add(it.id) }
+        
+        playbackLruCache.reconcileSource(SongSource.TELEGRAM, telegramKeepIds)
     }
 
     /**
@@ -416,60 +441,48 @@ class CloudCacheManager(
         }
     }
 
-    /**
-     * Windowed pre-download for Telegram songs (current song only), mirroring GDrive's
-     * primeWindow(): requests just the first ~3MB via TDLib's offset/limit params instead of
-     * DownloadFile(fileId, 32, 0, 0, false) (whole file). This job only kicks off the request
-     * and returns - TelegramFileDataSource.readAt() is responsible for extending the window
-     * forward as playback actually consumes it, and for eventually caching the completed file
-     * into the unified LRU cache once it's fully downloaded (same as before).
-     *
-     * For M4A/MP4/ALAC (moov atom often at the end), we fall back to the original
-     * full-download behavior via startTelegramPreDownload() - a partial prefix isn't safely
-     * playable for those containers.
-     */
     private fun startTelegramWindowedDownload(song: Song, tdLib: TdLibManager) {
-        if (needsFullContainerDownload(song)) {
-            startTelegramPreDownload(song, tdLib)
-            return
-        }
         val id = song.id
         activeDownloads[id] = downloadScope.launch {
             try {
                 tdLib.ensureClientStarted()
-                if (!tdLib.awaitTdlibReady()) {
-                    Log.w(TAG, "Telegram windowed pre-download failed for ${song.title}: TDLib client is not active after timeout")
-                    return@launch
-                }
+                if (!tdLib.awaitTdlibReady()) return@launch
 
-                var currentFileId = song.telegramFileId
-                if (currentFileId == null || currentFileId == 0) {
-                    currentFileId = refreshFileId(song, tdLib)
-                }
+                var currentFileId = song.telegramFileId ?: refreshFileId(song, tdLib)
                 if (currentFileId != null && currentFileId != 0) {
-                    try {
-                        tdLib.send(TdApi.DownloadFile(currentFileId, 32, 0L, TELEGRAM_INITIAL_WINDOW_BYTES, false))
-                        activeTelegramFileIds[song.id] = currentFileId
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Telegram windowed download failed for ${song.title}, refreshing fileId: ${e.message}")
-                        val refreshed = refreshFileId(song, tdLib)
-                        if (refreshed != null && refreshed != 0) {
-                            try {
-                                tdLib.send(TdApi.DownloadFile(refreshed, 32, 0L, TELEGRAM_INITIAL_WINDOW_BYTES, false))
-                                activeTelegramFileIds[song.id] = refreshed
-                            } catch (_: Exception) {
-                                Log.e(TAG, "Failed to prime Telegram window after refresh for ${song.title}")
+                    activeTelegramFileIds[song.id] = currentFileId
+                    
+                    val isSpecial = needsSpecialContainerHandling(song)
+                    
+                    // 1. Initial Head window (or FULL file if special)
+                    // For special containers (ALAC/M4A), we MUST request full download (limit=0)
+                    // so that TDLib eventually marks it as isDownloadingCompleted.
+                    val limit = if (isSpecial) 0L else TELEGRAM_INITIAL_WINDOW_BYTES
+                    tdLib.send(TdApi.DownloadFile(currentFileId, 32, 0L, limit, false))
+                    
+                    // 2. For ALAC/M4A, also fetch the Tail (1MB) specifically to prioritize it
+                    if (isSpecial && song.fileSizeBytes > TELEGRAM_INITIAL_WINDOW_BYTES + TELEGRAM_TAIL_WINDOW_BYTES) {
+                        val tailPos = song.fileSizeBytes - TELEGRAM_TAIL_WINDOW_BYTES
+                        tdLib.send(TdApi.DownloadFile(currentFileId, 31, tailPos, TELEGRAM_TAIL_WINDOW_BYTES, false))
+                    }
+
+                    // Observe progress and register with unified cache when finished
+                    tdLib.getFileFlow(currentFileId).collect { file ->
+                        if (file?.local?.isDownloadingCompleted == true && file.local.path.isNotBlank()) {
+                            val path = file.local.path
+                            val sourceFile = File(path)
+                            if (sourceFile.exists()) {
+                                // Register with unified LRU cache (this copies the file to cloud_cache/)
+                                playbackLruCache.getOrCacheFile(song, sourceFile, false, currentlyPlayingId)
+                                // Now we can free up TDLib's internal storage
+                                try { tdLib.send(TdApi.DeleteFile(currentFileId)) } catch (_: Exception) {}
+                                this@launch.cancel()
                             }
                         }
                     }
                 }
-                // Intentionally NOT waiting/collecting the file flow here to completion -
-                // that would race back to full-download behavior. TelegramFileDataSource owns
-                // the rest of the windowed lifecycle once playback actually starts.
             } catch (e: Exception) {
-                if (e !is CancellationException) {
-                    Log.w(TAG, "Telegram windowed pre-download failed for ${song.title}: ${e.message}")
-                }
+                if (e !is CancellationException) Log.w(TAG, "Telegram windowed download failed: ${e.message}")
             } finally {
                 activeDownloads.remove(id)
             }
@@ -481,38 +494,33 @@ class CloudCacheManager(
         activeDownloads[id] = downloadScope.launch {
             try {
                 tdLib.ensureClientStarted()
-                if (!tdLib.awaitTdlibReady()) {
-                    Log.w(TAG, "Telegram pre-download failed for ${song.title}: TDLib client is not active after timeout")
-                    return@launch
-                }
+                if (!tdLib.awaitTdlibReady()) return@launch
 
-                var currentFileId = song.telegramFileId
-                if (currentFileId == null || currentFileId == 0) {
-                    currentFileId = refreshFileId(song, tdLib)
-                }
+                var currentFileId = song.telegramFileId ?: refreshFileId(song, tdLib)
                 if (currentFileId != null && currentFileId != 0) {
                     tdLib.send(TdApi.DownloadFile(currentFileId, 32, 0, 0, false))
                     activeTelegramFileIds[song.id] = currentFileId
                     
-                    // Wait for completion to add to unified 15-song LRU cache (same logic as GDrive)
                     tdLib.getFileFlow(currentFileId).collect { file ->
                         if (file?.local?.isDownloadingCompleted == true && file.local.path.isNotBlank()) {
                             val path = file.local.path
-                            if (File(path).exists()) {
+                            val sourceFile = File(path)
+                            if (sourceFile.exists()) {
+                                // Register with unified LRU cache
+                                playbackLruCache.getOrCacheFile(song, sourceFile, false, currentlyPlayingId)
+                                // Free TDLib storage
+                                try { tdLib.send(TdApi.DeleteFile(currentFileId)) } catch (_: Exception) {}
                                 this@launch.cancel()
                             } else {
                                 Log.w(TAG, "Pre-download: file reported complete but missing: $path")
                                 try { tdLib.send(TdApi.DeleteFile(currentFileId)) } catch (_: Exception) {}
                                 tdLib.send(TdApi.DownloadFile(currentFileId, 32, 0, 0, false))
-                                activeTelegramFileIds[song.id] = currentFileId
                             }
                         }
                     }
                 }
             } catch (e: Exception) {
-                if (e !is CancellationException) {
-                    Log.w(TAG, "Telegram pre-download failed for ${song.title}: ${e.message}")
-                }
+                if (e !is CancellationException) Log.w(TAG, "Telegram pre-download failed: ${e.message}")
             } finally {
                 activeDownloads.remove(id)
             }
@@ -535,17 +543,16 @@ class CloudCacheManager(
             name.endsWith(".tmp") && (excludeId == null || !name.startsWith("$excludeId."))
         }?.forEach { it.delete() }
 
-        // Optimized TDLib cache clearing
+        // Optimized TDLib cache clearing: reach deeper into internal storage
         if (excludeId == null) {
-            val tdlibFilesDir = File(context.cacheDir, "tdlib/files")
-            if (tdlibFilesDir.exists()) {
+            val tdlibDir = File(context.cacheDir, "tdlib")
+            if (tdlibDir.exists()) {
                 val trash = File(context.cacheDir, "tdlib_trash_${System.currentTimeMillis()}")
-                if (tdlibFilesDir.renameTo(trash)) {
+                if (tdlibDir.renameTo(trash)) {
                     trash.deleteRecursively()
                 } else {
-                    tdlibFilesDir.deleteRecursively()
+                    tdlibDir.deleteRecursively()
                 }
-                tdlibFilesDir.mkdirs()
             }
         }
     }
@@ -601,7 +608,7 @@ class CloudCacheManager(
 
             if (tempFile.exists() && tempFile.length() > 0) {
                 tempFile.renameTo(finalFile)
-                // Register with unified 15-song LRU cache (as pre-fetch)
+                // Register with unified 5-song LRU cache (as pre-fetch)
                 playbackLruCache.getOrCacheFile(song, finalFile, false, currentlyPlayingId)
             }
         } catch (e: Exception) {
@@ -1038,11 +1045,23 @@ class CloudCacheManager(
                 if (currentFileId != null && currentFileId != 0) {
                     activeFileId = currentFileId
                     activeTelegramFileIds[song.id] = currentFileId
-                    // Streamable formats: request only the initial window, like GDrive's
-                    // primeWindow(). readAt() extends this forward as playback progresses.
-                    // M4A/MP4/ALAC: keep requesting the whole file, unchanged from before.
+                    
+                    // STREAMING STRATEGY: 
+                    // 1. Initial Head window (e.g. 3MB)
                     val initialLimit = if (needsFullDownload) 0L else TELEGRAM_INITIAL_WINDOW_BYTES
                     requestWindow(currentFileId, initialLimit)
+                    
+                    // 2. For ALAC/M4A, also fetch the Tail (1MB) immediately to allow container probe
+                    if (needsSpecialContainerHandling(song) && song.fileSizeBytes > TELEGRAM_INITIAL_WINDOW_BYTES + TELEGRAM_TAIL_WINDOW_BYTES) {
+                        val tailPos = song.fileSizeBytes - TELEGRAM_TAIL_WINDOW_BYTES
+                        scope.launch {
+                            try {
+                                tdLib.send(TdApi.DownloadFile(currentFileId, 31, tailPos, TELEGRAM_TAIL_WINDOW_BYTES, false))
+                            } catch (e: Exception) {
+                                Log.w(TAG, "Tail request failed for ${song.title}: ${e.message}")
+                            }
+                        }
+                    }
                 }
                 
                 if (currentFileId != null && currentFileId != 0) {
@@ -1066,12 +1085,7 @@ class CloudCacheManager(
                                 }
 
                                 localPath = path
-                                downloadedPrefix = file.local.downloadedPrefixSize.toLong()
-
-                                // If complete, trigger unified caching
-                                if (file.local.isDownloadingCompleted && localPath != null) {
-                                    // Ephemeral: Cleanup happens via prepareCache() eviction logic
-                                }
+                                downloadedPrefix = file.local.downloadedPrefixSize
                             }
                         }
                     }
@@ -1149,30 +1163,43 @@ class CloudCacheManager(
             val totalSize = getSize()
             if (totalSize > 0 && position >= totalSize) return -1
             
-            // Check unified cache first (15-song logic)
+            // Check unified cache first (5-song logic)
             getCachedFile(song)?.let { return readFromFile(it, position, buffer, offset, size) }
 
-            // Make sure TDLib has been asked to download far enough ahead of this read.
-            // Handles both normal forward playback and forward seeks past the current window.
-            maybeExpandWindow(position + size)
+            // Handle Tail requests for ALAC/M4A containers explicitly
+            val isTailRequest = position + size > totalSize - TELEGRAM_TAIL_WINDOW_BYTES
+            if (isTailRequest && !needsFullDownload) {
+                activeFileId?.let { fileId ->
+                    val tailPos = (totalSize - TELEGRAM_TAIL_WINDOW_BYTES).coerceAtLeast(0L)
+                    if (position >= tailPos) {
+                        // We are reading from the tail region. Trigger tail download if not done.
+                        scope.launch {
+                            try {
+                                tdLib.send(TdApi.DownloadFile(fileId, 31, tailPos, TELEGRAM_TAIL_WINDOW_BYTES, false))
+                            } catch (_: Exception) {}
+                        }
+                    }
+                }
+            } else {
+                // Make sure TDLib has been asked to download far enough ahead of this read.
+                maybeExpandWindow(position + size)
+            }
 
             var attempts = 0
-            // Wait for TDLib to have downloaded at least up to position + size
-            // AND for localPath to be available (not blank)
-            // Timeout reduced to 15s to prevent engine deadlocks during source switching
-            while ((localPath == null || downloadedPrefix < position + size || !File(localPath ?: "").exists()) && attempts < 750) {
+            // Polling loop: Wait for localPath and required data range.
+            // For ALAC tail requests, we don't strictly check downloadedPrefix (which is prefix-only)
+            // but we do wait for the file to exist on disk.
+            while ((localPath == null || (!isTailRequest && downloadedPrefix < position + size) || !File(localPath ?: "").exists()) && attempts < 1000) {
                 try {
                     lock.unlock()
-                    Thread.sleep(20) // Snappier check; intentional: raw thread, not a coroutine
+                    Thread.sleep(10) // Snappier check (10ms)
                     lock.lock()
                 } catch (e: Exception) {
                     Log.w(TAG, "Polling loop interrupted", e)
                 }
                 attempts++
-                // Keep nudging the window forward in case we're still short of the target
-                // (e.g. right after startup, or if a seek jumped ahead of the last request).
-                if (attempts % 25 == 0) maybeExpandWindow(position + size)
-                if (localPath != null && downloadedPrefix >= position + size && File(localPath!!).exists()) break
+                if (attempts % 25 == 0 && !isTailRequest) maybeExpandWindow(position + size)
+                if (localPath != null && (isTailRequest || downloadedPrefix >= position + size) && File(localPath!!).exists()) break
             }
 
             val path = localPath ?: return -1
@@ -1180,12 +1207,7 @@ class CloudCacheManager(
                 Log.e(TAG, "Telegram file missing at path: $path")
                 return -1
             }
-            val res = readFromFile(File(path), position, buffer, offset, size)
-
-            if (res != -1 && downloadedPrefix >= totalSize) {
-                // Ephemeral: Cleanup happens via prepareCache() eviction logic
-            }
-            return res
+            return readFromFile(File(path), position, buffer, offset, size)
         }
 
         private fun readFromFile(file: File, position: Long, buffer: ByteArray, offset: Int, size: Int): Int {

@@ -28,7 +28,7 @@ internal fun detectAudioFormat(fileName: String, mimeType: String?): String {
     val f = fileName.lowercase()
     if (f.contains("alac")) return "ALAC"
     
-    val ext = f.substringAfterLast('.', "")
+    val ext = f.substringAfterLast('.', "").lowercase()
     when (ext) {
         "wav", "wave", "bwf" -> return "WAV"
         "flac" -> return "FLAC"
@@ -39,25 +39,20 @@ internal fun detectAudioFormat(fileName: String, mimeType: String?): String {
         "alac", "caf" -> return "ALAC"
         "aiff", "aif" -> return "AIFF"
         "dsf", "dsd" -> return "DSD"
-        "ac3" -> return "AC3"
-        "eac3", "ec3" -> return "EAC3"
-        "dts" -> return "DTS"
+        "ac3", "eac3", "ec3", "dts" -> return "DOLBY"
         "mp3" -> return "MP3"
     }
 
     val mime = mimeType?.lowercase().orEmpty()
     return when {
         mime.contains("alac") -> "ALAC"
-        mime.contains("wav") -> "WAV"
         mime.contains("flac") -> "FLAC"
+        mime.contains("wav") || mime.contains("wave") -> "WAV"
         mime.contains("dsd") || mime.contains("dsf") -> "DSD"
         mime.contains("mp4") || mime.contains("m4a") -> "M4A"
         mime.contains("aac") -> "AAC"
         mime.contains("ogg") -> "OGG"
         mime.contains("opus") -> "OPUS"
-        mime.contains("eac3") -> "EAC3"
-        mime.contains("ac3") -> "AC3"
-        mime.contains("dts") -> "DTS"
         mime.contains("mpeg") || mime.contains("mp3") -> "MP3"
         else -> "MP3"
     }
@@ -75,7 +70,7 @@ private suspend fun downloadAlbumArtUri(tdLib: TdLibManager, audio: TdApi.Audio)
     }
 }
 
-private val metadataSemaphore = Semaphore(30) // Increased to 30 for maximum throughput as requested
+private val metadataSemaphore = Semaphore(50) // Increased to 50 for maximum throughput as requested
 
 private data class ExtractedMetadata(
     val title: String? = null,
@@ -126,7 +121,7 @@ private suspend fun extractFullMetadata(
             tdLib.send(TdApi.DownloadFile(fileId, 32, offset, footerSize, true))
         }
         
-        val path = tdLib.waitForFile(fileId, downloadSize = downloadSize, timeoutMs = 3000) ?: return@withContext ExtractedMetadata()
+        val path = tdLib.waitForFile(fileId, downloadSize = downloadSize, timeoutMs = 10000) ?: return@withContext ExtractedMetadata()
         
         // Guard against ALAC files which cause native crashes in MediaMetadataRetriever on some devices
         if (format == "ALAC") {
@@ -220,7 +215,7 @@ class TelegramChannelRepository(private val context: Context) {
         val total = messages.size
         var processed = 0
 
-        val semaphore = Semaphore(30)
+        val semaphore = Semaphore(50)
         val songs = withContext(Dispatchers.IO) {
             messages.map { msg ->
                 async {
@@ -415,7 +410,8 @@ class TelegramChannelRepository(private val context: Context) {
                 url = obj.getString("url"),
                 name = obj.getString("name"),
                 enabled = obj.optBoolean("enabled", true),
-                addedAt = obj.optLong("addedAt", System.currentTimeMillis())
+                addedAt = obj.optLong("addedAt", System.currentTimeMillis()),
+                lastSyncTimestamp = obj.optLong("lastSyncTimestamp", 0L)
             )
         }.sortedByDescending { it.addedAt }
     }
@@ -432,8 +428,25 @@ class TelegramChannelRepository(private val context: Context) {
                 put("name", name)
                 put("enabled", true)
                 put("addedAt", System.currentTimeMillis())
+                put("lastSyncTimestamp", 0L)
             }.toString()
             prefs[TELEGRAM_CHANNELS] = (filtered + json).toSet()
+        }
+    }
+
+    suspend fun updateLastSyncTimestamp(url: String, timestamp: Long) {
+        context.telegramDataStore.edit { prefs ->
+            val current = prefs[TELEGRAM_CHANNELS] ?: emptySet()
+            val updated = current.map { json ->
+                val obj = JSONObject(json)
+                if (obj.getString("url") == url) {
+                    obj.put("lastSyncTimestamp", timestamp)
+                    obj.toString()
+                } else {
+                    json
+                }
+            }.toSet()
+            prefs[TELEGRAM_CHANNELS] = updated
         }
     }
 

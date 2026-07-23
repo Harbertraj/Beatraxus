@@ -472,10 +472,14 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 _uiState.update { it.copy(telegramAuthState = state) }
                 if (state is AuthState.Ready) {
                     startTelegramLiveObservers()
-                    // Auto-sync all enabled channels when Telegram becomes ready
+                    // Auto-sync all enabled channels when Telegram becomes ready, 
+                    // but ONLY if they haven't been synced in the last 6 hours.
                     viewModelScope.launch {
+                        val currentTime = System.currentTimeMillis()
+                        val sixHoursMs = 6 * 60 * 60 * 1000L
+                        
                         telegramChannelRepository.channels.first().forEach { channel ->
-                            if (channel.enabled) {
+                            if (channel.enabled && (currentTime - channel.lastSyncTimestamp > sixHoursMs)) {
                                 syncTelegramChannel(channel.url)
                             }
                         }
@@ -924,7 +928,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                             telegramFileId = entity.telegramFileId,
                             isEnriched = entity.isEnriched,
                             albumArtFetchAttempted = entity.albumArtFetchAttempted,
-                            lastSyncTimestamp = entity.lastSyncTimestamp
+                            lastSyncTimestamp = entity.lastSyncTimestamp,
+                            lyricsOffsetMs = entity.lyricsOffsetMs
                         )
                     }
                 }
@@ -1206,7 +1211,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
 
-    private var enrichmentJob: Job? = null
+    private val enrichmentJobs = mutableMapOf<String, kotlinx.coroutines.Job>()
 
     fun scanDriveAccount(email: String) {
         if (_uiState.value.isCloudScanning) return // Already scanning, don't restart
@@ -3432,6 +3437,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 lyrics = emptyList(),
                 lyricsCurrentIndex = -1,
                 lyricsCurrentSongId = song.id,
+                lyricsOffsetMs = song.lyricsOffsetMs,
                 // Start in the Loading state (not false) as soon as the song changes. If this
                 // stays false here, the lyrics screen briefly renders its "No lyrics found"
                 // empty state (isLoading == false && lyrics.isEmpty()) for the one frame before
@@ -3487,11 +3493,34 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun adjustLyricsOffset(deltaMs: Long) {
-        _uiState.update { it.copy(lyricsOffsetMs = it.lyricsOffsetMs + deltaMs) }
+        val song = _uiState.value.currentSong ?: return
+        val newOffset = _uiState.value.lyricsOffsetMs + deltaMs
+        _uiState.update { it.copy(lyricsOffsetMs = newOffset) }
+        
+        viewModelScope.launch {
+            val updatedSong = song.copy(lyricsOffsetMs = newOffset)
+            withContext(Dispatchers.IO) {
+                songDao.insertSong(updatedSong.toEntity())
+            }
+            _songs.update { current ->
+                current.map { if (it.id == song.id) updatedSong else it }
+            }
+        }
     }
 
     fun setLyricsOffset(offset: Long) {
+        val song = _uiState.value.currentSong ?: return
         _uiState.update { it.copy(lyricsOffsetMs = offset) }
+        
+        viewModelScope.launch {
+            val updatedSong = song.copy(lyricsOffsetMs = offset)
+            withContext(Dispatchers.IO) {
+                songDao.insertSong(updatedSong.toEntity())
+            }
+            _songs.update { current ->
+                current.map { if (it.id == song.id) updatedSong else it }
+            }
+        }
     }
 
     fun saveLyrics(songId: String, lyricsText: String) {
@@ -3859,8 +3888,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             return
         }
 
-        enrichmentJob?.cancel()
-        enrichmentJob = viewModelScope.launch(Dispatchers.IO) {
+        enrichmentJobs[normalizedUrl]?.cancel()
+        val job = viewModelScope.launch(Dispatchers.IO) {
             _uiState.update { it.copy(isCloudScanning = true, scanProgress = 0f, telegramSyncErrorMessage = "Connecting...", showSyncStatusOnHome = true, isSyncFinishedRecently = false) }
             try {
                 val channelName = normalizedUrl.substringAfterLast("/")
@@ -3942,80 +3971,101 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     }
                     
                     _songs.update { current ->
-                        val updatedIds = songs.map { it.id }.toSet()
-                        val unchanged = current.filter { it.id !in updatedIds && it.id !in songsToDelete }
-                        (unchanged + songs).sortedBy { it.title }
-                    }
+                    val updatedIds = songs.map { it.id }.toSet()
+                    val unchanged = current.filter { it.id !in updatedIds && it.id !in songsToDelete }
+                    (unchanged + songs).sortedBy { it.title }
+                }
+                
+                // 3. Deep Enrichment for new songs (fetch duration, bitrate, album art)
+                val toEnrich = songs.filter {
+                    !it.isEnriched || (it.albumArtUri == null && !it.albumArtFetchAttempted)
+                }
+                Log.d("PlayerViewModel", "Songs to enrich: ${toEnrich.size}")
+                
+                if (toEnrich.isNotEmpty()) {
+                    _uiState.update { it.copy(enrichmentStatus = "Enriching ${toEnrich.size} new Telegram songs...") }
                     
-                    _uiState.update { it.copy(telegramSyncErrorMessage = "Found ${songs.size} songs. Starting enrichment...") }
-
-                    // 3. Deep Enrichment for new songs (fetch duration, bitrate, album art)
-                    val toEnrich = songs.filter {
-                        !it.isEnriched || (it.albumArtUri == null && !it.albumArtFetchAttempted)
-                    }
-                    Log.d("PlayerViewModel", "Songs to enrich: ${toEnrich.size}")
-                    if (toEnrich.isNotEmpty()) {
-                        _uiState.update { it.copy(enrichmentStatus = "Enriching ${toEnrich.size} new Telegram songs...") }
-                        
-                        val enrichedCount = AtomicInteger(0)
-                        val enrichmentSemaphore = Semaphore(30)
-                        
-                        toEnrich.map { song ->
-                            async {
-                                enrichmentSemaphore.withPermit {
-                                    if (!isActive) return@async
-                                    
-                                    val currentCount = enrichedCount.get() + 1
-                                    Log.d("PlayerViewModel", "Enriching [$currentCount/${toEnrich.size}]: ${song.title}")
-                                    
-                                    val enriched = extractTelegramMetadata(song)
-                                    if (enriched != null) {
-                                        withContext(Dispatchers.IO) {
-                                            songDao.insertSong(enriched.toEntity())
-                                        }
-                                        _songs.update { current ->
-                                            if (current.any { it.id == enriched.id }) {
-                                                current.map { if (it.id == enriched.id) enriched else it }
-                                            } else {
-                                                (current + enriched).sortedBy { it.title }
-                                            }
+                    val enrichedCount = AtomicInteger(0)
+                    val enrichmentSemaphore = Semaphore(50)
+                    
+                    toEnrich.map { song ->
+                        async {
+                            enrichmentSemaphore.withPermit {
+                                if (!isActive) return@async
+                                
+                                val currentCount = enrichedCount.get() + 1
+                                Log.d("PlayerViewModel", "Enriching [$currentCount/${toEnrich.size}]: ${song.title}")
+                                
+                                val enriched = extractTelegramMetadata(song)
+                                if (enriched != null) {
+                                    withContext(Dispatchers.IO) {
+                                        songDao.insertSong(enriched.toEntity())
+                                    }
+                                    _songs.update { current ->
+                                        if (current.any { it.id == enriched.id }) {
+                                            current.map { if (it.id == enriched.id) enriched else it }
+                                        } else {
+                                            (current + enriched).sortedBy { it.title }
                                         }
                                     }
-                                    
-                                    val processedCount = enrichedCount.incrementAndGet()
-                                    val enrichmentProgress = 0.1f + (processedCount.toFloat() / toEnrich.size.toFloat() * 0.9f)
-                                    _uiState.update { it.copy(scanProgress = enrichmentProgress) }
-                                    service?.updateEnrichingProgress(enrichmentProgress, processedCount, toEnrich.size)
                                 }
+                                
+                                val processedCount = enrichedCount.incrementAndGet()
+                                val enrichmentProgress = 0.1f + (processedCount.toFloat() / toEnrich.size.toFloat() * 0.9f)
+                                _uiState.update { it.copy(scanProgress = enrichmentProgress) }
+                                service?.updateEnrichingProgress(enrichmentProgress, processedCount, toEnrich.size)
                             }
-                        }.awaitAll()
-                    }
-
-                    _uiState.update { it.copy(telegramSyncErrorMessage = "Synced ${songs.size} songs from $channelName", enrichmentStatus = null, isSyncFinishedRecently = true) }
-                    startSyncDismissTimer()
-                    service?.updateEnrichingProgress(1.0f, toEnrich.size, toEnrich.size)
-                } else {
-                    Log.d("PlayerViewModel", "No songs found for Telegram channel: $normalizedUrl")
-                    // All songs might have been removed
-                    if (existingSongs.isNotEmpty()) {
-                        withContext(Dispatchers.IO) {
-                            songDao.deleteSongsByTelegramChannel(normalizedUrl)
                         }
-                        _songs.update { current -> current.filterNot { it.telegramChannelUrl == normalizedUrl } }
-                    }
-                    _uiState.update { it.copy(telegramSyncErrorMessage = "No songs found in $channelName", isSyncFinishedRecently = true) }
-                    startSyncDismissTimer()
+                    }.awaitAll()
                 }
-            } catch (e: Exception) {
-                if (e is CancellationException) throw e
-                Log.e("PlayerViewModel", "Telegram sync failed", e)
-                _uiState.update { it.copy(telegramSyncErrorMessage = "Sync failed: ${e.message}", enrichmentStatus = null, isSyncFinishedRecently = true) }
+
+                _uiState.update { it.copy(
+                    telegramSyncErrorMessage = "Synced ${songs.size} songs from $channelName", 
+                    enrichmentStatus = null, 
+                    isSyncFinishedRecently = true, 
+                    isCloudScanning = enrichmentJobs.size > 1, 
+                    scanProgress = 1f
+                ) }
+                telegramChannelRepository.updateLastSyncTimestamp(normalizedUrl, System.currentTimeMillis())
                 startSyncDismissTimer()
-            } finally {
+                service?.updateEnrichingProgress(1.0f, toEnrich.size, toEnrich.size)
+            } else {
+                Log.d("PlayerViewModel", "No songs found for Telegram channel: $normalizedUrl")
+                // All songs might have been removed
+                if (existingSongs.isNotEmpty()) {
+                    withContext(Dispatchers.IO) {
+                        songDao.deleteSongsByTelegramChannel(normalizedUrl)
+                    }
+                    _songs.update { current -> current.filterNot { it.telegramChannelUrl == normalizedUrl } }
+                }
+                _uiState.update { it.copy(
+                    telegramSyncErrorMessage = "No songs found in $channelName", 
+                    isSyncFinishedRecently = true, 
+                    isCloudScanning = enrichmentJobs.size > 1,
+                    scanProgress = 1f
+                ) }
+                telegramChannelRepository.updateLastSyncTimestamp(normalizedUrl, System.currentTimeMillis())
+                startSyncDismissTimer()
+            }
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            Log.e("PlayerViewModel", "Telegram sync failed", e)
+            _uiState.update { it.copy(
+                telegramSyncErrorMessage = "Sync failed: ${e.message}", 
+                enrichmentStatus = null, 
+                isSyncFinishedRecently = true, 
+                isCloudScanning = enrichmentJobs.size > 1
+            ) }
+            startSyncDismissTimer()
+        } finally {
+            enrichmentJobs.remove(normalizedUrl)
+            if (enrichmentJobs.isEmpty()) {
                 _uiState.update { it.copy(isCloudScanning = false) }
             }
         }
     }
+    enrichmentJobs[normalizedUrl] = job
+}
 
     private suspend fun extractTelegramMetadata(song: Song): Song? {
         val fileId = song.telegramFileId ?: return null
@@ -4025,8 +4075,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             val downloadSize = 1024 * 1024L
             tdLibManager.send(TdApi.DownloadFile(fileId, 32, 0, downloadSize, true))
             
-            // Wait for partial download reactively
-            val path = tdLibManager.waitForFile(fileId, downloadSize = downloadSize, timeoutMs = 3000)
+            // Wait for partial download reactively (Increased timeout for cold starts)
+            val path = tdLibManager.waitForFile(fileId, downloadSize = downloadSize, timeoutMs = 10000)
             
             if (path == null) return null
             
@@ -4045,7 +4095,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 val offset = (totalSize - tailSize).coerceAtLeast(downloadSize)
                 tdLibManager.send(TdApi.DownloadFile(fileId, 32, offset, totalSize - offset, true))
 
-                val tailPath = tdLibManager.waitForFile(fileId, downloadSize = totalSize, timeoutMs = 3000)
+                val tailPath = tdLibManager.waitForFile(fileId, downloadSize = totalSize, timeoutMs = 10000)
                 if (tailPath != null) {
                     tempFile = File(tailPath)
                 }

@@ -3230,6 +3230,34 @@ private fun TelegramLoginCard(uiState: PlayerUiState, viewModel: PlayerViewModel
                         }
                     }
                 }
+                AuthState.WaitOtherDeviceConfirmation -> {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                        CircularProgressIndicator(modifier = Modifier.size(24.dp), color = Color(0xFF2AABEE), strokeWidth = 2.dp)
+                        Text(
+                            "Please confirm login on another device or check your Telegram app.",
+                            color = Color.White.copy(0.8f),
+                            fontSize = 13.sp,
+                            textAlign = TextAlign.Center
+                        )
+                        TextButton(onClick = { viewModel.restartTelegramAuth() }) {
+                            Text("CANCEL", color = Color(0xFF2AABEE))
+                        }
+                    }
+                }
+                AuthState.WaitEmailAddress, AuthState.WaitEmailCode -> {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(Icons.Rounded.Email, null, tint = Color(0xFF2AABEE), modifier = Modifier.size(24.dp))
+                        Text(
+                            "Email-based login is required. This version mainly supports phone login. Please try again with a phone number if possible.",
+                            color = Color.White.copy(0.8f),
+                            fontSize = 13.sp,
+                            textAlign = TextAlign.Center
+                        )
+                        Button(onClick = { viewModel.restartTelegramAuth() }) {
+                            Text("RETRY WITH PHONE")
+                        }
+                    }
+                }
                 else -> {
                     val isPhoneDone = authState !is AuthState.LoggedOut && authState !is AuthState.WaitPhoneNumber
                     

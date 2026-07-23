@@ -67,5 +67,6 @@ data class SongEntity(
     val telegramFileId: Int? = null,
     val isEnriched: Boolean = false,
     val albumArtFetchAttempted: Boolean = false,
-    val lastSyncTimestamp: Long = 0L
+    val lastSyncTimestamp: Long = 0L,
+    val lyricsOffsetMs: Long = 0L
 )
