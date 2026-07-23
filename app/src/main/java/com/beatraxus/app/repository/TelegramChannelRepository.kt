@@ -68,23 +68,11 @@ private suspend fun downloadAlbumArtUri(tdLib: TdLibManager, audio: TdApi.Audio)
     val thumbnail = audio.albumCoverThumbnail ?: return null
     return try {
         tdLib.send(TdApi.DownloadFile(thumbnail.file.id, 32, 0, 0, true))
-        val path = waitForDownload(tdLib, thumbnail.file.id, 2000) // 2s timeout for thumb
+        val path = tdLib.waitForFile(thumbnail.file.id, timeoutMs = 2000) // 2s timeout for thumb
         path?.let { Uri.fromFile(File(it)) }
     } catch (e: Exception) {
         null
     }
-}
-
-private suspend fun waitForDownload(tdLib: TdLibManager, fileId: Int, timeoutMs: Long = 5000): String? {
-    val start = System.currentTimeMillis()
-    while (System.currentTimeMillis() - start < timeoutMs) {
-        val file = try { tdLib.send(TdApi.GetFile(fileId)) } catch (e: Exception) { null }
-        if (file?.local?.isDownloadingCompleted == true && file.local.path.isNotBlank()) {
-            return file.local.path
-        }
-        delay(200)
-    }
-    return null
 }
 
 private val metadataSemaphore = Semaphore(30) // Increased to 30 for maximum throughput as requested
@@ -138,7 +126,7 @@ private suspend fun extractFullMetadata(
             tdLib.send(TdApi.DownloadFile(fileId, 32, offset, footerSize, true))
         }
         
-        val path = waitForDownload(tdLib, fileId, 3000) ?: return@withContext ExtractedMetadata()
+        val path = tdLib.waitForFile(fileId, downloadSize = downloadSize, timeoutMs = 3000) ?: return@withContext ExtractedMetadata()
         
         // Guard against ALAC files which cause native crashes in MediaMetadataRetriever on some devices
         if (format == "ALAC") {

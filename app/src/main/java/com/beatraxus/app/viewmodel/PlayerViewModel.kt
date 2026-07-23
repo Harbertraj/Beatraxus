@@ -4025,19 +4025,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             val downloadSize = 1024 * 1024L
             tdLibManager.send(TdApi.DownloadFile(fileId, 32, 0, downloadSize, true))
             
-            // Wait for partial download
-            var attempts = 0
-            var path: String? = null
-            var file: TdApi.File? = null
-            while (attempts < 60) { // 3 seconds
-                file = try { tdLibManager.send(TdApi.GetFile(fileId)) } catch (e: Exception) { null }
-                if (file != null && file.local.path.isNotBlank() && (file.local.isDownloadingCompleted || file.local.downloadedPrefixSize >= downloadSize)) {
-                    path = file.local.path
-                    break
-                }
-                delay(50)
-                attempts++
-            }
+            // Wait for partial download reactively
+            val path = tdLibManager.waitForFile(fileId, downloadSize = downloadSize, timeoutMs = 3000)
             
             if (path == null) return null
             
@@ -4050,21 +4039,15 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             // which the 1MB header download won't contain. Fetch the tail too, same as
             // the Google Drive path does, before giving up.
             val isWav = song.format.lowercase().contains("wav")
-            val totalSize = file?.size?.toLong() ?: 0L
+            val totalSize = song.fileSizeBytes
             if (isWav && enriched.albumArtUri == null && totalSize > downloadSize) {
                 val tailSize = 8 * 1024 * 1024L
                 val offset = (totalSize - tailSize).coerceAtLeast(downloadSize)
                 tdLibManager.send(TdApi.DownloadFile(fileId, 32, offset, totalSize - offset, true))
 
-                var tailAttempts = 0
-                while (tailAttempts < 60) {
-                    val updated = try { tdLibManager.send(TdApi.GetFile(fileId)) } catch (e: Exception) { null }
-                    if (updated != null && (updated.local.isDownloadingCompleted || updated.local.downloadedPrefixSize >= totalSize)) {
-                        tempFile = File(updated.local.path)
-                        break
-                    }
-                    delay(50)
-                    tailAttempts++
+                val tailPath = tdLibManager.waitForFile(fileId, downloadSize = totalSize, timeoutMs = 3000)
+                if (tailPath != null) {
+                    tempFile = File(tailPath)
                 }
 
                 if (tempFile.exists()) {

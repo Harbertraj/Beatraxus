@@ -62,9 +62,9 @@ class CloudCacheManager(
      * M4A/MP4/ALAC containers often keep their 'moov' atom at the end of the file, so a
      * partially-downloaded prefix isn't reliably playable. These formats keep the original
      * "wait for full download" behavior. Everything else (MP3, FLAC, AAC, OPUS, OGG, ...) is
-     * safe to stream off a growing prefix window. Mirrors the isMov check in getTelegramFilePath().
+     * safe to stream off a growing prefix window.
      */
-    private fun telegramNeedsFullDownload(song: Song): Boolean {
+    private fun needsFullContainerDownload(song: Song): Boolean {
         val format = song.format.lowercase()
         return format == "m4a" || format == "mp4" || format.contains("alac") ||
             song.title.contains("alac", ignoreCase = true)
@@ -328,8 +328,13 @@ class CloudCacheManager(
                 } else if (song.source == SongSource.SMB || song.source == SongSource.FTP) {
                     if (!activeDownloads.containsKey(song.id)) startDownload(song)
                 } else {
-                    // HTTP Cloud (GDrive, Dropbox, etc.): Prime first 2MB window instead of full download
-                    primeWindow(song)
+                    if (needsFullContainerDownload(song)) {
+                        // M4A/MP4/ALAC: moov atom at end isn't safely playable from a partial window.
+                        if (!activeDownloads.containsKey(song.id)) startDownload(song)
+                    } else {
+                        // HTTP Cloud (GDrive, Dropbox, etc.): Prime first 2MB window instead of full download
+                        primeWindow(song)
+                    }
                 }
             }
         }
@@ -424,7 +429,7 @@ class CloudCacheManager(
      * playable for those containers.
      */
     private fun startTelegramWindowedDownload(song: Song, tdLib: TdLibManager) {
-        if (telegramNeedsFullDownload(song)) {
+        if (needsFullContainerDownload(song)) {
             startTelegramPreDownload(song, tdLib)
             return
         }
@@ -802,6 +807,7 @@ class CloudCacheManager(
         private var currentRafPath: String? = null
         private val lock = ReentrantLock()
         private var headers: Map<String, String>? = null
+        private val needsFullDownload = needsFullContainerDownload(song)
 
         // Get or create the shared window buffer for this song
         private val window = activeWindows.getOrPut(song.id) { WindowBuffer(song) }
@@ -856,6 +862,18 @@ class CloudCacheManager(
             
             // Strategy A: If full file is cached, read from it directly
             getCachedFile(song)?.let { return readFromFile(it, position, buffer, offset, size) }
+
+            if (needsFullDownload) {
+                if (!activeDownloads.containsKey(song.id)) startDownload(song)
+                runBlocking {
+                    withTimeoutOrNull(30_000) {
+                        while (getCachedFile(song) == null) delay(200)
+                    }
+                }
+                getCachedFile(song)?.let { return readFromFile(it, position, buffer, offset, size) }
+                Log.w(TAG, "Timed out waiting for full download of ${song.title}")
+                return -1
+            }
 
             // Strategy B: Use rolling-window buffer
             return readFromWindow(position, buffer, offset, size)
@@ -991,7 +1009,7 @@ class CloudCacheManager(
 
         // Windowed streaming (like GDrive): M4A/MP4/ALAC keep the old "wait for full file"
         // behavior since a partial prefix isn't reliably playable for those containers.
-        private val needsFullDownload = telegramNeedsFullDownload(song)
+        private val needsFullDownload = needsFullContainerDownload(song)
 
         // TDLib prefix-download bookkeeping. We always download from offset 0 and grow the
         // limit forward - "requestedPrefixEnd" is how far we've last asked TDLib to fetch.

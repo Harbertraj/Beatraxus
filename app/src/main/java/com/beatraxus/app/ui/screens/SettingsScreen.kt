@@ -3173,6 +3173,20 @@ private fun TelegramLoginCard(uiState: PlayerUiState, viewModel: PlayerViewModel
                     Text("Authenticated", color = Color(0xFF4CAF50), fontSize = 14.sp, fontWeight = FontWeight.Bold)
                 }
             }
+        } else if (authState is AuthState.NotReady) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                CircularProgressIndicator(modifier = Modifier.size(14.dp), color = Color(0xFF2AABEE), strokeWidth = 2.dp)
+                Text(
+                    "Connecting to Telegram...",
+                    color = Color.White.copy(0.6f),
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium
+                )
+            }
         } else if (!uiState.showTelegramPhoneForm) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(

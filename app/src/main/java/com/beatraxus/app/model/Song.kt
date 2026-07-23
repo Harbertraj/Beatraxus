@@ -292,7 +292,7 @@ data class PlayerUiState(
     val backgroundSyncEnabled: Boolean = true,
     val isEnrichmentPaused: Boolean = false,
     val enrichmentStatus: String? = null,
-    val telegramAuthState: AuthState = AuthState.LoggedOut,
+    val telegramAuthState: AuthState = AuthState.NotReady,
     val isSubmittingTelegram: Boolean = false,
     val telegramAuthError: String? = null,
     val castErrorMessage: String? = null,

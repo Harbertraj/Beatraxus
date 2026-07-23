@@ -3,6 +3,7 @@ package com.beatraxus.app.telegram
 import android.content.Context
 import android.util.Log
 import com.beatraxus.app.BuildConfig
+import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -35,6 +36,8 @@ class TdLibManager private constructor(
 ) {
 
     private var client: Client? = null
+    @Volatile private var pendingRestart = false
+    private val managerScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     private val _authState = MutableStateFlow<AuthState>(AuthState.NotReady)
     val authState: StateFlow<AuthState> = _authState
@@ -111,6 +114,11 @@ class TdLibManager private constructor(
                     Log.d("TDLib", "State: Closed -> clearing client")
                     _authState.value = AuthState.LoggedOut
                     client = null
+                    if (pendingRestart) {
+                        Log.d("TDLib", "pendingRestart is true, calling startClient()")
+                        pendingRestart = false
+                        startClient()
+                    }
                 }
                 else -> {
                     val stateName = state::class.java.simpleName
@@ -170,7 +178,7 @@ class TdLibManager private constructor(
                 client?.send(TdApi.SetOption("is_network_unmetered", TdApi.OptionValueBoolean(true))) {}
                 client?.send(TdApi.SetOption("ignore_background_networking", TdApi.OptionValueBoolean(true))) {}
                 // Higher number of concurrent downloads
-                client?.send(TdApi.SetOption("active_network_count", TdApi.OptionValueInteger(3))) {}
+                client?.send(TdApi.SetOption("active_network_count", TdApi.OptionValueInteger(25))) {}
             }
         }
     }
@@ -193,14 +201,27 @@ class TdLibManager private constructor(
 
     fun ensureClientStarted() {
         val currentState = _authState.value
-        if (client == null || currentState is AuthState.Error || currentState is AuthState.LoggedOut) {
-            Log.d("TDLib", "ensureClientStarted: Restarting client (current state: ${currentState::class.simpleName})")
+        if (client == null) {
             _authState.value = AuthState.NotReady
-            if (client != null) {
-                // If client exists but we're in a terminal state, try to clear it
-                client = null
-            }
             startClient()
+            return
+        }
+        if (currentState is AuthState.Error || currentState is AuthState.LoggedOut) {
+            Log.d("TDLib", "ensureClientStarted: closing stale client before restart (${currentState::class.simpleName})")
+            _authState.value = AuthState.NotReady
+            pendingRestart = true
+            client?.send(TdApi.Close()) { }
+            
+            // Safety timeout: if AuthorizationStateClosed never arrives, force restart after 5s
+            managerScope.launch {
+                delay(5000)
+                if (pendingRestart) {
+                    Log.w("TDLib", "Safety timeout: AuthorizationStateClosed did not arrive. Forcing restart.")
+                    pendingRestart = false
+                    client = null
+                    startClient()
+                }
+            }
         }
     }
 
@@ -347,7 +368,24 @@ class TdLibManager private constructor(
         }
     }
 
+    /**
+     * Reactively waits for a file to reach a certain download state.
+     * @param downloadSize If > 0, waits for at least this many bytes to be available.
+     *                     If 0, waits for full completion.
+     */
+    suspend fun waitForFile(fileId: Int, downloadSize: Long = 0, timeoutMs: Long = 10000): String? {
+        return withTimeoutOrNull(timeoutMs) {
+            getFileFlow(fileId).first { file ->
+                file != null && file.local.path.isNotBlank() && (
+                    (downloadSize <= 0 && file.local.isDownloadingCompleted) ||
+                    (downloadSize > 0 && (file.local.isDownloadingCompleted || file.local.downloadedPrefixSize >= downloadSize))
+                )
+            }?.local?.path
+        }
+    }
+
     fun close() {
+        managerScope.cancel()
         client?.send(TdApi.Close()) {
             INSTANCE = null
         }
