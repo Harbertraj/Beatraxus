@@ -77,7 +77,9 @@ private data class ExtractedMetadata(
     val artist: String? = null,
     val album: String? = null,
     val albumArtUri: Uri? = null,
-    val durationMs: Long? = null
+    val durationMs: Long? = null,
+    val sampleRateHz: Int? = null,
+    val bitDepth: Int? = null
 )
 
 private fun parseMetadataFromFileName(fileName: String): Pair<String?, String?> {
@@ -136,6 +138,9 @@ private suspend fun extractFullMetadata(
             val artist = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_ARTIST)
             val album = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_ALBUM)
             val duration = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()
+            val sampleRate = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_SAMPLERATE)?.toIntOrNull()
+            } else null
             
             var finalArtBytes = retriever.embeddedPicture
             
@@ -152,7 +157,7 @@ private suspend fun extractFullMetadata(
                 albumArtUri = Uri.fromFile(outFile)
             }
             
-            ExtractedMetadata(title, artist, album, albumArtUri, duration)
+            ExtractedMetadata(title, artist, album, albumArtUri, duration, sampleRate)
         } finally {
             try { retriever.release() } catch (e: Exception) {}
         }
@@ -170,6 +175,15 @@ private fun extractMetadataWithFfprobe(path: String): ExtractedMetadata {
             val tags = formatJson?.optJSONObject("tags")
             val duration = (formatJson?.optString("duration")?.toDoubleOrNull() ?: 0.0) * 1000.0
 
+            val streams = json.optJSONArray("streams")
+            val audioStream = (0 until (streams?.length() ?: 0))
+                .mapNotNull { streams?.optJSONObject(it) }
+                .find { it.optString("codec_type") == "audio" }
+
+            val sampleRate = audioStream?.optString("sample_rate")?.toIntOrNull()
+            val bitDepth = audioStream?.optString("bits_per_raw_sample")?.toIntOrNull() 
+                ?: audioStream?.optString("bits_per_sample")?.toIntOrNull()
+
             fun getTag(vararg keys: String): String? {
                 for (key in keys) {
                     val value = tags?.optString(key).takeIf { !it.isNullOrBlank() }
@@ -182,7 +196,9 @@ private fun extractMetadataWithFfprobe(path: String): ExtractedMetadata {
                 title = getTag("title", "TITLE"),
                 artist = getTag("artist", "ARTIST"),
                 album = getTag("album", "ALBUM"),
-                durationMs = duration.toLong()
+                durationMs = duration.toLong(),
+                sampleRateHz = sampleRate,
+                bitDepth = bitDepth
             )
         } catch (e: Exception) {
             // ignore
@@ -356,7 +372,8 @@ class TelegramChannelRepository(private val context: Context) {
                             folder = "Telegram: $username",
                             durationMs = extracted.durationMs ?: duration,
                             format = realFormat,
-                            sampleRateHz = 44100,
+                            sampleRateHz = extracted.sampleRateHz ?: 44100,
+                            bitDepth = extracted.bitDepth ?: 16,
                             fileSizeBytes = fileSize,
                             source = SongSource.TELEGRAM,
                             albumArtUri = extracted.albumArtUri ?: audioContent?.let { downloadAlbumArtUri(tdLib, it.audio) },

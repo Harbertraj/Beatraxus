@@ -70,9 +70,7 @@ class CloudCacheManager(
     }
 
     private fun needsFullContainerDownload(song: Song): Boolean {
-        // We now handle ALAC/M4A via head+tail streaming, so we don't strictly 
-        // need full download for playback start anymore.
-        return false 
+        return needsSpecialContainerHandling(song)
     }
 
     /**
@@ -194,12 +192,8 @@ class CloudCacheManager(
             }
         }
 
-        // For streamable containers (ALAC/M4A), also trigger a specific Tail download request
-        // to encourage TDLib to fetch the end of the file sooner.
-        if (isSpecial) {
-            val tailPos = (song.fileSizeBytes - TELEGRAM_TAIL_WINDOW_BYTES).coerceAtLeast(0L)
-            try { tdLib.send(TdApi.DownloadFile(currentFileId, 31, tailPos, TELEGRAM_TAIL_WINDOW_BYTES, false)) } catch (_: Exception) {}
-        }
+        // For streamable containers (ALAC/M4A), we no longer trigger a separate tail download 
+        // because TDLib only tracks one active offset per fileId.
 
         if (file?.local?.path?.isNotBlank() == true) {
             if (file.local.isDownloadingCompleted) {
@@ -225,20 +219,22 @@ class CloudCacheManager(
                     return@withContext path
                 }
                 
-                // Allow early unblock if we have enough data. 
-                // For ALAC/M4A, we need both head (prefix) and tail. 
-                // Since TDLib doesn't give range-specific progress, we check:
-                // 1. Prefix is >= 6MB (for play-start)
-                // 2. Total downloaded size is >= 7MB (to ensure tail request 1MB finished)
-                val requiredPrefix = if (isSpecial) 6L * 1024 * 1024 else TELEGRAM_INITIAL_WINDOW_BYTES
-                val requiredTotal = if (isSpecial) 7L * 1024 * 1024 else requiredPrefix
-                
-                if (file.local.downloadedPrefixSize >= requiredPrefix && 
-                    file.local.downloadedSize >= requiredTotal && 
-                    File(path).exists()) {
+                // For ALAC/M4A, we must wait for full download completion.
+                // Prefix/downloadedSize heuristics are removed because we no longer 
+                // send a tail request to complement the prefix.
+                if (isSpecial) {
+                    if (file.local.isDownloadingCompleted && File(path).exists()) {
+                        Log.d(TAG, "Full Telegram download available for special container ${song.title}: $path")
+                        return@withContext path
+                    }
+                } else {
+                    // Non-special: allow early unblock if we have enough data. 
+                    val requiredPrefix = TELEGRAM_INITIAL_WINDOW_BYTES
                     
-                    Log.d(TAG, "Windowed Telegram path available early for ${song.title}: $path (Prefix: ${file.local.downloadedPrefixSize}, Total: ${file.local.downloadedSize})")
-                    return@withContext path
+                    if (file.local.downloadedPrefixSize >= requiredPrefix && File(path).exists()) {
+                        Log.d(TAG, "Windowed Telegram path available early for ${song.title}: $path (Prefix: ${file.local.downloadedPrefixSize})")
+                        return@withContext path
+                    }
                 }
             }
             delay(50)
@@ -459,12 +455,6 @@ class CloudCacheManager(
                     // so that TDLib eventually marks it as isDownloadingCompleted.
                     val limit = if (isSpecial) 0L else TELEGRAM_INITIAL_WINDOW_BYTES
                     tdLib.send(TdApi.DownloadFile(currentFileId, 32, 0L, limit, false))
-                    
-                    // 2. For ALAC/M4A, also fetch the Tail (1MB) specifically to prioritize it
-                    if (isSpecial && song.fileSizeBytes > TELEGRAM_INITIAL_WINDOW_BYTES + TELEGRAM_TAIL_WINDOW_BYTES) {
-                        val tailPos = song.fileSizeBytes - TELEGRAM_TAIL_WINDOW_BYTES
-                        tdLib.send(TdApi.DownloadFile(currentFileId, 31, tailPos, TELEGRAM_TAIL_WINDOW_BYTES, false))
-                    }
 
                     // Observe progress and register with unified cache when finished
                     tdLib.getFileFlow(currentFileId).collect { file ->
@@ -1050,18 +1040,6 @@ class CloudCacheManager(
                     // 1. Initial Head window (e.g. 3MB)
                     val initialLimit = if (needsFullDownload) 0L else TELEGRAM_INITIAL_WINDOW_BYTES
                     requestWindow(currentFileId, initialLimit)
-                    
-                    // 2. For ALAC/M4A, also fetch the Tail (1MB) immediately to allow container probe
-                    if (needsSpecialContainerHandling(song) && song.fileSizeBytes > TELEGRAM_INITIAL_WINDOW_BYTES + TELEGRAM_TAIL_WINDOW_BYTES) {
-                        val tailPos = song.fileSizeBytes - TELEGRAM_TAIL_WINDOW_BYTES
-                        scope.launch {
-                            try {
-                                tdLib.send(TdApi.DownloadFile(currentFileId, 31, tailPos, TELEGRAM_TAIL_WINDOW_BYTES, false))
-                            } catch (e: Exception) {
-                                Log.w(TAG, "Tail request failed for ${song.title}: ${e.message}")
-                            }
-                        }
-                    }
                 }
                 
                 if (currentFileId != null && currentFileId != 0) {
