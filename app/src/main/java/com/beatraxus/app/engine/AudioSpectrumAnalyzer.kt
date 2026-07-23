@@ -77,7 +77,7 @@ import kotlin.math.sin
  *    adds `LosslessAuthenticity` detection (spectral cutoff + bit-depth LSB
  *    entropy) so the badge can tell genuine hi-res/lossless apart from a fake.
  */
-class AudioSpectrumAnalyzer(
+internal class AudioSpectrumAnalyzer(
     private val context: Context,
     private val decoderFactory: DecoderFactory
 ) {
@@ -572,7 +572,7 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawSpectrogram(fra
  *  analysis confirms genuine lossless content; gray (with a short reason) when the
  *  file is an upsampled/transcoded fake or a plain lossy format. */
 @Composable
-fun LosslessAuthenticityBadge(result: AudioSpectrumAnalyzer.SpectrumAnalysisResult) {
+internal fun LosslessAuthenticityBadge(result: AudioSpectrumAnalyzer.SpectrumAnalysisResult) {
     val color = result.badgeColor()
     Box(
         modifier = Modifier
@@ -593,7 +593,7 @@ fun LosslessAuthenticityBadge(result: AudioSpectrumAnalyzer.SpectrumAnalysisResu
 /** Full spectrogram canvas + corner badge, positioned exactly like the request:
  *  the lossless-authenticity text sits in the spectrogram's top-right corner. */
 @Composable
-fun SpectrogramAnalysisView(
+internal fun SpectrogramAnalysisView(
     result: AudioSpectrumAnalyzer.SpectrumAnalysisResult?,
     modifier: Modifier = Modifier
 ) {

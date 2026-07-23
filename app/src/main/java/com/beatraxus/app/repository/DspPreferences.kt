@@ -173,8 +173,8 @@ class DspPreferences(private val context: Context) {
             rmsLevelerEnabled = pref(RMS_LEVELER_ENABLED, false),
             dvcMode = DvcMode.valueOf(prefNullable(DVC_MODE) ?: DvcMode.DAC.name),
             dvcLevel = pref(DVC_LEVEL, 1f),
-            compensateDvcVolumeEnabled = pref(COMPENSATE_DVC_VOLUME, false),
-            ditherEnabled = pref(DITHER_ENABLED, true),
+            compensateDvcVolumeEnabled = pref(COMPENSATE_DVC_VOLUME, true),
+            ditherEnabled = pref(DITHER_ENABLED, false),
             ditherType = runCatching {
                 DitherType.valueOf(prefNullable(DITHER_TYPE) ?: DitherType.SHAPED.name)
             }.getOrDefault(DitherType.SHAPED),

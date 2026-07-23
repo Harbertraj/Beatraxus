@@ -2378,7 +2378,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    suspend fun analyzeSpectrum(song: Song): AudioSpectrumAnalyzer.SpectrumAnalysisResult? {
+    internal suspend fun analyzeSpectrum(song: Song): AudioSpectrumAnalyzer.SpectrumAnalysisResult? {
         return withContext(Dispatchers.IO) {
             service?.getAudioEngine()?.getAudioSpectrumAnalyzer()?.getOrAnalyze(song)
         }

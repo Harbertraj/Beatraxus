@@ -225,7 +225,7 @@ data class DspConfig(
     val rmsLevelerEnabled: Boolean = false,
     val dvcMode: DvcMode = DvcMode.DAC,
     val dvcLevel: Float = 1f,
-    val compensateDvcVolumeEnabled: Boolean = false,
+    val compensateDvcVolumeEnabled: Boolean = true,
 
     // USB
     val usbExclusiveEnabled: Boolean = false,
@@ -276,7 +276,7 @@ data class DspConfig(
     val limiterHardModeEnabled: Boolean = false,
 
     // Dither
-    val ditherEnabled: Boolean = true,
+    val ditherEnabled: Boolean = false,
     val ditherType: DitherType = DitherType.SHAPED,
     val settingsLocked: Boolean = false,
 
