@@ -163,7 +163,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         backgroundSyncEnabled = prefs.getBoolean("background_sync_enabled", true),
         scrobblingEnabled = prefs.getBoolean("scrobbling_enabled", true),
         gdriveAllowedFormats = prefs.getStringSet("gdrive_allowed_formats", emptySet()) ?: emptySet(),
-        telegramAllowedFormats = prefs.getStringSet("telegram_allowed_formats", emptySet()) ?: emptySet()
+        telegramAllowedFormats = prefs.getStringSet("telegram_allowed_formats", emptySet()) ?: emptySet(),
+        shuffleMode = prefs.getBoolean("last_shuffle_mode", false),
+        repeatMode = com.beatraxus.app.engine.RepeatMode.valueOf(
+            prefs.getString("last_repeat_mode", com.beatraxus.app.engine.RepeatMode.OFF.name) 
+                ?: com.beatraxus.app.engine.RepeatMode.OFF.name
+        ).ordinal
     ))
     val uiState: StateFlow<PlayerUiState> = _uiState.asStateFlow()
 
@@ -3759,14 +3764,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun restartTelegramAuth() {
         viewModelScope.launch {
-            _uiState.update { it.copy(isSubmittingTelegram = true) }
+            _uiState.update { it.copy(isSubmittingTelegram = true, telegramAuthError = null) }
             try {
-                // To change number, we need to log out or restart the client
-                // For simplicity and reliability with TDLib, we restart the client
-                tdLibManager.close()
-                delay(500)
-                tdLibManager.ensureClientStarted()
-                _uiState.update { it.copy(telegramAuthError = null) }
+                // To change number, we need to log out or restart the client.
+                // TdLibManager.restart() handles the proper sequence.
+                tdLibManager.restart()
+                delay(300)
             } catch (e: Exception) {
                 Log.e("TDLib", "Failed to restart auth", e)
             } finally {

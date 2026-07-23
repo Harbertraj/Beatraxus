@@ -293,10 +293,15 @@ internal class FfmpegAlacDecoder(
 
         // 3. Fallback to FFprobe for cloud/complex sources only if absolutely necessary
         val inputSource = resolveInputSource(song)
+        if (inputSource.isBlank()) {
+            Log.w(TAG, "Cannot probe format: resolveInputSource returned blank for ${song.title}")
+            return@withContext null
+        }
         probeFormatWithFfprobe(inputSource, headers)
     }
 
     private fun probeFormatWithFfprobe(path: String, headers: Map<String, String>): ProbedAlacFormat? {
+        if (path.isBlank()) return null
         return try {
             val mediaInfo = if (headers.isEmpty()) {
                 val session = FFprobeKit.getMediaInformation(path)

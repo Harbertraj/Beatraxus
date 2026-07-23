@@ -822,10 +822,10 @@ class AudioEngine(
                                 continue
                             }
 
-                            if (song.source == SongSource.TELEGRAM && retryCount < 1) {
+                            if (song.source == SongSource.TELEGRAM && retryCount < 2) {
                                 retryCount++
-                                Log.w("AudioEngine", "Telegram decode failed, waiting for TDLib ready and retrying...")
-                                if (tdLibManager.awaitTdlibReady(10000)) {
+                                Log.w("AudioEngine", "Telegram decode failed, waiting for TDLib ready and retrying... (Attempt $retryCount)")
+                                if (tdLibManager.awaitTdlibReady(20000)) {
                                     continue
                                 }
                             }

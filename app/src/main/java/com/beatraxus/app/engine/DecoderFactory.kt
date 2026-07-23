@@ -125,13 +125,21 @@ internal class DecoderFactory(
                     } catch (e: Exception) {
                         // Fallback to direct URL if MediaDataSource fails for probing
                         val url = resolveDirectUrl(song)
-                        val headers = resolveHeaders(song)
-                        extractor.setDataSource(url, headers)
+                        if (url.isNotBlank()) {
+                            val headers = resolveHeaders(song)
+                            extractor.setDataSource(url, headers)
+                        } else {
+                            return@withContext null
+                        }
                     }
                 } else {
                     val url = resolveDirectUrl(song)
-                    val headers = resolveHeaders(song)
-                    extractor.setDataSource(url, headers)
+                    if (url.isNotBlank()) {
+                        val headers = resolveHeaders(song)
+                        extractor.setDataSource(url, headers)
+                    } else {
+                        return@withContext null
+                    }
                 }
             } else {
                 try {
@@ -169,6 +177,11 @@ internal class DecoderFactory(
                 resolveDirectUrl(song)
             }
 
+            if (inputSource.isBlank()) {
+                Log.w(TAG, "Skipping FFprobe fallback: inputSource is blank for ${song.title}")
+                return@withContext null
+            }
+
             val session = com.arthenica.ffmpegkit.FFprobeKit.getMediaInformation(inputSource)
             val info = session.mediaInformation
             val audioStream = info?.streams?.firstOrNull { it.type == "audio" }
@@ -189,6 +202,7 @@ internal class DecoderFactory(
             SongSource.ONEDRIVE -> "https://graph.microsoft.com/v1.0/me/drive/items/${song.onedriveFileId}/content"
             SongSource.BOX -> "https://api.box.com/2.0/files/${song.boxFileId}/content"
             SongSource.NEXTCLOUD -> song.uri.toString()
+            SongSource.TELEGRAM -> ""
             else -> song.uri.toString()
         }
     }

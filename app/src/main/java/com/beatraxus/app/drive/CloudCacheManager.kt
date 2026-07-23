@@ -183,6 +183,7 @@ class CloudCacheManager(
             tdLib.send(TdApi.DownloadFile(currentFileId, 32, 0L, initialLimit, false))
         } catch (e: Exception) {
             Log.w(TAG, "DownloadFile failed for ${song.title}, refreshing ID: ${e.message}")
+            delay(200) // Small delay before refresh/retry to avoid race with deletion
             currentFileId = refreshFileId(song, tdLib) ?: return@withContext null
             try { 
                 tdLib.send(TdApi.DownloadFile(currentFileId, 32, 0L, initialLimit, false)) 
@@ -192,17 +193,14 @@ class CloudCacheManager(
             }
         }
 
-        // For streamable containers (ALAC/M4A), we no longer trigger a separate tail download 
-        // because TDLib only tracks one active offset per fileId.
-
         if (file?.local?.path?.isNotBlank() == true) {
             if (file.local.isDownloadingCompleted) {
                 val f = File(file.local.path)
                 if (f.exists()) return@withContext file.local.path
             }
             
-            // Unblock early if we have the required window for streaming
-            if (file.local.downloadedPrefixSize >= TELEGRAM_INITIAL_WINDOW_BYTES) {
+            // Unblock early if we have the required window for streaming, but ONLY for non-special formats
+            if (!isSpecial && file.local.downloadedPrefixSize >= TELEGRAM_INITIAL_WINDOW_BYTES) {
                 if (File(file.local.path).exists()) return@withContext file.local.path
             }
         }
@@ -210,7 +208,7 @@ class CloudCacheManager(
         // Wait for path and window to become available
         Log.d(TAG, "Waiting for Telegram file path for ${song.title} (ID: $currentFileId)...")
         var attempts = 0
-        while (attempts < 800) { // 40 seconds
+        while (attempts < 1200) { // Increased to 60 seconds
             file = try { tdLib.send(TdApi.GetFile(currentFileId)) } catch (e: Exception) { null }
             if (file?.local?.path?.isNotBlank() == true) {
                 val path = file.local.path
@@ -219,19 +217,10 @@ class CloudCacheManager(
                     return@withContext path
                 }
                 
-                // For ALAC/M4A, we must wait for full download completion.
-                // Prefix/downloadedSize heuristics are removed because we no longer 
-                // send a tail request to complement the prefix.
-                if (isSpecial) {
-                    if (file.local.isDownloadingCompleted && File(path).exists()) {
-                        Log.d(TAG, "Full Telegram download available for special container ${song.title}: $path")
-                        return@withContext path
-                    }
-                } else {
-                    // Non-special: allow early unblock if we have enough data. 
-                    val requiredPrefix = TELEGRAM_INITIAL_WINDOW_BYTES
-                    
-                    if (file.local.downloadedPrefixSize >= requiredPrefix && File(path).exists()) {
+                // For ALAC/M4A/MP4, we must wait for full download completion (metadata is often at EOF).
+                if (!isSpecial) {
+                    // Non-special (AAC, FLAC, MP3): allow early unblock if we have enough data (6MB window).
+                    if (file.local.downloadedPrefixSize >= TELEGRAM_INITIAL_WINDOW_BYTES && File(path).exists()) {
                         Log.d(TAG, "Windowed Telegram path available early for ${song.title}: $path (Prefix: ${file.local.downloadedPrefixSize})")
                         return@withContext path
                     }
@@ -311,9 +300,9 @@ class CloudCacheManager(
         toCancel.forEach { id ->
             activeDownloads[id]?.cancel()
             activeDownloads.remove(id)
-            activeTelegramFileIds.remove(id)?.let { fileId ->
-                tdLib?.let { td -> downloadScope.launch { try { td.send(TdApi.DeleteFile(fileId)) } catch (_: Exception) {} } }
-            }
+            // Relaxed deletion: don't call TdApi.DeleteFile here. 
+            // Let reconcileSource handle it later with a wider window.
+            activeTelegramFileIds.remove(id)
         }
 
         // 2. Prune rolling window buffers no longer in keepIds
@@ -323,9 +312,8 @@ class CloudCacheManager(
                 activeWindows[id]?.prefetchJob?.cancel()
             }
             activeWindows.remove(id)
-            activeTelegramFileIds.remove(id)?.let { fileId ->
-                tdLib?.let { td -> downloadScope.launch { try { td.send(TdApi.DeleteFile(fileId)) } catch (_: Exception) {} } }
-            }
+            // Relaxed deletion: don't call TdApi.DeleteFile here.
+            activeTelegramFileIds.remove(id)
         }
 
         // 3. Start downloads/priming for 'keepIds' if not already cached
@@ -1167,7 +1155,8 @@ class CloudCacheManager(
             // Polling loop: Wait for localPath and required data range.
             // For ALAC tail requests, we don't strictly check downloadedPrefix (which is prefix-only)
             // but we do wait for the file to exist on disk.
-            while ((localPath == null || (!isTailRequest && downloadedPrefix < position + size) || !File(localPath ?: "").exists()) && attempts < 1000) {
+            Log.d(TAG, "Polling for Telegram data at pos $position (isTail=$isTailRequest) for ${song.title}...")
+            while ((localPath.isNullOrBlank() || (!isTailRequest && downloadedPrefix < position + size) || !File(localPath ?: "").exists()) && attempts < 4000) {
                 try {
                     lock.unlock()
                     Thread.sleep(10) // Snappier check (10ms)
@@ -1177,10 +1166,14 @@ class CloudCacheManager(
                 }
                 attempts++
                 if (attempts % 25 == 0 && !isTailRequest) maybeExpandWindow(position + size)
-                if (localPath != null && (isTailRequest || downloadedPrefix >= position + size) && File(localPath!!).exists()) break
+                if (!localPath.isNullOrBlank() && (isTailRequest || downloadedPrefix >= position + size) && File(localPath!!).exists()) break
             }
 
-            val path = localPath ?: return -1
+            if (attempts >= 4000) {
+                Log.e(TAG, "Telegram polling timeout (40s) for ${song.title} at pos $position. Path: $localPath, Prefix: $downloadedPrefix")
+            }
+
+            val path = localPath.takeIf { it?.isNotBlank() == true } ?: return -1
             if (!File(path).exists()) {
                 Log.e(TAG, "Telegram file missing at path: $path")
                 return -1

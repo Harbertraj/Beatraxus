@@ -181,6 +181,13 @@ class AudioPlaybackService : Service() {
         val database = application.database
         val tdLibManager = application.tdLibManager
         engine = AudioEngine(this, audioOutput, cloudCacheManager, database, tdLibManager)
+
+        // Restore shuffle/repeat modes from disk
+        val lastShuffle = prefs.getBoolean("last_shuffle_mode", false)
+        val lastRepeat = RepeatMode.valueOf(prefs.getString("last_repeat_mode", RepeatMode.OFF.name) ?: RepeatMode.OFF.name)
+        engine.setShuffleMode(lastShuffle)
+        engine.setRepeatMode(lastRepeat)
+
         refreshOutputRoute()
         audioManager.registerAudioDeviceCallback(audioDeviceCallback, null)
         registerReceiver(noisyReceiver, IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY))
@@ -1602,6 +1609,11 @@ class AudioPlaybackService : Service() {
                 editor.putString("last_song_id", currentSong.id)
                 editor.putLong("last_song_pos", engine.currentPositionMs())
             }
+
+            // Persist shuffle and repeat modes
+            val state = engine.playbackStateFlow.value
+            editor.putBoolean("last_shuffle_mode", state.shuffleMode)
+            editor.putString("last_repeat_mode", state.repeatMode.name)
         }
         
         if (sync) {

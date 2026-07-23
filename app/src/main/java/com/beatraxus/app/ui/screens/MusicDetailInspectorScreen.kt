@@ -20,6 +20,7 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
@@ -49,6 +50,8 @@ import kotlin.math.sqrt
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
+import kotlin.math.pow
+import kotlin.math.log10
 
 /**
  * Music Detail Inspector — an "audiophile lab" reading of a single track. Deliberately
@@ -123,10 +126,13 @@ fun MusicDetailInspectorScreen(
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = 16.dp)
             ) {
-                InspectorHeader(currentSong, quality, onBack)
+                InspectorHeader(currentSong, onBack)
 
-                Spacer(Modifier.height(18.dp))
-                QualityScoreCard(quality)
+                Spacer(Modifier.height(14.dp))
+                LiveMetersCard(viewModel, isActive = isCurrentlyPlaying, quality = quality)
+
+                Spacer(Modifier.height(14.dp))
+                SpectrogramCard(spectrumResult)
 
                 Spacer(Modifier.height(14.dp))
                 WaveformCard(
@@ -138,30 +144,24 @@ fun MusicDetailInspectorScreen(
                 )
 
                 Spacer(Modifier.height(14.dp))
-                SpectrogramCard(spectrumResult)
-
-                Spacer(Modifier.height(14.dp))
-                LiveMetersCard(viewModel, isActive = isCurrentlyPlaying, quality = quality)
-
-                Spacer(Modifier.height(14.dp))
-                MetadataCard(currentSong)
-
-                Spacer(Modifier.height(14.dp))
-                ReplayGainCard(currentSong)
+                QualityScoreCard(quality)
 
                 Spacer(Modifier.height(14.dp))
                 CodecCard(currentSong, quality)
 
                 Spacer(Modifier.height(14.dp))
-                ArtworkCard(currentSong)
+                TagsCard(currentSong)
+
+                Spacer(Modifier.height(14.dp))
+                ReplayGainCard(currentSong)
+
+                Spacer(Modifier.height(14.dp))
+                MetadataCard(currentSong)
 
                 if (!currentSong.lyrics.isNullOrBlank()) {
                     Spacer(Modifier.height(14.dp))
                     LyricsCard(currentSong)
                 }
-
-                Spacer(Modifier.height(14.dp))
-                TagsCard(currentSong)
 
                 Spacer(Modifier.height(32.dp))
             }
@@ -192,7 +192,7 @@ private fun BoxScope.AmbientBackdrop(song: Song) {
             .height(420.dp)
             .align(Alignment.TopCenter)
             .blur(if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) 60.dp else 30.dp)
-            .background(Color.Black.copy(alpha = 0.35f))
+            .background(Color.Black.copy(alpha = 0.55f))
     )
     Box(
         modifier = Modifier
@@ -202,8 +202,8 @@ private fun BoxScope.AmbientBackdrop(song: Song) {
             .background(
                 Brush.verticalGradient(
                     colors = listOf(
-                        Color.Black.copy(alpha = 0.25f),
-                        InspectorPalette.Bg.copy(alpha = 0.55f),
+                        Color.Black.copy(alpha = 0.45f),
+                        InspectorPalette.Bg.copy(alpha = 0.75f),
                         InspectorPalette.Bg
                     )
                 )
@@ -219,9 +219,9 @@ private fun BoxScope.AmbientBackdrop(song: Song) {
 // ---------------------------------------------------------------------------
 @Composable
 private fun InstrumentCard(
-    label: String,
+    label: String?,
     accent: Color,
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    icon: androidx.compose.ui.graphics.vector.ImageVector?,
     modifier: Modifier = Modifier,
     trailing: (@Composable () -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit
@@ -241,31 +241,32 @@ private fun InstrumentCard(
             .border(1.dp, accent.copy(alpha = 0.35f), RoundedCornerShape(20.dp))
             .padding(16.dp)
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                modifier = Modifier
-                    .size(26.dp)
-                    .clip(CircleShape)
-                    .background(accent.copy(alpha = 0.18f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(icon, contentDescription = null, tint = accent, modifier = Modifier.size(15.dp))
+        if (label != null && icon != null) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(26.dp)
+                        .clip(CircleShape)
+                        .background(accent.copy(alpha = 0.18f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(icon, contentDescription = null, tint = accent, modifier = Modifier.size(15.dp))
+                }
+                Spacer(Modifier.width(10.dp))
+                Text(label, color = accent, fontSize = 12.sp, fontWeight = FontWeight.Black, letterSpacing = 1.2.sp)
+                if (trailing != null) {
+                    Spacer(Modifier.weight(1f))
+                    trailing()
+                }
             }
-            Spacer(Modifier.width(10.dp))
-            Text(label, color = accent, fontSize = 12.sp, fontWeight = FontWeight.Black, letterSpacing = 1.2.sp)
-            if (trailing != null) {
-                Spacer(Modifier.weight(1f))
-                trailing()
-            }
+            Spacer(Modifier.height(12.dp))
         }
-        Spacer(Modifier.height(12.dp))
         content()
     }
 }
 
 @Composable
-private fun InspectorHeader(song: Song, quality: SongQualityEntity?, onBack: () -> Unit) {
-    val tint = quality?.let { tierColor(it.qualityTier) } ?: InspectorPalette.Quality
+private fun InspectorHeader(song: Song, onBack: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -280,18 +281,7 @@ private fun InspectorHeader(song: Song, quality: SongQualityEntity?, onBack: () 
         ) {
             Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back", tint = Color.White)
         }
-        Spacer(Modifier.width(10.dp))
-        AsyncImage(
-            model = song.albumArtUri,
-            contentDescription = "Album art",
-            contentScale = ContentScale.Crop,
-            modifier = Modifier
-                .size(60.dp)
-                .clip(RoundedCornerShape(14.dp))
-                .border(1.5.dp, tint.copy(alpha = 0.6f), RoundedCornerShape(14.dp))
-                .background(Color.White.copy(0.06f))
-        )
-        Spacer(Modifier.width(12.dp))
+        Spacer(Modifier.width(16.dp))
         Column(Modifier.weight(1f)) {
             Text(
                 song.title,
@@ -328,7 +318,12 @@ private fun QualityScoreCard(quality: SongQualityEntity?) {
         }
 
         val tierColor = tierColor(quality.qualityTier)
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             Box(contentAlignment = Alignment.Center, modifier = Modifier.size(104.dp)) {
                 Canvas(modifier = Modifier.fillMaxSize()) {
                     val stroke = 11.dp.toPx()
@@ -354,8 +349,8 @@ private fun QualityScoreCard(quality: SongQualityEntity?) {
                     Text("/ 100", color = Color.White.copy(0.4f), fontSize = 10.sp)
                 }
             }
-            Spacer(Modifier.width(20.dp))
-            Column {
+            Spacer(Modifier.weight(1f))
+            Column(horizontalAlignment = Alignment.End) {
                 Box(
                     modifier = Modifier
                         .clip(RoundedCornerShape(10.dp))
@@ -522,7 +517,12 @@ private fun SpectrogramCard(
     InstrumentCard(
         label = "SPECTROGRAM",
         accent = InspectorPalette.Spectrogram,
-        icon = Icons.Rounded.Equalizer
+        icon = Icons.Rounded.Equalizer,
+        trailing = {
+            if (result != null) {
+                com.beatraxus.app.engine.LosslessAuthenticityBadge(result)
+            }
+        }
     ) {
         Box(
             modifier = Modifier
@@ -622,9 +622,9 @@ private fun LiveMetersCard(viewModel: PlayerViewModel, isActive: Boolean, qualit
 
         var fftBars by remember { mutableStateOf(FloatArray(32)) }
         var peakBars by remember { mutableStateOf(FloatArray(32)) }
-        var correlation by remember { mutableStateOf(0f) }
-        var rmsDb by remember { mutableStateOf(-60f) }
-        var peakDb by remember { mutableStateOf(-60f) }
+        var correlation by remember { mutableFloatStateOf(0f) }
+        var rmsDb by remember { mutableFloatStateOf(-60f) }
+        var peakDb by remember { mutableFloatStateOf(-60f) }
         var noSignalYet by remember { mutableStateOf(true) }
 
         LaunchedEffect(viewModel) {
@@ -652,8 +652,8 @@ private fun LiveMetersCard(viewModel: PlayerViewModel, isActive: Boolean, qualit
                             corrSum += (l * r).toDouble()
                         }
                         val rms = sqrt(sumSq / frames)
-                        rmsDb = (20.0 * kotlin.math.log10(rms.coerceAtLeast(1e-6))).toFloat()
-                        peakDb = (20.0 * kotlin.math.log10(peak.toDouble().coerceAtLeast(1e-6))).toFloat()
+                        rmsDb = (20.0 * log10(rms.coerceAtLeast(1e-6))).toFloat()
+                        peakDb = (20.0 * log10(peak.toDouble().coerceAtLeast(1e-6))).toFloat()
                         correlation = (corrSum / frames).toFloat().coerceIn(-1f, 1f)
 
                         val windowed = FloatArray(LIVE_FFT_SIZE) { idx ->
@@ -663,14 +663,36 @@ private fun LiveMetersCard(viewModel: PlayerViewModel, isActive: Boolean, qualit
                         }
                         val mags = fftMagnitude(windowed)
                         val bars = FloatArray(32)
-                        val binsPerBar = (mags.size / bars.size).coerceAtLeast(1)
+                        
+                        // Logarithmic mapping: more bins for lower frequencies, fewer for high.
+                        // Music energy is concentrated in lower octaves.
+                        val numBins = mags.size
+                        val minFreq = 40.0
+                        val maxFreq = 20000.0
+                        val logMin = log10(minFreq)
+                        val logMax = log10(maxFreq)
+                        
                         for (b in bars.indices) {
+                            val fStartLog = logMin + (b.toDouble() / bars.size) * (logMax - logMin)
+                            val fEndLog = logMin + ((b + 1).toDouble() / bars.size) * (logMax - logMin)
+                            
+                            val fStart = 10.0.pow(fStartLog)
+                            val fEnd = 10.0.pow(fEndLog)
+                            
+                            val binStart = (fStart * LIVE_FFT_SIZE / 44100.0).toInt().coerceIn(0, numBins - 1)
+                            val binEnd = (fEnd * LIVE_FFT_SIZE / 44100.0).toInt().coerceIn(binStart + 1, numBins)
+                            
                             var s = 0f
-                            for (i in 0 until binsPerBar) {
-                                val idx = b * binsPerBar + i
-                                if (idx < mags.size) s += mags[idx]
+                            var count = 0
+                            for (i in binStart until binEnd) {
+                                s += mags[i]
+                                count++
                             }
-                            bars[b] = (s / binsPerBar / (LIVE_FFT_SIZE / 4f)).coerceIn(0f, 1f)
+                            if (count > 0) {
+                                // Boost high frequencies slightly for visibility, as energy drops off
+                                val boost = 1.0f + (b.toFloat() / bars.size) * 1.5f
+                                bars[b] = (s / count / (LIVE_FFT_SIZE / 8f) * boost).coerceIn(0f, 1f)
+                            }
                         }
                         fftBars = bars
                         peakBars = FloatArray(32) { i -> maxOf(bars[i], peakBars.getOrElse(i) { 0f } * 0.92f) }
@@ -870,23 +892,32 @@ private fun CodecCard(song: Song, quality: SongQualityEntity?) {
 // 9. Embedded artwork card
 // ---------------------------------------------------------------------------
 @Composable
-private fun ArtworkCard(song: Song) {
-    InstrumentCard(label = "EMBEDDED ARTWORK", accent = InspectorPalette.Artwork, icon = Icons.Rounded.Image) {
-        if (song.albumArtUri == null) {
-            Text("No embedded artwork found", color = Color.White.copy(0.4f), fontSize = 12.sp)
-            return@InstrumentCard
-        }
-        AsyncImage(
-            model = song.albumArtUri,
-            contentDescription = "Full artwork",
-            contentScale = ContentScale.Fit,
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(max = 260.dp)
-                .clip(RoundedCornerShape(14.dp))
-                .border(1.dp, InspectorPalette.Artwork.copy(alpha = 0.3f), RoundedCornerShape(14.dp))
-        )
+private fun ArtworkCard(song: Song, showLabel: Boolean = true) {
+    InstrumentCard(
+        label = if (showLabel) "EMBEDDED ARTWORK" else null,
+        accent = InspectorPalette.Artwork,
+        icon = if (showLabel) Icons.Rounded.Image else null
+    ) {
+        ArtworkContent(song)
     }
+}
+
+@Composable
+private fun ArtworkContent(song: Song) {
+    if (song.albumArtUri == null) {
+        Text("No embedded artwork found", color = Color.White.copy(0.4f), fontSize = 12.sp)
+        return
+    }
+    AsyncImage(
+        model = song.albumArtUri,
+        contentDescription = "Full artwork",
+        contentScale = ContentScale.Fit,
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(max = 260.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .border(1.dp, InspectorPalette.Artwork.copy(alpha = 0.3f), RoundedCornerShape(14.dp))
+    )
 }
 
 // ---------------------------------------------------------------------------

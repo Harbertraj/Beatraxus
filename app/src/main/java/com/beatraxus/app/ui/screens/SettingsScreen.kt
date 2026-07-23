@@ -3107,13 +3107,19 @@ fun CloudContent(
 
 @Composable
 private fun TelegramLoginCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
-    var phone by remember { mutableStateOf("") }
+    var countryCode by remember { mutableStateOf("+") }
+    var mobileNumber by remember { mutableStateOf("") }
     var code by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
 
     val authState = uiState.telegramAuthState
     val isSubmitting = uiState.isSubmittingTelegram
     val authError = uiState.telegramAuthError
+
+    // When auth state is LoggedOut or WaitPhoneNumber, we are NOT done with phone
+    val isPhoneDone = authState !is AuthState.LoggedOut && 
+                      authState !is AuthState.WaitPhoneNumber && 
+                      authState !is AuthState.NotReady
 
     Column(
         modifier = Modifier
@@ -3138,6 +3144,10 @@ private fun TelegramLoginCard(uiState: PlayerUiState, viewModel: PlayerViewModel
                 fontWeight = FontWeight.Bold,
                 letterSpacing = 1.sp
             )
+            if (authState is AuthState.NotReady) {
+                Spacer(Modifier.weight(1f))
+                CircularProgressIndicator(modifier = Modifier.size(14.dp), color = Color(0xFF2AABEE), strokeWidth = 2.dp)
+            }
         }
 
         // Error message at the top
@@ -3173,20 +3183,6 @@ private fun TelegramLoginCard(uiState: PlayerUiState, viewModel: PlayerViewModel
                     Text("Authenticated", color = Color(0xFF4CAF50), fontSize = 14.sp, fontWeight = FontWeight.Bold)
                 }
             }
-        } else if (authState is AuthState.NotReady) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                CircularProgressIndicator(modifier = Modifier.size(14.dp), color = Color(0xFF2AABEE), strokeWidth = 2.dp)
-                Text(
-                    "Connecting to Telegram...",
-                    color = Color.White.copy(0.6f),
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Medium
-                )
-            }
         } else if (!uiState.showTelegramPhoneForm) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
@@ -3213,11 +3209,6 @@ private fun TelegramLoginCard(uiState: PlayerUiState, viewModel: PlayerViewModel
             }
         } else {
             when (authState) {
-                AuthState.NotReady -> {
-                    Box(modifier = Modifier.fillMaxWidth().height(48.dp), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(modifier = Modifier.size(24.dp), color = Color(0xFF2AABEE), strokeWidth = 2.dp)
-                    }
-                }
                 is AuthState.Error -> {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                         Icon(Icons.Rounded.ErrorOutline, null, tint = Color.Red, modifier = Modifier.size(24.dp))
@@ -3259,39 +3250,85 @@ private fun TelegramLoginCard(uiState: PlayerUiState, viewModel: PlayerViewModel
                     }
                 }
                 else -> {
-                    val isPhoneDone = authState !is AuthState.LoggedOut && authState !is AuthState.WaitPhoneNumber
-                    
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        OutlinedTextField(
-                            value = phone,
-                            onValueChange = { phone = it },
-                            label = { Text("Phone Number (+...)") },
-                            modifier = Modifier.fillMaxWidth(),
-                            enabled = !isPhoneDone && !isSubmitting,
-                            trailingIcon = {
-                                if (isPhoneDone) {
-                                    TextButton(onClick = { viewModel.restartTelegramAuth() }) {
-                                        Text("EDIT", color = Color(0xFF2AABEE), fontWeight = FontWeight.Bold)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(IntrinsicSize.Min),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            OutlinedTextField(
+                                value = countryCode,
+                                onValueChange = { 
+                                    if (it.startsWith("+")) {
+                                        countryCode = it.filter { char -> char == '+' || char.isDigit() }.take(5)
+                                    } else if (it.isEmpty()) {
+                                        countryCode = "+"
                                     }
-                                }
-                            },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone, imeAction = ImeAction.Send),
-                            keyboardActions = KeyboardActions(onSend = { if (!isPhoneDone) viewModel.submitTelegramPhone(phone) }),
-                            singleLine = true,
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = Color(0xFF2AABEE),
-                                unfocusedBorderColor = Color.White.copy(0.1f),
-                                disabledBorderColor = Color.White.copy(0.1f),
-                                disabledTextColor = Color.White.copy(0.6f),
-                                disabledLabelColor = Color.White.copy(0.4f)
+                                },
+                                label = { Text("Code", maxLines = 1) },
+                                modifier = Modifier
+                                    .weight(0.35f)
+                                    .fillMaxHeight(),
+                                enabled = !isSubmitting,
+                                readOnly = isPhoneDone,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone, imeAction = ImeAction.Next),
+                                singleLine = true,
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = if (isPhoneDone) Color.White.copy(0.1f) else Color(0xFF2AABEE),
+                                    unfocusedBorderColor = Color.White.copy(0.1f),
+                                    disabledBorderColor = Color.White.copy(0.1f),
+                                    disabledTextColor = Color.White.copy(0.6f),
+                                    focusedTextColor = if (isPhoneDone) Color.White.copy(0.6f) else Color.White,
+                                    unfocusedTextColor = if (isPhoneDone) Color.White.copy(0.6f) else Color.White
+                                )
                             )
-                        )
+
+                            OutlinedTextField(
+                                value = mobileNumber,
+                                onValueChange = { mobileNumber = it.filter { char -> char.isDigit() } },
+                                label = { Text("Mobile Number", maxLines = 1) },
+                                modifier = Modifier
+                                    .weight(0.65f)
+                                    .fillMaxHeight(),
+                                enabled = !isSubmitting,
+                                readOnly = isPhoneDone,
+                                trailingIcon = {
+                                    if (isPhoneDone) {
+                                        TextButton(onClick = { 
+                                            viewModel.restartTelegramAuth() 
+                                            code = ""
+                                            password = ""
+                                        }) {
+                                            Text("EDIT", color = Color(0xFF2AABEE), fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone, imeAction = ImeAction.Send),
+                                keyboardActions = KeyboardActions(onSend = { 
+                                    if (!isPhoneDone && mobileNumber.isNotBlank()) {
+                                        viewModel.submitTelegramPhone(countryCode + mobileNumber) 
+                                    }
+                                }),
+                                singleLine = true,
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = if (isPhoneDone) Color.White.copy(0.1f) else Color(0xFF2AABEE),
+                                    unfocusedBorderColor = Color.White.copy(0.1f),
+                                    disabledBorderColor = Color.White.copy(0.1f),
+                                    disabledTextColor = Color.White.copy(0.6f),
+                                    disabledLabelColor = Color.White.copy(0.4f),
+                                    focusedTextColor = if (isPhoneDone) Color.White.copy(0.6f) else Color.White,
+                                    unfocusedTextColor = if (isPhoneDone) Color.White.copy(0.6f) else Color.White
+                                )
+                            )
+                        }
 
                         if (!isPhoneDone) {
                             Button(
-                                onClick = { viewModel.submitTelegramPhone(phone) },
+                                onClick = { viewModel.submitTelegramPhone(countryCode + mobileNumber) },
                                 modifier = Modifier.fillMaxWidth(),
-                                enabled = phone.isNotBlank() && !isSubmitting,
+                                enabled = mobileNumber.isNotBlank() && !isSubmitting,
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = Color(0xFF2AABEE),
                                     contentColor = Color.Black

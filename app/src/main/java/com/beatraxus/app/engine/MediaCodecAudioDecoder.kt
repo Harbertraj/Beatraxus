@@ -43,11 +43,19 @@ internal class MediaCodecAudioDecoder(
                     } catch (e: Exception) {
                         control.logWarn("DataSource failed, falling back to direct URL: ${e.message}")
                         val (source, headers) = resolveSource(request.song)
-                        extractor.setDataSource(source, headers)
+                        if (source.isNotBlank()) {
+                            extractor.setDataSource(source, headers)
+                        } else {
+                            return@withContext DecodeResult.Failed("Fallback source resolve failed (blank)")
+                        }
                     }
                 } else {
                     val (source, headers) = resolveSource(request.song)
-                    extractor.setDataSource(source, headers)
+                    if (source.isNotBlank()) {
+                        extractor.setDataSource(source, headers)
+                    } else {
+                        return@withContext DecodeResult.Failed("Source resolve failed (blank)")
+                    }
                 }
             } else {
                 // For local files, try multiple ways to set the data source.
@@ -75,8 +83,12 @@ internal class MediaCodecAudioDecoder(
                 extractor.release()
                 extractor = MediaExtractor()
                 val (source, headers) = resolveSource(request.song)
-                extractor.setDataSource(source, headers)
-                track = selectBestAudioTrack(extractor)
+                if (source.isNotBlank()) {
+                    extractor.setDataSource(source, headers)
+                    track = selectBestAudioTrack(extractor)
+                } else {
+                    control.logWarn("Fallback source resolve failed (blank)")
+                }
             }
 
             if (track == null) {
@@ -245,7 +257,7 @@ internal class MediaCodecAudioDecoder(
 
         if (song.source == SongSource.TELEGRAM) {
             val path = cloudCacheManager.getTelegramFilePath(song, tdLibManager)
-            if (path != null) return path to emptyMap()
+            return (path ?: "") to emptyMap()
         }
 
         return if (song.source == SongSource.GDRIVE) {
@@ -258,8 +270,10 @@ internal class MediaCodecAudioDecoder(
                 }
             }
             url to headers
-        } else {
+        } else if (song.uri.scheme?.startsWith("http") == true) {
             song.uri.toString() to emptyMap()
+        } else {
+            "" to emptyMap()
         }
     }
 

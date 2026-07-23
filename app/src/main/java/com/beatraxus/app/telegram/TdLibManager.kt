@@ -223,15 +223,15 @@ class TdLibManager private constructor(
             }
         }
 
-    fun ensureClientStarted() {
+    fun ensureClientStarted(forceRestart: Boolean = false) {
         val currentState = _authState.value
         if (client == null) {
             _authState.value = AuthState.NotReady
             startClient()
             return
         }
-        if (currentState is AuthState.Error || currentState is AuthState.LoggedOut) {
-            Log.d("TDLib", "ensureClientStarted: closing stale client before restart (${currentState::class.simpleName})")
+        if (forceRestart || currentState is AuthState.Error || currentState is AuthState.LoggedOut) {
+            Log.d("TDLib", "ensureClientStarted: restarting client (force=$forceRestart, state=${currentState::class.simpleName})")
             _authState.value = AuthState.NotReady
             pendingRestart = true
             client?.send(TdApi.Close()) { }
@@ -249,7 +249,11 @@ class TdLibManager private constructor(
         }
     }
 
-    suspend fun awaitTdlibReady(timeoutMs: Long = 10000): Boolean {
+    fun restart() {
+        ensureClientStarted(forceRestart = true)
+    }
+
+    suspend fun awaitTdlibReady(timeoutMs: Long = 20000): Boolean {
         val current = authState.value
         if (current is AuthState.Ready) return true
         

@@ -1,11 +1,9 @@
 package com.beatraxus.app.engine
 
 import android.content.Context
-import android.net.Uri
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -576,16 +574,16 @@ internal fun LosslessAuthenticityBadge(result: AudioSpectrumAnalyzer.SpectrumAna
     val color = result.badgeColor()
     Box(
         modifier = Modifier
-            .clip(RoundedCornerShape(6.dp))
-            .background(color.copy(alpha = 0.14f))
-            .padding(horizontal = 6.dp, vertical = 3.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(color.copy(alpha = 0.18f))
+            .padding(horizontal = 10.dp, vertical = 5.dp)
     ) {
         Text(
             text = result.badgeSubtitle()?.let { "${result.badgeLabel()} \u00b7 ${it}" } ?: result.badgeLabel(),
             color = color,
-            fontSize = 9.sp,
+            fontSize = 10.sp,
             fontWeight = FontWeight.Black,
-            letterSpacing = 0.4.sp
+            letterSpacing = 0.5.sp
         )
     }
 }
@@ -597,14 +595,27 @@ internal fun SpectrogramAnalysisView(
     result: AudioSpectrumAnalyzer.SpectrumAnalysisResult?,
     modifier: Modifier = Modifier
 ) {
-    Box(modifier = modifier) {
-        val frames = result?.spectrogramFrames
-        if (frames != null && frames.isNotEmpty()) {
-            Canvas(modifier = Modifier) { drawSpectrogram(frames) }
+    Row(modifier = modifier.padding(horizontal = 4.dp, vertical = 2.dp)) {
+        // Frequency measurements on the outside (left)
+        Column(
+            modifier = Modifier
+                .fillMaxHeight()
+                .padding(end = 6.dp),
+            verticalArrangement = Arrangement.SpaceBetween,
+            horizontalAlignment = Alignment.End
+        ) {
+            val nyquistK = (result?.nyquistHz ?: 22050) / 1000f
+            Text("${nyquistK.toInt()}k", color = Color.White.copy(0.4f), fontSize = 8.sp)
+            Text("${(nyquistK * 0.75f).toInt()}k", color = Color.White.copy(0.4f), fontSize = 8.sp)
+            Text("${(nyquistK * 0.5f).toInt()}k", color = Color.White.copy(0.4f), fontSize = 8.sp)
+            Text("${(nyquistK * 0.25f).toInt()}k", color = Color.White.copy(0.4f), fontSize = 8.sp)
+            Text("0", color = Color.White.copy(0.4f), fontSize = 8.sp)
         }
-        if (result != null) {
-            Box(modifier = Modifier.align(Alignment.TopEnd).padding(6.dp)) {
-                LosslessAuthenticityBadge(result)
+
+        Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
+            val frames = result?.spectrogramFrames
+            if (!frames.isNullOrEmpty()) {
+                Canvas(modifier = Modifier.fillMaxSize()) { drawSpectrogram(frames) }
             }
         }
     }
