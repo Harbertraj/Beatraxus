@@ -3296,11 +3296,16 @@ private fun TelegramLoginCard(uiState: PlayerUiState, viewModel: PlayerViewModel
                                 readOnly = isPhoneDone,
                                 trailingIcon = {
                                     if (isPhoneDone) {
-                                        TextButton(onClick = { 
-                                            viewModel.restartTelegramAuth() 
-                                            code = ""
-                                            password = ""
-                                        }) {
+                                        TextButton(
+                                            onClick = { 
+                                                viewModel.restartTelegramAuth() 
+                                                countryCode = "+"
+                                                mobileNumber = ""
+                                                code = ""
+                                                password = ""
+                                            },
+                                            enabled = !isSubmitting
+                                        ) {
                                             Text("EDIT", color = Color(0xFF2AABEE), fontWeight = FontWeight.Bold)
                                         }
                                     }

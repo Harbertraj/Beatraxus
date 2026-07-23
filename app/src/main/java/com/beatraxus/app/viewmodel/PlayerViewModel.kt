@@ -18,6 +18,7 @@ import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.CancellationException
@@ -3763,15 +3764,27 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun restartTelegramAuth() {
+        if (_uiState.value.isSubmittingTelegram) return
         viewModelScope.launch {
             _uiState.update { it.copy(isSubmittingTelegram = true, telegramAuthError = null) }
             try {
                 // To change number, we need to log out or restart the client.
                 // TdLibManager.restart() handles the proper sequence.
                 tdLibManager.restart()
-                delay(300)
+                
+                // Wait for the auth state to reach WaitPhoneNumber or Error, or timeout
+                val success = withTimeoutOrNull(8000) {
+                    tdLibManager.authState.first {
+                        it is AuthState.WaitPhoneNumber || it is AuthState.Error
+                    }
+                }
+                
+                if (success == null) {
+                    _uiState.update { it.copy(telegramAuthError = "Could not reset login, please try again") }
+                }
             } catch (e: Exception) {
                 Log.e("TDLib", "Failed to restart auth", e)
+                _uiState.update { it.copy(telegramAuthError = e.message ?: "Failed to restart auth") }
             } finally {
                 _uiState.update { it.copy(isSubmittingTelegram = false) }
             }

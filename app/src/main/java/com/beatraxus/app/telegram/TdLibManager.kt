@@ -40,6 +40,7 @@ class TdLibManager private constructor(
 
     private var client: Client? = null
     @Volatile private var pendingRestart = false
+    private val activeRestartId = java.util.concurrent.atomic.AtomicInteger(0)
     private val managerScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     private val _authState = MutableStateFlow<AuthState>(AuthState.NotReady)
@@ -123,10 +124,10 @@ class TdLibManager private constructor(
                     _authState.value = AuthState.LoggedOut
                 }
                 is TdApi.AuthorizationStateClosing -> {
-                    Log.d("TDLib", "State: Closing")
+                    Log.d("TDLib", "State: Closing (pendingRestart=$pendingRestart)")
                 }
                 is TdApi.AuthorizationStateClosed -> {
-                    Log.d("TDLib", "State: Closed -> clearing client")
+                    Log.d("TDLib", "State: Closed -> clearing client (pendingRestart=$pendingRestart)")
                     _authState.value = AuthState.LoggedOut
                     client = null
                     if (pendingRestart) {
@@ -226,21 +227,29 @@ class TdLibManager private constructor(
     fun ensureClientStarted(forceRestart: Boolean = false) {
         val currentState = _authState.value
         if (client == null) {
+            Log.d("TDLib", "ensureClientStarted: client is null, starting...")
             _authState.value = AuthState.NotReady
             startClient()
             return
         }
         if (forceRestart || currentState is AuthState.Error || currentState is AuthState.LoggedOut) {
+            if (pendingRestart) {
+                Log.d("TDLib", "ensureClientStarted: restart already pending, ignoring request.")
+                return
+            }
             Log.d("TDLib", "ensureClientStarted: restarting client (force=$forceRestart, state=${currentState::class.simpleName})")
             _authState.value = AuthState.NotReady
             pendingRestart = true
+            val currentRestartId = activeRestartId.incrementAndGet()
+            
+            Log.d("TDLib", "ensureClientStarted: sending TdApi.Close() [restartId=$currentRestartId]")
             client?.send(TdApi.Close()) { }
             
             // Safety timeout: if AuthorizationStateClosed never arrives, force restart after 5s
             managerScope.launch {
                 delay(5000)
-                if (pendingRestart) {
-                    Log.w("TDLib", "Safety timeout: AuthorizationStateClosed did not arrive. Forcing restart.")
+                if (pendingRestart && activeRestartId.get() == currentRestartId) {
+                    Log.w("TDLib", "Safety timeout: AuthorizationStateClosed did not arrive for restartId $currentRestartId. Forcing restart.")
                     pendingRestart = false
                     client = null
                     startClient()
