@@ -25,7 +25,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
@@ -40,7 +39,7 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import coil.request.CachePolicy
 import coil.request.ImageRequest
-import com.beatraxus.app.engine.WaveformExtractor
+import com.beatraxus.app.engine.AudioSpectrumAnalyzer
 import com.beatraxus.app.model.Song
 import com.beatraxus.app.model.SongQualityEntity
 import com.beatraxus.app.viewmodel.PlayerViewModel
@@ -82,6 +81,13 @@ fun MusicDetailInspectorScreen(
     val quality by remember(songId) { viewModel.songQualityFlow(songId) }.collectAsState(initial = null)
     val uiState by viewModel.uiState.collectAsState()
     val progressMs by viewModel.progressMs.collectAsState()
+
+    var spectrumResult by remember(songId) { mutableStateOf<AudioSpectrumAnalyzer.SpectrumAnalysisResult?>(null) }
+
+    // Task 3: single shared decode pass for both Waveform and Spectrogram cards.
+    LaunchedEffect(songId) {
+        song?.let { spectrumResult = viewModel.analyzeSpectrum(it) }
+    }
 
     // System/gesture back must behave identically to the on-screen back arrow (which
     // restores the Now Playing info dialog / options-sheet state via onBack below) —
@@ -127,11 +133,12 @@ fun MusicDetailInspectorScreen(
                     song = currentSong,
                     isCurrentSong = isCurrentSong,
                     isPlaying = isCurrentlyPlaying,
-                    progressMs = progressMs
+                    progressMs = progressMs,
+                    result = spectrumResult
                 )
 
                 Spacer(Modifier.height(14.dp))
-                SpectrogramCard(currentSong)
+                SpectrogramCard(spectrumResult)
 
                 Spacer(Modifier.height(14.dp))
                 LiveMetersCard(viewModel, isActive = isCurrentlyPlaying, quality = quality)
@@ -390,21 +397,16 @@ private fun tierColor(tier: String): Color = when (tier) {
 }
 
 // ---------------------------------------------------------------------------
-// 3. Waveform — filled gradient envelope, decoded + cached by WaveformExtractor
+// 3. Waveform — filled gradient envelope, decoded + cached by AudioSpectrumAnalyzer
 // ---------------------------------------------------------------------------
 @Composable
-private fun WaveformCard(song: Song, isCurrentSong: Boolean, isPlaying: Boolean, progressMs: Long) {
-    val context = LocalContext.current
-    var data by remember(song.id) { mutableStateOf<WaveformExtractor.WaveformData?>(null) }
-    var failed by remember(song.id) { mutableStateOf(false) }
-
-    LaunchedEffect(song.id) {
-        data = null
-        failed = false
-        val result = WaveformExtractor.getOrExtract(context, song.id, song.uri)
-        if (result == null) failed = true else data = result
-    }
-
+private fun WaveformCard(
+    song: Song,
+    isCurrentSong: Boolean,
+    isPlaying: Boolean,
+    progressMs: Long,
+    result: AudioSpectrumAnalyzer.SpectrumAnalysisResult?
+) {
     // Live progress fraction along the track — only meaningful while this is the song
     // actually loaded in the player. Turns the (still statically-decoded) waveform shape
     // into a live playback readout: a moving playhead plus a played/unplayed split, the
@@ -429,17 +431,10 @@ private fun WaveformCard(song: Song, isCurrentSong: Boolean, isPlaying: Boolean,
                 .height(96.dp)
                 .background(Color.Black.copy(0.35f), RoundedCornerShape(10.dp))
         ) {
-            val d = data
             when {
-                d != null -> Canvas(modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp, vertical = 6.dp)) {
-                    drawWaveform(d.minPeaks, d.maxPeaks, InspectorPalette.Waveform, progressFraction)
+                result != null -> Canvas(modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp, vertical = 6.dp)) {
+                    drawWaveform(result.minPeaks, result.maxPeaks, InspectorPalette.Waveform, progressFraction)
                 }
-                failed -> Text(
-                    "Waveform unavailable for this file",
-                    color = Color.White.copy(0.4f),
-                    fontSize = 12.sp,
-                    modifier = Modifier.align(Alignment.Center)
-                )
                 else -> CircularProgressIndicator(
                     color = InspectorPalette.Waveform,
                     modifier = Modifier.align(Alignment.Center).size(24.dp),
@@ -521,21 +516,13 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawWaveform(
 // 4. Spectrogram — thermal (blue → green → yellow → red) time/frequency heatmap
 // ---------------------------------------------------------------------------
 @Composable
-private fun SpectrogramCard(song: Song) {
-    val context = LocalContext.current
-    var data by remember(song.id) { mutableStateOf<WaveformExtractor.WaveformData?>(null) }
-
-    LaunchedEffect(song.id) {
-        data = WaveformExtractor.getOrExtract(context, song.id, song.uri)
-    }
-
-    val lossless = remember(song.format) { isLosslessFormat(song.format) }
-
+private fun SpectrogramCard(
+    result: AudioSpectrumAnalyzer.SpectrumAnalysisResult?
+) {
     InstrumentCard(
         label = "SPECTROGRAM",
         accent = InspectorPalette.Spectrogram,
-        icon = Icons.Rounded.Equalizer,
-        trailing = { LosslessBadge(lossless) }
+        icon = Icons.Rounded.Equalizer
     ) {
         Box(
             modifier = Modifier
@@ -543,11 +530,11 @@ private fun SpectrogramCard(song: Song) {
                 .height(120.dp)
                 .background(Color.Black.copy(0.4f), RoundedCornerShape(10.dp))
         ) {
-            val frames = data?.spectrogramFrames
-            if (frames != null && frames.isNotEmpty()) {
-                Canvas(modifier = Modifier.fillMaxSize()) {
-                    drawSpectrogram(frames)
-                }
+            if (result != null) {
+                com.beatraxus.app.engine.SpectrogramAnalysisView(
+                    result = result,
+                    modifier = Modifier.fillMaxSize()
+                )
             } else {
                 CircularProgressIndicator(
                     color = InspectorPalette.Spectrogram,
@@ -575,51 +562,6 @@ private fun SpectrogramCard(song: Song) {
     }
 }
 
-private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawSpectrogram(frames: Array<FloatArray>) {
-    val cols = frames.size
-    val rows = frames.firstOrNull()?.size ?: return
-    val cellW = size.width / cols
-    val cellH = size.height / rows
-    for (c in 0 until cols) {
-        val frame = frames[c]
-        for (r in 0 until rows) {
-            drawRect(
-                color = thermalColor(frame[r].coerceIn(0f, 1f)),
-                topLeft = Offset(c * cellW, size.height - (r + 1) * cellH),
-                size = Size(cellW + 0.5f, cellH + 0.5f)
-            )
-        }
-    }
-}
-
-/** Format check reused from the same convention as SongListItem/NowPlayingScreen's
- *  lossless badge, so the Inspector agrees with the rest of the app about what counts
- *  as lossless. */
-private fun isLosslessFormat(format: String): Boolean {
-    val f = format.lowercase()
-    return f.contains("flac") || f.contains("alac") || f.contains("wav") ||
-        f.contains("dsd") || f.contains("aiff") || f.contains("dts") || f.contains("ac3") ||
-        f.contains("ape") || f.contains("wv")
-}
-
-@Composable
-private fun LosslessBadge(isLossless: Boolean) {
-    val color = if (isLossless) Color(0xFF43E97B) else Color.White.copy(alpha = 0.35f)
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
-            .clip(RoundedCornerShape(8.dp))
-            .background(color.copy(alpha = if (isLossless) 0.15f else 0.06f))
-            .padding(horizontal = 8.dp, vertical = 4.dp)
-    ) {
-        Text("LOSSLESS", color = color, fontSize = 9.sp, fontWeight = FontWeight.Black, letterSpacing = 0.6.sp)
-        if (isLossless) {
-            Spacer(Modifier.width(4.dp))
-            Icon(Icons.Rounded.Check, contentDescription = "Lossless", tint = color, modifier = Modifier.size(11.dp))
-        }
-    }
-}
-
 /** Classic thermal/spectrogram palette: near-black → blue → teal → green → yellow → red. */
 private fun thermalColor(mag: Float): Color {
     val stops = listOf(
@@ -635,20 +577,14 @@ private fun thermalColor(mag: Float): Color {
         val (p1, c1) = stops[i + 1]
         if (mag in p0..p1) {
             val t = if (p1 > p0) (mag - p0) / (p1 - p0) else 0f
-            return lerpColor(c0, c1, t)
+            return Color(
+                red = c0.red + (c1.red - c0.red) * t,
+                green = c0.green + (c1.green - c0.green) * t,
+                blue = c0.blue + (c1.blue - c0.blue) * t
+            )
         }
     }
     return stops.last().second
-}
-
-private fun lerpColor(a: Color, b: Color, t: Float): Color {
-    val ct = t.coerceIn(0f, 1f)
-    return Color(
-        red = a.red + (b.red - a.red) * ct,
-        green = a.green + (b.green - a.green) * ct,
-        blue = a.blue + (b.blue - a.blue) * ct,
-        alpha = a.alpha + (b.alpha - a.alpha) * ct
-    )
 }
 
 // ---------------------------------------------------------------------------

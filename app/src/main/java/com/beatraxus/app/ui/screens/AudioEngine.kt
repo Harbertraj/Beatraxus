@@ -70,6 +70,10 @@ class AudioEngine(
         mediaCodecDecoder = MediaCodecAudioDecoder(context, driveAccountRepository, cloudCacheManager, tdLibManager)
     )
 
+    private val audioSpectrumAnalyzer by lazy { AudioSpectrumAnalyzer(context, decoderFactory) }
+
+    fun getAudioSpectrumAnalyzer(): AudioSpectrumAnalyzer = audioSpectrumAnalyzer
+
     private val _audioStateFlow = MutableStateFlow(AudioState())
     val audioStateFlow = _audioStateFlow.asStateFlow()
 

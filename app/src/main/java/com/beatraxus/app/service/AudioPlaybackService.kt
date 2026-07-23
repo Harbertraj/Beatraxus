@@ -147,6 +147,8 @@ class AudioPlaybackService : Service() {
         fun getService(): AudioPlaybackService = this@AudioPlaybackService
     }
 
+    fun getAudioEngine(): AudioEngine = engine
+
     /** Current AudioTrack session id for live-meter taps (Music Detail Inspector, Phase 6),
      *  or 0 if unavailable (e.g. MMAP-exclusive output, or no active track yet). */
     fun getAudioSessionId(): Int = if (::audioOutput.isInitialized) audioOutput.getAudioSessionId() else 0

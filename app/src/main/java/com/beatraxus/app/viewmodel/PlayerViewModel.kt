@@ -54,6 +54,7 @@ import com.beatraxus.app.drive.DrivePlaybackHelper
 import com.beatraxus.app.model.SongSource
 import com.beatraxus.app.model.parseTelegramChannelName
 import com.beatraxus.app.repository.DriveAccountRepository
+import com.beatraxus.app.engine.AudioSpectrumAnalyzer
 import com.beatraxus.app.model.PlayerUiState
 import com.beatraxus.app.model.Song
 import com.beatraxus.app.model.toEntity
@@ -517,33 +518,40 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
                     // Quality analysis (Phase 3) — same LOCAL-only guard as analyzeSong,
                     // since result.features is null for skipped/failed songs.
-                    val features = result.features
-                    if (features != null) {
+                    var features = result.features
+                    var resolutionFromSpectrum: AudioSpectrumAnalyzer.SpectrumAnalysisResult? = null
+
+                    if (features == null) {
+                        // Task 4: Fallback for ALAC + cloud formats that NativeDsp skips
+                        resolutionFromSpectrum = service?.getAudioEngine()?.getAudioSpectrumAnalyzer()?.getOrAnalyze(song)
+                    }
+
+                    if (features != null || resolutionFromSpectrum != null) {
                         val scored = com.beatraxus.app.engine.QualityScorer.score(
                             bitrateKbps = song.bitrate,
-                            sampleRateHz = song.sampleRateHz,
-                            bitDepth = song.bitDepth,
+                            sampleRateHz = resolutionFromSpectrum?.sampleRateHz ?: song.sampleRateHz,
+                            bitDepth = resolutionFromSpectrum?.bitDepth ?: song.bitDepth,
                             codec = song.format,
-                            lufs = features.lufs,
-                            dynamicRange = features.dynamicRange,
-                            truePeakDb = features.truePeakDb,
-                            clippedSamplePct = features.clippedSamplePct,
-                            stereoWidth = features.stereoWidth
+                            lufs = features?.lufs ?: -14.0f,
+                            dynamicRange = features?.dynamicRange ?: 10.0f,
+                            truePeakDb = features?.truePeakDb ?: -1.0f,
+                            clippedSamplePct = features?.clippedSamplePct ?: 0.0f,
+                            stereoWidth = features?.stereoWidth ?: 1.0f
                         )
                         songQualityDao.upsertQuality(
                             com.beatraxus.app.model.SongQualityEntity(
                                 songId = song.id,
                                 bitrateKbps = song.bitrate,
-                                sampleRateHz = song.sampleRateHz,
-                                bitDepth = song.bitDepth,
+                                sampleRateHz = resolutionFromSpectrum?.sampleRateHz ?: song.sampleRateHz,
+                                bitDepth = resolutionFromSpectrum?.bitDepth ?: song.bitDepth,
                                 codec = song.format,
-                                lufs = features.lufs,
-                                dynamicRange = features.dynamicRange,
-                                truePeakDb = features.truePeakDb,
-                                clippedSamplePct = features.clippedSamplePct,
-                                stereoWidth = features.stereoWidth,
-                                freqRangeLowHz = features.freqRangeLowHz,
-                                freqRangeHighHz = features.freqRangeHighHz,
+                                lufs = features?.lufs ?: -14.0f,
+                                dynamicRange = features?.dynamicRange ?: 10.0f,
+                                truePeakDb = features?.truePeakDb ?: -1.0f,
+                                clippedSamplePct = features?.clippedSamplePct ?: 0.0f,
+                                stereoWidth = features?.stereoWidth ?: 1.0f,
+                                freqRangeLowHz = features?.freqRangeLowHz ?: 0f,
+                                freqRangeHighHz = features?.freqRangeHighHz ?: (resolutionFromSpectrum?.spectralCutoffHz?.toFloat() ?: 0f),
                                 qualityScore = scored.score,
                                 qualityTier = scored.tier,
                                 analysisVersion = 1,
@@ -2367,6 +2375,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             } else {
                 favoriteDao.addFavorite(FavoriteEntity(song.id))
             }
+        }
+    }
+
+    suspend fun analyzeSpectrum(song: Song): AudioSpectrumAnalyzer.SpectrumAnalysisResult? {
+        return withContext(Dispatchers.IO) {
+            service?.getAudioEngine()?.getAudioSpectrumAnalyzer()?.getOrAnalyze(song)
         }
     }
 

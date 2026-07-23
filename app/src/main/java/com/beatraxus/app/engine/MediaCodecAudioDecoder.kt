@@ -170,7 +170,7 @@ internal class MediaCodecAudioDecoder(
                 }
 
                 var outputProgress = false
-                while (outIndex >= 0) {
+                while (outIndex >= 0 && control.isActive()) {
                     val outputBuffer = codec.getOutputBuffer(outIndex)
                     if (outputBuffer != null && info.size > 0) {
                         val bytesPerSample = when (currentPcmEncoding) {
