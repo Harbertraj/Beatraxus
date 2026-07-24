@@ -96,6 +96,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private val autoEqApiService = com.beatraxus.app.repository.AutoEqApiService(application)
     private val lyricsRepository = LyricsRepository(application, (application as BeatraxusApplication).database)
     private val dspPreferences = DspPreferences(application)
+    private val appearancePreferences = com.beatraxus.app.repository.AppearancePreferences(application)
     private val driveAccountRepository = com.beatraxus.app.repository.DriveAccountRepository(application)
     private val dropboxAccountRepository = com.beatraxus.app.repository.DropboxAccountRepository(application)
     private val onedriveAccountRepository = com.beatraxus.app.repository.OneDriveAccountRepository(application)
@@ -636,6 +637,13 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     )) 
                 }
                 service?.updateDspConfig(config)
+            }
+        }
+
+        // Appearance settings
+        viewModelScope.launch {
+            appearancePreferences.appearanceConfig.collect { config ->
+                _uiState.update { it.copy(appearance = config) }
             }
         }
 
@@ -4073,6 +4081,42 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun setScrobblingEnabled(enabled: Boolean) {
         prefs.edit().putBoolean("scrobbling_enabled", enabled).apply()
         _uiState.update { it.copy(scrobblingEnabled = enabled) }
+    }
+
+    fun setShowMiniPlayer(value: Boolean) {
+        viewModelScope.launch {
+            appearancePreferences.setShowMiniPlayer(value)
+        }
+    }
+
+    fun setShowNowPlayingBlurBackground(value: Boolean) {
+        viewModelScope.launch {
+            appearancePreferences.setShowNowPlayingBlurBackground(value)
+        }
+    }
+
+    fun setShowAudioQualityBadge(value: Boolean) {
+        viewModelScope.launch {
+            appearancePreferences.setShowAudioQualityBadge(value)
+        }
+    }
+
+    fun setShowAudioPipelineOverlay(value: Boolean) {
+        viewModelScope.launch {
+            appearancePreferences.setShowAudioPipelineOverlay(value)
+        }
+    }
+
+    fun setShowTechnicalInfoPanel(value: Boolean) {
+        viewModelScope.launch {
+            appearancePreferences.setShowTechnicalInfoPanel(value)
+        }
+    }
+
+    fun setShowLyricsButton(value: Boolean) {
+        viewModelScope.launch {
+            appearancePreferences.setShowLyricsButton(value)
+        }
     }
 
     fun logoutLastFm() {

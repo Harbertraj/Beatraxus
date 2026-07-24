@@ -196,43 +196,45 @@ fun NowPlayingScreen(
             .background(Color.Black)
     ) {
         // Vibrant Background
-        AnimatedContent(
-            targetState = song.id to song.albumArtUri,
-            transitionSpec = {
-                fadeIn(tween(300)).togetherWith(fadeOut(tween(300)))
-            },
-            label = "backgroundTransition",
-            modifier = Modifier.fillMaxSize()
-        ) { (_, targetArtUri) ->
-            AsyncImage(
-                model = ImageRequest.Builder(LocalContext.current)
-                    .data(targetArtUri)
-                    .diskCachePolicy(CachePolicy.ENABLED)
-                    .memoryCachePolicy(CachePolicy.ENABLED)
-                    .size(256, 256) // Faster decode for background
-                    .precision(Precision.INEXACT)
-                    .crossfade(true)
-                    .error(ImageUtils.getDefaultAlbumArtRes())
-                    .fallback(ImageUtils.getDefaultAlbumArtRes())
-                    .build(),
-                contentDescription = null,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .graphicsLayer {
-                        alpha = 0.85f
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                            renderEffect = backgroundBlurEffect?.asComposeRenderEffect()
+        if (uiState.appearance.showNowPlayingBlurBackground) {
+            AnimatedContent(
+                targetState = song.id to song.albumArtUri,
+                transitionSpec = {
+                    fadeIn(tween(300)).togetherWith(fadeOut(tween(300)))
+                },
+                label = "backgroundTransition",
+                modifier = Modifier.fillMaxSize()
+            ) { (_, targetArtUri) ->
+                AsyncImage(
+                    model = ImageRequest.Builder(LocalContext.current)
+                        .data(targetArtUri)
+                        .diskCachePolicy(CachePolicy.ENABLED)
+                        .memoryCachePolicy(CachePolicy.ENABLED)
+                        .size(256, 256) // Faster decode for background
+                        .precision(Precision.INEXACT)
+                        .crossfade(true)
+                        .error(ImageUtils.getDefaultAlbumArtRes())
+                        .fallback(ImageUtils.getDefaultAlbumArtRes())
+                        .build(),
+                    contentDescription = null,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer {
+                            alpha = 0.85f
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                                renderEffect = backgroundBlurEffect?.asComposeRenderEffect()
+                            }
                         }
-                    }
-                    .then(
-                        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
-                            Modifier.blur(40.dp) // Further reduced
-                        } else {
-                            Modifier
-                        }
-                    ),
-                contentScale = ContentScale.Crop,
-            )
+                        .then(
+                            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+                                Modifier.blur(40.dp) // Further reduced
+                            } else {
+                                Modifier
+                            }
+                        ),
+                    contentScale = ContentScale.Crop,
+                )
+            }
         }
         
         Box(
@@ -552,17 +554,19 @@ fun NowPlayingScreen(
                                         modifier = Modifier.height(36.dp),
                                         contentAlignment = Alignment.BottomCenter
                                     ) {
-                                        androidx.compose.animation.AnimatedVisibility(
-                                            visible = badgeVisible,
-                                            enter = fadeIn(tween(600)) + scaleIn(initialScale = 0.8f, animationSpec = tween(600)),
-                                            exit = fadeOut(tween(0))
-                                        ) {
-                                            AudioQualityBadge(
-                                                song = song,
-                                                uiState = uiState,
-                                                onClick = { },
-                                                onLongPress = { onTogglePipeline(true) }
-                                            )
+                                        if (uiState.appearance.showAudioQualityBadge) {
+                                            androidx.compose.animation.AnimatedVisibility(
+                                                visible = badgeVisible,
+                                                enter = fadeIn(tween(600)) + scaleIn(initialScale = 0.8f, animationSpec = tween(600)),
+                                                exit = fadeOut(tween(0))
+                                            ) {
+                                                AudioQualityBadge(
+                                                    song = song,
+                                                    uiState = uiState,
+                                                    onClick = { },
+                                                    onLongPress = { onTogglePipeline(true) }
+                                                )
+                                            }
                                         }
                                     }
                                     Spacer(modifier = Modifier.height(0.dp))
@@ -655,13 +659,15 @@ fun NowPlayingScreen(
                             }
 
                             // Lyrics Icon
-                            IconButton(onClick = onToggleLyrics) {
-                                Icon(
-                                    Icons.Rounded.Lyrics,
-                                    null,
-                                    tint = if (showLyrics) MaterialTheme.colorScheme.primary else Color.White.copy(0.7f),
-                                    modifier = Modifier.size(28.dp)
-                                )
+                            if (uiState.appearance.showLyricsButton) {
+                                IconButton(onClick = onToggleLyrics) {
+                                    Icon(
+                                        Icons.Rounded.Lyrics,
+                                        null,
+                                        tint = if (showLyrics) MaterialTheme.colorScheme.primary else Color.White.copy(0.7f),
+                                        modifier = Modifier.size(28.dp)
+                                    )
+                                }
                             }
                         }
                     }
@@ -688,7 +694,9 @@ fun NowPlayingScreen(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 PlaybackTimerText(progressMs, true)
-                                TechnicalInfo(song, uiState)
+                                if (uiState.appearance.showTechnicalInfoPanel) {
+                                    TechnicalInfo(song, uiState)
+                                }
                                 Text(fmtTime(durationMs), color = Color.White.copy(0.5f), fontSize = 12.sp, modifier = Modifier.width(45.dp), textAlign = TextAlign.End)
                             }
                         }
@@ -1756,21 +1764,23 @@ private fun SleepTimerSheet(
                 .windowInsetsPadding(WindowInsets(0.dp))
         ) {
             // Background Layer with enhanced blur and subtle animation
-            AsyncImage(
-                model = ImageRequest.Builder(LocalContext.current)
-                    .data(albumArtUri)
-                    .build(),
-                contentDescription = null,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .blur(160.dp)
-                    .alpha(0.3f)
-                    .graphicsLayer {
-                        scaleX = 1.2f
-                        scaleY = 1.2f
-                    },
-                contentScale = ContentScale.Crop
-            )
+            if (uiState.appearance.showNowPlayingBlurBackground) {
+                AsyncImage(
+                    model = ImageRequest.Builder(LocalContext.current)
+                        .data(albumArtUri)
+                        .build(),
+                    contentDescription = null,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .blur(160.dp)
+                        .alpha(0.3f)
+                        .graphicsLayer {
+                            scaleX = 1.2f
+                            scaleY = 1.2f
+                        },
+                    contentScale = ContentScale.Crop
+                )
+            }
 
             Column(
                 modifier = Modifier

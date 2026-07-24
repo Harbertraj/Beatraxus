@@ -2624,7 +2624,7 @@ fun MainScreen(
                                         .padding(horizontal = 12.dp)
                                 ) {
                                     androidx.compose.animation.AnimatedVisibility(
-                                        visible = uiState.currentSong != null && !showFullPlayer,
+                                        visible = uiState.currentSong != null && !showFullPlayer && uiState.appearance.showMiniPlayer,
                                         enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
                                         exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
                                     ) {
@@ -3061,7 +3061,7 @@ fun MainScreen(
 
         // Floating Add button on Playlists view to create new playlists
         if (uiState.currentView == LibraryView.PLAYLISTS && drawerProgress == 0f && !showFullPlayer) {
-            val isMiniPlayerVisible = uiState.currentSong != null
+            val isMiniPlayerVisible = uiState.currentSong != null && uiState.appearance.showMiniPlayer
             val bottomPadding by animateDpAsState(
                 targetValue = if (isMiniPlayerVisible) 80.dp else 16.dp,
                 label = "fab_bottom_padding"
@@ -3164,7 +3164,7 @@ fun MainScreen(
         }
 
         AnimatedVisibility(
-            visible = showPipelineOverlay && !uiState.showQueue,
+            visible = showPipelineOverlay && !uiState.showQueue && uiState.appearance.showAudioPipelineOverlay,
             modifier = Modifier.fillMaxSize().zIndex(110f),
             enter = fadeIn(tween(220)),
             exit = fadeOut(tween(180))

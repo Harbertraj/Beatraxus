@@ -105,6 +105,15 @@ data class Playlist(
     val songIds: List<String> = emptyList()
 )
 
+data class AppearanceConfig(
+    val showMiniPlayer: Boolean = true,
+    val showNowPlayingBlurBackground: Boolean = true,
+    val showAudioQualityBadge: Boolean = true,
+    val showAudioPipelineOverlay: Boolean = true,
+    val showTechnicalInfoPanel: Boolean = true,
+    val showLyricsButton: Boolean = true,
+)
+
 enum class AudioOutputDevice(val displayName: String) {
     SPEAKER("Speaker"),
     WIRED("Headphones"),
@@ -231,6 +240,7 @@ data class PlayerUiState(
     val pipelineSummary: String = "",
     val autoEqProfileName: String? = null,
     val dsp: DspUiState = DspUiState(),
+    val appearance: AppearanceConfig = AppearanceConfig(),
     val resamplingEnabled: Boolean = true,
     val currentFolderPath: String? = null,
     val isFirstRun: Boolean = true,
@@ -367,6 +377,7 @@ data class PlayerUiState(
                 pipelineSummary == other.pipelineSummary &&
                 autoEqProfileName == other.autoEqProfileName &&
                 dsp == other.dsp &&
+                appearance == other.appearance &&
                 resamplingEnabled == other.resamplingEnabled &&
                 currentFolderPath == other.currentFolderPath &&
                 isFirstRun == other.isFirstRun &&
@@ -490,6 +501,7 @@ data class PlayerUiState(
         result = 31 * result + pipelineSummary.hashCode()
         result = 31 * result + (autoEqProfileName?.hashCode() ?: 0)
         result = 31 * result + dsp.hashCode()
+        result = 31 * result + appearance.hashCode()
         result = 31 * result + resamplingEnabled.hashCode()
         result = 31 * result + (currentFolderPath?.hashCode() ?: 0)
         result = 31 * result + isFirstRun.hashCode()

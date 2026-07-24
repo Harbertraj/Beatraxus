@@ -256,6 +256,13 @@ fun SettingsScreen(
                                 onClick = { sectionStack.add("DSP Enhancements") }
                             )
                             SettingMenuItem(
+                                title = "Appearance",
+                                subtitle = "Choose what's shown across the app",
+                                icon = Icons.Rounded.Palette,
+                                iconColor = Color(0xFF9C27B0),
+                                onClick = { sectionStack.add("Appearance") }
+                            )
+                            SettingMenuItem(
                                 title = "Replay Gain",
                                 subtitle = "Normalize volume across tracks",
                                 icon = Icons.AutoMirrored.Rounded.VolumeUp,
@@ -302,6 +309,7 @@ fun SettingsScreen(
                             when (section) {
                                 "Audio Engine" -> AudioEngineContent(uiState, playerViewModel, onEditValue = { editingValue = it })
                                 "DSP Enhancements" -> DspEnhancementsContent(uiState, playerViewModel, onEditValue = { editingValue = it })
+                                "Appearance" -> AppearanceContent(uiState, playerViewModel)
                                 "Replay Gain" -> ReplayGainContent(uiState, playerViewModel, onEditValue = { editingValue = it })
                                 "Library" -> LibraryContent(uiState, playerViewModel, onShowInfo = { showInfoPopup = true })
                                 "Cloud" -> CloudContent(
@@ -504,6 +512,92 @@ private fun ValueEditDialog(
             TextButton(onClick = onDismiss) { Text("CANCEL", color = Color.White.copy(0.6f)) }
         }
     )
+}
+
+@Composable
+fun AppearanceContent(uiState: PlayerUiState, playerViewModel: PlayerViewModel) {
+    SettingsSection(
+        title = "SCREEN ELEMENTS",
+        icon = Icons.Rounded.Palette,
+        isActive = true,
+        subtitle = "Toggle visibility of UI components"
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            AppearanceToggleRow(
+                title = "Mini Player",
+                subtitle = "Show a compact player when browsing the library",
+                checked = uiState.appearance.showMiniPlayer,
+                onCheckedChange = { playerViewModel.setShowMiniPlayer(it) }
+            )
+            HorizontalDivider(color = Color.White.copy(0.05f))
+            AppearanceToggleRow(
+                title = "Blurred Background (Now Playing)",
+                subtitle = "Enable immersive blurred album art background",
+                checked = uiState.appearance.showNowPlayingBlurBackground,
+                onCheckedChange = { playerViewModel.setShowNowPlayingBlurBackground(it) }
+            )
+            HorizontalDivider(color = Color.White.copy(0.05f))
+            AppearanceToggleRow(
+                title = "Audio Quality Badge",
+                subtitle = "Display bitrate and format badges (Hi-Res, Lossless)",
+                checked = uiState.appearance.showAudioQualityBadge,
+                onCheckedChange = { playerViewModel.setShowAudioQualityBadge(it) }
+            )
+            HorizontalDivider(color = Color.White.copy(0.05f))
+            AppearanceToggleRow(
+                title = "Live Pipeline Overlay",
+                subtitle = "Show real-time audio engine processing status",
+                checked = uiState.appearance.showAudioPipelineOverlay,
+                onCheckedChange = { playerViewModel.setShowAudioPipelineOverlay(it) }
+            )
+            HorizontalDivider(color = Color.White.copy(0.05f))
+            AppearanceToggleRow(
+                title = "Technical Info Panel",
+                subtitle = "View detailed audio metrics in the player",
+                checked = uiState.appearance.showTechnicalInfoPanel,
+                onCheckedChange = { playerViewModel.setShowTechnicalInfoPanel(it) }
+            )
+            HorizontalDivider(color = Color.White.copy(0.05f))
+            AppearanceToggleRow(
+                title = "Lyrics Button",
+                subtitle = "Quick access to lyrics from the main player screen",
+                checked = uiState.appearance.showLyricsButton,
+                onCheckedChange = { playerViewModel.setShowLyricsButton(it) }
+            )
+        }
+    }
+}
+
+@Composable
+private fun AppearanceToggleRow(
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                title,
+                color = Color.White,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                subtitle,
+                color = Color.White.copy(0.5f),
+                fontSize = 11.sp
+            )
+        }
+        PremiumSwitch(
+            checked = checked,
+            onCheckedChange = onCheckedChange
+        )
+    }
 }
 
 @Composable
