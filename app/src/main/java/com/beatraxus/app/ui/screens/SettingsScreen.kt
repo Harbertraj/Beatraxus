@@ -516,54 +516,165 @@ private fun ValueEditDialog(
 
 @Composable
 fun AppearanceContent(uiState: PlayerUiState, playerViewModel: PlayerViewModel) {
-    SettingsSection(
-        title = "SCREEN ELEMENTS",
-        icon = Icons.Rounded.Palette,
-        isActive = true,
-        subtitle = "Toggle visibility of UI components"
-    ) {
-        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            AppearanceToggleRow(
-                title = "Mini Player",
-                subtitle = "Show a compact player when browsing the library",
-                checked = uiState.appearance.showMiniPlayer,
-                onCheckedChange = { playerViewModel.setShowMiniPlayer(it) }
-            )
-            HorizontalDivider(color = Color.White.copy(0.05f))
-            AppearanceToggleRow(
-                title = "Blurred Background (Now Playing)",
-                subtitle = "Enable immersive blurred album art background",
-                checked = uiState.appearance.showNowPlayingBlurBackground,
-                onCheckedChange = { playerViewModel.setShowNowPlayingBlurBackground(it) }
-            )
-            HorizontalDivider(color = Color.White.copy(0.05f))
-            AppearanceToggleRow(
-                title = "Audio Quality Badge",
-                subtitle = "Display bitrate and format badges (Hi-Res, Lossless)",
-                checked = uiState.appearance.showAudioQualityBadge,
-                onCheckedChange = { playerViewModel.setShowAudioQualityBadge(it) }
-            )
-            HorizontalDivider(color = Color.White.copy(0.05f))
-            AppearanceToggleRow(
-                title = "Live Pipeline Overlay",
-                subtitle = "Show real-time audio engine processing status",
-                checked = uiState.appearance.showAudioPipelineOverlay,
-                onCheckedChange = { playerViewModel.setShowAudioPipelineOverlay(it) }
-            )
-            HorizontalDivider(color = Color.White.copy(0.05f))
-            AppearanceToggleRow(
-                title = "Technical Info Panel",
-                subtitle = "View detailed audio metrics in the player",
-                checked = uiState.appearance.showTechnicalInfoPanel,
-                onCheckedChange = { playerViewModel.setShowTechnicalInfoPanel(it) }
-            )
-            HorizontalDivider(color = Color.White.copy(0.05f))
-            AppearanceToggleRow(
-                title = "Lyrics Button",
-                subtitle = "Quick access to lyrics from the main player screen",
-                checked = uiState.appearance.showLyricsButton,
-                onCheckedChange = { playerViewModel.setShowLyricsButton(it) }
-            )
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        SettingsSection(
+            title = "SCREEN ELEMENTS",
+            icon = Icons.Rounded.Palette,
+            isActive = true,
+            subtitle = "Toggle visibility of UI components"
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                AppearanceToggleRow(
+                    title = "Mini Player",
+                    subtitle = "Show a compact player when browsing the library",
+                    checked = uiState.appearance.showMiniPlayer,
+                    onCheckedChange = { playerViewModel.setShowMiniPlayer(it) }
+                )
+                HorizontalDivider(color = Color.White.copy(0.05f))
+                AppearanceToggleRow(
+                    title = "Blurred Background (Now Playing)",
+                    subtitle = "Enable immersive blurred album art background",
+                    checked = uiState.appearance.showNowPlayingBlurBackground,
+                    onCheckedChange = { playerViewModel.setShowNowPlayingBlurBackground(it) }
+                )
+                HorizontalDivider(color = Color.White.copy(0.05f))
+                AppearanceToggleRow(
+                    title = "Audio Quality Badge",
+                    subtitle = "Display bitrate and format badges (Hi-Res, Lossless)",
+                    checked = uiState.appearance.showAudioQualityBadge,
+                    onCheckedChange = { playerViewModel.setShowAudioQualityBadge(it) }
+                )
+                HorizontalDivider(color = Color.White.copy(0.05f))
+                AppearanceToggleRow(
+                    title = "Live Pipeline Overlay",
+                    subtitle = "Show real-time audio engine processing status",
+                    checked = uiState.appearance.showAudioPipelineOverlay,
+                    onCheckedChange = { playerViewModel.setShowAudioPipelineOverlay(it) }
+                )
+                HorizontalDivider(color = Color.White.copy(0.05f))
+                AppearanceToggleRow(
+                    title = "Technical Info Panel",
+                    subtitle = "View detailed audio metrics in the player",
+                    checked = uiState.appearance.showTechnicalInfoPanel,
+                    onCheckedChange = { playerViewModel.setShowTechnicalInfoPanel(it) }
+                )
+                HorizontalDivider(color = Color.White.copy(0.05f))
+                AppearanceToggleRow(
+                    title = "Lyrics Button",
+                    subtitle = "Quick access to lyrics from the main player screen",
+                    checked = uiState.appearance.showLyricsButton,
+                    onCheckedChange = { playerViewModel.setShowLyricsButton(it) }
+                )
+            }
+        }
+
+        SettingsSection(
+            title = "HOME SCREEN SECTIONS",
+            icon = Icons.Rounded.Home,
+            isActive = true,
+            subtitle = "Customize visible categories on the home screen"
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                AppearanceToggleRow(
+                    title = "Greeting Header",
+                    subtitle = "Show personalized greeting and profile access",
+                    checked = uiState.appearance.showGreetingHeader,
+                    onCheckedChange = { playerViewModel.setShowGreetingHeader(it) }
+                )
+                HorizontalDivider(color = Color.White.copy(0.05f))
+                AppearanceToggleRow(
+                    title = "Browse by Mood",
+                    subtitle = "Show mood-based category shortcuts",
+                    checked = uiState.appearance.showBrowseByMood,
+                    onCheckedChange = { playerViewModel.setShowBrowseByMood(it) }
+                )
+                HorizontalDivider(color = Color.White.copy(0.05f))
+                AppearanceToggleRow(
+                    title = "Made For You",
+                    subtitle = "Show personalized mixes and discovery tracks",
+                    checked = uiState.appearance.showMadeForYou,
+                    onCheckedChange = { playerViewModel.setShowMadeForYou(it) }
+                )
+                HorizontalDivider(color = Color.White.copy(0.05f))
+                AppearanceToggleRow(
+                    title = "Listen Again",
+                    subtitle = "Quick access to your frequently played items",
+                    checked = uiState.appearance.showListenAgain,
+                    onCheckedChange = { playerViewModel.setShowListenAgain(it) }
+                )
+                HorizontalDivider(color = Color.White.copy(0.05f))
+                AppearanceToggleRow(
+                    title = "Recently Added",
+                    subtitle = "Show the latest additions to your library",
+                    checked = uiState.appearance.showRecentlyAddedHome,
+                    onCheckedChange = { playerViewModel.setShowRecentlyAddedHome(it) }
+                )
+                HorizontalDivider(color = Color.White.copy(0.05f))
+                AppearanceToggleRow(
+                    title = "Your Favorites",
+                    subtitle = "Show top songs and albums from your favorites",
+                    checked = uiState.appearance.showYourFavoritesHome,
+                    onCheckedChange = { playerViewModel.setShowYourFavoritesHome(it) }
+                )
+                HorizontalDivider(color = Color.White.copy(0.05f))
+                AppearanceToggleRow(
+                    title = "Featured Albums",
+                    subtitle = "Show selected albums from your collection",
+                    checked = uiState.appearance.showFeaturedAlbums,
+                    onCheckedChange = { playerViewModel.setShowFeaturedAlbums(it) }
+                )
+                HorizontalDivider(color = Color.White.copy(0.05f))
+                AppearanceToggleRow(
+                    title = "Artists You Love",
+                    subtitle = "Show highlights from your most played artists",
+                    checked = uiState.appearance.showArtistsYouLove,
+                    onCheckedChange = { playerViewModel.setShowArtistsYouLove(it) }
+                )
+                HorizontalDivider(color = Color.White.copy(0.05f))
+                AppearanceToggleRow(
+                    title = "Your Playlists",
+                    subtitle = "Show shortcuts to your custom playlists",
+                    checked = uiState.appearance.showYourPlaylists,
+                    onCheckedChange = { playerViewModel.setShowYourPlaylists(it) }
+                )
+            }
+        }
+
+        SettingsSection(
+            title = "NOW PLAYING SHORTCUTS",
+            icon = Icons.Rounded.Dashboard,
+            isActive = true,
+            subtitle = "Choose which icons appear on the player screen"
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                AppearanceToggleRow(
+                    title = "Favorite Button",
+                    subtitle = "Toggle heart icon to add songs to favorites",
+                    checked = uiState.appearance.showFavoriteButton,
+                    onCheckedChange = { playerViewModel.setShowFavoriteButton(it) }
+                )
+                HorizontalDivider(color = Color.White.copy(0.05f))
+                AppearanceToggleRow(
+                    title = "Equalizer Shortcut",
+                    subtitle = "Quick jump to DSP and EQ settings",
+                    checked = uiState.appearance.showEqualizerShortcut,
+                    onCheckedChange = { playerViewModel.setShowEqualizerShortcut(it) }
+                )
+                HorizontalDivider(color = Color.White.copy(0.05f))
+                AppearanceToggleRow(
+                    title = "Queue Button",
+                    subtitle = "Show the upcoming tracks list shortcut",
+                    checked = uiState.appearance.showQueueButton,
+                    onCheckedChange = { playerViewModel.setShowQueueButton(it) }
+                )
+                HorizontalDivider(color = Color.White.copy(0.05f))
+                AppearanceToggleRow(
+                    title = "Sleep Timer Icon",
+                    subtitle = "Show shortcut to set the sleep timer",
+                    checked = uiState.appearance.showSleepTimerIcon,
+                    onCheckedChange = { playerViewModel.setShowSleepTimerIcon(it) }
+                )
+            }
         }
     }
 }

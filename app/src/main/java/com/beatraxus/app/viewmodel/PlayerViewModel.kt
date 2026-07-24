@@ -4119,6 +4119,86 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    // Home Screen Sections
+    fun setShowGreetingHeader(value: Boolean) {
+        viewModelScope.launch {
+            appearancePreferences.setShowGreetingHeader(value)
+        }
+    }
+
+    fun setShowBrowseByMood(value: Boolean) {
+        viewModelScope.launch {
+            appearancePreferences.setShowBrowseByMood(value)
+        }
+    }
+
+    fun setShowMadeForYou(value: Boolean) {
+        viewModelScope.launch {
+            appearancePreferences.setShowMadeForYou(value)
+        }
+    }
+
+    fun setShowListenAgain(value: Boolean) {
+        viewModelScope.launch {
+            appearancePreferences.setShowListenAgain(value)
+        }
+    }
+
+    fun setShowRecentlyAddedHome(value: Boolean) {
+        viewModelScope.launch {
+            appearancePreferences.setShowRecentlyAddedHome(value)
+        }
+    }
+
+    fun setShowYourFavoritesHome(value: Boolean) {
+        viewModelScope.launch {
+            appearancePreferences.setShowYourFavoritesHome(value)
+        }
+    }
+
+    fun setShowFeaturedAlbums(value: Boolean) {
+        viewModelScope.launch {
+            appearancePreferences.setShowFeaturedAlbums(value)
+        }
+    }
+
+    fun setShowArtistsYouLove(value: Boolean) {
+        viewModelScope.launch {
+            appearancePreferences.setShowArtistsYouLove(value)
+        }
+    }
+
+    fun setShowYourPlaylists(value: Boolean) {
+        viewModelScope.launch {
+            appearancePreferences.setShowYourPlaylists(value)
+        }
+    }
+
+    // Now Playing Shortcuts
+    fun setShowFavoriteButton(value: Boolean) {
+        viewModelScope.launch {
+            appearancePreferences.setShowFavoriteButton(value)
+        }
+    }
+
+    fun setShowEqualizerShortcut(value: Boolean) {
+        viewModelScope.launch {
+            appearancePreferences.setShowEqualizerShortcut(value)
+        }
+    }
+
+    fun setShowQueueButton(value: Boolean) {
+        viewModelScope.launch {
+            appearancePreferences.setShowQueueButton(value)
+        }
+    }
+
+    fun setShowSleepTimerIcon(value: Boolean) {
+        viewModelScope.launch {
+            appearancePreferences.setShowSleepTimerIcon(value)
+        }
+    }
+
     fun logoutLastFm() {
         viewModelScope.launch {
             lastFmRepository.logout()

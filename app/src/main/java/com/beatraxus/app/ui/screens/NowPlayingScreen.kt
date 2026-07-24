@@ -358,30 +358,32 @@ fun NowPlayingScreen(
                                 }
                             } else {
                                 // Sleep Timer Button
-                                Surface(
-                                    onClick = { showSleepTimerSheet = true },
-                                    shape = RoundedCornerShape(14.dp),
-                                    color = if (uiState.isSleepTimerActive) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f) else Color.White.copy(alpha = 0.08f),
-                                    border = BorderStroke(1.dp, if (uiState.isSleepTimerActive) MaterialTheme.colorScheme.primary.copy(alpha = 0.4f) else Color.White.copy(alpha = 0.05f))
-                                ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        modifier = Modifier.padding(horizontal = if (uiState.isSleepTimerActive) 10.dp else 8.dp, vertical = 8.dp)
+                                if (uiState.appearance.showSleepTimerIcon) {
+                                    Surface(
+                                        onClick = { showSleepTimerSheet = true },
+                                        shape = RoundedCornerShape(14.dp),
+                                        color = if (uiState.isSleepTimerActive) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f) else Color.White.copy(alpha = 0.08f),
+                                        border = BorderStroke(1.dp, if (uiState.isSleepTimerActive) MaterialTheme.colorScheme.primary.copy(alpha = 0.4f) else Color.White.copy(alpha = 0.05f))
                                     ) {
-                                        Icon(
-                                            Icons.Rounded.Timer,
-                                            null,
-                                            tint = if (uiState.isSleepTimerActive) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.8f),
-                                            modifier = Modifier.size(20.dp)
-                                        )
-                                        if (uiState.isSleepTimerActive) {
-                                            Spacer(Modifier.width(6.dp))
-                                            Text(
-                                                text = fmtSleepTime(uiState.sleepTimerRemainingSeconds),
-                                                color = MaterialTheme.colorScheme.primary,
-                                                fontSize = 12.sp,
-                                                fontWeight = FontWeight.Bold
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.padding(horizontal = if (uiState.isSleepTimerActive) 10.dp else 8.dp, vertical = 8.dp)
+                                        ) {
+                                            Icon(
+                                                Icons.Rounded.Timer,
+                                                null,
+                                                tint = if (uiState.isSleepTimerActive) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.8f),
+                                                modifier = Modifier.size(20.dp)
                                             )
+                                            if (uiState.isSleepTimerActive) {
+                                                Spacer(Modifier.width(6.dp))
+                                                Text(
+                                                    text = fmtSleepTime(uiState.sleepTimerRemainingSeconds),
+                                                    color = MaterialTheme.colorScheme.primary,
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
                                         }
                                     }
                                 }
@@ -578,13 +580,15 @@ fun NowPlayingScreen(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                             // Favorite Icon
-                            IconButton(onClick = onFavoriteClick) {
-                                Icon(
-                                    if (isFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
-                                    null,
-                                    tint = if (isFavorite) Color(0xFFFF4081) else Color.White.copy(0.7f),
-                                    modifier = Modifier.size(28.dp)
-                                )
+                            if (uiState.appearance.showFavoriteButton) {
+                                IconButton(onClick = onFavoriteClick) {
+                                    Icon(
+                                        if (isFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                                        null,
+                                        tint = if (isFavorite) Color(0xFFFF4081) else Color.White.copy(0.7f),
+                                        modifier = Modifier.size(28.dp)
+                                    )
+                                }
                             }
 
 
@@ -833,35 +837,45 @@ fun NowPlayingScreen(
                         }
 
                         // Pill 2: Queue and Equalizer
-                        Box(modifier = pillModifier, contentAlignment = Alignment.Center) {
-                            Row(
-                                modifier = Modifier.fillMaxSize(),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                                    IconButton(onClick = onToggleQueue) {
-                                        Icon(
-                                            if (showQueue) Icons.AutoMirrored.Rounded.PlaylistPlay else Icons.AutoMirrored.Outlined.PlaylistPlay,
-                                            null,
-                                            tint = if (showQueue) Color.White else Color.White.copy(0.45f),
-                                            modifier = Modifier.size(24.dp)
+                        if (uiState.appearance.showQueueButton || uiState.appearance.showEqualizerShortcut) {
+                            Box(modifier = pillModifier, contentAlignment = Alignment.Center) {
+                                Row(
+                                    modifier = Modifier.fillMaxSize(),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    if (uiState.appearance.showQueueButton) {
+                                        Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                                            IconButton(onClick = onToggleQueue) {
+                                                Icon(
+                                                    if (showQueue) Icons.AutoMirrored.Rounded.PlaylistPlay else Icons.AutoMirrored.Outlined.PlaylistPlay,
+                                                    null,
+                                                    tint = if (showQueue) Color.White else Color.White.copy(0.45f),
+                                                    modifier = Modifier.size(24.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+
+                                    if (uiState.appearance.showQueueButton && uiState.appearance.showEqualizerShortcut) {
+                                        VerticalDivider(
+                                            modifier = Modifier.height(20.dp),
+                                            thickness = 1.dp,
+                                            color = Color.White.copy(alpha = 0.1f)
                                         )
                                     }
-                                }
-                                VerticalDivider(
-                                    modifier = Modifier.height(20.dp),
-                                    thickness = 1.dp,
-                                    color = Color.White.copy(alpha = 0.1f)
-                                )
-                                Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                                    IconButton(onClick = onOpenEqualizer) {
-                                        val eqEnabled = uiState.dsp.config.eqEnabled
-                                        Icon(
-                                            if (eqEnabled) Icons.Rounded.Equalizer else Icons.Outlined.Equalizer,
-                                            null,
-                                            tint = if (eqEnabled) Color.White else Color.White.copy(0.45f),
-                                            modifier = Modifier.size(24.dp)
-                                        )
+
+                                    if (uiState.appearance.showEqualizerShortcut) {
+                                        Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                                            IconButton(onClick = onOpenEqualizer) {
+                                                val eqEnabled = uiState.dsp.config.eqEnabled
+                                                Icon(
+                                                    if (eqEnabled) Icons.Rounded.Equalizer else Icons.Outlined.Equalizer,
+                                                    null,
+                                                    tint = if (eqEnabled) Color.White else Color.White.copy(0.45f),
+                                                    modifier = Modifier.size(24.dp)
+                                                )
+                                            }
+                                        }
                                     }
                                 }
                             }

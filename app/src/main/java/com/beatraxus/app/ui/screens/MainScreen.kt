@@ -3698,89 +3698,91 @@ fun HomeScreen(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(bottom = 140.dp)
     ) {
-        item {
-            // Updated Premium Greeting Header
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp)
-                    .clip(RoundedCornerShape(24.dp))
-                    .background(Color.Black.copy(alpha = 0.9f))
-                    .border(
-                        0.5.dp,
-                        Brush.verticalGradient(
-                            listOf(Color.White.copy(0.15f), Color.White.copy(0.05f))
-                        ),
-                        RoundedCornerShape(24.dp)
-                    )
-            ) {
-                Row(
+        if (uiState.appearance.showGreetingHeader) {
+            item {
+                // Updated Premium Greeting Header
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 20.dp, vertical = 16.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+                        .padding(horizontal = 16.dp, vertical = 8.dp)
+                        .clip(RoundedCornerShape(24.dp))
+                        .background(Color.Black.copy(alpha = 0.9f))
+                        .border(
+                            0.5.dp,
+                            Brush.verticalGradient(
+                                listOf(Color.White.copy(0.15f), Color.White.copy(0.05f))
+                            ),
+                            RoundedCornerShape(24.dp)
+                        )
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                        // Compact Premium Icon
-                        Box(
-                            modifier = Modifier
-                                .size(48.dp)
-                                .clip(CircleShape)
-                                .background(greetingColors[0].copy(alpha = 0.2f))
-                                .border(1.dp, greetingColors[0].copy(alpha = 0.3f), CircleShape),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = greetingIcon,
-                                contentDescription = null,
-                                tint = greetingColors[0].copy(alpha = 1f),
-                                modifier = Modifier.size(24.dp)
-                            )
-                        }
-
-                        Spacer(Modifier.width(16.dp))
-
-                        Column(verticalArrangement = Arrangement.Center) {
-                            Text(
-                                text = "$greeting,",
-                                fontSize = 14.sp,
-                                color = Color.White.copy(0.5f),
-                                fontWeight = FontWeight.Medium,
-                                letterSpacing = 0.2.sp
-                            )
-                            Text(
-                                text = deviceName,
-                                fontSize = 20.sp,
-                                color = Color.White,
-                                fontWeight = FontWeight.Black,
-                                letterSpacing = (-0.5).sp
-                            )
-                        }
-                    }
-
-                    // Compact Shuffle Button
-                    Surface(
-                        onClick = { viewModel.shuffleAndPlay() },
-                        color = Color.Transparent,
-                        shape = RoundedCornerShape(16.dp)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 20.dp, vertical = 16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .background(
-                                    Brush.linearGradient(
-                                        listOf(Color(0xFF00E5FF), Color(0xFF1200FF))
-                                    )
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                            // Compact Premium Icon
+                            Box(
+                                modifier = Modifier
+                                    .size(48.dp)
+                                    .clip(CircleShape)
+                                    .background(greetingColors[0].copy(alpha = 0.2f))
+                                    .border(1.dp, greetingColors[0].copy(alpha = 0.3f), CircleShape),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = greetingIcon,
+                                    contentDescription = null,
+                                    tint = greetingColors[0].copy(alpha = 1f),
+                                    modifier = Modifier.size(24.dp)
                                 )
-                                .padding(horizontal = 16.dp, vertical = 10.dp),
-                            contentAlignment = Alignment.Center
+                            }
+
+                            Spacer(Modifier.width(16.dp))
+
+                            Column(verticalArrangement = Arrangement.Center) {
+                                Text(
+                                    text = "$greeting,",
+                                    fontSize = 14.sp,
+                                    color = Color.White.copy(0.5f),
+                                    fontWeight = FontWeight.Medium,
+                                    letterSpacing = 0.2.sp
+                                )
+                                Text(
+                                    text = deviceName,
+                                    fontSize = 20.sp,
+                                    color = Color.White,
+                                    fontWeight = FontWeight.Black,
+                                    letterSpacing = (-0.5).sp
+                                )
+                            }
+                        }
+
+                        // Compact Shuffle Button
+                        Surface(
+                            onClick = { viewModel.shuffleAndPlay() },
+                            color = Color.Transparent,
+                            shape = RoundedCornerShape(16.dp)
                         ) {
-                            Icon(
-                                Icons.Rounded.Shuffle,
-                                null,
-                                tint = Color.White,
-                                modifier = Modifier.size(18.dp)
-                            )
+                            Box(
+                                modifier = Modifier
+                                    .background(
+                                        Brush.linearGradient(
+                                            listOf(Color(0xFF00E5FF), Color(0xFF1200FF))
+                                        )
+                                    )
+                                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    Icons.Rounded.Shuffle,
+                                    null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
                         }
                     }
                 }
@@ -4030,25 +4032,27 @@ fun HomeScreen(
         }
 
         // Browse by Mood
-        item {
-            HomeSectionHeader(
-                title = "Browse by Mood",
-                actionText = "See All",
-                actionIcon = Icons.Rounded.KeyboardArrowRight,
-                onActionClick = { showAllMoodsDialog = true }
-            )
-            LazyRow(
-                contentPadding = PaddingValues(horizontal = 16.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                items(allMoods) { mood ->
-                    MoodTile(mood) { playMood(mood) }
+        if (uiState.appearance.showBrowseByMood) {
+            item {
+                HomeSectionHeader(
+                    title = "Browse by Mood",
+                    actionText = "See All",
+                    actionIcon = Icons.Rounded.KeyboardArrowRight,
+                    onActionClick = { showAllMoodsDialog = true }
+                )
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    items(allMoods) { mood ->
+                        MoodTile(mood) { playMood(mood) }
+                    }
                 }
             }
         }
 
         // Additional Sections (Optional, placed after the main content from image)
-        if (quickPicks.isNotEmpty()) {
+        if (quickPicks.isNotEmpty() && uiState.appearance.showMadeForYou) {
             item { HomeSectionHeader("Made For You") }
             item {
                 LazyRow(
@@ -4126,7 +4130,7 @@ fun HomeScreen(
             }
         }
 
-        if (recentlyPlayed.isNotEmpty()) {
+        if (recentlyPlayed.isNotEmpty() && uiState.appearance.showListenAgain) {
             item { HomeSectionHeader("Listen Again") }
             item {
                 LazyRow(
@@ -4141,7 +4145,7 @@ fun HomeScreen(
         }
 
         val recentlyAddedSongs = allSongs.sortedByDescending { it.dateAdded }.take(15)
-        if (recentlyAddedSongs.isNotEmpty()) {
+        if (recentlyAddedSongs.isNotEmpty() && uiState.appearance.showRecentlyAddedHome) {
             item { HomeSectionHeader("Recently Added") }
             item {
                 LazyRow(
@@ -4158,7 +4162,7 @@ fun HomeScreen(
         }
 
         val favoriteSongs = allSongs.filter { favorites.contains(it.id) }.take(15)
-        if (favoriteSongs.isNotEmpty()) {
+        if (favoriteSongs.isNotEmpty() && uiState.appearance.showYourFavoritesHome) {
             item { HomeSectionHeader("Your Favorites") }
             item {
                 LazyRow(
@@ -4174,7 +4178,7 @@ fun HomeScreen(
             }
         }
 
-        if (albums.isNotEmpty()) {
+        if (albums.isNotEmpty() && uiState.appearance.showFeaturedAlbums) {
             item { HomeSectionHeader("Featured Albums") }
             item {
                 LazyRow(
@@ -4190,7 +4194,7 @@ fun HomeScreen(
             }
         }
 
-        if (artists.isNotEmpty()) {
+        if (artists.isNotEmpty() && uiState.appearance.showArtistsYouLove) {
             item { HomeSectionHeader("Artists You Love") }
             item {
                 LazyRow(
@@ -4206,7 +4210,7 @@ fun HomeScreen(
             }
         }
 
-        if (playlists.isNotEmpty()) {
+        if (playlists.isNotEmpty() && uiState.appearance.showYourPlaylists) {
             item { HomeSectionHeader("Your Playlists") }
             item {
                 LazyRow(

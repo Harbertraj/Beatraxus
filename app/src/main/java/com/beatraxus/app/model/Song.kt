@@ -112,6 +112,23 @@ data class AppearanceConfig(
     val showAudioPipelineOverlay: Boolean = true,
     val showTechnicalInfoPanel: Boolean = true,
     val showLyricsButton: Boolean = true,
+
+    // Home Screen Sections
+    val showGreetingHeader: Boolean = true,
+    val showBrowseByMood: Boolean = true,
+    val showMadeForYou: Boolean = true,
+    val showListenAgain: Boolean = true,
+    val showRecentlyAddedHome: Boolean = true,
+    val showYourFavoritesHome: Boolean = true,
+    val showFeaturedAlbums: Boolean = true,
+    val showArtistsYouLove: Boolean = true,
+    val showYourPlaylists: Boolean = true,
+
+    // Now Playing Shortcuts
+    val showFavoriteButton: Boolean = true,
+    val showEqualizerShortcut: Boolean = true,
+    val showQueueButton: Boolean = true,
+    val showSleepTimerIcon: Boolean = true,
 )
 
 enum class AudioOutputDevice(val displayName: String) {
