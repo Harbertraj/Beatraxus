@@ -31,7 +31,8 @@ import java.util.concurrent.ConcurrentHashMap
 class MetadataExtractor(private val context: Context) {
 
     private val TAG = "MetadataExtractor"
-    private val batchSemaphore = Semaphore(50) // Increased to 50 parallel workers for maximum speed as requested
+    private val batchSemaphore = Semaphore(50) // Restored to 50 for high throughput
+    private val ffmpegSemaphore = Semaphore(2) // CPU-intensive tasks should be strictly throttled
     private val onlineGenreService = GenreApiService()
     
     // Global tracking to prevent multiple batches from processing the same song
@@ -397,7 +398,7 @@ class MetadataExtractor(private val context: Context) {
     }
 
 
-    private fun extractMetadataWithFFprobe(song: Song, file: File): Song {
+    private suspend fun extractMetadataWithFFprobe(song: Song, file: File): Song = ffmpegSemaphore.withPermit {
         val session = FFprobeKit.execute("-v quiet -print_format json -show_format -show_streams ${file.absolutePath}")
         if (ReturnCode.isSuccess(session.returnCode)) {
             val json = JSONObject(session.output ?: "{}")
@@ -489,6 +490,36 @@ class MetadataExtractor(private val context: Context) {
                 }
 
                 when (chunkId.trim().uppercase()) {
+                    "FMT " -> {
+                        val formatCode = readLittleEndianShort(raf)
+                        val channels = readLittleEndianShort(raf)
+                        val sampleRate = readLittleEndianInt(raf)
+                        val byteRate = readLittleEndianInt(raf)
+                        val blockAlign = readLittleEndianShort(raf)
+                        val bitsPerSample = readLittleEndianShort(raf)
+                        
+                        updatedSong = updatedSong.copy(
+                            sampleRateHz = sampleRate,
+                            bitDepth = bitsPerSample.toInt()
+                        )
+                        
+                        // Capture byteRate to use for duration calculation later
+                        if (byteRate > 0) {
+                            updatedSong = updatedSong.copy(bitrate = byteRate * 8)
+                        }
+                    }
+                    "DATA" -> {
+                        if (chunkSize > 0) {
+                            // DurationMs = (data size * 1000) / (bytes per second)
+                            val byteRate = updatedSong.bitrate / 8
+                            if (byteRate > 0) {
+                                val durationMs = (chunkSize * 1000) / byteRate
+                                if (updatedSong.durationMs <= 0 || updatedSong.durationMs < durationMs) {
+                                    updatedSong = updatedSong.copy(durationMs = durationMs)
+                                }
+                            }
+                        }
+                    }
                     "ID3" -> {
                         if (chunkSize > 0 && chunkSize <= (fileLen - chunkStart)) {
                             val bytes = ByteArray(chunkSize.toInt())
@@ -629,7 +660,7 @@ class MetadataExtractor(private val context: Context) {
         try { Charsets.UTF_8.newDecoder().decode(java.nio.ByteBuffer.wrap(bytes)); true }
         catch (e: Exception) { false }
 
-    private fun extractEmbeddedArtWithFfmpeg(songId: String, file: File): Uri? {
+    private suspend fun extractEmbeddedArtWithFfmpeg(songId: String, file: File): Uri? = ffmpegSemaphore.withPermit {
         val outputFile = File(File(context.filesDir, "album_art").apply { mkdirs() }, "$songId.jpg")
         val session = FFmpegKit.executeWithArguments(
             arrayOf(
@@ -679,12 +710,17 @@ class MetadataExtractor(private val context: Context) {
     }
 
     private fun readLittleEndianInt(raf: RandomAccessFile): Int {
-        val bytes = ByteArray(4)
-        raf.readFully(bytes)
-        return (bytes[0].toInt() and 0xFF) or
-               ((bytes[1].toInt() and 0xFF) shl 8) or
-               ((bytes[2].toInt() and 0xFF) shl 16) or
-               ((bytes[3].toInt() and 0xFF) shl 24)
+        val b0 = raf.read()
+        val b1 = raf.read()
+        val b2 = raf.read()
+        val b3 = raf.read()
+        return (b0 and 0xFF) or ((b1 and 0xFF) shl 8) or ((b2 and 0xFF) shl 16) or ((b3 and 0xFF) shl 24)
+    }
+
+    private fun readLittleEndianShort(raf: RandomAccessFile): Short {
+        val b0 = raf.read()
+        val b1 = raf.read()
+        return ((b0 and 0xFF) or ((b1 and 0xFF) shl 8)).toShort()
     }
 
     private fun synchsafeToInt(bytes: ByteArray): Int {

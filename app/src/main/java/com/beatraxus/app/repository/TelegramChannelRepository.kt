@@ -70,7 +70,7 @@ private suspend fun downloadAlbumArtUri(tdLib: TdLibManager, audio: TdApi.Audio)
     }
 }
 
-private val metadataSemaphore = Semaphore(50) // Increased to 50 for maximum throughput as requested
+private val metadataSemaphore = Semaphore(50) // Restored to 50 for high throughput
 
 private data class ExtractedMetadata(
     val title: String? = null,
@@ -231,7 +231,7 @@ class TelegramChannelRepository(private val context: Context) {
         val total = messages.size
         var processed = 0
 
-        val semaphore = Semaphore(50)
+        val semaphore = Semaphore(50) // Restored to 50 for high throughput
         val songs = withContext(Dispatchers.IO) {
             messages.map { msg ->
                 async {

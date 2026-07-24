@@ -69,6 +69,8 @@ import com.beatraxus.app.repository.MusicRepository
 import com.google.android.gms.cast.MediaStatus
 import com.beatraxus.app.model.AppDatabase
 import com.google.api.client.googleapis.extensions.android.gms.auth.UserRecoverableAuthIOException
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.io.File
 
 
@@ -80,8 +82,12 @@ class AudioPlaybackService : Service() {
     private lateinit var audioManager: AudioManager
     private lateinit var dspPreferences: DspPreferences
     private lateinit var cloudCacheManager: com.beatraxus.app.drive.CloudCacheManager
+    private lateinit var telegramChannelRepository: com.beatraxus.app.repository.TelegramChannelRepository
+    private lateinit var metadataExtractor: com.beatraxus.app.repository.MetadataExtractor
+    private lateinit var tdLibManager: com.beatraxus.app.telegram.TdLibManager
     private var audioFocusRequest: AudioFocusRequest? = null
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+    private val scanMutex = Mutex()
     private val _outputRouteStateFlow = MutableStateFlow(OutputRouteState())
     val outputRouteStateFlow: StateFlow<OutputRouteState> = _outputRouteStateFlow.asStateFlow()
     
@@ -177,9 +183,11 @@ class AudioPlaybackService : Service() {
         )
         audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         audioOutput = AudioTrackOutput(this)
-        val application = (application as com.beatraxus.app.BeatraxusApplication)
-        val database = application.database
-        val tdLibManager = application.tdLibManager
+        val app = (application as com.beatraxus.app.BeatraxusApplication)
+        val database = app.database
+        tdLibManager = app.tdLibManager
+        telegramChannelRepository = com.beatraxus.app.repository.TelegramChannelRepository(this)
+        metadataExtractor = com.beatraxus.app.repository.MetadataExtractor(this)
         engine = AudioEngine(this, audioOutput, cloudCacheManager, database, tdLibManager)
 
         // Restore shuffle/repeat modes from disk
@@ -832,96 +840,97 @@ class AudioPlaybackService : Service() {
         onComplete: (String) -> Unit,
         onError: (String, Intent?) -> Unit
     ) {
-        if (libraryScanJob?.isActive == true) return
         libraryScanJob = serviceScope.launch(Dispatchers.Default) {
-            acquireScanWakeLock()
-            try {
-                val credential = driveAccountRepository.getCredential(email)
-                val scanner = com.beatraxus.app.drive.DriveLibraryScanner(application)
-                val newSongs = scanner.scanAccount(credential, allowedFormats)
-                
-                val existingSongs = withContext(Dispatchers.IO) {
-                    songDao.getSongsByAccount(email.lowercase()).associateBy { it.id }
-                }
-
-                val newSongIds = newSongs.map { it.id }.toSet()
-                val songsToDelete = existingSongs.filterKeys { it !in newSongIds }.keys.toList()
-                if (songsToDelete.isNotEmpty()) {
-                    withContext(Dispatchers.IO) {
-                        songDao.deleteSongsByIds(songsToDelete)
-                    }
-                }
-
-                if (newSongs.isNotEmpty()) {
-                    val updatedNewSongs = newSongs.map { song ->
-                        val existing = existingSongs[song.id]
-                        if (existing != null && (existing.isEnriched || existing.durationMs > 0)) {
-                            song.copy(
-                                durationMs = existing.durationMs,
-                                bitrate = existing.bitrate,
-                                sampleRateHz = existing.sampleRateHz,
-                                bitDepth = existing.bitDepth,
-                                albumArtUri = existing.albumArtUriString?.let { Uri.parse(it) } ?: song.albumArtUri,
-                                format = existing.format,
-                                album = existing.album,
-                                artist = existing.artist,
-                                genre = existing.genre,
-                                year = existing.year,
-                                lyrics = existing.lyrics,
-                                replayGainTrackDb = existing.replayGainTrackDb,
-                                replayGainAlbumDb = existing.replayGainAlbumDb,
-                                replayGainTrackPeak = existing.replayGainTrackPeak,
-                                replayGainAlbumPeak = existing.replayGainAlbumPeak,
-                                isEnriched = existing.isEnriched,
-                                lastSyncTimestamp = existing.lastSyncTimestamp
-                            )
-                        } else {
-                            song
-                        }
-                    }
-
-                    songDao.insertSongs(updatedNewSongs.map { it.toEntity() })
-                    onDiscoveryComplete(updatedNewSongs)
+            scanMutex.withLock {
+                acquireScanWakeLock()
+                try {
+                    val credential = driveAccountRepository.getCredential(email)
+                    val scanner = com.beatraxus.app.drive.DriveLibraryScanner(application)
+                    val newSongs = scanner.scanAccount(credential, allowedFormats)
                     
-                    val toEnrich = updatedNewSongs.filter {
-                        !it.isEnriched || (it.albumArtUri == null && !it.albumArtFetchAttempted)
+                    val existingSongs = withContext(Dispatchers.IO) {
+                        songDao.getSongsByAccount(email.lowercase()).associateBy { it.id }
                     }
-                    if (toEnrich.isNotEmpty()) {
-                        val extractor = com.beatraxus.app.repository.MetadataExtractor(application)
-                        var processed = 0
-                        val total = toEnrich.size
-                        
-                        onStatusUpdate("Enriching $total new songs...")
 
-                        try {
-                            extractor.extractCloudMetadataBatch(toEnrich, credential) { updatedSong ->
-                                processed++
-                                val progress = processed.toFloat() / total.toFloat()
-                                onProgress(progress)
-                                onEnrichmentProgress(progress, processed, total)
-                                updateEnrichingProgress(progress, processed, total)
-                                
-                                songDao.insertSong(updatedSong.toEntity())
-                                onSongUpdated(updatedSong)
-                            }
-                        } finally {
-                            onStatusUpdate(null)
-                            updateEnrichingProgress(1.0f, total, total)
+                    val newSongIds = newSongs.map { it.id }.toSet()
+                    val songsToDelete = existingSongs.filterKeys { it !in newSongIds }.keys.toList()
+                    if (songsToDelete.isNotEmpty()) {
+                        withContext(Dispatchers.IO) {
+                            songDao.deleteSongsByIds(songsToDelete)
                         }
                     }
-                    onComplete("Synced ${newSongs.size} songs from $email")
-                } else {
-                    onComplete("No songs found for $email")
+
+                    if (newSongs.isNotEmpty()) {
+                        val updatedNewSongs = newSongs.map { song ->
+                            val existing = existingSongs[song.id]
+                            if (existing != null && (existing.isEnriched || existing.durationMs > 0)) {
+                                song.copy(
+                                    durationMs = existing.durationMs,
+                                    bitrate = existing.bitrate,
+                                    sampleRateHz = existing.sampleRateHz,
+                                    bitDepth = existing.bitDepth,
+                                    albumArtUri = existing.albumArtUriString?.let { Uri.parse(it) } ?: song.albumArtUri,
+                                    format = existing.format,
+                                    album = existing.album,
+                                    artist = existing.artist,
+                                    genre = existing.genre,
+                                    year = existing.year,
+                                    lyrics = existing.lyrics,
+                                    replayGainTrackDb = existing.replayGainTrackDb,
+                                    replayGainAlbumDb = existing.replayGainAlbumDb,
+                                    replayGainTrackPeak = existing.replayGainTrackPeak,
+                                    replayGainAlbumPeak = existing.replayGainAlbumPeak,
+                                    isEnriched = existing.isEnriched,
+                                    lastSyncTimestamp = existing.lastSyncTimestamp
+                                )
+                            } else {
+                                song
+                            }
+                        }
+
+                        songDao.insertSongs(updatedNewSongs.map { it.toEntity() })
+                        onDiscoveryComplete(updatedNewSongs)
+                        
+                        val toEnrich = updatedNewSongs.filter {
+                            !it.isEnriched || (it.albumArtUri == null && !it.albumArtFetchAttempted)
+                        }
+                        if (toEnrich.isNotEmpty()) {
+                            val extractor = com.beatraxus.app.repository.MetadataExtractor(application)
+                            var processed = 0
+                            val total = toEnrich.size
+                            
+                            onStatusUpdate("Enriching $total new songs...")
+
+                            try {
+                                extractor.extractCloudMetadataBatch(toEnrich, credential) { updatedSong ->
+                                    processed++
+                                    val progress = processed.toFloat() / total.toFloat()
+                                    onProgress(progress)
+                                    onEnrichmentProgress(progress, processed, total)
+                                    updateEnrichingProgress(progress, processed, total)
+                                    
+                                    songDao.insertSong(updatedSong.toEntity())
+                                    onSongUpdated(updatedSong)
+                                }
+                            } finally {
+                                onStatusUpdate(null)
+                                updateEnrichingProgress(1.0f, total, total)
+                            }
+                        }
+                        onComplete("Synced ${newSongs.size} songs from $email")
+                    } else {
+                        onComplete("No songs found for $email")
+                    }
+                } catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                    if (e is UserRecoverableAuthIOException) {
+                        onError(e.message ?: "Auth error", e.intent)
+                    } else {
+                        onError(e.message ?: "Drive scan failed: ${e.message}", null)
+                    }
+                } finally {
+                    releaseScanWakeLock()
                 }
-            } catch (e: Exception) {
-                if (e is CancellationException) throw e
-                if (e is UserRecoverableAuthIOException) {
-                    onError(e.message ?: "Auth error", e.intent)
-                } else {
-                    onError(e.message ?: "Drive scan failed: ${e.message}", null)
-                }
-            } finally {
-                releaseScanWakeLock()
             }
         }
     }
@@ -935,45 +944,46 @@ class AudioPlaybackService : Service() {
         onComplete: (String) -> Unit,
         onError: (String) -> Unit
     ) {
-        if (libraryScanJob?.isActive == true) return
         libraryScanJob = serviceScope.launch(Dispatchers.Default) {
-            acquireScanWakeLock()
-            try {
-                val scanner = com.beatraxus.app.drive.DropboxLibraryScanner(application)
-                val discovered = mutableListOf<Song>()
-                val token = dropboxAccountRepository.getAccessToken(account.email) ?: throw Exception("Failed to get access token")
-                scanner.scanAccountFlow(token, account.email, allowedFormats).collect { page ->
-                    discovered.addAll(page)
-                    withContext(Dispatchers.IO) {
-                        songDao.insertSongs(page.map { it.toEntity() })
-                    }
-                    onDiscoveryComplete(page)
-                }
-
-                if (discovered.isNotEmpty()) {
-                    val toEnrich = discovered.filter { !it.isEnriched }
-                    if (toEnrich.isNotEmpty()) {
-                        val extractor = com.beatraxus.app.repository.MetadataExtractor(application)
-                        var processed = 0
-                        val total = toEnrich.size
-                        
-                        extractor.extractCloudMetadataBatch(toEnrich, null) { updatedSong ->
-                            processed++
-                            val progress = processed.toFloat() / total.toFloat()
-                            onProgress(progress)
-                            updateEnrichingProgress(progress, processed, total)
-                            
-                            songDao.insertSong(updatedSong.toEntity())
-                            onSongUpdated(updatedSong)
+            scanMutex.withLock {
+                acquireScanWakeLock()
+                try {
+                    val scanner = com.beatraxus.app.drive.DropboxLibraryScanner(application)
+                    val discovered = mutableListOf<Song>()
+                    val token = dropboxAccountRepository.getAccessToken(account.email) ?: throw Exception("Failed to get access token")
+                    scanner.scanAccountFlow(token, account.email, allowedFormats).collect { page ->
+                        discovered.addAll(page)
+                        withContext(Dispatchers.IO) {
+                            songDao.insertSongs(page.map { it.toEntity() })
                         }
-                        updateEnrichingProgress(1.0f, total, total)
+                        onDiscoveryComplete(page)
                     }
+
+                    if (discovered.isNotEmpty()) {
+                        val toEnrich = discovered.filter { !it.isEnriched }
+                        if (toEnrich.isNotEmpty()) {
+                            val extractor = com.beatraxus.app.repository.MetadataExtractor(application)
+                            var processed = 0
+                            val total = toEnrich.size
+                            
+                            extractor.extractCloudMetadataBatch(toEnrich, null) { updatedSong ->
+                                processed++
+                                val progress = processed.toFloat() / total.toFloat()
+                                onProgress(progress)
+                                updateEnrichingProgress(progress, processed, total)
+                                
+                                songDao.insertSong(updatedSong.toEntity())
+                                onSongUpdated(updatedSong)
+                            }
+                            updateEnrichingProgress(1.0f, total, total)
+                        }
+                    }
+                    onComplete("Dropbox sync complete. Found ${discovered.size} songs.")
+                } catch (e: Exception) {
+                    onError(e.message ?: "Dropbox scan failed")
+                } finally {
+                    releaseScanWakeLock()
                 }
-                onComplete("Dropbox sync complete. Found ${discovered.size} songs.")
-            } catch (e: Exception) {
-                onError(e.message ?: "Dropbox scan failed")
-            } finally {
-                releaseScanWakeLock()
             }
         }
     }
@@ -987,41 +997,42 @@ class AudioPlaybackService : Service() {
         onComplete: (String) -> Unit,
         onError: (String) -> Unit
     ) {
-        if (libraryScanJob?.isActive == true) return
         libraryScanJob = serviceScope.launch(Dispatchers.Default) {
-            acquireScanWakeLock()
-            try {
-                val token = onedriveAccountRepository.getAccessToken(account.email)
-                if (token == null) {
-                    onError("Failed to get OneDrive access token")
-                    return@launch
-                }
-
-                val scanner = com.beatraxus.app.drive.OneDriveLibraryScanner(application)
-                val graphClient = com.microsoft.graph.requests.GraphServiceClient.builder()
-                    .authenticationProvider { _ ->
-                        java.util.concurrent.CompletableFuture.completedFuture(token)
+            scanMutex.withLock {
+                acquireScanWakeLock()
+                try {
+                    val token = onedriveAccountRepository.getAccessToken(account.email)
+                    if (token == null) {
+                        onError("Failed to get OneDrive access token")
+                        return@withLock
                     }
-                    .buildClient()
 
-                var totalFound = 0
-                scanner.scanAccountFlow(graphClient, account.email, allowedFormats).collect { page ->
-                    totalFound += page.size
-                    withContext(Dispatchers.IO) {
-                        songDao.insertSongs(page.map { it.toEntity() })
+                    val scanner = com.beatraxus.app.drive.OneDriveLibraryScanner(application)
+                    val graphClient = com.microsoft.graph.requests.GraphServiceClient.builder()
+                        .authenticationProvider { _ ->
+                            java.util.concurrent.CompletableFuture.completedFuture(token)
+                        }
+                        .buildClient()
+
+                    var totalFound = 0
+                    scanner.scanAccountFlow(graphClient, account.email, allowedFormats).collect { page ->
+                        totalFound += page.size
+                        withContext(Dispatchers.IO) {
+                            songDao.insertSongs(page.map { it.toEntity() })
+                        }
+                        onDiscoveryComplete(page)
                     }
-                    onDiscoveryComplete(page)
-                }
 
-                if (totalFound > 0) {
-                    // Similar enrichment logic as GDrive/Dropbox could be added here
+                    if (totalFound > 0) {
+                        // Similar enrichment logic as GDrive/Dropbox could be added here
+                    }
+                    
+                    onComplete("OneDrive sync complete. Found $totalFound songs.")
+                } catch (e: Exception) {
+                    onError(e.message ?: "OneDrive scan failed")
+                } finally {
+                    releaseScanWakeLock()
                 }
-                
-                onComplete("OneDrive sync complete. Found $totalFound songs.")
-            } catch (e: Exception) {
-                onError(e.message ?: "OneDrive scan failed")
-            } finally {
-                releaseScanWakeLock()
             }
         }
     }
@@ -1035,26 +1046,27 @@ class AudioPlaybackService : Service() {
         onComplete: (String) -> Unit,
         onError: (String) -> Unit
     ) {
-        if (libraryScanJob?.isActive == true) return
         libraryScanJob = serviceScope.launch(Dispatchers.Default) {
-            acquireScanWakeLock()
-            try {
-                val session = com.box.androidsdk.content.models.BoxSession(application)
-                // session.setUserId(account.userId)
-                val scanner = com.beatraxus.app.drive.BoxLibraryScanner(application)
-                var totalFound = 0
-                scanner.scanAccountFlow(session, account.email, allowedFormats).collect { discovered ->
-                    totalFound += discovered.size
-                    withContext(Dispatchers.IO) {
-                        songDao.insertSongs(discovered.map { it.toEntity() })
+            scanMutex.withLock {
+                acquireScanWakeLock()
+                try {
+                    val session = com.box.androidsdk.content.models.BoxSession(application)
+                    // session.setUserId(account.userId)
+                    val scanner = com.beatraxus.app.drive.BoxLibraryScanner(application)
+                    var totalFound = 0
+                    scanner.scanAccountFlow(session, account.email, allowedFormats).collect { discovered ->
+                        totalFound += discovered.size
+                        withContext(Dispatchers.IO) {
+                            songDao.insertSongs(discovered.map { it.toEntity() })
+                        }
+                        onDiscoveryComplete(discovered)
                     }
-                    onDiscoveryComplete(discovered)
+                    onComplete("Box sync complete. Found $totalFound songs.")
+                } catch (e: Exception) {
+                    onError(e.message ?: "Box scan failed")
+                } finally {
+                    releaseScanWakeLock()
                 }
-                onComplete("Box sync complete. Found $totalFound songs.")
-            } catch (e: Exception) {
-                onError(e.message ?: "Box scan failed")
-            } finally {
-                releaseScanWakeLock()
             }
         }
     }
@@ -1068,25 +1080,26 @@ class AudioPlaybackService : Service() {
         onComplete: (String) -> Unit,
         onError: (String) -> Unit
     ) {
-        if (libraryScanJob?.isActive == true) return
         libraryScanJob = serviceScope.launch(Dispatchers.Default) {
-            acquireScanWakeLock()
-            try {
-                val scanner = com.beatraxus.app.drive.NextcloudLibraryScanner(application)
-                var totalFound = 0
-                // Nextcloud scanner needs credentials
-                scanner.scanAccountFlow(account.serverUrl, account.username, account.appPassword, allowedFormats).collect { discovered ->
-                    totalFound += discovered.size
-                    withContext(Dispatchers.IO) {
-                        songDao.insertSongs(discovered.map { it.toEntity() })
+            scanMutex.withLock {
+                acquireScanWakeLock()
+                try {
+                    val scanner = com.beatraxus.app.drive.NextcloudLibraryScanner(application)
+                    var totalFound = 0
+                    // Nextcloud scanner needs credentials
+                    scanner.scanAccountFlow(account.serverUrl, account.username, account.appPassword, allowedFormats).collect { discovered ->
+                        totalFound += discovered.size
+                        withContext(Dispatchers.IO) {
+                            songDao.insertSongs(discovered.map { it.toEntity() })
+                        }
+                        onDiscoveryComplete(discovered)
                     }
-                    onDiscoveryComplete(discovered)
+                    onComplete("Nextcloud sync complete. Found $totalFound songs.")
+                } catch (e: Exception) {
+                    onError(e.message ?: "Nextcloud scan failed")
+                } finally {
+                    releaseScanWakeLock()
                 }
-                onComplete("Nextcloud sync complete. Found $totalFound songs.")
-            } catch (e: Exception) {
-                onError(e.message ?: "Nextcloud scan failed")
-            } finally {
-                releaseScanWakeLock()
             }
         }
     }
@@ -1097,7 +1110,6 @@ class AudioPlaybackService : Service() {
         onComplete: (List<Song>, String) -> Unit,
         onError: (String) -> Unit
     ) {
-        if (libraryScanJob?.isActive == true) return
         libraryScanJob = serviceScope.launch(Dispatchers.Default) {
             acquireScanWakeLock()
             try {
@@ -1136,6 +1148,158 @@ class AudioPlaybackService : Service() {
             } finally {
                 releaseScanWakeLock()
             }
+        }
+    }
+
+    fun runTelegramScan(
+        url: String,
+        allowedFormats: Set<String>,
+        onProgress: (Float) -> Unit,
+        onDiscoveryComplete: (List<Song>) -> Unit,
+        onSongUpdated: (Song) -> Unit,
+        onComplete: (String) -> Unit,
+        onError: (String) -> Unit
+    ) {
+        libraryScanJob = serviceScope.launch(Dispatchers.IO) {
+            scanMutex.withLock {
+                acquireScanWakeLock()
+                try {
+                    val normalizedUrl = url.trim().removeSuffix("/")
+                    val channelName = normalizedUrl.substringAfterLast("/")
+                    
+                    val existingSongs = songDao.getSongsByTelegramChannel(normalizedUrl).associateBy { it.id }
+
+                    // 1. Fast scan messages
+                    val discoveredSongs = telegramChannelRepository.scanChannel(
+                        tdLibManager, 
+                        cloudCacheManager, 
+                        normalizedUrl, 
+                        existingSongs.mapValues { (_, entity) ->
+                            Song(
+                                id = entity.id,
+                                uri = Uri.parse(entity.uriString),
+                                title = entity.title,
+                                artist = entity.artist,
+                                album = entity.album,
+                                durationMs = entity.durationMs,
+                                format = entity.format,
+                                sampleRateHz = entity.sampleRateHz,
+                                bitDepth = entity.bitDepth,
+                                bitrate = entity.bitrate,
+                                fileSizeBytes = entity.fileSizeBytes,
+                                albumArtUri = entity.albumArtUriString?.let { Uri.parse(it) },
+                                year = entity.year,
+                                genre = entity.genre,
+                                albumArtist = entity.albumArtist,
+                                composer = entity.composer,
+                                trackNumber = entity.trackNumber,
+                                discNumber = entity.discNumber,
+                                lyrics = entity.lyrics,
+                                folder = entity.folder,
+                                dateAdded = entity.dateAdded,
+                                replayGainTrackDb = entity.replayGainTrackDb,
+                                replayGainAlbumDb = entity.replayGainAlbumDb,
+                                replayGainTrackPeak = entity.replayGainTrackPeak,
+                                replayGainAlbumPeak = entity.replayGainAlbumPeak,
+                                source = SongSource.valueOf(entity.source),
+                                driveFileId = entity.driveFileId,
+                                driveAccountEmail = entity.driveAccountEmail,
+                                telegramChannelUrl = entity.telegramChannelUrl,
+                                telegramChatId = entity.telegramChatId,
+                                telegramMessageId = entity.telegramMessageId,
+                                telegramFileId = entity.telegramFileId,
+                                isEnriched = entity.isEnriched,
+                                albumArtFetchAttempted = entity.albumArtFetchAttempted,
+                                lastSyncTimestamp = entity.lastSyncTimestamp
+                            )
+                        },
+                        allowedFormats
+                    ) { progress ->
+                        onProgress(progress * 0.1f)
+                    }
+
+                    if (discoveredSongs.isNotEmpty()) {
+                        // Identify missing songs
+                        val newSongIds = discoveredSongs.map { it.id }.toSet()
+                        val songsToDelete = existingSongs.filterKeys { it !in newSongIds }.keys.toList()
+                        if (songsToDelete.isNotEmpty()) {
+                            songDao.deleteSongsByIds(songsToDelete)
+                        }
+
+                        // Initial insert
+                        songDao.insertSongs(discoveredSongs.map { it.toEntity() })
+                        onDiscoveryComplete(discoveredSongs)
+                        
+                        // 2. Deep Enrichment
+                        val toEnrich = discoveredSongs.filter {
+                            !it.isEnriched || (it.albumArtUri == null && !it.albumArtFetchAttempted)
+                        }
+                        
+                        if (toEnrich.isNotEmpty()) {
+                            var processed = 0
+                            val total = toEnrich.size
+                            
+                            toEnrich.forEach { song ->
+                                val enriched = extractTelegramMetadata(song)
+                                if (enriched != null) {
+                                    songDao.insertSong(enriched.toEntity())
+                                    onSongUpdated(enriched)
+                                }
+                                processed++
+                                val enrichmentProgress = 0.1f + (processed.toFloat() / total.toFloat() * 0.9f)
+                                onProgress(enrichmentProgress)
+                                updateEnrichingProgress(enrichmentProgress, processed, total)
+                            }
+                            updateEnrichingProgress(1.0f, total, total)
+                        }
+                        onComplete("Synced ${discoveredSongs.size} songs from $channelName")
+                    } else {
+                        onComplete("No songs found in Telegram channel")
+                    }
+                } catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                    onError(e.message ?: "Telegram sync failed")
+                } finally {
+                    releaseScanWakeLock()
+                }
+            }
+        }
+    }
+
+    private suspend fun extractTelegramMetadata(song: Song): Song? {
+        val fileId = song.telegramFileId ?: return null
+        try {
+            val downloadSize = 1024 * 1024L
+            tdLibManager.send(org.drinkless.tdlib.TdApi.DownloadFile(fileId, 32, 0, downloadSize, true))
+            val path = tdLibManager.waitForFile(fileId, downloadSize = downloadSize, timeoutMs = 10000) ?: return null
+            
+            val tempFile = File(path)
+            if (!tempFile.exists()) return null
+
+            var enriched = metadataExtractor.extractMetadataFromLocalFile(song, tempFile)
+            
+            // WAV/M4A Tail handling
+            val format = song.format.lowercase()
+            val isSpecial = format.contains("wav") || format == "alac" || format == "m4a" || format == "mp4"
+            if (isSpecial && enriched.albumArtUri == null && song.fileSizeBytes > downloadSize) {
+                val tailSize = 8 * 1024 * 1024L
+                val offset = (song.fileSizeBytes - tailSize).coerceAtLeast(downloadSize)
+                tdLibManager.send(org.drinkless.tdlib.TdApi.DownloadFile(fileId, 32, offset, song.fileSizeBytes - offset, true))
+                val tailPath = tdLibManager.waitForFile(fileId, downloadSize = song.fileSizeBytes, timeoutMs = 10000)
+                if (tailPath != null) {
+                    val tailFile = File(tailPath)
+                    if (tailFile.exists()) {
+                        enriched = metadataExtractor.extractMetadataFromLocalFile(song, tailFile)
+                    }
+                }
+            }
+
+            return enriched.copy(isEnriched = true, albumArtFetchAttempted = true)
+        } catch (e: Exception) {
+            Log.e("AudioPlaybackService", "Failed to enrich Telegram song: ${song.title}", e)
+            return null
+        } finally {
+            try { tdLibManager.send(org.drinkless.tdlib.TdApi.DeleteFile(fileId)) } catch (_: Exception) {}
         }
     }
 

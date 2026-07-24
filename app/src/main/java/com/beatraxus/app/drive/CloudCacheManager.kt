@@ -62,14 +62,21 @@ class CloudCacheManager(
     /**
      * M4A/MP4/ALAC containers often keep their 'moov' atom at the end of the file.
      * For these, we trigger a special head+tail download to allow streaming.
+     * We also include WAV here because tags/headers can live at the end.
      */
     private fun needsSpecialContainerHandling(song: Song): Boolean {
         val format = song.format.lowercase()
-        return format == "m4a" || format == "mp4" || format.contains("alac") ||
-            song.title.contains("alac", ignoreCase = true)
+        val isAlac = format.contains("alac") || song.title.contains("alac", ignoreCase = true)
+        val isWav = format.contains("wav")
+        // Only treat as special if it's actually lossless/complex, 
+        // not every single M4A/MP4 (which are usually just AAC).
+        return isAlac || isWav || (format == "m4a" && song.bitrate > 500000)
     }
 
     private fun needsFullContainerDownload(song: Song): Boolean {
+        // NOTE: For Telegram, we now use Head+Tail streaming even for ALAC/M4A,
+        // so we return false here to allow windowed priming/reconciliation.
+        if (song.source == SongSource.TELEGRAM) return false
         return needsSpecialContainerHandling(song)
     }
 
@@ -173,11 +180,9 @@ class CloudCacheManager(
         }
 
         // Trigger windowed download immediately for play-start speed.
-        // For special containers (ALAC/M4A), we request the FULL file (limit=0) because
-        // they often need the tail for parsing, and TDLib only marks completion
-        // when the whole file is present.
         val isSpecial = needsSpecialContainerHandling(song)
-        val initialLimit = if (isSpecial) 0L else TELEGRAM_INITIAL_WINDOW_BYTES
+        val totalSize = song.fileSizeBytes
+        val initialLimit = if (totalSize > 0 && totalSize < TELEGRAM_INITIAL_WINDOW_BYTES) 0L else TELEGRAM_INITIAL_WINDOW_BYTES
         
         var file = try {
             tdLib.send(TdApi.DownloadFile(currentFileId, 32, 0L, initialLimit, false))
@@ -199,9 +204,22 @@ class CloudCacheManager(
                 if (f.exists()) return@withContext file.local.path
             }
             
-            // Unblock early if we have the required window for streaming, but ONLY for non-special formats
-            if (!isSpecial && file.local.downloadedPrefixSize >= TELEGRAM_INITIAL_WINDOW_BYTES) {
-                if (File(file.local.path).exists()) return@withContext file.local.path
+            // Unblock early if we have the required window for streaming.
+            // For special formats (ALAC/M4A/WAV), we also trigger the tail download.
+            val prefix = file.local.downloadedPrefixSize
+            val total = song.fileSizeBytes
+            if (file.local.isDownloadingCompleted || prefix >= TELEGRAM_INITIAL_WINDOW_BYTES || (total > 0 && prefix >= total)) {
+                if (File(file.local.path).exists()) {
+                    if (isSpecial && !file.local.isDownloadingCompleted) {
+                        val tailPos = (total - TELEGRAM_TAIL_WINDOW_BYTES).coerceAtLeast(0L)
+                        // For special files (ALAC/WAV), we wait briefly for the tail metadata to be ready for FFmpeg.
+                        try { 
+                            tdLib.send(TdApi.DownloadFile(currentFileId, 31, tailPos, TELEGRAM_TAIL_WINDOW_BYTES, false))
+                            delay(1500)
+                        } catch (_: Exception) {}
+                    }
+                    return@withContext file.local.path
+                }
             }
         }
 
@@ -217,11 +235,19 @@ class CloudCacheManager(
                     return@withContext path
                 }
                 
-                // For ALAC/M4A/MP4, we must wait for full download completion (metadata is often at EOF).
-                if (!isSpecial) {
-                    // Non-special (AAC, FLAC, MP3): allow early unblock if we have enough data (6MB window).
-                    if (file.local.downloadedPrefixSize >= TELEGRAM_INITIAL_WINDOW_BYTES && File(path).exists()) {
-                        Log.d(TAG, "Windowed Telegram path available early for ${song.title}: $path (Prefix: ${file.local.downloadedPrefixSize})")
+                // Allow early unblock if we have enough data (6MB window).
+                val prefix = file.local.downloadedPrefixSize
+                val total = song.fileSizeBytes
+                if (file.local.isDownloadingCompleted || prefix >= TELEGRAM_INITIAL_WINDOW_BYTES || (total > 0 && prefix >= total)) {
+                    if (File(path).exists()) {
+                        Log.d(TAG, "Telegram path available for ${song.title}: $path (Prefix: $prefix)")
+                        if (isSpecial && !file.local.isDownloadingCompleted) {
+                            val tailPos = (total - TELEGRAM_TAIL_WINDOW_BYTES).coerceAtLeast(0L)
+                            try { 
+                                tdLib.send(TdApi.DownloadFile(currentFileId, 31, tailPos, TELEGRAM_TAIL_WINDOW_BYTES, false))
+                                delay(1500)
+                            } catch (_: Exception) {}
+                        }
                         return@withContext path
                     }
                 }
@@ -271,17 +297,22 @@ class CloudCacheManager(
         currentSong?.let { if (it.isCloud()) keepIds.add(it.id) }
         currentlyPlayingId?.let { keepIds.add(it) }
 
-        // GDrive keeps next 5, others (Telegram) keep next 2
-        upcomingSongs.forEachIndexed { index, song ->
+        // GDrive keeps next 5, others (Telegram) keep next 3
+        val perSourceKept = mutableMapOf<SongSource, Int>()
+        upcomingSongs.forEach { song ->
             if (song.isCloud()) {
-                val limit = if (song.source == SongSource.GDRIVE) 5 else 2
-                if (index < limit) keepIds.add(song.id)
+                val limit = if (song.source == SongSource.GDRIVE) 5 else 3
+                val countSoFar = perSourceKept.getOrDefault(song.source, 0)
+                if (countSoFar < limit) {
+                    keepIds.add(song.id)
+                    perSourceKept[song.source] = countSoFar + 1
+                }
             }
         }
 
         // Pre-fetch GDrive tokens
-        val emails = (listOfNotNull(currentSong) + upcomingSongs.take(5))
-            .filter { it.source == SongSource.GDRIVE }
+        val gDriveUpcoming = upcomingSongs.filter { it.source == SongSource.GDRIVE }.take(5)
+        val emails = (listOfNotNull(currentSong).filter { it.source == SongSource.GDRIVE } + gDriveUpcoming)
             .mapNotNull { it.driveAccountEmail }
             .distinct()
         
@@ -300,9 +331,6 @@ class CloudCacheManager(
         toCancel.forEach { id ->
             activeDownloads[id]?.cancel()
             activeDownloads.remove(id)
-            // Relaxed deletion: don't call TdApi.DeleteFile here. 
-            // Let reconcileSource handle it later with a wider window.
-            activeTelegramFileIds.remove(id)
         }
 
         // 2. Prune rolling window buffers no longer in keepIds
@@ -312,22 +340,33 @@ class CloudCacheManager(
                 activeWindows[id]?.prefetchJob?.cancel()
             }
             activeWindows.remove(id)
-            // Relaxed deletion: don't call TdApi.DeleteFile here.
-            activeTelegramFileIds.remove(id)
         }
 
-        // 3. Start downloads/priming for 'keepIds' if not already cached
-        // Prioritize current song
-        currentSong?.let { song ->
+        // 3. Aggressive Telegram Storage Cleanup:
+        // If a Telegram song is no longer in 'keepIds', delete its internal TDLib cache immediately.
+        // This handles the "fast skip through 8 songs" scenario.
+        val telegramIdsToPurge = activeTelegramFileIds.keys - keepIds
+        telegramIdsToPurge.forEach { songId ->
+            val fileId = activeTelegramFileIds[songId]
+            if (fileId != null && fileId != 0 && tdLib != null) {
+                downloadScope.launch {
+                    try { tdLib.send(TdApi.DeleteFile(fileId)) } catch (_: Exception) {}
+                }
+            }
+            activeTelegramFileIds.remove(songId)
+        }
+
+        // 4. Start downloads/priming for 'keepIds' if not already cached
+        // Prioritize current song and eagerly pre-fetch all 'keepIds'
+        (listOfNotNull(currentSong) + upcomingSongs.filter { it.id in keepIds }).distinctBy { it.id }.forEach { song ->
             val cached = getCachedFile(song)
             if (cached != null) {
-                // If already in cache, just update its LRU recency
-                playbackLruCache.getOrCacheFile(song, cached, true, currentlyPlayingId)
+                // If already in cache, update its LRU recency
+                val isPlayback = (song.id == currentlyPlayingId)
+                playbackLruCache.getOrCacheFile(song, cached, isPlayback, currentlyPlayingId)
             } else if (song.isCloud()) {
                 if (song.source == SongSource.TELEGRAM && tdLib != null) {
-                    // Windowed priming for Telegram (like GDrive's primeWindow), instead of a
-                    // full-file DownloadFile call. Falls back to full download internally for
-                    // M4A/MP4/ALAC where a partial prefix isn't safely playable.
+                    // Windowed priming for Telegram
                     if (!activeDownloads.containsKey(song.id)) startTelegramWindowedDownload(song, tdLib)
                 } else if (song.source == SongSource.SMB || song.source == SongSource.FTP) {
                     if (!activeDownloads.containsKey(song.id)) startDownload(song)
@@ -345,7 +384,7 @@ class CloudCacheManager(
 
         // 4. For upcoming songs, we ONLY bump recency if already cached.
         // We NO LONGER trigger eager full-file downloads (startDownload) for upcoming songs.
-        upcomingSongs.take(5).forEach { song ->
+        upcomingSongs.filter { it.id in keepIds }.forEach { song ->
             val cached = getCachedFile(song)
             if (cached != null) {
                 // For pre-fetch, we don't necessarily want to bump recency, 
@@ -354,10 +393,10 @@ class CloudCacheManager(
             }
         }
 
-        // --- NEW: Aggressive Telegram Reconciliation (Current + Next 2 Telegram) ---
+        // --- NEW: Aggressive Telegram Reconciliation (Current + Next 3 Telegram) ---
         val telegramKeepIds = mutableSetOf<String>()
         currentSong?.let { if (it.source == SongSource.TELEGRAM) telegramKeepIds.add(it.id) }
-        upcomingSongs.filter { it.source == SongSource.TELEGRAM }.take(2).forEach { telegramKeepIds.add(it.id) }
+        upcomingSongs.filter { it.source == SongSource.TELEGRAM }.take(3).forEach { telegramKeepIds.add(it.id) }
         
         playbackLruCache.reconcileSource(SongSource.TELEGRAM, telegramKeepIds)
     }

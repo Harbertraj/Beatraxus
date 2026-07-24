@@ -38,19 +38,20 @@ internal class DecoderFactory(
 
         val isM4A = format == "m4a" || format == "mp4"
         val isWav = format.contains("wav")
+        val isFlac = format.contains("flac")
 
         // 1. Cloud routing
         if (isCloud) {
             // FFmpeg is much more robust for ALAC and WAV (especially over network)
-            // Local MediaCodec often fails or has glitches with lossless formats over MediaDataSource.
-            // However, for Telegram we now use a specialized MediaDataSource that handles local file growth,
-            // which MediaCodec handles better for WAV than FFmpeg does without complex piping.
-            // We also route Telegram M4A/MP4 here to ensure ALAC support without risky/slow probing.
-            if (isExplicitAlac || isDolbyOrDts || isDsd || (isWav && song.source != SongSource.TELEGRAM) || (isM4A && song.source == SongSource.TELEGRAM)) {
+            // We route Telegram lossless formats here to ensure stability with Head+Tail streaming.
+            val isTelegramLossless = song.source == SongSource.TELEGRAM && (isAlac || isWav || isFlac)
+            
+            if (isExplicitAlac || isDolbyOrDts || isDsd || (isWav && song.source != SongSource.TELEGRAM) || isTelegramLossless) {
                 val reason = when {
                     isDolbyOrDts -> format.uppercase()
                     isDsd -> "DSD"
-                    isExplicitAlac || (isM4A && song.source == SongSource.TELEGRAM) -> "ALAC"
+                    isExplicitAlac || (isTelegramLossless && isAlac) -> "ALAC"
+                    isTelegramLossless && isFlac -> "FLAC"
                     else -> "WAV"
                 }
                 Log.i(TAG, "Routing Cloud ($reason) to FFmpeg: ${song.title}")

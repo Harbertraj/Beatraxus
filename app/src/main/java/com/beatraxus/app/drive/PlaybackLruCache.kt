@@ -19,7 +19,7 @@ class PlaybackLruCache private constructor(private val context: Context) {
 
     companion object {
         private const val DEFAULT_MAX_CACHED_SONGS = 5
-        private const val TELEGRAM_MAX_CACHED_SONGS = 3
+        private const val TELEGRAM_MAX_CACHED_SONGS = 4
 
         @Volatile
         private var INSTANCE: PlaybackLruCache? = null
