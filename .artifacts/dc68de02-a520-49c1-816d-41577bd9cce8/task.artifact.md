@@ -1,3 +1,0 @@
-- [x] Update `gradle.properties` to set `android.dependency.useConstraints=false`
-- [x] Run Gradle sync to verify resolution
-- [x] Create walkthrough

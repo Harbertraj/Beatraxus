@@ -1,6 +1,0 @@
-- [x] Add MBASSY ProGuard rules to `app/proguard-rules.pro`
-- [x] Clean build artifacts (`./gradlew clean`)
-- [/] Build release variant (`./gradlew assembleRelease`)
-- [ ] Verify mapping file for `net.engio.mbassy`
-- [ ] Verify fix by installing and running the app
-- [ ] Commit changes
