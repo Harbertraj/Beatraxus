@@ -2993,6 +2993,15 @@ fun MainScreen(
                     }
                 }
             }
+
+            // Dimming overlay when side menu is open
+            if (drawerProgress > 0f) {
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = (drawerProgress * 0.35f).coerceIn(0f, 0.35f)))
+                )
+            }
         }
 
         if (showPlaylistDialog) {
