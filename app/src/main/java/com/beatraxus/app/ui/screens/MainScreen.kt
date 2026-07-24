@@ -3619,7 +3619,6 @@ fun HomeScreen(
     val albums by viewModel.albums.collectAsStateWithLifecycle()
     val artists by viewModel.artists.collectAsStateWithLifecycle()
     val playlists by viewModel.playlists.collectAsStateWithLifecycle()
-    val genres by viewModel.genres.collectAsStateWithLifecycle()
     val allSongs by viewModel.allSongs.collectAsStateWithLifecycle()
     val aiAnalysis by viewModel.aiAnalysis.collectAsStateWithLifecycle()
     var showAllMoodsDialog by remember { mutableStateOf(false) }
@@ -4001,28 +4000,7 @@ fun HomeScreen(
             }
         }
 
-        // Your Genres
-        if (genres.isNotEmpty()) {
-            item {
-                HomeSectionHeader(
-                    title = "Your Genres",
-                    actionText = "Edit",
-                    actionIcon = Icons.Rounded.Edit
-                )
-            }
-            item {
-                LazyRow(
-                    contentPadding = PaddingValues(horizontal = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    items(genres.take(8)) { genre ->
-                        GenreChip(genre.first) {
-                            viewModel.setLibraryView(LibraryView.GENRE_DETAIL, genre.first)
-                        }
-                    }
-                }
-            }
-        }
+
 
         // Song List Grid (matching the bottom part of the image)
         val songsToShow = if (recentlyPlayed.isNotEmpty()) recentlyPlayed.take(10) else allSongs.take(10)

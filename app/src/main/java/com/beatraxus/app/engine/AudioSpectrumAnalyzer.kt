@@ -84,14 +84,14 @@ internal class AudioSpectrumAnalyzer(
     // ------------------------------------------------------------------
 
     enum class LosslessAuthenticity {
-        /** Full-bandwidth content up to (near) Nyquist, real bit-depth noise floor. */
-        GENUINE_LOSSLESS,
-        /** Lossless/hi-res *container* (FLAC/ALAC/WAV/24-bit/hi-res sample rate) whose
-         *  actual content was transcoded from a lossy source or zero-padded from a lower
-         *  bit depth / sample rate — a "fake" lossless file. */
-        UPSAMPLED_FAKE,
-        /** File is declared/encoded in a lossy codec (MP3, AAC, OGG, Opus, WMA-lossy…). */
-        LOSSY_SOURCE
+        /** Full-bandwidth content, likely original master. (90-100% confidence) */
+        ORIGINAL_LOSSLESS,
+        /** High bandwidth with minor roll-off or artifacts; likely genuine. (70-89% confidence) */
+        LIKELY_LOSSLESS,
+        /** Significant band-limiting or suspicious noise floor detected. (40-69% confidence) */
+        POSSIBLY_UPSCALED,
+        /** Obvious brick-wall filtering or zero-padded bits detected. (0-39% confidence) */
+        DEFINITELY_UPSCALED
     }
 
     data class SpectrumAnalysisResult(
@@ -102,26 +102,28 @@ internal class AudioSpectrumAnalyzer(
         val sampleRateHz: Int,
         val bitDepth: Int,
         val authenticity: LosslessAuthenticity,
+        val confidenceScore: Int,        // 0-100 weighted confidence
         val spectralCutoffHz: Int,       // detected high-frequency rolloff point
         val nyquistHz: Int,              // sampleRateHz / 2, for comparison in the UI
         val bitDepthLooksPadded: Boolean // true if the declared bit depth's low bits are silent/constant
     ) {
-        /** Badge text + color for the spectrogram's top-right corner, per spec:
-         *  genuine lossless -> accent color; upsampled/fake OR lossy -> gray. */
+        /** Badge color based on tier: Green for original, Amber for likely, Gray for fake. */
         fun badgeColor(): Color = when (authenticity) {
-            LosslessAuthenticity.GENUINE_LOSSLESS -> Color(0xFF43E97B) // green — matches app's LosslessBadge accent
-            LosslessAuthenticity.UPSAMPLED_FAKE -> Color(0xFF9AA3AF)  // gray
-            LosslessAuthenticity.LOSSY_SOURCE -> Color(0xFF9AA3AF)    // gray
+            LosslessAuthenticity.ORIGINAL_LOSSLESS -> Color(0xFF43E97B) // Green
+            LosslessAuthenticity.LIKELY_LOSSLESS -> Color(0xFF43E97B)   // Green (still considered "good")
+            LosslessAuthenticity.POSSIBLY_UPSCALED -> Color(0xFFFFB03B) // Amber/Orange
+            LosslessAuthenticity.DEFINITELY_UPSCALED -> Color(0xFF9AA3AF) // Gray
         }
 
-        fun badgeLabel(): String = "ORIGINAL LOSSLESS"
-
-        /** Small subtitle so the gray state isn't ambiguous about *why* it's gray. */
-        fun badgeSubtitle(): String? = when (authenticity) {
-            LosslessAuthenticity.GENUINE_LOSSLESS -> null
-            LosslessAuthenticity.UPSAMPLED_FAKE -> "upsampled from lossy \u2248${spectralCutoffHz / 1000}kHz"
-            LosslessAuthenticity.LOSSY_SOURCE -> "lossy source"
+        fun badgeLabel(): String = when (authenticity) {
+            LosslessAuthenticity.ORIGINAL_LOSSLESS -> "ORIGINAL LOSSLESS"
+            LosslessAuthenticity.LIKELY_LOSSLESS -> "LIKELY LOSSLESS"
+            LosslessAuthenticity.POSSIBLY_UPSCALED -> "POSSIBLY UPSCALED"
+            LosslessAuthenticity.DEFINITELY_UPSCALED -> "DEFINITELY UPSCALED"
         }
+
+        /** Detail text showing the score and detected cutoff. */
+        fun badgeSubtitle(): String = "${confidenceScore}% \u00b7 \u2248${spectralCutoffHz / 1000}kHz"
     }
 
     // ------------------------------------------------------------------
@@ -202,10 +204,16 @@ internal class AudioSpectrumAnalyzer(
         private var frameCounter = 0
         private var frameStride = 1
 
-        // Averaged spectrum across the whole track, for cutoff-frequency detection —
-        // more reliable than reading it off any single displayed frame.
+        // Averaged spectrum across the whole track, for cutoff-frequency detection.
         private val cutoffAccum = DoubleArray(SPECTROGRAM_BUCKETS)
         private var cutoffFrameCount = 0
+
+        // Per-frame cutoff history for temporal stability analysis.
+        private val frameCutoffs = ArrayList<Int>()
+
+        // High-frequency energy accumulation (>15kHz).
+        private var hfEnergyTotal = 0.0
+        private var energyTotal = 0.0
 
         // Bit-depth authenticity: histogram of the lowest byte of each sample once
         // rescaled to the declared bit depth. A genuine 24-bit source has a roughly
@@ -268,6 +276,13 @@ internal class AudioSpectrumAnalyzer(
                 if (fftFill >= SPECTROGRAM_FFT_SIZE) {
                     fftFill = 0
                     val frame = computeSpectrogramFrame(fftBuffer, sampleRate)
+                    val nyquist = sampleRate / 2
+                    
+                    // Track temporal signals
+                    val frameCutoff = detectFrameCutoff(frame, nyquist)
+                    frameCutoffs.add(frameCutoff)
+                    accumulateEnergy(frame, nyquist)
+                    
                     accumulateCutoff(frame)
                     if (frameCounter % frameStride == 0 && spectrogramFrames.size < SPECTROGRAM_MAX_FRAMES) {
                         spectrogramFrames.add(frame)
@@ -275,6 +290,25 @@ internal class AudioSpectrumAnalyzer(
                     frameCounter++
                     framesCollected++
                 }
+            }
+        }
+
+        private fun detectFrameCutoff(frame: FloatArray, nyquist: Int): Int {
+            // Quick per-frame cutoff check (0.1 magnitude threshold)
+            val hzPerBucket = nyquist.toDouble() / frame.size
+            for (b in frame.indices.reversed()) {
+                if (frame[b] > 0.1f) return (b * hzPerBucket).toInt()
+            }
+            return 0
+        }
+
+        private fun accumulateEnergy(frame: FloatArray, nyquist: Int) {
+            val hzPerBucket = nyquist.toDouble() / frame.size
+            for (b in frame.indices) {
+                val hz = b * hzPerBucket
+                val energy = frame[b].toDouble()
+                energyTotal += energy
+                if (hz > 15000) hfEnergyTotal += energy
             }
         }
 
@@ -296,18 +330,35 @@ internal class AudioSpectrumAnalyzer(
             if (bucketCount > 0) { minPeaks.add(bucketMin); maxPeaks.add(bucketMax) }
 
             val nyquist = sampleRate / 2
-            val cutoffHz = detectSpectralCutoff(cutoffAccum, cutoffFrameCount, nyquist)
+            val cutoffMetrics = analyzeSpectralRollOff(cutoffAccum, cutoffFrameCount, nyquist)
             val bitDepthPadded = detectBitDepthPadding(lowByteHistogram, lowByteSamples, declaredBitDepth)
+            
+            // Temporal stability: variance of frame cutoffs (normalized 0-1)
+            val temporalStability = computeTemporalStability(frameCutoffs, cutoffMetrics.cutoffHz)
+            
+            // HF Energy ratio
+            val hfRatio = if (energyTotal > 0) hfEnergyTotal / energyTotal else 0.0
 
-            val declaredLossyCodec = LOSSY_CODECS.any { song.format.lowercase().contains(it) }
             val declaredLosslessCodec = LOSSLESS_CODECS.any { song.format.uppercase().contains(it) }
 
+            val score = if (!declaredLosslessCodec) 0 else {
+                computeConfidenceScore(
+                    cutoffHz = cutoffMetrics.cutoffHz,
+                    nyquistHz = nyquist,
+                    slopeDbOct = cutoffMetrics.slopeDbOct,
+                    noiseFloorDb = cutoffMetrics.hfNoiseFloorDb,
+                    temporalStability = temporalStability,
+                    bitDepthPadded = bitDepthPadded,
+                    hfRatio = hfRatio
+                )
+            }
+
             val authenticity = when {
-                declaredLossyCodec && !declaredLosslessCodec -> LosslessAuthenticity.LOSSY_SOURCE
-                declaredLosslessCodec && (isSuspiciousCutoff(cutoffHz, nyquist) || bitDepthPadded) ->
-                    LosslessAuthenticity.UPSAMPLED_FAKE
-                declaredLosslessCodec -> LosslessAuthenticity.GENUINE_LOSSLESS
-                else -> LosslessAuthenticity.LOSSY_SOURCE // unknown codec: treat conservatively as non-lossless
+                !declaredLosslessCodec -> LosslessAuthenticity.DEFINITELY_UPSCALED
+                score >= 90 -> LosslessAuthenticity.ORIGINAL_LOSSLESS
+                score >= 70 -> LosslessAuthenticity.LIKELY_LOSSLESS
+                score >= 40 -> LosslessAuthenticity.POSSIBLY_UPSCALED
+                else -> LosslessAuthenticity.DEFINITELY_UPSCALED
             }
 
             return SpectrumAnalysisResult(
@@ -318,7 +369,8 @@ internal class AudioSpectrumAnalyzer(
                 sampleRateHz = sampleRate,
                 bitDepth = declaredBitDepth,
                 authenticity = authenticity,
-                spectralCutoffHz = cutoffHz,
+                confidenceScore = score,
+                spectralCutoffHz = cutoffMetrics.cutoffHz,
                 nyquistHz = nyquist,
                 bitDepthLooksPadded = bitDepthPadded
             )
@@ -338,42 +390,111 @@ internal class AudioSpectrumAnalyzer(
         private const val MAX_ANALYSIS_FRAMES = 2000L // decode cap so a 3-hour file doesn't stall analysis
 
         private val LOSSLESS_CODECS = setOf("FLAC", "ALAC", "WAV", "AIFF", "APE", "WV", "DSD", "DSF", "PCM")
-        private val LOSSY_CODECS = setOf("mp3", "aac", "m4a", "ogg", "opus", "wma", "vorbis")
 
-        /** Scans the averaged (whole-track) spectrum for a sharp high-frequency cliff —
-         *  the signature of a prior lossy encode's low-pass filter (e.g. ~16kHz for
-         *  128kbps MP3, ~19-20kHz for 256-320kbps MP3/AAC) baked into a lossless container.
-         *  Returns the detected cutoff in Hz, or `nyquist` if the spectrum is full-bandwidth. */
-        internal fun detectSpectralCutoff(accum: DoubleArray, frameCount: Int, nyquistHz: Int): Int {
-            if (frameCount <= 0) return nyquistHz
+        private const val WEIGHT_CUTOFF = 0.40
+        private const val WEIGHT_SLOPE = 0.25
+        private const val WEIGHT_NOISE = 0.15
+        private const val WEIGHT_STABILITY = 0.10
+        private const val WEIGHT_BIT_DEPTH = 0.10
+
+        data class CutoffMetrics(
+            val cutoffHz: Int,
+            val slopeDbOct: Double,
+            val hfNoiseFloorDb: Double
+        )
+
+        /** Comprehensive spectral analysis: finds the cutoff, the steepness of the
+         *  drop, and the noise floor level above the cutoff. */
+        internal fun analyzeSpectralRollOff(accum: DoubleArray, frameCount: Int, nyquistHz: Int): CutoffMetrics {
+            if (frameCount <= 0) return CutoffMetrics(nyquistHz, 0.0, -100.0)
             val buckets = accum.size
             val avg = DoubleArray(buckets) { accum[it] / frameCount }
             val hzPerBucket = nyquistHz.toDouble() / buckets
 
-            // Reference level = median magnitude across the lower 60% of the spectrum
-            // (where lossy encoders rarely touch anything), used as "full signal" baseline.
-            val refBand = avg.copyOfRange(0, (buckets * 0.6).toInt()).sortedDescending()
+            // 1. Find Reference Level (median of 0-12kHz range)
+            val refLimit = (12000.0 / hzPerBucket).toInt().coerceIn(1, buckets)
+            val refBand = avg.copyOfRange(0, refLimit).sortedDescending()
             val refLevel = if (refBand.isNotEmpty()) refBand[refBand.size / 2] else 1e-6
 
-            // Walk from high frequency downward looking for the first bucket where the
-            // level rises back above -30dB relative to the reference — i.e. the top edge
-            // of the "cliff". Everything above that point is treated as filtered/noise floor.
+            // 2. Find Cutoff (-30dB point)
             var cutoffBucket = buckets - 1
-            for (b in buckets - 1 downTo (buckets * 0.5).toInt()) {
+            for (b in buckets - 1 downTo 1) {
                 val db = 20.0 * log10((avg[b] / refLevel).coerceAtLeast(1e-9))
                 if (db > -30.0) { cutoffBucket = b; break }
-                cutoffBucket = (buckets * 0.5).toInt()
             }
-            return (cutoffBucket * hzPerBucket).roundToInt()
+
+            // 3. Calculate Slope (dB/octave) just before cutoff
+            val octRange = 0.1 // analyze 1/10th of an octave
+            val startBucket = (cutoffBucket * (1.0 - octRange)).toInt().coerceAtLeast(0)
+            val dbStart = 20.0 * log10((avg[startBucket] / refLevel).coerceAtLeast(1e-9))
+            val dbEnd = 20.0 * log10((avg[cutoffBucket] / refLevel).coerceAtLeast(1e-9))
+            // This is a simplified slope; in practice, brick-walls are >60dB/oct
+            val slope = (dbStart - dbEnd) / octRange 
+
+            // 4. Measure Noise Floor above cutoff
+            var noiseFloorSum = 0.0
+            var noiseFloorCount = 0
+            for (b in cutoffBucket + 1 until buckets) {
+                noiseFloorSum += avg[b]
+                noiseFloorCount++
+            }
+            val avgNoise = if (noiseFloorCount > 0) noiseFloorSum / noiseFloorCount else 1e-9
+            val noiseDb = 20.0 * log10((avgNoise / refLevel).coerceAtLeast(1e-9))
+
+            return CutoffMetrics((cutoffBucket * hzPerBucket).roundToInt(), slope, noiseDb)
         }
 
-        /** A cutoff meaningfully below Nyquist (>8% short of it, and below ~21kHz where
-         *  most consumer lossy encoders top out even at their best settings) indicates the
-         *  content itself was band-limited before being packed into this container. */
-        internal fun isSuspiciousCutoff(cutoffHz: Int, nyquistHz: Int): Boolean {
-            if (nyquistHz <= 0) return false
-            val ratio = cutoffHz.toDouble() / nyquistHz.toDouble()
-            return ratio < 0.92 && cutoffHz < 21500
+        internal fun computeTemporalStability(cutoffs: List<Int>, avgCutoff: Int): Double {
+            if (cutoffs.isEmpty()) return 1.0
+            var variance = 0.0
+            for (c in cutoffs) variance += kotlin.math.abs(c - avgCutoff)
+            val meanVar = variance / cutoffs.size
+            // High stability (low variance) is actually SUSPICIOUS for lossy filters,
+            // but natural roll-offs are also stable. We use this to distinguish
+            // "clean" filters from "noisy" original content.
+            // 0 = perfectly stable, 1 = wildly unstable
+            return (meanVar / 2000.0).coerceIn(0.0, 1.0)
+        }
+
+        internal fun computeConfidenceScore(
+            cutoffHz: Int,
+            nyquistHz: Int,
+            slopeDbOct: Double,
+            noiseFloorDb: Double,
+            temporalStability: Double,
+            bitDepthPadded: Boolean,
+            hfRatio: Double
+        ): Int {
+            // Cutoff Score: 100 if >20kHz, scales down to 0 at 15kHz
+            val cutoffScore = ((cutoffHz - 15000.0) / (min(nyquistHz, 21000) - 15000.0))
+                .coerceIn(0.0, 1.0) * 100.0
+
+            // Slope Score: Natural roll-offs are gentle (<20dB/oct).
+            // Brick-walls are >60dB/oct.
+            val slopeScore = (1.0 - (slopeDbOct - 10.0) / 50.0).coerceIn(0.0, 1.0) * 100.0
+
+            // Noise Score: -40dB to -70dB is good (analog noise).
+            // -90dB or lower is likely a digital silence/filter.
+            val noiseScore = ((noiseFloorDb + 90.0) / 40.0).coerceIn(0.0, 1.0) * 100.0
+
+            // Stability: 100 if it wavers (genuine), 50 if perfectly static (clean filter).
+            val stabilityScore = 50.0 + (temporalStability * 50.0)
+
+            // Bit-depth: 100 if not padded, 0 if padded.
+            val bitDepthScore = if (bitDepthPadded) 0.0 else 100.0
+
+            // HF Energy ratio: hi-res recordings usually have >0.1% energy above 15kHz.
+            // Brick-walls have near 0%.
+            val hfScore = (hfRatio * 1000.0).coerceIn(0.0, 1.0) * 100.0
+
+            val total = (cutoffScore * WEIGHT_CUTOFF) +
+                        (slopeScore * WEIGHT_SLOPE) +
+                        (noiseScore * WEIGHT_NOISE) +
+                        (stabilityScore * WEIGHT_STABILITY) +
+                        (bitDepthScore * WEIGHT_BIT_DEPTH * 0.5) + // reducing bit depth weight slightly to fit HF
+                        (hfScore * 0.05)
+            
+            return total.roundToInt().coerceIn(0, 100)
         }
 
         /** A genuinely 24-bit (or deeper) source has dithered/noisy low-order bits; a
@@ -492,7 +613,8 @@ internal class AudioSpectrumAnalyzer(
             durationMs = json.optLong("durationMs", 0L),
             sampleRateHz = json.optInt("sampleRateHz", 44100),
             bitDepth = json.optInt("bitDepth", 16),
-            authenticity = LosslessAuthenticity.valueOf(json.optString("authenticity", "LOSSY_SOURCE")),
+            authenticity = LosslessAuthenticity.valueOf(json.optString("authenticity", "DEFINITELY_UPSCALED")),
+            confidenceScore = json.optInt("confidenceScore", 0),
             spectralCutoffHz = json.optInt("spectralCutoffHz", 0),
             nyquistHz = json.optInt("nyquistHz", 22050),
             bitDepthLooksPadded = json.optBoolean("bitDepthLooksPadded", false)
@@ -510,6 +632,7 @@ internal class AudioSpectrumAnalyzer(
         json.put("sampleRateHz", data.sampleRateHz)
         json.put("bitDepth", data.bitDepth)
         json.put("authenticity", data.authenticity.name)
+        json.put("confidenceScore", data.confidenceScore)
         json.put("spectralCutoffHz", data.spectralCutoffHz)
         json.put("nyquistHz", data.nyquistHz)
         json.put("bitDepthLooksPadded", data.bitDepthLooksPadded)
@@ -574,16 +697,17 @@ internal fun LosslessAuthenticityBadge(result: AudioSpectrumAnalyzer.SpectrumAna
     val color = result.badgeColor()
     Box(
         modifier = Modifier
-            .clip(RoundedCornerShape(8.dp))
-            .background(color.copy(alpha = 0.18f))
-            .padding(horizontal = 10.dp, vertical = 5.dp)
+            .clip(RoundedCornerShape(20.dp))
+            .background(color.copy(alpha = 0.15f))
+            .padding(horizontal = 6.dp, vertical = 2.dp)
     ) {
         Text(
-            text = result.badgeSubtitle()?.let { "${result.badgeLabel()} \u00b7 ${it}" } ?: result.badgeLabel(),
+            text = "${result.badgeLabel()} \u00b7 ${result.badgeSubtitle()}",
             color = color,
-            fontSize = 10.sp,
+            fontSize = 7.5.sp,
             fontWeight = FontWeight.Black,
-            letterSpacing = 0.5.sp
+            letterSpacing = 0.3.sp,
+            maxLines = 1
         )
     }
 }
