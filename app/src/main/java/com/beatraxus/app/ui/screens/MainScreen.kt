@@ -5187,14 +5187,17 @@ fun SlideDrawerMenu(
                         )
                 ) {
                     Box(modifier = Modifier.fillMaxWidth()) {
+                        val hasCastDevices = com.beatraxus.app.cast.CastManager.isConnected ||
+                                com.beatraxus.app.cast.CastManager.availableDevices.isNotEmpty()
                         CastButton(
                             modifier = Modifier
                                 .align(Alignment.TopEnd)
                                 .padding(12.dp)
-                                .size(32.dp),
-                            tint = if (com.beatraxus.app.cast.CastManager.isConnected ||
-                                com.beatraxus.app.cast.CastManager.availableDevices.isNotEmpty()
-                            ) Color.White else Color.Black
+                                .size(32.dp)
+                                .graphicsLayer {
+                                    alpha = if (hasCastDevices) 1f else 0f
+                                },
+                            tint = Color.White
                         )
                         if (isPlaying) {
                             val notesTransition = rememberInfiniteTransition(label = "notes")
@@ -5355,22 +5358,7 @@ fun SlideDrawerMenu(
                     },
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                val context = androidx.compose.ui.platform.LocalContext.current
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Surface(
-                        color = Color.White.copy(0.08f),
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(52.dp)
-                            .clickable {
-                                android.widget.Toast.makeText(context, "Coming soon", android.widget.Toast.LENGTH_SHORT).show()
-                            }
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(Icons.Rounded.ColorLens, null, tint = Color.White.copy(0.7f), modifier = Modifier.size(22.dp))
-                        }
-                    }
                     Surface(
                         color = Color.White.copy(0.08f),
                         shape = RoundedCornerShape(14.dp),
@@ -5387,12 +5375,23 @@ fun SlideDrawerMenu(
                         color = Color.White.copy(0.08f),
                         shape = RoundedCornerShape(14.dp),
                         modifier = Modifier
-                            .weight(1f)
+                            .weight(2f)
                             .height(52.dp)
                             .clickable { onNavigateToSettings(); onClose() }
                     ) {
-                        Box(contentAlignment = Alignment.Center) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 16.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
                             Icon(Icons.Rounded.Settings, null, tint = Color.White.copy(0.7f), modifier = Modifier.size(22.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                "Settings",
+                                color = Color.White.copy(0.7f),
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold
+                            )
                         }
                     }
                 }

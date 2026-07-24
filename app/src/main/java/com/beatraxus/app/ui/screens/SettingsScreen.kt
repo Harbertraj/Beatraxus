@@ -518,21 +518,28 @@ private fun ValueEditDialog(
 fun AppearanceContent(uiState: PlayerUiState, playerViewModel: PlayerViewModel) {
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         SettingsSection(
-            title = "SCREEN ELEMENTS",
+            title = "MAIN SCREEN",
+            icon = Icons.Rounded.Devices,
+            isActive = true,
+            subtitle = "Settings for the main app container"
+        ) {
+            AppearanceToggleRow(
+                title = "Mini Player",
+                subtitle = "Show a compact player when browsing the library",
+                checked = uiState.appearance.showMiniPlayer,
+                onCheckedChange = { playerViewModel.setShowMiniPlayer(it) }
+            )
+        }
+
+        SettingsSection(
+            title = "NOW PLAYING SCREEN",
             icon = Icons.Rounded.Palette,
             isActive = true,
-            subtitle = "Toggle visibility of UI components"
+            subtitle = "Customize the player interface and shortcuts"
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 AppearanceToggleRow(
-                    title = "Mini Player",
-                    subtitle = "Show a compact player when browsing the library",
-                    checked = uiState.appearance.showMiniPlayer,
-                    onCheckedChange = { playerViewModel.setShowMiniPlayer(it) }
-                )
-                HorizontalDivider(color = Color.White.copy(0.05f))
-                AppearanceToggleRow(
-                    title = "Blurred Background (Now Playing)",
+                    title = "Blurred Background",
                     subtitle = "Enable immersive blurred album art background",
                     checked = uiState.appearance.showNowPlayingBlurBackground,
                     onCheckedChange = { playerViewModel.setShowNowPlayingBlurBackground(it) }
@@ -561,15 +568,43 @@ fun AppearanceContent(uiState: PlayerUiState, playerViewModel: PlayerViewModel) 
                 HorizontalDivider(color = Color.White.copy(0.05f))
                 AppearanceToggleRow(
                     title = "Lyrics Button",
-                    subtitle = "Quick access to lyrics from the main player screen",
+                    subtitle = "Quick access to lyrics from the player screen",
                     checked = uiState.appearance.showLyricsButton,
                     onCheckedChange = { playerViewModel.setShowLyricsButton(it) }
+                )
+                HorizontalDivider(color = Color.White.copy(0.05f))
+                AppearanceToggleRow(
+                    title = "Favorite Button",
+                    subtitle = "Toggle heart icon to add songs to favorites",
+                    checked = uiState.appearance.showFavoriteButton,
+                    onCheckedChange = { playerViewModel.setShowFavoriteButton(it) }
+                )
+                HorizontalDivider(color = Color.White.copy(0.05f))
+                AppearanceToggleRow(
+                    title = "Equalizer Shortcut",
+                    subtitle = "Quick jump to DSP and EQ settings",
+                    checked = uiState.appearance.showEqualizerShortcut,
+                    onCheckedChange = { playerViewModel.setShowEqualizerShortcut(it) }
+                )
+                HorizontalDivider(color = Color.White.copy(0.05f))
+                AppearanceToggleRow(
+                    title = "Queue Button",
+                    subtitle = "Show the upcoming tracks list shortcut",
+                    checked = uiState.appearance.showQueueButton,
+                    onCheckedChange = { playerViewModel.setShowQueueButton(it) }
+                )
+                HorizontalDivider(color = Color.White.copy(0.05f))
+                AppearanceToggleRow(
+                    title = "Sleep Timer Icon",
+                    subtitle = "Show shortcut to set the sleep timer",
+                    checked = uiState.appearance.showSleepTimerIcon,
+                    onCheckedChange = { playerViewModel.setShowSleepTimerIcon(it) }
                 )
             }
         }
 
         SettingsSection(
-            title = "HOME SCREEN SECTIONS",
+            title = "HOME SCREEN",
             icon = Icons.Rounded.Home,
             isActive = true,
             subtitle = "Customize visible categories on the home screen"
@@ -636,43 +671,6 @@ fun AppearanceContent(uiState: PlayerUiState, playerViewModel: PlayerViewModel) 
                     subtitle = "Show shortcuts to your custom playlists",
                     checked = uiState.appearance.showYourPlaylists,
                     onCheckedChange = { playerViewModel.setShowYourPlaylists(it) }
-                )
-            }
-        }
-
-        SettingsSection(
-            title = "NOW PLAYING SHORTCUTS",
-            icon = Icons.Rounded.Dashboard,
-            isActive = true,
-            subtitle = "Choose which icons appear on the player screen"
-        ) {
-            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                AppearanceToggleRow(
-                    title = "Favorite Button",
-                    subtitle = "Toggle heart icon to add songs to favorites",
-                    checked = uiState.appearance.showFavoriteButton,
-                    onCheckedChange = { playerViewModel.setShowFavoriteButton(it) }
-                )
-                HorizontalDivider(color = Color.White.copy(0.05f))
-                AppearanceToggleRow(
-                    title = "Equalizer Shortcut",
-                    subtitle = "Quick jump to DSP and EQ settings",
-                    checked = uiState.appearance.showEqualizerShortcut,
-                    onCheckedChange = { playerViewModel.setShowEqualizerShortcut(it) }
-                )
-                HorizontalDivider(color = Color.White.copy(0.05f))
-                AppearanceToggleRow(
-                    title = "Queue Button",
-                    subtitle = "Show the upcoming tracks list shortcut",
-                    checked = uiState.appearance.showQueueButton,
-                    onCheckedChange = { playerViewModel.setShowQueueButton(it) }
-                )
-                HorizontalDivider(color = Color.White.copy(0.05f))
-                AppearanceToggleRow(
-                    title = "Sleep Timer Icon",
-                    subtitle = "Show shortcut to set the sleep timer",
-                    checked = uiState.appearance.showSleepTimerIcon,
-                    onCheckedChange = { playerViewModel.setShowSleepTimerIcon(it) }
                 )
             }
         }

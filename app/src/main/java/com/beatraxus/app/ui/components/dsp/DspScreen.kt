@@ -2786,9 +2786,7 @@ private fun PremiumReverbCard(uiState: PlayerUiState, viewModel: PlayerViewModel
                     .padding(vertical = 2.dp)
             ) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceAround) {
-                    KnobControl("PRE-DELAY", config.reverbPredelayMs, { newVal ->
-                        viewModel.setReverbPredelay(newVal * config.reverbPredelayMix * 100f)
-                    }, 0f..100f, "ms", knobSizeSmall, false, !isReverbBypassed, reverbActive, {}, { onEditValue(EditingValue("PRE-DELAY", config.reverbPredelayMs, 0f..100f, { v -> viewModel.setReverbPredelay(v * config.reverbPredelayMix * 100f) })) })
+                    KnobControl("PRE-DELAY", config.reverbPredelayMs, viewModel::setReverbPredelay, 0f..250f, "ms", knobSizeSmall, false, !isReverbBypassed, reverbActive, {}, { onEditValue(EditingValue("PRE-DELAY", config.reverbPredelayMs, 0f..250f, viewModel::setReverbPredelay)) })
                     KnobControl("DRY/WET", config.reverbPredelayMix, viewModel::setReverbPredelayMix, 0f..1f, "x", knobSizeSmall, false, !isReverbBypassed, reverbActive, {}, { onEditValue(EditingValue("DRY/WET MIX", config.reverbPredelayMix, 0f..1f, viewModel::setReverbPredelayMix)) })
                     KnobControl("SIZE", config.reverbRoomSize, viewModel::setReverbRoomSize, 0f..1f, "x", knobSizeSmall, false, !isReverbBypassed, reverbActive, {}, { onEditValue(EditingValue("SIZE", config.reverbRoomSize, 0f..1f, viewModel::setReverbRoomSize)) })
                 }

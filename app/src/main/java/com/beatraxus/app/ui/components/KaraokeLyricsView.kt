@@ -78,7 +78,7 @@ private suspend fun LazyListState.bouncyScrollToItem(index: Int, targetOffset: I
         var previous = 0f
         Animatable(0f).animateTo(
             targetValue = delta,
-            animationSpec = spring(dampingRatio = Spring.DampingRatioHighBouncy, stiffness = Spring.StiffnessLow)
+            animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow)
         ) {
             dispatchRawDelta(value - previous)
             previous = value
@@ -393,7 +393,7 @@ fun SyncedLyricLine(
     val animatedScale by animateFloatAsState(
         targetValue = targetScale,
         animationSpec = spring(
-            dampingRatio = if (isCurrent) Spring.DampingRatioHighBouncy else Spring.DampingRatioMediumBouncy,
+            dampingRatio = if (isCurrent) Spring.DampingRatioMediumBouncy else Spring.DampingRatioLowBouncy,
             stiffness = if (isCurrent) Spring.StiffnessVeryLow else Spring.StiffnessLow
         ),
         label = "lineScale"
@@ -409,7 +409,7 @@ fun SyncedLyricLine(
     val verticalOffset by animateFloatAsState(
         targetValue = targetOffset,
         animationSpec = spring(
-            dampingRatio = if (isCurrent) Spring.DampingRatioHighBouncy else Spring.DampingRatioMediumBouncy,
+            dampingRatio = if (isCurrent) Spring.DampingRatioMediumBouncy else Spring.DampingRatioLowBouncy,
             stiffness = if (isCurrent) Spring.StiffnessVeryLow else Spring.StiffnessLow
         ),
         label = "upwardMovement"
@@ -508,7 +508,7 @@ fun BouncyWordByWordFlow(
             val wordScale by animateFloatAsState(
                 targetValue = if (isWordActive) 1.05f else 1.0f,
                 animationSpec = spring(
-                    dampingRatio = Spring.DampingRatioMediumBouncy,
+                    dampingRatio = Spring.DampingRatioLowBouncy,
                     stiffness = Spring.StiffnessLow
                 ),
                 label = "wordScale"
