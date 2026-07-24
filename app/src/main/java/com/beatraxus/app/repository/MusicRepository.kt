@@ -71,6 +71,27 @@ class MusicRepository(private val context: Context) {
                 selection.append(" AND ${MediaStore.Audio.Media.DATA} LIKE ?")
                 selectionArgs.add("$normalizedTarget%")
             }
+        } else if (!fullScan) {
+            // Quick scan only searches in added folders
+            val addedFolders = getMusicFolders()
+            if (addedFolders.isNotEmpty()) {
+                val folderClauses = mutableListOf<String>()
+                addedFolders.forEach { path ->
+                    val resolvedPath = if (path.startsWith("content://")) resolveUriToPath(path) else path
+                    if (resolvedPath != null) {
+                        val normalized = if (resolvedPath.endsWith("/")) resolvedPath else "$resolvedPath/"
+                        folderClauses.add("${MediaStore.Audio.Media.DATA} LIKE ?")
+                        selectionArgs.add("$normalized%")
+                    }
+                }
+                if (folderClauses.isNotEmpty()) {
+                    selection.append(" AND (${folderClauses.joinToString(" OR ")})")
+                }
+            } else {
+                // If no folders added, quick scan returns nothing as per requirement
+                // to "only search song in added folders"
+                selection.append(" AND 1=0") 
+            }
         }
 
         excludedPaths.forEach { path ->

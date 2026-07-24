@@ -3620,6 +3620,7 @@ fun HomeScreen(
     val artists by viewModel.artists.collectAsStateWithLifecycle()
     val playlists by viewModel.playlists.collectAsStateWithLifecycle()
     val allSongs by viewModel.allSongs.collectAsStateWithLifecycle()
+    val favorites by viewModel.favorites.collectAsStateWithLifecycle()
     val aiAnalysis by viewModel.aiAnalysis.collectAsStateWithLifecycle()
     var showAllMoodsDialog by remember { mutableStateOf(false) }
 
@@ -3773,6 +3774,43 @@ fun HomeScreen(
                             )
                         }
                     }
+                }
+            }
+        }
+
+        item {
+            LazyRow(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                item {
+                    ActionChip(
+                        label = "Shuffle All",
+                        icon = Icons.Rounded.Shuffle,
+                        onClick = { viewModel.playList(allSongs.shuffled(), 0) }
+                    )
+                }
+                item {
+                    ActionChip(
+                        label = "Favorites",
+                        icon = Icons.Rounded.Favorite,
+                        onClick = {
+                            val favSongs = allSongs.filter { favorites.contains(it.id) }
+                            if (favSongs.isNotEmpty()) viewModel.playList(favSongs, 0)
+                        }
+                    )
+                }
+                item {
+                    ActionChip(
+                        label = "Recently Added",
+                        icon = Icons.Rounded.NewReleases,
+                        onClick = {
+                            val recentSongs = allSongs.sortedByDescending { it.dateAdded }
+                            if (recentSongs.isNotEmpty()) viewModel.playList(recentSongs, 0)
+                        }
+                    )
                 }
             }
         }
@@ -4000,36 +4038,6 @@ fun HomeScreen(
             }
         }
 
-
-
-        // Song List Grid (matching the bottom part of the image)
-        val songsToShow = if (recentlyPlayed.isNotEmpty()) recentlyPlayed.take(10) else allSongs.take(10)
-        if (songsToShow.isNotEmpty()) {
-            item {
-                Column(
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    val songChunks = songsToShow.chunked(2)
-                    songChunks.forEach { chunk ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            chunk.forEach { song ->
-                                Box(modifier = Modifier.weight(1f)) {
-                                    HomeSongCard(song) { viewModel.playSong(song) }
-                                }
-                            }
-                            if (chunk.size == 1) {
-                                Spacer(modifier = Modifier.weight(1f))
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
         // Additional Sections (Optional, placed after the main content from image)
         if (quickPicks.isNotEmpty()) {
             item { HomeSectionHeader("Made For You") }
@@ -4118,6 +4126,40 @@ fun HomeScreen(
                 ) {
                     items(recentlyPlayed, key = { it.id }) { song ->
                         HomeSongItem(song) { viewModel.playSong(song) }
+                    }
+                }
+            }
+        }
+
+        val recentlyAddedSongs = allSongs.sortedByDescending { it.dateAdded }.take(15)
+        if (recentlyAddedSongs.isNotEmpty()) {
+            item { HomeSectionHeader("Recently Added") }
+            item {
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    itemsIndexed(recentlyAddedSongs, key = { _, song -> "recent_${song.id}" }) { index, song ->
+                        HomeSongCard(song) {
+                            viewModel.playList(recentlyAddedSongs, index)
+                        }
+                    }
+                }
+            }
+        }
+
+        val favoriteSongs = allSongs.filter { favorites.contains(it.id) }.take(15)
+        if (favoriteSongs.isNotEmpty()) {
+            item { HomeSectionHeader("Your Favorites") }
+            item {
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    itemsIndexed(favoriteSongs, key = { _, song -> "fav_${song.id}" }) { index, song ->
+                        HomeSongCard(song) {
+                            viewModel.playList(favoriteSongs, index)
+                        }
                     }
                 }
             }
@@ -4301,6 +4343,39 @@ private fun GenreChip(label: String, onClick: () -> Unit) {
                 color = Color.White,
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Medium
+            )
+        }
+    }
+}
+
+@Composable
+private fun ActionChip(
+    label: String,
+    icon: ImageVector,
+    onClick: () -> Unit
+) {
+    Surface(
+        onClick = onClick,
+        color = Color.White.copy(0.08f),
+        shape = CircleShape,
+        border = BorderStroke(1.dp, Color.White.copy(0.08f))
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = Color(0xFF00F2FF).copy(alpha = 0.8f),
+                modifier = Modifier.size(18.dp)
+            )
+            Text(
+                text = label,
+                color = Color.White,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold
             )
         }
     }

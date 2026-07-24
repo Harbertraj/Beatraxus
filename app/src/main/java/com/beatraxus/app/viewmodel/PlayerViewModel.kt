@@ -1050,8 +1050,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         return@launch
                     }
                     
-                    // After loading from DB, we stop here to avoid automatic "sync" (quickScan) on startup
+                    // After loading from DB, we trigger a quick scan to sync with added folders as requested
                     _uiState.update { it.copy(isLoadingLibrary = false) }
+                    quickScan()
                     return@launch
                 }
             } catch (e: Exception) {
