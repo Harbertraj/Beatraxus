@@ -286,7 +286,12 @@ class CloudCacheManager(
 
     private val tokenCache = ConcurrentHashMap<String, String>()
 
-    suspend fun prepareCache(currentSong: Song?, upcomingSongs: List<Song>, tdLib: TdLibManager? = null) = mutex.withLock {
+    suspend fun prepareCache(
+        currentSong: Song?, 
+        upcomingSongs: List<Song>, 
+        previousSongs: List<Song> = emptyList(), 
+        tdLib: TdLibManager? = null
+    ) = mutex.withLock {
         // Only update currentlyPlayingId if we have a non-null currentSong,
         // otherwise we might accidentally clear it due to a race with the service's state flow.
         if (currentSong != null) {
@@ -297,11 +302,17 @@ class CloudCacheManager(
         currentSong?.let { if (it.isCloud()) keepIds.add(it.id) }
         currentlyPlayingId?.let { keepIds.add(it) }
 
-        // GDrive keeps next 5, others (Telegram) keep next 3
+        // Logic for keeping previous songs to prevent re-download on "Back"
+        // We keep the immediate previous song to make navigation snappy.
+        if (currentSong?.source == SongSource.TELEGRAM || currentlyPlayingId?.startsWith("tg_") == true) {
+            previousSongs.lastOrNull()?.let { if (it.isCloud()) keepIds.add(it.id) }
+        }
+
+        // GDrive keeps next 5, others (Telegram) keep next 2 (total 4 with prev+curr)
         val perSourceKept = mutableMapOf<SongSource, Int>()
         upcomingSongs.forEach { song ->
             if (song.isCloud()) {
-                val limit = if (song.source == SongSource.GDRIVE) 5 else 3
+                val limit = if (song.source == SongSource.GDRIVE) 5 else 2
                 val countSoFar = perSourceKept.getOrDefault(song.source, 0)
                 if (countSoFar < limit) {
                     keepIds.add(song.id)
@@ -393,10 +404,11 @@ class CloudCacheManager(
             }
         }
 
-        // --- NEW: Aggressive Telegram Reconciliation (Current + Next 3 Telegram) ---
+        // --- NEW: Aggressive Telegram Reconciliation (Prev + Current + Next 2 Telegram) ---
         val telegramKeepIds = mutableSetOf<String>()
         currentSong?.let { if (it.source == SongSource.TELEGRAM) telegramKeepIds.add(it.id) }
-        upcomingSongs.filter { it.source == SongSource.TELEGRAM }.take(3).forEach { telegramKeepIds.add(it.id) }
+        previousSongs.lastOrNull()?.let { if (it.source == SongSource.TELEGRAM) telegramKeepIds.add(it.id) }
+        upcomingSongs.filter { it.source == SongSource.TELEGRAM }.take(2).forEach { telegramKeepIds.add(it.id) }
         
         playbackLruCache.reconcileSource(SongSource.TELEGRAM, telegramKeepIds)
     }

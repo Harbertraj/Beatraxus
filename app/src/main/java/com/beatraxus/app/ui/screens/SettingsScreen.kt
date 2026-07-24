@@ -1369,20 +1369,21 @@ private fun PremiumChip(
     label: String,
     modifier: Modifier = Modifier
 ) {
-    val background = if (selected) {
-        Brush.linearGradient(listOf(Color.Black, Color.Black))
+    val background = if (selected) Color.Black else Color(0xFF1A232D)
+    val borderStroke = if (selected) {
+        BorderStroke(1.dp, PrimaryCyan)
     } else {
-        Brush.linearGradient(listOf(Color(0xFF1A232D), Color(0xFF1A232D)))
+        BorderStroke(1.dp, Color.White.copy(0.05f))
     }
     
     Box(
         modifier = modifier
             .widthIn(min = 52.dp)
+            .then(if (selected) Modifier.shadow(elevation = 12.dp, shape = RoundedCornerShape(10.dp), ambientColor = PrimaryCyan.copy(0.2f), spotColor = PrimaryCyan.copy(0.2f)) else Modifier)
             .clip(RoundedCornerShape(10.dp))
             .background(background)
+            .border(borderStroke, RoundedCornerShape(10.dp))
             .clickable { onClick() }
-            .then(if (selected) Modifier.border(1.dp, PrimaryCyan, RoundedCornerShape(10.dp)) else Modifier)
-            .then(if (selected) Modifier.shadow(elevation = 12.dp, shape = RoundedCornerShape(10.dp), ambientColor = PrimaryCyan.copy(0.2f), spotColor = PrimaryCyan.copy(0.2f)) else Modifier)
             .padding(horizontal = 12.dp, vertical = 8.dp),
         contentAlignment = Alignment.Center
     ) {
@@ -4082,18 +4083,19 @@ fun OutputModeButton(
     enabled: Boolean = true,
     modifier: Modifier = Modifier
 ) {
-    val background = if (selected) {
-        Brush.linearGradient(listOf(Color.Black, Color.Black))
+    val background = if (selected) Color.Black else Color(0xFF1A232D)
+    val borderStroke = if (selected) {
+        BorderStroke(1.dp, PrimaryCyan)
     } else {
-        Brush.linearGradient(listOf(Color(0xFF1A232D), Color(0xFF1A232D)))
+        BorderStroke(1.dp, Color.White.copy(0.05f))
     }
 
     Box(
         modifier = modifier
+            .then(if (selected) Modifier.shadow(elevation = 12.dp, shape = RoundedCornerShape(14.dp), ambientColor = PrimaryCyan.copy(0.2f), spotColor = PrimaryCyan.copy(0.2f)) else Modifier)
             .clip(RoundedCornerShape(14.dp))
             .background(background)
-            .then(if (selected) Modifier.border(1.dp, PrimaryCyan, RoundedCornerShape(14.dp)) else Modifier)
-            .then(if (selected) Modifier.shadow(elevation = 12.dp, shape = RoundedCornerShape(14.dp), ambientColor = PrimaryCyan.copy(0.2f), spotColor = PrimaryCyan.copy(0.2f)) else Modifier)
+            .border(borderStroke, RoundedCornerShape(14.dp))
             .clickable(enabled = enabled, onClick = onClick)
             .padding(vertical = 10.dp),
         contentAlignment = Alignment.Center

@@ -64,6 +64,8 @@ import android.net.Uri
 import coil.ImageLoader
 import coil.request.ImageRequest
 import coil.request.SuccessResult
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import coil.request.CachePolicy
 import com.beatraxus.app.repository.MusicRepository
 import com.google.android.gms.cast.MediaStatus
@@ -517,6 +519,7 @@ class AudioPlaybackService : Service() {
     private val songDao by lazy { (application as com.beatraxus.app.BeatraxusApplication).database.songDao() }
     private val lastFmRepository by lazy { com.beatraxus.app.repository.lastfm.LastFmRepository(this) }
     private var libraryScanJob: Job? = null
+    private val activeCloudScanJobs = java.util.concurrent.ConcurrentHashMap<String, Job>()
 
     private var currentSongStartTime: Long = 0
     private var currentSongPlaybackTimeMs: Long = 0
@@ -553,7 +556,7 @@ class AudioPlaybackService : Service() {
         
         serviceScope.launch {
             val tdLib = (application as com.beatraxus.app.BeatraxusApplication).tdLibManager
-            cloudCacheManager.prepareCache(current, upcoming, tdLib)
+            cloudCacheManager.prepareCache(current, upcoming, previous, tdLib)
         }
 
         // Enable gapless transition in engine
@@ -840,10 +843,20 @@ class AudioPlaybackService : Service() {
         onComplete: (String) -> Unit,
         onError: (String, Intent?) -> Unit
     ) {
-        libraryScanJob = serviceScope.launch(Dispatchers.Default) {
+        val normalizedId = email.lowercase()
+        val job = serviceScope.launch(Dispatchers.Default) {
             scanMutex.withLock {
                 acquireScanWakeLock()
                 try {
+                    // Rule: Stop if account is removed during enrichment
+                    val accountWatcher = launch {
+                        driveAccountRepository.accounts.collect { accounts ->
+                            if (accounts.none { it.email.lowercase() == normalizedId }) {
+                                this@launch.cancel("Account removed during scan")
+                            }
+                        }
+                    }
+
                     val credential = driveAccountRepository.getCredential(email)
                     val scanner = com.beatraxus.app.drive.DriveLibraryScanner(application)
                     val newSongs = scanner.scanAccount(credential, allowedFormats)
@@ -922,7 +935,15 @@ class AudioPlaybackService : Service() {
                         onComplete("No songs found for $email")
                     }
                 } catch (e: Exception) {
-                    if (e is CancellationException) throw e
+                    if (e is CancellationException) {
+                        val stillExists = driveAccountRepository.accounts.first().any { it.email.lowercase() == normalizedId }
+                        if (!stillExists) {
+                            withContext(Dispatchers.IO) {
+                                songDao.deleteSongsByAccount(normalizedId)
+                            }
+                        }
+                        throw e
+                    }
                     if (e is UserRecoverableAuthIOException) {
                         onError(e.message ?: "Auth error", e.intent)
                     } else {
@@ -933,7 +954,14 @@ class AudioPlaybackService : Service() {
                 }
             }
         }
+        libraryScanJob = job
+        activeCloudScanJobs[normalizedId] = job
+        job.invokeOnCompletion { 
+            if (libraryScanJob == job) libraryScanJob = null
+            activeCloudScanJobs.remove(normalizedId) 
+        }
     }
+
 
     fun runDropboxScan(
         account: com.beatraxus.app.repository.DropboxAccount,
@@ -944,10 +972,20 @@ class AudioPlaybackService : Service() {
         onComplete: (String) -> Unit,
         onError: (String) -> Unit
     ) {
-        libraryScanJob = serviceScope.launch(Dispatchers.Default) {
+        val normalizedId = account.email.lowercase()
+        val job = serviceScope.launch(Dispatchers.Default) {
             scanMutex.withLock {
                 acquireScanWakeLock()
                 try {
+                    // Rule: Stop if account is removed during enrichment
+                    val accountWatcher = launch {
+                        dropboxAccountRepository.accounts.collect { accounts ->
+                            if (accounts.none { it.email.lowercase() == normalizedId }) {
+                                this@launch.cancel("Account removed during scan")
+                            }
+                        }
+                    }
+
                     val scanner = com.beatraxus.app.drive.DropboxLibraryScanner(application)
                     val discovered = mutableListOf<Song>()
                     val token = dropboxAccountRepository.getAccessToken(account.email) ?: throw Exception("Failed to get access token")
@@ -980,6 +1018,15 @@ class AudioPlaybackService : Service() {
                     }
                     onComplete("Dropbox sync complete. Found ${discovered.size} songs.")
                 } catch (e: Exception) {
+                    if (e is CancellationException) {
+                        val stillExists = dropboxAccountRepository.accounts.first().any { it.email.lowercase() == normalizedId }
+                        if (!stillExists) {
+                            withContext(Dispatchers.IO) {
+                                songDao.deleteSongsByDropboxAccount(normalizedId)
+                            }
+                        }
+                        throw e
+                    }
                     onError(e.message ?: "Dropbox scan failed")
                 } finally {
                     releaseScanWakeLock()
@@ -987,6 +1034,7 @@ class AudioPlaybackService : Service() {
             }
         }
     }
+
 
     fun runOneDriveScan(
         account: com.beatraxus.app.repository.OneDriveAccount,
@@ -997,10 +1045,20 @@ class AudioPlaybackService : Service() {
         onComplete: (String) -> Unit,
         onError: (String) -> Unit
     ) {
-        libraryScanJob = serviceScope.launch(Dispatchers.Default) {
+        val normalizedId = account.email.lowercase()
+        val job = serviceScope.launch(Dispatchers.Default) {
             scanMutex.withLock {
                 acquireScanWakeLock()
                 try {
+                    // Rule: Stop if account is removed during enrichment
+                    val accountWatcher = launch {
+                        onedriveAccountRepository.accounts.collect { accounts ->
+                            if (accounts.none { it.email.lowercase() == normalizedId }) {
+                                this@launch.cancel("Account removed during scan")
+                            }
+                        }
+                    }
+
                     val token = onedriveAccountRepository.getAccessToken(account.email)
                     if (token == null) {
                         onError("Failed to get OneDrive access token")
@@ -1029,6 +1087,15 @@ class AudioPlaybackService : Service() {
                     
                     onComplete("OneDrive sync complete. Found $totalFound songs.")
                 } catch (e: Exception) {
+                    if (e is CancellationException) {
+                        val stillExists = onedriveAccountRepository.accounts.first().any { it.email.lowercase() == normalizedId }
+                        if (!stillExists) {
+                            withContext(Dispatchers.IO) {
+                                songDao.deleteSongsByOneDriveAccount(normalizedId)
+                            }
+                        }
+                        throw e
+                    }
                     onError(e.message ?: "OneDrive scan failed")
                 } finally {
                     releaseScanWakeLock()
@@ -1036,6 +1103,7 @@ class AudioPlaybackService : Service() {
             }
         }
     }
+
 
     fun runBoxScan(
         account: com.beatraxus.app.repository.BoxAccount,
@@ -1046,10 +1114,20 @@ class AudioPlaybackService : Service() {
         onComplete: (String) -> Unit,
         onError: (String) -> Unit
     ) {
-        libraryScanJob = serviceScope.launch(Dispatchers.Default) {
+        val normalizedId = account.email.lowercase()
+        val job = serviceScope.launch(Dispatchers.Default) {
             scanMutex.withLock {
                 acquireScanWakeLock()
                 try {
+                    // Rule: Stop if account is removed during enrichment
+                    val accountWatcher = launch {
+                        boxAccountRepository.accounts.collect { accounts ->
+                            if (accounts.none { it.email.lowercase() == normalizedId }) {
+                                this@launch.cancel("Account removed during scan")
+                            }
+                        }
+                    }
+
                     val session = com.box.androidsdk.content.models.BoxSession(application)
                     // session.setUserId(account.userId)
                     val scanner = com.beatraxus.app.drive.BoxLibraryScanner(application)
@@ -1063,6 +1141,15 @@ class AudioPlaybackService : Service() {
                     }
                     onComplete("Box sync complete. Found $totalFound songs.")
                 } catch (e: Exception) {
+                    if (e is CancellationException) {
+                        val stillExists = boxAccountRepository.accounts.first().any { it.email.lowercase() == normalizedId }
+                        if (!stillExists) {
+                            withContext(Dispatchers.IO) {
+                                songDao.deleteSongsByBoxAccount(normalizedId)
+                            }
+                        }
+                        throw e
+                    }
                     onError(e.message ?: "Box scan failed")
                 } finally {
                     releaseScanWakeLock()
@@ -1070,6 +1157,7 @@ class AudioPlaybackService : Service() {
             }
         }
     }
+
 
     fun runNextcloudScan(
         account: com.beatraxus.app.repository.NextcloudAccount,
@@ -1080,10 +1168,21 @@ class AudioPlaybackService : Service() {
         onComplete: (String) -> Unit,
         onError: (String) -> Unit
     ) {
-        libraryScanJob = serviceScope.launch(Dispatchers.Default) {
+        val normalizedServer = account.serverUrl
+        val normalizedUser = account.username
+        val job = serviceScope.launch(Dispatchers.Default) {
             scanMutex.withLock {
                 acquireScanWakeLock()
                 try {
+                    // Rule: Stop if account is removed during enrichment
+                    val accountWatcher = launch {
+                        nextcloudAccountRepository.accounts.collect { accounts ->
+                            if (accounts.none { it.serverUrl == normalizedServer && it.username == normalizedUser }) {
+                                this@launch.cancel("Account removed during scan")
+                            }
+                        }
+                    }
+
                     val scanner = com.beatraxus.app.drive.NextcloudLibraryScanner(application)
                     var totalFound = 0
                     // Nextcloud scanner needs credentials
@@ -1096,6 +1195,15 @@ class AudioPlaybackService : Service() {
                     }
                     onComplete("Nextcloud sync complete. Found $totalFound songs.")
                 } catch (e: Exception) {
+                    if (e is CancellationException) {
+                        val stillExists = nextcloudAccountRepository.accounts.first().any { it.serverUrl == normalizedServer && it.username == normalizedUser }
+                        if (!stillExists) {
+                            withContext(Dispatchers.IO) {
+                                songDao.deleteSongsByNextcloudAccount("${normalizedServer}|${normalizedUser}")
+                            }
+                        }
+                        throw e
+                    }
                     onError(e.message ?: "Nextcloud scan failed")
                 } finally {
                     releaseScanWakeLock()
@@ -1103,6 +1211,7 @@ class AudioPlaybackService : Service() {
             }
         }
     }
+
 
     fun runFolderScan(
         folders: List<String>,
@@ -1160,10 +1269,20 @@ class AudioPlaybackService : Service() {
         onComplete: (String) -> Unit,
         onError: (String) -> Unit
     ) {
-        libraryScanJob = serviceScope.launch(Dispatchers.IO) {
+        val normalizedId = url.trim().removeSuffix("/").lowercase()
+        val job = serviceScope.launch(Dispatchers.IO) {
             scanMutex.withLock {
                 acquireScanWakeLock()
                 try {
+                    // Rule: Stop if channel is removed during enrichment
+                    val channelWatcher = launch {
+                        telegramChannelRepository.channels.collect { channels ->
+                            if (channels.none { it.url.lowercase() == normalizedId }) {
+                                this@launch.cancel("Channel removed during scan")
+                            }
+                        }
+                    }
+
                     val normalizedUrl = url.trim().removeSuffix("/")
                     val channelName = normalizedUrl.substringAfterLast("/")
                     
@@ -1236,19 +1355,28 @@ class AudioPlaybackService : Service() {
                         }
                         
                         if (toEnrich.isNotEmpty()) {
-                            var processed = 0
+                            val processed = java.util.concurrent.atomic.AtomicInteger(0)
                             val total = toEnrich.size
+                            val enrichmentSemaphore = Semaphore(500)
                             
-                            toEnrich.forEach { song ->
-                                val enriched = extractTelegramMetadata(song)
-                                if (enriched != null) {
-                                    songDao.insertSong(enriched.toEntity())
-                                    onSongUpdated(enriched)
-                                }
-                                processed++
-                                val enrichmentProgress = 0.1f + (processed.toFloat() / total.toFloat() * 0.9f)
-                                onProgress(enrichmentProgress)
-                                updateEnrichingProgress(enrichmentProgress, processed, total)
+                            // High-speed parallel enrichment
+                            coroutineScope {
+                                toEnrich.map { song ->
+                                    async {
+                                        enrichmentSemaphore.withPermit {
+                                            val enriched = extractTelegramMetadata(song)
+                                            if (enriched != null) {
+                                                songDao.insertSong(enriched.toEntity())
+                                                onSongUpdated(enriched)
+                                            }
+                                            
+                                            val currentProcessed = processed.incrementAndGet()
+                                            val enrichmentProgress = 0.1f + (currentProcessed.toFloat() / total.toFloat() * 0.9f)
+                                            onProgress(enrichmentProgress)
+                                            updateEnrichingProgress(enrichmentProgress, currentProcessed, total)
+                                        }
+                                    }
+                                }.awaitAll()
                             }
                             updateEnrichingProgress(1.0f, total, total)
                         }
@@ -1257,7 +1385,15 @@ class AudioPlaybackService : Service() {
                         onComplete("No songs found in Telegram channel")
                     }
                 } catch (e: Exception) {
-                    if (e is CancellationException) throw e
+                    if (e is CancellationException) {
+                        val stillExists = telegramChannelRepository.channels.first().any { it.url.lowercase() == normalizedId }
+                        if (!stillExists) {
+                            withContext(Dispatchers.IO) {
+                                songDao.deleteSongsByTelegramChannel(normalizedId)
+                            }
+                        }
+                        throw e
+                    }
                     onError(e.message ?: "Telegram sync failed")
                 } finally {
                     releaseScanWakeLock()
@@ -1265,6 +1401,7 @@ class AudioPlaybackService : Service() {
             }
         }
     }
+
 
     private suspend fun extractTelegramMetadata(song: Song): Song? {
         val fileId = song.telegramFileId ?: return null
@@ -1278,23 +1415,29 @@ class AudioPlaybackService : Service() {
 
             var enriched = metadataExtractor.extractMetadataFromLocalFile(song, tempFile)
             
-            // WAV/M4A Tail handling
+            // WAV/M4A/ALAC Tail handling: Often tags and album art are stored in the footer.
             val format = song.format.lowercase()
             val isSpecial = format.contains("wav") || format == "alac" || format == "m4a" || format == "mp4"
             if (isSpecial && enriched.albumArtUri == null && song.fileSizeBytes > downloadSize) {
                 val tailSize = 8 * 1024 * 1024L
                 val offset = (song.fileSizeBytes - tailSize).coerceAtLeast(downloadSize)
+                // Request tail download (priority 32)
                 tdLibManager.send(org.drinkless.tdlib.TdApi.DownloadFile(fileId, 32, offset, song.fileSizeBytes - offset, true))
-                val tailPath = tdLibManager.waitForFile(fileId, downloadSize = song.fileSizeBytes, timeoutMs = 10000)
-                if (tailPath != null) {
-                    val tailFile = File(tailPath)
+                
+                // Wait up to 5 seconds for the tail to be available in the sparse file.
+                // We don't wait for the FULL file (song.fileSizeBytes), just for the path to be ready.
+                delay(1500) // Brief wait for network start
+                val pathReady = tdLibManager.waitForFile(fileId, downloadSize = downloadSize, timeoutMs = 5000)
+                if (pathReady != null) {
+                    val tailFile = File(pathReady)
                     if (tailFile.exists()) {
+                        // Enrichment now uses the local file which TDLib has partially filled at the end.
                         enriched = metadataExtractor.extractMetadataFromLocalFile(song, tailFile)
                     }
                 }
             }
 
-            return enriched.copy(isEnriched = true, albumArtFetchAttempted = true)
+            return enriched.copy(isEnriched = enriched.durationMs > 0, albumArtFetchAttempted = true)
         } catch (e: Exception) {
             Log.e("AudioPlaybackService", "Failed to enrich Telegram song: ${song.title}", e)
             return null
@@ -1306,6 +1449,15 @@ class AudioPlaybackService : Service() {
     fun cancelLibraryScan() {
         libraryScanJob?.cancel()
         libraryScanJob = null
+        activeCloudScanJobs.values.forEach { it.cancel() }
+        activeCloudScanJobs.clear()
+    }
+
+    fun cancelScanForAccount(id: String) {
+        val normalizedId = id.lowercase()
+        activeCloudScanJobs[normalizedId]?.cancel()
+        activeCloudScanJobs.remove(normalizedId)
+        Log.d("AudioPlaybackService", "Cancelled scan for account: $normalizedId")
     }
 
     private var scanWakeLock: PowerManager.WakeLock? = null

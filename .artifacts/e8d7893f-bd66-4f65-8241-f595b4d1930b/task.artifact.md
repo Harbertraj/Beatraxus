@@ -1,0 +1,7 @@
+- [x] Fix `OutputModeButton` styling and modifier order in `SettingsScreen.kt`
+- [x] Fix `PremiumChip` styling and modifier order in `SettingsScreen.kt`
+- [x] Verify UI changes in `SettingsScreen.kt`
+- [x] Implement `OUTPUT_RECONFIG_SKIP_MS` in `AudioEngine.kt`
+- [x] Update `performReconfigureOutput` to handle skip duration
+- [x] Update `PlaybackSession.requestOutputRestart` to handle skip duration
+- [x] Verify 1-second skip during output change

@@ -70,7 +70,7 @@ private suspend fun downloadAlbumArtUri(tdLib: TdLibManager, audio: TdApi.Audio)
     }
 }
 
-private val metadataSemaphore = Semaphore(50) // Restored to 50 for high throughput
+private val metadataSemaphore = Semaphore(500) // Increased to 500 for high-speed enrichment
 
 private data class ExtractedMetadata(
     val title: String? = null,

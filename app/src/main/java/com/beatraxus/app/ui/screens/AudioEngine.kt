@@ -495,7 +495,8 @@ class AudioEngine(
             if (session != null && session.isActive() && session.pcmFormat != null) {
                 session.requestOutputRestart()
             } else if (_playbackStateFlow.value.isPlaying) {
-                val resumePositionMs = currentPositionMs()
+                // Applying 1s skip on full restart as well for consistency
+                val resumePositionMs = currentPositionMs() + OUTPUT_RECONFIG_SKIP_MS
                 startSessionInternal(song, resumePositionMs)
             } else {
                 publishDspState(activeSession?.pcmFormat)
@@ -870,11 +871,12 @@ class AudioEngine(
             val format = pcmFormat ?: return
 
             // Capture current position synchronously before launching reconfiguration.
-            // This ensures playback progress is preserved when output is re-initialized.
-            basePositionMs = currentRenderedPositionMs()
+            // Apply exactly 1s skip to satisfy user request for predictable jump.
+            basePositionMs = currentRenderedPositionMs() + OUTPUT_RECONFIG_SKIP_MS
             startFrameOffset = output.playbackPositionFrames()
 
             try {
+                requestSeek(basePositionMs)
                 configure(format)
             } catch (e: Exception) {
                 Log.e(TAG, "Output restart failed", e)
@@ -1041,6 +1043,7 @@ class AudioEngine(
         private const val RING_BUFFER_SAMPLES = 262_144 // Increased for better pre-fetch
         private const val RENDER_BATCH_SAMPLES = 1_024
         private const val NO_SEEK_PENDING = -1L
+        private const val OUTPUT_RECONFIG_SKIP_MS = 1000L
 
         private fun framesToMs(frames: Long, sampleRate: Int): Long {
             if (sampleRate <= 0) return 0L

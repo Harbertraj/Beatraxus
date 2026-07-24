@@ -31,8 +31,8 @@ import java.util.concurrent.ConcurrentHashMap
 class MetadataExtractor(private val context: Context) {
 
     private val TAG = "MetadataExtractor"
-    private val batchSemaphore = Semaphore(50) // Restored to 50 for high throughput
-    private val ffmpegSemaphore = Semaphore(2) // CPU-intensive tasks should be strictly throttled
+    private val batchSemaphore = Semaphore(500) // Increased to 500 for high-speed enrichment
+    private val ffmpegSemaphore = Semaphore(4) // Slightly increased for better throughput on multi-core
     private val onlineGenreService = GenreApiService()
     
     // Global tracking to prevent multiple batches from processing the same song
@@ -515,6 +515,17 @@ class MetadataExtractor(private val context: Context) {
                             if (byteRate > 0) {
                                 val durationMs = (chunkSize * 1000) / byteRate
                                 if (updatedSong.durationMs <= 0 || updatedSong.durationMs < durationMs) {
+                                    updatedSong = updatedSong.copy(durationMs = durationMs)
+                                }
+                            }
+                        } else {
+                            // FALLBACK: If DATA chunk size is 0 (common in some Telegram WAVs), 
+                            // estimate duration using total file size minus header/footer overhead.
+                            val byteRate = updatedSong.bitrate / 8
+                            if (byteRate > 0) {
+                                val estimatedDataSize = (fileLen - raf.filePointer).coerceAtLeast(0L)
+                                val durationMs = (estimatedDataSize * 1000) / byteRate
+                                if (updatedSong.durationMs <= 0) {
                                     updatedSong = updatedSong.copy(durationMs = durationMs)
                                 }
                             }
