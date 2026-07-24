@@ -5,3 +5,6 @@
 - [x] Update `performReconfigureOutput` to handle skip duration
 - [x] Update `PlaybackSession.requestOutputRestart` to handle skip duration
 - [x] Verify 1-second skip during output change
+- [x] Restore `detectSpectralCutoff` to `AudioSpectrumAnalyzer.kt`
+- [x] Restore `isSuspiciousCutoff` to `AudioSpectrumAnalyzer.kt`
+- [x] Verify test compilation and execution

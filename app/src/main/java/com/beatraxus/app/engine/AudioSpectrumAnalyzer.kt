@@ -444,6 +444,21 @@ internal class AudioSpectrumAnalyzer(
             return CutoffMetrics((cutoffBucket * hzPerBucket).roundToInt(), slope, noiseDb)
         }
 
+        /** Backward compatibility for unit tests: returns only the cutoff frequency. */
+        internal fun detectSpectralCutoff(accum: DoubleArray, frameCount: Int, nyquistHz: Int): Int {
+            return analyzeSpectralRollOff(accum, frameCount, nyquistHz).cutoffHz
+        }
+
+        /** Backward compatibility for unit tests: determines if a cutoff is suspicious
+         *  for a given container bandwidth. */
+        internal fun isSuspiciousCutoff(cutoffHz: Int, nyquistHz: Int): Boolean {
+            if (nyquistHz <= 24000) { // Only check standard 44.1/48kHz containers
+                val ratio = cutoffHz.toDouble() / nyquistHz
+                return ratio < 0.92
+            }
+            return false
+        }
+
         internal fun computeTemporalStability(cutoffs: List<Int>, avgCutoff: Int): Double {
             if (cutoffs.isEmpty()) return 1.0
             var variance = 0.0

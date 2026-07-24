@@ -23,3 +23,4 @@ local.properties
 hs_err_pid*.log
 buildlog.txt
 compile_out.txt
+.artifacts
