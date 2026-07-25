@@ -1,6 +1,6 @@
 package com.beatraxus.app.ui.components
 
-import android.graphics.RenderEffect as AndroidRenderEffect
+import com.beatraxus.app.ui.utils.RenderEffectHelper
 import android.graphics.Shader
 import android.os.Build
 import androidx.compose.animation.core.Animatable
@@ -117,11 +117,10 @@ fun GlassMenuPopup(
 
             val scrimBlur = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 Modifier.graphicsLayer {
-                    renderEffect = AndroidRenderEffect.createBlurEffect(
+                    renderEffect = RenderEffectHelper.createBlurEffect(
                         20f,
-                        20f,
-                        Shader.TileMode.CLAMP
-                    ).asComposeRenderEffect()
+                        20f
+                    )
                 }
             } else {
                 Modifier
@@ -133,11 +132,26 @@ fun GlassMenuPopup(
                     .then(scrimBlur)
                     .graphicsLayer { alpha = fade.value.coerceIn(0f, 1f) }
                     .drawBehind {
-                        drawRect(
-                            color = Color.Black.copy(
-                                alpha = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) 0.45f else 0.75f
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                            drawRect(color = Color.Black.copy(alpha = 0.45f))
+                        } else {
+                            // High-quality vertical gradient + vignette for depth on older Android
+                            drawRect(
+                                brush = Brush.verticalGradient(
+                                    0.0f to Color.Black.copy(alpha = 0.3f),
+                                    0.5f to Color.Black.copy(alpha = 0.5f),
+                                    1.0f to Color.Black.copy(alpha = 0.8f)
+                                )
                             )
-                        )
+                            // Subtle vignette effect
+                            drawRect(
+                                brush = Brush.radialGradient(
+                                    colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.3f)),
+                                    center = center,
+                                    radius = size.maxDimension / 1.5f
+                                )
+                            )
+                        }
                     }
                     .clickable(
                         indication = null,

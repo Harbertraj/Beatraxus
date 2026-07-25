@@ -166,11 +166,36 @@ class AudioPlaybackService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        
+        // 1. Immediate Notification/MediaSession setup for Foreground state
+        createNotificationChannel()
+        mediaSession = MediaSessionCompat(this, "AudioPlaybackService").apply {
+            setCallback(object : MediaSessionCompat.Callback() {
+                override fun onPlay() { togglePlayPause() }
+                override fun onPause() { togglePlayPause() }
+                override fun onSkipToNext() { next() }
+                override fun onSkipToPrevious() { previous() }
+                override fun onSeekTo(pos: Long) { seekTo(pos) }
+            })
+            isActive = true
+        }
+        
+        // Call startForeground ASAP to satisfy the system 5s timeout
+        startForeground(NOTIFICATION_ID, createNotification())
+
+        // 2. Heavy initializations happen AFTER the service is foregrounded
         val prefs = getSharedPreferences("beatraxus", Context.MODE_PRIVATE)
         prefs.registerOnSharedPreferenceChangeListener(prefListener)
         scrobblingEnabled = prefs.getBoolean("scrobbling_enabled", true)
 
         dspPreferences = DspPreferences(this)
+        audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        audioOutput = AudioTrackOutput(this)
+        
+        val app = (application as com.beatraxus.app.BeatraxusApplication)
+        val database = app.database
+        tdLibManager = app.tdLibManager
+        
         cloudCacheManager = com.beatraxus.app.drive.CloudCacheManager(
             this,
             driveAccountRepository,
@@ -183,11 +208,7 @@ class AudioPlaybackService : Service() {
             smbFolderBrowser,
             ftpFolderBrowser
         )
-        audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        audioOutput = AudioTrackOutput(this)
-        val app = (application as com.beatraxus.app.BeatraxusApplication)
-        val database = app.database
-        tdLibManager = app.tdLibManager
+        
         telegramChannelRepository = com.beatraxus.app.repository.TelegramChannelRepository(this)
         metadataExtractor = com.beatraxus.app.repository.MetadataExtractor(this)
         engine = AudioEngine(this, audioOutput, cloudCacheManager, database, tdLibManager)
@@ -202,19 +223,8 @@ class AudioPlaybackService : Service() {
         audioManager.registerAudioDeviceCallback(audioDeviceCallback, null)
         registerReceiver(noisyReceiver, IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY))
 
-        mediaSession = MediaSessionCompat(this, "AudioPlaybackService").apply {
-            setCallback(object : MediaSessionCompat.Callback() {
-                override fun onPlay() { togglePlayPause() }
-                override fun onPause() { togglePlayPause() }
-                override fun onSkipToNext() { next() }
-                override fun onSkipToPrevious() { previous() }
-                override fun onSeekTo(pos: Long) { seekTo(pos) }
-            })
-            isActive = true
-        }
-
-        createNotificationChannel()
-        startForeground(NOTIFICATION_ID, createNotification())
+        // Start observing engine state (previously in init)
+        observeEngineState()
 
         serviceScope.launch {
             dspPreferences.dspConfig.collectLatest { config ->
@@ -495,6 +505,7 @@ class AudioPlaybackService : Service() {
                                 set(MusicWidgetKeys.REPEAT_MODE, repeatMode)
                             }.toPreferences()
                         }
+                        Log.d("Beatraxus", "Updating widget ${clazz.simpleName} (id: $id)")
                         widget.update(context, id)
                     } catch (e: Exception) {
                     }
@@ -1701,7 +1712,7 @@ class AudioPlaybackService : Service() {
     private val _audioStateFlow = MutableStateFlow(AudioState())
     val audioStateFlow: StateFlow<AudioState> = _audioStateFlow.asStateFlow()
 
-    init {
+    private fun observeEngineState() {
         serviceScope.launch {
             engine.playbackStateFlow.collect { state ->
                 _playbackStateFlow.value = state
@@ -1716,9 +1727,11 @@ class AudioPlaybackService : Service() {
         // Lets CastManager auto-load "whatever is currently playing" if the user connects to a
         // TV through the system Cast icon rather than an explicit "cast this song" action.
         com.beatraxus.app.cast.CastManager.nowPlayingProvider = {
-            engine.playbackStateFlow.value.currentSong?.let { song ->
-                song to engine.currentPositionMs()
-            }
+            if (::engine.isInitialized) {
+                engine.playbackStateFlow.value.currentSong?.let { song ->
+                    song to engine.currentPositionMs()
+                }
+            } else null
         }
     }
 

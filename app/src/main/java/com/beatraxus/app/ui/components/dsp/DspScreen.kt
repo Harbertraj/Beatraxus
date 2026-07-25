@@ -74,7 +74,6 @@ import com.beatraxus.app.ui.components.PremiumSwitch
 import com.beatraxus.app.viewmodel.PlayerViewModel
 import kotlinx.coroutines.delay
 import kotlin.math.*
-import android.graphics.RenderEffect as AndroidRenderEffect
 
 // Premium Color Palette
 private val PremiumSurface = Color(0xFF080B10)
@@ -196,6 +195,7 @@ fun DspScreen(
         Scaffold(
             containerColor = Color.Transparent,
             modifier = Modifier.background(Color.Transparent),
+            contentWindowInsets = WindowInsets.statusBars,
             topBar = {
                 CenterAlignedTopAppBar(
                     colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = Color.Transparent),

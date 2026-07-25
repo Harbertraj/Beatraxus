@@ -41,7 +41,6 @@ import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
@@ -66,13 +65,15 @@ import android.graphics.drawable.BitmapDrawable
 import android.net.Uri
 import androidx.palette.graphics.Palette
 import com.beatraxus.app.R
+import com.beatraxus.app.model.NowPlayingBackgroundMode
 import com.beatraxus.app.model.Song
 import com.beatraxus.app.model.SongSource
 import com.beatraxus.app.ui.components.WaveformSeekBar
 import com.beatraxus.app.ui.components.KaraokeLyricsView
 import com.beatraxus.app.ui.components.PremiumSwitch
 import com.beatraxus.app.ui.components.SongInfoDialog
-import android.graphics.RenderEffect as AndroidRenderEffect
+import com.beatraxus.app.ui.utils.FastBlurTransformation
+import com.beatraxus.app.ui.utils.RenderEffectHelper
 import android.graphics.Shader
 import android.os.Build
 import sh.calvin.reorderable.ReorderableItem
@@ -184,10 +185,11 @@ fun NowPlayingScreen(
         label = "metadataHeight"
     )
 
-    val backgroundBlurEffect = remember {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            AndroidRenderEffect.createBlurEffect(250f, 250f, Shader.TileMode.DECAL)
-        } else null
+    val backgroundBlurEffect = remember(uiState.appearance.nowPlayingBlurIntensity) {
+        RenderEffectHelper.createBlurEffect(
+            uiState.appearance.nowPlayingBlurIntensity,
+            uiState.appearance.nowPlayingBlurIntensity
+        )
     }
 
     Box(
@@ -195,44 +197,65 @@ fun NowPlayingScreen(
             .fillMaxSize()
             .background(Color.Black)
     ) {
-        // Vibrant Background
-        if (uiState.appearance.showNowPlayingBlurBackground) {
-            AnimatedContent(
-                targetState = song.id to song.albumArtUri,
-                transitionSpec = {
-                    fadeIn(tween(300)).togetherWith(fadeOut(tween(300)))
-                },
-                label = "backgroundTransition",
-                modifier = Modifier.fillMaxSize()
-            ) { (_, targetArtUri) ->
-                AsyncImage(
-                    model = ImageRequest.Builder(LocalContext.current)
-                        .data(targetArtUri)
-                        .diskCachePolicy(CachePolicy.ENABLED)
-                        .memoryCachePolicy(CachePolicy.ENABLED)
-                        .size(256, 256) // Faster decode for background
-                        .precision(Precision.INEXACT)
-                        .crossfade(true)
-                        .error(ImageUtils.getDefaultAlbumArtRes())
-                        .fallback(ImageUtils.getDefaultAlbumArtRes())
-                        .build(),
-                    contentDescription = null,
+        // --- NEW DYNAMIC BACKGROUND ---
+        val appearance = uiState.appearance
+        when (appearance.nowPlayingBackgroundMode) {
+            NowPlayingBackgroundMode.BLACK -> {
+                // Background is already black from the parent Box
+            }
+            NowPlayingBackgroundMode.SOLID -> {
+                Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .graphicsLayer {
-                            alpha = 0.85f
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                                renderEffect = backgroundBlurEffect?.asComposeRenderEffect()
+                        .background(currentDominantColor.copy(alpha = appearance.nowPlayingSolidColorIntensity))
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = appearance.nowPlayingSolidColorDarkness))
+                )
+            }
+            NowPlayingBackgroundMode.BLUR -> {
+                AnimatedContent(
+                    targetState = song.id to song.albumArtUri,
+                    transitionSpec = {
+                        fadeIn(tween(300)).togetherWith(fadeOut(tween(300)))
+                    },
+                    label = "backgroundTransition",
+                    modifier = Modifier.fillMaxSize()
+                ) { (_, targetArtUri) ->
+                    AsyncImage(
+                        model = ImageRequest.Builder(LocalContext.current)
+                            .data(targetArtUri)
+                            .diskCachePolicy(CachePolicy.ENABLED)
+                            .memoryCachePolicy(CachePolicy.ENABLED)
+                            .size(256, 256)
+                            .precision(Precision.INEXACT)
+                            .crossfade(true)
+                            .error(ImageUtils.getDefaultAlbumArtRes())
+                            .fallback(ImageUtils.getDefaultAlbumArtRes())
+                            .apply {
+                                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+                                    transformations(FastBlurTransformation(appearance.nowPlayingBlurIntensity))
+                                }
                             }
-                        }
-                        .then(
-                            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
-                                Modifier.blur(40.dp) // Further reduced
-                            } else {
-                                Modifier
-                            }
-                        ),
-                    contentScale = ContentScale.Crop,
+                            .build(),
+                        contentDescription = null,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer {
+                                alpha = 0.85f
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                                    renderEffect = backgroundBlurEffect
+                                }
+                            },
+                        contentScale = ContentScale.Crop,
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = appearance.nowPlayingBlurDarkness))
                 )
             }
         }
@@ -254,7 +277,8 @@ fun NowPlayingScreen(
         val dismissState = remember { mutableStateOf(0f) }
         
         Scaffold(
-            modifier = Modifier.pointerInput(Unit) {
+            modifier = Modifier
+                .pointerInput(Unit) {
                 detectVerticalDragGestures(
                     onVerticalDrag = { _, dragAmount ->
                         dismissState.value += dragAmount
@@ -269,6 +293,7 @@ fun NowPlayingScreen(
                 )
             },
             containerColor = Color.Transparent,
+            contentWindowInsets = WindowInsets.statusBars,
             topBar = {
                 CenterAlignedTopAppBar(
                     colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = Color.Transparent),
@@ -754,7 +779,8 @@ fun NowPlayingScreen(
                     // Redesigned Bottom Control Pills - Claymorphism with Transparency
                     Row(
                         modifier = Modifier
-                            .padding(top = 16.dp, bottom = 32.dp)
+                            .padding(top = 16.dp)
+                            .padding(bottom = 24.dp)
                             .fillMaxWidth(0.95f)
                             .height(64.dp),
                         horizontalArrangement = Arrangement.spacedBy(16.dp)
@@ -1348,7 +1374,7 @@ fun QueueView(
             state = lazyListState,
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(10.dp),
-            contentPadding = PaddingValues(bottom = 32.dp)
+            contentPadding = PaddingValues(bottom = 120.dp)
         ) {
             // Previous Songs Section
             if (previousSongs.isNotEmpty()) {
@@ -1778,7 +1804,7 @@ private fun SleepTimerSheet(
                 .windowInsetsPadding(WindowInsets(0.dp))
         ) {
             // Background Layer with enhanced blur and subtle animation
-            if (uiState.appearance.showNowPlayingBlurBackground) {
+            if (uiState.appearance.nowPlayingBackgroundMode == NowPlayingBackgroundMode.BLUR) {
                 AsyncImage(
                     model = ImageRequest.Builder(LocalContext.current)
                         .data(albumArtUri)

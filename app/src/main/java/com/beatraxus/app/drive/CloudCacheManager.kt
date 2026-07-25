@@ -47,6 +47,17 @@ class CloudCacheManager(
     private val mutex = Mutex()
     private var currentlyPlayingId: String? = null
     
+    @Volatile
+    private var noCacheEnabled: Boolean = false
+
+    fun setNoCacheEnabled(enabled: Boolean) {
+        noCacheEnabled = enabled
+        if (enabled) {
+            // When enabling "no-cache", clear existing playback caches to be consistent
+            clearAllPlaybackCaches(currentlyPlayingId)
+        }
+    }
+
     fun setCurrentlyPlayingId(id: String?) {
         currentlyPlayingId = id
     }
@@ -370,7 +381,7 @@ class CloudCacheManager(
         // 4. Start downloads/priming for 'keepIds' if not already cached
         // Prioritize current song and eagerly pre-fetch all 'keepIds'
         (listOfNotNull(currentSong) + upcomingSongs.filter { it.id in keepIds }).distinctBy { it.id }.forEach { song ->
-            val cached = getCachedFile(song)
+            val cached = if (noCacheEnabled) null else getCachedFile(song)
             if (cached != null) {
                 // If already in cache, update its LRU recency
                 val isPlayback = (song.id == currentlyPlayingId)
@@ -378,11 +389,19 @@ class CloudCacheManager(
             } else if (song.isCloud()) {
                 if (song.source == SongSource.TELEGRAM && tdLib != null) {
                     // Windowed priming for Telegram
-                    if (!activeDownloads.containsKey(song.id)) startTelegramWindowedDownload(song, tdLib)
+                    if (!activeDownloads.containsKey(song.id)) {
+                        if (noCacheEnabled) {
+                            // In no-cache mode, we just ensure file is available for windowed streaming
+                            // but we don't start the full "windowed download" job that copies to cache.
+                            // TelegramFileDataSource handles its own windowing.
+                        } else {
+                            startTelegramWindowedDownload(song, tdLib)
+                        }
+                    }
                 } else if (song.source == SongSource.SMB || song.source == SongSource.FTP) {
                     if (!activeDownloads.containsKey(song.id)) startDownload(song)
                 } else {
-                    if (needsFullContainerDownload(song)) {
+                    if (!noCacheEnabled && needsFullContainerDownload(song)) {
                         // M4A/MP4/ALAC: moov atom at end isn't safely playable from a partial window.
                         if (!activeDownloads.containsKey(song.id)) startDownload(song)
                     } else {
@@ -395,22 +414,26 @@ class CloudCacheManager(
 
         // 4. For upcoming songs, we ONLY bump recency if already cached.
         // We NO LONGER trigger eager full-file downloads (startDownload) for upcoming songs.
-        upcomingSongs.filter { it.id in keepIds }.forEach { song ->
-            val cached = getCachedFile(song)
-            if (cached != null) {
-                // For pre-fetch, we don't necessarily want to bump recency, 
-                // but we should ensure it's tracked in lruMap
-                playbackLruCache.getOrCacheFile(song, cached, false, currentlyPlayingId)
+        if (!noCacheEnabled) {
+            upcomingSongs.filter { it.id in keepIds }.forEach { song ->
+                val cached = getCachedFile(song)
+                if (cached != null) {
+                    // For pre-fetch, we don't necessarily want to bump recency, 
+                    // but we should ensure it's tracked in lruMap
+                    playbackLruCache.getOrCacheFile(song, cached, false, currentlyPlayingId)
+                }
             }
         }
 
         // --- NEW: Aggressive Telegram Reconciliation (Prev + Current + Next 2 Telegram) ---
-        val telegramKeepIds = mutableSetOf<String>()
-        currentSong?.let { if (it.source == SongSource.TELEGRAM) telegramKeepIds.add(it.id) }
-        previousSongs.lastOrNull()?.let { if (it.source == SongSource.TELEGRAM) telegramKeepIds.add(it.id) }
-        upcomingSongs.filter { it.source == SongSource.TELEGRAM }.take(2).forEach { telegramKeepIds.add(it.id) }
-        
-        playbackLruCache.reconcileSource(SongSource.TELEGRAM, telegramKeepIds)
+        if (!noCacheEnabled) {
+            val telegramKeepIds = mutableSetOf<String>()
+            currentSong?.let { if (it.source == SongSource.TELEGRAM) telegramKeepIds.add(it.id) }
+            previousSongs.lastOrNull()?.let { if (it.source == SongSource.TELEGRAM) telegramKeepIds.add(it.id) }
+            upcomingSongs.filter { it.source == SongSource.TELEGRAM }.take(2).forEach { telegramKeepIds.add(it.id) }
+            
+            playbackLruCache.reconcileSource(SongSource.TELEGRAM, telegramKeepIds)
+        }
     }
 
     /**
@@ -863,7 +886,7 @@ class CloudCacheManager(
                 window.totalSize = size
                 return size
             }
-            val cacheFile = getCachedFile(song)
+            val cacheFile = if (noCacheEnabled) null else getCachedFile(song)
             if (cacheFile != null) {
                 size = cacheFile.length()
                 window.totalSize = size
@@ -897,9 +920,11 @@ class CloudCacheManager(
             if (totalSize > 0 && position >= totalSize) return -1
             
             // Strategy A: If full file is cached, read from it directly
-            getCachedFile(song)?.let { return readFromFile(it, position, buffer, offset, size) }
+            if (!noCacheEnabled) {
+                getCachedFile(song)?.let { return readFromFile(it, position, buffer, offset, size) }
+            }
 
-            if (needsFullDownload) {
+            if (!noCacheEnabled && needsFullDownload) {
                 if (!activeDownloads.containsKey(song.id)) startDownload(song)
                 runBlocking {
                     withTimeoutOrNull(30_000) {
@@ -1181,7 +1206,9 @@ class CloudCacheManager(
             if (totalSize > 0 && position >= totalSize) return -1
             
             // Check unified cache first (5-song logic)
-            getCachedFile(song)?.let { return readFromFile(it, position, buffer, offset, size) }
+            if (!noCacheEnabled) {
+                getCachedFile(song)?.let { return readFromFile(it, position, buffer, offset, size) }
+            }
 
             // Handle Tail requests for ALAC/M4A containers explicitly
             val isTailRequest = position + size > totalSize - TELEGRAM_TAIL_WINDOW_BYTES

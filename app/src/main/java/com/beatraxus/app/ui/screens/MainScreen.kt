@@ -36,12 +36,11 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import kotlinx.coroutines.launch
-import android.graphics.RenderEffect as AndroidRenderEffect
 import android.graphics.Shader
 import android.os.Build
-import android.graphics.ColorMatrix
-import android.graphics.ColorMatrixColorFilter
-import androidx.compose.ui.graphics.asComposeRenderEffect
+import com.beatraxus.app.ui.utils.FastBlurTransformation
+import com.beatraxus.app.ui.utils.RenderEffectHelper
+import androidx.compose.ui.graphics.RenderEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
@@ -99,76 +98,107 @@ import androidx.compose.runtime.mutableIntStateOf
 import coil.compose.AsyncImage
 import coil.request.CachePolicy
 import coil.request.ImageRequest
-import com.beatraxus.app.model.LibraryMode
-import com.beatraxus.app.model.LibraryView
-import com.beatraxus.app.model.SortType
-import com.beatraxus.app.model.RadioStation
-import com.beatraxus.app.model.toSong
+import com.beatraxus.app.model.*
 import com.beatraxus.app.repository.RadioBrowserApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import com.beatraxus.app.ui.components.*
 import com.beatraxus.app.ui.theme.*
 import com.beatraxus.app.viewmodel.PlayerViewModel
+import androidx.palette.graphics.Palette
+import coil.imageLoader
+import coil.request.SuccessResult
+import android.graphics.drawable.BitmapDrawable
+import coil.size.Precision
 
 @Composable
 fun MainBackground(
     albumArtUri: android.net.Uri?,
-    blurEffect: AndroidRenderEffect?
+    blurEffect: RenderEffect?,
+    appearance: AppearanceConfig,
+    currentView: LibraryView,
+    dominantColor: Color
 ) {
+    val isHome = currentView == LibraryView.HOME
+    val mode = if (isHome) appearance.homeBackgroundMode else appearance.mainBackgroundMode
+    val solidIntensity = if (isHome) appearance.homeSolidColorIntensity else appearance.mainSolidColorIntensity
+    val solidDarkness = if (isHome) appearance.homeSolidColorDarkness else appearance.mainSolidColorDarkness
+    val blurIntensityValue = if (isHome) appearance.homeBlurIntensity else appearance.mainBlurIntensity
+    val blurDarknessValue = if (isHome) appearance.homeBlurDarkness else appearance.mainBlurDarkness
+
+    // Re-calculate blur effect if intensity differs from the cached one in MainScreen
+    // For simplicity, we'll use the one passed from MainScreen if it matches, 
+    // but ideally we should handle different intensities.
+    // In MainScreen, cachedBackgroundBlurEffect is 120f.
+    val effectiveBlurEffect = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        remember(blurIntensityValue) {
+            RenderEffectHelper.createBlurEffect(blurIntensityValue, blurIntensityValue)
+        }
+    } else null
+
     Box(Modifier.fillMaxSize()) {
-        AnimatedContent(
-            targetState = albumArtUri,
-            transitionSpec = {
-                fadeIn(tween(800)) togetherWith fadeOut(tween(800))
-            },
-            label = "mainBackgroundArt"
-        ) { artUri ->
-            if (artUri != null) {
-                Box(Modifier.fillMaxSize()) {
-                    AsyncImage(
-                        model = ImageRequest.Builder(LocalContext.current)
-                            .data(artUri)
-                            .diskCachePolicy(CachePolicy.ENABLED)
-                            .memoryCachePolicy(CachePolicy.ENABLED)
-                            .build(),
-                        contentDescription = null,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .graphicsLayer {
-                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                                    renderEffect = blurEffect?.asComposeRenderEffect()
-                                }
-                                alpha = 0.45f
-                            }
-                            .then(
-                                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
-                                    Modifier.blur(64.dp)
-                                } else {
-                                    Modifier
-                                }
-                            ),
-                        contentScale = ContentScale.Crop,
-                    )
-                    Box(
-                        Modifier
-                            .fillMaxSize()
-                            .background(
-                                Brush.verticalGradient(
-                                    listOf(
-                                        Color.Black.copy(0.35f),
-                                        Color.Black.copy(0.65f)
-                                    )
-                                )
-                            )
-                    )
-                }
-            } else {
+        when (mode) {
+            NowPlayingBackgroundMode.BLACK -> {
+                Box(Modifier.fillMaxSize().background(Color.Black))
+            }
+            NowPlayingBackgroundMode.SOLID -> {
                 Box(
-                    Modifier
+                    modifier = Modifier
                         .fillMaxSize()
-                        .background(BgDeep)
+                        .background(dominantColor.copy(alpha = solidIntensity))
                 )
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = solidDarkness))
+                )
+            }
+            NowPlayingBackgroundMode.BLUR -> {
+                AnimatedContent(
+                    targetState = albumArtUri,
+                    transitionSpec = {
+                        fadeIn(tween(800)) togetherWith fadeOut(tween(800))
+                    },
+                    label = "mainBackgroundArt"
+                ) { artUri ->
+                    if (artUri != null) {
+                        Box(Modifier.fillMaxSize()) {
+                            AsyncImage(
+                                model = ImageRequest.Builder(LocalContext.current)
+                                    .data(artUri)
+                                    .diskCachePolicy(CachePolicy.ENABLED)
+                                    .memoryCachePolicy(CachePolicy.ENABLED)
+                                    .apply {
+                                        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+                                            transformations(FastBlurTransformation(blurIntensityValue))
+                                        }
+                                    }
+                                    .build(),
+                                contentDescription = null,
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .graphicsLayer {
+                                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                                            renderEffect = effectiveBlurEffect
+                                        }
+                                        alpha = 0.45f
+                                    },
+                                contentScale = ContentScale.Crop,
+                            )
+                            Box(
+                                Modifier
+                                    .fillMaxSize()
+                                    .background(Color.Black.copy(alpha = blurDarknessValue))
+                            )
+                        }
+                    } else {
+                        Box(
+                            Modifier
+                                .fillMaxSize()
+                                .background(BgDeep)
+                        )
+                    }
+                }
             }
         }
     }
@@ -193,6 +223,39 @@ fun MainScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val progressMs by viewModel.progressMs.collectAsStateWithLifecycle()
+
+    val context = LocalContext.current
+    val dominantColorsCache = remember { mutableStateMapOf<String, Color>() }
+    val currentDominantColor by animateColorAsState(
+        targetValue = uiState.currentSong?.let { dominantColorsCache[it.id] } ?: Color(0xFF2C2C2C),
+        animationSpec = tween(600),
+        label = "dominantColor"
+    )
+
+    LaunchedEffect(uiState.currentSong?.id, uiState.currentSong?.albumArtUri) {
+        val song = uiState.currentSong ?: return@LaunchedEffect
+        if (dominantColorsCache.containsKey(song.id)) return@LaunchedEffect
+
+        val loader = context.imageLoader
+        val request = ImageRequest.Builder(context)
+            .data(song.albumArtUri)
+            .allowHardware(false)
+            .size(100, 100)
+            .precision(Precision.INEXACT)
+            .build()
+
+        val result = (loader.execute(request) as? SuccessResult)?.drawable
+        val bitmap = (result as? BitmapDrawable)?.bitmap
+        if (bitmap != null) {
+            Palette.from(bitmap).generate { palette ->
+                val color = palette?.vibrantSwatch?.rgb
+                    ?: palette?.dominantSwatch?.rgb
+                if (color != null) {
+                    dominantColorsCache[song.id] = Color(color)
+                }
+            }
+        }
+    }
 
     val targetAccentColor = when (uiState.currentView) {
         LibraryView.HOME -> Color(0xFF00E676)
@@ -254,14 +317,10 @@ fun MainScreen(
     }
 
     val cachedBlurEffect = remember {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            AndroidRenderEffect.createBlurEffect(20f, 20f, Shader.TileMode.DECAL)
-        } else null
+        RenderEffectHelper.createBlurEffect(20f, 20f)
     }
     val cachedBackgroundBlurEffect = remember {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            AndroidRenderEffect.createBlurEffect(120f, 120f, Shader.TileMode.DECAL)
-        } else null
+        RenderEffectHelper.createBlurEffect(120f, 120f)
     }
 
     val launcher = androidx.activity.compose.rememberLauncherForActivityResult(
@@ -460,7 +519,10 @@ fun MainScreen(
         Box(Modifier.fillMaxSize().background(Color.Black))
         MainBackground(
             albumArtUri = uiState.currentSong?.albumArtUri,
-            blurEffect = cachedBackgroundBlurEffect
+            blurEffect = cachedBackgroundBlurEffect,
+            appearance = uiState.appearance,
+            currentView = uiState.currentView,
+            dominantColor = currentDominantColor
         )
 
         // Slide drawer (Reveals the background behind it)
@@ -538,27 +600,21 @@ fun MainScreen(
                                     val blurEffect = if (blurByScan > 19.9f && blurByScan < 20.1f) {
                                         cachedBlurEffect
                                     } else if (blurByScan > 0.1f) {
-                                        AndroidRenderEffect.createBlurEffect(
+                                        RenderEffectHelper.createBlurEffect(
                                             blurByScan,
-                                            blurByScan,
-                                            Shader.TileMode.DECAL
+                                            blurByScan
                                         )
                                     } else null
 
                                     val colorFilterEffect = if (saturationByScan < 0.99f) {
-                                        val colorMatrix = ColorMatrix().apply {
-                                            setSaturation(saturationByScan)
-                                        }
-                                        AndroidRenderEffect.createColorFilterEffect(
-                                            ColorMatrixColorFilter(colorMatrix)
-                                        )
+                                        RenderEffectHelper.createSaturationEffect(saturationByScan)
                                     } else null
 
                                     this.renderEffect = when {
                                         blurEffect != null && colorFilterEffect != null ->
-                                            AndroidRenderEffect.createChainEffect(blurEffect, colorFilterEffect).asComposeRenderEffect()
-                                        blurEffect != null -> blurEffect.asComposeRenderEffect()
-                                        colorFilterEffect != null -> colorFilterEffect.asComposeRenderEffect()
+                                            RenderEffectHelper.createBlurAndSaturationEffect(blurByScan, saturationByScan)
+                                        blurEffect != null -> blurEffect
+                                        colorFilterEffect != null -> colorFilterEffect
                                         else -> null
                                     }
                                 }
@@ -570,7 +626,8 @@ fun MainScreen(
                 Scaffold(
                     containerColor = Color.Transparent,
                     snackbarHost = { SnackbarHost(snackbarHostState) },
-                    topBar = {}
+                    topBar = {},
+                    contentWindowInsets = WindowInsets.statusBars
                 ) { paddingValues ->
                     // FIX 3: Wrap Column + mini player in Box so mini player can float at bottom
                     Box(Modifier.fillMaxSize()) {
@@ -2624,7 +2681,7 @@ fun MainScreen(
                                         .padding(horizontal = 12.dp)
                                 ) {
                                     androidx.compose.animation.AnimatedVisibility(
-                                        visible = uiState.currentSong != null && !showFullPlayer && uiState.appearance.showMiniPlayer,
+                                        visible = uiState.currentSong != null && !showFullPlayer,
                                         enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
                                         exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
                                     ) {
@@ -2696,54 +2753,71 @@ fun MainScreen(
                                                 }
                                         ) {
                                             // Glass Background Layer
+                                            val miniAppearance = uiState.appearance
+                                            val miniMode = miniAppearance.miniPlayerBackgroundMode
+                                            val miniBlurIntensity = miniAppearance.miniPlayerBlurIntensity
+
                                             Box(Modifier.fillMaxSize()) {
-                                                Box(Modifier.fillMaxSize().background(Color(0xFF121212)))
-                                                AnimatedContent(
-                                                    targetState = uiState.currentSong,
-                                                    transitionSpec = {
-                                                        fadeIn(tween(400)) togetherWith fadeOut(tween(400))
-                                                    },
-                                                    label = "miniPlayerBgArt"
-                                                ) { currentSong ->
-                                                    val context = LocalContext.current
-                                                    val model = remember(currentSong?.id) {
-                                                        ImageRequest.Builder(context)
-                                                            .data(currentSong?.albumArtUri)
-                                                            .diskCachePolicy(CachePolicy.ENABLED)
-                                                            .memoryCachePolicy(CachePolicy.ENABLED)
-                                                            .error(ImageUtils.getDefaultAlbumArtRes())
-                                                            .fallback(ImageUtils.getDefaultAlbumArtRes())
-                                                            .build()
+                                                if (miniMode == NowPlayingBackgroundMode.BLACK) {
+                                                    Box(Modifier.fillMaxSize().background(Color(0xFF121212)))
+                                                } else {
+                                                    AnimatedContent(
+                                                        targetState = uiState.currentSong,
+                                                        transitionSpec = {
+                                                            fadeIn(tween(400)) togetherWith fadeOut(tween(400))
+                                                        },
+                                                        label = "miniPlayerBgArt"
+                                                    ) { currentSong ->
+                                                        val context = LocalContext.current
+                                                        val model = remember(currentSong?.id) {
+                                                            ImageRequest.Builder(context)
+                                                                .data(currentSong?.albumArtUri)
+                                                                .diskCachePolicy(CachePolicy.ENABLED)
+                                                                .memoryCachePolicy(CachePolicy.ENABLED)
+                                                                .error(ImageUtils.getDefaultAlbumArtRes())
+                                                                .fallback(ImageUtils.getDefaultAlbumArtRes())
+                                                                .build()
+                                                        }
+                                                        AsyncImage(
+                                                            model = model,
+                                                            contentDescription = null,
+                                                            modifier = Modifier
+                                                                .fillMaxSize()
+                                                                .blur(miniBlurIntensity.dp),
+                                                            contentScale = ContentScale.Crop,
+                                                            alpha = if (miniMode == NowPlayingBackgroundMode.SOLID) 
+                                                                miniAppearance.miniPlayerSolidColorIntensity else 1f
+                                                        )
                                                     }
-                                                    AsyncImage(
-                                                        model = model,
-                                                        contentDescription = null,
-                                                        modifier = Modifier
+                                                    if (miniMode == NowPlayingBackgroundMode.SOLID) {
+                                                        Box(
+                                                            Modifier
+                                                                .fillMaxSize()
+                                                                .background(currentDominantColor.copy(alpha = miniAppearance.miniPlayerSolidColorIntensity))
+                                                        )
+                                                    }
+                                                    Box(
+                                                        Modifier
                                                             .fillMaxSize()
-                                                            .blur(70.dp),
-                                                        contentScale = ContentScale.Crop,
-                                                        alpha = 1f
-                                                    )
-                                                }
-                                                Box(
-                                                    Modifier
-                                                        .fillMaxSize()
-                                                        .background(
-                                                            Brush.verticalGradient(
-                                                                listOf(
-                                                                    Color.Black.copy(0.4f),
-                                                                    Color.Black.copy(0.6f)
+                                                            .background(
+                                                                Brush.verticalGradient(
+                                                                    listOf(
+                                                                        Color.Black.copy(alpha = if (miniMode == NowPlayingBackgroundMode.SOLID) 
+                                                                            miniAppearance.miniPlayerSolidColorDarkness else 0.4f),
+                                                                        Color.Black.copy(alpha = if (miniMode == NowPlayingBackgroundMode.SOLID) 
+                                                                            miniAppearance.miniPlayerSolidColorDarkness else 0.6f)
+                                                                    )
                                                                 )
                                                             )
-                                                        )
-                                                        .border(
-                                                            width = 0.5.dp,
-                                                            brush = Brush.verticalGradient(
-                                                                listOf(Color.White.copy(0.4f), Color.White.copy(0.05f))
-                                                            ),
-                                                            shape = RoundedCornerShape(20.dp)
-                                                        )
-                                                )
+                                                            .border(
+                                                                width = 0.5.dp,
+                                                                brush = Brush.verticalGradient(
+                                                                    listOf(Color.White.copy(0.4f), Color.White.copy(0.05f))
+                                                                ),
+                                                                shape = RoundedCornerShape(20.dp)
+                                                            )
+                                                    )
+                                                }
                                             }
 
                                             MiniPlayerProgressBar(
@@ -3061,7 +3135,7 @@ fun MainScreen(
 
         // Floating Add button on Playlists view to create new playlists
         if (uiState.currentView == LibraryView.PLAYLISTS && drawerProgress == 0f && !showFullPlayer) {
-            val isMiniPlayerVisible = uiState.currentSong != null && uiState.appearance.showMiniPlayer
+            val isMiniPlayerVisible = uiState.currentSong != null
             val bottomPadding by animateDpAsState(
                 targetValue = if (isMiniPlayerVisible) 80.dp else 16.dp,
                 label = "fab_bottom_padding"
@@ -3698,528 +3772,567 @@ fun HomeScreen(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(bottom = 140.dp)
     ) {
-        if (uiState.appearance.showGreetingHeader) {
-            item {
-                // Updated Premium Greeting Header
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 8.dp)
-                        .clip(RoundedCornerShape(24.dp))
-                        .background(Color.Black.copy(alpha = 0.9f))
-                        .border(
-                            0.5.dp,
-                            Brush.verticalGradient(
-                                listOf(Color.White.copy(0.15f), Color.White.copy(0.05f))
-                            ),
-                            RoundedCornerShape(24.dp)
-                        )
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 20.dp, vertical = 16.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                            // Compact Premium Icon
+        uiState.appearance.homeScreenSectionsOrder.forEach { sectionKey ->
+            when (sectionKey) {
+                "GREETING" -> {
+                    if (uiState.appearance.showGreetingHeader) {
+                        item(key = "GREETING") {
+                            // Updated Premium Greeting Header
                             Box(
-                                modifier = Modifier
-                                    .size(48.dp)
-                                    .clip(CircleShape)
-                                    .background(greetingColors[0].copy(alpha = 0.2f))
-                                    .border(1.dp, greetingColors[0].copy(alpha = 0.3f), CircleShape),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    imageVector = greetingIcon,
-                                    contentDescription = null,
-                                    tint = greetingColors[0].copy(alpha = 1f),
-                                    modifier = Modifier.size(24.dp)
-                                )
-                            }
-
-                            Spacer(Modifier.width(16.dp))
-
-                            Column(verticalArrangement = Arrangement.Center) {
-                                Text(
-                                    text = "$greeting,",
-                                    fontSize = 14.sp,
-                                    color = Color.White.copy(0.5f),
-                                    fontWeight = FontWeight.Medium,
-                                    letterSpacing = 0.2.sp
-                                )
-                                Text(
-                                    text = deviceName,
-                                    fontSize = 20.sp,
-                                    color = Color.White,
-                                    fontWeight = FontWeight.Black,
-                                    letterSpacing = (-0.5).sp
-                                )
-                            }
-                        }
-
-                        // Compact Shuffle Button
-                        Surface(
-                            onClick = { viewModel.shuffleAndPlay() },
-                            color = Color.Transparent,
-                            shape = RoundedCornerShape(16.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .background(
-                                        Brush.linearGradient(
-                                            listOf(Color(0xFF00E5FF), Color(0xFF1200FF))
-                                        )
-                                    )
-                                    .padding(horizontal = 16.dp, vertical = 10.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    Icons.Rounded.Shuffle,
-                                    null,
-                                    tint = Color.White,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        item {
-            LazyRow(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                item {
-                    ActionChip(
-                        label = "Shuffle All",
-                        icon = Icons.Rounded.Shuffle,
-                        onClick = { viewModel.playList(allSongs.shuffled(), 0) }
-                    )
-                }
-                item {
-                    ActionChip(
-                        label = "Favorites",
-                        icon = Icons.Rounded.Favorite,
-                        onClick = {
-                            val favSongs = allSongs.filter { favorites.contains(it.id) }
-                            if (favSongs.isNotEmpty()) viewModel.playList(favSongs, 0)
-                        }
-                    )
-                }
-                item {
-                    ActionChip(
-                        label = "Recently Added",
-                        icon = Icons.Rounded.NewReleases,
-                        onClick = {
-                            val recentSongs = allSongs.sortedByDescending { it.dateAdded }
-                            if (recentSongs.isNotEmpty()) viewModel.playList(recentSongs, 0)
-                        }
-                    )
-                }
-            }
-        }
-
-        item {
-            androidx.compose.animation.AnimatedVisibility(
-                visible = uiState.libraryMode != LibraryMode.LOCAL || uiState.showSyncStatusOnHome,
-                enter = expandVertically() + fadeIn(),
-                exit = shrinkVertically() + fadeOut()
-            ) {
-                var showCloudPopup by remember { mutableStateOf(false) }
-                var anchorBounds by remember { mutableStateOf(Rect.Zero) }
-
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 8.dp)
-                        .clip(RoundedCornerShape(24.dp))
-                        .background(
-                            Brush.verticalGradient(
-                                listOf(Color.White.copy(0.08f), Color.White.copy(0.02f))
-                            )
-                        )
-                        .border(
-                            0.5.dp,
-                            Brush.verticalGradient(
-                                listOf(Color.White.copy(0.15f), Color.Transparent)
-                            ),
-                            RoundedCornerShape(24.dp)
-                        )
-                        .clickable {
-                            if (uiState.selectedTelegramChannelUrl != null) {
-                                viewModel.setLibraryViewTelegram(uiState.selectedTelegramChannelUrl!!)
-                            } else {
-                                viewModel.setLibraryView(LibraryView.CLOUD, uiState.selectedCloudEmail)
-                            }
-                        }
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(36.dp)
-                                        .background(Color(0xFF1A73E8).copy(0.15f), CircleShape)
-                                        .border(1.dp, Color(0xFF1A73E8).copy(0.2f), CircleShape),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(
-                                        Icons.Rounded.CloudSync,
-                                        null,
-                                        tint = Color(0xFF1A73E8),
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                }
-                                Spacer(Modifier.width(12.dp))
-                                Column {
-                                    Text(
-                                        text = "CLOUD LIBRARY",
-                                        color = Color.White,
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Black,
-                                        letterSpacing = 1.2.sp
-                                    )
-                                    val currentAccount = when {
-                                        uiState.selectedCloudEmail != null -> uiState.selectedCloudEmail
-                                        uiState.selectedTelegramChannelUrl != null -> {
-                                            uiState.telegramChannels.find { it.url == uiState.selectedTelegramChannelUrl }?.name ?: "Telegram"
-                                        }
-                                        else -> "All Accounts"
-                                    }
-                                    Text(
-                                        text = currentAccount ?: "All Accounts",
-                                        color = Color.White.copy(0.5f),
-                                        fontSize = 10.sp,
-                                        fontWeight = FontWeight.Medium
-                                    )
-                                }
-                            }
-
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                if (uiState.isCloudScanning) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(18.dp),
-                                        color = Color(0xFF1A73E8),
-                                        strokeWidth = 2.dp
-                                    )
-                                } else if (uiState.isSyncFinishedRecently) {
-                                    Icon(
-                                        Icons.Rounded.CheckCircle,
-                                        null,
-                                        tint = Color(0xFF4CAF50),
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-
-                                Spacer(Modifier.width(12.dp))
-
-                                IconButton(
-                                    onClick = { showCloudPopup = true },
-                                    modifier = Modifier
-                                        .size(32.dp)
-                                        .onGloballyPositioned { anchorBounds = it.boundsInRoot() }
-                                        .background(if (showCloudPopup) Color.Black else Color.White.copy(0.08f), CircleShape)
-                                        .then(if (showCloudPopup) Modifier.border(1.dp, Color.White.copy(0.4f), CircleShape) else Modifier)
-                                ) {
-                                    Icon(
-                                        Icons.Rounded.SwapHoriz,
-                                        null,
-                                        tint = Color.White,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-                            }
-                        }
-
-                        Spacer(Modifier.height(16.dp))
-
-                        val statusText = if (uiState.isCloudScanning) {
-                            uiState.enrichmentStatus ?: uiState.driveErrorMessage ?: uiState.telegramSyncErrorMessage ?: "Syncing..."
-                        } else if (uiState.isSyncFinishedRecently) {
-                            uiState.driveErrorMessage ?: uiState.telegramSyncErrorMessage ?: "Sync Complete"
-                        } else ""
-
-                        if (statusText.isNotEmpty()) {
-                            Text(
-                                text = statusText,
-                                color = Color.White.copy(0.7f),
-                                fontSize = 13.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            Spacer(Modifier.height(12.dp))
-                        }
-
-                        if (uiState.isCloudScanning) {
-                            LinearProgressIndicator(
-                                progress = { uiState.scanProgress },
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(4.dp)
-                                    .clip(CircleShape),
-                                color = Color(0xFF1A73E8),
-                                trackColor = Color(0xFF1A73E8).copy(0.1f)
-                            )
-                            Spacer(Modifier.height(16.dp))
-                        }
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clip(RoundedCornerShape(20.dp))
-                                    .background(Color.White.copy(0.05f))
-                                    .border(0.5.dp, Color.White.copy(0.1f), RoundedCornerShape(20.dp))
-                                    .padding(vertical = 12.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                StatItem(Icons.Rounded.MusicNote, uiState.cloudSongCount.toString(), "Songs", Color(0xFFFF4081))
-                            }
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clip(RoundedCornerShape(20.dp))
-                                    .background(Color.White.copy(0.05f))
-                                    .border(0.5.dp, Color.White.copy(0.1f), RoundedCornerShape(20.dp))
-                                    .padding(vertical = 12.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                StatItem(Icons.Rounded.Album, uiState.cloudAlbumCount.toString(), "Albums", Color(0xFF00E676))
-                            }
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clip(RoundedCornerShape(20.dp))
-                                    .background(Color.White.copy(0.05f))
-                                    .border(0.5.dp, Color.White.copy(0.1f), RoundedCornerShape(20.dp))
-                                    .padding(vertical = 12.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                StatItem(Icons.Rounded.Person, uiState.cloudArtistCount.toString(), "Artists", Color(0xFF2979FF))
-                            }
-                        }
-                    }
-
-                    if (showCloudPopup) {
-                        CloudDrivePopup(
-                            expanded = showCloudPopup,
-                            onDismiss = { showCloudPopup = false },
-                            anchorBounds = anchorBounds,
-                            accounts = uiState.driveAccounts,
-                            telegramChannels = uiState.telegramChannels,
-                            onSelectAccount = { viewModel.setCloudAccount(it) },
-                            onSelectTelegramChannel = { viewModel.setCloudTelegram(it) },
-                            onRefreshAccount = { viewModel.scanDriveAccount(it) },
-                            onSyncTelegramChannel = { viewModel.syncTelegramChannel(it) }
-                        )
-                    }
-                }
-            }
-        }
-
-        // Browse by Mood
-        if (uiState.appearance.showBrowseByMood) {
-            item {
-                HomeSectionHeader(
-                    title = "Browse by Mood",
-                    actionText = "See All",
-                    actionIcon = Icons.Rounded.KeyboardArrowRight,
-                    onActionClick = { showAllMoodsDialog = true }
-                )
-                LazyRow(
-                    contentPadding = PaddingValues(horizontal = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    items(allMoods) { mood ->
-                        MoodTile(mood) { playMood(mood) }
-                    }
-                }
-            }
-        }
-
-        // Additional Sections (Optional, placed after the main content from image)
-        if (quickPicks.isNotEmpty() && uiState.appearance.showMadeForYou) {
-            item { HomeSectionHeader("Made For You") }
-            item {
-                LazyRow(
-                    contentPadding = PaddingValues(horizontal = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
-                    items(quickPicks.take(5), key = { "featured_${it.id}" }) { song ->
-                        Box(
-                            modifier = Modifier
-                                .width(280.dp)
-                                .height(160.dp)
-                                .clip(RoundedCornerShape(24.dp))
-                                .clickable { viewModel.playSong(song) }
-                                .border(1.dp, Color.White.copy(0.1f), RoundedCornerShape(24.dp))
-                        ) {
-                            AsyncImage(
-                                model = song.albumArtUri,
-                                contentDescription = null,
-                                modifier = Modifier.fillMaxSize(),
-                                contentScale = ContentScale.Crop
-                            )
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
+                                    .padding(horizontal = 16.dp, vertical = 8.dp)
+                                    .clip(RoundedCornerShape(24.dp))
                                     .background(
-                                        Brush.verticalGradient(
-                                            colors = listOf(Color.Transparent, Color.Black.copy(0.85f)),
-                                            startY = 100f
+                                        Brush.linearGradient(
+                                            listOf(Color(0xFF1A1A1A), Color(0xFF0D0D0D))
                                         )
                                     )
-                            )
-                            Column(
-                                modifier = Modifier
-                                    .align(Alignment.BottomStart)
-                                    .padding(20.dp)
+                                    .border(
+                                        0.5.dp,
+                                        Brush.verticalGradient(
+                                            listOf(Color.White.copy(0.12f), Color.Transparent)
+                                        ),
+                                        RoundedCornerShape(24.dp)
+                                    )
                             ) {
-                                Text(
-                                    text = "FEATURED",
-                                    color = Color(0xFF00F2FF),
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Black,
-                                    style = androidx.compose.ui.text.TextStyle(letterSpacing = 2.sp)
-                                )
-                                Text(
-                                    text = song.title,
-                                    color = Color.White,
-                                    fontSize = 18.sp,
-                                    fontWeight = FontWeight.ExtraBold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Text(
-                                    text = song.artist,
-                                    color = Color.White.copy(0.7f),
-                                    fontSize = 14.sp,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 20.dp, vertical = 18.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        // Premium Icon with Glow
+                                        Box(
+                                            modifier = Modifier
+                                                .size(52.dp)
+                                                .clip(CircleShape)
+                                                .background(greetingColors[0].copy(alpha = 0.15f))
+                                                .border(1.dp, greetingColors[0].copy(alpha = 0.3f), CircleShape),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = greetingIcon,
+                                                contentDescription = null,
+                                                tint = greetingColors[0].copy(alpha = 0.9f),
+                                                modifier = Modifier.size(26.dp)
+                                            )
+                                        }
+
+                                        Spacer(Modifier.width(16.dp))
+
+                                        Column(verticalArrangement = Arrangement.Center) {
+                                            Text(
+                                                text = "$greeting,",
+                                                fontSize = 13.sp,
+                                                color = Color.White.copy(0.5f),
+                                                fontWeight = FontWeight.Medium,
+                                                letterSpacing = 0.4.sp
+                                            )
+                                            Text(
+                                                text = deviceName,
+                                                fontSize = 22.sp,
+                                                color = Color.White,
+                                                fontWeight = FontWeight.Black,
+                                                letterSpacing = (-0.5).sp
+                                            )
+                                        }
+                                    }
+
+                                    // Library Stats to use empty space
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .width(1.dp)
+                                                .height(32.dp)
+                                                .background(Color.White.copy(alpha = 0.08f))
+                                        )
+
+                                        Column(horizontalAlignment = Alignment.End) {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Text(
+                                                    text = "${allSongs.size}",
+                                                    fontSize = 16.sp,
+                                                    color = Color.White,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                                Spacer(Modifier.width(4.dp))
+                                                Icon(
+                                                    Icons.Rounded.MusicNote,
+                                                    null,
+                                                    tint = Color.White.copy(0.3f),
+                                                    modifier = Modifier.size(12.dp)
+                                                )
+                                            }
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Text(
+                                                    text = "${favorites.size}",
+                                                    fontSize = 14.sp,
+                                                    color = Color(0xFF00F2FF).copy(0.7f),
+                                                    fontWeight = FontWeight.Medium
+                                                )
+                                                Spacer(Modifier.width(4.dp))
+                                                Icon(
+                                                    Icons.Rounded.Favorite,
+                                                    null,
+                                                    tint = Color(0xFF00F2FF).copy(0.4f),
+                                                    modifier = Modifier.size(10.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                "ACTION_CHIPS" -> {
+                    item(key = "ACTION_CHIPS") {
+                        LazyRow(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            item {
+                                ActionChip(
+                                    label = "Shuffle All",
+                                    icon = Icons.Rounded.Shuffle,
+                                    onClick = { viewModel.shuffleAndPlay() }
                                 )
                             }
+                            item {
+                                ActionChip(
+                                    label = "Favorites",
+                                    icon = Icons.Rounded.Favorite,
+                                    onClick = {
+                                        val favSongs = allSongs.filter { favorites.contains(it.id) }
+                                        if (favSongs.isNotEmpty()) viewModel.playList(favSongs, 0)
+                                    }
+                                )
+                            }
+                            item {
+                                ActionChip(
+                                    label = "Recently Added",
+                                    icon = Icons.Rounded.NewReleases,
+                                    onClick = {
+                                        val recentSongs = allSongs.sortedByDescending { it.dateAdded }
+                                        if (recentSongs.isNotEmpty()) viewModel.playList(recentSongs, 0)
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+                "CLOUD_LIBRARY" -> {
+                    item(key = "CLOUD_LIBRARY") {
+                        androidx.compose.animation.AnimatedVisibility(
+                            visible = uiState.libraryMode != LibraryMode.LOCAL || uiState.showSyncStatusOnHome,
+                            enter = expandVertically() + fadeIn(),
+                            exit = shrinkVertically() + fadeOut()
+                        ) {
+                            var showCloudPopup by remember { mutableStateOf(false) }
+                            var anchorBounds by remember { mutableStateOf(Rect.Zero) }
 
                             Box(
                                 modifier = Modifier
-                                    .align(Alignment.BottomEnd)
-                                    .padding(16.dp)
-                                    .size(44.dp)
-                                    .background(Color.White.copy(0.15f), CircleShape)
-                                    .border(1.dp, Color.White.copy(0.2f), CircleShape),
-                                contentAlignment = Alignment.Center
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 8.dp)
+                                    .clip(RoundedCornerShape(24.dp))
+                                    .background(
+                                        Brush.verticalGradient(
+                                            listOf(Color.White.copy(0.08f), Color.White.copy(0.02f))
+                                        )
+                                    )
+                                    .border(
+                                        0.5.dp,
+                                        Brush.verticalGradient(
+                                            listOf(Color.White.copy(0.15f), Color.Transparent)
+                                        ),
+                                        RoundedCornerShape(24.dp)
+                                    )
+                                    .clickable {
+                                        if (uiState.selectedTelegramChannelUrl != null) {
+                                            viewModel.setLibraryViewTelegram(uiState.selectedTelegramChannelUrl!!)
+                                        } else {
+                                            viewModel.setLibraryView(LibraryView.CLOUD, uiState.selectedCloudEmail)
+                                        }
+                                    }
                             ) {
-                                Icon(Icons.Rounded.PlayArrow, null, tint = Color.White, modifier = Modifier.size(28.dp))
+                                Column(modifier = Modifier.padding(16.dp)) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(36.dp)
+                                                    .background(Color(0xFF1A73E8).copy(0.15f), CircleShape)
+                                                    .border(1.dp, Color(0xFF1A73E8).copy(0.2f), CircleShape),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Icon(
+                                                    Icons.Rounded.CloudSync,
+                                                    null,
+                                                    tint = Color(0xFF1A73E8),
+                                                    modifier = Modifier.size(20.dp)
+                                                )
+                                            }
+                                            Spacer(Modifier.width(12.dp))
+                                            Column {
+                                                Text(
+                                                    text = "CLOUD LIBRARY",
+                                                    color = Color.White,
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.Black,
+                                                    letterSpacing = 1.2.sp
+                                                )
+                                                val currentAccount = when {
+                                                    uiState.selectedCloudEmail != null -> uiState.selectedCloudEmail
+                                                    uiState.selectedTelegramChannelUrl != null -> {
+                                                        uiState.telegramChannels.find { it.url == uiState.selectedTelegramChannelUrl }?.name ?: "Telegram"
+                                                    }
+                                                    else -> "All Accounts"
+                                                }
+                                                Text(
+                                                    text = currentAccount ?: "All Accounts",
+                                                    color = Color.White.copy(0.5f),
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.Medium
+                                                )
+                                            }
+                                        }
+
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            if (uiState.isCloudScanning) {
+                                                CircularProgressIndicator(
+                                                    modifier = Modifier.size(18.dp),
+                                                    color = Color(0xFF1A73E8),
+                                                    strokeWidth = 2.dp
+                                                )
+                                            } else if (uiState.isSyncFinishedRecently) {
+                                                Icon(
+                                                    Icons.Rounded.CheckCircle,
+                                                    null,
+                                                    tint = Color(0xFF4CAF50),
+                                                    modifier = Modifier.size(18.dp)
+                                                )
+                                            }
+
+                                            Spacer(Modifier.width(12.dp))
+
+                                            IconButton(
+                                                onClick = { showCloudPopup = true },
+                                                modifier = Modifier
+                                                    .size(32.dp)
+                                                    .onGloballyPositioned { anchorBounds = it.boundsInRoot() }
+                                                    .background(if (showCloudPopup) Color.Black else Color.White.copy(0.08f), CircleShape)
+                                                    .then(if (showCloudPopup) Modifier.border(1.dp, Color.White.copy(0.4f), CircleShape) else Modifier)
+                                            ) {
+                                                Icon(
+                                                    Icons.Rounded.SwapHoriz,
+                                                    null,
+                                                    tint = Color.White,
+                                                    modifier = Modifier.size(18.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+
+                                    Spacer(Modifier.height(16.dp))
+
+                                    val statusText = if (uiState.isCloudScanning) {
+                                        uiState.enrichmentStatus ?: uiState.driveErrorMessage ?: uiState.telegramSyncErrorMessage ?: "Syncing..."
+                                    } else if (uiState.isSyncFinishedRecently) {
+                                        uiState.driveErrorMessage ?: uiState.telegramSyncErrorMessage ?: "Sync Complete"
+                                    } else ""
+
+                                    if (statusText.isNotEmpty()) {
+                                        Text(
+                                            text = statusText,
+                                            color = Color.White.copy(0.7f),
+                                            fontSize = 13.sp,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Spacer(Modifier.height(12.dp))
+                                    }
+
+                                    if (uiState.isCloudScanning) {
+                                        LinearProgressIndicator(
+                                            progress = { uiState.scanProgress },
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(4.dp)
+                                                .clip(CircleShape),
+                                            color = Color(0xFF1A73E8),
+                                            trackColor = Color(0xFF1A73E8).copy(0.1f)
+                                        )
+                                        Spacer(Modifier.height(16.dp))
+                                    }
+
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .clip(RoundedCornerShape(20.dp))
+                                                .background(Color.White.copy(0.05f))
+                                                .border(0.5.dp, Color.White.copy(0.1f), RoundedCornerShape(20.dp))
+                                                .padding(vertical = 12.dp),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            StatItem(Icons.Rounded.MusicNote, uiState.cloudSongCount.toString(), "Songs", Color(0xFFFF4081))
+                                        }
+                                        Box(
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .clip(RoundedCornerShape(20.dp))
+                                                .background(Color.White.copy(0.05f))
+                                                .border(0.5.dp, Color.White.copy(0.1f), RoundedCornerShape(20.dp))
+                                                .padding(vertical = 12.dp),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            StatItem(Icons.Rounded.Album, uiState.cloudAlbumCount.toString(), "Albums", Color(0xFF00E676))
+                                        }
+                                        Box(
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .clip(RoundedCornerShape(20.dp))
+                                                .background(Color.White.copy(0.05f))
+                                                .border(0.5.dp, Color.White.copy(0.1f), RoundedCornerShape(20.dp))
+                                                .padding(vertical = 12.dp),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            StatItem(Icons.Rounded.Person, uiState.cloudArtistCount.toString(), "Artists", Color(0xFF2979FF))
+                                        }
+                                    }
+                                }
+
+                                if (showCloudPopup) {
+                                    CloudDrivePopup(
+                                        expanded = showCloudPopup,
+                                        onDismiss = { showCloudPopup = false },
+                                        anchorBounds = anchorBounds,
+                                        accounts = uiState.driveAccounts,
+                                        telegramChannels = uiState.telegramChannels,
+                                        onSelectAccount = { viewModel.setCloudAccount(it) },
+                                        onSelectTelegramChannel = { viewModel.setCloudTelegram(it) },
+                                        onRefreshAccount = { viewModel.scanDriveAccount(it) },
+                                        onSyncTelegramChannel = { viewModel.syncTelegramChannel(it) }
+                                    )
+                                }
                             }
                         }
                     }
                 }
-            }
-        }
-
-        if (recentlyPlayed.isNotEmpty() && uiState.appearance.showListenAgain) {
-            item { HomeSectionHeader("Listen Again") }
-            item {
-                LazyRow(
-                    contentPadding = PaddingValues(horizontal = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
-                    items(recentlyPlayed, key = { it.id }) { song ->
-                        HomeSongItem(song) { viewModel.playSong(song) }
-                    }
-                }
-            }
-        }
-
-        val recentlyAddedSongs = allSongs.sortedByDescending { it.dateAdded }.take(15)
-        if (recentlyAddedSongs.isNotEmpty() && uiState.appearance.showRecentlyAddedHome) {
-            item { HomeSectionHeader("Recently Added") }
-            item {
-                LazyRow(
-                    contentPadding = PaddingValues(horizontal = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
-                    itemsIndexed(recentlyAddedSongs, key = { _, song -> "recent_${song.id}" }) { index, song ->
-                        HomeSongCard(song) {
-                            viewModel.playList(recentlyAddedSongs, index)
+                "MOODS" -> {
+                    if (uiState.appearance.showBrowseByMood) {
+                        item(key = "MOODS") {
+                            HomeSectionHeader(
+                                title = "Browse by Mood",
+                                actionText = "See All",
+                                actionIcon = Icons.Rounded.KeyboardArrowRight,
+                                onActionClick = { showAllMoodsDialog = true }
+                            )
+                            LazyRow(
+                                contentPadding = PaddingValues(horizontal = 16.dp),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                items(allMoods) { mood ->
+                                    MoodTile(mood) { playMood(mood) }
+                                }
+                            }
                         }
                     }
                 }
-            }
-        }
+                "MADE_FOR_YOU" -> {
+                    if (quickPicks.isNotEmpty() && uiState.appearance.showMadeForYou) {
+                        item(key = "MADE_FOR_YOU") { HomeSectionHeader("Made For You") }
+                        item(key = "MADE_FOR_YOU_CONTENT") {
+                            LazyRow(
+                                contentPadding = PaddingValues(horizontal = 16.dp),
+                                horizontalArrangement = Arrangement.spacedBy(16.dp)
+                            ) {
+                                items(quickPicks.take(5), key = { "featured_${it.id}" }) { song ->
+                                    Box(
+                                        modifier = Modifier
+                                            .width(280.dp)
+                                            .height(160.dp)
+                                            .clip(RoundedCornerShape(24.dp))
+                                            .clickable { viewModel.playSong(song) }
+                                            .border(1.dp, Color.White.copy(0.1f), RoundedCornerShape(24.dp))
+                                    ) {
+                                        AsyncImage(
+                                            model = song.albumArtUri,
+                                            contentDescription = null,
+                                            modifier = Modifier.fillMaxSize(),
+                                            contentScale = ContentScale.Crop
+                                        )
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .background(
+                                                    Brush.verticalGradient(
+                                                        colors = listOf(Color.Transparent, Color.Black.copy(0.85f)),
+                                                        startY = 100f
+                                                    )
+                                                )
+                                        )
+                                        Column(
+                                            modifier = Modifier
+                                                .align(Alignment.BottomStart)
+                                                .padding(20.dp)
+                                        ) {
+                                            Text(
+                                                text = "FEATURED",
+                                                color = Color(0xFF00F2FF),
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Black,
+                                                style = androidx.compose.ui.text.TextStyle(letterSpacing = 2.sp)
+                                            )
+                                            Text(
+                                                text = song.title,
+                                                color = Color.White,
+                                                fontSize = 18.sp,
+                                                fontWeight = FontWeight.ExtraBold,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            Text(
+                                                text = song.artist,
+                                                color = Color.White.copy(0.7f),
+                                                fontSize = 14.sp,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
 
-        val favoriteSongs = allSongs.filter { favorites.contains(it.id) }.take(15)
-        if (favoriteSongs.isNotEmpty() && uiState.appearance.showYourFavoritesHome) {
-            item { HomeSectionHeader("Your Favorites") }
-            item {
-                LazyRow(
-                    contentPadding = PaddingValues(horizontal = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
-                    itemsIndexed(favoriteSongs, key = { _, song -> "fav_${song.id}" }) { index, song ->
-                        HomeSongCard(song) {
-                            viewModel.playList(favoriteSongs, index)
+                                        Box(
+                                            modifier = Modifier
+                                                .align(Alignment.BottomEnd)
+                                                .padding(16.dp)
+                                                .size(44.dp)
+                                                .background(Color.White.copy(0.15f), CircleShape)
+                                                .border(1.dp, Color.White.copy(0.2f), CircleShape),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(Icons.Rounded.PlayArrow, null, tint = Color.White, modifier = Modifier.size(28.dp))
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
-            }
-        }
-
-        if (albums.isNotEmpty() && uiState.appearance.showFeaturedAlbums) {
-            item { HomeSectionHeader("Featured Albums") }
-            item {
-                LazyRow(
-                    contentPadding = PaddingValues(horizontal = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
-                    items(albums.take(10), key = { it.first }) { album ->
-                        HomeGridItem(album.first, album.second, album.third) {
-                            viewModel.setLibraryView(com.beatraxus.app.model.LibraryView.ALBUM_DETAIL, album.first)
+                "LISTEN_AGAIN" -> {
+                    if (recentlyPlayed.isNotEmpty() && uiState.appearance.showListenAgain) {
+                        item(key = "LISTEN_AGAIN") { HomeSectionHeader("Listen Again") }
+                        item(key = "LISTEN_AGAIN_CONTENT") {
+                            LazyRow(
+                                contentPadding = PaddingValues(horizontal = 16.dp),
+                                horizontalArrangement = Arrangement.spacedBy(16.dp)
+                            ) {
+                                items(recentlyPlayed, key = { it.id }) { song ->
+                                    HomeSongItem(song) { viewModel.playSong(song) }
+                                }
+                            }
                         }
                     }
                 }
-            }
-        }
-
-        if (artists.isNotEmpty() && uiState.appearance.showArtistsYouLove) {
-            item { HomeSectionHeader("Artists You Love") }
-            item {
-                LazyRow(
-                    contentPadding = PaddingValues(horizontal = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
-                    items(artists.take(10), key = { it.first }) { artist ->
-                        HomeArtistItem(artist.first, artist.third) {
-                            viewModel.setLibraryView(com.beatraxus.app.model.LibraryView.ARTIST_DETAIL, artist.first)
+                "RECENTLY_ADDED" -> {
+                    val recentlyAddedSongs = allSongs.sortedByDescending { it.dateAdded }.take(15)
+                    if (recentlyAddedSongs.isNotEmpty() && uiState.appearance.showRecentlyAddedHome) {
+                        item(key = "RECENTLY_ADDED") { HomeSectionHeader("Recently Added") }
+                        item(key = "RECENTLY_ADDED_CONTENT") {
+                            LazyRow(
+                                contentPadding = PaddingValues(horizontal = 16.dp),
+                                horizontalArrangement = Arrangement.spacedBy(16.dp)
+                            ) {
+                                itemsIndexed(recentlyAddedSongs, key = { _, song -> "recent_${song.id}" }) { index, song ->
+                                    HomeSongCard(song) {
+                                        viewModel.playList(recentlyAddedSongs, index)
+                                    }
+                                }
+                            }
                         }
                     }
                 }
-            }
-        }
-
-        if (playlists.isNotEmpty() && uiState.appearance.showYourPlaylists) {
-            item { HomeSectionHeader("Your Playlists") }
-            item {
-                LazyRow(
-                    contentPadding = PaddingValues(horizontal = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
-                    items(playlists, key = { it.id }) { playlist ->
-                        HomeGridItem(playlist.name, "${playlist.songIds.size} songs", null) {
-                            viewModel.setLibraryView(com.beatraxus.app.model.LibraryView.PLAYLIST_DETAIL, playlist.name)
+                "YOUR_FAVORITES" -> {
+                    val favoriteSongs = allSongs.filter { favorites.contains(it.id) }.take(15)
+                    if (favoriteSongs.isNotEmpty() && uiState.appearance.showYourFavoritesHome) {
+                        item(key = "YOUR_FAVORITES") { HomeSectionHeader("Your Favorites") }
+                        item(key = "YOUR_FAVORITES_CONTENT") {
+                            LazyRow(
+                                contentPadding = PaddingValues(horizontal = 16.dp),
+                                horizontalArrangement = Arrangement.spacedBy(16.dp)
+                            ) {
+                                itemsIndexed(favoriteSongs, key = { _, song -> "fav_${song.id}" }) { index, song ->
+                                    HomeSongCard(song) {
+                                        viewModel.playList(favoriteSongs, index)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                "FEATURED_ALBUMS" -> {
+                    if (albums.isNotEmpty() && uiState.appearance.showFeaturedAlbums) {
+                        item(key = "FEATURED_ALBUMS") { HomeSectionHeader("Featured Albums") }
+                        item(key = "FEATURED_ALBUMS_CONTENT") {
+                            LazyRow(
+                                contentPadding = PaddingValues(horizontal = 16.dp),
+                                horizontalArrangement = Arrangement.spacedBy(16.dp)
+                            ) {
+                                items(albums.take(10), key = { it.first }) { album ->
+                                    HomeGridItem(album.first, album.second, album.third) {
+                                        viewModel.setLibraryView(com.beatraxus.app.model.LibraryView.ALBUM_DETAIL, album.first)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                "ARTISTS_YOU_LOVE" -> {
+                    if (artists.isNotEmpty() && uiState.appearance.showArtistsYouLove) {
+                        item(key = "ARTISTS_YOU_LOVE") { HomeSectionHeader("Artists You Love") }
+                        item(key = "ARTISTS_YOU_LOVE_CONTENT") {
+                            LazyRow(
+                                contentPadding = PaddingValues(horizontal = 16.dp),
+                                horizontalArrangement = Arrangement.spacedBy(16.dp)
+                            ) {
+                                items(artists.take(10), key = { it.first }) { artist ->
+                                    HomeArtistItem(artist.first, artist.third) {
+                                        viewModel.setLibraryView(com.beatraxus.app.model.LibraryView.ARTIST_DETAIL, artist.first)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                "YOUR_PLAYLISTS" -> {
+                    if (playlists.isNotEmpty() && uiState.appearance.showYourPlaylists) {
+                        item(key = "YOUR_PLAYLISTS") { HomeSectionHeader("Your Playlists") }
+                        item(key = "YOUR_PLAYLISTS_CONTENT") {
+                            LazyRow(
+                                contentPadding = PaddingValues(horizontal = 16.dp),
+                                horizontalArrangement = Arrangement.spacedBy(16.dp)
+                            ) {
+                                items(playlists, key = { it.id }) { playlist ->
+                                    HomeGridItem(playlist.name, "${playlist.songIds.size} songs", null) {
+                                        viewModel.setLibraryView(com.beatraxus.app.model.LibraryView.PLAYLIST_DETAIL, playlist.name)
+                                    }
+                                }
+                            }
                         }
                     }
                 }

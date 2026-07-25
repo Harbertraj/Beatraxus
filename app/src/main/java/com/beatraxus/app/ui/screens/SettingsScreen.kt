@@ -1,9 +1,12 @@
 package com.beatraxus.app.ui.screens
 
+import sh.calvin.reorderable.ReorderableItem
+import sh.calvin.reorderable.rememberReorderableLazyListState
 import java.util.Locale
 import android.graphics.Shader
 import android.os.Build
-import android.graphics.RenderEffect as AndroidRenderEffect
+import com.beatraxus.app.ui.utils.FastBlurTransformation
+import com.beatraxus.app.ui.utils.RenderEffectHelper
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -40,6 +43,7 @@ import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
@@ -54,6 +58,8 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInParent
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.painterResource
@@ -71,9 +77,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import androidx.compose.ui.graphics.asComposeRenderEffect
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.palette.graphics.Palette
+import coil.imageLoader
+import coil.request.SuccessResult
+import android.graphics.drawable.BitmapDrawable
+import coil.size.Precision
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
@@ -92,6 +101,7 @@ import com.beatraxus.app.model.ParametricEqBand
 import com.beatraxus.app.model.ResamplerMode
 import com.beatraxus.app.model.SoxrQuality
 import com.beatraxus.app.model.DitherType
+import com.beatraxus.app.model.NowPlayingBackgroundMode
 import com.beatraxus.app.model.PlayerUiState
 import com.beatraxus.app.model.SoxrQuality as SoxrQualityEnum
 import com.beatraxus.app.telegram.AuthState
@@ -118,6 +128,40 @@ fun SettingsScreen(
 ) {
     val uiState by playerViewModel.uiState.collectAsStateWithLifecycle()
     var showInfoPopup by remember { mutableStateOf(false) }
+
+    val context = LocalContext.current
+    val dominantColorsCache = remember { mutableStateMapOf<String, Color>() }
+    val currentDominantColor by animateColorAsState(
+        targetValue = uiState.currentSong?.let { dominantColorsCache[it.id] } ?: Color(0xFF2C2C2C),
+        animationSpec = tween(600),
+        label = "dominantColor"
+    )
+
+    LaunchedEffect(uiState.currentSong?.id, uiState.currentSong?.albumArtUri) {
+        val song = uiState.currentSong ?: return@LaunchedEffect
+        if (dominantColorsCache.containsKey(song.id)) return@LaunchedEffect
+
+        val loader = context.imageLoader
+        val request = ImageRequest.Builder(context)
+            .data(song.albumArtUri)
+            .allowHardware(false)
+            .size(100, 100)
+            .precision(Precision.INEXACT)
+            .build()
+
+        val result = (loader.execute(request) as? SuccessResult)?.drawable
+        val bitmap = (result as? BitmapDrawable)?.bitmap
+        if (bitmap != null) {
+            Palette.from(bitmap).generate { palette ->
+                val color = palette?.vibrantSwatch?.rgb
+                    ?: palette?.dominantSwatch?.rgb
+                if (color != null) {
+                    dominantColorsCache[song.id] = Color(color)
+                }
+            }
+        }
+    }
+
     val sectionStack = remember { mutableStateListOf<String>() }
     val currentSection = sectionStack.lastOrNull()
     var editingValue by remember { mutableStateOf<EditingValue?>(null) }
@@ -139,39 +183,73 @@ fun SettingsScreen(
         if (sectionStack.isNotEmpty()) sectionStack.removeAt(sectionStack.size - 1) else onBack()
     }
 
-    val blurEffect = remember {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            AndroidRenderEffect.createBlurEffect(120f, 120f, Shader.TileMode.DECAL)
-        } else null
+    val settingsBlurEffect = remember(uiState.appearance.settingsBlurIntensity) {
+        RenderEffectHelper.createBlurEffect(uiState.appearance.settingsBlurIntensity, uiState.appearance.settingsBlurIntensity)
     }
 
     val bgGradient = Brush.verticalGradient(listOf(Color(0xFF0A0A0C), Color(0xFF14110C)))
     Box(modifier = Modifier.fillMaxSize().background(bgGradient)) {
-        if (uiState.currentSong?.albumArtUri != null) {
-            Box(Modifier.fillMaxSize()) {
-                AsyncImage(
-                    model = ImageRequest.Builder(LocalContext.current)
-                        .data(uiState.currentSong?.albumArtUri)
-                        .crossfade(true)
-                        .build(),
-                    contentDescription = null,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .blur(if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) 100.dp else 0.dp)
-                        .graphicsLayer {
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                                renderEffect = blurEffect?.asComposeRenderEffect()
-                            }
-                            alpha = 0.1f
-                        },
-                    contentScale = androidx.compose.ui.layout.ContentScale.Crop
-                )
+        val settingsMode = uiState.appearance.settingsBackgroundMode
+        val settingsSolidIntensity = uiState.appearance.settingsSolidColorIntensity
+        val settingsSolidDarkness = uiState.appearance.settingsSolidColorDarkness
+        val settingsBlurDarkness = uiState.appearance.settingsBlurDarkness
+
+        when (settingsMode) {
+            NowPlayingBackgroundMode.BLACK -> {
+                // Background is already dark from the gradient/bg
+            }
+            NowPlayingBackgroundMode.SOLID -> {
+                if (uiState.currentSong?.albumArtUri != null) {
+                    Box(
+                        Modifier
+                            .fillMaxSize()
+                            .background(currentDominantColor.copy(alpha = settingsSolidIntensity))
+                    )
+                    Box(
+                        Modifier
+                            .fillMaxSize()
+                            .background(Color.Black.copy(alpha = settingsSolidDarkness))
+                    )
+                }
+            }
+            NowPlayingBackgroundMode.BLUR -> {
+                if (uiState.currentSong?.albumArtUri != null) {
+                    Box(Modifier.fillMaxSize()) {
+                        AsyncImage(
+                            model = ImageRequest.Builder(LocalContext.current)
+                                .data(uiState.currentSong?.albumArtUri)
+                                .crossfade(true)
+                                .apply {
+                                    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+                                        transformations(FastBlurTransformation(uiState.appearance.settingsBlurIntensity))
+                                    }
+                                }
+                                .build(),
+                            contentDescription = null,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .graphicsLayer {
+                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                                        renderEffect = settingsBlurEffect
+                                    }
+                                    alpha = 0.1f
+                                },
+                            contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                        )
+                        Box(
+                            Modifier
+                                .fillMaxSize()
+                                .background(Color.Black.copy(alpha = settingsBlurDarkness))
+                        )
+                    }
+                }
             }
         }
 
         Scaffold(
             modifier = Modifier.blur(if (uiState.isFullScanning) 20.dp else 0.dp),
             containerColor = Color.Transparent,
+            contentWindowInsets = WindowInsets.statusBars,
             topBar = {
                 CenterAlignedTopAppBar(
                     colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
@@ -179,12 +257,19 @@ fun SettingsScreen(
                         scrolledContainerColor = Color.Transparent
                     ),
                     title = {
+                        val displayTitle = if (currentSection != null && currentSection.contains(": ")) {
+                            currentSection.substringAfter(": ")
+                        } else {
+                            currentSection ?: "SETTINGS"
+                        }
+                        
                         Text(
-                            text = (currentSection ?: "SETTINGS").uppercase(Locale.getDefault()),
+                            text = displayTitle.uppercase(Locale.getDefault()),
                             color = TextWhite,
                             fontWeight = FontWeight.ExtraBold,
                             fontSize = if (currentSection == null) 24.sp else 18.sp,
                             letterSpacing = if (currentSection == null) (-0.2).sp else 1.5.sp,
+                            textAlign = TextAlign.Center,
                             modifier = Modifier.animateContentSize()
                         )
                     },
@@ -232,11 +317,12 @@ fun SettingsScreen(
                 animationSpec = tween(220, easing = EaseInOutCubic),
                 label = "settings_transition"
             ) { section ->
+                val scrollState = rememberScrollState()
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
                         .imePadding()
-                        .verticalScroll(rememberScrollState())
+                        .then(if (section != "Appearance: Home Screen Layout") Modifier.verticalScroll(scrollState) else Modifier)
                         .padding(horizontal = 16.dp, vertical = 10.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
@@ -257,7 +343,7 @@ fun SettingsScreen(
                             )
                             SettingMenuItem(
                                 title = "Appearance",
-                                subtitle = "Choose what's shown across the app",
+                                subtitle = "Main Screen, Now Playing, Home Screen",
                                 icon = Icons.Rounded.Palette,
                                 iconColor = Color(0xFF9C27B0),
                                 onClick = { sectionStack.add("Appearance") }
@@ -309,7 +395,12 @@ fun SettingsScreen(
                             when (section) {
                                 "Audio Engine" -> AudioEngineContent(uiState, playerViewModel, onEditValue = { editingValue = it })
                                 "DSP Enhancements" -> DspEnhancementsContent(uiState, playerViewModel, onEditValue = { editingValue = it })
-                                "Appearance" -> AppearanceContent(uiState, playerViewModel)
+                                "Appearance" -> AppearanceContent(sectionStack)
+                                "Appearance: Main Screen" -> MainScreenAppearanceContent(uiState, playerViewModel)
+                                "Appearance: Now Playing" -> NowPlayingAppearanceContent(uiState, playerViewModel)
+                                "Appearance: Home Screen" -> HomeScreenAppearanceContent(uiState, playerViewModel, sectionStack)
+                                "Appearance: Home Screen Layout" -> HomeScreenLayoutContent(uiState, playerViewModel)
+                                "Appearance: Settings Screen" -> SettingsScreenAppearanceContent(uiState, playerViewModel)
                                 "Replay Gain" -> ReplayGainContent(uiState, playerViewModel, onEditValue = { editingValue = it })
                                 "Library" -> LibraryContent(uiState, playerViewModel, onShowInfo = { showInfoPopup = true })
                                 "Cloud" -> CloudContent(
@@ -515,167 +606,442 @@ private fun ValueEditDialog(
 }
 
 @Composable
-fun AppearanceContent(uiState: PlayerUiState, playerViewModel: PlayerViewModel) {
+fun AppearanceContent(sectionStack: SnapshotStateList<String>) {
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        SettingsSection(
-            title = "MAIN SCREEN",
-            icon = Icons.Rounded.Devices,
-            isActive = true,
-            subtitle = "Settings for the main app container"
-        ) {
-            AppearanceToggleRow(
-                title = "Mini Player",
-                subtitle = "Show a compact player when browsing the library",
-                checked = uiState.appearance.showMiniPlayer,
-                onCheckedChange = { playerViewModel.setShowMiniPlayer(it) }
-            )
-        }
-
-        SettingsSection(
-            title = "NOW PLAYING SCREEN",
+        SettingMenuItem(
+            title = "Main Screen",
+            subtitle = "Settings for the main app container",
+            icon = Icons.Rounded.Smartphone,
+            iconColor = PrimaryCyan,
+            onClick = { sectionStack.add("Appearance: Main Screen") }
+        )
+        SettingMenuItem(
+            title = "Now Playing Screen",
+            subtitle = "Customize the player interface and shortcuts",
+            icon = Icons.Rounded.PlayCircle,
+            iconColor = PrimaryCyan,
+            onClick = { sectionStack.add("Appearance: Now Playing") }
+        )
+        SettingMenuItem(
+            title = "Home Screen",
+            subtitle = "Customize visible categories on the home screen",
+            icon = Icons.Rounded.Dashboard,
+            iconColor = PrimaryCyan,
+            onClick = { sectionStack.add("Appearance: Home Screen") }
+        )
+        SettingMenuItem(
+            title = "Settings Screen",
+            subtitle = "Customize background for the settings interface",
             icon = Icons.Rounded.Palette,
-            isActive = true,
-            subtitle = "Customize the player interface and shortcuts"
-        ) {
-            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                AppearanceToggleRow(
-                    title = "Blurred Background",
-                    subtitle = "Enable immersive blurred album art background",
-                    checked = uiState.appearance.showNowPlayingBlurBackground,
-                    onCheckedChange = { playerViewModel.setShowNowPlayingBlurBackground(it) }
-                )
-                HorizontalDivider(color = Color.White.copy(0.05f))
-                AppearanceToggleRow(
-                    title = "Audio Quality Badge",
-                    subtitle = "Display bitrate and format badges (Hi-Res, Lossless)",
-                    checked = uiState.appearance.showAudioQualityBadge,
-                    onCheckedChange = { playerViewModel.setShowAudioQualityBadge(it) }
-                )
-                HorizontalDivider(color = Color.White.copy(0.05f))
-                AppearanceToggleRow(
-                    title = "Live Pipeline Overlay",
-                    subtitle = "Show real-time audio engine processing status",
-                    checked = uiState.appearance.showAudioPipelineOverlay,
-                    onCheckedChange = { playerViewModel.setShowAudioPipelineOverlay(it) }
-                )
-                HorizontalDivider(color = Color.White.copy(0.05f))
-                AppearanceToggleRow(
-                    title = "Technical Info Panel",
-                    subtitle = "View detailed audio metrics in the player",
-                    checked = uiState.appearance.showTechnicalInfoPanel,
-                    onCheckedChange = { playerViewModel.setShowTechnicalInfoPanel(it) }
-                )
-                HorizontalDivider(color = Color.White.copy(0.05f))
-                AppearanceToggleRow(
-                    title = "Lyrics Button",
-                    subtitle = "Quick access to lyrics from the player screen",
-                    checked = uiState.appearance.showLyricsButton,
-                    onCheckedChange = { playerViewModel.setShowLyricsButton(it) }
-                )
-                HorizontalDivider(color = Color.White.copy(0.05f))
-                AppearanceToggleRow(
-                    title = "Favorite Button",
-                    subtitle = "Toggle heart icon to add songs to favorites",
-                    checked = uiState.appearance.showFavoriteButton,
-                    onCheckedChange = { playerViewModel.setShowFavoriteButton(it) }
-                )
-                HorizontalDivider(color = Color.White.copy(0.05f))
-                AppearanceToggleRow(
-                    title = "Equalizer Shortcut",
-                    subtitle = "Quick jump to DSP and EQ settings",
-                    checked = uiState.appearance.showEqualizerShortcut,
-                    onCheckedChange = { playerViewModel.setShowEqualizerShortcut(it) }
-                )
-                HorizontalDivider(color = Color.White.copy(0.05f))
-                AppearanceToggleRow(
-                    title = "Queue Button",
-                    subtitle = "Show the upcoming tracks list shortcut",
-                    checked = uiState.appearance.showQueueButton,
-                    onCheckedChange = { playerViewModel.setShowQueueButton(it) }
-                )
-                HorizontalDivider(color = Color.White.copy(0.05f))
-                AppearanceToggleRow(
-                    title = "Sleep Timer Icon",
-                    subtitle = "Show shortcut to set the sleep timer",
-                    checked = uiState.appearance.showSleepTimerIcon,
-                    onCheckedChange = { playerViewModel.setShowSleepTimerIcon(it) }
-                )
-            }
+            iconColor = PrimaryCyan,
+            onClick = { sectionStack.add("Appearance: Settings Screen") }
+        )
+    }
+}
+
+@Composable
+fun MainScreenAppearanceContent(uiState: PlayerUiState, playerViewModel: PlayerViewModel) {
+    val isClassic = com.beatraxus.app.utils.DeviceUtils.isClassicDevice()
+    val appearance = uiState.appearance
+
+    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        val isMainDefault = when (appearance.mainBackgroundMode) {
+            NowPlayingBackgroundMode.BLACK -> true
+            NowPlayingBackgroundMode.SOLID -> appearance.mainSolidColorIntensity == 0.6f && appearance.mainSolidColorDarkness == 0.4f
+            NowPlayingBackgroundMode.BLUR -> appearance.mainBlurIntensity == 120f && appearance.mainBlurDarkness == 0.5f
         }
 
-        SettingsSection(
-            title = "HOME SCREEN",
-            icon = Icons.Rounded.Home,
-            isActive = true,
-            subtitle = "Customize visible categories on the home screen"
+        BackgroundSettingsSection(
+            title = "Background",
+            subtitle = "Customize the main screen background style",
+            backgroundMode = appearance.mainBackgroundMode,
+            solidIntensity = appearance.mainSolidColorIntensity,
+            solidDarkness = appearance.mainSolidColorDarkness,
+            blurIntensity = appearance.mainBlurIntensity,
+            blurDarkness = appearance.mainBlurDarkness,
+            isDefault = isMainDefault,
+            onModeChange = { playerViewModel.setMainBackgroundMode(it) },
+            onSolidIntensityChange = { playerViewModel.setMainSolidColorIntensity(it) },
+            onSolidDarknessChange = { playerViewModel.setMainSolidColorDarkness(it) },
+            onBlurIntensityChange = { playerViewModel.setMainBlurIntensity(it) },
+            onBlurDarknessChange = { playerViewModel.setMainBlurDarkness(it) },
+            onReset = { playerViewModel.resetMainBackground() }
+        )
+
+        HorizontalDivider(color = Color.White.copy(0.05f))
+
+        val isMiniDefault = when (appearance.miniPlayerBackgroundMode) {
+            NowPlayingBackgroundMode.BLACK -> true
+            NowPlayingBackgroundMode.SOLID -> appearance.miniPlayerSolidColorIntensity == 0.6f && appearance.miniPlayerSolidColorDarkness == 0.4f
+            NowPlayingBackgroundMode.BLUR -> appearance.miniPlayerBlurIntensity == 70f && appearance.miniPlayerBlurDarkness == 0.5f
+        }
+
+        BackgroundSettingsSection(
+            title = "Mini Player Background",
+            subtitle = "Customize the background style for the mini player",
+            backgroundMode = appearance.miniPlayerBackgroundMode,
+            solidIntensity = appearance.miniPlayerSolidColorIntensity,
+            solidDarkness = appearance.miniPlayerSolidColorDarkness,
+            blurIntensity = appearance.miniPlayerBlurIntensity,
+            blurDarkness = appearance.miniPlayerBlurDarkness,
+            isDefault = isMiniDefault,
+            onModeChange = { playerViewModel.setMiniPlayerBackgroundMode(it) },
+            onSolidIntensityChange = { playerViewModel.setMiniPlayerSolidColorIntensity(it) },
+            onSolidDarknessChange = { playerViewModel.setMiniPlayerSolidColorDarkness(it) },
+            onBlurIntensityChange = { playerViewModel.setMiniPlayerBlurIntensity(it) },
+            onBlurDarknessChange = { playerViewModel.setMiniPlayerBlurDarkness(it) },
+            onReset = { playerViewModel.resetMiniPlayerBackground() }
+        )
+    }
+}
+
+@Composable
+fun NowPlayingAppearanceContent(uiState: PlayerUiState, playerViewModel: PlayerViewModel) {
+    val isClassic = com.beatraxus.app.utils.DeviceUtils.isClassicDevice()
+    val appearance = uiState.appearance
+
+    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        AppearanceToggleRow(
+            title = "Audio Quality Badge",
+            subtitle = "Display bitrate and format badges (Hi-Res, Lossless)",
+            checked = uiState.appearance.showAudioQualityBadge,
+            onCheckedChange = { playerViewModel.setShowAudioQualityBadge(it) }
+        )
+        HorizontalDivider(color = Color.White.copy(0.05f))
+        AppearanceToggleRow(
+            title = "Live Pipeline Overlay",
+            subtitle = "Show real-time audio engine processing status",
+            checked = uiState.appearance.showAudioPipelineOverlay,
+            onCheckedChange = { playerViewModel.setShowAudioPipelineOverlay(it) }
+        )
+        HorizontalDivider(color = Color.White.copy(0.05f))
+        AppearanceToggleRow(
+            title = "Technical Info Panel",
+            subtitle = "View detailed audio metrics in the player",
+            checked = uiState.appearance.showTechnicalInfoPanel,
+            onCheckedChange = { playerViewModel.setShowTechnicalInfoPanel(it) }
+        )
+        HorizontalDivider(color = Color.White.copy(0.05f))
+        AppearanceToggleRow(
+            title = "Lyrics Button",
+            subtitle = "Quick access to lyrics from the player screen",
+            checked = uiState.appearance.showLyricsButton,
+            onCheckedChange = { playerViewModel.setShowLyricsButton(it) }
+        )
+        HorizontalDivider(color = Color.White.copy(0.05f))
+        AppearanceToggleRow(
+            title = "Favorite Button",
+            subtitle = "Toggle heart icon to add songs to favorites",
+            checked = uiState.appearance.showFavoriteButton,
+            onCheckedChange = { playerViewModel.setShowFavoriteButton(it) }
+        )
+        HorizontalDivider(color = Color.White.copy(0.05f))
+        AppearanceToggleRow(
+            title = "Equalizer Shortcut",
+            subtitle = "Quick jump to DSP and EQ settings",
+            checked = uiState.appearance.showEqualizerShortcut,
+            onCheckedChange = { playerViewModel.setShowEqualizerShortcut(it) }
+        )
+        HorizontalDivider(color = Color.White.copy(0.05f))
+        AppearanceToggleRow(
+            title = "Queue Button",
+            subtitle = "Show the upcoming tracks list shortcut",
+            checked = uiState.appearance.showQueueButton,
+            onCheckedChange = { playerViewModel.setShowQueueButton(it) }
+        )
+        HorizontalDivider(color = Color.White.copy(0.05f))
+        AppearanceToggleRow(
+            title = "Sleep Timer Icon",
+            subtitle = "Show shortcut to set the sleep timer",
+            checked = uiState.appearance.showSleepTimerIcon,
+            onCheckedChange = { playerViewModel.setShowSleepTimerIcon(it) }
+        )
+
+        HorizontalDivider(color = Color.White.copy(0.05f))
+
+        val isNowPlayingDefault = when (appearance.nowPlayingBackgroundMode) {
+            NowPlayingBackgroundMode.BLACK -> true
+            NowPlayingBackgroundMode.SOLID -> appearance.nowPlayingSolidColorIntensity == 0.6f && appearance.nowPlayingSolidColorDarkness == 0.4f
+            NowPlayingBackgroundMode.BLUR -> appearance.nowPlayingBlurIntensity == 120f && appearance.nowPlayingBlurDarkness == 0.5f
+        }
+
+        BackgroundSettingsSection(
+            title = "Background",
+            subtitle = "Customize the player background style",
+            backgroundMode = appearance.nowPlayingBackgroundMode,
+            solidIntensity = appearance.nowPlayingSolidColorIntensity,
+            solidDarkness = appearance.nowPlayingSolidColorDarkness,
+            blurIntensity = appearance.nowPlayingBlurIntensity,
+            blurDarkness = appearance.nowPlayingBlurDarkness,
+            isDefault = isNowPlayingDefault,
+            onModeChange = { playerViewModel.setNowPlayingBackgroundMode(it) },
+            onSolidIntensityChange = { playerViewModel.setNowPlayingSolidColorIntensity(it) },
+            onSolidDarknessChange = { playerViewModel.setNowPlayingSolidColorDarkness(it) },
+            onBlurIntensityChange = { playerViewModel.setNowPlayingBlurIntensity(it) },
+            onBlurDarknessChange = { playerViewModel.setNowPlayingBlurDarkness(it) },
+            onReset = { playerViewModel.resetNowPlayingBackground() }
+        )
+    }
+}
+
+@Composable
+fun HomeScreenAppearanceContent(uiState: PlayerUiState, playerViewModel: PlayerViewModel, sectionStack: SnapshotStateList<String>) {
+    val appearance = uiState.appearance
+
+    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Text(
+            "Layout Settings",
+            color = PremiumAccent,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = 1.sp,
+            modifier = Modifier.padding(top = 8.dp)
+        )
+
+        SettingMenuItem(
+            title = "Section Order",
+            subtitle = "Press and hold to reorder sections",
+            icon = Icons.Rounded.Layers,
+            iconColor = PrimaryCyan,
+            onClick = { sectionStack.add("Appearance: Home Screen Layout") }
+        )
+
+        HorizontalDivider(color = Color.White.copy(0.05f))
+
+        Text(
+            "Visibility Settings",
+            color = PremiumAccent,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = 1.sp
+        )
+
+        AppearanceToggleRow(
+            title = "Greeting Header",
+            subtitle = "Show personalized greeting and profile access",
+            checked = uiState.appearance.showGreetingHeader,
+            onCheckedChange = { playerViewModel.setShowGreetingHeader(it) }
+        )
+        HorizontalDivider(color = Color.White.copy(0.05f))
+        AppearanceToggleRow(
+            title = "Browse by Mood",
+            subtitle = "Show mood-based category shortcuts",
+            checked = uiState.appearance.showBrowseByMood,
+            onCheckedChange = { playerViewModel.setShowBrowseByMood(it) }
+        )
+        HorizontalDivider(color = Color.White.copy(0.05f))
+        AppearanceToggleRow(
+            title = "Made For You",
+            subtitle = "Show personalized mixes and discovery tracks",
+            checked = uiState.appearance.showMadeForYou,
+            onCheckedChange = { playerViewModel.setShowMadeForYou(it) }
+        )
+        HorizontalDivider(color = Color.White.copy(0.05f))
+        AppearanceToggleRow(
+            title = "Listen Again",
+            subtitle = "Quick access to your frequently played items",
+            checked = uiState.appearance.showListenAgain,
+            onCheckedChange = { playerViewModel.setShowListenAgain(it) }
+        )
+        HorizontalDivider(color = Color.White.copy(0.05f))
+        AppearanceToggleRow(
+            title = "Recently Added",
+            subtitle = "Show the latest additions to your library",
+            checked = uiState.appearance.showRecentlyAddedHome,
+            onCheckedChange = { playerViewModel.setShowRecentlyAddedHome(it) }
+        )
+        HorizontalDivider(color = Color.White.copy(0.05f))
+        AppearanceToggleRow(
+            title = "Your Favorites",
+            subtitle = "Show top songs and albums from your favorites",
+            checked = uiState.appearance.showYourFavoritesHome,
+            onCheckedChange = { playerViewModel.setShowYourFavoritesHome(it) }
+        )
+        HorizontalDivider(color = Color.White.copy(0.05f))
+        AppearanceToggleRow(
+            title = "Featured Albums",
+            subtitle = "Show selected albums from your collection",
+            checked = uiState.appearance.showFeaturedAlbums,
+            onCheckedChange = { playerViewModel.setShowFeaturedAlbums(it) }
+        )
+        HorizontalDivider(color = Color.White.copy(0.05f))
+        AppearanceToggleRow(
+            title = "Artists You Love",
+            subtitle = "Show highlights from your most played artists",
+            checked = uiState.appearance.showArtistsYouLove,
+            onCheckedChange = { playerViewModel.setShowArtistsYouLove(it) }
+        )
+        HorizontalDivider(color = Color.White.copy(0.05f))
+        AppearanceToggleRow(
+            title = "Your Playlists",
+            subtitle = "Show shortcuts to your custom playlists",
+            checked = uiState.appearance.showYourPlaylists,
+            onCheckedChange = { playerViewModel.setShowYourPlaylists(it) }
+        )
+
+        HorizontalDivider(color = Color.White.copy(0.05f))
+
+        val isHomeDefault = when (appearance.homeBackgroundMode) {
+            NowPlayingBackgroundMode.BLACK -> true
+            NowPlayingBackgroundMode.SOLID -> appearance.homeSolidColorIntensity == 0.6f && appearance.homeSolidColorDarkness == 0.4f
+            NowPlayingBackgroundMode.BLUR -> appearance.homeBlurIntensity == 120f && appearance.homeBlurDarkness == 0.5f
+        }
+
+        BackgroundSettingsSection(
+            title = "Background",
+            subtitle = "Customize the home screen background style",
+            backgroundMode = appearance.homeBackgroundMode,
+            solidIntensity = appearance.homeSolidColorIntensity,
+            solidDarkness = appearance.homeSolidColorDarkness,
+            blurIntensity = appearance.homeBlurIntensity,
+            blurDarkness = appearance.homeBlurDarkness,
+            isDefault = isHomeDefault,
+            onModeChange = { playerViewModel.setHomeBackgroundMode(it) },
+            onSolidIntensityChange = { playerViewModel.setHomeSolidColorIntensity(it) },
+            onSolidDarknessChange = { playerViewModel.setHomeSolidColorDarkness(it) },
+            onBlurIntensityChange = { playerViewModel.setHomeBlurIntensity(it) },
+            onBlurDarknessChange = { playerViewModel.setHomeBlurDarkness(it) },
+            onReset = { playerViewModel.resetHomeBackground() }
+        )
+    }
+}
+
+@Composable
+fun SettingsScreenAppearanceContent(uiState: PlayerUiState, playerViewModel: PlayerViewModel) {
+    val isClassic = com.beatraxus.app.utils.DeviceUtils.isClassicDevice()
+    val appearance = uiState.appearance
+
+    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        val isSettingsDefault = when (appearance.settingsBackgroundMode) {
+            NowPlayingBackgroundMode.BLACK -> true
+            NowPlayingBackgroundMode.SOLID -> appearance.settingsSolidColorIntensity == 0.6f && appearance.settingsSolidColorDarkness == 0.4f
+            NowPlayingBackgroundMode.BLUR -> appearance.settingsBlurIntensity == 120f && appearance.settingsBlurDarkness == 0.5f
+        }
+
+        BackgroundSettingsSection(
+            title = "Background",
+            subtitle = "Customize the settings screen background style",
+            backgroundMode = appearance.settingsBackgroundMode,
+            solidIntensity = appearance.settingsSolidColorIntensity,
+            solidDarkness = appearance.settingsSolidColorDarkness,
+            blurIntensity = appearance.settingsBlurIntensity,
+            blurDarkness = appearance.settingsBlurDarkness,
+            isDefault = isSettingsDefault,
+            onModeChange = { playerViewModel.setSettingsBackgroundMode(it) },
+            onSolidIntensityChange = { playerViewModel.setSettingsSolidColorIntensity(it) },
+            onSolidDarknessChange = { playerViewModel.setSettingsSolidColorDarkness(it) },
+            onBlurIntensityChange = { playerViewModel.setSettingsBlurIntensity(it) },
+            onBlurDarknessChange = { playerViewModel.setSettingsBlurDarkness(it) },
+            onReset = { playerViewModel.resetSettingsBackground() }
+        )
+    }
+}
+
+@Composable
+fun HomeScreenLayoutContent(uiState: PlayerUiState, playerViewModel: PlayerViewModel) {
+    val appearance = uiState.appearance
+    var sections by remember(appearance.homeScreenSectionsOrder) { 
+        mutableStateOf(appearance.homeScreenSectionsOrder) 
+    }
+    val lazyListState = rememberLazyListState()
+    val reorderableLazyListState = rememberReorderableLazyListState(lazyListState) { from, to ->
+        sections = sections.toMutableList().apply {
+            add(to.index, removeAt(from.index))
+        }
+        playerViewModel.setHomeScreenSectionsOrder(sections)
+    }
+
+    Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        Text(
+            text = "Press and hold a section to drag and reorder. The new order will be applied to your Home Screen immediately.",
+            color = Color.White.copy(0.5f),
+            fontSize = 12.sp,
+            lineHeight = 18.sp,
+            modifier = Modifier.padding(horizontal = 4.dp)
+        )
+
+        LazyColumn(
+            state = lazyListState,
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+            contentPadding = PaddingValues(bottom = 24.dp)
         ) {
-            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                AppearanceToggleRow(
-                    title = "Greeting Header",
-                    subtitle = "Show personalized greeting and profile access",
-                    checked = uiState.appearance.showGreetingHeader,
-                    onCheckedChange = { playerViewModel.setShowGreetingHeader(it) }
-                )
-                HorizontalDivider(color = Color.White.copy(0.05f))
-                AppearanceToggleRow(
-                    title = "Browse by Mood",
-                    subtitle = "Show mood-based category shortcuts",
-                    checked = uiState.appearance.showBrowseByMood,
-                    onCheckedChange = { playerViewModel.setShowBrowseByMood(it) }
-                )
-                HorizontalDivider(color = Color.White.copy(0.05f))
-                AppearanceToggleRow(
-                    title = "Made For You",
-                    subtitle = "Show personalized mixes and discovery tracks",
-                    checked = uiState.appearance.showMadeForYou,
-                    onCheckedChange = { playerViewModel.setShowMadeForYou(it) }
-                )
-                HorizontalDivider(color = Color.White.copy(0.05f))
-                AppearanceToggleRow(
-                    title = "Listen Again",
-                    subtitle = "Quick access to your frequently played items",
-                    checked = uiState.appearance.showListenAgain,
-                    onCheckedChange = { playerViewModel.setShowListenAgain(it) }
-                )
-                HorizontalDivider(color = Color.White.copy(0.05f))
-                AppearanceToggleRow(
-                    title = "Recently Added",
-                    subtitle = "Show the latest additions to your library",
-                    checked = uiState.appearance.showRecentlyAddedHome,
-                    onCheckedChange = { playerViewModel.setShowRecentlyAddedHome(it) }
-                )
-                HorizontalDivider(color = Color.White.copy(0.05f))
-                AppearanceToggleRow(
-                    title = "Your Favorites",
-                    subtitle = "Show top songs and albums from your favorites",
-                    checked = uiState.appearance.showYourFavoritesHome,
-                    onCheckedChange = { playerViewModel.setShowYourFavoritesHome(it) }
-                )
-                HorizontalDivider(color = Color.White.copy(0.05f))
-                AppearanceToggleRow(
-                    title = "Featured Albums",
-                    subtitle = "Show selected albums from your collection",
-                    checked = uiState.appearance.showFeaturedAlbums,
-                    onCheckedChange = { playerViewModel.setShowFeaturedAlbums(it) }
-                )
-                HorizontalDivider(color = Color.White.copy(0.05f))
-                AppearanceToggleRow(
-                    title = "Artists You Love",
-                    subtitle = "Show highlights from your most played artists",
-                    checked = uiState.appearance.showArtistsYouLove,
-                    onCheckedChange = { playerViewModel.setShowArtistsYouLove(it) }
-                )
-                HorizontalDivider(color = Color.White.copy(0.05f))
-                AppearanceToggleRow(
-                    title = "Your Playlists",
-                    subtitle = "Show shortcuts to your custom playlists",
-                    checked = uiState.appearance.showYourPlaylists,
-                    onCheckedChange = { playerViewModel.setShowYourPlaylists(it) }
-                )
+            items(items = sections, key = { it }) { sectionKey ->
+                ReorderableItem(reorderableLazyListState, key = sectionKey) { isDragging ->
+                    val elevation by animateDpAsState(if (isDragging) 12.dp else 0.dp, label = "elevation")
+                    val meta = homeScreenSectionMeta[sectionKey] ?: ("Unknown" to "")
+                    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .shadow(elevation, RoundedCornerShape(16.dp)),
+                        color = if (isDragging) Color.White.copy(0.15f) else CardSurface.copy(alpha = 0.6f),
+                        shape = RoundedCornerShape(16.dp),
+                        border = BorderStroke(1.dp, if (isDragging) PremiumAccent.copy(0.5f) else Color.White.copy(0.08f))
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .longPressDraggableHandle(
+                                    onDragStarted = {
+                                        haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                                    }
+                                )
+                                .padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .clip(CircleShape)
+                                    .background(Color.White.copy(alpha = 0.05f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    Icons.Rounded.DragHandle,
+                                    null,
+                                    tint = if (isDragging) PremiumAccent else Color.White.copy(0.4f),
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                            Spacer(Modifier.width(16.dp))
+                            Column {
+                                Text(
+                                    text = meta.first,
+                                    color = Color.White,
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = meta.second,
+                                    color = Color.White.copy(0.5f),
+                                    fontSize = 12.sp
+                                )
+                            }
+                        }
+                    }
+                }
             }
         }
     }
 }
+
+private val homeScreenSectionMeta = mapOf(
+    "GREETING" to ("Greeting Header" to "Personalized greeting and profile access"),
+    "ACTION_CHIPS" to ("Action Chips" to "Quick shuffle, favorites, and recent buttons"),
+    "CLOUD_LIBRARY" to ("Cloud Library" to "Status and counts for cloud accounts"),
+    "MOODS" to ("Browse by Mood" to "Mood-based category shortcuts"),
+    "MADE_FOR_YOU" to ("Made For You" to "Personalized mixes and discovery tracks"),
+    "LISTEN_AGAIN" to ("Listen Again" to "Frequently played items"),
+    "RECENTLY_ADDED" to ("Recently Added" to "Latest additions to your library"),
+    "YOUR_FAVORITES" to ("Your Favorites" to "Top songs and albums from favorites"),
+    "FEATURED_ALBUMS" to ("Featured Albums" to "Selected albums from collection"),
+    "ARTISTS_YOU_LOVE" to ("Artists You Love" to "Most played artists"),
+    "YOUR_PLAYLISTS" to ("Your Playlists" to "Shortcuts to custom playlists")
+)
 
 @Composable
 private fun AppearanceToggleRow(
@@ -787,6 +1153,7 @@ fun SettingMenuItem(
     icon: ImageVector,
     iconColor: Color,
     showBetaBadge: Boolean = false,
+    centered: Boolean = false,
     onClick: () -> Unit
 ) {
     val interactionSource = remember { MutableInteractionSource() }
@@ -820,37 +1187,70 @@ fun SettingMenuItem(
             .scale(scale)
             .clickable(interactionSource = interactionSource, indication = null, onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = if (centered) Arrangement.Center else Arrangement.Start
     ) {
-        // Icon with colored glass background
-        Box(
-            modifier = Modifier
-                .size(40.dp)
-                .clip(RoundedCornerShape(12.dp))
-                .glassIconBackground(
-                    backgroundColor = iconColor.copy(alpha = 0.12f),
-                    shape = RoundedCornerShape(12.dp),
-                    borderColor = iconColor.copy(alpha = 0.18f)
-                ),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = iconColor,
-                modifier = Modifier.size(20.dp)
-            )
+        if (!centered) {
+            // Icon with colored glass background
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .glassIconBackground(
+                        backgroundColor = iconColor.copy(alpha = 0.12f),
+                        shape = RoundedCornerShape(12.dp),
+                        borderColor = iconColor.copy(alpha = 0.18f)
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = iconColor,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+
+            Spacer(Modifier.width(14.dp))
         }
 
-        Spacer(Modifier.width(14.dp))
+        Column(
+            modifier = Modifier.weight(1f),
+            horizontalAlignment = if (centered) Alignment.CenterHorizontally else Alignment.Start
+        ) {
+            if (centered) {
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .glassIconBackground(
+                            backgroundColor = iconColor.copy(alpha = 0.12f),
+                            shape = RoundedCornerShape(12.dp),
+                            borderColor = iconColor.copy(alpha = 0.18f)
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = null,
+                        tint = iconColor,
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+                Spacer(Modifier.height(10.dp))
+            }
 
-        Column(modifier = Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = if (centered) Arrangement.Center else Arrangement.Start,
+                modifier = if (centered) Modifier.fillMaxWidth() else Modifier
+            ) {
                 Text(
                     text = title,
                     color = TextWhite,
                     fontSize = 16.sp,
-                    fontWeight = FontWeight.SemiBold
+                    fontWeight = FontWeight.SemiBold,
+                    textAlign = if (centered) TextAlign.Center else TextAlign.Start
                 )
                 if (showBetaBadge) {
                     Spacer(Modifier.width(8.dp))
@@ -878,18 +1278,22 @@ fun SettingMenuItem(
                 text = subtitle,
                 color = TextWhite.copy(alpha = 0.7f),
                 fontSize = 12.sp,
-                lineHeight = 16.sp
+                lineHeight = 16.sp,
+                textAlign = if (centered) TextAlign.Center else TextAlign.Start,
+                modifier = if (centered) Modifier.fillMaxWidth() else Modifier
             )
         }
 
-        Spacer(Modifier.width(8.dp))
+        if (!centered) {
+            Spacer(Modifier.width(8.dp))
 
-        Icon(
-            Icons.AutoMirrored.Rounded.KeyboardArrowRight,
-            null,
-            tint = TextWhite.copy(0.3f),
-            modifier = Modifier.size(20.dp)
-        )
+            Icon(
+                Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                null,
+                tint = TextWhite.copy(0.3f),
+                modifier = Modifier.size(20.dp)
+            )
+        }
     }
 }
 
@@ -4615,6 +5019,20 @@ fun MetadataSyncContent(uiState: PlayerUiState, playerViewModel: PlayerViewModel
                 fontSize = 12.sp,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
             )
+
+            HorizontalDivider(color = Color.White.copy(0.05f), modifier = Modifier.padding(vertical = 8.dp))
+
+            DspToggleRow(
+                title = "No-Cache Streaming",
+                checked = uiState.streamingNoCacheEnabled,
+                onCheckedChange = { playerViewModel.setStreamingNoCacheEnabled(it) }
+            )
+            Text(
+                "Direct playback without saving songs to device storage. Recommended if you have limited storage but stable internet.",
+                color = Color.White.copy(0.5f),
+                fontSize = 12.sp,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+            )
         }
 
         SettingsSection(
@@ -4808,6 +5226,183 @@ fun NextcloudLoginDialog(
             TextButton(onClick = onDismiss) { Text("CANCEL", color = Color.White.copy(0.6f)) }
         }
     )
+}
+
+@Composable
+private fun AppearanceSliderRow(
+    title: String,
+    value: Float,
+    range: ClosedFloatingPointRange<Float>,
+    defaultValue: Float,
+    onValueChange: (Float) -> Unit
+) {
+    Column {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                title,
+                color = Color.White.copy(0.7f),
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    if (range.endInclusive > 10) value.toInt().toString() else "%.2f".format(value),
+                    color = PremiumAccent,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+        Slider(
+            value = value,
+            onValueChange = onValueChange,
+            valueRange = range,
+            colors = SliderDefaults.colors(
+                activeTrackColor = PremiumAccent,
+                inactiveTrackColor = Color.White.copy(0.05f),
+                thumbColor = PremiumAccent
+            ),
+            modifier = Modifier.height(32.dp)
+        )
+    }
+}
+
+@Composable
+fun BackgroundSettingsSection(
+    title: String,
+    subtitle: String,
+    backgroundMode: NowPlayingBackgroundMode,
+    solidIntensity: Float,
+    solidDarkness: Float,
+    blurIntensity: Float,
+    blurDarkness: Float,
+    isDefault: Boolean = true,
+    onModeChange: (NowPlayingBackgroundMode) -> Unit,
+    onSolidIntensityChange: (Float) -> Unit,
+    onSolidDarknessChange: (Float) -> Unit,
+    onBlurIntensityChange: (Float) -> Unit,
+    onBlurDarknessChange: (Float) -> Unit,
+    onReset: () -> Unit = {}
+) {
+    var expandedMode by remember { mutableStateOf(false) }
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+                    Text(
+                        title,
+                        color = Color.White,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        textAlign = TextAlign.Center
+                    )
+                    if (!isDefault && backgroundMode != NowPlayingBackgroundMode.BLACK) {
+                        Spacer(Modifier.width(10.dp))
+                        Surface(
+                            onClick = { onReset() },
+                            color = PremiumAccent.copy(alpha = 0.12f),
+                            shape = RoundedCornerShape(6.dp),
+                            border = BorderStroke(1.dp, PremiumAccent.copy(alpha = 0.3f))
+                        ) {
+                            Text(
+                                "DEFAULT",
+                                color = PremiumAccent,
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Black,
+                                letterSpacing = 0.5.sp,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                }
+                Text(
+                    subtitle,
+                    color = Color.White.copy(0.5f),
+                    fontSize = 11.sp,
+                    textAlign = TextAlign.Center
+                )
+            }
+        }
+
+        Box(modifier = Modifier.padding(top = 4.dp)) {
+            TextButton(
+                onClick = { expandedMode = true },
+                colors = ButtonDefaults.textButtonColors(contentColor = PremiumAccent)
+            ) {
+                Text(
+                    backgroundMode.name.lowercase().replaceFirstChar { it.uppercase() },
+                    fontWeight = FontWeight.Bold
+                )
+                Icon(Icons.Rounded.ArrowDropDown, null)
+            }
+            DropdownMenu(
+                expanded = expandedMode,
+                onDismissRequest = { expandedMode = false },
+                modifier = Modifier.background(CardSurface)
+            ) {
+                NowPlayingBackgroundMode.entries.forEach { mode ->
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                mode.name.lowercase().replaceFirstChar { it.uppercase() },
+                                color = if (backgroundMode == mode) PremiumAccent else Color.White
+                            )
+                        },
+                        onClick = {
+                            onModeChange(mode)
+                            expandedMode = false
+                        }
+                    )
+                }
+            }
+        }
+
+        // Conditional Sliders
+        when (backgroundMode) {
+            NowPlayingBackgroundMode.BLACK -> { /* No sliders */ }
+            NowPlayingBackgroundMode.SOLID -> {
+                AppearanceSliderRow(
+                    title = "Color Intensity",
+                    value = solidIntensity,
+                    range = 0f..1f,
+                    defaultValue = 0.6f,
+                    onValueChange = onSolidIntensityChange
+                )
+                AppearanceSliderRow(
+                    title = "Darkness",
+                    value = solidDarkness,
+                    range = 0f..1f,
+                    defaultValue = 0.4f,
+                    onValueChange = onSolidDarknessChange
+                )
+            }
+            NowPlayingBackgroundMode.BLUR -> {
+                AppearanceSliderRow(
+                    title = "Blur Intensity",
+                    value = blurIntensity,
+                    range = 10f..250f,
+                    defaultValue = 120f,
+                    onValueChange = onBlurIntensityChange
+                )
+                AppearanceSliderRow(
+                    title = "Darkness",
+                    value = blurDarkness,
+                    range = 0f..1f,
+                    defaultValue = 0.5f,
+                    onValueChange = onBlurDarknessChange
+                )
+            }
+        }
+    }
 }
 
 fun android.content.Context.findActivity(): android.app.Activity? = when (this) {

@@ -4,6 +4,7 @@ import android.net.Uri
 import com.beatraxus.app.model.OutputMode
 import com.beatraxus.app.repository.LyricsSource
 import com.beatraxus.app.telegram.AuthState
+import com.beatraxus.app.utils.DeviceUtils
 
 enum class SongSource { LOCAL, GDRIVE, WEB, TELEGRAM, DROPBOX, ONEDRIVE, BOX, NEXTCLOUD, SMB, FTP }
 
@@ -105,9 +106,43 @@ data class Playlist(
     val songIds: List<String> = emptyList()
 )
 
+enum class NowPlayingBackgroundMode { BLACK, SOLID, BLUR }
+
 data class AppearanceConfig(
-    val showMiniPlayer: Boolean = true,
-    val showNowPlayingBlurBackground: Boolean = true,
+    val nowPlayingBackgroundMode: NowPlayingBackgroundMode = if (DeviceUtils.isClassicDevice()) NowPlayingBackgroundMode.SOLID else NowPlayingBackgroundMode.BLUR,
+    val nowPlayingSolidColorIntensity: Float = 0.6f,
+    val nowPlayingSolidColorDarkness: Float = 0.4f,
+    val nowPlayingBlurIntensity: Float = 120f,
+    val nowPlayingBlurDarkness: Float = 0.5f,
+
+    // Main Screen Background
+    val mainBackgroundMode: NowPlayingBackgroundMode = if (DeviceUtils.isClassicDevice()) NowPlayingBackgroundMode.BLACK else NowPlayingBackgroundMode.BLUR,
+    val mainSolidColorIntensity: Float = 0.6f,
+    val mainSolidColorDarkness: Float = 0.4f,
+    val mainBlurIntensity: Float = 120f,
+    val mainBlurDarkness: Float = 0.5f,
+
+    // Home Screen Background
+    val homeBackgroundMode: NowPlayingBackgroundMode = if (DeviceUtils.isClassicDevice()) NowPlayingBackgroundMode.BLACK else NowPlayingBackgroundMode.BLUR,
+    val homeSolidColorIntensity: Float = 0.6f,
+    val homeSolidColorDarkness: Float = 0.4f,
+    val homeBlurIntensity: Float = 120f,
+    val homeBlurDarkness: Float = 0.5f,
+
+    // Settings Screen Background
+    val settingsBackgroundMode: NowPlayingBackgroundMode = if (DeviceUtils.isClassicDevice()) NowPlayingBackgroundMode.BLACK else NowPlayingBackgroundMode.BLUR,
+    val settingsSolidColorIntensity: Float = 0.6f,
+    val settingsSolidColorDarkness: Float = 0.4f,
+    val settingsBlurIntensity: Float = 120f,
+    val settingsBlurDarkness: Float = 0.5f,
+
+    // Mini Player Background
+    val miniPlayerBackgroundMode: NowPlayingBackgroundMode = if (DeviceUtils.isClassicDevice()) NowPlayingBackgroundMode.SOLID else NowPlayingBackgroundMode.BLUR,
+    val miniPlayerSolidColorIntensity: Float = 0.6f,
+    val miniPlayerSolidColorDarkness: Float = 0.4f,
+    val miniPlayerBlurIntensity: Float = 70f,
+    val miniPlayerBlurDarkness: Float = 0.5f,
+
     val showAudioQualityBadge: Boolean = true,
     val showAudioPipelineOverlay: Boolean = true,
     val showTechnicalInfoPanel: Boolean = true,
@@ -129,6 +164,13 @@ data class AppearanceConfig(
     val showEqualizerShortcut: Boolean = true,
     val showQueueButton: Boolean = true,
     val showSleepTimerIcon: Boolean = true,
+
+    // Home Screen Layout
+    val homeScreenSectionsOrder: List<String> = listOf(
+        "GREETING", "ACTION_CHIPS", "CLOUD_LIBRARY", "MOODS",
+        "MADE_FOR_YOU", "LISTEN_AGAIN", "RECENTLY_ADDED",
+        "YOUR_FAVORITES", "FEATURED_ALBUMS", "ARTISTS_YOU_LOVE", "YOUR_PLAYLISTS"
+    )
 )
 
 enum class AudioOutputDevice(val displayName: String) {
@@ -248,6 +290,7 @@ data class PlayerUiState(
     val bitDepth: Int = 16,
     val bitrate: Int = 0,
     val format: String = "",
+    val streamingNoCacheEnabled: Boolean = false,
     val pipelineOutputPath: String = "AudioTrack",
     val pipelineDvcEnabled: Boolean = false,
     val pipelineResamplerEnabled: Boolean = false,

@@ -5,6 +5,8 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.*
 import androidx.datastore.preferences.preferencesDataStore
 import com.beatraxus.app.model.AppearanceConfig
+import com.beatraxus.app.model.NowPlayingBackgroundMode
+import com.beatraxus.app.utils.DeviceUtils
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
@@ -14,9 +16,18 @@ class AppearancePreferences(context: Context) {
     private val dataStore = context.dataStore
 
     val appearanceConfig: Flow<AppearanceConfig> = dataStore.data.map { preferences ->
+        val isClassic = DeviceUtils.isClassicDevice()
+        val defaultMode = if (isClassic) NowPlayingBackgroundMode.BLACK.name else NowPlayingBackgroundMode.BLUR.name
+        val defaultNowPlayingMode = if (isClassic) NowPlayingBackgroundMode.SOLID.name else NowPlayingBackgroundMode.BLUR.name
+        
         AppearanceConfig(
-            showMiniPlayer = preferences[SHOW_MINI_PLAYER] ?: true,
-            showNowPlayingBlurBackground = preferences[SHOW_BLUR_BACKGROUND] ?: true,
+            nowPlayingBackgroundMode = NowPlayingBackgroundMode.valueOf(
+                preferences[NOW_PLAYING_BACKGROUND_MODE] ?: defaultNowPlayingMode
+            ),
+            nowPlayingSolidColorIntensity = preferences[SOLID_COLOR_INTENSITY] ?: 0.6f,
+            nowPlayingSolidColorDarkness = preferences[SOLID_COLOR_DARKNESS] ?: 0.4f,
+            nowPlayingBlurIntensity = preferences[BLUR_INTENSITY] ?: 120f,
+            nowPlayingBlurDarkness = preferences[BLUR_DARKNESS] ?: 0.5f,
             showAudioQualityBadge = preferences[SHOW_QUALITY_BADGE] ?: true,
             showAudioPipelineOverlay = preferences[SHOW_PIPELINE_OVERLAY] ?: true,
             showTechnicalInfoPanel = preferences[SHOW_TECHNICAL_INFO] ?: true,
@@ -37,16 +48,70 @@ class AppearancePreferences(context: Context) {
             showFavoriteButton = preferences[SHOW_FAVORITE_BUTTON] ?: true,
             showEqualizerShortcut = preferences[SHOW_EQUALIZER_SHORTCUT] ?: true,
             showQueueButton = preferences[SHOW_QUEUE_BUTTON] ?: true,
-            showSleepTimerIcon = preferences[SHOW_SLEEP_TIMER_ICON] ?: true
+            showSleepTimerIcon = preferences[SHOW_SLEEP_TIMER_ICON] ?: true,
+
+            // Main Screen Background
+            mainBackgroundMode = NowPlayingBackgroundMode.valueOf(
+                preferences[MAIN_BACKGROUND_MODE] ?: defaultMode
+            ),
+            mainSolidColorIntensity = preferences[MAIN_SOLID_COLOR_INTENSITY] ?: 0.6f,
+            mainSolidColorDarkness = preferences[MAIN_SOLID_COLOR_DARKNESS] ?: 0.4f,
+            mainBlurIntensity = preferences[MAIN_BLUR_INTENSITY] ?: 120f,
+            mainBlurDarkness = preferences[MAIN_BLUR_DARKNESS] ?: 0.5f,
+
+            // Home Screen Background
+            homeBackgroundMode = NowPlayingBackgroundMode.valueOf(
+                preferences[HOME_BACKGROUND_MODE] ?: defaultMode
+            ),
+            homeSolidColorIntensity = preferences[HOME_SOLID_COLOR_INTENSITY] ?: 0.6f,
+            homeSolidColorDarkness = preferences[HOME_SOLID_COLOR_DARKNESS] ?: 0.4f,
+            homeBlurIntensity = preferences[HOME_BLUR_INTENSITY] ?: 120f,
+            homeBlurDarkness = preferences[HOME_BLUR_DARKNESS] ?: 0.5f,
+
+            // Settings Screen Background
+            settingsBackgroundMode = NowPlayingBackgroundMode.valueOf(
+                preferences[SETTINGS_BACKGROUND_MODE] ?: defaultMode
+            ),
+            settingsSolidColorIntensity = preferences[SETTINGS_SOLID_COLOR_INTENSITY] ?: 0.6f,
+            settingsSolidColorDarkness = preferences[SETTINGS_SOLID_COLOR_DARKNESS] ?: 0.4f,
+            settingsBlurIntensity = preferences[SETTINGS_BLUR_INTENSITY] ?: 120f,
+            settingsBlurDarkness = preferences[SETTINGS_BLUR_DARKNESS] ?: 0.5f,
+
+            // Mini Player Background
+            miniPlayerBackgroundMode = NowPlayingBackgroundMode.valueOf(
+                preferences[MINI_PLAYER_BACKGROUND_MODE] ?: defaultNowPlayingMode
+            ),
+            miniPlayerSolidColorIntensity = preferences[MINI_PLAYER_SOLID_COLOR_INTENSITY] ?: 0.6f,
+            miniPlayerSolidColorDarkness = preferences[MINI_PLAYER_SOLID_COLOR_DARKNESS] ?: 0.4f,
+            miniPlayerBlurIntensity = preferences[MINI_PLAYER_BLUR_INTENSITY] ?: 70f,
+            miniPlayerBlurDarkness = preferences[MINI_PLAYER_BLUR_DARKNESS] ?: 0.5f,
+
+            homeScreenSectionsOrder = preferences[HOME_SCREEN_SECTIONS_ORDER]?.split(",")?.filter { it.isNotBlank() } ?: listOf(
+                "GREETING", "ACTION_CHIPS", "CLOUD_LIBRARY", "MOODS",
+                "MADE_FOR_YOU", "LISTEN_AGAIN", "RECENTLY_ADDED",
+                "YOUR_FAVORITES", "FEATURED_ALBUMS", "ARTISTS_YOU_LOVE", "YOUR_PLAYLISTS"
+            )
         )
     }
 
-    suspend fun setShowMiniPlayer(value: Boolean) {
-        dataStore.edit { it[SHOW_MINI_PLAYER] = value }
+    suspend fun setNowPlayingBackgroundMode(mode: NowPlayingBackgroundMode) {
+        dataStore.edit { it[NOW_PLAYING_BACKGROUND_MODE] = mode.name }
     }
 
-    suspend fun setShowNowPlayingBlurBackground(value: Boolean) {
-        dataStore.edit { it[SHOW_BLUR_BACKGROUND] = value }
+    suspend fun setNowPlayingSolidColorIntensity(value: Float) {
+        dataStore.edit { it[SOLID_COLOR_INTENSITY] = value }
+    }
+
+    suspend fun setNowPlayingSolidColorDarkness(value: Float) {
+        dataStore.edit { it[SOLID_COLOR_DARKNESS] = value }
+    }
+
+    suspend fun setNowPlayingBlurIntensity(value: Float) {
+        dataStore.edit { it[BLUR_INTENSITY] = value }
+    }
+
+    suspend fun setNowPlayingBlurDarkness(value: Float) {
+        dataStore.edit { it[BLUR_DARKNESS] = value }
     }
 
     suspend fun setShowAudioQualityBadge(value: Boolean) {
@@ -119,9 +184,145 @@ class AppearancePreferences(context: Context) {
         dataStore.edit { it[SHOW_SLEEP_TIMER_ICON] = value }
     }
 
+    // Main Screen Background Setters
+    suspend fun setMainBackgroundMode(mode: NowPlayingBackgroundMode) {
+        dataStore.edit { it[MAIN_BACKGROUND_MODE] = mode.name }
+    }
+
+    suspend fun setMainSolidColorIntensity(value: Float) {
+        dataStore.edit { it[MAIN_SOLID_COLOR_INTENSITY] = value }
+    }
+
+    suspend fun setMainSolidColorDarkness(value: Float) {
+        dataStore.edit { it[MAIN_SOLID_COLOR_DARKNESS] = value }
+    }
+
+    suspend fun setMainBlurIntensity(value: Float) {
+        dataStore.edit { it[MAIN_BLUR_INTENSITY] = value }
+    }
+
+    suspend fun setMainBlurDarkness(value: Float) {
+        dataStore.edit { it[MAIN_BLUR_DARKNESS] = value }
+    }
+
+    // Home Screen Background Setters
+    suspend fun setHomeBackgroundMode(mode: NowPlayingBackgroundMode) {
+        dataStore.edit { it[HOME_BACKGROUND_MODE] = mode.name }
+    }
+
+    suspend fun setHomeSolidColorIntensity(value: Float) {
+        dataStore.edit { it[HOME_SOLID_COLOR_INTENSITY] = value }
+    }
+
+    suspend fun setHomeSolidColorDarkness(value: Float) {
+        dataStore.edit { it[HOME_SOLID_COLOR_DARKNESS] = value }
+    }
+
+    suspend fun setHomeBlurIntensity(value: Float) {
+        dataStore.edit { it[HOME_BLUR_INTENSITY] = value }
+    }
+
+    suspend fun setHomeBlurDarkness(value: Float) {
+        dataStore.edit { it[HOME_BLUR_DARKNESS] = value }
+    }
+
+    // Settings Screen Background Setters
+    suspend fun setSettingsBackgroundMode(mode: NowPlayingBackgroundMode) {
+        dataStore.edit { it[SETTINGS_BACKGROUND_MODE] = mode.name }
+    }
+
+    suspend fun setSettingsSolidColorIntensity(value: Float) {
+        dataStore.edit { it[SETTINGS_SOLID_COLOR_INTENSITY] = value }
+    }
+
+    suspend fun setSettingsSolidColorDarkness(value: Float) {
+        dataStore.edit { it[SETTINGS_SOLID_COLOR_DARKNESS] = value }
+    }
+
+    suspend fun setSettingsBlurIntensity(value: Float) {
+        dataStore.edit { it[SETTINGS_BLUR_INTENSITY] = value }
+    }
+
+    suspend fun setSettingsBlurDarkness(value: Float) {
+        dataStore.edit { it[SETTINGS_BLUR_DARKNESS] = value }
+    }
+
+    // Mini Player Background Setters
+    suspend fun setMiniPlayerBackgroundMode(mode: NowPlayingBackgroundMode) {
+        dataStore.edit { it[MINI_PLAYER_BACKGROUND_MODE] = mode.name }
+    }
+
+    suspend fun setMiniPlayerSolidColorIntensity(value: Float) {
+        dataStore.edit { it[MINI_PLAYER_SOLID_COLOR_INTENSITY] = value }
+    }
+
+    suspend fun setMiniPlayerSolidColorDarkness(value: Float) {
+        dataStore.edit { it[MINI_PLAYER_SOLID_COLOR_DARKNESS] = value }
+    }
+
+    suspend fun setMiniPlayerBlurIntensity(value: Float) {
+        dataStore.edit { it[MINI_PLAYER_BLUR_INTENSITY] = value }
+    }
+
+    suspend fun setMiniPlayerBlurDarkness(value: Float) {
+        dataStore.edit { it[MINI_PLAYER_BLUR_DARKNESS] = value }
+    }
+
+    suspend fun setHomeScreenSectionsOrder(order: List<String>) {
+        dataStore.edit { it[HOME_SCREEN_SECTIONS_ORDER] = order.joinToString(",") }
+    }
+
+    suspend fun resetNowPlayingBackground() {
+        dataStore.edit {
+            it[SOLID_COLOR_INTENSITY] = 0.6f
+            it[SOLID_COLOR_DARKNESS] = 0.4f
+            it[BLUR_INTENSITY] = 120f
+            it[BLUR_DARKNESS] = 0.5f
+        }
+    }
+
+    suspend fun resetMainBackground() {
+        dataStore.edit {
+            it[MAIN_SOLID_COLOR_INTENSITY] = 0.6f
+            it[MAIN_SOLID_COLOR_DARKNESS] = 0.4f
+            it[MAIN_BLUR_INTENSITY] = 120f
+            it[MAIN_BLUR_DARKNESS] = 0.5f
+        }
+    }
+
+    suspend fun resetHomeBackground() {
+        dataStore.edit {
+            it[HOME_SOLID_COLOR_INTENSITY] = 0.6f
+            it[HOME_SOLID_COLOR_DARKNESS] = 0.4f
+            it[HOME_BLUR_INTENSITY] = 120f
+            it[HOME_BLUR_DARKNESS] = 0.5f
+        }
+    }
+
+    suspend fun resetSettingsBackground() {
+        dataStore.edit {
+            it[SETTINGS_SOLID_COLOR_INTENSITY] = 0.6f
+            it[SETTINGS_SOLID_COLOR_DARKNESS] = 0.4f
+            it[SETTINGS_BLUR_INTENSITY] = 120f
+            it[SETTINGS_BLUR_DARKNESS] = 0.5f
+        }
+    }
+
+    suspend fun resetMiniPlayerBackground() {
+        dataStore.edit {
+            it[MINI_PLAYER_SOLID_COLOR_INTENSITY] = 0.6f
+            it[MINI_PLAYER_SOLID_COLOR_DARKNESS] = 0.4f
+            it[MINI_PLAYER_BLUR_INTENSITY] = 70f
+            it[MINI_PLAYER_BLUR_DARKNESS] = 0.5f
+        }
+    }
+
     companion object {
-        private val SHOW_MINI_PLAYER = booleanPreferencesKey("show_mini_player")
-        private val SHOW_BLUR_BACKGROUND = booleanPreferencesKey("show_blur_background")
+        private val NOW_PLAYING_BACKGROUND_MODE = stringPreferencesKey("now_playing_background_mode")
+        private val SOLID_COLOR_INTENSITY = floatPreferencesKey("solid_color_intensity")
+        private val SOLID_COLOR_DARKNESS = floatPreferencesKey("solid_color_darkness")
+        private val BLUR_INTENSITY = floatPreferencesKey("blur_intensity")
+        private val BLUR_DARKNESS = floatPreferencesKey("blur_darkness")
         private val SHOW_QUALITY_BADGE = booleanPreferencesKey("show_quality_badge")
         private val SHOW_PIPELINE_OVERLAY = booleanPreferencesKey("show_pipeline_overlay")
         private val SHOW_TECHNICAL_INFO = booleanPreferencesKey("show_technical_info")
@@ -143,5 +344,35 @@ class AppearancePreferences(context: Context) {
         private val SHOW_EQUALIZER_SHORTCUT = booleanPreferencesKey("show_equalizer_shortcut")
         private val SHOW_QUEUE_BUTTON = booleanPreferencesKey("show_queue_button")
         private val SHOW_SLEEP_TIMER_ICON = booleanPreferencesKey("show_sleep_timer_icon")
+
+        // Main Screen Background
+        private val MAIN_BACKGROUND_MODE = stringPreferencesKey("main_background_mode")
+        private val MAIN_SOLID_COLOR_INTENSITY = floatPreferencesKey("main_solid_color_intensity")
+        private val MAIN_SOLID_COLOR_DARKNESS = floatPreferencesKey("main_solid_color_darkness")
+        private val MAIN_BLUR_INTENSITY = floatPreferencesKey("main_blur_intensity")
+        private val MAIN_BLUR_DARKNESS = floatPreferencesKey("main_blur_darkness")
+
+        // Home Screen Background
+        private val HOME_BACKGROUND_MODE = stringPreferencesKey("home_background_mode")
+        private val HOME_SOLID_COLOR_INTENSITY = floatPreferencesKey("home_solid_color_intensity")
+        private val HOME_SOLID_COLOR_DARKNESS = floatPreferencesKey("home_solid_color_darkness")
+        private val HOME_BLUR_INTENSITY = floatPreferencesKey("home_blur_intensity")
+        private val HOME_BLUR_DARKNESS = floatPreferencesKey("home_blur_darkness")
+
+        // Settings Screen Background
+        private val SETTINGS_BACKGROUND_MODE = stringPreferencesKey("settings_background_mode")
+        private val SETTINGS_SOLID_COLOR_INTENSITY = floatPreferencesKey("settings_solid_color_intensity")
+        private val SETTINGS_SOLID_COLOR_DARKNESS = floatPreferencesKey("settings_solid_color_darkness")
+        private val SETTINGS_BLUR_INTENSITY = floatPreferencesKey("settings_blur_intensity")
+        private val SETTINGS_BLUR_DARKNESS = floatPreferencesKey("settings_blur_darkness")
+
+        // Mini Player Background
+        private val MINI_PLAYER_BACKGROUND_MODE = stringPreferencesKey("mini_player_background_mode")
+        private val MINI_PLAYER_SOLID_COLOR_INTENSITY = floatPreferencesKey("mini_player_solid_color_intensity")
+        private val MINI_PLAYER_SOLID_COLOR_DARKNESS = floatPreferencesKey("mini_player_solid_color_darkness")
+        private val MINI_PLAYER_BLUR_INTENSITY = floatPreferencesKey("mini_player_blur_intensity")
+        private val MINI_PLAYER_BLUR_DARKNESS = floatPreferencesKey("mini_player_blur_darkness")
+
+        private val HOME_SCREEN_SECTIONS_ORDER = stringPreferencesKey("home_screen_sections_order")
     }
 }

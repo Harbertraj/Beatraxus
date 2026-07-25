@@ -180,6 +180,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         syncQuality = SyncQuality.valueOf(prefs.getString("sync_quality", SyncQuality.MEDIUM.name) ?: SyncQuality.MEDIUM.name),
         backgroundSyncEnabled = prefs.getBoolean("background_sync_enabled", true),
         scrobblingEnabled = prefs.getBoolean("scrobbling_enabled", true),
+        streamingNoCacheEnabled = prefs.getBoolean("streaming_no_cache_enabled", false),
         gdriveAllowedFormats = prefs.getStringSet("gdrive_allowed_formats", emptySet()) ?: emptySet(),
         telegramAllowedFormats = prefs.getStringSet("telegram_allowed_formats", emptySet()) ?: emptySet(),
         shuffleMode = prefs.getBoolean("last_shuffle_mode", false),
@@ -814,6 +815,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             _songs.value.filter { it.source == SongSource.LOCAL && it.year == 0 }
                 .forEach { yearEnrichmentChannel.send(it) }
         }
+
+        // Initialize CloudCacheManager with no-cache setting
+        cloudCacheManager.setNoCacheEnabled(_uiState.value.streamingNoCacheEnabled)
     }
 
     private fun checkBatteryOptimizations() {
@@ -1054,7 +1058,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     }
                     
                     if (cacheWiped) {
-                        startFullScan()
+                        quickScan()
                         return@launch
                     }
                     
@@ -2619,7 +2623,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             musicRepository.addMusicFolder(uri)
             _uiState.update { it.copy(triggerFolderPicker = false, musicFolders = musicRepository.getMusicFolders()) }
             if (!_uiState.value.isFirstRun) {
-                startFullScan()
+                quickScan()
             }
         }
     }
@@ -2678,6 +2682,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun setDataSaverEnabled(enabled: Boolean) {
         prefs.edit().putBoolean("data_saver_enabled", enabled).apply()
         _uiState.update { it.copy(dataSaverEnabled = enabled) }
+    }
+
+    fun setStreamingNoCacheEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean("streaming_no_cache_enabled", enabled).apply()
+        _uiState.update { it.copy(streamingNoCacheEnabled = enabled) }
+        cloudCacheManager.setNoCacheEnabled(enabled)
     }
 
     fun setArtworkEnrichmentEnabled(enabled: Boolean) {
@@ -4083,15 +4093,187 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         _uiState.update { it.copy(scrobblingEnabled = enabled) }
     }
 
-    fun setShowMiniPlayer(value: Boolean) {
+    fun setNowPlayingBackgroundMode(mode: com.beatraxus.app.model.NowPlayingBackgroundMode) {
         viewModelScope.launch {
-            appearancePreferences.setShowMiniPlayer(value)
+            appearancePreferences.setNowPlayingBackgroundMode(mode)
         }
     }
 
-    fun setShowNowPlayingBlurBackground(value: Boolean) {
+    fun setNowPlayingSolidColorIntensity(value: Float) {
         viewModelScope.launch {
-            appearancePreferences.setShowNowPlayingBlurBackground(value)
+            appearancePreferences.setNowPlayingSolidColorIntensity(value)
+        }
+    }
+
+    fun setNowPlayingSolidColorDarkness(value: Float) {
+        viewModelScope.launch {
+            appearancePreferences.setNowPlayingSolidColorDarkness(value)
+        }
+    }
+
+    fun setNowPlayingBlurIntensity(value: Float) {
+        viewModelScope.launch {
+            appearancePreferences.setNowPlayingBlurIntensity(value)
+        }
+    }
+
+    fun setNowPlayingBlurDarkness(value: Float) {
+        viewModelScope.launch {
+            appearancePreferences.setNowPlayingBlurDarkness(value)
+        }
+    }
+
+    // Main Screen Background Setters
+    fun setMainBackgroundMode(mode: com.beatraxus.app.model.NowPlayingBackgroundMode) {
+        viewModelScope.launch {
+            appearancePreferences.setMainBackgroundMode(mode)
+        }
+    }
+
+    fun setMainSolidColorIntensity(value: Float) {
+        viewModelScope.launch {
+            appearancePreferences.setMainSolidColorIntensity(value)
+        }
+    }
+
+    fun setMainSolidColorDarkness(value: Float) {
+        viewModelScope.launch {
+            appearancePreferences.setMainSolidColorDarkness(value)
+        }
+    }
+
+    fun setMainBlurIntensity(value: Float) {
+        viewModelScope.launch {
+            appearancePreferences.setMainBlurIntensity(value)
+        }
+    }
+
+    fun setMainBlurDarkness(value: Float) {
+        viewModelScope.launch {
+            appearancePreferences.setMainBlurDarkness(value)
+        }
+    }
+
+    // Home Screen Background Setters
+    fun setHomeBackgroundMode(mode: com.beatraxus.app.model.NowPlayingBackgroundMode) {
+        viewModelScope.launch {
+            appearancePreferences.setHomeBackgroundMode(mode)
+        }
+    }
+
+    fun setHomeSolidColorIntensity(value: Float) {
+        viewModelScope.launch {
+            appearancePreferences.setHomeSolidColorIntensity(value)
+        }
+    }
+
+    fun setHomeSolidColorDarkness(value: Float) {
+        viewModelScope.launch {
+            appearancePreferences.setHomeSolidColorDarkness(value)
+        }
+    }
+
+    fun setHomeBlurIntensity(value: Float) {
+        viewModelScope.launch {
+            appearancePreferences.setHomeBlurIntensity(value)
+        }
+    }
+
+    fun setHomeBlurDarkness(value: Float) {
+        viewModelScope.launch {
+            appearancePreferences.setHomeBlurDarkness(value)
+        }
+    }
+
+    // Settings Screen Background Setters
+    fun setSettingsBackgroundMode(mode: com.beatraxus.app.model.NowPlayingBackgroundMode) {
+        viewModelScope.launch {
+            appearancePreferences.setSettingsBackgroundMode(mode)
+        }
+    }
+
+    fun setSettingsSolidColorIntensity(value: Float) {
+        viewModelScope.launch {
+            appearancePreferences.setSettingsSolidColorIntensity(value)
+        }
+    }
+
+    fun setSettingsSolidColorDarkness(value: Float) {
+        viewModelScope.launch {
+            appearancePreferences.setSettingsSolidColorDarkness(value)
+        }
+    }
+
+    fun setSettingsBlurIntensity(value: Float) {
+        viewModelScope.launch {
+            appearancePreferences.setSettingsBlurIntensity(value)
+        }
+    }
+
+    fun setSettingsBlurDarkness(value: Float) {
+        viewModelScope.launch {
+            appearancePreferences.setSettingsBlurDarkness(value)
+        }
+    }
+
+    // Mini Player Background Setters
+    fun setMiniPlayerBackgroundMode(mode: com.beatraxus.app.model.NowPlayingBackgroundMode) {
+        viewModelScope.launch {
+            appearancePreferences.setMiniPlayerBackgroundMode(mode)
+        }
+    }
+
+    fun setMiniPlayerSolidColorIntensity(value: Float) {
+        viewModelScope.launch {
+            appearancePreferences.setMiniPlayerSolidColorIntensity(value)
+        }
+    }
+
+    fun setMiniPlayerSolidColorDarkness(value: Float) {
+        viewModelScope.launch {
+            appearancePreferences.setMiniPlayerSolidColorDarkness(value)
+        }
+    }
+
+    fun setMiniPlayerBlurIntensity(value: Float) {
+        viewModelScope.launch {
+            appearancePreferences.setMiniPlayerBlurIntensity(value)
+        }
+    }
+
+    fun setMiniPlayerBlurDarkness(value: Float) {
+        viewModelScope.launch {
+            appearancePreferences.setMiniPlayerBlurDarkness(value)
+        }
+    }
+
+    fun resetNowPlayingBackground() {
+        viewModelScope.launch {
+            appearancePreferences.resetNowPlayingBackground()
+        }
+    }
+
+    fun resetMainBackground() {
+        viewModelScope.launch {
+            appearancePreferences.resetMainBackground()
+        }
+    }
+
+    fun resetHomeBackground() {
+        viewModelScope.launch {
+            appearancePreferences.resetHomeBackground()
+        }
+    }
+
+    fun resetSettingsBackground() {
+        viewModelScope.launch {
+            appearancePreferences.resetSettingsBackground()
+        }
+    }
+
+    fun resetMiniPlayerBackground() {
+        viewModelScope.launch {
+            appearancePreferences.resetMiniPlayerBackground()
         }
     }
 
@@ -4196,6 +4378,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun setShowSleepTimerIcon(value: Boolean) {
         viewModelScope.launch {
             appearancePreferences.setShowSleepTimerIcon(value)
+        }
+    }
+
+    fun setHomeScreenSectionsOrder(order: List<String>) {
+        viewModelScope.launch {
+            appearancePreferences.setHomeScreenSectionsOrder(order)
         }
     }
 

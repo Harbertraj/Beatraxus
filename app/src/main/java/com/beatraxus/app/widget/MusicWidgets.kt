@@ -54,7 +54,7 @@ class MusicWidgetSmall : GlanceAppWidget() {
     override suspend fun provideGlance(context: Context, id: GlanceId) {
         val prefs = getAppWidgetState(context, PreferencesGlanceStateDefinition, id)
         val albumArtUri = prefs[MusicWidgetKeys.ALBUM_ART_URI] ?: ""
-        val artProvider = getImageProvider(context, albumArtUri)
+        val artProvider = getImageProvider(context, id, albumArtUri)
         val hasArt = albumArtUri.isNotEmpty()
 
         provideContent {
@@ -82,7 +82,7 @@ class MusicWidgetMedium : GlanceAppWidget() {
     override suspend fun provideGlance(context: Context, id: GlanceId) {
         val prefs = getAppWidgetState(context, PreferencesGlanceStateDefinition, id)
         val albumArtUri = prefs[MusicWidgetKeys.ALBUM_ART_URI] ?: ""
-        val artProvider = getImageProvider(context, albumArtUri)
+        val artProvider = getImageProvider(context, id, albumArtUri)
         val hasArt = albumArtUri.isNotEmpty()
 
         provideContent {
@@ -110,7 +110,7 @@ class MusicWidgetLarge : GlanceAppWidget() {
     override suspend fun provideGlance(context: Context, id: GlanceId) {
         val prefs = getAppWidgetState(context, PreferencesGlanceStateDefinition, id)
         val albumArtUri = prefs[MusicWidgetKeys.ALBUM_ART_URI] ?: ""
-        val artProvider = getImageProvider(context, albumArtUri)
+        val artProvider = getImageProvider(context, id, albumArtUri)
         val hasArt = albumArtUri.isNotEmpty()
 
         provideContent {
@@ -404,16 +404,14 @@ private fun fixedColorProvider(color: Color): ColorProvider = object : ColorProv
     override fun getColor(context: Context): Color = color
 }
 
-private var lastAlbumArtUri: String? = null
-private var lastImageProvider: ImageProvider? = null
+private val imageProviderCache = java.util.concurrent.ConcurrentHashMap<GlanceId, Pair<String, ImageProvider>>()
 
-private suspend fun getImageProvider(context: Context, uriString: String): ImageProvider {
+private suspend fun getImageProvider(context: Context, id: GlanceId, uriString: String): ImageProvider {
     if (uriString.isEmpty()) return ImageProvider(ImageUtils.getDefaultAlbumArtRes())
     
-    synchronized(MusicWidgetKeys) {
-        if (uriString == lastAlbumArtUri && lastImageProvider != null) {
-            return lastImageProvider!!
-        }
+    val cached = imageProviderCache[id]
+    if (cached != null && cached.first == uriString) {
+        return cached.second
     }
 
     return withContext(Dispatchers.IO) {
@@ -450,10 +448,7 @@ private suspend fun getImageProvider(context: Context, uriString: String): Image
                 } else ImageProvider(ImageUtils.getDefaultAlbumArtRes())
             } ?: ImageProvider(ImageUtils.getDefaultAlbumArtRes())
             
-            synchronized(MusicWidgetKeys) {
-                lastAlbumArtUri = uriString
-                lastImageProvider = result
-            }
+            imageProviderCache[id] = uriString to result
             result
         } catch (e: Exception) {
             ImageProvider(ImageUtils.getDefaultAlbumArtRes())
