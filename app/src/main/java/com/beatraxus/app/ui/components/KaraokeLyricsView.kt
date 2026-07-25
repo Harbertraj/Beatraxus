@@ -436,23 +436,28 @@ fun SyncedLyricLine(
         label = "upwardMovement"
     )
 
-    // Generate word timings if they don't exist to support word-by-word highlighting
-    val words = remember(line.text, line.wordTimings, line.duration) {
-        line.wordTimings ?: run {
-            val wordsList = line.text.split(Regex("\\s+")).filter { it.isNotBlank() }
-            if (wordsList.isEmpty()) return@run emptyList<WordTiming>()
-            
-            val totalDuration = if (line.duration > 0) line.duration else 3000L
-            val wordDuration = totalDuration / wordsList.size
-            wordsList.mapIndexed { index, text ->
-                WordTiming(
-                    startTime = line.startTime + (index * wordDuration),
-                    duration = wordDuration,
-                    text = text
-                )
-            }
+    // Generate sub-line data to handle explicit newlines and sequential fill
+    val subLines = remember(line.text, line.duration) {
+        val totalDuration = if (line.duration > 0) line.duration else 3000L
+        val rawSubLines = line.text.split("\n").filter { it.isNotBlank() }
+        
+        val totalChars = rawSubLines.sumOf { it.length }.coerceAtLeast(1)
+        var elapsed = 0L
+        rawSubLines.map { text ->
+            val lineDuration = (totalDuration * text.length / totalChars)
+            val startTime = elapsed
+            elapsed += lineDuration
+            Triple(text, startTime, lineDuration)
         }
     }
+
+    val baseStyle = MaterialTheme.typography.headlineMedium.copy(
+        fontWeight = FontWeight.ExtraBold,
+        fontSize = 24.sp,
+        lineHeight = 30.sp,
+        textAlign = TextAlign.Start,
+        letterSpacing = (-0.5).sp
+    )
 
     Column(
         modifier = Modifier
@@ -473,56 +478,36 @@ fun SyncedLyricLine(
             )
     ) {
         if (isCurrent) {
-            // Enhanced Smooth Fill Flow for the current line
-            val lineDuration = remember(line.duration) { 
-                if (line.duration > 0) line.duration else 3000L 
-            }
-            val lineProgress = (progressInLine.toFloat() / lineDuration).coerceIn(0f, 1f)
-
-            if (isWordByWord && words.isNotEmpty()) {
-                BouncyWordByWordFlow(
-                    wordTimings = words,
-                    progressInLine = progressInLine,
-                    lineStartTime = line.startTime,
-                    isWordByWord = true
-                )
-            } else {
-                // Line-by-line smooth fill flow (Karaoke-style)
-                val edgeWidth = 0.2f
-                val start = (lineProgress - edgeWidth).coerceAtLeast(0f)
-                val end = (lineProgress + edgeWidth).coerceAtMost(1f)
+            // Sequential Smooth Fill Flow (Old Style)
+            subLines.forEach { (text, relStart, duration) ->
+                val subLineProgress = ((progressInLine - relStart).toFloat() / duration).coerceIn(0f, 1f)
                 
-                val fillBrush = Brush.horizontalGradient(
-                    0.0f to Color.White,
-                    start to Color.White,
-                    lineProgress to Color.White.copy(alpha = 0.85f),
-                    end to Color.White.copy(alpha = 0.35f),
-                    1.0f to Color.White.copy(alpha = 0.35f)
-                )
+                val fillBrush = if (subLineProgress > 0f && subLineProgress < 1f) {
+                    val edgeWidth = 0.2f
+                    val start = (subLineProgress - edgeWidth).coerceAtLeast(0f)
+                    val end = (subLineProgress + edgeWidth).coerceAtMost(1f)
+                    
+                    Brush.horizontalGradient(
+                        0.0f to Color.White,
+                        start to Color.White,
+                        subLineProgress to Color.White.copy(alpha = 0.85f),
+                        end to Color.White.copy(alpha = 0.35f),
+                        1.0f to Color.White.copy(alpha = 0.35f)
+                    )
+                } else null
 
                 Text(
-                    text = line.text,
-                    style = MaterialTheme.typography.headlineMedium.copy(
-                        fontWeight = FontWeight.ExtraBold,
-                        fontSize = 24.sp,
-                        lineHeight = 30.sp,
-                        textAlign = TextAlign.Start,
-                        letterSpacing = (-0.5).sp,
-                        brush = fillBrush
-                    ),
-                    color = Color.Unspecified
+                    text = text,
+                    style = baseStyle.copy(brush = fillBrush),
+                    color = if (fillBrush != null) Color.Unspecified 
+                            else if (subLineProgress >= 1f) Color.White 
+                            else Color.White.copy(alpha = 0.35f)
                 )
             }
         } else {
             Text(
                 text = line.text,
-                style = MaterialTheme.typography.headlineMedium.copy(
-                    fontWeight = FontWeight.ExtraBold,
-                    fontSize = 24.sp,
-                    lineHeight = 30.sp,
-                    textAlign = TextAlign.Start,
-                    letterSpacing = (-0.5).sp
-                ),
+                style = baseStyle,
                 color = Color.White
             )
         }
