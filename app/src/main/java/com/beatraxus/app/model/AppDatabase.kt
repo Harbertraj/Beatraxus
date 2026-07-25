@@ -8,6 +8,7 @@ import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
+import androidx.room.TypeConverters
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -55,7 +56,17 @@ interface RecentlyPlayedDao {
     suspend fun removeRecentlyPlayed(songId: String)
 }
 
-@Database(entities = [PlaylistEntity::class, FavoriteEntity::class, SongEntity::class, RecentlyPlayedEntity::class, LyricsEntity::class, FolderEntity::class, AiAnalysisEntity::class, ArtistArtEntity::class, SongQualityEntity::class], version = 18, exportSchema = false)
+@Database(
+    entities = [
+        PlaylistEntity::class, FavoriteEntity::class, SongEntity::class, RecentlyPlayedEntity::class,
+        LyricsEntity::class, FolderEntity::class, AiAnalysisEntity::class, ArtistArtEntity::class,
+        SongQualityEntity::class, BookmarkEntity::class, ChapterEntity::class, HighlightEntity::class,
+        LoudnessEntity::class
+    ],
+    version = 19,
+    exportSchema = false
+)
+@TypeConverters(Converters::class)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun playlistDao(): PlaylistDao
     abstract fun favoriteDao(): FavoriteDao
@@ -66,6 +77,10 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun aiAnalysisDao(): AiAnalysisDao
     abstract fun artistArtDao(): ArtistArtDao
     abstract fun songQualityDao(): SongQualityDao
+    abstract fun bookmarkDao(): BookmarkDao
+    abstract fun chapterDao(): ChapterDao
+    abstract fun highlightDao(): HighlightDao
+    abstract fun loudnessDao(): LoudnessDao
 
     companion object {
         val MIGRATION_11_12 = object : Migration(11, 12) {
@@ -142,6 +157,52 @@ abstract class AppDatabase : RoomDatabase() {
         val MIGRATION_17_18 = object : Migration(17, 18) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE songs ADD COLUMN lyricsOffsetMs INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        val MIGRATION_18_19 = object : Migration(18, 19) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS bookmarks (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        songId TEXT NOT NULL,
+                        timeMs INTEGER NOT NULL,
+                        label TEXT NOT NULL,
+                        createdAt INTEGER NOT NULL,
+                        FOREIGN KEY(songId) REFERENCES songs(id) ON UPDATE NO ACTION ON DELETE CASCADE)
+                """.trimIndent())
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_bookmarks_songId ON bookmarks(songId)")
+
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS chapters (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        songId TEXT NOT NULL,
+                        startMs INTEGER NOT NULL,
+                        label TEXT NOT NULL,
+                        color INTEGER NOT NULL,
+                        FOREIGN KEY(songId) REFERENCES songs(id) ON UPDATE NO ACTION ON DELETE CASCADE)
+                """.trimIndent())
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_chapters_songId ON chapters(songId)")
+
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS highlights (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        songId TEXT NOT NULL,
+                        timeMs INTEGER NOT NULL,
+                        type TEXT NOT NULL,
+                        label TEXT NOT NULL,
+                        FOREIGN KEY(songId) REFERENCES songs(id) ON UPDATE NO ACTION ON DELETE CASCADE)
+                """.trimIndent())
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_highlights_songId ON highlights(songId)")
+
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS loudness_cache (
+                        songId TEXT NOT NULL PRIMARY KEY,
+                        data TEXT NOT NULL,
+                        lastAnalyzed INTEGER NOT NULL,
+                        FOREIGN KEY(songId) REFERENCES songs(id) ON UPDATE NO ACTION ON DELETE CASCADE)
+                """.trimIndent())
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_loudness_cache_songId ON loudness_cache(songId)")
             }
         }
     }

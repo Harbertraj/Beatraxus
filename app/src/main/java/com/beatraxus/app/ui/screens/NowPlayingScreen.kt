@@ -68,7 +68,7 @@ import com.beatraxus.app.R
 import com.beatraxus.app.model.NowPlayingBackgroundMode
 import com.beatraxus.app.model.Song
 import com.beatraxus.app.model.SongSource
-import com.beatraxus.app.ui.components.WaveformSeekBar
+import com.beatraxus.app.ui.components.seekbars.AppSeekBar
 import com.beatraxus.app.ui.components.KaraokeLyricsView
 import com.beatraxus.app.ui.components.PremiumSwitch
 import com.beatraxus.app.ui.components.SongInfoDialog
@@ -682,7 +682,9 @@ fun NowPlayingScreen(
                                         progressMs = progressMs,
                                         durationMs = durationMs,
                                         onSeek = onSeek,
-                                        songId = song.id
+                                        songId = song.id,
+                                        uiState = uiState,
+                                        dominantColor = currentDominantColor
                                     )
                                 }
                             }
@@ -713,7 +715,9 @@ fun NowPlayingScreen(
                                     durationMs = durationMs,
                                     onSeek = onSeek,
                                     songId = song.id,
-                                    showLyrics = showLyrics
+                                    showLyrics = showLyrics,
+                                    uiState = uiState,
+                                    dominantColor = currentDominantColor
                                 )
                             }
                             
@@ -1185,7 +1189,9 @@ private fun LyricsProgressSeekBar(
     progressMs: () -> Long,
     durationMs: Long,
     onSeek: (Long) -> Unit,
-    songId: String
+    songId: String,
+    uiState: com.beatraxus.app.model.PlayerUiState,
+    dominantColor: Color
 ) {
     val progress = if (durationMs > 0) {
         (progressMs().toFloat() / durationMs).coerceIn(0f, 1f)
@@ -1197,7 +1203,8 @@ private fun LyricsProgressSeekBar(
         label = "seekHeight"
     )
 
-    WaveformSeekBar(
+    AppSeekBar(
+        style = uiState.appearance.seekbarStyle,
         progress = progress,
         onProgressChange = { },
         onProgressFinished = {
@@ -1205,10 +1212,16 @@ private fun LyricsProgressSeekBar(
         },
         modifier = Modifier
             .fillMaxWidth()
-            .height(seekHeight),
+            .height(24.dp),
         activeColor = Color.White,
         inactiveColor = Color.White.copy(0.2f),
-        seed = songId.hashCode()
+        seed = songId.hashCode(),
+        dominantColor = dominantColor,
+        durationMs = durationMs,
+        chapters = uiState.chapters,
+        lyrics = uiState.lyrics,
+        loudnessData = uiState.loudnessData,
+        spectrumData = uiState.spectrumData
     )
 }
 
@@ -1218,7 +1231,9 @@ private fun MainProgressSeekBar(
     durationMs: Long,
     onSeek: (Long) -> Unit,
     songId: String,
-    showLyrics: Boolean
+    showLyrics: Boolean,
+    uiState: com.beatraxus.app.model.PlayerUiState,
+    dominantColor: Color
 ) {
     val progress = if (durationMs > 0) {
         (progressMs().toFloat() / durationMs).coerceIn(0f, 1f)
@@ -1232,7 +1247,8 @@ private fun MainProgressSeekBar(
 
     Column {
         Spacer(Modifier.height(18.dp))
-        WaveformSeekBar(
+        AppSeekBar(
+            style = uiState.appearance.seekbarStyle,
             progress = progress,
             onProgressChange = { },
             onProgressFinished = {
@@ -1243,7 +1259,13 @@ private fun MainProgressSeekBar(
                 .height(seekHeight),
             activeColor = Color.White,
             inactiveColor = Color.White.copy(0.2f),
-            seed = songId.hashCode()
+            seed = songId.hashCode(),
+            dominantColor = dominantColor,
+            durationMs = durationMs,
+            chapters = uiState.chapters,
+            lyrics = uiState.lyrics,
+            loudnessData = uiState.loudnessData,
+            spectrumData = uiState.spectrumData
         )
         Spacer(Modifier.height(8.dp))
     }

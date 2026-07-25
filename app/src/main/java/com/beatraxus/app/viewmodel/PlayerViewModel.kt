@@ -98,6 +98,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private val dspPreferences = DspPreferences(application)
     private val appearancePreferences = com.beatraxus.app.repository.AppearancePreferences(application)
     private val driveAccountRepository = com.beatraxus.app.repository.DriveAccountRepository(application)
+    
+    private val db = (application as BeatraxusApplication).database
+    private val bookmarkRepository = com.beatraxus.app.repository.BookmarkRepository(db.bookmarkDao())
+    private val chapterRepository = com.beatraxus.app.repository.ChapterRepository(db.chapterDao())
+    private val highlightRepository = com.beatraxus.app.repository.HighlightRepository(db.highlightDao())
+    private val loudnessRepository = com.beatraxus.app.repository.LoudnessRepository(db.loudnessDao())
     private val dropboxAccountRepository = com.beatraxus.app.repository.DropboxAccountRepository(application)
     private val onedriveAccountRepository = com.beatraxus.app.repository.OneDriveAccountRepository(application)
     private val boxAccountRepository = com.beatraxus.app.repository.BoxAccountRepository(application)
@@ -1134,6 +1140,28 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                             val sameSong = it.currentSong?.id == pbState.currentSong?.id
                             if (!sameSong) {
                                 cloudCacheManager.setCurrentlyPlayingId(pbState.currentSong?.id)
+                                // Fetch markers and loudness for the new song
+                                pbState.currentSong?.id?.let { songId ->
+                                    viewModelScope.launch {
+                                        combine(
+                                            chapterRepository.getChapters(songId),
+                                            highlightRepository.getHighlights(songId),
+                                            bookmarkRepository.getBookmarks(songId)
+                                        ) { c, h, b ->
+                                            Triple(c, h, b)
+                                        }.collect { (c, h, b) ->
+                                            _uiState.update { state ->
+                                                state.copy(chapters = c, highlights = h, bookmarks = b)
+                                            }
+                                        }
+                                    }
+                                    viewModelScope.launch {
+                                        val loudness = loudnessRepository.getLoudness(songId)
+                                        _uiState.update { state ->
+                                            state.copy(loudnessData = loudness?.data)
+                                        }
+                                    }
+                                }
                             }
                             
                             it.copy(
@@ -4298,6 +4326,26 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun setShowLyricsButton(value: Boolean) {
         viewModelScope.launch {
             appearancePreferences.setShowLyricsButton(value)
+        }
+    }
+
+    fun setSeekbarStyle(style: com.beatraxus.app.model.SeekbarStyle) {
+        viewModelScope.launch {
+            appearancePreferences.setSeekbarStyle(style)
+        }
+    }
+
+    fun addBookmark(label: String) {
+        val song = _uiState.value.currentSong ?: return
+        val time = _progressMs.value
+        viewModelScope.launch {
+            bookmarkRepository.addBookmark(song.id, time, label)
+        }
+    }
+
+    fun deleteBookmark(id: Long) {
+        viewModelScope.launch {
+            bookmarkRepository.deleteBookmark(id)
         }
     }
 

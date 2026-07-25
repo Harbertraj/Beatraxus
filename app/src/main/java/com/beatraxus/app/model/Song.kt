@@ -108,12 +108,26 @@ data class Playlist(
 
 enum class NowPlayingBackgroundMode { BLACK, SOLID, BLUR }
 
+enum class SeekbarStyle {
+    WAVEFORM,          // existing WaveformSeekBar, kept as-is, default
+    SPECTRUM_TIMELINE,
+    SMART_CHAPTER,
+    PARTICLE_TRAIL,
+    MORPHING_BLOB,
+    ALBUM_ART_GRADIENT,
+    LOUDNESS_HEATMAP,
+    LYRICS_MARKER,
+    MINI_SPECTRUM_THUMB
+}
+
 data class AppearanceConfig(
     val nowPlayingBackgroundMode: NowPlayingBackgroundMode = if (DeviceUtils.isClassicDevice()) NowPlayingBackgroundMode.SOLID else NowPlayingBackgroundMode.BLUR,
     val nowPlayingSolidColorIntensity: Float = 0.6f,
     val nowPlayingSolidColorDarkness: Float = 0.4f,
-    val nowPlayingBlurIntensity: Float = 120f,
-    val nowPlayingBlurDarkness: Float = 0.5f,
+    val nowPlayingBlurIntensity: Float = 210f,
+    val nowPlayingBlurDarkness: Float = 0.3f,
+
+    val seekbarStyle: SeekbarStyle = SeekbarStyle.WAVEFORM,
 
     // Main Screen Background
     val mainBackgroundMode: NowPlayingBackgroundMode = if (DeviceUtils.isClassicDevice()) NowPlayingBackgroundMode.BLACK else NowPlayingBackgroundMode.BLUR,
@@ -372,7 +386,14 @@ data class PlayerUiState(
     val isIgnoringBatteryOptimizations: Boolean = false,
     val isOemBatteryManagerDetected: Boolean = false,
     val gdriveAllowedFormats: Set<String> = emptySet(),
-    val telegramAllowedFormats: Set<String> = emptySet()
+    val telegramAllowedFormats: Set<String> = emptySet(),
+
+    val chapters: List<ChapterEntity> = emptyList(),
+    val highlights: List<HighlightEntity> = emptyList(),
+    val bookmarks: List<BookmarkEntity> = emptyList(),
+    val loudnessData: FloatArray? = null,
+    val spectrumData: FloatArray? = null,
+    val bufferedProgress: Float = 0f
 )
 {
     override fun equals(other: Any?): Boolean {

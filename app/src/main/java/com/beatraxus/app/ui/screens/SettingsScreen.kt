@@ -175,12 +175,12 @@ fun SettingsScreen(
     }
 
     var lastBackClickTime by remember { mutableStateOf(0L) }
-    BackHandler {
+    BackHandler(enabled = sectionStack.isNotEmpty()) {
         val currentTime = System.currentTimeMillis()
         if (currentTime - lastBackClickTime < 500) return@BackHandler
         lastBackClickTime = currentTime
 
-        if (sectionStack.isNotEmpty()) sectionStack.removeAt(sectionStack.size - 1) else onBack()
+        sectionStack.removeAt(sectionStack.size - 1)
     }
 
     val settingsBlurEffect = remember(uiState.appearance.settingsBlurIntensity) {
@@ -762,7 +762,7 @@ fun NowPlayingAppearanceContent(uiState: PlayerUiState, playerViewModel: PlayerV
         val isNowPlayingDefault = when (appearance.nowPlayingBackgroundMode) {
             NowPlayingBackgroundMode.BLACK -> true
             NowPlayingBackgroundMode.SOLID -> appearance.nowPlayingSolidColorIntensity == 0.6f && appearance.nowPlayingSolidColorDarkness == 0.4f
-            NowPlayingBackgroundMode.BLUR -> appearance.nowPlayingBlurIntensity == 120f && appearance.nowPlayingBlurDarkness == 0.5f
+            NowPlayingBackgroundMode.BLUR -> appearance.nowPlayingBlurIntensity == 210f && appearance.nowPlayingBlurDarkness == 0.3f
         }
 
         BackgroundSettingsSection(
@@ -781,6 +781,78 @@ fun NowPlayingAppearanceContent(uiState: PlayerUiState, playerViewModel: PlayerV
             onBlurDarknessChange = { playerViewModel.setNowPlayingBlurDarkness(it) },
             onReset = { playerViewModel.resetNowPlayingBackground() }
         )
+
+        HorizontalDivider(color = Color.White.copy(0.05f))
+
+        Text(
+            "Seekbar Settings",
+            color = PremiumAccent,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = 1.sp,
+            modifier = Modifier.padding(top = 8.dp)
+        )
+
+        SeekbarStyleSettingsRow(uiState, playerViewModel)
+    }
+}
+
+@Composable
+fun SeekbarStyleSettingsRow(uiState: PlayerUiState, playerViewModel: PlayerViewModel) {
+    var expanded by remember { mutableStateOf(false) }
+    val currentStyle = uiState.appearance.seekbarStyle
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                "Seekbar Design",
+                color = Color.White,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Medium
+            )
+            Text(
+                "Change the look and behavior of the progress bar",
+                color = Color.White.copy(0.5f),
+                fontSize = 13.sp
+            )
+        }
+
+        Box {
+            TextButton(
+                onClick = { expanded = true },
+                colors = ButtonDefaults.textButtonColors(contentColor = PremiumAccent)
+            ) {
+                Text(
+                    currentStyle.name.lowercase().replaceFirstChar { it.uppercase() }.replace("_", " "),
+                    fontWeight = FontWeight.Bold
+                )
+                Icon(Icons.Rounded.ArrowDropDown, null)
+            }
+            DropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false },
+                modifier = Modifier.background(CardSurface)
+            ) {
+                com.beatraxus.app.model.SeekbarStyle.entries.forEach { style ->
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                style.name.lowercase().replaceFirstChar { it.uppercase() }.replace("_", " "),
+                                color = if (currentStyle == style) PremiumAccent else Color.White
+                            )
+                        },
+                        onClick = {
+                            playerViewModel.setSeekbarStyle(style)
+                            expanded = false
+                        }
+                    )
+                }
+            }
+        }
     }
 }
 

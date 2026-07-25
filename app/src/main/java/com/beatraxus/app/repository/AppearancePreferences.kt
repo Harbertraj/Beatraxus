@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.*
 import androidx.datastore.preferences.preferencesDataStore
 import com.beatraxus.app.model.AppearanceConfig
 import com.beatraxus.app.model.NowPlayingBackgroundMode
+import com.beatraxus.app.model.SeekbarStyle
 import com.beatraxus.app.utils.DeviceUtils
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -26,8 +27,11 @@ class AppearancePreferences(context: Context) {
             ),
             nowPlayingSolidColorIntensity = preferences[SOLID_COLOR_INTENSITY] ?: 0.6f,
             nowPlayingSolidColorDarkness = preferences[SOLID_COLOR_DARKNESS] ?: 0.4f,
-            nowPlayingBlurIntensity = preferences[BLUR_INTENSITY] ?: 120f,
-            nowPlayingBlurDarkness = preferences[BLUR_DARKNESS] ?: 0.5f,
+            nowPlayingBlurIntensity = preferences[BLUR_INTENSITY] ?: 210f,
+            nowPlayingBlurDarkness = preferences[BLUR_DARKNESS] ?: 0.3f,
+            seekbarStyle = SeekbarStyle.valueOf(
+                preferences[SEEKBAR_STYLE] ?: SeekbarStyle.WAVEFORM.name
+            ),
             showAudioQualityBadge = preferences[SHOW_QUALITY_BADGE] ?: true,
             showAudioPipelineOverlay = preferences[SHOW_PIPELINE_OVERLAY] ?: true,
             showTechnicalInfoPanel = preferences[SHOW_TECHNICAL_INFO] ?: true,
@@ -112,6 +116,10 @@ class AppearancePreferences(context: Context) {
 
     suspend fun setNowPlayingBlurDarkness(value: Float) {
         dataStore.edit { it[BLUR_DARKNESS] = value }
+    }
+
+    suspend fun setSeekbarStyle(style: SeekbarStyle) {
+        dataStore.edit { it[SEEKBAR_STYLE] = style.name }
     }
 
     suspend fun setShowAudioQualityBadge(value: Boolean) {
@@ -276,8 +284,8 @@ class AppearancePreferences(context: Context) {
         dataStore.edit {
             it[SOLID_COLOR_INTENSITY] = 0.6f
             it[SOLID_COLOR_DARKNESS] = 0.4f
-            it[BLUR_INTENSITY] = 120f
-            it[BLUR_DARKNESS] = 0.5f
+            it[BLUR_INTENSITY] = 210f
+            it[BLUR_DARKNESS] = 0.3f
         }
     }
 
@@ -323,6 +331,7 @@ class AppearancePreferences(context: Context) {
         private val SOLID_COLOR_DARKNESS = floatPreferencesKey("solid_color_darkness")
         private val BLUR_INTENSITY = floatPreferencesKey("blur_intensity")
         private val BLUR_DARKNESS = floatPreferencesKey("blur_darkness")
+        private val SEEKBAR_STYLE = stringPreferencesKey("seekbar_style")
         private val SHOW_QUALITY_BADGE = booleanPreferencesKey("show_quality_badge")
         private val SHOW_PIPELINE_OVERLAY = booleanPreferencesKey("show_pipeline_overlay")
         private val SHOW_TECHNICAL_INFO = booleanPreferencesKey("show_technical_info")
