@@ -627,7 +627,7 @@ fun MainScreen(
                     containerColor = Color.Transparent,
                     snackbarHost = { SnackbarHost(snackbarHostState) },
                     topBar = {},
-                    contentWindowInsets = WindowInsets.statusBars
+                    contentWindowInsets = WindowInsets.systemBars
                 ) { paddingValues ->
                     // FIX 3: Wrap Column + mini player in Box so mini player can float at bottom
                     Box(Modifier.fillMaxSize()) {

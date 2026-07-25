@@ -33,6 +33,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.text.TextStyle
@@ -114,6 +115,25 @@ fun KaraokeLyricsView(
 
     val currentProgressMs = progressMs()
 
+    // Calculate current line progress (0f to 1f) for "Smooth Flow" logic
+    val currentLineProgress = remember(currentIndex, currentProgressMs, lyricsOffsetMs) {
+        val line = lyrics.getOrNull(currentIndex) ?: return@remember 0f
+        val nextLine = lyrics.getOrNull(currentIndex + 1)
+        val endTime = if (line.duration > 0) line.startTime + line.duration 
+                      else nextLine?.startTime ?: (line.startTime + 5000L)
+        
+        val elapsed = (currentProgressMs + lyricsOffsetMs - line.startTime).toFloat()
+        val total = (endTime - line.startTime).toFloat()
+        (elapsed / total).coerceIn(0f, 1f)
+    }
+
+    // "Liquid Flow" Vertical Offset: Subtle upward creep as the line progresses
+    val flowVerticalOffset by animateFloatAsState(
+        targetValue = -currentLineProgress * 24f, // Creep up by 24dp over the line's duration
+        animationSpec = tween(durationMillis = 800, easing = LinearEasing),
+        label = "flowScroll"
+    )
+
     // Logic to re-enable auto-scroll after manual interaction
     LaunchedEffect(isDragged) {
         if (isDragged) {
@@ -132,15 +152,7 @@ fun KaraokeLyricsView(
     LaunchedEffect(currentIndex, autoScrollEnabled, containerHeight) {
         if (autoScrollEnabled && currentIndex in lyrics.indices && containerHeight > 0) {
             scope.launch {
-                // Centering: put the active line at the vertical midpoint of the lyrics area
-                // (this Box spans exactly from the top title bar to the bottom seek bar area),
-                // so the active line always sits accurately in the middle, not near the top.
-                // targetOffset is the literal desired final on-screen top position of the
-                // item, so this must be positive (containerHeight / 2 below the viewport's
-                // top edge) — a negative value here pushes the line above the visible area,
-                // which is what caused the active line to disappear off the top on normal
-                // (non-jump) line changes.
-                // UPDATED: Changed from 0.5f to 0.35f to move current lyric higher up.
+                // Centering with "Smooth Flow" compensation
                 val offset = (containerHeight * 0.35f).toInt()
                 listState.bouncyScrollToItem(index = currentIndex, targetOffset = offset)
             }
@@ -151,7 +163,11 @@ fun KaraokeLyricsView(
         modifier = modifier
             .fillMaxSize()
             .onGloballyPositioned { containerHeight = it.size.height }
-            .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
+            .graphicsLayer {
+                // Apply the "Smooth Flow" translation to the entire lyrics area
+                translationY = flowVerticalOffset
+                compositingStrategy = CompositingStrategy.Offscreen
+            }
             .drawWithContent {
                 drawContent()
                 // Premium Fading Edges
@@ -372,18 +388,25 @@ fun SyncedLyricLine(
     onClick: () -> Unit,
     onLongClick: () -> Unit = {}
 ) {
+    // Ambient "Floating" Motion: Subtle sinusoidal swaying for the active line
+    val infiniteTransition = rememberInfiniteTransition(label = "ambient")
+    val ambientSway by infiniteTransition.animateFloat(
+        initialValue = -3f,
+        targetValue = 3f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(4000, easing = CubicBezierEasing(0.445f, 0.05f, 0.55f, 0.95f)),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "sway"
+    )
+
     val animatedAlpha by animateFloatAsState(
         targetValue = targetAlpha, 
         animationSpec = tween(durationMillis = 600),
         label = "alpha"
     )
 
-    // Bouncy scale for EVERY line, not just the active one — as currentIndex changes, every
-    // visible line's `distance` shifts by one, so they all spring toward their new target
-    // scale together instead of only the active line moving. The line becoming active gets
-    // the springiest, most "poppy" overshoot (HighBouncy); background lines settle with a
-    // gentler bounce (MediumBouncy) so the effect reads as a cascade, not everything popping
-    // at once.
+    // Bouncy scale for EVERY line, not just the active one
     val targetScale = when {
         isCurrent -> 1.08f
         distance == 1 -> 0.97f
@@ -399,9 +422,7 @@ fun SyncedLyricLine(
         label = "lineScale"
     )
 
-    // Bouncy vertical settle for every line — farther lines "stack" down slightly more, so
-    // when the active line advances, the whole visible group bounces into its new resting
-    // position instead of only the highlighted line moving.
+    // Bouncy vertical settle for every line
     val targetOffset = when {
         isCurrent -> 0f
         else -> (distance.coerceAtMost(4) * 5f)
@@ -441,6 +462,7 @@ fun SyncedLyricLine(
                 scaleX = animatedScale
                 scaleY = animatedScale
                 translationY = verticalOffset
+                translationX = if (isCurrent) ambientSway else 0f
                 transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0.5f)
             }
             .combinedClickable(
@@ -450,13 +472,47 @@ fun SyncedLyricLine(
                 onLongClick = onLongClick
             )
     ) {
-        if (isCurrent && words.isNotEmpty()) {
-            BouncyWordByWordFlow(
-                wordTimings = words,
-                progressInLine = progressInLine,
-                lineStartTime = line.startTime,
-                isWordByWord = isWordByWord
-            )
+        if (isCurrent) {
+            // Enhanced Smooth Fill Flow for the current line
+            val lineDuration = remember(line.duration) { 
+                if (line.duration > 0) line.duration else 3000L 
+            }
+            val lineProgress = (progressInLine.toFloat() / lineDuration).coerceIn(0f, 1f)
+
+            if (isWordByWord && words.isNotEmpty()) {
+                BouncyWordByWordFlow(
+                    wordTimings = words,
+                    progressInLine = progressInLine,
+                    lineStartTime = line.startTime,
+                    isWordByWord = true
+                )
+            } else {
+                // Line-by-line smooth fill flow (Karaoke-style)
+                val edgeWidth = 0.2f
+                val start = (lineProgress - edgeWidth).coerceAtLeast(0f)
+                val end = (lineProgress + edgeWidth).coerceAtMost(1f)
+                
+                val fillBrush = Brush.horizontalGradient(
+                    0.0f to Color.White,
+                    start to Color.White,
+                    lineProgress to Color.White.copy(alpha = 0.85f),
+                    end to Color.White.copy(alpha = 0.35f),
+                    1.0f to Color.White.copy(alpha = 0.35f)
+                )
+
+                Text(
+                    text = line.text,
+                    style = MaterialTheme.typography.headlineMedium.copy(
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 24.sp,
+                        lineHeight = 30.sp,
+                        textAlign = TextAlign.Start,
+                        letterSpacing = (-0.5).sp,
+                        brush = fillBrush
+                    ),
+                    color = Color.Unspecified
+                )
+            }
         } else {
             Text(
                 text = line.text,
@@ -494,13 +550,10 @@ fun BouncyWordByWordFlow(
     ) {
         wordTimings.forEach { word ->
             val relativeStartTime = (word.startTime - lineStartTime).coerceAtLeast(0)
-            
-            // For LRC (not word-by-word), we highlight the whole line immediately
             val isWordActive = if (isWordByWord) progressInLine >= relativeStartTime else true
             
             val wordAlpha by animateFloatAsState(
                 targetValue = if (isWordActive) 1f else 0.35f,
-                // Snap alpha for ELRC to allow brush to handle the smooth fill transition
                 animationSpec = if (isWordByWord && isWordActive) snap() else tween(durationMillis = 250),
                 label = "wordAlpha"
             )
@@ -514,30 +567,29 @@ fun BouncyWordByWordFlow(
                 label = "wordScale"
             )
 
-            // Letter by letter flow animation using a brush gradient (only for ELRC)
+            // Letter by letter flow animation logic
             val wordDuration = word.duration.coerceAtLeast(1L)
             val wordProgress = ((progressInLine - relativeStartTime).toFloat() / wordDuration).coerceIn(0f, 1f)
 
-            // Enhanced "Smooth Fill Effect": Gradient with soft edge transition
+            // Enhanced "Smooth Fill Effect"
             val brush = if (isWordByWord && isWordActive && wordProgress < 1f) {
-                val transitionStart = (wordProgress - 0.15f).coerceAtLeast(0f)
-                val transitionEnd = (wordProgress + 0.15f).coerceAtMost(1f)
+                val edgeWidth = 0.25f
+                val start = (wordProgress - edgeWidth).coerceAtLeast(0f)
+                val end = (wordProgress + edgeWidth).coerceAtMost(1f)
+                
                 Brush.horizontalGradient(
                     0.0f to Color.White,
-                    transitionStart to Color.White,
-                    transitionEnd to Color.White.copy(alpha = 0.35f),
+                    start to Color.White,
+                    wordProgress to Color.White.copy(alpha = 0.85f),
+                    end to Color.White.copy(alpha = 0.35f),
                     1.0f to Color.White.copy(alpha = 0.35f)
                 )
-            } else if (isWordByWord && isWordActive && wordProgress >= 1f) {
-                null // Full white
-            } else if (isWordByWord && !isWordActive) {
-                null // Handled by alpha
             } else null
 
             Text(
                 text = word.text,
                 style = if (brush != null) baseStyle.copy(brush = brush) else baseStyle,
-                color = if (brush != null) Color.Unspecified else Color.White,
+                color = if (brush != null) Color.Unspecified else if (isWordActive) Color.White else Color.White.copy(alpha = 0.35f),
                 modifier = Modifier
                     .padding(bottom = 6.dp)
                     .graphicsLayer {

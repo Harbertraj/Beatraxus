@@ -225,7 +225,7 @@ fun WelcomeScreen(
                 fadeIn(tween(800)) togetherWith fadeOut(tween(800))
             },
             label = "screenState",
-            modifier = Modifier.fillMaxSize().statusBarsPadding()
+            modifier = Modifier.fillMaxSize().systemBarsPadding()
         ) { state ->
             when (state) {
                 0 -> {

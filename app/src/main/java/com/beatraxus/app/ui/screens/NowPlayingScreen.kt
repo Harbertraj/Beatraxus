@@ -293,7 +293,7 @@ fun NowPlayingScreen(
                 )
             },
             containerColor = Color.Transparent,
-            contentWindowInsets = WindowInsets.statusBars,
+            contentWindowInsets = WindowInsets.systemBars,
             topBar = {
                 CenterAlignedTopAppBar(
                     colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = Color.Transparent),

@@ -249,7 +249,7 @@ fun SettingsScreen(
         Scaffold(
             modifier = Modifier.blur(if (uiState.isFullScanning) 20.dp else 0.dp),
             containerColor = Color.Transparent,
-            contentWindowInsets = WindowInsets.statusBars,
+            contentWindowInsets = WindowInsets.systemBars,
             topBar = {
                 CenterAlignedTopAppBar(
                     colors = TopAppBarDefaults.centerAlignedTopAppBarColors(

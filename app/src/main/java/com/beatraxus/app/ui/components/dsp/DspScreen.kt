@@ -195,7 +195,7 @@ fun DspScreen(
         Scaffold(
             containerColor = Color.Transparent,
             modifier = Modifier.background(Color.Transparent),
-            contentWindowInsets = WindowInsets.statusBars,
+            contentWindowInsets = WindowInsets.systemBars,
             topBar = {
                 CenterAlignedTopAppBar(
                     colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = Color.Transparent),
