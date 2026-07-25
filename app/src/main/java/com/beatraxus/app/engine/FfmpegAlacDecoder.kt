@@ -26,9 +26,9 @@ internal class FfmpegAlacDecoder(
 
     override suspend fun canDecode(song: Song): Boolean {
         val ext = song.uri.lastPathSegment?.substringAfterLast('.', "")?.lowercase(Locale.US).orEmpty()
-        if (song.format.equals("ALAC", ignoreCase = true) || song.format.equals("AC3", true) || song.format.equals("EAC3", true) || song.format.equals("DTS", true) || song.format.equals("DSD", true)) return true
+        if (song.format.equals("ALAC", ignoreCase = true) || song.format.equals("FLAC", ignoreCase = true) || song.format.equals("AC3", true) || song.format.equals("EAC3", true) || song.format.equals("DTS", true) || song.format.equals("DSD", true)) return true
         if (song.format.equals("WAV", ignoreCase = true)) return true
-        if (ext in setOf("alac", "m4a", "mp4", "caf", "wav", "bwf", "ac3", "eac3", "ec3", "dts", "dsf", "dff")) return true
+        if (ext in setOf("alac", "flac", "m4a", "mp4", "caf", "wav", "bwf", "ac3", "eac3", "ec3", "dts", "dsf", "dff")) return true
         return false
     }
 

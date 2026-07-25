@@ -20,9 +20,26 @@ internal class DecoderFactory(
     private val ffmpegAlacDecoder: FfmpegAlacDecoder,
     private val mediaCodecDecoder: MediaCodecAudioDecoder
 ) {
+    private val mediaCodecFailures = java.util.concurrent.ConcurrentHashMap<String, Int>()
+
+    fun notifyDecoderFailure(songId: String) {
+        val current = mediaCodecFailures[songId] ?: 0
+        mediaCodecFailures[songId] = current + 1
+        Log.w(TAG, "Incremented MediaCodec failure count for song $songId to ${current + 1}")
+    }
+
     suspend fun create(song: Song): AudioDecoder {
         val format = song.format.lowercase()
         val isCloud = song.isCloud()
+
+        // Fallback to FFmpeg if MediaCodec has failed consistently for this track
+        val failures = mediaCodecFailures[song.id] ?: 0
+        if (failures >= 2) {
+            if (ffmpegAlacDecoder.canDecode(song)) {
+                Log.i(TAG, "Routing to FFmpeg due to consecutive MediaCodec failures ($failures) for: ${song.title}")
+                return ffmpegAlacDecoder
+            }
+        }
 
         val isDolbyOrDts = format in setOf("ac3", "eac3", "dts") || format.contains("ac3") || format.contains("dts")
         val isDsd = format == "dsd" || format == "dsf" || format == "dff" || format.contains("dsd")

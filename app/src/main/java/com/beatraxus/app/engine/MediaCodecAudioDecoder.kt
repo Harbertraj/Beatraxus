@@ -123,12 +123,15 @@ internal class MediaCodecAudioDecoder(
             var configured = false
 
             // 4. Decode Loop
+            var lastProgressTime = System.currentTimeMillis()
+
             while (control.isActive()) {
                 val pendingSeek = control.consumePendingSeekMs()
                 if (pendingSeek != null) {
                     try {
                         extractor.seekTo(pendingSeek * 1000, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
                         codec.flush()
+                        lastProgressTime = System.currentTimeMillis()
                     } catch (e: Exception) {
                         control.logWarn("Seek failed: ${e.message}")
                     } finally {
@@ -231,7 +234,13 @@ internal class MediaCodecAudioDecoder(
                     }
                 }
 
-                if (!inputProgress && !outputProgress) {
+                if (inputProgress || outputProgress) {
+                    lastProgressTime = System.currentTimeMillis()
+                } else {
+                    if (System.currentTimeMillis() - lastProgressTime > STALL_THRESHOLD_MS) {
+                        Log.e(TAG, "MediaCodec stall detected for ${request.song.title}: no I/O progress for ${STALL_THRESHOLD_MS}ms")
+                        return@withContext DecodeResult.Failed("MediaCodec stalled: no input/output progress")
+                    }
                     Thread.yield()
                 }
             }
@@ -398,5 +407,6 @@ internal class MediaCodecAudioDecoder(
     companion object {
         private const val TAG = "MediaCodecDecoder"
         private const val PCM_CHUNK_SAMPLES = 131_072 // Increased for multi-channel/high-res buffers
+        private const val STALL_THRESHOLD_MS = 8000L
     }
 }

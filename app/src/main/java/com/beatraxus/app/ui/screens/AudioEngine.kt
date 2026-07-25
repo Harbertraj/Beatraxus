@@ -153,7 +153,10 @@ class AudioEngine(
                             } else {
                                 val isCloud = state.currentSong.isCloud()
                                 val isTelegram = state.currentSong.source == SongSource.TELEGRAM
-                                
+
+                                val decoderActive = session != null && !session.decoderCompleted &&
+                                        (now - session.lastDecoderProgressTime < 2000)
+
                                 val isBuffering = session != null && !session.decoderCompleted &&
                                         (now - session.lastDecoderProgressTime > 2000) &&
                                         isCloud
@@ -162,6 +165,7 @@ class AudioEngine(
                                 val timeout = when {
                                     isTelegram -> 45000 // 45s for Telegram
                                     isBuffering -> 20000 // 20s for other cloud
+                                    decoderActive -> 8000 // 8s if decoder is actively writing but hardware clock hasn't moved
                                     else -> 4000 // 4s for local/stuck
                                 }
 
@@ -177,13 +181,22 @@ class AudioEngine(
                     }
                 }
 
-                if (shouldRecover && recoveryAttempts < 3) {
-                    recoveryAttempts++
-                    Log.i(TAG, "Attempting recovery $recoveryAttempts/3...")
-                    lastStuckCheckTime = now // Reset timer to avoid immediate re-trigger
-                    delay(500L * recoveryAttempts) // Backoff
-                    performRecovery()
-                } else if (!shouldRecover) {
+                if (shouldRecover) {
+                    if (recoveryAttempts < 3) {
+                        recoveryAttempts++
+                        Log.i(TAG, "Attempting recovery $recoveryAttempts/3...")
+                        lastStuckCheckTime = now // Reset timer to avoid immediate re-trigger
+                        delay(500L * recoveryAttempts) // Backoff
+                        performRecovery()
+                    } else {
+                        Log.e(TAG, "Max recovery attempts reached for ${state.currentSong?.title}. Skipping track.")
+                        recoveryAttempts = 0
+                        lastStuckPosition = -1L
+                        lastStuckCheckTime = now
+                        stop()
+                        _onCompletion.emit(Unit)
+                    }
+                } else {
                     // Reset attempts if we are playing normally
                     if (userIntentPlaying.get() && state.isPlaying && currentPos != lastStuckPosition) {
                         if (recoveryAttempts > 0) recoveryAttempts = 0
@@ -874,6 +887,10 @@ class AudioEngine(
                                 if (tdLibManager.awaitTdlibReady(20000)) {
                                     continue
                                 }
+                            }
+
+                            if (decoder is MediaCodecAudioDecoder) {
+                                decoderFactory.notifyDecoderFailure(song.id)
                             }
 
                             logWarn("Decoder failed permanently: ${result.reason ?: "unknown"}")

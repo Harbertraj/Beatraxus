@@ -79,7 +79,10 @@ private suspend fun LazyListState.bouncyScrollToItem(index: Int, targetOffset: I
         var previous = 0f
         Animatable(0f).animateTo(
             targetValue = delta,
-            animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow)
+            animationSpec = spring(
+                dampingRatio = Spring.DampingRatioMediumBouncy,
+                stiffness = Spring.StiffnessVeryLow
+            )
         ) {
             dispatchRawDelta(value - previous)
             previous = value
@@ -130,7 +133,10 @@ fun KaraokeLyricsView(
     // "Liquid Flow" Vertical Offset: Subtle upward creep as the line progresses
     val flowVerticalOffset by animateFloatAsState(
         targetValue = -currentLineProgress * 24f, // Creep up by 24dp over the line's duration
-        animationSpec = tween(durationMillis = 800, easing = LinearEasing),
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessLow
+        ),
         label = "flowScroll"
     )
 
@@ -430,27 +436,14 @@ fun SyncedLyricLine(
     val verticalOffset by animateFloatAsState(
         targetValue = targetOffset,
         animationSpec = spring(
-            dampingRatio = if (isCurrent) Spring.DampingRatioMediumBouncy else Spring.DampingRatioLowBouncy,
+            dampingRatio = Spring.DampingRatioMediumBouncy,
             stiffness = if (isCurrent) Spring.StiffnessVeryLow else Spring.StiffnessLow
         ),
         label = "upwardMovement"
     )
 
-    // Generate sub-line data to handle explicit newlines and sequential fill
-    val subLines = remember(line.text, line.duration) {
-        val totalDuration = if (line.duration > 0) line.duration else 3000L
-        val rawSubLines = line.text.split("\n").filter { it.isNotBlank() }
-        
-        val totalChars = rawSubLines.sumOf { it.length }.coerceAtLeast(1)
-        var elapsed = 0L
-        rawSubLines.map { text ->
-            val lineDuration = (totalDuration * text.length / totalChars)
-            val startTime = elapsed
-            elapsed += lineDuration
-            Triple(text, startTime, lineDuration)
-        }
-    }
-
+    // Remove sequentialWords - no longer needed for single text block
+    
     val baseStyle = MaterialTheme.typography.headlineMedium.copy(
         fontWeight = FontWeight.ExtraBold,
         fontSize = 24.sp,
@@ -458,6 +451,9 @@ fun SyncedLyricLine(
         textAlign = TextAlign.Start,
         letterSpacing = (-0.5).sp
     )
+
+    var textLayoutResult by remember { mutableStateOf<androidx.compose.ui.text.TextLayoutResult?>(null) }
+    val lineDuration = remember(line.duration) { if (line.duration > 0) line.duration else 3000L }
 
     Column(
         modifier = Modifier
@@ -478,30 +474,82 @@ fun SyncedLyricLine(
             )
     ) {
         if (isCurrent) {
-            // Sequential Smooth Fill Flow (Old Style)
-            subLines.forEach { (text, relStart, duration) ->
-                val subLineProgress = ((progressInLine - relStart).toFloat() / duration).coerceIn(0f, 1f)
-                
-                val fillBrush = if (subLineProgress > 0f && subLineProgress < 1f) {
-                    val edgeWidth = 0.2f
-                    val start = (subLineProgress - edgeWidth).coerceAtLeast(0f)
-                    val end = (subLineProgress + edgeWidth).coerceAtMost(1f)
-                    
-                    Brush.horizontalGradient(
-                        0.0f to Color.White,
-                        start to Color.White,
-                        subLineProgress to Color.White.copy(alpha = 0.85f),
-                        end to Color.White.copy(alpha = 0.35f),
-                        1.0f to Color.White.copy(alpha = 0.35f)
-                    )
-                } else null
+            // Sequential Smooth Fill Flow (Single-Block Classic Style)
+            // Ensures perfect typography (no word splitting) while highlighting one line at a time
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .drawWithContent {
+                        val layout = textLayoutResult ?: run {
+                            drawContent()
+                            return@drawWithContent
+                        }
 
+                        // 1. Draw the background (dimmed) text first
+                        // We do this by letting the Text component draw itself normally
+                        // with a dimmed color, then drawing the highlight on top.
+                        drawContent()
+
+                        // 2. Calculate and Draw the highlight for each visual line sequentially
+                        val totalChars = line.text.length.coerceAtLeast(1)
+                        val sweepDuration = 600f
+                        var elapsedChars = 0
+
+                        for (lineIdx in 0 until layout.lineCount) {
+                            val lineStart = layout.getLineStart(lineIdx)
+                            val lineEnd = layout.getLineEnd(lineIdx)
+                            val lineChars = lineEnd - lineStart
+                            
+                            // Proportional timing for this visual line
+                            val relStart = (elapsedChars.toFloat() / totalChars) * lineDuration
+                            val relDuration = (lineChars.toFloat() / totalChars) * lineDuration
+                            
+                            val timeIntoLine = progressInLine - relStart
+                            
+                            // Only draw highlight if the sweep is currently active on this line
+                            if (timeIntoLine > -sweepDuration && timeIntoLine < relDuration + sweepDuration) {
+                                val halfSweep = sweepDuration / 2f
+                                // Map time to local 0.0 - 1.0 of the visual line
+                                val sweepCenter = (timeIntoLine / relDuration).coerceIn(0f, 1f)
+                                val sweepStart = ((timeIntoLine - halfSweep) / relDuration).coerceIn(0f, 1f)
+                                val sweepEnd = ((timeIntoLine + halfSweep) / relDuration).coerceIn(0f, 1f)
+
+                                if (sweepStart < 1f && sweepEnd > 0f) {
+                                    val lineLeft = layout.getLineLeft(lineIdx)
+                                    val lineRight = layout.getLineRight(lineIdx)
+                                    val lineTop = layout.getLineTop(lineIdx)
+                                    val lineBottom = layout.getLineBottom(lineIdx)
+                                    
+                                    val highlightBrush = Brush.horizontalGradient(
+                                        0.0f to Color.White,
+                                        sweepStart to Color.White,
+                                        sweepCenter to Color.White.copy(alpha = 0.85f),
+                                        sweepEnd to Color.Transparent,
+                                        1.0f to Color.Transparent,
+                                        startX = lineLeft,
+                                        endX = lineRight
+                                    )
+
+                                    // Clip to the text using Layer and BlendMode
+                                    drawRect(
+                                        brush = highlightBrush,
+                                        topLeft = androidx.compose.ui.geometry.Offset(lineLeft, lineTop),
+                                        size = androidx.compose.ui.geometry.Size(lineRight - lineLeft, lineBottom - lineTop),
+                                        blendMode = BlendMode.SrcAtop
+                                    )
+                                }
+                            }
+                            elapsedChars += lineChars
+                            if (progressInLine < relStart) break // Optimization: future lines haven't started
+                        }
+                    }
+                    .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
+            ) {
                 Text(
-                    text = text,
-                    style = baseStyle.copy(brush = fillBrush),
-                    color = if (fillBrush != null) Color.Unspecified 
-                            else if (subLineProgress >= 1f) Color.White 
-                            else Color.White.copy(alpha = 0.35f)
+                    text = line.text,
+                    style = baseStyle,
+                    color = Color.White.copy(alpha = 0.35f),
+                    onTextLayout = { textLayoutResult = it }
                 )
             }
         } else {
@@ -514,76 +562,3 @@ fun SyncedLyricLine(
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-fun BouncyWordByWordFlow(
-    wordTimings: List<WordTiming>,
-    progressInLine: Long,
-    lineStartTime: Long,
-    isWordByWord: Boolean
-) {
-    val baseStyle = MaterialTheme.typography.headlineMedium.copy(
-        fontWeight = FontWeight.ExtraBold,
-        fontSize = 24.sp,
-        lineHeight = 30.sp,
-        letterSpacing = (-0.5).sp
-    )
-
-    FlowRow(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        wordTimings.forEach { word ->
-            val relativeStartTime = (word.startTime - lineStartTime).coerceAtLeast(0)
-            val isWordActive = if (isWordByWord) progressInLine >= relativeStartTime else true
-            
-            val wordAlpha by animateFloatAsState(
-                targetValue = if (isWordActive) 1f else 0.35f,
-                animationSpec = if (isWordByWord && isWordActive) snap() else tween(durationMillis = 250),
-                label = "wordAlpha"
-            )
-            
-            val wordScale by animateFloatAsState(
-                targetValue = if (isWordActive) 1.05f else 1.0f,
-                animationSpec = spring(
-                    dampingRatio = Spring.DampingRatioLowBouncy,
-                    stiffness = Spring.StiffnessLow
-                ),
-                label = "wordScale"
-            )
-
-            // Letter by letter flow animation logic
-            val wordDuration = word.duration.coerceAtLeast(1L)
-            val wordProgress = ((progressInLine - relativeStartTime).toFloat() / wordDuration).coerceIn(0f, 1f)
-
-            // Enhanced "Smooth Fill Effect"
-            val brush = if (isWordByWord && isWordActive && wordProgress < 1f) {
-                val edgeWidth = 0.25f
-                val start = (wordProgress - edgeWidth).coerceAtLeast(0f)
-                val end = (wordProgress + edgeWidth).coerceAtMost(1f)
-                
-                Brush.horizontalGradient(
-                    0.0f to Color.White,
-                    start to Color.White,
-                    wordProgress to Color.White.copy(alpha = 0.85f),
-                    end to Color.White.copy(alpha = 0.35f),
-                    1.0f to Color.White.copy(alpha = 0.35f)
-                )
-            } else null
-
-            Text(
-                text = word.text,
-                style = if (brush != null) baseStyle.copy(brush = brush) else baseStyle,
-                color = if (brush != null) Color.Unspecified else if (isWordActive) Color.White else Color.White.copy(alpha = 0.35f),
-                modifier = Modifier
-                    .padding(bottom = 6.dp)
-                    .graphicsLayer {
-                        alpha = wordAlpha
-                        scaleX = wordScale
-                        scaleY = wordScale
-                        transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0.5f)
-                    }
-            )
-        }
-    }
-}
