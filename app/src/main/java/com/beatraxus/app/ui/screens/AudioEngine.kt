@@ -209,13 +209,20 @@ class AudioEngine(
         output.flush()
 
         controlMutex.withLock {
-            stopSessionsInternal()
+            stopActiveSessionOnly()
             underrunCount = 0
             _playbackStateFlow.update { it.copy(isPlaying = true) }
             startSessionInternal(song, pos)
         }
 
         output.start()
+    }
+
+    private fun stopActiveSessionOnly() {
+        positionMs = activeSession?.currentRenderedPositionMs() ?: positionMs
+        activeSession?.stop()
+        activeSession = null
+        isSeeking.set(false)
     }
 
     private fun startRenderer() {
@@ -750,8 +757,6 @@ class AudioEngine(
 
                             if (newFormat != null && oldFormat != newFormat) {
                                 next.configure(newFormat)
-                                // Reconfigure output for the new format
-                                reconfigureOutput()
                             }
                             val framesAtTransition = output.totalFramesWritten()
                             next.setStartFrameOffset(framesAtTransition)
