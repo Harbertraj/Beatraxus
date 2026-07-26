@@ -280,9 +280,10 @@ class AudioTrackOutput(
                         lastPlaybackHeadPosition = 0
                         playbackHeadOffset = 0L
                     } else {
+                        // RECOVERY PATH: Preserve cumulative position.
                         playbackHeadWraps = 0L
                         lastPlaybackHeadPosition = 0
-                        playbackHeadOffset = lastPosForRecovery
+                        playbackHeadOffset = -lastPosForRecovery
                     }
                 }
                 Log.i(TAG, "MMAP Exclusive active: rate=${this.sampleRate}")
@@ -373,11 +374,13 @@ class AudioTrackOutput(
                         playbackHeadOffset = 0L
                     } else {
                         // RECOVERY PATH: Preserve cumulative position.
-                        // The new track's hardware head starts at 0, so we use the captured
-                        // last absolute position as the new offset.
+                        // The new track's hardware head starts at 0. We want playbackPositionFrames()
+                        // to continue from lastPosForRecovery.
+                        // Formula: (head - offset) = lastPosForRecovery.
+                        // Since head is 0: (0 - offset) = lastPosForRecovery => offset = -lastPosForRecovery.
                         playbackHeadWraps = 0L
                         lastPlaybackHeadPosition = 0
-                        playbackHeadOffset = lastPosForRecovery
+                        playbackHeadOffset = -lastPosForRecovery
                         // totalFramesWritten is intentionally NOT reset
                     }
                 }
@@ -398,9 +401,10 @@ class AudioTrackOutput(
                         lastPlaybackHeadPosition = 0
                         playbackHeadOffset = 0L
                     } else {
+                        // RECOVERY PATH: Preserve cumulative position.
                         playbackHeadWraps = 0L
                         lastPlaybackHeadPosition = 0
-                        playbackHeadOffset = lastPosForRecovery
+                        playbackHeadOffset = -lastPosForRecovery
                     }
                 }
             }

@@ -111,8 +111,8 @@ class AudioEngine(
     private var recoveryAttempts = 0
     private var lastStuckCheckTime = 0L
     private var lastStuckPosition = -1L
-    private var lastTotalFramesWritten = 0L
-    private var lastPlaybackPosFrames = 0L
+    private var stuckWindowStartTotalWritten = 0L
+    private var stuckWindowStartPlaybackPos = 0L
 
     init {
         startRenderer()
@@ -147,9 +147,9 @@ class AudioEngine(
                     } else if (state.currentSong != null && currentPos < state.currentSong.durationMs - 1000) {
                         // Case 2: Stuck detection. isPlaying is true, but position isn't advancing.
                         
-                        // GRACE PERIOD: Ignore stuck detection for the first 10 seconds of a session
+                        // GRACE PERIOD: Ignore stuck detection for the first 15 seconds of a session
                         // to allow for hardware buffer lag and cold-start synchronization.
-                        val inGracePeriod = session != null && (now - session.sessionStartTimeMs < 10000)
+                        val inGracePeriod = session != null && (now - session.sessionStartTimeMs < 15000)
                         
                         if (currentPos == lastStuckPosition) {
                             if (inGracePeriod) {
@@ -169,15 +169,18 @@ class AudioEngine(
                                 // Telegram songs can take longer to "prime" their sparse file/path
                                 val timeout = when {
                                     isTelegram -> 45000 // 45s for Telegram
-                                    isBuffering -> 20000 // 20s for other cloud
-                                    decoderActive -> 8000 // 8s if decoder is actively writing but hardware clock hasn't moved
-                                    else -> 4000 // 4s for local/stuck
+                                    isBuffering -> 25000 // 25s for other cloud
+                                    decoderActive -> 12000 // 12s if decoder is actively writing but hardware clock hasn't moved
+                                    else -> 10000 // 10s for local/stuck
                                 }
 
                                 if (lastStuckCheckTime > 0 && now - lastStuckCheckTime > timeout) {
-                                    // Check if software is still producing data while hardware is stuck
-                                    outputSinkStalled = totalWritten > lastTotalFramesWritten && playbackPos == lastPlaybackPosFrames
-                                    
+                                    // Check if software is still producing data while hardware is stuck.
+                                    // We compare against the baseline captured when the position first went flat,
+                                    // so the check spans the entire stuck window, not just the last 1-second tick.
+                                    outputSinkStalled = totalWritten > stuckWindowStartTotalWritten &&
+                                            playbackPos == stuckWindowStartPlaybackPos
+
                                     Log.w(TAG, "Playback appears stuck (position unchanged for ${timeout/1000}s at $currentPos ms). " +
                                             "Buffering=$isBuffering, OutputStalled=$outputSinkStalled")
                                     shouldRecover = true
@@ -186,6 +189,8 @@ class AudioEngine(
                         } else {
                             lastStuckPosition = currentPos
                             lastStuckCheckTime = now
+                            stuckWindowStartTotalWritten = totalWritten
+                            stuckWindowStartPlaybackPos = playbackPos
                         }
                     }
                 }
@@ -217,8 +222,6 @@ class AudioEngine(
                     }
                 }
 
-                lastTotalFramesWritten = totalWritten
-                lastPlaybackPosFrames = playbackPos
                 delay(1000)
             }
         }
