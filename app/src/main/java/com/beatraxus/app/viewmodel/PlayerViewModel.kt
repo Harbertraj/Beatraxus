@@ -2732,11 +2732,18 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun setStreamingNoCacheEnabled(enabled: Boolean) {
+        if (_uiState.value.streamingNoCacheEnabled == enabled) {
+            Log.d(TAG, "setStreamingNoCacheEnabled($enabled) ignored - already in this state")
+            return
+        }
         Log.d(TAG, "setStreamingNoCacheEnabled: $enabled")
         prefs.edit().putBoolean("streaming_no_cache_enabled", enabled).apply()
         _uiState.update { it.copy(streamingNoCacheEnabled = enabled) }
         cloudCacheManager.setNoCacheEnabled(enabled)
-        // Propagate to service for immediate effect and queue re-priming
+        // Propagate to service for immediate effect and queue re-priming. Note: this write to
+        // prefs above will ALSO notify AudioPlaybackService's own SharedPreferences listener,
+        // which calls the same service method a second time - that second call is now a
+        // guarded no-op inside AudioPlaybackService.setStreamingNoCacheEnabled, so it's safe.
         service?.setStreamingNoCacheEnabled(enabled)
     }
 
