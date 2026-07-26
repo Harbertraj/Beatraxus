@@ -83,6 +83,8 @@ class CloudCacheManager private constructor(
     @Volatile
     private var noCacheEnabled: Boolean = false
 
+    fun isNoCacheEnabled(): Boolean = noCacheEnabled
+
     fun setNoCacheEnabled(enabled: Boolean) {
         noCacheEnabled = enabled
         if (enabled) {
@@ -1400,7 +1402,9 @@ class CloudCacheManager private constructor(
         override fun readAt(position: Long, buffer: ByteArray, offset: Int, size: Int): Int = lock.withLock {
             if (isSeekPending()) return -1
             
-            getCachedFile(song)?.let { return readFromFile(it, position, buffer, offset, size) }
+            if (!noCacheEnabled) {
+                getCachedFile(song)?.let { return readFromFile(it, position, buffer, offset, size) }
+            }
 
             val tmpFile = File(cacheDir, "${song.id}.tmp")
             if (!tmpFile.exists() && !activeDownloads.containsKey(song.id)) {

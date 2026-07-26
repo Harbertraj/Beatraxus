@@ -32,7 +32,7 @@ internal class MediaCodecAudioDecoder(
 
         try {
             // 1. Setup Data Source
-            val cachedFile = cloudCacheManager.getCachedFile(request.song)
+            val cachedFile = if (cloudCacheManager.isNoCacheEnabled()) null else cloudCacheManager.getCachedFile(request.song)
             if (cachedFile != null) {
                 extractor.setDataSource(cachedFile.absolutePath)
             } else if (request.song.source != SongSource.LOCAL) {
@@ -259,7 +259,7 @@ internal class MediaCodecAudioDecoder(
     }
 
     private suspend fun resolveSource(song: Song): Pair<String, Map<String, String>> {
-        val cachedFile = cloudCacheManager.getCachedFile(song)
+        val cachedFile = if (cloudCacheManager.isNoCacheEnabled()) null else cloudCacheManager.getCachedFile(song)
         if (cachedFile != null) {
             return cachedFile.absolutePath to emptyMap()
         }

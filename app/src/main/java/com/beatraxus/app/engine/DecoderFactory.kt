@@ -132,7 +132,7 @@ internal class DecoderFactory(
         // First try MediaExtractor as it's fast
         val extractor = MediaExtractor()
         try {
-            val cachedFile = cloudCacheManager.getCachedFile(song)
+            val cachedFile = if (cloudCacheManager.isNoCacheEnabled()) null else cloudCacheManager.getCachedFile(song)
             if (cachedFile != null) {
                 extractor.setDataSource(cachedFile.absolutePath)
             } else if (song.source != SongSource.LOCAL) {

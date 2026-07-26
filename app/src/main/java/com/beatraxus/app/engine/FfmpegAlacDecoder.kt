@@ -234,7 +234,8 @@ internal class FfmpegAlacDecoder(
     }
 
     private suspend fun resolveHeaders(song: Song): Map<String, String> {
-        if (cloudCacheManager.getCachedFile(song) != null) return emptyMap()
+        val cachedFile = if (cloudCacheManager.isNoCacheEnabled()) null else cloudCacheManager.getCachedFile(song)
+        if (cachedFile != null) return emptyMap()
         
         val headers = mutableMapOf<String, String>()
         
@@ -257,7 +258,7 @@ internal class FfmpegAlacDecoder(
     }
 
     private suspend fun resolveInputSource(song: Song): String {
-        val cachedFile = cloudCacheManager.getCachedFile(song)
+        val cachedFile = if (cloudCacheManager.isNoCacheEnabled()) null else cloudCacheManager.getCachedFile(song)
         if (cachedFile != null) return cachedFile.absolutePath
 
         return if (song.source == SongSource.GDRIVE) {
@@ -276,7 +277,8 @@ internal class FfmpegAlacDecoder(
         // 1. Try MediaExtractor first (local or cached)
         // MediaExtractor is significantly faster than FFprobe as it can use our StreamingCacheDataSource
         // SKIP for Telegram unless already cached, to avoid slow/blocking network reads during probe.
-        if (song.source != SongSource.TELEGRAM || cloudCacheManager.getCachedFile(song) != null) {
+        val cachedFile = if (cloudCacheManager.isNoCacheEnabled()) null else cloudCacheManager.getCachedFile(song)
+        if (song.source != SongSource.TELEGRAM || cachedFile != null) {
             val extracted = probeFormatWithExtractor(song, headers)
             if (extracted != null) return@withContext extracted
         }
@@ -357,7 +359,7 @@ internal class FfmpegAlacDecoder(
     private suspend fun probeFormatWithExtractor(song: Song, headers: Map<String, String>): ProbedAlacFormat? {
         val extractor = MediaExtractor()
         return try {
-            val cachedFile = cloudCacheManager.getCachedFile(song)
+            val cachedFile = if (cloudCacheManager.isNoCacheEnabled()) null else cloudCacheManager.getCachedFile(song)
             if (cachedFile != null) {
                 extractor.setDataSource(cachedFile.absolutePath)
             } else if (song.source != SongSource.LOCAL) {
