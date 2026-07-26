@@ -8,7 +8,6 @@ import com.beatraxus.app.model.ReplayGainSource
 import com.beatraxus.app.model.Song
 import com.beatraxus.app.model.SoundStageNodePosition
 import kotlin.math.abs
-import kotlin.math.log10
 import kotlin.math.pow
 
 internal data class DspProcessResult(
@@ -408,13 +407,7 @@ private class NativeDspProcessor(
         val manualPreamp = if (!isBP && config.preampEnabled) config.preampDb else 0f
         val eqMasterGain = if (effectiveEqEnabled) config.eqMasterGainDb else 0f
         val appliedEqMasterGain = eqMasterGain
-        val dvcCompensationDb = if (config.dvcEnabled && config.compensateDvcVolumeEnabled && !isBP) {
-            val attenuationDb = if (config.dvcLevel > 0f)
-                -20f * log10(config.dvcLevel)
-            else 0f
-            // Cap so compensation doesn't blow up as dvcLevel approaches 0
-            attenuationDb.coerceIn(0f, 12f)
-        } else 0f
+        val dvcCompensationDb = if (config.dvcEnabled && config.compensateDvcVolumeEnabled && !isBP) 3.0f else 0f
 
         val totalPreamp = manualPreamp + autoEqPreamp + reverbCompensation + appliedEqMasterGain + dvcCompensationDb
 
@@ -530,7 +523,7 @@ private data class ReplayGainState(
             val safeLimit = if (peak > 0f) (1f / peak).coerceAtMost(1f) else 1f
             return if (config.replayGainOption == ReplayGainOption.APPLY_GAIN_PREVENT_CLIPPING && linearGain > safeLimit) {
                 ReplayGainState(
-                    gainDb = 20f * log10(safeLimit.toDouble()).toFloat(),
+                    gainDb = 20f * kotlin.math.log10(safeLimit.toDouble()).toFloat(),
                     preventClipping = true,
                     limit = safeLimit
                 )

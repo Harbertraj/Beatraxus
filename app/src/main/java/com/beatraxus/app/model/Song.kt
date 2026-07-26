@@ -316,7 +316,6 @@ data class PlayerUiState(
     val bitDepth: Int = 16,
     val bitrate: Int = 0,
     val format: String = "",
-    val streamingNoCacheEnabled: Boolean = false,
     val pipelineOutputPath: String = "AudioTrack",
     val pipelineDvcEnabled: Boolean = false,
     val pipelineResamplerEnabled: Boolean = false,

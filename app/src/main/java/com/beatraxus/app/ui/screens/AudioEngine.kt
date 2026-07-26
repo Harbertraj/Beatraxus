@@ -380,13 +380,11 @@ class AudioEngine(
      * already-running PlaybackSession, which reuses the MediaExtractor/data source that
      * was opened when the session started. That "use cache or not" decision is made once,
      * at session start, inside the decoder (MediaCodecAudioDecoder / FfmpegAlacDecoder /
-     * DecoderFactory each check cloudCacheManager.isNoCacheEnabled() only when first opening
-     * the source). So toggling no-cache-streaming while a cloud song is already playing had
-     * no effect on that song until the next track, because the running decoder never
-     * re-checked the flag.
+     * DecoderFactory). Since we now exclusively use no-cache streaming for all cloud songs,
+     * this restart ensures any change in playback strategy is applied immediately.
      *
      * Call this instead of seekTo() whenever a setting that changes *how* the current
-     * song's data source is opened (e.g. no-cache streaming) changes mid-playback.
+     * song's data source is opened changes mid-playback.
      */
     fun restartCurrentSession(positionMs: Long) {
         Log.d("AudioEngine", "restartCurrentSession requested at $positionMs ms")
@@ -571,7 +569,10 @@ class AudioEngine(
                         // computes elapsed frames against startFrameOffset captured back when
                         // it was preloaded (seconds/minutes ago), producing a huge garbage
                         // position (e.g. showing "3245:14" instead of the real elapsed time).
-                        activeSession?.setStartFrameOffset(output.totalFramesWritten())
+                        // FIX: Use playbackPositionFrames() consistently instead of totalFramesWritten()
+                        // to ensure the subtraction in currentRenderedPositionMs is accurate.
+                        val currentHwPos = output.playbackPositionFrames()
+                        activeSession?.setStartFrameOffset(currentHwPos)
                         updateAudioStateForSong(currentSong!!)
                         this@AudioEngine.positionMs = 0L
                         _playbackStateFlow.update { it.copy(currentSong = currentSong, sessionId = newSessionId) }
@@ -674,7 +675,8 @@ class AudioEngine(
                             if (newFormat != null && oldFormat != newFormat) {
                                 next.configure(newFormat)
                             }
-                            val framesAtTransition = output.totalFramesWritten()
+                            // FIX: Use playbackPositionFrames() consistently
+                            val framesAtTransition = output.playbackPositionFrames()
                             next.setStartFrameOffset(framesAtTransition)
 
                             updateAudioStateForSong(currentSong!!)
@@ -820,7 +822,17 @@ class AudioEngine(
 
         fun currentRenderedPositionMs(): Long {
             val sampleRate = output.outputSampleRate().takeIf { it > 0 } ?: pcmFormat?.sampleRate ?: 44_100
-            val framesSinceStart = (output.playbackPositionFrames() - startFrameOffset).coerceAtLeast(0L)
+            val hwPosition = output.playbackPositionFrames()
+            val framesSinceStart = (hwPosition - startFrameOffset).coerceAtLeast(0L)
+            
+            // Safeguard: if elapsed frames represent more than 24 hours of playback, 
+            // it's likely a hardware sync error (hardware counter was cumulative since boot 
+            // but we anchored to 0). In this case, we cap it to the song duration or 
+            // return basePositionMs to avoid "6234:03" glitch.
+            if (framesSinceStart > 86400L * sampleRate) {
+                return basePositionMs
+            }
+            
             return basePositionMs + framesToMs(framesSinceStart, sampleRate)
         }
 

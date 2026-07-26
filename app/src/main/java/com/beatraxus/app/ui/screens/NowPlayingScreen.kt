@@ -25,6 +25,7 @@ import androidx.compose.material.icons.automirrored.outlined.PlaylistPlay
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.snapshots.SnapshotStateMap
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -173,10 +174,17 @@ fun NowPlayingScreen(
     // Key ensures derived state (progress calc) resets on song change
     val songChangeKey = song.id to (durationMs)
 
-    var badgeVisible by remember(song.id) { mutableStateOf(false) }
+    var badgeVisible by rememberSaveable(song.id) { mutableStateOf(false) }
+    var shouldAnimateBadge by rememberSaveable(song.id) { mutableStateOf(true) }
+    
     LaunchedEffect(song.id) {
-        delay(200)
-        badgeVisible = true
+        if (!badgeVisible) {
+            delay(350)
+            badgeVisible = true
+        } else {
+            // If already visible (returning from another screen), don't animate again
+            shouldAnimateBadge = false
+        }
     }
     
     val metadataHeight by animateDpAsState(
@@ -542,7 +550,6 @@ fun NowPlayingScreen(
                                 KaraokeLyricsView(
                                     lyrics = uiState.lyrics,
                                     currentIndex = uiState.lyricsCurrentIndex,
-                                    progressMs = progressMs,
                                     lyricsOffsetMs = uiState.lyricsOffsetMs,
                                     isLoading = uiState.isLoadingLyrics,
                                     lyricsSource = uiState.lyricsSource,
@@ -582,17 +589,27 @@ fun NowPlayingScreen(
                                         contentAlignment = Alignment.BottomCenter
                                     ) {
                                         if (uiState.appearance.showAudioQualityBadge) {
-                                            androidx.compose.animation.AnimatedVisibility(
-                                                visible = badgeVisible,
-                                                enter = fadeIn(tween(600)) + scaleIn(initialScale = 0.8f, animationSpec = tween(600)),
-                                                exit = fadeOut(tween(0))
-                                            ) {
-                                                AudioQualityBadge(
-                                                    song = song,
-                                                    uiState = uiState,
-                                                    onClick = { },
-                                                    onLongPress = { onTogglePipeline(true) }
-                                                )
+                                            key(song.id) {
+                                                androidx.compose.animation.AnimatedVisibility(
+                                                    visible = badgeVisible,
+                                                    enter = if (shouldAnimateBadge) {
+                                                        fadeIn(tween(500)) + scaleIn(
+                                                            initialScale = 0.6f,
+                                                            animationSpec = spring(
+                                                                dampingRatio = Spring.DampingRatioMediumBouncy,
+                                                                stiffness = Spring.StiffnessLow
+                                                            )
+                                                        )
+                                                    } else EnterTransition.None,
+                                                    exit = fadeOut(tween(100))
+                                                ) {
+                                                    AudioQualityBadge(
+                                                        song = song,
+                                                        uiState = uiState,
+                                                        onClick = { },
+                                                        onLongPress = { onTogglePipeline(true) }
+                                                    )
+                                                }
                                             }
                                         }
                                     }

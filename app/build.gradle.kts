@@ -228,6 +228,7 @@ dependencies {
     implementation("androidx.security:security-crypto:1.1.0")
 
     implementation("androidx.work:work-runtime-ktx:2.9.0")
+    implementation("androidx.core:core-splashscreen:1.0.1")
 
     implementation(files("libs/ffmpeg-kit-full-gpl-6.0-2.aar"))
     implementation("com.arthenica:smart-exception-java:0.2.1")

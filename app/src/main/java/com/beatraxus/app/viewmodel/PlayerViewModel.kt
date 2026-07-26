@@ -137,6 +137,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private val aiAnalysisDao = database.aiAnalysisDao()
     private val artistArtDao = database.artistArtDao()
     private val songQualityDao = database.songQualityDao()
+    private val recentlyPlayedDao = database.recentlyPlayedDao()
     private val aiAnalysisEngine = com.beatraxus.app.engine.AiAnalysisEngine(application)
 
     private val decoderFactory = DecoderFactory(
@@ -162,6 +163,23 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     private val prefs = application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE)
 
+    private val prefListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { p, key ->
+        when (key) {
+            "data_saver_enabled" -> {
+                val enabled = p.getBoolean(key, false)
+                _uiState.update { it.copy(dataSaverEnabled = enabled) }
+            }
+            "artwork_enrichment_enabled" -> {
+                val enabled = p.getBoolean(key, true)
+                _uiState.update { it.copy(artworkEnrichmentEnabled = enabled) }
+            }
+            "scrobbling_enabled" -> {
+                val enabled = p.getBoolean(key, true)
+                _uiState.update { it.copy(scrobblingEnabled = enabled) }
+            }
+        }
+    }
+
     private val _uiState = MutableStateFlow(PlayerUiState(
         isFirstRun = prefs.getBoolean("first_run", true),
         useOriginalQualityArt = prefs.getBoolean("use_original_quality_art", false),
@@ -178,7 +196,6 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         syncQuality = SyncQuality.valueOf(prefs.getString("sync_quality", SyncQuality.MEDIUM.name) ?: SyncQuality.MEDIUM.name),
         backgroundSyncEnabled = prefs.getBoolean("background_sync_enabled", true),
         scrobblingEnabled = prefs.getBoolean("scrobbling_enabled", true),
-        streamingNoCacheEnabled = prefs.getBoolean("streaming_no_cache_enabled", false),
         gdriveAllowedFormats = prefs.getStringSet("gdrive_allowed_formats", emptySet()) ?: emptySet(),
         telegramAllowedFormats = prefs.getStringSet("telegram_allowed_formats", emptySet()) ?: emptySet(),
         shuffleMode = prefs.getBoolean("last_shuffle_mode", false),
@@ -501,7 +518,16 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }.asCoroutineDispatcher()
 
     init {
+        prefs.registerOnSharedPreferenceChangeListener(prefListener)
         FFmpegKitConfig.setLogLevel(Level.AV_LOG_ERROR)
+
+        // Load persistent play history
+        viewModelScope.launch {
+            recentlyPlayedDao.getAllRecentlyPlayed().collect { entities ->
+                _recentlyPlayed.value = entities.map { it.songId }
+            }
+        }
+
         // Observe Telegram auth state
         viewModelScope.launch {
             tdLibManager.authState.collect { state ->
@@ -840,9 +866,6 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             _songs.value.filter { it.source == SongSource.LOCAL && it.year == 0 }
                 .forEach { yearEnrichmentChannel.send(it) }
         }
-
-        // Initialize CloudCacheManager with no-cache setting
-        cloudCacheManager.setNoCacheEnabled(_uiState.value.streamingNoCacheEnabled)
     }
 
     private fun checkBatteryOptimizations() {
@@ -1108,6 +1131,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun attachService(svc: AudioPlaybackService) {
         if (service === svc) return
         service = svc
+        
         svc.updateDspConfig(_uiState.value.dsp.config)
         svc.setOutputMode(OutputMode.fromName(_uiState.value.outputMode))
         serviceObserversJob?.cancel()
@@ -1199,7 +1223,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
                         if (resetProgress) {
                             if (pbState.currentSong != null) {
-                                updateRecentlyPlayed(pbState.currentSong.id)
+                                updateRecentlyPlayed(pbState.currentSong)
                                 handleSongChangeForSleepTimer(pbState.currentSong)
                                 fetchOnlineInfo(pbState.currentSong)
                                 loadLyrics(pbState.currentSong)
@@ -1992,7 +2016,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 saveQueueToPrefs(listOf(song), listOf(song), 0)
             }
         }
-        updateRecentlyPlayed(song.id)
+        updateRecentlyPlayed(song)
         loadLyrics(song)
     }
 
@@ -2041,12 +2065,31 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    private fun updateRecentlyPlayed(songId: String) {
+    private fun updateRecentlyPlayed(song: Song) {
+        val songId = song.id
         val current = _recentlyPlayed.value.toMutableList()
         current.remove(songId)
         current.add(0, songId)
-        if (current.size > 50) current.removeAt(current.size - 1)
+        if (current.size > 200) current.removeAt(current.size - 1)
         _recentlyPlayed.value = current
+
+        // Persist to database
+        viewModelScope.launch(Dispatchers.IO) {
+            recentlyPlayedDao.addRecentlyPlayed(
+                com.beatraxus.app.model.RecentlyPlayedEntity(
+                    songId = songId,
+                    timestamp = System.currentTimeMillis(),
+                    accountEmail = when (song.source) {
+                        SongSource.GDRIVE -> song.driveAccountEmail
+                        SongSource.DROPBOX -> song.dropboxAccountEmail
+                        SongSource.ONEDRIVE -> song.onedriveAccountEmail
+                        SongSource.BOX -> song.boxAccountEmail
+                        SongSource.NEXTCLOUD -> song.nextcloudAccountEmail
+                        else -> null
+                    }
+                )
+            )
+        }
     }
 
 
@@ -2728,28 +2771,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun setDataSaverEnabled(enabled: Boolean) {
         prefs.edit().putBoolean("data_saver_enabled", enabled).apply()
-        _uiState.update { it.copy(dataSaverEnabled = enabled) }
-    }
-
-    fun setStreamingNoCacheEnabled(enabled: Boolean) {
-        if (_uiState.value.streamingNoCacheEnabled == enabled) {
-            Log.d(TAG, "setStreamingNoCacheEnabled($enabled) ignored - already in this state")
-            return
-        }
-        Log.d(TAG, "setStreamingNoCacheEnabled: $enabled")
-        prefs.edit().putBoolean("streaming_no_cache_enabled", enabled).apply()
-        _uiState.update { it.copy(streamingNoCacheEnabled = enabled) }
-        cloudCacheManager.setNoCacheEnabled(enabled)
-        // Propagate to service for immediate effect and queue re-priming. Note: this write to
-        // prefs above will ALSO notify AudioPlaybackService's own SharedPreferences listener,
-        // which calls the same service method a second time - that second call is now a
-        // guarded no-op inside AudioPlaybackService.setStreamingNoCacheEnabled, so it's safe.
-        service?.setStreamingNoCacheEnabled(enabled)
     }
 
     fun setArtworkEnrichmentEnabled(enabled: Boolean) {
         prefs.edit().putBoolean("artwork_enrichment_enabled", enabled).apply()
-        _uiState.update { it.copy(artworkEnrichmentEnabled = enabled) }
     }
 
     fun setSyncQuality(quality: com.beatraxus.app.model.SyncQuality) {
@@ -3498,10 +3523,29 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
         if (songsToShuffle.isNotEmpty()) {
             service?.setShuffleMode(true)
-            val shuffled = songsToShuffle.shuffled()
+            val shuffled = smartShuffle(songsToShuffle)
             service?.playList(shuffled, 0)
             saveQueueToPrefs(shuffled, songsToShuffle, 0)
         }
+    }
+
+    private fun smartShuffle(songs: List<Song>): List<Song> {
+        // If library is small, standard shuffle is fine
+        if (songs.size <= 20) return songs.shuffled()
+
+        // Deprioritize the last 150 songs played to ensure variety
+        val deprioritizeLimit = 150
+        val recentlyPlayedIds = _recentlyPlayed.value.take(deprioritizeLimit).toSet()
+
+        val (recent, fresh) = songs.partition { it.id in recentlyPlayedIds }
+
+        // Use a high-precision seed for randomization
+        val random = java.util.Random(System.nanoTime())
+        val shuffledFresh = fresh.shuffled(random)
+        val shuffledRecent = recent.shuffled(random)
+
+        // Fresh songs first, recently played songs last
+        return shuffledFresh + shuffledRecent
     }
 
     fun toggleLyrics() {
@@ -3681,23 +3725,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         val state = _uiState.value
         if (state.lyrics.isEmpty()) return
         
-        // DEBUG: Audit for drift vs constant latency offset
-        if (state.lyricsCurrentIndex >= 0) {
-            val latency = service?.getAudioEngine()?.audioStateFlow?.value?.latencyFrames ?: 0
-            val rate = service?.getAudioEngine()?.audioStateFlow?.value?.sampleRate ?: 44100
-            val latencyMs = if (rate > 0) (latency * 1000L) / rate else 0L
-            Log.d("LyricSync", "UI_Pos=${currentMs}ms, Latency=${latencyMs}ms, Adjusted=${currentMs + state.lyricsOffsetMs}ms")
-        }
-
         val adjustedMs = currentMs + state.lyricsOffsetMs
-        // NOTE: previously this was `lyrics.findLast { ... }?.let { lyrics.indexOf(it) }`, which
-        // re-locates the found line by structural equality. If two lines share the same
-        // startTime + text (duplicate lines happen in real-world LRC/synced-lyrics files —
-        // e.g. a repeated chorus line that a source duplicated with the same timestamp),
-        // indexOf() returns the FIRST match instead of the one findLast() actually found,
-        // silently pointing the highlighted line at an earlier lyric than the one actually
-        // due — this is a real, intermittent "lyrics fall out of sync" cause. indexOfLast
-        // does the same predicate search in one pass and always returns the correct position.
         val index = state.lyrics.indexOfLast { it.startTime <= adjustedMs }
         
         if (index != state.lyricsCurrentIndex) {
@@ -4157,7 +4185,6 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun setScrobblingEnabled(enabled: Boolean) {
         prefs.edit().putBoolean("scrobbling_enabled", enabled).apply()
-        _uiState.update { it.copy(scrobblingEnabled = enabled) }
     }
 
     fun setNowPlayingBackgroundMode(mode: com.beatraxus.app.model.NowPlayingBackgroundMode) {
@@ -4552,6 +4579,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 artistCount = songs.map { song -> song.artist }.toSet().size
             )
         }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        prefs.unregisterOnSharedPreferenceChangeListener(prefListener)
+        aiAnalysisDispatcher.close()
     }
 }
 

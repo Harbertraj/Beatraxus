@@ -30,7 +30,8 @@ data class LyricsLoadResult(
     val source: LyricsSource,
     val type: LyricsType = LyricsType.PLAIN,
     val rawContent: String? = null,
-    val syncOffset: Long = 0L
+    val syncOffset: Long = 0L,
+    val score: Double = 0.0
 )
 
 class LyricsRepository(private val context: Context, private val database: AppDatabase) {
@@ -198,7 +199,8 @@ class LyricsRepository(private val context: Context, private val database: AppDa
             source = LyricsSource.ONLINE,
             type = result.type,
             rawContent = result.content,
-            syncOffset = existingOffset
+            syncOffset = existingOffset,
+            score = result.score
         )
 
         cache[song.id] = res
@@ -210,7 +212,6 @@ class LyricsRepository(private val context: Context, private val database: AppDa
             // and the song doesn't already have them in its metadata
             if (song.lyrics.isNullOrBlank()) {
                 embeddedSource.saveLyrics(song.uri, result.content)
-                // Also update the songs table so the app knows it now has lyrics
                 songDao.updateLyrics(song.id, result.content)
             }
         }
@@ -270,8 +271,8 @@ class LyricsRepository(private val context: Context, private val database: AppDa
 
     private fun determineType(content: String): LyricsType {
         return when {
-            content.contains(Regex("<\\d+:\\d+[.:]\\d+>")) -> LyricsType.WORD_BY_WORD
-            content.contains(Regex("\\[\\d+:\\d+[.:]\\d+\\]")) -> LyricsType.SYNCED
+            // Using triple quotes to match LrcParser's TIME_PATTERN
+            content.contains(Regex("""\[(?:(\d+):)?(\d{1,3}):(\d{2})(?:[.:](\d{1,3}))?\]""")) -> LyricsType.SYNCED
             else -> LyricsType.PLAIN
         }
     }

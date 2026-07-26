@@ -7,13 +7,10 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.ScrollScope
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyListItemInfo
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -33,43 +30,21 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.asComposeRenderEffect
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
 import com.beatraxus.app.model.LrcLine
-import com.beatraxus.app.model.WordTiming
 import com.beatraxus.app.repository.LyricsSource
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 
-/**
- * Spring-based alternative to LazyListState.animateScrollToItem, which only offers a fixed
- * (non-bouncy) easing curve. Uses LazyListState.scroll{}'s dispatchRawDelta, the standard
- * Compose mechanism for driving a scroll from a custom AnimationSpec — same pattern used
- * for e.g. fling/snap behaviors that need something other than the built-in animation.
- *
- * Falls back to an instant snap for jumps to an item that isn't currently laid out at all
- * (e.g. the user scrubbed the seek bar far ahead) — bouncing across a large off-screen
- * distance wouldn't read as an intentional "line change" animation, just a slow scroll.
- */
 private suspend fun LazyListState.bouncyScrollToItem(index: Int, targetOffset: Int) {
     val itemInfo = layoutInfo.visibleItemsInfo.firstOrNull { it.index == index }
     if (itemInfo == null) {
-        // LazyListState.scrollToItem's scrollOffset uses the OPPOSITE sign convention from
-        // our targetOffset: passing a positive scrollOffset here pushes the item further
-        // *past* the top of the viewport (final position = -scrollOffset). Our targetOffset
-        // below is defined as the literal desired final on-screen position, so it must be
-        // negated when handing off to the real API — otherwise a jump-scroll (e.g. seeking
-        // far ahead) lands the item mirrored above/below where the bouncy path would put it.
         scrollToItem(index, -targetOffset)
         return
     }
@@ -95,8 +70,6 @@ private suspend fun LazyListState.bouncyScrollToItem(index: Int, targetOffset: I
 fun KaraokeLyricsView(
     lyrics: List<LrcLine>,
     currentIndex: Int,
-    progressMs: () -> Long,
-    lyricsOffsetMs: Long,
     isLoading: Boolean,
     lyricsSource: LyricsSource?,
     onLineClick: (Long) -> Unit,
@@ -105,7 +78,8 @@ fun KaraokeLyricsView(
     onSetOffset: (Long) -> Unit = {},
     onSwipeDown: () -> Unit = {},
     onSearchOnline: (() -> Unit)? = null,
-    lyricsErrorMessage: String? = null
+    lyricsErrorMessage: String? = null,
+    lyricsOffsetMs: Long = 0L // Keep this for sync controls
 ) {
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -117,11 +91,6 @@ fun KaraokeLyricsView(
     var isLongPressing by remember { mutableStateOf(false) }
     var tempOffsetStr by remember { mutableStateOf("") }
 
-
-
-
-
-    // Logic to re-enable auto-scroll after manual interaction
     LaunchedEffect(isDragged) {
         if (isDragged) {
             autoScrollEnabled = false
@@ -139,7 +108,6 @@ fun KaraokeLyricsView(
     LaunchedEffect(currentIndex, autoScrollEnabled, containerHeight) {
         if (autoScrollEnabled && currentIndex in lyrics.indices && containerHeight > 0) {
             scope.launch {
-                // Centering with "Smooth Flow" compensation
                 val offset = (containerHeight * 0.35f).toInt()
                 listState.bouncyScrollToItem(index = currentIndex, targetOffset = offset)
             }
@@ -155,7 +123,6 @@ fun KaraokeLyricsView(
             }
             .drawWithContent {
                 drawContent()
-                // Premium Fading Edges
                 val colors = listOf(Color.Transparent, Color.Black, Color.Black, Color.Transparent)
                 val stops = floatArrayOf(0f, 0.15f, 0.85f, 1f)
                 drawRect(
@@ -196,7 +163,7 @@ fun KaraokeLyricsView(
                         lyricsErrorMessage,
                         color = Color(0xFFFF8A80).copy(alpha = 0.85f),
                         style = MaterialTheme.typography.bodyMedium,
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        textAlign = TextAlign.Center,
                         modifier = Modifier.padding(horizontal = 24.dp)
                     )
                     Spacer(Modifier.height(4.dp))
@@ -218,24 +185,20 @@ fun KaraokeLyricsView(
             LazyColumn(
                 state = listState,
                 modifier = Modifier.fillMaxSize(),
-                // Reduced top padding to allow lyrics to move higher up the screen
                 contentPadding = PaddingValues(top = 40.dp, bottom = 450.dp, start = 32.dp, end = 32.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
                 horizontalAlignment = Alignment.Start
             ) {
-                itemsIndexed(lyrics, key = { _, line -> line.startTime }) { index, line ->
+                itemsIndexed(lyrics, key = { index, line -> line.startTime }) { index, line ->
                     val isCurrent = index == currentIndex
                     val distance = abs(index - currentIndex)
                     
-                    // Progressive blur and fade for non-active lines
                     val lineAlpha = when {
                         isCurrent -> 1.0f
                         distance == 1 -> 0.45f
                         distance == 2 -> 0.25f
                         else -> 0.12f
                     }
-
-
 
                     SyncedLyricLine(
                         line = line,
@@ -247,15 +210,12 @@ fun KaraokeLyricsView(
                             lastInteractionTime = System.currentTimeMillis()
                         },
                         onLongClick = {
-                            if (line.wordTimings == null) {
-                                onSearchOnline?.invoke()
-                            }
+                            onSearchOnline?.invoke()
                         }
                     )
                 }
             }
 
-            // Enhanced Sync Controls
             AnimatedVisibility(
                 visible = showSyncControls,
                 enter = fadeIn() + slideInVertically { -it },
@@ -316,7 +276,6 @@ fun KaraokeLyricsView(
             }
         }
         
-        // Manual offset entry dialog
         if (isLongPressing) {
             AlertDialog(
                 onDismissRequest = { isLongPressing = false },
@@ -367,7 +326,6 @@ fun SyncedLyricLine(
     onClick: () -> Unit,
     onLongClick: () -> Unit = {}
 ) {
-    // Ambient "Floating" Motion: Subtle sinusoidal swaying for the active line
     val infiniteTransition = rememberInfiniteTransition(label = "ambient")
     val ambientSway by infiniteTransition.animateFloat(
         initialValue = -3f,
@@ -385,7 +343,6 @@ fun SyncedLyricLine(
         label = "alpha"
     )
 
-    // Bouncy scale for EVERY line, not just the active one
     val targetScale = when {
         isCurrent -> 1.08f
         distance == 1 -> 0.97f
@@ -401,7 +358,6 @@ fun SyncedLyricLine(
         label = "lineScale"
     )
 
-    // Bouncy vertical settle for every line
     val targetOffset = when {
         isCurrent -> 0f
         else -> (distance.coerceAtMost(4) * 5f)
@@ -415,8 +371,6 @@ fun SyncedLyricLine(
         label = "upwardMovement"
     )
 
-    // Remove sequentialWords - no longer needed for single text block
-    
     val baseStyle = MaterialTheme.typography.headlineMedium.copy(
         fontWeight = FontWeight.ExtraBold,
         fontSize = 24.sp,
@@ -443,15 +397,10 @@ fun SyncedLyricLine(
                 onLongClick = onLongClick
             )
     ) {
-        Box(
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text(
-                text = line.text,
-                style = baseStyle,
-                color = if (isCurrent) Color.White else Color.White.copy(alpha = 0.35f)
-            )
-        }
+        Text(
+            text = line.text,
+            style = baseStyle,
+            color = if (isCurrent) Color.White else Color.White.copy(alpha = 0.35f)
+        )
     }
 }
-

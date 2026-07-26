@@ -32,10 +32,7 @@ internal class MediaCodecAudioDecoder(
 
         try {
             // 1. Setup Data Source
-            val cachedFile = if (cloudCacheManager.isNoCacheEnabled()) null else cloudCacheManager.getCachedFile(request.song)
-            if (cachedFile != null) {
-                extractor.setDataSource(cachedFile.absolutePath)
-            } else if (request.song.source != SongSource.LOCAL) {
+            if (request.song.source != SongSource.LOCAL) {
                 val dataSource = cloudCacheManager.getDataSource(request.song, tdLibManager) { control.isSeekPending() }
                 if (dataSource != null) {
                     try {
@@ -78,7 +75,7 @@ internal class MediaCodecAudioDecoder(
 
             // 2. Select Track with retry
             var track = selectBestAudioTrack(extractor)
-            if (track == null && request.song.source != SongSource.LOCAL && cachedFile == null) {
+            if (track == null && request.song.source != SongSource.LOCAL) {
                 control.logWarn("Initial extraction failed, retrying with fresh extractor and direct URL...")
                 extractor.release()
                 extractor = MediaExtractor()
@@ -259,11 +256,6 @@ internal class MediaCodecAudioDecoder(
     }
 
     private suspend fun resolveSource(song: Song): Pair<String, Map<String, String>> {
-        val cachedFile = if (cloudCacheManager.isNoCacheEnabled()) null else cloudCacheManager.getCachedFile(song)
-        if (cachedFile != null) {
-            return cachedFile.absolutePath to emptyMap()
-        }
-
         if (song.source == SongSource.TELEGRAM) {
             val path = cloudCacheManager.getTelegramFilePath(song, tdLibManager)
             return (path ?: "") to emptyMap()

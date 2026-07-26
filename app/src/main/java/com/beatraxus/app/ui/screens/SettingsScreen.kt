@@ -410,11 +410,16 @@ fun SettingsScreen(
                                     playerViewModel, 
                                     onRequestGDriveAccount = onRequestGDriveAccount, 
                                     onNavigateToGDriveSettings = { sectionStack.add("GDrive Settings") },
-                                    onNavigateToTelegramSettings = { sectionStack.add("Telegram Settings") },
+                                    onNavigateToTelegramCloud = { sectionStack.add("Telegram Channels") },
                                     onNavigateToDropboxSettings = { sectionStack.add("Dropbox Settings") },
                                     onNavigateToOneDriveSettings = { sectionStack.add("OneDrive Settings") },
                                     onNavigateToBoxSettings = { sectionStack.add("Box Settings") },
                                     onNavigateToNextcloudSettings = { sectionStack.add("Nextcloud Settings") }
+                                )
+                                "Telegram Channels" -> TelegramCloudContent(
+                                    uiState,
+                                    playerViewModel,
+                                    onNavigateToTelegramSettings = { sectionStack.add("Telegram Settings") }
                                 )
                                 "GDrive Settings" -> MetadataSyncContent(uiState, playerViewModel, provider = com.beatraxus.app.model.CloudProvider.GDRIVE)
                                 "Telegram Settings" -> MetadataSyncContent(uiState, playerViewModel, provider = com.beatraxus.app.model.CloudProvider.TELEGRAM)
@@ -3346,7 +3351,7 @@ fun CloudContent(
     viewModel: PlayerViewModel,
     onRequestGDriveAccount: () -> Unit,
     onNavigateToGDriveSettings: () -> Unit,
-    onNavigateToTelegramSettings: () -> Unit,
+    onNavigateToTelegramCloud: () -> Unit,
     onNavigateToDropboxSettings: () -> Unit,
     onNavigateToOneDriveSettings: () -> Unit,
     onNavigateToBoxSettings: () -> Unit,
@@ -3357,20 +3362,11 @@ fun CloudContent(
     val onedriveAccounts = uiState.onedriveAccounts
     val boxAccounts = uiState.boxAccounts
     val nextcloudAccounts = uiState.nextcloudAccounts
-    val telegramChannels = uiState.telegramChannels
 
-    DisposableEffect(Unit) {
-        onDispose {
-            viewModel.resetTelegramLoginForm()
-        }
-    }
-
-    var driveQuery by remember { mutableStateOf("") }
     var dropboxQuery by remember { mutableStateOf("") }
     var onedriveQuery by remember { mutableStateOf("") }
     var boxQuery by remember { mutableStateOf("") }
     var nextcloudQuery by remember { mutableStateOf("") }
-    var telegramUrl by remember { mutableStateOf("") }
     var showNextcloudDialog by remember { mutableStateOf(false) }
 
     if (showNextcloudDialog) {
@@ -3390,27 +3386,24 @@ fun CloudContent(
             isActive = true,
             subtitle = "Enrichment rules, network and data saver"
         ) {
-            OutlinedTextField(
-                value = driveQuery,
-                onValueChange = { driveQuery = it },
-                modifier = Modifier.fillMaxWidth(),
-                placeholder = { Text("Search or add account...", color = Color.Gray, fontSize = 14.sp) },
-                trailingIcon = {
-                    TextButton(onClick = onRequestGDriveAccount) {
-                        Text("Add", color = Color(0xFF1A73E8), fontWeight = FontWeight.Bold)
-                    }
-                },
-                shape = RoundedCornerShape(10.dp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = Color(0xFF1A73E8).copy(0.5f),
-                    unfocusedBorderColor = Color.White.copy(0.1f),
-                    focusedContainerColor = Color.Black.copy(0.2f),
-                    unfocusedContainerColor = Color.Black.copy(0.2f),
-                    cursorColor = Color(0xFF1A73E8)
-                ),
-                singleLine = true,
-                textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 14.sp)
-            )
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Color.Black.copy(0.2f))
+                    .border(1.dp, Color.White.copy(0.1f), RoundedCornerShape(10.dp))
+                    .clickable { onRequestGDriveAccount() }
+                    .padding(horizontal = 16.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "Add Google Drive Account",
+                    color = Color.White.copy(alpha = 0.7f),
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
 
             uiState.driveErrorMessage?.let { error ->
                 Text(
@@ -3421,13 +3414,9 @@ fun CloudContent(
                 )
             }
 
-            val filteredDrive = driveAccounts.filter {
-                it.email.contains(driveQuery, ignoreCase = true) || it.accountName.contains(driveQuery, ignoreCase = true)
-            }
-
-            if (filteredDrive.isNotEmpty()) {
+            if (driveAccounts.isNotEmpty()) {
                 Spacer(Modifier.height(4.dp))
-                filteredDrive.forEach { account ->
+                driveAccounts.forEach { account ->
                     CloudAccountRow(
                         name = account.accountName,
                         email = account.email,
@@ -3449,81 +3438,6 @@ fun CloudContent(
                 icon = Icons.Rounded.Settings,
                 onClick = onNavigateToGDriveSettings
             )
-        }
-
-        SettingsSection(
-            title = "TELEGRAM CHANNELS",
-            icon = Icons.AutoMirrored.Rounded.Send,
-            isActive = true
-        ) {
-            OutlinedTextField(
-                value = telegramUrl,
-                onValueChange = { telegramUrl = it },
-                modifier = Modifier.fillMaxWidth(),
-                placeholder = { Text("Channel URL or @username...", color = Color.Gray, fontSize = 14.sp) },
-                trailingIcon = {
-                    TextButton(
-                        onClick = {
-                            if (telegramUrl.isNotBlank()) {
-                                viewModel.addTelegramChannel(telegramUrl)
-                                telegramUrl = ""
-                            }
-                        }
-                    ) {
-                        val isExisting = telegramChannels.any { it.url.contains(telegramUrl, true) || it.name.contains(telegramUrl, true) }
-                        Text(if (isExisting) "Search" else "Join",
-                            color = Color(0xFF2AABEE), fontWeight = FontWeight.Bold)
-                    }
-                },
-                shape = RoundedCornerShape(10.dp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = Color(0xFF2AABEE).copy(0.5f),
-                    unfocusedBorderColor = Color.White.copy(0.1f),
-                    focusedContainerColor = Color.Black.copy(0.2f),
-                    unfocusedContainerColor = Color.Black.copy(0.2f),
-                    cursorColor = Color(0xFF2AABEE)
-                ),
-                singleLine = true,
-                textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 14.sp)
-            )
-
-            uiState.telegramSyncErrorMessage?.let { error ->
-                Text(
-                    text = error,
-                    color = if (error.contains("failed", ignoreCase = true)) Color.Red else Color(0xFF2AABEE),
-                    fontSize = 12.sp,
-                    modifier = Modifier.padding(top = 4.dp, start = 4.dp)
-                )
-            }
-
-            val filteredTelegram = telegramChannels.filter {
-                it.name.contains(telegramUrl, ignoreCase = true) || it.url.contains(telegramUrl, ignoreCase = true)
-            }
-
-            if (filteredTelegram.isNotEmpty()) {
-                Spacer(Modifier.height(4.dp))
-                filteredTelegram.forEach { channel ->
-                    TelegramChannelRow(
-                        channel = channel,
-                        onSync = { viewModel.syncTelegramChannel(channel.url) },
-                        onToggle = { enabled -> viewModel.toggleTelegramChannelEnabled(channel.url, enabled) },
-                        onRemove = { viewModel.removeTelegramChannel(channel.url) }
-                    )
-                }
-            }
-
-            HorizontalDivider(color = Color.White.copy(0.08f), modifier = Modifier.padding(vertical = 8.dp))
-
-            CloudSettingsButton(
-                title = "Telegram Settings",
-                subtitle = "Network, Data Saver and Sync options",
-                icon = Icons.Rounded.Settings,
-                onClick = onNavigateToTelegramSettings
-            )
-
-            Spacer(Modifier.height(8.dp))
-
-            TelegramLoginCard(uiState, viewModel)
         }
 
         // --- DROPBOX ---
@@ -3806,6 +3720,15 @@ fun CloudContent(
                 onClick = onNavigateToNextcloudSettings
             )
         }
+
+        SettingMenuItem(
+            title = "Telegram Channels",
+            subtitle = "Access private channels and login to your account",
+            icon = Icons.AutoMirrored.Rounded.Send,
+            iconColor = Color(0xFF2AABEE),
+            showBetaBadge = true,
+            onClick = onNavigateToTelegramCloud
+        )
     }
 }
 
@@ -5115,20 +5038,6 @@ fun MetadataSyncContent(uiState: PlayerUiState, playerViewModel: PlayerViewModel
                 fontSize = 12.sp,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
             )
-
-            HorizontalDivider(color = Color.White.copy(0.05f), modifier = Modifier.padding(vertical = 8.dp))
-
-            DspToggleRow(
-                title = "No-Cache Streaming",
-                checked = uiState.streamingNoCacheEnabled,
-                onCheckedChange = { playerViewModel.setStreamingNoCacheEnabled(it) }
-            )
-            Text(
-                "Direct playback without saving songs to device storage. Recommended if you have limited storage but stable internet.",
-                color = Color.White.copy(0.5f),
-                fontSize = 12.sp,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
-            )
         }
 
         SettingsSection(
@@ -5505,4 +5414,109 @@ fun android.content.Context.findActivity(): android.app.Activity? = when (this) 
     is android.app.Activity -> this
     is android.content.ContextWrapper -> baseContext.findActivity()
     else -> null
+}
+
+@Composable
+fun TelegramCloudContent(
+    uiState: PlayerUiState,
+    viewModel: PlayerViewModel,
+    onNavigateToTelegramSettings: () -> Unit
+) {
+    val telegramChannels = uiState.telegramChannels
+    var telegramUrl by remember { mutableStateOf("") }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            viewModel.resetTelegramLoginForm()
+        }
+    }
+
+    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        Card(
+            modifier = Modifier.fillMaxWidth().shadow(
+                elevation = 8.dp,
+                shape = RoundedCornerShape(24.dp),
+                ambientColor = Color.Black.copy(0.35f),
+                spotColor = Color.Black.copy(0.35f)
+            ),
+            shape = RoundedCornerShape(24.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = CardSurface.copy(alpha = 0.85f)
+            ),
+            border = BorderStroke(
+                1.2.dp,
+                PrimaryCyan.copy(0.3f)
+            )
+        ) {
+            Column(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                OutlinedTextField(
+                    value = telegramUrl,
+                    onValueChange = { telegramUrl = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("Channel URL or @username...", color = Color.Gray, fontSize = 14.sp) },
+                    trailingIcon = {
+                        TextButton(
+                            onClick = {
+                                if (telegramUrl.isNotBlank()) {
+                                    viewModel.addTelegramChannel(telegramUrl)
+                                    telegramUrl = ""
+                                }
+                            }
+                        ) {
+                            val isExisting = telegramChannels.any { it.url.contains(telegramUrl, true) || it.name.contains(telegramUrl, true) }
+                            Text(if (isExisting) "Search" else "Join",
+                                color = Color(0xFF2AABEE), fontWeight = FontWeight.Bold)
+                        }
+                    },
+                    shape = RoundedCornerShape(10.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = Color(0xFF2AABEE).copy(0.5f),
+                        unfocusedBorderColor = Color.White.copy(0.1f),
+                        focusedContainerColor = Color.Black.copy(0.2f),
+                        unfocusedContainerColor = Color.Black.copy(0.2f),
+                        cursorColor = Color(0xFF2AABEE)
+                    ),
+                    singleLine = true,
+                    textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 14.sp)
+                )
+
+                uiState.telegramSyncErrorMessage?.let { error ->
+                    Text(
+                        text = error,
+                        color = if (error.contains("failed", ignoreCase = true)) Color.Red else Color(0xFF2AABEE),
+                        fontSize = 12.sp,
+                        modifier = Modifier.padding(top = 4.dp, start = 4.dp)
+                    )
+                }
+
+                if (telegramChannels.isNotEmpty()) {
+                    Spacer(Modifier.height(4.dp))
+                    telegramChannels.forEach { channel ->
+                        TelegramChannelRow(
+                            channel = channel,
+                            onSync = { viewModel.syncTelegramChannel(channel.url) },
+                            onToggle = { enabled -> viewModel.toggleTelegramChannelEnabled(channel.url, enabled) },
+                            onRemove = { viewModel.removeTelegramChannel(channel.url) }
+                        )
+                    }
+                }
+
+                HorizontalDivider(color = Color.White.copy(0.08f), modifier = Modifier.padding(vertical = 8.dp))
+
+                CloudSettingsButton(
+                    title = "Telegram Settings",
+                    subtitle = "Network, Data Saver and Sync options",
+                    icon = Icons.Rounded.Settings,
+                    onClick = onNavigateToTelegramSettings
+                )
+
+                Spacer(Modifier.height(8.dp))
+
+                TelegramLoginCard(uiState, viewModel)
+            }
+        }
+    }
 }

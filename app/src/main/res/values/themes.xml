@@ -8,6 +8,13 @@
         <item name="android:windowLightStatusBar">false</item>
     </style>
 
+    <!-- Splash Screen theme -->
+    <style name="Theme.Beatraxus.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/bg_deep</item>
+        <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
+        <item name="postSplashScreenTheme">@style/Theme.Beatraxus</item>
+    </style>
+
     <style name="Theme.CastExpandedController" parent="Theme.AppCompat.NoActionBar">
         <item name="castExpandedControllerStyle">@style/CustomCastExpandedControllerStyle</item>
         <item name="android:windowBackground">@android:color/black</item>

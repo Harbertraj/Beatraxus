@@ -199,8 +199,6 @@ class AudioPlaybackService : Service() {
         tdLibManager = app.tdLibManager
         
         cloudCacheManager = app.cloudCacheManager
-        val noCache = prefs.getBoolean("streaming_no_cache_enabled", false)
-        cloudCacheManager.setNoCacheEnabled(noCache)
         
         telegramChannelRepository = com.beatraxus.app.repository.TelegramChannelRepository(this)
         metadataExtractor = com.beatraxus.app.repository.MetadataExtractor(this)
@@ -536,70 +534,6 @@ class AudioPlaybackService : Service() {
     private val prefListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { prefs, key ->
         if (key == "scrobbling_enabled") {
             scrobblingEnabled = prefs.getBoolean(key, true)
-        } else if (key == "streaming_no_cache_enabled") {
-            val enabled = prefs.getBoolean(key, false)
-            setStreamingNoCacheEnabled(enabled)
-        }
-    }
-
-    fun setStreamingNoCacheEnabled(enabled: Boolean) {
-        val old = cloudCacheManager.isNoCacheEnabled()
-
-        // Guard against redundant invocation: PlayerViewModel calls this method directly
-        // AND writes the same value to the shared "beatraxus" SharedPreferences file, which
-        // this service also listens to via prefListener below. That means a single user tap
-        // previously fired this method TWICE - once from the direct call, once from the
-        // prefs-change callback reacting to the write the direct call just made - each time
-        // unconditionally re-running prepareCache() and potentially restarting the session.
-        // That double (or, under rapid re-taps, N-fold) churn is what was tearing down and
-        // rebuilding the MediaCodec pipeline mid-playback. Since the setting genuinely hasn't
-        // changed on the second call, there's nothing to do - bail out before touching the
-        // cache or the active session.
-        if (old == enabled) {
-            Log.d(TAG, "setStreamingNoCacheEnabled($enabled) ignored - no change from current state")
-            return
-        }
-
-        cloudCacheManager.setNoCacheEnabled(enabled)
-
-        // Re-trigger cache preparation for the entire queue with new setting
-        serviceScope.launch(Dispatchers.IO) {
-            val state = engine.playbackStateFlow.value
-            val current = state.currentSong
-            val upcoming = upcomingSongs.value
-            val previous = previousSongs.value
-
-            Log.d(TAG, "Re-triggering prepareCache due to no-cache toggle ($enabled)")
-            try {
-                cloudCacheManager.prepareCache(current, upcoming, previous, tdLibManager)
-            } catch (e: Exception) {
-                Log.e(TAG, "prepareCache failed while applying no-cache toggle ($enabled)", e)
-            }
-
-            // Restart the session if source might need switching (e.g. from cache to network).
-            // NOTE: a plain seekTo() is NOT sufficient here - it only seeks within the
-            // already-open decoder/data source, which decided whether to use the cache
-            // once, back when the session started. Only a full session restart forces the
-            // decoder to re-check cloudCacheManager.isNoCacheEnabled() and re-open the
-            // correct source (see AudioEngine.restartCurrentSession for details).
-            //
-            // This is wrapped in try/catch deliberately: unlike every other settings toggle
-            // in this app, this one triggers real-time work on a live playback session. If
-            // restartCurrentSession throws here (bad cloud source, network hiccup, decoder
-            // reconfigure failure), an uncaught exception on this coroutine can crash the
-            // process before the SharedPreferences write above has flushed to disk - and on
-            // relaunch the setting would silently read back as its old (disabled) value,
-            // which looks exactly like "the toggle didn't stay on." Catching it here keeps
-            // the persisted setting and the UI state truthful even if the live restart fails.
-            if (current?.isCloud() == true) {
-                val currentPos = engine.currentPositionMs()
-                Log.d(TAG, "Restarting session to apply no-cache change at $currentPos ms")
-                try {
-                    engine.restartCurrentSession(currentPos)
-                } catch (e: Exception) {
-                    Log.e(TAG, "restartCurrentSession failed while applying no-cache toggle ($enabled)", e)
-                }
-            }
         }
     }
 

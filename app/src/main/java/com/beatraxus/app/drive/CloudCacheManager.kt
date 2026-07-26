@@ -80,39 +80,9 @@ class CloudCacheManager private constructor(
     private val mutex = Mutex()
     private var currentlyPlayingId: String? = null
     
-    @Volatile
-    private var noCacheEnabled: Boolean = false
-
-    fun isNoCacheEnabled(): Boolean = noCacheEnabled
-
-    fun setNoCacheEnabled(enabled: Boolean) {
-        noCacheEnabled = enabled
-        if (enabled) {
-            // Immediately clean up existing full caches / in-flight downloads so that turning
-            // no-cache streaming on actually behaves like no-cache streaming, instead of silently
-            // continuing to fill and read from disk cache in the background. Previously this
-            // policy function existed but was never invoked from anywhere.
-            downloadScope.launch { applyNoCachePolicy() }
-        }
-    }
-
-    /**
-     * Clears caches and cancels full downloads if no-cache is enabled.
-     * Should be called from a coroutine under the same lock as prepareCache to avoid races.
-     */
-    suspend fun applyNoCachePolicy() = mutex.withLock {
-        if (noCacheEnabled) {
-            // 1. Clear existing playback caches
-            clearAllPlaybackCaches(currentlyPlayingId)
-            
-            // 2. Cancel all active full-file downloads immediately
-            activeDownloads.forEach { (id, job) ->
-                Log.d(TAG, "Cancelling active download for $id due to no-cache policy")
-                job.cancel()
-            }
-            activeDownloads.clear()
-        }
-    }
+    // Always use no-cache streaming for GDrive/Dropbox/etc.
+    // Telegram uses its own 4-song cache logic below.
+    private val noCacheEnabled: Boolean = true
 
     fun setCurrentlyPlayingId(id: String?) {
         currentlyPlayingId = id
@@ -124,7 +94,6 @@ class CloudCacheManager private constructor(
     // "how far into the file we've asked TDLib to download", not a circular in-memory buffer.
     private val TELEGRAM_INITIAL_WINDOW_BYTES = 6L * 1024 * 1024 // Increased to 6MB for ALAC/high-res speed
     private val TELEGRAM_WINDOW_EXTEND_BYTES = 4L * 1024 * 1024  // grow-ahead margin as playback advances
-    private val TELEGRAM_TAIL_WINDOW_BYTES = 1L * 1024 * 1024    // last 1MB for moov/headers
 
     /**
      * M4A/MP4/ALAC containers often keep their 'moov' atom at the end of the file.
@@ -141,9 +110,9 @@ class CloudCacheManager private constructor(
     }
 
     private fun needsFullContainerDownload(song: Song): Boolean {
-        // NOTE: For Telegram, we now use Head+Tail streaming even for ALAC/M4A,
-        // so we return false here to allow windowed priming/reconciliation.
-        if (song.source == SongSource.TELEGRAM) return false
+        // Force full sequential download for Telegram to avoid sparse file gaps
+        // which cause "30s + 30s" playback loops.
+        if (song.source == SongSource.TELEGRAM) return true
         return needsSpecialContainerHandling(song)
     }
 
@@ -253,14 +222,19 @@ class CloudCacheManager private constructor(
         }
 
         // Trigger windowed download immediately for play-start speed.
-        val isSpecial = needsSpecialContainerHandling(song)
         val totalSize = song.fileSizeBytes
         val initialLimit = if (totalSize > 0 && totalSize < TELEGRAM_INITIAL_WINDOW_BYTES) 0L else TELEGRAM_INITIAL_WINDOW_BYTES
         
         var file = try {
             tdLib.send(TdApi.DownloadFile(currentFileId, 32, 0L, initialLimit, false))
         } catch (e: Exception) {
-            Log.w(TAG, "DownloadFile failed for ${song.title}, refreshing ID: ${e.message}")
+            val errorMsg = e.message ?: ""
+            if (errorMsg.contains("400") || errorMsg.contains("File not found", ignoreCase = true)) {
+                Log.w(TAG, "DownloadFile failed for ${song.title}: File not found in Telegram. Refreshing...")
+            } else {
+                Log.w(TAG, "DownloadFile failed for ${song.title}, refreshing ID: $errorMsg")
+            }
+            
             delay(200) // Small delay before refresh/retry to avoid race with deletion
             currentFileId = refreshFileId(song, tdLib) ?: return@withContext null
             try { 
@@ -278,19 +252,10 @@ class CloudCacheManager private constructor(
             }
             
             // Unblock early if we have the required window for streaming.
-            // For special formats (ALAC/M4A/WAV), we also trigger the tail download.
             val prefix = file.local.downloadedPrefixSize
             val total = song.fileSizeBytes
             if (file.local.isDownloadingCompleted || prefix >= TELEGRAM_INITIAL_WINDOW_BYTES || (total > 0 && prefix >= total)) {
                 if (File(file.local.path).exists()) {
-                    if (isSpecial && !file.local.isDownloadingCompleted) {
-                        val tailPos = (total - TELEGRAM_TAIL_WINDOW_BYTES).coerceAtLeast(0L)
-                        // For special files (ALAC/WAV), we wait briefly for the tail metadata to be ready for FFmpeg.
-                        try { 
-                            tdLib.send(TdApi.DownloadFile(currentFileId, 31, tailPos, TELEGRAM_TAIL_WINDOW_BYTES, false))
-                            delay(1500)
-                        } catch (_: Exception) {}
-                    }
                     return@withContext file.local.path
                 }
             }
@@ -314,13 +279,6 @@ class CloudCacheManager private constructor(
                 if (file.local.isDownloadingCompleted || prefix >= TELEGRAM_INITIAL_WINDOW_BYTES || (total > 0 && prefix >= total)) {
                     if (File(path).exists()) {
                         Log.d(TAG, "Telegram path available for ${song.title}: $path (Prefix: $prefix)")
-                        if (isSpecial && !file.local.isDownloadingCompleted) {
-                            val tailPos = (total - TELEGRAM_TAIL_WINDOW_BYTES).coerceAtLeast(0L)
-                            try { 
-                                tdLib.send(TdApi.DownloadFile(currentFileId, 31, tailPos, TELEGRAM_TAIL_WINDOW_BYTES, false))
-                                delay(1500)
-                            } catch (_: Exception) {}
-                        }
                         return@withContext path
                     }
                 }
@@ -417,6 +375,56 @@ class CloudCacheManager private constructor(
             activeDownloads.remove(id)
         }
 
+        // --- Specific Telegram 4-song cache logic ---
+        // Current slot + Previous slot + Next 2 slots = 4 slots total.
+        val telegramKeepIds = mutableSetOf<String>()
+        val prevTg = previousSongs.lastOrNull()?.takeIf { it.source == SongSource.TELEGRAM }
+        val currTg = currentSong?.takeIf { it.source == SongSource.TELEGRAM }
+        val nextTg = upcomingSongs.filter { it.source == SongSource.TELEGRAM }.take(2)
+        
+        prevTg?.let { telegramKeepIds.add(it.id) }
+        currTg?.let { telegramKeepIds.add(it.id) }
+        nextTg.forEach { telegramKeepIds.add(it.id) }
+
+        // Start full downloads for these 4 Telegram slots if not already cached.
+        // Once cached, TelegramFileDataSource will use the local file for instant seeking.
+        if (tdLib != null) {
+            (listOfNotNull(currTg, prevTg) + nextTg).forEach { song ->
+                val cached = getCachedFile(song)
+                if (cached != null) {
+                    // Update LRU recency
+                    playbackLruCache.getOrCacheFile(song, cached, song.id == currentlyPlayingId, currentlyPlayingId)
+                } else if (!activeDownloads.containsKey(song.id)) {
+                    Log.d(TAG, "Triggering 4-slot cache download for Telegram song: ${song.title}")
+                    startTelegramFullDownload(song, tdLib)
+                }
+            }
+        }
+        
+        // Aggressively reconcile Telegram cache: delete any file not in the 4 active slots
+        playbackLruCache.reconcileSource(SongSource.TELEGRAM, telegramKeepIds)
+        
+        // --- CLEANUP: Aggressively reconcile other cloud sources ---
+        // Since we now use pure "No-Cache" windowed streaming for GDrive, Dropbox, etc., 
+        // any existing persistent files for these sources should be purged immediately.
+        playbackLruCache.reconcileSource(SongSource.GDRIVE, emptySet())
+        playbackLruCache.reconcileSource(SongSource.DROPBOX, emptySet())
+        playbackLruCache.reconcileSource(SongSource.ONEDRIVE, emptySet())
+        playbackLruCache.reconcileSource(SongSource.BOX, emptySet())
+        playbackLruCache.reconcileSource(SongSource.NEXTCLOUD, emptySet())
+
+        // --- NEW: Aggressive Physical Garbage Collection ---
+        // This handles .tmp files, partially copied files, and abandoned downloads
+        // that aren't tracked in the LRU maps.
+        val masterKeepIds = mutableSetOf<String>()
+        masterKeepIds.addAll(telegramKeepIds)
+        currentlyPlayingId?.let { masterKeepIds.add(it) }
+        
+        // Also keep files for songs currently in the download queue (SMB/FTP)
+        activeDownloads.keys.forEach { masterKeepIds.add(it) }
+
+        playbackLruCache.aggressivePhysicalCleanup(masterKeepIds)
+
         // 2. Prune rolling window buffers no longer in keepIds
         val windowsToRemove = activeWindows.keys - keepIds
         windowsToRemove.forEach { id ->
@@ -440,74 +448,20 @@ class CloudCacheManager private constructor(
             activeTelegramFileIds.remove(songId)
         }
 
-        // 4. Start downloads/priming for 'keepIds' if not already cached
-        // Prioritize current song and eagerly pre-fetch all 'keepIds'
+        // 4. Start windowed priming for 'keepIds'
+        // Always use windowed priming for all cloud sources (except Telegram which uses full cache above).
         (listOfNotNull(currentSong) + upcomingSongs.filter { it.id in keepIds }).distinctBy { it.id }.forEach { song ->
-            val cached = if (noCacheEnabled) null else getCachedFile(song)
-            if (cached != null) {
-                // If already in cache, update its LRU recency
-                val isPlayback = (song.id == currentlyPlayingId)
-                playbackLruCache.getOrCacheFile(song, cached, isPlayback, currentlyPlayingId)
-            } else if (song.isCloud()) {
-                if (song.source == SongSource.TELEGRAM && tdLib != null) {
-                    // Windowed priming for Telegram
-                    if (!activeDownloads.containsKey(song.id)) {
-                        if (noCacheEnabled) {
-                            // In no-cache mode, we just ensure file is available for windowed streaming
-                            // but we don't start the full "windowed download" job that copies to cache.
-                            // TelegramFileDataSource handles its own windowing.
-                        } else {
-                            startTelegramWindowedDownload(song, tdLib)
-                        }
-                    }
+            if (song.isCloud()) {
+                if (song.source == SongSource.TELEGRAM) {
+                    // Handled by 4-slot cache logic above
                 } else if (song.source == SongSource.SMB || song.source == SongSource.FTP) {
                     if (!activeDownloads.containsKey(song.id)) startDownload(song)
                 } else {
-                    if (noCacheEnabled) {
-                        // In no-cache mode, we use windowed priming for all cloud sources.
-                        // Special containers (M4A/MP4/ALAC) will fetch head+tail internally.
-                        primeWindow(song)
-                    } else {
-                        // Cached playback: full download for special containers, otherwise 2MB priming
-                        if (needsFullContainerDownload(song)) {
-                            if (!activeDownloads.containsKey(song.id)) startDownload(song)
-                        } else {
-                            primeWindow(song)
-                        }
-                    }
+                    // Windowed priming for GDrive/Dropbox/etc.
+                    primeWindow(song)
                 }
             }
         }
-
-        // 4. For upcoming songs, we ONLY bump recency if already cached.
-        // We NO LONGER trigger eager full-file downloads (startDownload) for upcoming songs.
-        if (!noCacheEnabled) {
-            upcomingSongs.filter { it.id in keepIds }.forEach { song ->
-                val cached = getCachedFile(song)
-                if (cached != null) {
-                    // For pre-fetch, we don't necessarily want to bump recency, 
-                    // but we should ensure it's tracked in lruMap
-                    playbackLruCache.getOrCacheFile(song, cached, false, currentlyPlayingId)
-                }
-            }
-        }
-
-        // --- Aggressive Telegram Reconciliation (Prev + Current + Next 2 Telegram) ---
-        // NOTE: this used to be skipped entirely when noCacheEnabled was true, which was
-        // backwards - that meant enabling "no-cache streaming" actually stopped Telegram's
-        // downloaded head/tail windows from ever being cleaned up, leaving MORE stale data on
-        // disk, not less. TDLib always writes downloaded bytes to disk (there's no in-memory-only
-        // download mode), so the only real lever "no-cache" has for Telegram is being stricter
-        // about freeing that disk data promptly. So this now always runs, and keeps a smaller
-        // window (current song only, no lookahead prefetch) when no-cache is enabled.
-        val telegramKeepIds = mutableSetOf<String>()
-        currentSong?.let { if (it.source == SongSource.TELEGRAM) telegramKeepIds.add(it.id) }
-        if (!noCacheEnabled) {
-            previousSongs.lastOrNull()?.let { if (it.source == SongSource.TELEGRAM) telegramKeepIds.add(it.id) }
-            upcomingSongs.filter { it.source == SongSource.TELEGRAM }.take(2).forEach { telegramKeepIds.add(it.id) }
-        }
-
-        playbackLruCache.reconcileSource(SongSource.TELEGRAM, telegramKeepIds)
     }
 
     /**
@@ -521,7 +475,7 @@ class CloudCacheManager private constructor(
                 window.endPos = 0
                 window.isFetching = true
                 window.prefetchJob = downloadScope.launch {
-                    if (noCacheEnabled && needsFullContainerDownload(song)) {
+                    if (needsFullContainerDownload(song)) {
                         // 1. Fetch Head (2MB)
                         fetchWindowRange(song, window, 0, 2 * 1024 * 1024, isHead = true)
                         
@@ -530,9 +484,6 @@ class CloudCacheManager private constructor(
                         if (total > 0) {
                             val tailPos = (total - 1024 * 1024).coerceAtLeast(0L)
                             fetchWindowRange(song, window, tailPos, 1024 * 1024, isTail = true)
-                        } else {
-                            // If total size unknown, the head fetch didn't give Content-Range? 
-                            // Usually cloud providers do for range requests.
                         }
                     } else {
                         fetchWindowRange(song, window, 0, 2 * 1024 * 1024)
@@ -611,7 +562,7 @@ class CloudCacheManager private constructor(
         }
     }
 
-    private fun startTelegramWindowedDownload(song: Song, tdLib: TdLibManager) {
+    private fun startTelegramFullDownload(song: Song, tdLib: TdLibManager) {
         val id = song.id
         activeDownloads[id] = downloadScope.launch {
             try {
@@ -622,13 +573,8 @@ class CloudCacheManager private constructor(
                 if (currentFileId != null && currentFileId != 0) {
                     activeTelegramFileIds[song.id] = currentFileId
                     
-                    val isSpecial = needsSpecialContainerHandling(song)
-                    
-                    // 1. Initial Head window (or FULL file if special)
-                    // For special containers (ALAC/M4A), we MUST request full download (limit=0)
-                    // so that TDLib eventually marks it as isDownloadingCompleted.
-                    val limit = if (isSpecial) 0L else TELEGRAM_INITIAL_WINDOW_BYTES
-                    tdLib.send(TdApi.DownloadFile(currentFileId, 32, 0L, limit, false))
+                    // Always request FULL download for Telegram "cache streaming"
+                    tdLib.send(TdApi.DownloadFile(currentFileId, 32, 0L, 0L, false))
 
                     // Observe progress and register with unified cache when finished
                     tdLib.getFileFlow(currentFileId).collect { file ->
@@ -636,60 +582,24 @@ class CloudCacheManager private constructor(
                             val path = file.local.path
                             val sourceFile = File(path)
                             if (sourceFile.exists()) {
-                                // Register with unified LRU cache (this copies the file to cloud_cache/)
-                                playbackLruCache.getOrCacheFile(song, sourceFile, false, currentlyPlayingId)
-                                // Now we can free up TDLib's internal storage
-                                try { tdLib.send(TdApi.DeleteFile(currentFileId)) } catch (_: Exception) {}
-                                this@launch.cancel()
-                            }
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                if (e !is CancellationException) Log.w(TAG, "Telegram windowed download failed: ${e.message}")
-            } finally {
-                activeDownloads.remove(id)
-            }
-        }
-    }
-
-    private fun startTelegramPreDownload(song: Song, tdLib: TdLibManager) {
-        val id = song.id
-        activeDownloads[id] = downloadScope.launch {
-            try {
-                tdLib.ensureClientStarted()
-                if (!tdLib.awaitTdlibReady()) return@launch
-
-                var currentFileId = song.telegramFileId ?: refreshFileId(song, tdLib)
-                if (currentFileId != null && currentFileId != 0) {
-                    tdLib.send(TdApi.DownloadFile(currentFileId, 32, 0, 0, false))
-                    activeTelegramFileIds[song.id] = currentFileId
-                    
-                    tdLib.getFileFlow(currentFileId).collect { file ->
-                        if (file?.local?.isDownloadingCompleted == true && file.local.path.isNotBlank()) {
-                            val path = file.local.path
-                            val sourceFile = File(path)
-                            if (sourceFile.exists()) {
                                 // Register with unified LRU cache
-                                playbackLruCache.getOrCacheFile(song, sourceFile, false, currentlyPlayingId)
+                                playbackLruCache.getOrCacheFile(song, sourceFile, song.id == currentlyPlayingId, currentlyPlayingId)
                                 // Free TDLib storage
                                 try { tdLib.send(TdApi.DeleteFile(currentFileId)) } catch (_: Exception) {}
                                 this@launch.cancel()
-                            } else {
-                                Log.w(TAG, "Pre-download: file reported complete but missing: $path")
-                                try { tdLib.send(TdApi.DeleteFile(currentFileId)) } catch (_: Exception) {}
-                                tdLib.send(TdApi.DownloadFile(currentFileId, 32, 0, 0, false))
                             }
                         }
                     }
                 }
             } catch (e: Exception) {
-                if (e !is CancellationException) Log.w(TAG, "Telegram pre-download failed: ${e.message}")
+                if (e !is CancellationException) Log.w(TAG, "Telegram full download failed: ${e.message}")
             } finally {
                 activeDownloads.remove(id)
             }
         }
     }
+
+
 
     fun clearAllPlaybackCaches(excludeId: String? = null) {
         playbackLruCache.clearCache(excludeId)
@@ -998,12 +908,6 @@ class CloudCacheManager private constructor(
                 window.totalSize = size
                 return size
             }
-            val cacheFile = if (noCacheEnabled) null else getCachedFile(song)
-            if (cacheFile != null) {
-                size = cacheFile.length()
-                window.totalSize = size
-                return size
-            }
             try {
                 val url = resolveDownloadUrl(song) ?: return -1
                 val requestBuilder = Request.Builder().url(url)
@@ -1031,51 +935,32 @@ class CloudCacheManager private constructor(
             val totalSize = getSize()
             if (totalSize > 0 && position >= totalSize) return -1
             
-            // Strategy A: If full file is cached, read from it directly
-            if (!noCacheEnabled) {
-                getCachedFile(song)?.let { return readFromFile(it, position, buffer, offset, size) }
-            }
-
-            if (!noCacheEnabled && needsFullDownload) {
-                if (!activeDownloads.containsKey(song.id)) startDownload(song)
-                runBlocking {
-                    withTimeoutOrNull(30_000) {
-                        while (getCachedFile(song) == null) delay(200)
-                    }
-                }
-                getCachedFile(song)?.let { return readFromFile(it, position, buffer, offset, size) }
-                Log.w(TAG, "Timed out waiting for full download of ${song.title}")
-                return -1
-            }
-
-            // Strategy B: Use rolling-window buffer
+            // Always use rolling-window buffer for cloud playback
             return readFromWindow(position, buffer, offset, size)
         }
 
         private fun readFromWindow(position: Long, outBuffer: ByteArray, offset: Int, size: Int): Int {
             window.lock.withLock {
-                // --- NEW: Check Head/Tail Buffers for No-Cache mode ---
-                if (noCacheEnabled) {
-                    // Check Head
-                    window.headBuffer?.let { head ->
-                        if (position < head.size) {
-                            val available = (head.size - position).toInt()
-                            val toRead = minOf(size, available)
-                            System.arraycopy(head, position.toInt(), outBuffer, offset, toRead)
-                            return toRead
-                        }
+                // --- Head/Tail Buffers for No-Cache mode ---
+                // Check Head
+                window.headBuffer?.let { head ->
+                    if (position < head.size) {
+                        val available = (head.size - position).toInt()
+                        val toRead = minOf(size, available)
+                        System.arraycopy(head, position.toInt(), outBuffer, offset, toRead)
+                        return toRead
                     }
-                    // Check Tail
-                    val tail = window.tailBuffer
-                    val tailStart = window.tailStartPos
-                    if (tail != null && tailStart != -1L && position >= tailStart) {
-                        val tailOffset = (position - tailStart).toInt()
-                        if (tailOffset >= 0 && tailOffset < tail.size) {
-                            val available = tail.size - tailOffset
-                            val toRead = minOf(size, available)
-                            System.arraycopy(tail, tailOffset, outBuffer, offset, toRead)
-                            return toRead
-                        }
+                }
+                // Check Tail
+                val tail = window.tailBuffer
+                val tailStart = window.tailStartPos
+                if (tail != null && tailStart != -1L && position >= tailStart) {
+                    val tailOffset = (position - tailStart).toInt()
+                    if (tailOffset >= 0 && tailOffset < tail.size) {
+                        val available = tail.size - tailOffset
+                        val toRead = minOf(size, available)
+                        System.arraycopy(tail, tailOffset, outBuffer, offset, toRead)
+                        return toRead
                     }
                 }
                 // -----------------------------------------------------
@@ -1088,7 +973,9 @@ class CloudCacheManager private constructor(
 
                 // Wait if current request exceeds available buffered data but fetch is in progress
                 var attempts = 0
-                while (position + size > window.endPos && window.isFetching && attempts < 150) {
+                // Increase timeout to 20 seconds (1000 * 20ms) to prevent auto-skipping 
+                // on slow network seeks. Returning -1 too early signals EOF to MediaExtractor.
+                while (position + size > window.endPos && window.isFetching && attempts < 1000) {
                     if (isSeekPending()) return -1
                     try {
                         window.condition.await(20, TimeUnit.MILLISECONDS)
@@ -1157,33 +1044,46 @@ class CloudCacheManager private constructor(
         }
 
         private fun readFromNetwork(position: Long, buffer: ByteArray, offset: Int, size: Int): Int {
-            try {
-                val url = resolveDownloadUrl(song) ?: return -1
-                // Optimization: Request slightly more to reduce number of requests
-                val fetchSize = if (size < 131072) 131072 else size 
-                val endPos = position + fetchSize - 1
+            var lastError: Exception? = null
+            for (attempt in 1..3) {
+                try {
+                    val url = resolveDownloadUrl(song) ?: return -1
+                    // Optimization: Request slightly more to reduce number of requests
+                    val fetchSize = if (size < 131072) 131072 else size 
+                    val endPos = position + fetchSize - 1
 
-                val requestBuilder = Request.Builder()
-                    .url(url)
-                    .header("Range", "bytes=$position-$endPos")
-                
-                val h = runBlocking { getOrFetchHeaders() }
-                h.forEach { (k, v) -> requestBuilder.header(k, v) }
-
-                okHttpClient.newCall(requestBuilder.build()).execute().use { response ->
-                    if (!response.isSuccessful) return -1
-                    val body = response.body ?: return -1
-                    val inputStream = body.byteStream()
+                    val requestBuilder = Request.Builder()
+                        .url(url)
+                        .header("Range", "bytes=$position-$endPos")
                     
-                    var totalRead = 0
-                    while (totalRead < size) {
-                        val read = inputStream.read(buffer, offset + totalRead, size - totalRead)
-                        if (read == -1) break
-                        totalRead += read
+                    val h = runBlocking { getOrFetchHeaders() }
+                    h.forEach { (k, v) -> requestBuilder.header(k, v) }
+
+                    okHttpClient.newCall(requestBuilder.build()).execute().use { response ->
+                        if (!response.isSuccessful) {
+                            if (response.code == 416) return -1 // Real EOF
+                            throw Exception("HTTP ${response.code}")
+                        }
+                        val body = response.body ?: throw Exception("Empty body")
+                        val inputStream = body.byteStream()
+                        
+                        var totalRead = 0
+                        while (totalRead < size) {
+                            val read = inputStream.read(buffer, offset + totalRead, size - totalRead)
+                            if (read == -1) break
+                            totalRead += read
+                        }
+                        return if (totalRead == 0) -1 else totalRead
                     }
-                    return if (totalRead == 0) -1 else totalRead
+                } catch (e: Exception) {
+                    lastError = e
+                    if (e is CancellationException) throw e
+                    Log.w(TAG, "Network read attempt $attempt failed for ${song.title}: ${e.message}")
+                    if (attempt < 3) runBlocking { delay(500L * attempt) }
                 }
-            } catch (e: Exception) { return -1 }
+            }
+            Log.e(TAG, "All network read attempts failed for ${song.title}: ${lastError?.message}")
+            return -1
         }
 
         override fun close() = lock.withLock {
@@ -1206,13 +1106,8 @@ class CloudCacheManager private constructor(
         private val job = Job()
         private val scope = CoroutineScope(Dispatchers.IO + job)
 
-        // Windowed streaming (like GDrive): M4A/MP4/ALAC keep the old "wait for full file"
-        // behavior since a partial prefix isn't reliably playable for those containers.
-        private val needsFullDownload = needsFullContainerDownload(song)
-
         // TDLib prefix-download bookkeeping. We always download from offset 0 and grow the
-        // limit forward - "requestedPrefixEnd" is how far we've last asked TDLib to fetch.
-        @Volatile private var activeFileId: Int? = null
+        private val activeFileId = java.util.concurrent.atomic.AtomicReference<Int?>(null)
         @Volatile private var requestedPrefixEnd: Long = 0L
         @Volatile private var isExpanding: Boolean = false
 
@@ -1235,13 +1130,12 @@ class CloudCacheManager private constructor(
                 }
 
                 if (currentFileId != null && currentFileId != 0) {
-                    activeFileId = currentFileId
+                    activeFileId.set(currentFileId)
                     activeTelegramFileIds[song.id] = currentFileId
                     
                     // STREAMING STRATEGY: 
-                    // 1. Initial Head window (e.g. 3MB)
-                    val initialLimit = if (needsFullDownload) 0L else TELEGRAM_INITIAL_WINDOW_BYTES
-                    requestWindow(currentFileId, initialLimit)
+                    // Force full sequential download (0L limit) to avoid sparse file gaps.
+                    requestWindow(currentFileId, 0L)
                 }
                 
                 if (currentFileId != null && currentFileId != 0) {
@@ -1255,10 +1149,9 @@ class CloudCacheManager private constructor(
                                 if (file.local.isDownloadingCompleted && path != null) {
                                     if (!File(path).exists()) {
                                         Log.w(TAG, "Telegram file flow: reported complete but missing from disk: $path. Resetting.")
-                                        val limit = if (needsFullDownload) 0L else requestedPrefixEnd
                                         scope.launch {
                                             try { tdLib.send(TdApi.DeleteFile(currentFileId)) } catch (_: Exception) {}
-                                            requestWindow(currentFileId, limit)
+                                            requestWindow(currentFileId, 0L)
                                         }
                                         return@collect
                                     }
@@ -1286,7 +1179,7 @@ class CloudCacheManager private constructor(
                 Log.w(TAG, "Stale fileId detected for ${song.title}, refreshing...")
                 val refreshed = refreshFileId()
                 if (refreshed != null && refreshed != 0) {
-                    activeFileId = refreshed
+                    activeFileId.set(refreshed)
                     activeTelegramFileIds[song.id] = refreshed
                     try {
                         tdLib.send(TdApi.DownloadFile(refreshed, 32, 0L, limit, false))
@@ -1300,12 +1193,13 @@ class CloudCacheManager private constructor(
 
         /**
          * Extends the TDLib download window forward as playback (or a seek) approaches the
-         * edge of what we've already requested - mirrors GDrive's checkPrefetch(). No-op for
-         * formats that already request the whole file.
+         * edge of what we've already requested.
          */
         private fun maybeExpandWindow(targetPosition: Long) {
-            if (needsFullDownload) return
-            val fileId = activeFileId ?: return
+            // No-op if we are already downloading the full file
+            if (requestedPrefixEnd == Long.MAX_VALUE) return
+            
+            val fileId = activeFileId.get() ?: return
             if (isExpanding) return
             var target = targetPosition + TELEGRAM_WINDOW_EXTEND_BYTES
             if (target <= requestedPrefixEnd) return
@@ -1343,36 +1237,17 @@ class CloudCacheManager private constructor(
             val totalSize = getSize()
             if (totalSize > 0 && position >= totalSize) return -1
             
-            // Check unified cache first (5-song logic)
-            if (!noCacheEnabled) {
-                getCachedFile(song)?.let { return readFromFile(it, position, buffer, offset, size) }
-            }
+            // 1. Check unified cache first (Telegram 4-slot logic)
+            getCachedFile(song)?.let { return readFromFile(it, position, buffer, offset, size) }
 
-            // Handle Tail requests for ALAC/M4A containers explicitly
-            val isTailRequest = position + size > totalSize - TELEGRAM_TAIL_WINDOW_BYTES
-            if (isTailRequest && !needsFullDownload) {
-                activeFileId?.let { fileId ->
-                    val tailPos = (totalSize - TELEGRAM_TAIL_WINDOW_BYTES).coerceAtLeast(0L)
-                    if (position >= tailPos) {
-                        // We are reading from the tail region. Trigger tail download if not done.
-                        scope.launch {
-                            try {
-                                tdLib.send(TdApi.DownloadFile(fileId, 31, tailPos, TELEGRAM_TAIL_WINDOW_BYTES, false))
-                            } catch (_: Exception) {}
-                        }
-                    }
-                }
-            } else {
-                // Make sure TDLib has been asked to download far enough ahead of this read.
-                maybeExpandWindow(position + size)
-            }
+            // 2. Fallback to windowed streaming if not cached yet
+            // Make sure TDLib has been asked to download far enough ahead of this read.
+            maybeExpandWindow(position + size)
 
             var attempts = 0
             // Polling loop: Wait for localPath and required data range.
-            // For ALAC tail requests, we don't strictly check downloadedPrefix (which is prefix-only)
-            // but we do wait for the file to exist on disk.
-            Log.d(TAG, "Polling for Telegram data at pos $position (isTail=$isTailRequest) for ${song.title}...")
-            while ((localPath.isNullOrBlank() || (!isTailRequest && downloadedPrefix < position + size) || !File(localPath ?: "").exists()) && attempts < 4000) {
+            Log.d(TAG, "Polling for Telegram data at pos $position for ${song.title}...")
+            while ((localPath.isNullOrBlank() || downloadedPrefix < position + size || !File(localPath ?: "").exists()) && attempts < 4000) {
                 try {
                     lock.unlock()
                     Thread.sleep(10) // Snappier check (10ms)
@@ -1381,8 +1256,8 @@ class CloudCacheManager private constructor(
                     Log.w(TAG, "Polling loop interrupted", e)
                 }
                 attempts++
-                if (attempts % 25 == 0 && !isTailRequest) maybeExpandWindow(position + size)
-                if (!localPath.isNullOrBlank() && (isTailRequest || downloadedPrefix >= position + size) && File(localPath!!).exists()) break
+                if (attempts % 25 == 0) maybeExpandWindow(position + size)
+                if (!localPath.isNullOrBlank() && downloadedPrefix >= position + size && File(localPath!!).exists()) break
             }
 
             if (attempts >= 4000) {
@@ -1430,10 +1305,6 @@ class CloudCacheManager private constructor(
         override fun readAt(position: Long, buffer: ByteArray, offset: Int, size: Int): Int = lock.withLock {
             if (isSeekPending()) return -1
             
-            if (!noCacheEnabled) {
-                getCachedFile(song)?.let { return readFromFile(it, position, buffer, offset, size) }
-            }
-
             val tmpFile = File(cacheDir, "${song.id}.tmp")
             if (!tmpFile.exists() && !activeDownloads.containsKey(song.id)) {
                 startDownload(song)

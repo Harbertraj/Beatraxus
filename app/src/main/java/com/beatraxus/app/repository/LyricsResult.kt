@@ -8,5 +8,6 @@ enum class LyricsType {
 
 data class LyricsResult(
     val type: LyricsType,
-    val content: String
+    val content: String,
+    val score: Double = 0.0
 )

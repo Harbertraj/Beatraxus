@@ -14,6 +14,7 @@ import com.beatraxus.app.model.SongSource
 import com.beatraxus.app.repository.DriveAccountRepository
 import kotlinx.coroutines.*
 import java.io.FileInputStream
+import java.io.FileOutputStream
 import java.io.File
 import java.util.Locale
 
@@ -41,9 +42,6 @@ internal class FfmpegAlacDecoder(
         val format = probeFormat(request.song, headers) ?: return@withContext DecodeResult.Failed("Format probe failed (ALAC/WAV)")
         val ext = request.song.uri.lastPathSegment?.substringAfterLast('.', "")?.lowercase(Locale.US).orEmpty()
         
-        val inputSource = resolveInputSource(request.song)
-        if (inputSource.isBlank()) return@withContext DecodeResult.Failed("Unable to resolve input source for ${request.song.title}")
-
         val outputFormat = PcmAudioFormat(
             sampleRate = format.sampleRate,
             channels = format.channels.coerceIn(1, 8),
@@ -56,8 +54,53 @@ internal class FfmpegAlacDecoder(
                 "channels=${outputFormat.channels}, bitDepth=${format.bitDepth}"
         )
 
-        val pipePath = FFmpegKitConfig.registerNewFFmpegPipe(context)
-        Log.d(TAG, "FFmpeg output pipe registered at: $pipePath")
+        val outputPipePath = FFmpegKitConfig.registerNewFFmpegPipe(context)
+        Log.d(TAG, "FFmpeg output pipe registered at: $outputPipePath")
+
+        var inputPipePath: String? = null
+        var pumperJob: Job? = null
+
+        if (request.song.source == SongSource.TELEGRAM) {
+            inputPipePath = FFmpegKitConfig.registerNewFFmpegPipe(context)
+            Log.d(TAG, "FFmpeg input pipe registered at: $inputPipePath")
+            
+            val dataSource = cloudCacheManager.getDataSource(request.song, tdLibManager) { control.isSeekPending() }
+            if (dataSource == null) return@withContext DecodeResult.Failed("Unable to get data source for Telegram song")
+
+            pumperJob = launch(Dispatchers.IO) {
+                var inputPipeStream: FileOutputStream? = null
+                try {
+                    inputPipeStream = FileOutputStream(inputPipePath)
+                    val buffer = ByteArray(64 * 1024)
+                    var pos = 0L 
+                    
+                    while (isActive && control.isActive()) {
+                        val read = dataSource.readAt(pos, buffer, 0, buffer.size)
+                        if (read == -1) break
+                        if (read > 0) {
+                            inputPipeStream.write(buffer, 0, read)
+                            pos += read
+                        } else {
+                            delay(50)
+                        }
+                    }
+                    inputPipeStream.flush()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Telegram pumper failed", e)
+                } finally {
+                    try { inputPipeStream?.close() } catch (_: Exception) {}
+                    try { dataSource.close() } catch (_: Exception) {}
+                }
+            }
+        }
+
+        val inputSource = if (inputPipePath != null) {
+            inputPipePath
+        } else {
+            val resolved = resolveInputSource(request.song)
+            if (resolved.isBlank()) return@withContext DecodeResult.Failed("Unable to resolve input source for ${request.song.title}")
+            resolved
+        }
 
         // Determine demuxer to help FFmpeg with pipes or extension-less cache files
         val demuxerHint = when {
@@ -120,7 +163,7 @@ internal class FfmpegAlacDecoder(
                     "-ac", outputFormat.channels.toString(),
                     "-ar", outputFormat.sampleRate.toString(),
                     "-f", "f32le",
-                    pipePath
+                    outputPipePath
                 )
             )
         }.toTypedArray()
@@ -141,18 +184,20 @@ internal class FfmpegAlacDecoder(
         control.setSeekListener {
             Log.d(TAG, "FFmpeg session cancelled due to seek")
             session.cancel()
+            pumperJob?.cancel()
         }
 
-        var input: FileInputStream? = null
+        var outputPipeStream: FileInputStream? = null
         try {
             // Increased timeout for slow cloud connections
-            input = waitForPipeOpen(pipePath, timeoutMs = 10000) ?: run {
-                Log.e(TAG, "FFmpeg pipe failed to open after 10s")
+            outputPipeStream = waitForPipeOpen(outputPipePath, timeoutMs = 15000) ?: run {
+                Log.e(TAG, "FFmpeg output pipe failed to open after 15s")
                 session.cancel()
-                return@withContext DecodeResult.Failed("Unable to open ffmpeg pipe (timeout)")
+                pumperJob?.cancel()
+                return@withContext DecodeResult.Failed("Unable to open ffmpeg output pipe (timeout)")
             }
 
-            Log.d(TAG, "FFmpeg pipe opened successfully, starting read loop")
+            Log.d(TAG, "FFmpeg output pipe opened successfully, starting read loop")
 
             val byteBuffer = ByteArray(BYTES_PER_BATCH)
             val floatBuffer = FloatArray(FLOATS_PER_BATCH)
@@ -164,20 +209,21 @@ internal class FfmpegAlacDecoder(
                 if (pendingSeek != null) {
                     Log.d(TAG, "Seek requested during decode: $pendingSeek ms")
                     session.cancel()
+                    pumperJob?.cancel()
                     return@withContext DecodeResult.Seek(pendingSeek)
                 }
 
                 val bytesToRead = byteBuffer.size - remainder
                 val bytesRead = try {
                     // Reverting to blocking read as available() is unreliable for pipes
-                    input.read(byteBuffer, remainder, bytesToRead)
+                    outputPipeStream.read(byteBuffer, remainder, bytesToRead)
                 } catch (e: Exception) {
                     Log.e(TAG, "Pipe read failed for ${request.song.title}", e)
                     -1
                 }
                 
                 if (bytesRead < 0) {
-                    Log.d(TAG, "FFmpeg pipe reached EOF or was closed")
+                    Log.d(TAG, "FFmpeg output pipe reached EOF or was closed")
                     break
                 }
                 
@@ -207,6 +253,7 @@ internal class FfmpegAlacDecoder(
 
             if (!control.isActive()) {
                 session.cancel()
+                pumperJob?.cancel()
                 return@withContext DecodeResult.Failed("Playback stopped")
             }
 
@@ -216,8 +263,15 @@ internal class FfmpegAlacDecoder(
             } else {
                 if (!control.isActive()) return@withContext DecodeResult.Failed("Playback stopped")
                 val logs = session.allLogsAsString
-                control.logWarn("ffmpeg session failed: code=$code logs=$logs")
-                DecodeResult.Failed("ffmpeg error (code $code)")
+                
+                // Detailed logging for exit code 255 and broken pipes
+                val reason = when (code) {
+                    255 -> "FFmpeg error (code 255): Likely file access error or TDLib timeout. Logs: ${logs.take(200)}..."
+                    else -> "FFmpeg error (code $code). Logs: ${logs.take(200)}..."
+                }
+                
+                control.logWarn(reason)
+                DecodeResult.Failed(reason)
             }
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
@@ -225,18 +279,17 @@ internal class FfmpegAlacDecoder(
             DecodeResult.Failed(e.message ?: e.toString())
         } finally {
             try {
-                input?.close()
+                outputPipeStream?.close()
             } catch (_: Exception) {}
             try {
-                FFmpegKitConfig.closeFFmpegPipe(pipePath)
+                FFmpegKitConfig.closeFFmpegPipe(outputPipePath)
+                inputPipePath?.let { FFmpegKitConfig.closeFFmpegPipe(it) }
             } catch (_: Exception) {}
+            pumperJob?.cancel()
         }
     }
 
     private suspend fun resolveHeaders(song: Song): Map<String, String> {
-        val cachedFile = if (cloudCacheManager.isNoCacheEnabled()) null else cloudCacheManager.getCachedFile(song)
-        if (cachedFile != null) return emptyMap()
-        
         val headers = mutableMapOf<String, String>()
         
         // Always provide a User-Agent for cloud sources
@@ -258,9 +311,6 @@ internal class FfmpegAlacDecoder(
     }
 
     private suspend fun resolveInputSource(song: Song): String {
-        val cachedFile = if (cloudCacheManager.isNoCacheEnabled()) null else cloudCacheManager.getCachedFile(song)
-        if (cachedFile != null) return cachedFile.absolutePath
-
         return if (song.source == SongSource.GDRIVE) {
             "https://www.googleapis.com/drive/v3/files/${song.driveFileId}?alt=media"
         } else if (song.source == SongSource.TELEGRAM) {
@@ -276,9 +326,8 @@ internal class FfmpegAlacDecoder(
     private suspend fun probeFormat(song: Song, headers: Map<String, String>): ProbedAlacFormat? = withContext(Dispatchers.IO) {
         // 1. Try MediaExtractor first (local or cached)
         // MediaExtractor is significantly faster than FFprobe as it can use our StreamingCacheDataSource
-        // SKIP for Telegram unless already cached, to avoid slow/blocking network reads during probe.
-        val cachedFile = if (cloudCacheManager.isNoCacheEnabled()) null else cloudCacheManager.getCachedFile(song)
-        if (song.source != SongSource.TELEGRAM || cachedFile != null) {
+        // SKIP for Telegram to avoid slow/blocking network reads during probe.
+        if (song.source != SongSource.TELEGRAM) {
             val extracted = probeFormatWithExtractor(song, headers)
             if (extracted != null) return@withContext extracted
         }
@@ -359,10 +408,7 @@ internal class FfmpegAlacDecoder(
     private suspend fun probeFormatWithExtractor(song: Song, headers: Map<String, String>): ProbedAlacFormat? {
         val extractor = MediaExtractor()
         return try {
-            val cachedFile = if (cloudCacheManager.isNoCacheEnabled()) null else cloudCacheManager.getCachedFile(song)
-            if (cachedFile != null) {
-                extractor.setDataSource(cachedFile.absolutePath)
-            } else if (song.source != SongSource.LOCAL) {
+            if (song.source != SongSource.LOCAL) {
                 val dataSource = cloudCacheManager.getDataSource(song, tdLibManager) { false }
                 if (dataSource != null) {
                     extractor.setDataSource(dataSource)

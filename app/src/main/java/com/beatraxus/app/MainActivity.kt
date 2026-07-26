@@ -56,6 +56,7 @@ import com.beatraxus.app.ui.components.dsp.DspScreen
 import androidx.compose.ui.Modifier
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.LocalView
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -167,9 +168,16 @@ class MainActivity : FragmentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        val splashScreen = installSplashScreen()
         super.onCreate(savedInstanceState)
+        
         logSigningCertFingerprints() // See Logcat tag "SigningCert" — compare against Google Cloud Console
         frameJankMonitor = FrameJankMonitor("BeatraxusFrameMonitor")
+
+        // Keep splash screen on until the initial library load is finished
+        splashScreen.setKeepOnScreenCondition {
+            viewModel.uiState.value.isLoadingLibrary
+        }
 
         // Enable edge-to-edge
         WindowCompat.setDecorFitsSystemWindows(window, false)
@@ -193,10 +201,8 @@ class MainActivity : FragmentActivity() {
                 viewModel.setCastErrorMessage(error)
             }
             if (!viewModel.uiState.value.isFirstRun) {
-                // Post again to ensure the activity is fully settled before starting intensive I/O
-                window.decorView.postDelayed({
-                    checkAndRequestPermissions()
-                }, 500)
+                // Immediately check permissions and load library to let splash screen dismiss as soon as DB is ready
+                checkAndRequestPermissions()
             }
         }
     }
@@ -474,7 +480,7 @@ fun BeatraxusApp(
     Box(Modifier.fillMaxSize()) {
         NavHost(
             navController = navController,
-            startDestination = if (uiState.isFirstRun) "welcome" else "loading"
+            startDestination = if (uiState.isFirstRun) "welcome" else Screen.Main.route
         ) {
             composable(
                 "welcome",
@@ -488,22 +494,9 @@ fun BeatraxusApp(
                     onFinish = {
                         if (navController.currentBackStackEntry?.destination?.route == "welcome") {
                             viewModel.setFirstRunComplete()
-                            navController.navigate("loading") {
+                            navController.navigate(Screen.Main.route) {
                                 popUpTo("welcome") { inclusive = true }
                             }
-                        }
-                    }
-                )
-            }
-            composable(
-                "loading",
-                exitTransition = { fadeOut(tween(500)) }
-            ) {
-                LoadingScreen(
-                    viewModel = viewModel,
-                    onLoadingFinished = {
-                        navController.navigate(Screen.Main.route) {
-                            popUpTo("loading") { inclusive = true }
                         }
                     }
                 )

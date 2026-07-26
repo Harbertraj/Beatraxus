@@ -136,11 +136,13 @@ class PlaybackLruCache private constructor(private val context: Context) {
         synchronized(map) {
             val toRemove = map.keys.filter { it !in keepIds }
             if (toRemove.isEmpty()) {
-                Log.d("PlaybackLruCache", "Reconciling $source cache: All ${map.size} songs are in keep list.")
+                if (map.isNotEmpty()) {
+                    Log.d("PlaybackLruCache", "Reconciling $source cache: All ${map.size} songs are in keep list.")
+                }
                 return
             }
             
-            Log.d("PlaybackLruCache", "Reconciling $source cache. Keeping: $keepIds, Evicting ${toRemove.size} songs: $toRemove")
+            Log.d("PlaybackLruCache", "Reconciling $source cache. Keeping: $keepIds, Evicting ${toRemove.size} items: $toRemove")
             
             toRemove.forEach { id ->
                 map.remove(id)
@@ -150,6 +152,20 @@ class PlaybackLruCache private constructor(private val context: Context) {
                 }
             }
             persistMap(source, map)
+        }
+    }
+
+    /**
+     * Scans the physical cache directory and deletes ANY file whose ID is not in [keepIds].
+     * This captures .tmp files, failed downloads, and abandoned copies that are not tracked in LRU maps.
+     */
+    fun aggressivePhysicalCleanup(keepIds: Set<String>) {
+        cacheDir.listFiles()?.forEach { file ->
+            val id = file.name.substringBefore('.')
+            if (id.isNotBlank() && id !in keepIds) {
+                Log.d("PlaybackLruCache", "Aggressive Cleanup: deleting abandoned file ${file.name}")
+                file.delete()
+            }
         }
     }
 
