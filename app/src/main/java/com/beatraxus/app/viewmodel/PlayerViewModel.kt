@@ -99,34 +99,24 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private val lyricsRepository = LyricsRepository(application, (application as BeatraxusApplication).database)
     private val dspPreferences = DspPreferences(application)
     private val appearancePreferences = com.beatraxus.app.repository.AppearancePreferences(application)
-    private val driveAccountRepository = com.beatraxus.app.repository.DriveAccountRepository(application)
+    private val app = application as BeatraxusApplication
+    private val driveAccountRepository = app.driveAccountRepository
     
-    private val db = (application as BeatraxusApplication).database
+    private val db = app.database
     private val bookmarkRepository = com.beatraxus.app.repository.BookmarkRepository(db.bookmarkDao())
     private val chapterRepository = com.beatraxus.app.repository.ChapterRepository(db.chapterDao())
     private val highlightRepository = com.beatraxus.app.repository.HighlightRepository(db.highlightDao())
     private val loudnessRepository = com.beatraxus.app.repository.LoudnessRepository(db.loudnessDao())
-    private val dropboxAccountRepository = com.beatraxus.app.repository.DropboxAccountRepository(application)
-    private val onedriveAccountRepository = com.beatraxus.app.repository.OneDriveAccountRepository(application)
-    private val boxAccountRepository = com.beatraxus.app.repository.BoxAccountRepository(application)
-    private val nextcloudAccountRepository = com.beatraxus.app.repository.NextcloudAccountRepository(application)
-    private val smbConnectionRepository = com.beatraxus.app.repository.SmbConnectionRepository(application)
-    private val ftpConnectionRepository = com.beatraxus.app.repository.FtpConnectionRepository(application)
-    private val smbFolderBrowser = com.beatraxus.app.network.SmbFolderBrowser()
-    private val ftpFolderBrowser = com.beatraxus.app.network.FtpFolderBrowser()
+    private val dropboxAccountRepository = app.dropboxAccountRepository
+    private val onedriveAccountRepository = app.onedriveAccountRepository
+    private val boxAccountRepository = app.boxAccountRepository
+    private val nextcloudAccountRepository = app.nextcloudAccountRepository
+    private val smbConnectionRepository = app.smbConnectionRepository
+    private val ftpConnectionRepository = app.ftpConnectionRepository
+    private val smbFolderBrowser = app.smbFolderBrowser
+    private val ftpFolderBrowser = app.ftpFolderBrowser
     private val telegramChannelRepository = TelegramChannelRepository(application)
-    private val cloudCacheManager = com.beatraxus.app.drive.CloudCacheManager(
-        application,
-        driveAccountRepository,
-        dropboxAccountRepository,
-        onedriveAccountRepository,
-        boxAccountRepository,
-        nextcloudAccountRepository,
-        smbConnectionRepository,
-        ftpConnectionRepository,
-        smbFolderBrowser,
-        ftpFolderBrowser
-    )
+    private val cloudCacheManager = app.cloudCacheManager
     private val metadataExtractor = com.beatraxus.app.repository.MetadataExtractor(application)
     private val tdLibManager = (application as BeatraxusApplication).tdLibManager
     private val lastFmRepository = com.beatraxus.app.repository.lastfm.LastFmRepository(application)
@@ -1093,21 +1083,21 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     }
                     
                     if (cacheWiped) {
-                        quickScan()
+                        if (_uiState.value.musicFolders.isNotEmpty()) startAddedFoldersScan()
                         return@launch
                     }
                     
-                    // After loading from DB, we trigger a quick scan to sync with added folders as requested
+                    // After loading from DB, we trigger an incremental scan to check for new songs in added folders
                     _uiState.update { it.copy(isLoadingLibrary = false) }
-                    quickScan()
+                    if (_uiState.value.musicFolders.isNotEmpty()) startAddedFoldersScan()
                     return@launch
                 }
             } catch (e: Exception) {
                 // Ignore initial load errors
             }
 
-            // Perform a quick scan ONLY if DB was empty
-            quickScan()
+            // Perform an incremental scan ONLY if DB was empty
+            if (_uiState.value.musicFolders.isNotEmpty()) startAddedFoldersScan()
         }
     }
 
@@ -2742,9 +2732,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun setStreamingNoCacheEnabled(enabled: Boolean) {
-        prefs.edit().putBoolean("streaming_no_cache_enabled", enabled).apply()
+        prefs?.edit()?.putBoolean("streaming_no_cache_enabled", enabled)?.apply()
         _uiState.update { it.copy(streamingNoCacheEnabled = enabled) }
         cloudCacheManager.setNoCacheEnabled(enabled)
+        // Propagate to service for immediate effect on active playback
+        service?.setStreamingNoCacheEnabled(enabled)
     }
 
     fun setArtworkEnrichmentEnabled(enabled: Boolean) {
@@ -3681,6 +3673,14 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         val state = _uiState.value
         if (state.lyrics.isEmpty()) return
         
+        // DEBUG: Audit for drift vs constant latency offset
+        if (state.lyricsCurrentIndex >= 0) {
+            val latency = service?.getAudioEngine()?.audioStateFlow?.value?.latencyFrames ?: 0
+            val rate = service?.getAudioEngine()?.audioStateFlow?.value?.sampleRate ?: 44100
+            val latencyMs = if (rate > 0) (latency * 1000L) / rate else 0L
+            Log.d("LyricSync", "UI_Pos=${currentMs}ms, Latency=${latencyMs}ms, Adjusted=${currentMs + state.lyricsOffsetMs}ms")
+        }
+
         val adjustedMs = currentMs + state.lyricsOffsetMs
         // NOTE: previously this was `lyrics.findLast { ... }?.let { lyrics.indexOf(it) }`, which
         // re-locates the found line by structural equality. If two lines share the same
@@ -4099,15 +4099,17 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
             var enriched = metadataExtractor.extractMetadataFromLocalFile(song, tempFile)
 
-            // WAV art often lives near the END of the file (after the audio "data" chunk),
-            // which the 1MB header download won't contain. Fetch the tail too, same as
-            // the Google Drive path does, before giving up.
-            val isWav = song.format.lowercase().contains("wav")
+            // WAV/M4A/ALAC Tail handling: Often tags and album art are stored in the footer.
+            val format = song.format.lowercase()
+            val isSpecial = format.contains("wav") || format == "alac" || format == "m4a" || format == "mp4"
             val totalSize = song.fileSizeBytes
-            if (isWav && enriched.albumArtUri == null && totalSize > downloadSize) {
+            if (isSpecial && enriched.albumArtUri == null && totalSize > downloadSize) {
                 val tailSize = 8 * 1024 * 1024L
                 val offset = (totalSize - tailSize).coerceAtLeast(downloadSize)
                 tdLibManager.send(TdApi.DownloadFile(fileId, 32, offset, totalSize - offset, true))
+
+                // Request full download to ensure tail is reached and can be verified via prefix/completion
+                tdLibManager.send(TdApi.DownloadFile(fileId, 32, 0, 0, true))
 
                 val tailPath = tdLibManager.waitForFile(fileId, downloadSize = totalSize, timeoutMs = 10000)
                 if (tailPath != null) {

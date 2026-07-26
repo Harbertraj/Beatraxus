@@ -29,6 +29,31 @@ class BeatraxusApplication : Application() {
         TdLibManager.getInstance(this)
     }
 
+    val driveAccountRepository by lazy { com.beatraxus.app.repository.DriveAccountRepository(this) }
+    val dropboxAccountRepository by lazy { com.beatraxus.app.repository.DropboxAccountRepository(this) }
+    val onedriveAccountRepository by lazy { com.beatraxus.app.repository.OneDriveAccountRepository(this) }
+    val boxAccountRepository by lazy { com.beatraxus.app.repository.BoxAccountRepository(this) }
+    val nextcloudAccountRepository by lazy { com.beatraxus.app.repository.NextcloudAccountRepository(this) }
+    val smbConnectionRepository by lazy { com.beatraxus.app.repository.SmbConnectionRepository(this) }
+    val ftpConnectionRepository by lazy { com.beatraxus.app.repository.FtpConnectionRepository(this) }
+    val smbFolderBrowser by lazy { com.beatraxus.app.network.SmbFolderBrowser() }
+    val ftpFolderBrowser by lazy { com.beatraxus.app.network.FtpFolderBrowser() }
+
+    val cloudCacheManager by lazy {
+        com.beatraxus.app.drive.CloudCacheManager.getInstance(
+            this,
+            driveAccountRepository,
+            dropboxAccountRepository,
+            onedriveAccountRepository,
+            boxAccountRepository,
+            nextcloudAccountRepository,
+            smbConnectionRepository,
+            ftpConnectionRepository,
+            smbFolderBrowser,
+            ftpFolderBrowser
+        )
+    }
+
     override fun onCreate() {
         super.onCreate()
 

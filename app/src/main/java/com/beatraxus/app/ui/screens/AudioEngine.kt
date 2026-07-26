@@ -823,11 +823,16 @@ class AudioEngine(
                     output.setSampleFormat(dspConfig.sampleFormat)
                 }
 
-                if (!output.init(format.sampleRate, format.channels, format.bitDepth, format.isDoP)) {
+                // RECOVERY: Capture the current cumulative position before re-initializing
+                // the output, so we can resume smoothly without a jump.
+                basePositionMs = currentRenderedPositionMs()
+
+                if (!output.init(format.sampleRate, format.channels, format.bitDepth, format.isDoP, resetOffsets = false)) {
                     logWarn("Audio output initialization failed")
                 }
 
-                // Hardware position was just reset by init(), so we reset our offset to match.
+                // Hardware position was just updated/continued by init(resetOffsets=false),
+                // so we reset our base frame offset to the "new" start position.
                 startFrameOffset = output.playbackPositionFrames()
 
                 // Move pipeline refresh BEFORE starting output to avoid race condition where

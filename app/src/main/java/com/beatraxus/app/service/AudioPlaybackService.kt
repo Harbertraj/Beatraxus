@@ -26,6 +26,7 @@ import android.util.Log
 import android.support.v4.media.session.MediaSessionCompat
 import android.support.v4.media.session.PlaybackStateCompat
 import androidx.core.app.NotificationCompat
+import androidx.room.withTransaction
 import androidx.glance.appwidget.GlanceAppWidget
 import androidx.glance.appwidget.GlanceAppWidgetManager
 import androidx.glance.appwidget.state.updateAppWidgetState
@@ -196,18 +197,9 @@ class AudioPlaybackService : Service() {
         val database = app.database
         tdLibManager = app.tdLibManager
         
-        cloudCacheManager = com.beatraxus.app.drive.CloudCacheManager(
-            this,
-            driveAccountRepository,
-            dropboxAccountRepository,
-            onedriveAccountRepository,
-            boxAccountRepository,
-            nextcloudAccountRepository,
-            smbConnectionRepository,
-            ftpConnectionRepository,
-            smbFolderBrowser,
-            ftpFolderBrowser
-        )
+        cloudCacheManager = app.cloudCacheManager
+        val noCache = prefs.getBoolean("streaming_no_cache_enabled", false)
+        cloudCacheManager.setNoCacheEnabled(noCache)
         
         telegramChannelRepository = com.beatraxus.app.repository.TelegramChannelRepository(this)
         metadataExtractor = com.beatraxus.app.repository.MetadataExtractor(this)
@@ -517,17 +509,18 @@ class AudioPlaybackService : Service() {
 
     override fun onBind(intent: Intent): IBinder = binder
 
-    private val driveAccountRepository by lazy { DriveAccountRepository(this) }
-    private val dropboxAccountRepository by lazy { com.beatraxus.app.repository.DropboxAccountRepository(this) }
-    private val onedriveAccountRepository by lazy { com.beatraxus.app.repository.OneDriveAccountRepository(this) }
-    private val boxAccountRepository by lazy { com.beatraxus.app.repository.BoxAccountRepository(this) }
-    private val nextcloudAccountRepository by lazy { com.beatraxus.app.repository.NextcloudAccountRepository(this) }
-    private val smbConnectionRepository by lazy { com.beatraxus.app.repository.SmbConnectionRepository(this) }
-    private val ftpConnectionRepository by lazy { com.beatraxus.app.repository.FtpConnectionRepository(this) }
-    private val smbFolderBrowser by lazy { com.beatraxus.app.network.SmbFolderBrowser() }
-    private val ftpFolderBrowser by lazy { com.beatraxus.app.network.FtpFolderBrowser() }
+    private val driveAccountRepository by lazy { (application as com.beatraxus.app.BeatraxusApplication).driveAccountRepository }
+    private val dropboxAccountRepository by lazy { (application as com.beatraxus.app.BeatraxusApplication).dropboxAccountRepository }
+    private val onedriveAccountRepository by lazy { (application as com.beatraxus.app.BeatraxusApplication).onedriveAccountRepository }
+    private val boxAccountRepository by lazy { (application as com.beatraxus.app.BeatraxusApplication).boxAccountRepository }
+    private val nextcloudAccountRepository by lazy { (application as com.beatraxus.app.BeatraxusApplication).nextcloudAccountRepository }
+    private val smbConnectionRepository by lazy { (application as com.beatraxus.app.BeatraxusApplication).smbConnectionRepository }
+    private val ftpConnectionRepository by lazy { (application as com.beatraxus.app.BeatraxusApplication).ftpConnectionRepository }
+    private val smbFolderBrowser by lazy { (application as com.beatraxus.app.BeatraxusApplication).smbFolderBrowser }
+    private val ftpFolderBrowser by lazy { (application as com.beatraxus.app.BeatraxusApplication).ftpFolderBrowser }
     private val musicRepository by lazy { com.beatraxus.app.repository.MusicRepository(this) }
-    private val songDao by lazy { (application as com.beatraxus.app.BeatraxusApplication).database.songDao() }
+    private val database by lazy { (application as com.beatraxus.app.BeatraxusApplication).database }
+    private val songDao by lazy { database.songDao() }
     private val lastFmRepository by lazy { com.beatraxus.app.repository.lastfm.LastFmRepository(this) }
     private var libraryScanJob: Job? = null
     private val activeCloudScanJobs = java.util.concurrent.ConcurrentHashMap<String, Job>()
@@ -542,7 +535,14 @@ class AudioPlaybackService : Service() {
     private val prefListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { prefs, key ->
         if (key == "scrobbling_enabled") {
             scrobblingEnabled = prefs.getBoolean(key, true)
+        } else if (key == "streaming_no_cache_enabled") {
+            val enabled = prefs.getBoolean(key, false)
+            setStreamingNoCacheEnabled(enabled)
         }
+    }
+
+    fun setStreamingNoCacheEnabled(enabled: Boolean) {
+        cloudCacheManager.setNoCacheEnabled(enabled)
     }
 
 
@@ -799,13 +799,15 @@ class AudioPlaybackService : Service() {
                 if (hasChanges) {
                     val entities = results.map { it.toEntity() }
                     withContext(Dispatchers.IO) {
-                        if (fullScan) {
-                            songDao.deleteLocalSongs()
-                        } else if (removedLocalIds.isNotEmpty()) {
-                            songDao.deleteSongsByIds(removedLocalIds.toList())
-                        }
-                        entities.chunked(200).forEach { chunk ->
-                            songDao.insertSongs(chunk)
+                        database.withTransaction {
+                            if (fullScan) {
+                                songDao.deleteLocalSongs()
+                            } else if (removedLocalIds.isNotEmpty()) {
+                                songDao.deleteSongsByIds(removedLocalIds.toList())
+                            }
+                            entities.chunked(200).forEach { chunk ->
+                                songDao.insertSongs(chunk)
+                            }
                         }
                     }
                 }
@@ -1435,10 +1437,12 @@ class AudioPlaybackService : Service() {
                 // Request tail download (priority 32)
                 tdLibManager.send(org.drinkless.tdlib.TdApi.DownloadFile(fileId, 32, offset, song.fileSizeBytes - offset, true))
                 
-                // Wait up to 5 seconds for the tail to be available in the sparse file.
-                // We don't wait for the FULL file (song.fileSizeBytes), just for the path to be ready.
-                delay(1500) // Brief wait for network start
-                val pathReady = tdLibManager.waitForFile(fileId, downloadSize = downloadSize, timeoutMs = 5000)
+                // Request full download to ensure tail is reached and can be verified via prefix/completion
+                tdLibManager.send(org.drinkless.tdlib.TdApi.DownloadFile(fileId, 32, 0, 0, true))
+
+                // Wait up to 10 seconds for the tail to be available.
+                // Targeting song.fileSizeBytes ensures we wait until the entire file (including the tail) is ready.
+                val pathReady = tdLibManager.waitForFile(fileId, downloadSize = song.fileSizeBytes, timeoutMs = 10000)
                 if (pathReady != null) {
                     val tailFile = File(pathReady)
                     if (tailFile.exists()) {

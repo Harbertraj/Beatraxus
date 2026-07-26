@@ -114,5 +114,115 @@ fun AppSeekBar(
             seed = seed,
             dominantColor = dominantColor
         )
+        SeekbarStyle.GLASS_TUBE -> GlassTubeSeekBar(
+            progress = progress,
+            onProgressChange = onProgressChange,
+            modifier = modifier,
+            onProgressFinished = onProgressFinished,
+            activeColor = activeColor,
+            inactiveColor = inactiveColor,
+            seed = seed
+        )
+        SeekbarStyle.LIVE_WAVEFORM -> LiveWaveformSeekBar(
+            progress = progress,
+            onProgressChange = onProgressChange,
+            modifier = modifier,
+            onProgressFinished = onProgressFinished,
+            activeColor = activeColor,
+            inactiveColor = inactiveColor,
+            seed = seed
+        )
+        SeekbarStyle.VINYL_GROOVE -> VinylGrooveSeekBar(
+            progress = progress,
+            onProgressChange = onProgressChange,
+            modifier = modifier,
+            onProgressFinished = onProgressFinished,
+            activeColor = activeColor,
+            inactiveColor = inactiveColor,
+            seed = seed
+        )
+        SeekbarStyle.LIQUID_FLOW -> LiquidFlowSeekBar(
+            progress = progress,
+            onProgressChange = onProgressChange,
+            modifier = modifier,
+            onProgressFinished = onProgressFinished,
+            activeColor = activeColor,
+            inactiveColor = inactiveColor,
+            seed = seed
+        )
+        SeekbarStyle.FREQUENCY_SPECTRUM -> FrequencySpectrumSeekBar(
+            progress = progress,
+            onProgressChange = onProgressChange,
+            modifier = modifier,
+            onProgressFinished = onProgressFinished,
+            activeColor = activeColor,
+            inactiveColor = inactiveColor,
+            seed = seed,
+            spectrumData = spectrumData
+        )
+        SeekbarStyle.CONSTELLATION -> ConstellationSeekBar(
+            progress = progress,
+            onProgressChange = onProgressChange,
+            modifier = modifier,
+            onProgressFinished = onProgressFinished,
+            activeColor = activeColor,
+            inactiveColor = inactiveColor,
+            seed = seed
+        )
+        SeekbarStyle.HEARTBEAT -> HeartbeatSeekBar(
+            progress = progress,
+            onProgressChange = onProgressChange,
+            modifier = modifier,
+            onProgressFinished = onProgressFinished,
+            activeColor = activeColor,
+            inactiveColor = inactiveColor,
+            seed = seed
+        )
+        SeekbarStyle.GALAXY -> GalaxySeekBar(
+            progress = progress,
+            onProgressChange = onProgressChange,
+            modifier = modifier,
+            onProgressFinished = onProgressFinished,
+            activeColor = activeColor,
+            inactiveColor = inactiveColor,
+            seed = seed,
+            dominantColor = dominantColor
+        )
+        SeekbarStyle.ROPE -> RopeSeekBar(
+            progress = progress,
+            onProgressChange = onProgressChange,
+            modifier = modifier,
+            onProgressFinished = onProgressFinished,
+            activeColor = activeColor,
+            inactiveColor = inactiveColor,
+            seed = seed
+        )
+        SeekbarStyle.SOUND_PARTICLES -> SoundParticlesSeekBar(
+            progress = progress,
+            onProgressChange = onProgressChange,
+            modifier = modifier,
+            onProgressFinished = onProgressFinished,
+            activeColor = activeColor,
+            inactiveColor = inactiveColor,
+            seed = seed
+        )
+        SeekbarStyle.CRYSTAL_PRISM -> CrystalPrismSeekBar(
+            progress = progress,
+            onProgressChange = onProgressChange,
+            modifier = modifier,
+            onProgressFinished = onProgressFinished,
+            activeColor = activeColor,
+            inactiveColor = inactiveColor,
+            seed = seed
+        )
+        SeekbarStyle.MAGNETIC_FLOATING -> MagneticFloatingSeekBar(
+            progress = progress,
+            onProgressChange = onProgressChange,
+            modifier = modifier,
+            onProgressFinished = onProgressFinished,
+            activeColor = activeColor,
+            inactiveColor = inactiveColor,
+            seed = seed
+        )
     }
 }

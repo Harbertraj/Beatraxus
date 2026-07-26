@@ -23,7 +23,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 
-class CloudCacheManager(
+class CloudCacheManager private constructor(
     private val context: Context,
     private val driveAccountRepository: DriveAccountRepository,
     private val dropboxAccountRepository: com.beatraxus.app.repository.DropboxAccountRepository,
@@ -35,6 +35,39 @@ class CloudCacheManager(
     private val smbFolderBrowser: com.beatraxus.app.network.SmbFolderBrowser,
     private val ftpFolderBrowser: com.beatraxus.app.network.FtpFolderBrowser
 ) {
+    companion object {
+        @Volatile
+        private var INSTANCE: CloudCacheManager? = null
+
+        fun getInstance(
+            context: Context,
+            driveAccountRepository: DriveAccountRepository,
+            dropboxAccountRepository: com.beatraxus.app.repository.DropboxAccountRepository,
+            onedriveAccountRepository: com.beatraxus.app.repository.OneDriveAccountRepository,
+            boxAccountRepository: com.beatraxus.app.repository.BoxAccountRepository,
+            nextcloudAccountRepository: com.beatraxus.app.repository.NextcloudAccountRepository,
+            smbConnectionRepository: com.beatraxus.app.repository.SmbConnectionRepository,
+            ftpConnectionRepository: com.beatraxus.app.repository.FtpConnectionRepository,
+            smbFolderBrowser: com.beatraxus.app.network.SmbFolderBrowser,
+            ftpFolderBrowser: com.beatraxus.app.network.FtpFolderBrowser
+        ): CloudCacheManager {
+            return INSTANCE ?: synchronized(this) {
+                INSTANCE ?: CloudCacheManager(
+                    context,
+                    driveAccountRepository,
+                    dropboxAccountRepository,
+                    onedriveAccountRepository,
+                    boxAccountRepository,
+                    nextcloudAccountRepository,
+                    smbConnectionRepository,
+                    ftpConnectionRepository,
+                    smbFolderBrowser,
+                    ftpFolderBrowser
+                ).also { INSTANCE = it }
+            }
+        }
+    }
+
     private val TAG = "CloudCacheManager"
     private val cacheDir = File(context.cacheDir, "cloud_cache").apply { mkdirs() }
     private val downloadScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -99,6 +132,12 @@ class CloudCacheManager(
         val buffer = ByteArray(8 * 1024 * 1024) // 8MB scratch buffer
         val BUFFER_SIZE = buffer.size
         
+        // --- NEW: Head+Tail storage for no-cache mode (special containers) ---
+        var headBuffer: ByteArray? = null 
+        var tailBuffer: ByteArray? = null 
+        var tailStartPos: Long = -1L
+        // ---------------------------------------------------------------------
+
         var startPos: Long = -1L // Absolute file position of buffer start
         var endPos: Long = -1L   // Absolute file position of data end (exclusive)
         var isFetching = false
@@ -401,12 +440,17 @@ class CloudCacheManager(
                 } else if (song.source == SongSource.SMB || song.source == SongSource.FTP) {
                     if (!activeDownloads.containsKey(song.id)) startDownload(song)
                 } else {
-                    if (!noCacheEnabled && needsFullContainerDownload(song)) {
-                        // M4A/MP4/ALAC: moov atom at end isn't safely playable from a partial window.
-                        if (!activeDownloads.containsKey(song.id)) startDownload(song)
-                    } else {
-                        // HTTP Cloud (GDrive, Dropbox, etc.): Prime first 2MB window instead of full download
+                    if (noCacheEnabled) {
+                        // In no-cache mode, we use windowed priming for all cloud sources.
+                        // Special containers (M4A/MP4/ALAC) will fetch head+tail internally.
                         primeWindow(song)
+                    } else {
+                        // Cached playback: full download for special containers, otherwise 2MB priming
+                        if (needsFullContainerDownload(song)) {
+                            if (!activeDownloads.containsKey(song.id)) startDownload(song)
+                        } else {
+                            primeWindow(song)
+                        }
                     }
                 }
             }
@@ -447,7 +491,22 @@ class CloudCacheManager(
                 window.endPos = 0
                 window.isFetching = true
                 window.prefetchJob = downloadScope.launch {
-                    fetchWindowRange(song, window, 0, 2 * 1024 * 1024)
+                    if (noCacheEnabled && needsFullContainerDownload(song)) {
+                        // 1. Fetch Head (2MB)
+                        fetchWindowRange(song, window, 0, 2 * 1024 * 1024, isHead = true)
+                        
+                        // 2. Fetch Tail (1MB) - fetchWindowRange will update totalSize from Content-Range
+                        val total = window.totalSize
+                        if (total > 0) {
+                            val tailPos = (total - 1024 * 1024).coerceAtLeast(0L)
+                            fetchWindowRange(song, window, tailPos, 1024 * 1024, isTail = true)
+                        } else {
+                            // If total size unknown, the head fetch didn't give Content-Range? 
+                            // Usually cloud providers do for range requests.
+                        }
+                    } else {
+                        fetchWindowRange(song, window, 0, 2 * 1024 * 1024)
+                    }
                 }
             }
         }
@@ -456,7 +515,7 @@ class CloudCacheManager(
     /**
      * Fetches a specific range from the network into the WindowBuffer.
      */
-    private suspend fun fetchWindowRange(song: Song, window: WindowBuffer, start: Long, length: Long) {
+    private suspend fun fetchWindowRange(song: Song, window: WindowBuffer, start: Long, length: Long, isHead: Boolean = false, isTail: Boolean = false) {
         try {
             val url = resolveDownloadUrl(song) ?: return
             val end = start + length - 1
@@ -470,6 +529,29 @@ class CloudCacheManager(
             okHttpClient.newCall(requestBuilder.build()).execute().use { response ->
                 if (!response.isSuccessful) return
                 val body = response.body ?: return
+                
+                // Update totalSize from Content-Range if possible
+                val contentRange = response.header("Content-Range")
+                if (contentRange != null) {
+                    val total = contentRange.substringAfterLast("/").toLongOrNull()
+                    if (total != null && total > 0) {
+                        window.totalSize = total
+                    }
+                }
+
+                if (isHead) {
+                    window.headBuffer = body.bytes()
+                    window.lock.withLock { window.condition.signalAll() }
+                    return
+                }
+                
+                if (isTail) {
+                    window.tailBuffer = body.bytes()
+                    window.tailStartPos = start
+                    window.lock.withLock { window.condition.signalAll() }
+                    return
+                }
+
                 val input = body.byteStream()
                 val tempBuffer = ByteArray(65536)
                 var bytesRead = 0
@@ -942,6 +1024,32 @@ class CloudCacheManager(
 
         private fun readFromWindow(position: Long, outBuffer: ByteArray, offset: Int, size: Int): Int {
             window.lock.withLock {
+                // --- NEW: Check Head/Tail Buffers for No-Cache mode ---
+                if (noCacheEnabled) {
+                    // Check Head
+                    window.headBuffer?.let { head ->
+                        if (position < head.size) {
+                            val available = (head.size - position).toInt()
+                            val toRead = minOf(size, available)
+                            System.arraycopy(head, position.toInt(), outBuffer, offset, toRead)
+                            return toRead
+                        }
+                    }
+                    // Check Tail
+                    val tail = window.tailBuffer
+                    val tailStart = window.tailStartPos
+                    if (tail != null && tailStart != -1L && position >= tailStart) {
+                        val tailOffset = (position - tailStart).toInt()
+                        if (tailOffset >= 0 && tailOffset < tail.size) {
+                            val available = tail.size - tailOffset
+                            val toRead = minOf(size, available)
+                            System.arraycopy(tail, tailOffset, outBuffer, offset, toRead)
+                            return toRead
+                        }
+                    }
+                }
+                // -----------------------------------------------------
+
                 // If seek is outside current window or window is empty
                 if (window.startPos == -1L || position < window.startPos || position >= window.endPos) {
                     // DISCARD: Discard old window and fetch fresh window starting at position

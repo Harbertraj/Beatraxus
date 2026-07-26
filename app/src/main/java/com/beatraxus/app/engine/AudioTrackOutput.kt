@@ -198,7 +198,16 @@ class AudioTrackOutput(
     }
 
     override fun init(sampleRate: Int, channels: Int, bitDepth: Int, isDoP: Boolean, resetOffsets: Boolean): Boolean = lifecycleLock.writeLock().withLock {
-        val lastPosForRecovery = if (!resetOffsets) playbackPositionFrames() else 0L
+        val lastPosForRecovery = if (!resetOffsets) {
+            // SECURITY: If we're performing a seamless recovery (mid-song re-init), we must
+            // pause the hardware head FIRST to get a stable, non-racing position. If we
+            // read while it's still running, we might capture a position that includes
+            // frames that are about to be flushed/discarded, causing lyrics to lag.
+            try { audioTrack?.pause() } catch (_: Exception) {}
+            // Use internal method to bypass tryLock() on lifecycleLock while holding writeLock
+            (getAbsolutePlaybackHeadPositionInternal() - playbackHeadOffset).coerceAtLeast(0L)
+        } else 0L
+
         refreshRouteState()
 
         val channelConfig = when (channels) {
