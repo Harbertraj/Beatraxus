@@ -117,29 +117,9 @@ fun KaraokeLyricsView(
     var isLongPressing by remember { mutableStateOf(false) }
     var tempOffsetStr by remember { mutableStateOf("") }
 
-    val currentProgressMs = progressMs()
 
-    // Calculate current line progress (0f to 1f) for "Smooth Flow" logic
-    val currentLineProgress = remember(currentIndex, currentProgressMs, lyricsOffsetMs) {
-        val line = lyrics.getOrNull(currentIndex) ?: return@remember 0f
-        val nextLine = lyrics.getOrNull(currentIndex + 1)
-        val endTime = if (line.duration > 0) line.startTime + line.duration 
-                      else nextLine?.startTime ?: (line.startTime + 5000L)
-        
-        val elapsed = (currentProgressMs + lyricsOffsetMs - line.startTime).toFloat()
-        val total = (endTime - line.startTime).toFloat()
-        (elapsed / total).coerceIn(0f, 1f)
-    }
 
-    // "Liquid Flow" Vertical Offset: Subtle upward creep as the line progresses
-    val flowVerticalOffset by animateFloatAsState(
-        targetValue = -currentLineProgress * 24f, // Creep up by 24dp over the line's duration
-        animationSpec = spring(
-            dampingRatio = Spring.DampingRatioMediumBouncy,
-            stiffness = Spring.StiffnessLow
-        ),
-        label = "flowScroll"
-    )
+
 
     // Logic to re-enable auto-scroll after manual interaction
     LaunchedEffect(isDragged) {
@@ -171,8 +151,6 @@ fun KaraokeLyricsView(
             .fillMaxSize()
             .onGloballyPositioned { containerHeight = it.size.height }
             .graphicsLayer {
-                // Apply the "Smooth Flow" translation to the entire lyrics area
-                translationY = flowVerticalOffset
                 compositingStrategy = CompositingStrategy.Offscreen
             }
             .drawWithContent {
@@ -257,19 +235,13 @@ fun KaraokeLyricsView(
                         else -> 0.12f
                     }
 
-                    val lineProgress = when {
-                        index < currentIndex -> Long.MAX_VALUE
-                        isCurrent -> (currentProgressMs + lyricsOffsetMs - line.startTime).coerceAtLeast(0)
-                        else -> 0L
-                    }
+
 
                     SyncedLyricLine(
                         line = line,
                         isCurrent = isCurrent,
                         distance = distance,
-                        progressInLine = lineProgress,
                         targetAlpha = lineAlpha,
-                        isWordByWord = line.wordTimings != null,
                         onClick = { 
                             onLineClick(line.startTime)
                             lastInteractionTime = System.currentTimeMillis()
@@ -391,9 +363,7 @@ fun SyncedLyricLine(
     line: LrcLine,
     isCurrent: Boolean,
     distance: Int,
-    progressInLine: Long,
     targetAlpha: Float,
-    isWordByWord: Boolean,
     onClick: () -> Unit,
     onLongClick: () -> Unit = {}
 ) {
@@ -455,9 +425,6 @@ fun SyncedLyricLine(
         letterSpacing = (-0.5).sp
     )
 
-    var textLayoutResult by remember { mutableStateOf<androidx.compose.ui.text.TextLayoutResult?>(null) }
-    val lineDuration = remember(line.duration) { if (line.duration > 0) line.duration else 3000L }
-
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -477,99 +444,12 @@ fun SyncedLyricLine(
             )
     ) {
         Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .drawWithContent {
-                    val layout = textLayoutResult ?: run {
-                        drawContent()
-                        return@drawWithContent
-                    }
-
-                    // 1. Draw the dimmed background text
-                    // The Text composable is already set to 0.35f alpha
-                    drawContent()
-
-                    // 2. Draw the Opaque Highlight (Fill)
-                    if (progressInLine > 0) {
-                        val totalChars = line.text.length.coerceAtLeast(1)
-                        val sweepDuration = 450f
-                        var elapsedChars = 0
-
-                        // Use a layer to isolate the SrcAtop/DstIn blending
-                        drawContext.canvas.saveLayer(
-                            androidx.compose.ui.geometry.Rect(0f, 0f, size.width, size.height),
-                            androidx.compose.ui.graphics.Paint()
-                        )
-
-                        for (lineIdx in 0 until layout.lineCount) {
-                            val lineStart = layout.getLineStart(lineIdx)
-                            val lineEnd = layout.getLineEnd(lineIdx)
-                            val lineChars = lineEnd - lineStart
-                            
-                            val relStart = (elapsedChars.toFloat() / totalChars) * lineDuration
-                            val relDuration = (lineChars.toFloat() / totalChars) * lineDuration
-                            val timeIntoLine = progressInLine - relStart
-                            
-                            val lineLeft = layout.getLineLeft(lineIdx)
-                            val lineRight = layout.getLineRight(lineIdx)
-                            val lineTop = layout.getLineTop(lineIdx)
-                            val lineBottom = layout.getLineBottom(lineIdx)
-
-                            if (timeIntoLine >= relDuration) {
-                                // Fully completed visual line
-                                drawRect(
-                                    color = Color.White,
-                                    topLeft = androidx.compose.ui.geometry.Offset(lineLeft, lineTop),
-                                    size = androidx.compose.ui.geometry.Size(lineRight - lineLeft, lineBottom - lineTop)
-                                )
-                            } else if (timeIntoLine > -sweepDuration) {
-                                // In-progress visual line
-                                val sweepCenter = (timeIntoLine / relDuration).coerceIn(0f, 1f)
-                                val halfSweep = sweepDuration / 2f
-                                val sweepStart = ((timeIntoLine - halfSweep) / relDuration).coerceIn(0f, 1f)
-                                val sweepEnd = ((timeIntoLine + halfSweep) / relDuration).coerceIn(0f, 1f)
-
-                                if (sweepEnd > 0f) {
-                                    val highlightBrush = Brush.horizontalGradient(
-                                        0.0f to Color.White,
-                                        sweepStart to Color.White,
-                                        sweepCenter to Color.White.copy(alpha = 0.95f),
-                                        sweepEnd to Color.Transparent,
-                                        1.0f to Color.Transparent,
-                                        startX = lineLeft,
-                                        endX = lineRight
-                                    )
-
-                                    drawRect(
-                                        brush = highlightBrush,
-                                        topLeft = androidx.compose.ui.geometry.Offset(lineLeft, lineTop),
-                                        size = androidx.compose.ui.geometry.Size(lineRight - lineLeft, lineBottom - lineTop)
-                                    )
-                                }
-                            }
-                            elapsedChars += lineChars
-                            if (progressInLine < relStart - sweepDuration) break
-                        }
-
-                        // 3. Clip the white fill to the text shape
-                        // We draw the text AGAIN with 1.0 alpha and BlendMode.DstIn
-                        // This makes the text visible ONLY where we drew the white progress rects/gradients
-                        drawText(
-                            textLayoutResult = layout,
-                            color = Color.White,
-                            blendMode = BlendMode.DstIn
-                        )
-
-                        drawContext.canvas.restore()
-                    }
-                }
-                .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
+            modifier = Modifier.fillMaxWidth()
         ) {
             Text(
                 text = line.text,
                 style = baseStyle,
-                color = Color.White.copy(alpha = 0.35f),
-                onTextLayout = { textLayoutResult = it }
+                color = if (isCurrent) Color.White else Color.White.copy(alpha = 0.35f)
             )
         }
     }
