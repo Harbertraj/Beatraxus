@@ -175,12 +175,13 @@ class AudioEngine(
                                 }
 
                                 if (lastStuckCheckTime > 0 && now - lastStuckCheckTime > timeout) {
-                                    // Check if software is still producing data while hardware is stuck.
-                                    // We compare against the baseline captured when the position first went flat,
-                                    // so the check spans the entire stuck window, not just the last 1-second tick.
-                                    outputSinkStalled = totalWritten > stuckWindowStartTotalWritten &&
+                                    val ringHasQueuedAudio = (session?.ringBuffer?.availableRead() ?: 0) > 0
+                                    val writeProgressedButHeadFrozen = totalWritten > stuckWindowStartTotalWritten &&
                                             playbackPos == stuckWindowStartPlaybackPos
-
+                                    // If the decoder is actively feeding data (or there's a backlog waiting to play)
+                                    // while the hardware head is frozen, this is an output-sink stall, not a decoder
+                                    // problem — recreating the AudioTrack is the correct fix, not resetting the decoder.
+                                    outputSinkStalled = writeProgressedButHeadFrozen || (decoderActive && ringHasQueuedAudio)
                                     Log.w(TAG, "Playback appears stuck (position unchanged for ${timeout/1000}s at $currentPos ms). " +
                                             "Buffering=$isBuffering, OutputStalled=$outputSinkStalled")
                                     shouldRecover = true
@@ -932,7 +933,13 @@ class AudioEngine(
                                 }
                             }
 
-                            if (decoder is MediaCodecAudioDecoder) {
+                            // "Playback stopped" means the decode loop exited because control.isActive()
+                            // went false (the session was intentionally torn down by the recovery watcher
+                            // or a track change) — this is NOT a genuine decoder fault, so don't penalize
+                            // this song's future decoder choice for it.
+                            val isIntentionalStop = result.reason == "Playback stopped"
+
+                            if (decoder is MediaCodecAudioDecoder && !isIntentionalStop) {
                                 decoderFactory.notifyDecoderFailure(song.id)
                             }
 
