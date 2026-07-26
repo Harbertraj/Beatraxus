@@ -1,7 +1,7 @@
 package com.beatraxus.app.engine
 
 interface AudioOutput {
-    fun init(sampleRate: Int, channels: Int, bitDepth: Int, isDoP: Boolean = false): Boolean
+    fun init(sampleRate: Int, channels: Int, bitDepth: Int, isDoP: Boolean = false, resetOffsets: Boolean = true): Boolean
     fun setTargetSampleRate(sampleRate: Int)
     fun setSampleFormat(format: com.beatraxus.app.model.SampleFormat)
     fun setDvcState(enabled: Boolean, mode: String, level: Float)

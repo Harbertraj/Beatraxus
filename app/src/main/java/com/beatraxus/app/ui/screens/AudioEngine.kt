@@ -111,6 +111,8 @@ class AudioEngine(
     private var recoveryAttempts = 0
     private var lastStuckCheckTime = 0L
     private var lastStuckPosition = -1L
+    private var lastTotalFramesWritten = 0L
+    private var lastPlaybackPosFrames = 0L
 
     init {
         startRenderer()
@@ -129,9 +131,12 @@ class AudioEngine(
             while (isActive) {
                 val state = playbackStateFlow.value
                 val currentPos = positionMs
+                val totalWritten = output.totalFramesWritten()
+                val playbackPos = output.playbackPositionFrames()
                 val now = System.currentTimeMillis()
 
                 var shouldRecover = false
+                var outputSinkStalled = false
 
                 if (userIntentPlaying.get()) {
                     val session = activeSession
@@ -170,7 +175,11 @@ class AudioEngine(
                                 }
 
                                 if (lastStuckCheckTime > 0 && now - lastStuckCheckTime > timeout) {
-                                    Log.w(TAG, "Playback appears stuck (position unchanged for ${timeout/1000}s at $currentPos ms). Buffering=$isBuffering")
+                                    // Check if software is still producing data while hardware is stuck
+                                    outputSinkStalled = totalWritten > lastTotalFramesWritten && playbackPos == lastPlaybackPosFrames
+                                    
+                                    Log.w(TAG, "Playback appears stuck (position unchanged for ${timeout/1000}s at $currentPos ms). " +
+                                            "Buffering=$isBuffering, OutputStalled=$outputSinkStalled")
                                     shouldRecover = true
                                 }
                             }
@@ -184,10 +193,15 @@ class AudioEngine(
                 if (shouldRecover) {
                     if (recoveryAttempts < 3) {
                         recoveryAttempts++
-                        Log.i(TAG, "Attempting recovery $recoveryAttempts/3...")
+                        Log.i(TAG, "Attempting recovery $recoveryAttempts/3 (OutputSinkStalled=$outputSinkStalled)...")
                         lastStuckCheckTime = now // Reset timer to avoid immediate re-trigger
                         delay(500L * recoveryAttempts) // Backoff
-                        performRecovery()
+                        
+                        if (outputSinkStalled) {
+                            recoverOutputSink()
+                        } else {
+                            performRecovery()
+                        }
                     } else {
                         Log.e(TAG, "Max recovery attempts reached for ${state.currentSong?.title}. Skipping track.")
                         recoveryAttempts = 0
@@ -203,6 +217,8 @@ class AudioEngine(
                     }
                 }
 
+                lastTotalFramesWritten = totalWritten
+                lastPlaybackPosFrames = playbackPos
                 delay(1000)
             }
         }
@@ -229,6 +245,30 @@ class AudioEngine(
         }
 
         output.start()
+    }
+
+    private suspend fun recoverOutputSink() {
+        Log.i(TAG, "Attempting dedicated output sink recovery (recreating AudioTrack)...")
+        val session = activeSession ?: return
+        val format = session.pcmFormat ?: return
+
+        // Re-init output without resetting offsets to preserve cumulative frame counts.
+        // This clears the vendor-driver "disabled due to underrun" state by creating a fresh
+        // android.media.AudioTrack instance, while hiding the hardware reset from the engine.
+        val success = output.init(
+            sampleRate = format.sampleRate,
+            channels = format.channels,
+            bitDepth = format.bitDepth,
+            isDoP = format.isDoP,
+            resetOffsets = false
+        )
+        if (success) {
+            output.start()
+            Log.i(TAG, "Output sink recovery successful.")
+        } else {
+            Log.e(TAG, "Output sink recovery failed, falling back to full session reset.")
+            performRecovery()
+        }
     }
 
     private fun stopActiveSessionOnly() {

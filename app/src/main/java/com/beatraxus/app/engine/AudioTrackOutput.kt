@@ -197,7 +197,8 @@ class AudioTrackOutput(
         )
     }
 
-    override fun init(sampleRate: Int, channels: Int, bitDepth: Int, isDoP: Boolean): Boolean = lifecycleLock.writeLock().withLock {
+    override fun init(sampleRate: Int, channels: Int, bitDepth: Int, isDoP: Boolean, resetOffsets: Boolean): Boolean = lifecycleLock.writeLock().withLock {
+        val lastPosForRecovery = if (!resetOffsets) playbackPositionFrames() else 0L
         refreshRouteState()
 
         val channelConfig = when (channels) {
@@ -263,7 +264,7 @@ class AudioTrackOutput(
             releaseInternal() 
             val mmap = MmapAudioOutput()
             val format = if (isDoP) 4 else 2 
-            if (mmap.init(resolvedSampleRate, channels, mmapRequestedBufferFrames, format)) {
+            if (mmap.init(resolvedSampleRate, channels, mmapRequestedBufferFrames, format, resetOffsets)) {
                 mmapOutput = mmap
                 usingMmap = true
                 this.sampleRate = mmap.outputSampleRate()
@@ -273,10 +274,16 @@ class AudioTrackOutput(
                 this.currentPerformanceMode = AudioTrack.PERFORMANCE_MODE_NONE
                 
                 synchronized(stateLock) {
-                    totalFramesWritten = 0L
-                    playbackHeadWraps = 0L
-                    lastPlaybackHeadPosition = 0
-                    playbackHeadOffset = 0L
+                    if (resetOffsets) {
+                        totalFramesWritten = 0L
+                        playbackHeadWraps = 0L
+                        lastPlaybackHeadPosition = 0
+                        playbackHeadOffset = 0L
+                    } else {
+                        playbackHeadWraps = 0L
+                        lastPlaybackHeadPosition = 0
+                        playbackHeadOffset = lastPosForRecovery
+                    }
                 }
                 Log.i(TAG, "MMAP Exclusive active: rate=${this.sampleRate}")
                 return true
@@ -311,7 +318,8 @@ class AudioTrackOutput(
         val bufferSize = if (this.bufferFrames > 0) {
             this.bufferFrames * channels * resolvedBytesPerSample * this.bufferCount
         } else {
-            minBuffer * 8
+            // Increased from 8 to 16 to target ~200-250ms by default (assuming ~10-15ms minBuffer)
+            minBuffer * 16
         }
         if (bufferSize <= 0) return false
 
@@ -356,21 +364,22 @@ class AudioTrackOutput(
                 val isPlaying = oldTrack.playState == AudioTrack.PLAYSTATE_PLAYING
                 if (isPlaying) newTrack.play()
                 audioTrack = newTrack
-                // BUGFIX: The new AudioTrack's playbackHeadPosition always restarts at 0,
-                // while lastPlaybackHeadPosition/playbackHeadWraps/playbackHeadOffset still
-                // reference the OLD track. On the very next read, head(0) < lastPlaybackHeadPosition
-                // (the old track's large value), which getAbsolutePlaybackHeadPositionInternal()
-                // misreads as a 32-bit counter wraparound and increments playbackHeadWraps.
-                // That single spurious wrap adds (1 shl 32) frames (~1623 minutes at 44.1kHz) to
-                // every position calculated afterwards — producing the bogus huge seekbar/duration
-                // values (e.g. "1493:30") seen after switching to a track with the same
-                // sample rate/channels/performance mode (the "seamless" path). Reset the tracking
-                // state here exactly like the non-seamless branch below already does.
+                
                 synchronized(stateLock) {
-                    totalFramesWritten = 0L
-                    playbackHeadWraps = 0L
-                    lastPlaybackHeadPosition = 0
-                    playbackHeadOffset = 0L
+                    if (resetOffsets) {
+                        totalFramesWritten = 0L
+                        playbackHeadWraps = 0L
+                        lastPlaybackHeadPosition = 0
+                        playbackHeadOffset = 0L
+                    } else {
+                        // RECOVERY PATH: Preserve cumulative position.
+                        // The new track's hardware head starts at 0, so we use the captured
+                        // last absolute position as the new offset.
+                        playbackHeadWraps = 0L
+                        lastPlaybackHeadPosition = 0
+                        playbackHeadOffset = lastPosForRecovery
+                        // totalFramesWritten is intentionally NOT reset
+                    }
                 }
                 try {
                     oldTrack.pause()
@@ -383,10 +392,16 @@ class AudioTrackOutput(
             } else {
                 audioTrack = newTrack
                 synchronized(stateLock) {
-                    totalFramesWritten = 0L
-                    playbackHeadWraps = 0L
-                    lastPlaybackHeadPosition = 0
-                    playbackHeadOffset = 0L
+                    if (resetOffsets) {
+                        totalFramesWritten = 0L
+                        playbackHeadWraps = 0L
+                        lastPlaybackHeadPosition = 0
+                        playbackHeadOffset = 0L
+                    } else {
+                        playbackHeadWraps = 0L
+                        lastPlaybackHeadPosition = 0
+                        playbackHeadOffset = lastPosForRecovery
+                    }
                 }
             }
 

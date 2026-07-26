@@ -19,9 +19,12 @@ internal class MmapAudioOutput {
         System.loadLibrary("beatraxus_dsp")
     }
 
-    fun init(sampleRate: Int, channels: Int, requestedBufferFrames: Int, format: Int = 2): Boolean {
+    fun init(sampleRate: Int, channels: Int, requestedBufferFrames: Int, format: Int = 2, resetOffsets: Boolean = true): Boolean {
         lock.writeLock().withLock {
             nativeHandle = nMmapCreate(sampleRate, channels, requestedBufferFrames, format)
+            if (resetOffsets) {
+                framesWritten.set(0L)
+            }
             return nativeHandle != 0L
         }
     }

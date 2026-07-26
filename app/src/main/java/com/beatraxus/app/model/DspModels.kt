@@ -259,7 +259,7 @@ data class DspConfig(
     // MMAP — enabled state is derived from outputMode == MMAP_EXCLUSIVE
     // mmapExclusiveEnabled field removed to avoid dual source-of-truth conflict
     val outputBufferMs: Int = 50,
-    val outputBufferCount: Int = 2,
+    val outputBufferCount: Int = 5,
     val postFadeBufferMs: Int = 0,
     val mmapRequestedBufferSizeFrames: Int = 512,  // Safer default for high-load DSP (Atmos/Hi-Res)
 
