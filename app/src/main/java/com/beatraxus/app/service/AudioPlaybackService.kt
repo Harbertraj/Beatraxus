@@ -556,13 +556,16 @@ class AudioPlaybackService : Service() {
             Log.d(TAG, "Re-triggering prepareCache due to no-cache toggle ($enabled)")
             cloudCacheManager.prepareCache(current, upcoming, previous, tdLibManager)
 
-            // Nudge engine if source might need switching (e.g. from cache to network)
+            // Restart the session if source might need switching (e.g. from cache to network).
+            // NOTE: a plain seekTo() is NOT sufficient here - it only seeks within the
+            // already-open decoder/data source, which decided whether to use the cache
+            // once, back when the session started. Only a full session restart forces the
+            // decoder to re-check cloudCacheManager.isNoCacheEnabled() and re-open the
+            // correct source (see AudioEngine.restartCurrentSession for details).
             if (old != enabled && current?.isCloud() == true) {
-                // If it was playing from cache and we enabled no-cache, or vice versa,
-                // a seek will force the decoder to re-read and hit the new gates.
                 val currentPos = engine.currentPositionMs()
-                Log.d(TAG, "Nudging engine to apply no-cache change at $currentPos ms")
-                engine.seekTo(currentPos)
+                Log.d(TAG, "Restarting session to apply no-cache change at $currentPos ms")
+                engine.restartCurrentSession(currentPos)
             }
         }
     }

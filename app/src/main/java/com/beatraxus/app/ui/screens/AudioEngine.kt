@@ -371,6 +371,49 @@ class AudioEngine(
         }
     }
 
+    /**
+     * Fully tears down and re-creates the playback session for the current song at
+     * [positionMs], forcing the decoder to re-resolve its data source (cached file vs.
+     * live network/window stream) from scratch.
+     *
+     * A plain seekTo() is NOT enough for this: seeking only calls requestSeek() on the
+     * already-running PlaybackSession, which reuses the MediaExtractor/data source that
+     * was opened when the session started. That "use cache or not" decision is made once,
+     * at session start, inside the decoder (MediaCodecAudioDecoder / FfmpegAlacDecoder /
+     * DecoderFactory each check cloudCacheManager.isNoCacheEnabled() only when first opening
+     * the source). So toggling no-cache-streaming while a cloud song is already playing had
+     * no effect on that song until the next track, because the running decoder never
+     * re-checked the flag.
+     *
+     * Call this instead of seekTo() whenever a setting that changes *how* the current
+     * song's data source is opened (e.g. no-cache streaming) changes mid-playback.
+     */
+    fun restartCurrentSession(positionMs: Long) {
+        Log.d("AudioEngine", "restartCurrentSession requested at $positionMs ms")
+        engineScope.launch {
+            controlMutex.withLock {
+                val song = currentSong ?: return@withLock
+                val wasPlaying = _playbackStateFlow.value.isPlaying
+                isSeeking.set(false)
+
+                // Tear down the current (and any preloaded next) session outright, rather
+                // than just requesting a seek, so the decoder is created fresh and re-checks
+                // the current no-cache-streaming flag when it resolves its data source.
+                activeSession?.stop()
+                activeSession = null
+                nextSession?.stop()
+                nextSession = null
+                nextSong = null
+
+                this@AudioEngine.positionMs = positionMs
+                userIntentPlaying.set(wasPlaying)
+                _playbackStateFlow.update { it.copy(isPlaying = wasPlaying) }
+
+                startSessionInternal(song, startPositionMs = positionMs)
+            }
+        }
+    }
+
     fun setShuffleMode(enabled: Boolean) {
         _playbackStateFlow.update { it.copy(shuffleMode = enabled) }
     }

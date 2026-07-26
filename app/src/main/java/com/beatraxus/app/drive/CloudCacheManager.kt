@@ -87,6 +87,13 @@ class CloudCacheManager private constructor(
 
     fun setNoCacheEnabled(enabled: Boolean) {
         noCacheEnabled = enabled
+        if (enabled) {
+            // Immediately clean up existing full caches / in-flight downloads so that turning
+            // no-cache streaming on actually behaves like no-cache streaming, instead of silently
+            // continuing to fill and read from disk cache in the background. Previously this
+            // policy function existed but was never invoked from anywhere.
+            downloadScope.launch { applyNoCachePolicy() }
+        }
     }
 
     /**
