@@ -30,6 +30,8 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.Executors
+import kotlinx.coroutines.asCoroutineDispatcher
 import com.google.api.client.googleapis.extensions.android.gms.auth.UserRecoverableAuthIOException
 import kotlin.math.roundToInt
 import com.beatraxus.app.BeatraxusApplication
@@ -496,6 +498,18 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private var libraryLoadJob: Job? = null
     private var serviceObserversJob: Job? = null
 
+    // Dedicated low-priority thread for the background AI genre/mood/quality scan.
+    // Using Dispatchers.Default here made this heavy work (MediaCodec + TFLite +
+    // network calls per song) compete for CPU scheduling with the actual audio
+    // decoder/render threads, which is what was causing playback to stall and
+    // auto-skip while the library scan was running.
+    private val aiAnalysisDispatcher = Executors.newSingleThreadExecutor { r ->
+        Thread({
+            runCatching { android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND) }
+            r.run()
+        }, "AiAnalysisWorker")
+    }.asCoroutineDispatcher()
+
     init {
         FFmpegKitConfig.setLogLevel(Level.AV_LOG_ERROR)
         // Observe Telegram auth state
@@ -521,11 +535,25 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
 
         // Start AI Analysis worker
-        viewModelScope.launch(Dispatchers.Default) {
+        viewModelScope.launch(aiAnalysisDispatcher) {
             // Delay AI analysis at startup to prevent blocking the main thread during initial UI render
             delay(2000)
 
             for (song in aiAnalysisChannel) {
+                // ROOT-CAUSE FIX: don't run the heavy per-song feature extraction
+                // (native MediaCodec decode + TFLite inference + 2 network calls)
+                // while a track is actively playing. This background scan used to
+                // fire ~4s after launch for the *entire* unanalyzed library, spinning
+                // up its own MediaCodec "audio/raw" decoder per song back-to-back.
+                // That starved the real playback decoder's CCodec pipeline (visible
+                // in logcat as "pipelineFull: too many frames in pipeline"), which
+                // the stuck-playback watcher then misread as an output-sink stall,
+                // recreated AudioTrack a few times, and finally gave up and skipped
+                // the song ("Max recovery attempts reached... Skipping track").
+                while (_uiState.value.isPlaying) {
+                    delay(1000)
+                }
+
                 try {
                     // Runs the native DSP feature extraction ONCE per song; both the AI
                     // entity and the quality entity below are built from this same result
@@ -593,8 +621,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 } catch (t: Throwable) {
                     Log.e("PlayerViewModel", "AI Analysis failed for ${song.title}: ${t.message}", t)
                 }
-                // Small delay to prevent CPU hogging
-                delay(100)
+                // Cooldown to prevent CPU/MediaCodec hogging between songs (was 100ms,
+                // which wasn't enough breathing room given the decoder+TFLite+network cost)
+                delay(750)
             }
         }
 

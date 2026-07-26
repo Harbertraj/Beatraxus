@@ -102,17 +102,11 @@ class AudioEngine(
     )
 
     @Volatile private var positionMs: Long = 0L
-    private var underrunCount = 0
     private val isReleased = AtomicBoolean(false)
     @Volatile private var dspConfig: DspConfig = DspConfig()
     private val dspRevision = AtomicLong(0L)
     private val isSeeking = AtomicBoolean(false)
     private val userIntentPlaying = AtomicBoolean(false)
-    private var recoveryAttempts = 0
-    private var lastStuckCheckTime = 0L
-    private var lastStuckPosition = -1L
-    private var stuckWindowStartTotalWritten = 0L
-    private var stuckWindowStartPlaybackPos = 0L
 
     init {
         startRenderer()
@@ -124,162 +118,6 @@ class AudioEngine(
                 performReconfigureOutput()
             }
         }
-
-        // Recovery watcher: if playback silently dies or gets stuck (e.g. MediaCodec hang or AudioFlinger drop)
-        // while the user intent is still 'playing', attempt to restart.
-        engineScope.launch {
-            while (isActive) {
-                val state = playbackStateFlow.value
-                val currentPos = positionMs
-                val totalWritten = output.totalFramesWritten()
-                val playbackPos = output.playbackPositionFrames()
-                val now = System.currentTimeMillis()
-
-                var shouldRecover = false
-                var outputSinkStalled = false
-
-                if (userIntentPlaying.get()) {
-                    val session = activeSession
-                    if (!state.isPlaying) {
-                        // Case 1: Playback state flipped to paused unexpectedly
-                        Log.w(TAG, "Playback silently died (intent=true, isPlaying=false).")
-                        shouldRecover = true
-                    } else if (state.currentSong != null && currentPos < state.currentSong.durationMs - 1000) {
-                        // Case 2: Stuck detection. isPlaying is true, but position isn't advancing.
-                        
-                        // GRACE PERIOD: Ignore stuck detection for the first 15 seconds of a session
-                        // to allow for hardware buffer lag and cold-start synchronization.
-                        val inGracePeriod = session != null && (now - session.sessionStartTimeMs < 15000)
-                        
-                        if (currentPos == lastStuckPosition) {
-                            if (inGracePeriod) {
-                                // Just keep resetting the check time during grace period if we haven't moved yet
-                                lastStuckCheckTime = now
-                            } else {
-                                val isCloud = state.currentSong.isCloud()
-                                val isTelegram = state.currentSong.source == SongSource.TELEGRAM
-
-                                val decoderActive = session != null && !session.decoderCompleted &&
-                                        (now - session.lastDecoderProgressTime < 2000)
-
-                                val isBuffering = session != null && !session.decoderCompleted &&
-                                        (now - session.lastDecoderProgressTime > 2000) &&
-                                        isCloud
-
-                                // Telegram songs can take longer to "prime" their sparse file/path
-                                val timeout = when {
-                                    isTelegram -> 45000 // 45s for Telegram
-                                    isBuffering -> 25000 // 25s for other cloud
-                                    decoderActive -> 12000 // 12s if decoder is actively writing but hardware clock hasn't moved
-                                    else -> 10000 // 10s for local/stuck
-                                }
-
-                                if (lastStuckCheckTime > 0 && now - lastStuckCheckTime > timeout) {
-                                    val ringHasQueuedAudio = (session?.ringBuffer?.availableRead() ?: 0) > 0
-                                    val writeProgressedButHeadFrozen = totalWritten > stuckWindowStartTotalWritten &&
-                                            playbackPos == stuckWindowStartPlaybackPos
-                                    // If the decoder is actively feeding data (or there's a backlog waiting to play)
-                                    // while the hardware head is frozen, this is an output-sink stall, not a decoder
-                                    // problem — recreating the AudioTrack is the correct fix, not resetting the decoder.
-                                    outputSinkStalled = writeProgressedButHeadFrozen || (decoderActive && ringHasQueuedAudio)
-                                    Log.w(TAG, "Playback appears stuck (position unchanged for ${timeout/1000}s at $currentPos ms). " +
-                                            "Buffering=$isBuffering, OutputStalled=$outputSinkStalled")
-                                    shouldRecover = true
-                                }
-                            }
-                        } else {
-                            lastStuckPosition = currentPos
-                            lastStuckCheckTime = now
-                            stuckWindowStartTotalWritten = totalWritten
-                            stuckWindowStartPlaybackPos = playbackPos
-                        }
-                    }
-                }
-
-                if (shouldRecover) {
-                    if (recoveryAttempts < 3) {
-                        recoveryAttempts++
-                        Log.i(TAG, "Attempting recovery $recoveryAttempts/3 (OutputSinkStalled=$outputSinkStalled)...")
-                        lastStuckCheckTime = now // Reset timer to avoid immediate re-trigger
-                        delay(500L * recoveryAttempts) // Backoff
-                        
-                        if (outputSinkStalled) {
-                            recoverOutputSink()
-                        } else {
-                            performRecovery()
-                        }
-                    } else {
-                        Log.e(TAG, "Max recovery attempts reached for ${state.currentSong?.title}. Skipping track.")
-                        recoveryAttempts = 0
-                        lastStuckPosition = -1L
-                        lastStuckCheckTime = now
-                        stop()
-                        _onCompletion.emit(Unit)
-                    }
-                } else {
-                    // Reset attempts if we are playing normally
-                    if (userIntentPlaying.get() && state.isPlaying && currentPos != lastStuckPosition) {
-                        if (recoveryAttempts > 0) recoveryAttempts = 0
-                    }
-                }
-
-                delay(1000)
-            }
-        }
-    }
-
-    private suspend fun performRecovery() {
-        val (song, pos) = controlMutex.withLock {
-            val s = currentSong ?: return
-            val p = currentPositionMs()
-            s to p
-        }
-
-        Log.i(TAG, "Recovering playback for ${song.title} at $pos ms")
-
-        // Full hardware and session reset
-        output.stop()
-        output.flush()
-
-        controlMutex.withLock {
-            stopActiveSessionOnly()
-            underrunCount = 0
-            _playbackStateFlow.update { it.copy(isPlaying = true) }
-            startSessionInternal(song, pos)
-        }
-
-        output.start()
-    }
-
-    private suspend fun recoverOutputSink() {
-        Log.i(TAG, "Attempting dedicated output sink recovery (recreating AudioTrack)...")
-        val session = activeSession ?: return
-        val format = session.pcmFormat ?: return
-
-        // Re-init output without resetting offsets to preserve cumulative frame counts.
-        // This clears the vendor-driver "disabled due to underrun" state by creating a fresh
-        // android.media.AudioTrack instance, while hiding the hardware reset from the engine.
-        val success = output.init(
-            sampleRate = format.sampleRate,
-            channels = format.channels,
-            bitDepth = format.bitDepth,
-            isDoP = format.isDoP,
-            resetOffsets = false
-        )
-        if (success) {
-            output.start()
-            Log.i(TAG, "Output sink recovery successful.")
-        } else {
-            Log.e(TAG, "Output sink recovery failed, falling back to full session reset.")
-            performRecovery()
-        }
-    }
-
-    private fun stopActiveSessionOnly() {
-        positionMs = activeSession?.currentRenderedPositionMs() ?: positionMs
-        activeSession?.stop()
-        activeSession = null
-        isSeeking.set(false)
     }
 
     private fun startRenderer() {
@@ -301,7 +139,6 @@ class AudioEngine(
                 if (nextSession != null && nextSong?.id == song.id) {
                     val oldSession = activeSession
                     activeSession = nextSession
-                    activeSession?.markActive() // Reset grace period for stuck detection
                     val newSessionId = activeSession?.sessionId ?: 0L
                     nextSession = null
                     currentSong = song
@@ -309,16 +146,11 @@ class AudioEngine(
 
                     activeSession?.setStartFrameOffset(output.playbackPositionFrames())
 
-                    // Reset stuck detection trackers for the new track
-                    lastStuckPosition = -1L
-                    lastStuckCheckTime = System.currentTimeMillis()
-
                     // Don't reset positionMs to 0 if we are promoting a prepared session
                     // instead, sync it with the session's current internal position.
                     this@AudioEngine.positionMs = activeSession?.currentRenderedPositionMs() ?: 0L
 
                     userIntentPlaying.set(true)
-                    recoveryAttempts = 0
                     updateAudioStateForSong(song)
                     _playbackStateFlow.update { it.copy(currentSong = song, isPlaying = true, sessionId = newSessionId) }
 
@@ -353,12 +185,7 @@ class AudioEngine(
                 positionMs = 0L
                 updateAudioStateForSong(song)
 
-                // Reset stuck detection trackers for the new track
-                lastStuckPosition = -1L
-                lastStuckCheckTime = System.currentTimeMillis()
-
                 userIntentPlaying.set(true)
-                recoveryAttempts = 0
                 _playbackStateFlow.update { it.copy(currentSong = song, isPlaying = true) }
 
                 startSessionInternal(song, startPositionMs = 0L)
@@ -457,21 +284,15 @@ class AudioEngine(
                 if (nextSession != null && nextSong?.id == song.id) {
                     val oldSession = activeSession
                     activeSession = nextSession
-                    activeSession?.markActive() // Reset grace period for stuck detection
                     val newSessionId = activeSession?.sessionId ?: 0L
                     nextSession = null
                     nextSong = null
 
                     activeSession?.setStartFrameOffset(output.playbackPositionFrames())
 
-                    // Reset stuck detection trackers for the new track
-                    lastStuckPosition = -1L
-                    lastStuckCheckTime = System.currentTimeMillis()
-
                     this@AudioEngine.positionMs = activeSession?.currentRenderedPositionMs() ?: positionMs
 
                     userIntentPlaying.set(true)
-                    recoveryAttempts = 0
                     _playbackStateFlow.update { it.copy(isPlaying = true, sessionId = newSessionId) }
 
                     val fmt = activeSession?.pcmFormat
@@ -489,7 +310,6 @@ class AudioEngine(
 
                 // Set isPlaying = true EAGERLY to ensure UI responsiveness
                 userIntentPlaying.set(true)
-                recoveryAttempts = 0
                 _playbackStateFlow.update { it.copy(isPlaying = true) }
 
                 if (activeSession == null) {
@@ -701,7 +521,6 @@ class AudioEngine(
                     controlMutex.withLock {
                         fadingOutSession = activeSession
                         activeSession = nextSession
-                        activeSession?.markActive() // Reset grace period for stuck detection
                         val newSessionId = activeSession?.sessionId ?: 0L
                         nextSession = null
                         currentSong = activeSession?.song
@@ -779,7 +598,6 @@ class AudioEngine(
                         )
                     }
                     if (written <= 0) {
-                        underrunCount++
                         delay(2)
                         continue
                     }
@@ -789,8 +607,7 @@ class AudioEngine(
                 continue
             }
 
-            // Still update position even if no samples were read (e.g. throttled) 
-            // to keep recovery watcher happy.
+            // Still update position even if no samples were read (e.g. throttled).
             if (engineScope.isActive && !isSeeking.get() && _playbackStateFlow.value.isPlaying) {
                 this@AudioEngine.positionMs = targetSession.currentRenderedPositionMs()
             }
@@ -806,7 +623,6 @@ class AudioEngine(
                             val newFormat = next.pcmFormat
 
                             activeSession = next
-                            next.markActive() // Reset grace period for stuck detection
                             val newSessionId = next.sessionId
                             nextSession = null
                             currentSong = next.song
@@ -817,10 +633,6 @@ class AudioEngine(
                             }
                             val framesAtTransition = output.totalFramesWritten()
                             next.setStartFrameOffset(framesAtTransition)
-
-                            // Reset stuck detection trackers for the new track
-                            lastStuckPosition = -1L
-                            lastStuckCheckTime = System.currentTimeMillis()
 
                             updateAudioStateForSong(currentSong!!)
                             this@AudioEngine.positionMs = 0L
@@ -846,13 +658,6 @@ class AudioEngine(
         val song: Song,
         private val initialStartPositionMs: Long
     ) : DecoderSink, DecoderControl {
-        @Volatile
-        var sessionStartTimeMs = System.currentTimeMillis()
-            private set
-
-        fun markActive() {
-            sessionStartTimeMs = System.currentTimeMillis()
-        }
 
         val ringBuffer = FloatRingBuffer(RING_BUFFER_SAMPLES)
         private val pendingSeekMs = AtomicLong(NO_SEEK_PENDING)
@@ -860,9 +665,6 @@ class AudioEngine(
         private var seekListener: (() -> Unit)? = null
         var decoderCompleted = false
             private set
-
-        @Volatile
-        var lastDecoderProgressTime = System.currentTimeMillis()
 
         @Volatile
         var pcmFormat: PcmAudioFormat? = null
@@ -934,8 +736,8 @@ class AudioEngine(
                             }
 
                             // "Playback stopped" means the decode loop exited because control.isActive()
-                            // went false (the session was intentionally torn down by the recovery watcher
-                            // or a track change) — this is NOT a genuine decoder fault, so don't penalize
+                            // went false (the session was intentionally torn down by a track change)
+                            // — this is NOT a genuine decoder fault, so don't penalize
                             // this song's future decoder choice for it.
                             val isIntentionalStop = result.reason == "Playback stopped"
 
@@ -1046,7 +848,6 @@ class AudioEngine(
         }
 
         override suspend fun write(data: FloatArray, sampleCount: Int) {
-            lastDecoderProgressTime = System.currentTimeMillis()
             ringBuffer.write(data, sampleCount)
         }
 
