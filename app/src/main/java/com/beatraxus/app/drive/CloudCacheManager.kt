@@ -87,9 +87,23 @@ class CloudCacheManager private constructor(
 
     fun setNoCacheEnabled(enabled: Boolean) {
         noCacheEnabled = enabled
-        if (enabled) {
-            // When enabling "no-cache", clear existing playback caches to be consistent
+    }
+
+    /**
+     * Clears caches and cancels full downloads if no-cache is enabled.
+     * Should be called from a coroutine under the same lock as prepareCache to avoid races.
+     */
+    suspend fun applyNoCachePolicy() = mutex.withLock {
+        if (noCacheEnabled) {
+            // 1. Clear existing playback caches
             clearAllPlaybackCaches(currentlyPlayingId)
+            
+            // 2. Cancel all active full-file downloads immediately
+            activeDownloads.forEach { (id, job) ->
+                Log.d(TAG, "Cancelling active download for $id due to no-cache policy")
+                job.cancel()
+            }
+            activeDownloads.clear()
         }
     }
 

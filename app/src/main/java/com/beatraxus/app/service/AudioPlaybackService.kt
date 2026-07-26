@@ -78,6 +78,7 @@ import java.io.File
 
 
 class AudioPlaybackService : Service() {
+    private val TAG = "AudioPlaybackService"
     private val binder = LocalBinder()
     private lateinit var engine: AudioEngine
     private lateinit var audioOutput: AudioTrackOutput
@@ -542,7 +543,28 @@ class AudioPlaybackService : Service() {
     }
 
     fun setStreamingNoCacheEnabled(enabled: Boolean) {
+        val old = cloudCacheManager.isNoCacheEnabled()
         cloudCacheManager.setNoCacheEnabled(enabled)
+        
+        // Re-trigger cache preparation for the entire queue with new setting
+        serviceScope.launch(Dispatchers.IO) {
+            val state = engine.playbackStateFlow.value
+            val current = state.currentSong
+            val upcoming = upcomingSongs.value
+            val previous = previousSongs.value
+            
+            Log.d(TAG, "Re-triggering prepareCache due to no-cache toggle ($enabled)")
+            cloudCacheManager.prepareCache(current, upcoming, previous, tdLibManager)
+
+            // Nudge engine if source might need switching (e.g. from cache to network)
+            if (old != enabled && current?.isCloud() == true) {
+                // If it was playing from cache and we enabled no-cache, or vice versa,
+                // a seek will force the decoder to re-read and hit the new gates.
+                val currentPos = engine.currentPositionMs()
+                Log.d(TAG, "Nudging engine to apply no-cache change at $currentPos ms")
+                engine.seekTo(currentPos)
+            }
+        }
     }
 
 

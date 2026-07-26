@@ -2732,10 +2732,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun setStreamingNoCacheEnabled(enabled: Boolean) {
-        prefs?.edit()?.putBoolean("streaming_no_cache_enabled", enabled)?.apply()
+        Log.d(TAG, "setStreamingNoCacheEnabled: $enabled")
+        prefs.edit().putBoolean("streaming_no_cache_enabled", enabled).apply()
         _uiState.update { it.copy(streamingNoCacheEnabled = enabled) }
         cloudCacheManager.setNoCacheEnabled(enabled)
-        // Propagate to service for immediate effect on active playback
+        // Propagate to service for immediate effect and queue re-priming
         service?.setStreamingNoCacheEnabled(enabled)
     }
 
