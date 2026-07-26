@@ -492,15 +492,22 @@ class CloudCacheManager private constructor(
             }
         }
 
-        // --- NEW: Aggressive Telegram Reconciliation (Prev + Current + Next 2 Telegram) ---
+        // --- Aggressive Telegram Reconciliation (Prev + Current + Next 2 Telegram) ---
+        // NOTE: this used to be skipped entirely when noCacheEnabled was true, which was
+        // backwards - that meant enabling "no-cache streaming" actually stopped Telegram's
+        // downloaded head/tail windows from ever being cleaned up, leaving MORE stale data on
+        // disk, not less. TDLib always writes downloaded bytes to disk (there's no in-memory-only
+        // download mode), so the only real lever "no-cache" has for Telegram is being stricter
+        // about freeing that disk data promptly. So this now always runs, and keeps a smaller
+        // window (current song only, no lookahead prefetch) when no-cache is enabled.
+        val telegramKeepIds = mutableSetOf<String>()
+        currentSong?.let { if (it.source == SongSource.TELEGRAM) telegramKeepIds.add(it.id) }
         if (!noCacheEnabled) {
-            val telegramKeepIds = mutableSetOf<String>()
-            currentSong?.let { if (it.source == SongSource.TELEGRAM) telegramKeepIds.add(it.id) }
             previousSongs.lastOrNull()?.let { if (it.source == SongSource.TELEGRAM) telegramKeepIds.add(it.id) }
             upcomingSongs.filter { it.source == SongSource.TELEGRAM }.take(2).forEach { telegramKeepIds.add(it.id) }
-            
-            playbackLruCache.reconcileSource(SongSource.TELEGRAM, telegramKeepIds)
         }
+
+        playbackLruCache.reconcileSource(SongSource.TELEGRAM, telegramKeepIds)
     }
 
     /**
