@@ -95,6 +95,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import com.beatraxus.app.BuildConfig
 import com.beatraxus.app.ui.components.PremiumSwitch
 import com.beatraxus.app.ui.components.glassIconBackground
+import com.beatraxus.app.ui.components.seekbars.AppSeekBar
 import com.beatraxus.app.model.OutputMode
 import com.beatraxus.app.model.DvcMode
 import com.beatraxus.app.model.ParametricEqBand
@@ -397,7 +398,8 @@ fun SettingsScreen(
                                 "DSP Enhancements" -> DspEnhancementsContent(uiState, playerViewModel, onEditValue = { editingValue = it })
                                 "Appearance" -> AppearanceContent(sectionStack)
                                 "Appearance: Main Screen" -> MainScreenAppearanceContent(uiState, playerViewModel)
-                                "Appearance: Now Playing" -> NowPlayingAppearanceContent(uiState, playerViewModel)
+                                "Appearance: Now Playing" -> NowPlayingAppearanceContent(uiState, playerViewModel, sectionStack)
+                                "Appearance: Seekbar Settings" -> SeekbarSettingsContent(uiState, playerViewModel)
                                 "Appearance: Home Screen" -> HomeScreenAppearanceContent(uiState, playerViewModel, sectionStack)
                                 "Appearance: Home Screen Layout" -> HomeScreenLayoutContent(uiState, playerViewModel)
                                 "Appearance: Settings Screen" -> SettingsScreenAppearanceContent(uiState, playerViewModel)
@@ -696,7 +698,7 @@ fun MainScreenAppearanceContent(uiState: PlayerUiState, playerViewModel: PlayerV
 }
 
 @Composable
-fun NowPlayingAppearanceContent(uiState: PlayerUiState, playerViewModel: PlayerViewModel) {
+fun NowPlayingAppearanceContent(uiState: PlayerUiState, playerViewModel: PlayerViewModel, sectionStack: SnapshotStateList<String>) {
     val isClassic = com.beatraxus.app.utils.DeviceUtils.isClassicDevice()
     val appearance = uiState.appearance
 
@@ -784,72 +786,94 @@ fun NowPlayingAppearanceContent(uiState: PlayerUiState, playerViewModel: PlayerV
 
         HorizontalDivider(color = Color.White.copy(0.05f))
 
-        Text(
-            "Seekbar Settings",
-            color = PremiumAccent,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Bold,
-            letterSpacing = 1.sp,
-            modifier = Modifier.padding(top = 8.dp)
+        SettingMenuItem(
+            title = "Seekbar Design",
+            subtitle = "Change the look and behavior of the progress bar",
+            icon = Icons.Rounded.LinearScale,
+            iconColor = PrimaryCyan,
+            onClick = { sectionStack.add("Appearance: Seekbar Settings") }
         )
-
-        SeekbarStyleSettingsRow(uiState, playerViewModel)
     }
 }
 
 @Composable
-fun SeekbarStyleSettingsRow(uiState: PlayerUiState, playerViewModel: PlayerViewModel) {
-    var expanded by remember { mutableStateOf(false) }
+fun SeekbarSettingsContent(uiState: PlayerUiState, playerViewModel: PlayerViewModel) {
     val currentStyle = uiState.appearance.seekbarStyle
+    val styles = com.beatraxus.app.model.SeekbarStyle.entries
 
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                "Seekbar Design",
-                color = Color.White,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Medium
-            )
-            Text(
-                "Change the look and behavior of the progress bar",
-                color = Color.White.copy(0.5f),
-                fontSize = 13.sp
-            )
-        }
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        Text(
+            text = "Select a design for the playback progress bar. Previews use sample data.",
+            color = Color.White.copy(0.5f),
+            fontSize = 12.sp,
+            lineHeight = 18.sp,
+            modifier = Modifier.padding(horizontal = 4.dp)
+        )
 
-        Box {
-            TextButton(
-                onClick = { expanded = true },
-                colors = ButtonDefaults.textButtonColors(contentColor = PremiumAccent)
-            ) {
-                Text(
-                    currentStyle.name.lowercase().replaceFirstChar { it.uppercase() }.replace("_", " "),
-                    fontWeight = FontWeight.Bold
+        styles.forEach { style ->
+            val isSelected = currentStyle == style
+            
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { playerViewModel.setSeekbarStyle(style) },
+                shape = RoundedCornerShape(20.dp),
+                color = if (isSelected) PremiumAccent.copy(alpha = 0.08f) else CardSurface.copy(alpha = 0.6f),
+                border = BorderStroke(
+                    width = 1.2.dp,
+                    brush = if (isSelected) 
+                        Brush.verticalGradient(listOf(PremiumAccent, PremiumAccent.copy(0.5f)))
+                    else 
+                        Brush.verticalGradient(listOf(Color.White.copy(0.08f), Color.Transparent))
                 )
-                Icon(Icons.Rounded.ArrowDropDown, null)
-            }
-            DropdownMenu(
-                expanded = expanded,
-                onDismissRequest = { expanded = false },
-                modifier = Modifier.background(CardSurface)
             ) {
-                com.beatraxus.app.model.SeekbarStyle.entries.forEach { style ->
-                    DropdownMenuItem(
-                        text = {
-                            Text(
-                                style.name.lowercase().replaceFirstChar { it.uppercase() }.replace("_", " "),
-                                color = if (currentStyle == style) PremiumAccent else Color.White
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = style.name.replace("_", " ").lowercase().replaceFirstChar { it.uppercase() },
+                            color = if (isSelected) PremiumAccent else Color.White,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        if (isSelected) {
+                            Icon(
+                                Icons.Rounded.CheckCircle,
+                                null,
+                                tint = PremiumAccent,
+                                modifier = Modifier.size(20.dp)
                             )
-                        },
-                        onClick = {
-                            playerViewModel.setSeekbarStyle(style)
-                            expanded = false
                         }
-                    )
+                    }
+
+                    // Seekbar Preview
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Color.Black.copy(0.3f))
+                            .padding(horizontal = 12.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        AppSeekBar(
+                            style = style,
+                            progress = 0.45f,
+                            onProgressChange = {},
+                            modifier = Modifier.fillMaxWidth().height(if (style == com.beatraxus.app.model.SeekbarStyle.WAVEFORM) 32.dp else 40.dp),
+                            seed = 123,
+                            dominantColor = PremiumAccent,
+                            durationMs = 240000L,
+                            loudnessData = FloatArray(100) { (kotlin.math.sin(it.toFloat() / 5f) + 1f) / 2f },
+                            spectrumData = FloatArray(64) { (kotlin.math.cos(it.toFloat() / 3f) + 1f) / 2f }
+                        )
+                    }
                 }
             }
         }
