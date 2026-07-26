@@ -75,38 +75,60 @@ class OnlineLyricsSource {
     ): LyricsResult? = withContext(Dispatchers.IO) {
         val durationSec = (durationMs / 1000.0).roundToInt()
 
-        // Simple fetch logic
+        // Keep the best *plain* candidate around in case we never find a synced match,
+        // but never settle for plain lyrics while a synced version might still be found.
+        var bestPlainCandidate: LyricsResult? = null
+
+        // 1. Direct/exact match by artist+title(+album+duration)
         runCatching {
             val response = lrcLibService.getLyrics(artist, title, album, durationSec)
             if (isValidResponse(response)) {
-                return@withContext createResultFromResponse(response, 1.0)
+                if (isSyncedResponse(response)) {
+                    return@withContext createResultFromResponse(response, 1.0)
+                }
+                bestPlainCandidate = createResultFromResponse(response, 1.0)
             }
         }
 
+        // 2. Search fallback — scan ALL results and prefer any synced match over plain ones,
+        //    instead of blindly taking the first "valid" (possibly unsynced) result.
         runCatching {
             val query = normalizeForSearch("$artist $title")
             val results = lrcLibService.searchLyrics(query)
-            results.firstOrNull { isValidResponse(it) }?.let {
-                return@withContext createResultFromResponse(it, 0.8)
+
+            val syncedMatch = results.firstOrNull { isValidResponse(it) && isSyncedResponse(it) }
+            if (syncedMatch != null) {
+                return@withContext createResultFromResponse(syncedMatch, 0.8)
+            }
+
+            if (bestPlainCandidate == null) {
+                results.firstOrNull { isValidResponse(it) }?.let {
+                    bestPlainCandidate = createResultFromResponse(it, 0.8)
+                }
             }
         }
 
-        null
+        // 3. Nothing synced found anywhere — fall back to the best plain-text match, if any.
+        bestPlainCandidate
     }
 
     private fun isValidResponse(res: LrcLibResponse): Boolean {
         return !res.instrumental && (!res.syncedLyrics.isNullOrBlank() || !res.plainLyrics.isNullOrBlank())
     }
 
+    private fun isSyncedResponse(res: LrcLibResponse): Boolean {
+        return !res.syncedLyrics.isNullOrBlank()
+    }
+
     private fun createResultFromResponse(res: LrcLibResponse, score: Double): LyricsResult {
         val synced = res.syncedLyrics
         val plain = res.plainLyrics ?: ""
-        
+
         val type = when {
             !synced.isNullOrBlank() -> LyricsType.SYNCED
             else -> LyricsType.PLAIN
         }
-        
+
         return LyricsResult(type, synced ?: plain, score)
     }
 
