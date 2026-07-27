@@ -3366,8 +3366,9 @@ fun CloudContent(
     var dropboxQuery by remember { mutableStateOf("") }
     var onedriveQuery by remember { mutableStateOf("") }
     var boxQuery by remember { mutableStateOf("") }
-    var nextcloudQuery by remember { mutableStateOf("") }
     var showNextcloudDialog by remember { mutableStateOf(false) }
+    var showSmbDialog by remember { mutableStateOf(false) }
+    var showFtpDialog by remember { mutableStateOf(false) }
 
     if (showNextcloudDialog) {
         NextcloudLoginDialog(
@@ -3384,31 +3385,18 @@ fun CloudContent(
             title = "GOOGLE DRIVE",
             icon = Icons.Rounded.Cloud,
             isActive = true,
-            subtitle = "Enrichment rules, network and data saver"
+            subtitle = "ENRICHMENT RULES, NETWORK AND DATA SAVER",
+            accentColor = Color(0xFF4285F4)
         ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(56.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(Color.Black.copy(0.2f))
-                    .border(1.dp, Color.White.copy(0.1f), RoundedCornerShape(10.dp))
-                    .clickable { onRequestGDriveAccount() }
-                    .padding(horizontal = 16.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = "Add Google Drive Account",
-                    color = Color.White.copy(alpha = 0.7f),
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold
-                )
-            }
+            AddCloudAccountButton(
+                text = "Add Google Drive Account",
+                onClick = onRequestGDriveAccount
+            )
 
             uiState.driveErrorMessage?.let { error ->
                 Text(
                     text = error,
-                    color = if (error.contains("failed", ignoreCase = true)) Color.Red else Color(0xFF1A73E8),
+                    color = if (error.contains("failed", ignoreCase = true)) Color.Red else Color(0xFF4285F4),
                     fontSize = 12.sp,
                     modifier = Modifier.padding(top = 4.dp, start = 4.dp)
                 )
@@ -3422,7 +3410,7 @@ fun CloudContent(
                         email = account.email,
                         enabled = account.enabled,
                         icon = Icons.Rounded.Person,
-                        iconColor = Color(0xFF1A73E8),
+                        iconColor = Color(0xFF4285F4),
                         onSync = { viewModel.scanDriveAccount(account.email) },
                         onToggle = { enabled -> viewModel.toggleDriveAccountEnabled(account.email, enabled) },
                         onRemove = { viewModel.removeDriveAccount(account.email) }
@@ -3434,8 +3422,9 @@ fun CloudContent(
             
             CloudSettingsButton(
                 title = "GDrive Settings",
-                subtitle = "Network, Data Saver and Sync options",
+                subtitle = "NETWORK, DATA SAVER AND SYNC OPTIONS",
                 icon = Icons.Rounded.Settings,
+                accentColor = Color(0xFF4285F4),
                 onClick = onNavigateToGDriveSettings
             )
         }
@@ -3445,53 +3434,33 @@ fun CloudContent(
             title = "DROPBOX",
             icon = Icons.Rounded.CloudQueue,
             isActive = true,
-            subtitle = "Enrichment rules, network and data saver"
+            subtitle = "ENRICHMENT RULES, NETWORK AND DATA SAVER",
+            accentColor = Color(0xFF3D9AE8)
         ) {
             val context = LocalContext.current
-            OutlinedTextField(
-                value = dropboxQuery,
-                onValueChange = { dropboxQuery = it },
-                modifier = Modifier.fillMaxWidth(),
-                placeholder = { Text("Search or add account...", color = Color.Gray, fontSize = 14.sp) },
-                trailingIcon = {
-                    TextButton(onClick = { viewModel.startDropboxLogin(context) }) {
-                        Text("Add", color = Color(0xFF0061FF), fontWeight = FontWeight.Bold)
-                    }
-                },
-                shape = RoundedCornerShape(10.dp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = Color(0xFF0061FF).copy(0.5f),
-                    unfocusedBorderColor = Color.White.copy(0.1f),
-                    focusedContainerColor = Color.Black.copy(0.2f),
-                    unfocusedContainerColor = Color.Black.copy(0.2f),
-                    cursorColor = Color(0xFF0061FF)
-                ),
-                singleLine = true,
-                textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 14.sp)
+            AddCloudAccountButton(
+                text = "Add Dropbox Account",
+                onClick = { viewModel.startDropboxLogin(context) }
             )
 
             uiState.dropboxErrorMessage?.let { error ->
                 Text(
                     text = error,
-                    color = if (error.contains("failed", ignoreCase = true)) Color.Red else Color(0xFF0061FF),
+                    color = if (error.contains("failed", ignoreCase = true)) Color.Red else Color(0xFF3D9AE8),
                     fontSize = 12.sp,
                     modifier = Modifier.padding(top = 4.dp, start = 4.dp)
                 )
             }
 
-            val filtered = dropboxAccounts.filter {
-                it.email.contains(dropboxQuery, ignoreCase = true) || it.accountName.contains(dropboxQuery, ignoreCase = true)
-            }
-
-            if (filtered.isNotEmpty()) {
+            if (dropboxAccounts.isNotEmpty()) {
                 Spacer(Modifier.height(4.dp))
-                filtered.forEach { account ->
+                dropboxAccounts.forEach { account ->
                     CloudAccountRow(
                         name = account.accountName,
                         email = account.email,
                         enabled = account.enabled,
                         icon = Icons.Rounded.CloudQueue,
-                        iconColor = Color(0xFF0061FF),
+                        iconColor = Color(0xFF3D9AE8),
                         onSync = { viewModel.scanDropboxAccount(account.email) },
                         onToggle = { enabled -> viewModel.toggleDropboxAccountEnabled(account.email, enabled) },
                         onRemove = { viewModel.removeDropboxAccount(account.email) }
@@ -3503,8 +3472,9 @@ fun CloudContent(
 
             CloudSettingsButton(
                 title = "Dropbox Settings",
-                subtitle = "Network, Data Saver and Sync options",
+                subtitle = "NETWORK, DATA SAVER AND SYNC OPTIONS",
                 icon = Icons.Rounded.Settings,
+                accentColor = Color(0xFF3D9AE8),
                 onClick = onNavigateToDropboxSettings
             )
         }
@@ -3514,56 +3484,36 @@ fun CloudContent(
             title = "ONEDRIVE",
             icon = Icons.Rounded.CloudCircle,
             isActive = true,
-            subtitle = "Enrichment rules, network and data saver"
+            subtitle = "ENRICHMENT RULES, NETWORK AND DATA SAVER",
+            accentColor = Color(0xFF00A1F1)
         ) {
             val context = LocalContext.current
-            OutlinedTextField(
-                value = onedriveQuery,
-                onValueChange = { onedriveQuery = it },
-                modifier = Modifier.fillMaxWidth(),
-                placeholder = { Text("Search or add account...", color = Color.Gray, fontSize = 14.sp) },
-                trailingIcon = {
-                    TextButton(onClick = { 
-                        val activity = context.findActivity()
-                        if (activity != null) viewModel.startOneDriveLogin(activity)
-                    }) {
-                        Text("Add", color = Color(0xFF0078D4), fontWeight = FontWeight.Bold)
-                    }
-                },
-                shape = RoundedCornerShape(10.dp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = Color(0xFF0078D4).copy(0.5f),
-                    unfocusedBorderColor = Color.White.copy(0.1f),
-                    focusedContainerColor = Color.Black.copy(0.2f),
-                    unfocusedContainerColor = Color.Black.copy(0.2f),
-                    cursorColor = Color(0xFF0078D4)
-                ),
-                singleLine = true,
-                textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 14.sp)
+            AddCloudAccountButton(
+                text = "Add OneDrive Account",
+                onClick = { 
+                    val activity = context.findActivity()
+                    if (activity != null) viewModel.startOneDriveLogin(activity)
+                }
             )
 
             uiState.onedriveErrorMessage?.let { error ->
                 Text(
                     text = error,
-                    color = if (error.contains("failed", ignoreCase = true)) Color.Red else Color(0xFF0078D4),
+                    color = if (error.contains("failed", ignoreCase = true)) Color.Red else Color(0xFF00A1F1),
                     fontSize = 12.sp,
                     modifier = Modifier.padding(top = 4.dp, start = 4.dp)
                 )
             }
 
-            val filtered = onedriveAccounts.filter {
-                it.email.contains(onedriveQuery, ignoreCase = true) || it.accountName.contains(onedriveQuery, ignoreCase = true)
-            }
-
-            if (filtered.isNotEmpty()) {
+            if (onedriveAccounts.isNotEmpty()) {
                 Spacer(Modifier.height(4.dp))
-                filtered.forEach { account ->
+                onedriveAccounts.forEach { account ->
                     CloudAccountRow(
                         name = account.accountName,
                         email = account.email,
                         enabled = account.enabled,
                         icon = Icons.Rounded.CloudCircle,
-                        iconColor = Color(0xFF0078D4),
+                        iconColor = Color(0xFF00A1F1),
                         onSync = { viewModel.scanOneDriveAccount(account.email) },
                         onToggle = { enabled -> viewModel.toggleOneDriveAccountEnabled(account.email, enabled) },
                         onRemove = { viewModel.removeOneDriveAccount(account.email) }
@@ -3575,8 +3525,9 @@ fun CloudContent(
 
             CloudSettingsButton(
                 title = "OneDrive Settings",
-                subtitle = "Network, Data Saver and Sync options",
+                subtitle = "NETWORK, DATA SAVER AND SYNC OPTIONS",
                 icon = Icons.Rounded.Settings,
+                accentColor = Color(0xFF00A1F1),
                 onClick = onNavigateToOneDriveSettings
             )
         }
@@ -3586,56 +3537,36 @@ fun CloudContent(
             title = "BOX",
             icon = Icons.Rounded.ViewInAr,
             isActive = true,
-            subtitle = "Enrichment rules, network and data saver"
+            subtitle = "ENRICHMENT RULES, NETWORK AND DATA SAVER",
+            accentColor = Color(0xFF7B1FA2)
         ) {
             val context = LocalContext.current
-            OutlinedTextField(
-                value = boxQuery,
-                onValueChange = { boxQuery = it },
-                modifier = Modifier.fillMaxWidth(),
-                placeholder = { Text("Search or add account...", color = Color.Gray, fontSize = 14.sp) },
-                trailingIcon = {
-                    TextButton(onClick = { 
-                        val activity = context.findActivity()
-                        if (activity != null) viewModel.startBoxLogin(activity)
-                    }) {
-                        Text("Add", color = Color(0xFF0061D5), fontWeight = FontWeight.Bold)
-                    }
-                },
-                shape = RoundedCornerShape(10.dp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = Color(0xFF0061D5).copy(0.5f),
-                    unfocusedBorderColor = Color.White.copy(0.1f),
-                    focusedContainerColor = Color.Black.copy(0.2f),
-                    unfocusedContainerColor = Color.Black.copy(0.2f),
-                    cursorColor = Color(0xFF0061D5)
-                ),
-                singleLine = true,
-                textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 14.sp)
+            AddCloudAccountButton(
+                text = "Add Box Account",
+                onClick = { 
+                    val activity = context.findActivity()
+                    if (activity != null) viewModel.startBoxLogin(activity)
+                }
             )
 
             uiState.boxErrorMessage?.let { error ->
                 Text(
                     text = error,
-                    color = if (error.contains("failed", ignoreCase = true)) Color.Red else Color(0xFF0061D5),
+                    color = if (error.contains("failed", ignoreCase = true)) Color.Red else Color(0xFF7B1FA2),
                     fontSize = 12.sp,
                     modifier = Modifier.padding(top = 4.dp, start = 4.dp)
                 )
             }
 
-            val filtered = boxAccounts.filter {
-                it.email.contains(boxQuery, ignoreCase = true) || it.accountName.contains(boxQuery, ignoreCase = true)
-            }
-
-            if (filtered.isNotEmpty()) {
+            if (boxAccounts.isNotEmpty()) {
                 Spacer(Modifier.height(4.dp))
-                filtered.forEach { account ->
+                boxAccounts.forEach { account ->
                     CloudAccountRow(
                         name = account.accountName,
                         email = account.email,
                         enabled = account.enabled,
                         icon = Icons.Rounded.ViewInAr,
-                        iconColor = Color(0xFF0061D5),
+                        iconColor = Color(0xFF7B1FA2),
                         onSync = { viewModel.scanBoxAccount(account.email) },
                         onToggle = { enabled -> viewModel.toggleBoxAccountEnabled(account.email, enabled) },
                         onRemove = { viewModel.removeBoxAccount(account.email) }
@@ -3647,8 +3578,9 @@ fun CloudContent(
 
             CloudSettingsButton(
                 title = "Box Settings",
-                subtitle = "Network, Data Saver and Sync options",
+                subtitle = "NETWORK, DATA SAVER AND SYNC OPTIONS",
                 icon = Icons.Rounded.Settings,
+                accentColor = Color(0xFF7B1FA2),
                 onClick = onNavigateToBoxSettings
             )
         }
@@ -3658,52 +3590,32 @@ fun CloudContent(
             title = "NEXTCLOUD",
             icon = Icons.Rounded.Storage,
             isActive = true,
-            subtitle = "Enrichment rules, network and data saver"
+            subtitle = "ENRICHMENT RULES, NETWORK AND DATA SAVER",
+            accentColor = Color(0xFF00CED1)
         ) {
-            OutlinedTextField(
-                value = nextcloudQuery,
-                onValueChange = { nextcloudQuery = it },
-                modifier = Modifier.fillMaxWidth(),
-                placeholder = { Text("Search or add account...", color = Color.Gray, fontSize = 14.sp) },
-                trailingIcon = {
-                    TextButton(onClick = { showNextcloudDialog = true }) {
-                        Text("Add", color = Color(0xFF0082C9), fontWeight = FontWeight.Bold)
-                    }
-                },
-                shape = RoundedCornerShape(10.dp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = Color(0xFF0082C9).copy(0.5f),
-                    unfocusedBorderColor = Color.White.copy(0.1f),
-                    focusedContainerColor = Color.Black.copy(0.2f),
-                    unfocusedContainerColor = Color.Black.copy(0.2f),
-                    cursorColor = Color(0xFF0082C9)
-                ),
-                singleLine = true,
-                textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 14.sp)
+            AddCloudAccountButton(
+                text = "Add Nextcloud Account",
+                onClick = { showNextcloudDialog = true }
             )
 
             uiState.nextcloudErrorMessage?.let { error ->
                 Text(
                     text = error,
-                    color = if (error.contains("failed", ignoreCase = true)) Color.Red else Color(0xFF0082C9),
+                    color = if (error.contains("failed", ignoreCase = true)) Color.Red else Color(0xFF00CED1),
                     fontSize = 12.sp,
                     modifier = Modifier.padding(top = 4.dp, start = 4.dp)
                 )
             }
 
-            val filtered = nextcloudAccounts.filter {
-                it.username.contains(nextcloudQuery, ignoreCase = true) || it.displayName.contains(nextcloudQuery, ignoreCase = true)
-            }
-
-            if (filtered.isNotEmpty()) {
+            if (nextcloudAccounts.isNotEmpty()) {
                 Spacer(Modifier.height(4.dp))
-                filtered.forEach { account ->
+                nextcloudAccounts.forEach { account ->
                     CloudAccountRow(
                         name = account.displayName,
                         email = account.username,
                         enabled = account.enabled,
                         icon = Icons.Rounded.Storage,
-                        iconColor = Color(0xFF0082C9),
+                        iconColor = Color(0xFF00CED1),
                         onSync = { viewModel.scanNextcloudAccount(account.serverUrl, account.username) },
                         onToggle = { enabled -> viewModel.toggleNextcloudAccountEnabled(account.serverUrl, account.username, enabled) },
                         onRemove = { viewModel.removeNextcloudAccount(account.serverUrl, account.username) }
@@ -3715,19 +3627,100 @@ fun CloudContent(
 
             CloudSettingsButton(
                 title = "Nextcloud Settings",
-                subtitle = "Network, Data Saver and Sync options",
+                subtitle = "NETWORK, DATA SAVER AND SYNC OPTIONS",
                 icon = Icons.Rounded.Settings,
+                accentColor = Color(0xFF00CED1),
                 onClick = onNavigateToNextcloudSettings
             )
         }
 
+        // --- SMB/NAS ---
+        SettingsSection(
+            title = "SMB / NAS",
+            icon = Icons.Rounded.Storage,
+            isActive = true,
+            subtitle = "NETWORK ATTACHED STORAGE (CIFS/SMB)",
+            accentColor = Color(0xFF546E7A)
+        ) {
+            AddCloudAccountButton(
+                text = "Add SMB Server",
+                onClick = { showSmbDialog = true }
+            )
+
+            if (uiState.smbServers.isNotEmpty()) {
+                Spacer(Modifier.height(4.dp))
+                uiState.smbServers.forEach { server ->
+                    CloudAccountRow(
+                        name = server.displayName,
+                        email = "${server.host}/${server.shareName}",
+                        enabled = server.enabled,
+                        icon = Icons.Rounded.Storage,
+                        iconColor = Color(0xFF546E7A),
+                        onSync = { /* SMB doesn't have a background scan task yet, it browses live */ },
+                        onToggle = { enabled -> viewModel.updateSmbServerEnabled(server.id, enabled) },
+                        onRemove = { viewModel.removeSmbServer(server.id) }
+                    )
+                }
+            }
+        }
+
+        // --- FTP/SFTP ---
+        SettingsSection(
+            title = "FTP / SFTP",
+            icon = Icons.Rounded.Dns,
+            isActive = true,
+            subtitle = "FILE TRANSFER PROTOCOL SERVERS",
+            accentColor = Color(0xFFE91E63)
+        ) {
+            AddCloudAccountButton(
+                text = "Add FTP/SFTP Server",
+                onClick = { showFtpDialog = true }
+            )
+
+            if (uiState.ftpServers.isNotEmpty()) {
+                Spacer(Modifier.height(4.dp))
+                uiState.ftpServers.forEach { server ->
+                    CloudAccountRow(
+                        name = server.displayName,
+                        email = "${server.protocol.name}://${server.host}:${server.port}",
+                        enabled = server.enabled,
+                        icon = Icons.Rounded.Dns,
+                        iconColor = Color.Magenta,
+                        onSync = { /* FTP browses live */ },
+                        onToggle = { enabled -> viewModel.updateFtpServerEnabled(server.id, enabled) },
+                        onRemove = { viewModel.removeFtpServer(server.id) }
+                    )
+                }
+            }
+        }
+
         SettingMenuItem(
-            title = "Telegram Channels",
-            subtitle = "Access private channels and login to your account",
+            title = "TELEGRAM CHANNELS",
+            subtitle = "ACCESS PRIVATE CHANNELS AND LOGIN TO YOUR ACCOUNT",
             icon = Icons.AutoMirrored.Rounded.Send,
             iconColor = Color(0xFF2AABEE),
             showBetaBadge = true,
             onClick = onNavigateToTelegramCloud
+        )
+    }
+
+    if (showSmbDialog) {
+        com.beatraxus.app.ui.screens.SmbAddServerDialog(
+            onDismiss = { showSmbDialog = false },
+            onAdd = { server ->
+                viewModel.addSmbServer(server)
+                showSmbDialog = false
+            }
+        )
+    }
+
+    if (showFtpDialog) {
+        com.beatraxus.app.ui.screens.FtpAddServerDialog(
+            onDismiss = { showFtpDialog = false },
+            onAdd = { server ->
+                viewModel.addFtpServer(server)
+                showFtpDialog = false
+            }
         )
     }
 }
@@ -3813,7 +3806,7 @@ private fun TelegramLoginCard(uiState: PlayerUiState, viewModel: PlayerViewModel
         } else if (!uiState.showTelegramPhoneForm) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
-                    "Login to access private channels and faster downloads.",
+                    "LOGIN TO ACCESS PRIVATE CHANNELS AND FASTER DOWNLOADS.",
                     color = Color.White.copy(0.6f),
                     fontSize = 12.sp
                 )
@@ -4056,6 +4049,7 @@ private fun CloudSettingsButton(
     title: String,
     subtitle: String,
     icon: ImageVector,
+    accentColor: Color = Color(0xFF1A73E8),
     onClick: () -> Unit
 ) {
     Row(
@@ -4070,10 +4064,10 @@ private fun CloudSettingsButton(
         Box(
             modifier = Modifier
                 .size(36.dp)
-                .background(Color(0xFF1A73E8).copy(0.12f), CircleShape),
+                .background(accentColor.copy(0.12f), CircleShape),
             contentAlignment = Alignment.Center
         ) {
-            Icon(icon, null, tint = Color(0xFF1A73E8), modifier = Modifier.size(20.dp))
+            Icon(icon, null, tint = accentColor, modifier = Modifier.size(20.dp))
         }
         Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
@@ -4141,6 +4135,30 @@ private fun TelegramChannelRow(
     }
 }
 
+@Composable
+private fun AddCloudAccountButton(
+    text: String,
+    onClick: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(56.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(Color.Black.copy(0.2f))
+            .border(1.dp, Color.White.copy(0.1f), RoundedCornerShape(10.dp))
+            .clickable { onClick() }
+            .padding(horizontal = 16.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = text,
+            color = Color.White.copy(alpha = 0.7f),
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Bold
+        )
+    }
+}
 
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
@@ -4606,6 +4624,7 @@ fun SettingsSection(
     statusDot: Color? = null,
     subtitle: String? = null,
     headerActions: @Composable (() -> Unit)? = null,
+    accentColor: Color = PrimaryCyan,
     content: @Composable ColumnScope.() -> Unit
 ) {
     val alpha by animateFloatAsState(if (enabled) 1f else 0.45f, label = "alpha")
@@ -4623,11 +4642,13 @@ fun SettingsSection(
         ),
         border = BorderStroke(
             1.2.dp,
-            if (isActive) PrimaryCyan.copy(0.3f) else Color(0xFF26D9FF).copy(0.15f)
+            if (isActive) accentColor.copy(0.3f) else accentColor.copy(0.15f)
         )
     ) {
         Column(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+            modifier = Modifier
+                .background(accentColor.copy(alpha = 0.04f))
+                .padding(horizontal = 16.dp, vertical = 14.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Row(
@@ -4644,16 +4665,16 @@ fun SettingsSection(
                         modifier = Modifier
                             .size(40.dp)
                             .glassIconBackground(
-                                backgroundColor = PrimaryCyan.copy(alpha = 0.1f),
+                                backgroundColor = accentColor.copy(alpha = 0.1f),
                                 shape = RoundedCornerShape(12.dp),
-                                borderColor = PrimaryCyan.copy(alpha = 0.2f)
+                                borderColor = accentColor.copy(alpha = 0.2f)
                             ),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             icon,
                             null,
-                            tint = PrimaryCyan,
+                            tint = accentColor,
                             modifier = Modifier.size(20.dp)
                         )
 
@@ -5431,6 +5452,8 @@ fun TelegramCloudContent(
         }
     }
 
+    val telegramAccent = Color(0xFF2AABEE)
+
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Card(
             modifier = Modifier.fillMaxWidth().shadow(
@@ -5445,11 +5468,13 @@ fun TelegramCloudContent(
             ),
             border = BorderStroke(
                 1.2.dp,
-                PrimaryCyan.copy(0.3f)
+                telegramAccent.copy(0.3f)
             )
         ) {
             Column(
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                modifier = Modifier
+                    .background(telegramAccent.copy(alpha = 0.04f))
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 OutlinedTextField(
@@ -5508,8 +5533,9 @@ fun TelegramCloudContent(
 
                 CloudSettingsButton(
                     title = "Telegram Settings",
-                    subtitle = "Network, Data Saver and Sync options",
+                    subtitle = "NETWORK, DATA SAVER AND SYNC OPTIONS",
                     icon = Icons.Rounded.Settings,
+                    accentColor = Color(0xFF2AABEE),
                     onClick = onNavigateToTelegramSettings
                 )
 

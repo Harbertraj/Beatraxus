@@ -211,7 +211,7 @@ fun KaraokeLyricsView(
                 verticalArrangement = Arrangement.spacedBy(16.dp),
                 horizontalAlignment = Alignment.Start
             ) {
-                itemsIndexed(lyrics, key = { index, line -> line.startTime }) { index, line ->
+                itemsIndexed(lyrics, key = { index, line -> "${line.startTime}_$index" }) { index, line ->
                     val isCurrent = index == currentIndex
                     val distance = abs(index - currentIndex)
 
@@ -395,10 +395,11 @@ fun SyncedLyricLine(
         label = "upwardMovement"
     )
 
+    val isTamil = remember(line.text) { line.text.any { it in '\u0B80'..'\u0BFF' } }
     val baseStyle = MaterialTheme.typography.headlineMedium.copy(
         fontWeight = FontWeight.ExtraBold,
-        fontSize = 24.sp,
-        lineHeight = 30.sp,
+        fontSize = if (isTamil) 22.sp else 24.sp,
+        lineHeight = if (isTamil) 28.sp else 30.sp,
         textAlign = TextAlign.Start,
         letterSpacing = (-0.5).sp
     )
@@ -492,7 +493,7 @@ private fun calculateKaraokePath(
         val elapsed = progressMs - line.startTime
         val totalFraction = (elapsed.toFloat() / duration.toFloat()).coerceIn(0f, 1f)
         val totalLength = line.text.length
-        
+
         val targetCharIndex = (totalFraction * totalLength).toInt()
         if (targetCharIndex > 0) {
             path.addPath(textLayout.getPathForRange(0, targetCharIndex))
