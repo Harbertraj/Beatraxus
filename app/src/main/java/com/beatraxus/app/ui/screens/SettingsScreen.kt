@@ -3385,7 +3385,7 @@ fun CloudContent(
             title = "GOOGLE DRIVE",
             icon = Icons.Rounded.Cloud,
             isActive = true,
-            subtitle = "ENRICHMENT RULES, NETWORK AND DATA SAVER",
+            subtitle = "Enrichment rules, network and data saver",
             accentColor = Color(0xFF4285F4)
         ) {
             AddCloudAccountButton(
@@ -3422,7 +3422,7 @@ fun CloudContent(
             
             CloudSettingsButton(
                 title = "GDrive Settings",
-                subtitle = "NETWORK, DATA SAVER AND SYNC OPTIONS",
+                subtitle = "Network, data saver and sync options",
                 icon = Icons.Rounded.Settings,
                 accentColor = Color(0xFF4285F4),
                 onClick = onNavigateToGDriveSettings
@@ -3434,7 +3434,7 @@ fun CloudContent(
             title = "DROPBOX",
             icon = Icons.Rounded.CloudQueue,
             isActive = true,
-            subtitle = "ENRICHMENT RULES, NETWORK AND DATA SAVER",
+            subtitle = "Enrichment rules, network and data saver",
             accentColor = Color(0xFF3D9AE8)
         ) {
             val context = LocalContext.current
@@ -3472,7 +3472,7 @@ fun CloudContent(
 
             CloudSettingsButton(
                 title = "Dropbox Settings",
-                subtitle = "NETWORK, DATA SAVER AND SYNC OPTIONS",
+                subtitle = "Network, data saver and sync options",
                 icon = Icons.Rounded.Settings,
                 accentColor = Color(0xFF3D9AE8),
                 onClick = onNavigateToDropboxSettings
@@ -3484,7 +3484,7 @@ fun CloudContent(
             title = "ONEDRIVE",
             icon = Icons.Rounded.CloudCircle,
             isActive = true,
-            subtitle = "ENRICHMENT RULES, NETWORK AND DATA SAVER",
+            subtitle = "Enrichment rules, network and data saver",
             accentColor = Color(0xFF00A1F1)
         ) {
             val context = LocalContext.current
@@ -3525,7 +3525,7 @@ fun CloudContent(
 
             CloudSettingsButton(
                 title = "OneDrive Settings",
-                subtitle = "NETWORK, DATA SAVER AND SYNC OPTIONS",
+                subtitle = "Network, data saver and sync options",
                 icon = Icons.Rounded.Settings,
                 accentColor = Color(0xFF00A1F1),
                 onClick = onNavigateToOneDriveSettings
@@ -3537,7 +3537,7 @@ fun CloudContent(
             title = "BOX",
             icon = Icons.Rounded.ViewInAr,
             isActive = true,
-            subtitle = "ENRICHMENT RULES, NETWORK AND DATA SAVER",
+            subtitle = "Enrichment rules, network and data saver",
             accentColor = Color(0xFF7B1FA2)
         ) {
             val context = LocalContext.current
@@ -3569,7 +3569,7 @@ fun CloudContent(
                         iconColor = Color(0xFF7B1FA2),
                         onSync = { viewModel.scanBoxAccount(account.email) },
                         onToggle = { enabled -> viewModel.toggleBoxAccountEnabled(account.email, enabled) },
-                        onRemove = { viewModel.removeBoxAccount(account.email) }
+                        onRemove = { viewModel.removeDriveAccount(account.email) }
                     )
                 }
             }
@@ -3578,7 +3578,7 @@ fun CloudContent(
 
             CloudSettingsButton(
                 title = "Box Settings",
-                subtitle = "NETWORK, DATA SAVER AND SYNC OPTIONS",
+                subtitle = "Network, data saver and sync options",
                 icon = Icons.Rounded.Settings,
                 accentColor = Color(0xFF7B1FA2),
                 onClick = onNavigateToBoxSettings
@@ -3590,7 +3590,7 @@ fun CloudContent(
             title = "NEXTCLOUD",
             icon = Icons.Rounded.Storage,
             isActive = true,
-            subtitle = "ENRICHMENT RULES, NETWORK AND DATA SAVER",
+            subtitle = "Enrichment rules, network and data saver",
             accentColor = Color(0xFF00CED1)
         ) {
             AddCloudAccountButton(
@@ -3627,7 +3627,7 @@ fun CloudContent(
 
             CloudSettingsButton(
                 title = "Nextcloud Settings",
-                subtitle = "NETWORK, DATA SAVER AND SYNC OPTIONS",
+                subtitle = "Network, data saver and sync options",
                 icon = Icons.Rounded.Settings,
                 accentColor = Color(0xFF00CED1),
                 onClick = onNavigateToNextcloudSettings
@@ -3639,7 +3639,7 @@ fun CloudContent(
             title = "SMB / NAS",
             icon = Icons.Rounded.Storage,
             isActive = true,
-            subtitle = "NETWORK ATTACHED STORAGE (CIFS/SMB)",
+            subtitle = "Network attached storage (CIFS/SMB)",
             accentColor = Color(0xFF546E7A)
         ) {
             AddCloudAccountButton(
@@ -3669,7 +3669,7 @@ fun CloudContent(
             title = "FTP / SFTP",
             icon = Icons.Rounded.Dns,
             isActive = true,
-            subtitle = "FILE TRANSFER PROTOCOL SERVERS",
+            subtitle = "File transfer protocol servers",
             accentColor = Color(0xFFE91E63)
         ) {
             AddCloudAccountButton(
@@ -3696,7 +3696,7 @@ fun CloudContent(
 
         SettingMenuItem(
             title = "TELEGRAM CHANNELS",
-            subtitle = "ACCESS PRIVATE CHANNELS AND LOGIN TO YOUR ACCOUNT",
+            subtitle = "Access private channels and login to your account",
             icon = Icons.AutoMirrored.Rounded.Send,
             iconColor = Color(0xFF2AABEE),
             showBetaBadge = true,
@@ -3758,7 +3758,7 @@ private fun TelegramLoginCard(uiState: PlayerUiState, viewModel: PlayerViewModel
                 modifier = Modifier.size(16.dp)
             )
             Text(
-                "TELEGRAM ACCOUNT",
+                "Telegram Account",
                 color = Color(0xFF2AABEE),
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Bold,
@@ -3806,7 +3806,7 @@ private fun TelegramLoginCard(uiState: PlayerUiState, viewModel: PlayerViewModel
         } else if (!uiState.showTelegramPhoneForm) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
-                    "LOGIN TO ACCESS PRIVATE CHANNELS AND FASTER DOWNLOADS.",
+                    "Login to access private channels and faster downloads.",
                     color = Color.White.copy(0.6f),
                     fontSize = 12.sp
                 )
@@ -5533,7 +5533,7 @@ fun TelegramCloudContent(
 
                 CloudSettingsButton(
                     title = "Telegram Settings",
-                    subtitle = "NETWORK, DATA SAVER AND SYNC OPTIONS",
+                    subtitle = "Network, data saver and sync options",
                     icon = Icons.Rounded.Settings,
                     accentColor = Color(0xFF2AABEE),
                     onClick = onNavigateToTelegramSettings
