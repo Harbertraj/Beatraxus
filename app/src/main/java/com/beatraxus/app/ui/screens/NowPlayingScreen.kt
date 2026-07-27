@@ -146,10 +146,10 @@ fun NowPlayingScreen(
         animationSpec = tween(600),
         label = "dominantColor"
     )
-    
+
     LaunchedEffect(song.id, song.albumArtUri) {
         if (dominantColorsCache.containsKey(song.id)) return@LaunchedEffect
-        
+
         val loader = context.imageLoader
         val request = ImageRequest.Builder(context)
             .data(song.albumArtUri)
@@ -157,7 +157,7 @@ fun NowPlayingScreen(
             .size(100, 100)
             .precision(Precision.INEXACT)
             .build()
-            
+
         val result = (loader.execute(request) as? SuccessResult)?.drawable
         val bitmap = (result as? BitmapDrawable)?.bitmap
         if (bitmap != null) {
@@ -176,7 +176,7 @@ fun NowPlayingScreen(
 
     var badgeVisible by rememberSaveable(song.id) { mutableStateOf(false) }
     var shouldAnimateBadge by rememberSaveable(song.id) { mutableStateOf(true) }
-    
+
     LaunchedEffect(song.id) {
         if (!badgeVisible) {
             delay(350)
@@ -186,7 +186,7 @@ fun NowPlayingScreen(
             shouldAnimateBadge = false
         }
     }
-    
+
     val metadataHeight by animateDpAsState(
         targetValue = if (showLyrics) 64.dp else 90.dp,
         animationSpec = tween(600),
@@ -267,7 +267,7 @@ fun NowPlayingScreen(
                 )
             }
         }
-        
+
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -283,23 +283,23 @@ fun NowPlayingScreen(
         )
 
         val dismissState = remember { mutableStateOf(0f) }
-        
+
         Scaffold(
             modifier = Modifier
                 .pointerInput(Unit) {
-                detectVerticalDragGestures(
-                    onVerticalDrag = { _, dragAmount ->
-                        dismissState.value += dragAmount
-                    },
-                    onDragEnd = {
-                        if (dismissState.value > 100) {
-                            onTogglePipeline(false)
-                            onClose()
+                    detectVerticalDragGestures(
+                        onVerticalDrag = { _, dragAmount ->
+                            dismissState.value += dragAmount
+                        },
+                        onDragEnd = {
+                            if (dismissState.value > 100) {
+                                onTogglePipeline(false)
+                                onClose()
+                            }
+                            dismissState.value = 0f
                         }
-                        dismissState.value = 0f
-                    }
-                )
-            },
+                    )
+                },
             containerColor = Color.Transparent,
             contentWindowInsets = WindowInsets.systemBars,
             topBar = {
@@ -465,7 +465,7 @@ fun NowPlayingScreen(
                             animationSpec = tween(600),
                             label = "albumArtScale"
                         )
-                        
+
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth(0.93f)
@@ -559,7 +559,8 @@ fun NowPlayingScreen(
                                     modifier = Modifier.fillMaxSize(),
                                     onSwipeDown = { onClose() },
                                     onSearchOnline = onSearchLyricsOnline,
-                                    lyricsErrorMessage = uiState.lyricsErrorMessage
+                                    lyricsErrorMessage = uiState.lyricsErrorMessage,
+                                    progressMs = progressMs
                                 )
                             }
                         }
@@ -621,108 +622,108 @@ fun NowPlayingScreen(
                                 modifier = Modifier.fillMaxWidth(),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                            // Favorite Icon
-                            if (uiState.appearance.showFavoriteButton) {
-                                IconButton(onClick = onFavoriteClick) {
-                                    Icon(
-                                        if (isFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
-                                        null,
-                                        tint = if (isFavorite) Color(0xFFFF4081) else Color.White.copy(0.7f),
-                                        modifier = Modifier.size(28.dp)
-                                    )
-                                }
-                            }
-
-
-                            // Dynamic Middle Content
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .padding(horizontal = 8.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                androidx.compose.animation.AnimatedVisibility(
-                                    visible = !showLyrics,
-                                    enter = fadeIn(tween(600)) + expandHorizontally(tween(600)),
-                                    exit = fadeOut(tween(600)) + shrinkHorizontally(tween(600))
-                                ) {
-                                    Column(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalAlignment = Alignment.CenterHorizontally,
-                                        verticalArrangement = Arrangement.Center
-                                    ) {
-                                        Text(
-                                            text = song.title,
-                                            style = MaterialTheme.typography.headlineSmall.copy(
-                                                fontWeight = FontWeight.Bold,
-                                                fontSize = 26.sp,
-                                                platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false)
-                                            ),
-                                            color = Color.White,
-                                            textAlign = TextAlign.Center,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                        val titleSpacerHeight by animateDpAsState(
-                                            targetValue = 0.dp,
-                                            animationSpec = tween(600),
-                                            label = "titleSpacerHeight"
-                                        )
-                                        Spacer(modifier = Modifier.height(titleSpacerHeight))
-                                        Text(
-                                            text = "${song.artist} • ${song.album}",
-                                            style = MaterialTheme.typography.titleMedium.copy(
-                                                fontSize = 16.sp,
-                                                color = Color.White.copy(alpha = 0.6f),
-                                                lineHeight = 24.sp,
-                                                platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false)
-                                            ),
-                                            textAlign = TextAlign.Center,
-                                            maxLines = 1,
-                                            modifier = Modifier
-                                                .offset(y = (3).dp)
-                                                .basicMarquee(iterations = Int.MAX_VALUE)
-                                                .clickable { 
-                                                    onNavigateToAlbum(song.album)
-                                                    onClose()
-                                                }
+                                // Favorite Icon
+                                if (uiState.appearance.showFavoriteButton) {
+                                    IconButton(onClick = onFavoriteClick) {
+                                        Icon(
+                                            if (isFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                                            null,
+                                            tint = if (isFavorite) Color(0xFFFF4081) else Color.White.copy(0.7f),
+                                            modifier = Modifier.size(28.dp)
                                         )
                                     }
                                 }
 
-                                androidx.compose.animation.AnimatedVisibility(
-                                    visible = showLyrics,
-                                    enter = fadeIn(tween(600)) + expandHorizontally(tween(600)),
-                                    exit = fadeOut(tween(600)) + shrinkHorizontally(tween(600))
-                                ) {
-                                    LyricsProgressSeekBar(
-                                        progressMs = progressMs,
-                                        durationMs = durationMs,
-                                        onSeek = onSeek,
-                                        songId = song.id,
-                                        uiState = uiState,
-                                        dominantColor = currentDominantColor
-                                    )
-                                }
-                            }
 
-                            // Lyrics Icon
-                            if (uiState.appearance.showLyricsButton) {
-                                IconButton(onClick = onToggleLyrics) {
-                                    Icon(
-                                        Icons.Rounded.Lyrics,
-                                        null,
-                                        tint = if (showLyrics) MaterialTheme.colorScheme.primary else Color.White.copy(0.7f),
-                                        modifier = Modifier.size(28.dp)
-                                    )
+                                // Dynamic Middle Content
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .padding(horizontal = 8.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    androidx.compose.animation.AnimatedVisibility(
+                                        visible = !showLyrics,
+                                        enter = fadeIn(tween(600)) + expandHorizontally(tween(600)),
+                                        exit = fadeOut(tween(600)) + shrinkHorizontally(tween(600))
+                                    ) {
+                                        Column(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                            verticalArrangement = Arrangement.Center
+                                        ) {
+                                            Text(
+                                                text = song.title,
+                                                style = MaterialTheme.typography.headlineSmall.copy(
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 26.sp,
+                                                    platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false)
+                                                ),
+                                                color = Color.White,
+                                                textAlign = TextAlign.Center,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            val titleSpacerHeight by animateDpAsState(
+                                                targetValue = 0.dp,
+                                                animationSpec = tween(600),
+                                                label = "titleSpacerHeight"
+                                            )
+                                            Spacer(modifier = Modifier.height(titleSpacerHeight))
+                                            Text(
+                                                text = "${song.artist} • ${song.album}",
+                                                style = MaterialTheme.typography.titleMedium.copy(
+                                                    fontSize = 16.sp,
+                                                    color = Color.White.copy(alpha = 0.6f),
+                                                    lineHeight = 24.sp,
+                                                    platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false)
+                                                ),
+                                                textAlign = TextAlign.Center,
+                                                maxLines = 1,
+                                                modifier = Modifier
+                                                    .offset(y = (3).dp)
+                                                    .basicMarquee(iterations = Int.MAX_VALUE)
+                                                    .clickable {
+                                                        onNavigateToAlbum(song.album)
+                                                        onClose()
+                                                    }
+                                            )
+                                        }
+                                    }
+
+                                    androidx.compose.animation.AnimatedVisibility(
+                                        visible = showLyrics,
+                                        enter = fadeIn(tween(600)) + expandHorizontally(tween(600)),
+                                        exit = fadeOut(tween(600)) + shrinkHorizontally(tween(600))
+                                    ) {
+                                        LyricsProgressSeekBar(
+                                            progressMs = progressMs,
+                                            durationMs = durationMs,
+                                            onSeek = onSeek,
+                                            songId = song.id,
+                                            uiState = uiState,
+                                            dominantColor = currentDominantColor
+                                        )
+                                    }
+                                }
+
+                                // Lyrics Icon
+                                if (uiState.appearance.showLyricsButton) {
+                                    IconButton(onClick = onToggleLyrics) {
+                                        Icon(
+                                            Icons.Rounded.Lyrics,
+                                            null,
+                                            tint = if (showLyrics) MaterialTheme.colorScheme.primary else Color.White.copy(0.7f),
+                                            modifier = Modifier.size(28.dp)
+                                        )
+                                    }
                                 }
                             }
                         }
-                    }
 
-                    // Seekbar Area (Timers and Technical Info always visible, Big Wavebar conditional)
+                        // Seekbar Area (Timers and Technical Info always visible, Big Wavebar conditional)
                         Column(modifier = Modifier.fillMaxWidth()) {
-                                androidx.compose.animation.AnimatedVisibility(
+                            androidx.compose.animation.AnimatedVisibility(
                                 visible = !showLyrics,
                                 enter = expandVertically(tween(600)) + fadeIn(tween(600)),
                                 exit = shrinkVertically(tween(600)) + fadeOut(tween(600))
@@ -737,8 +738,8 @@ fun NowPlayingScreen(
                                     dominantColor = currentDominantColor
                                 )
                             }
-                            
-                                Row(
+
+                            Row(
                                 modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
@@ -977,13 +978,13 @@ fun AudioQualityBadge(
 
     val durationMin = song.durationMs / 60000.0
     val sizeMb = song.fileSizeBytes / (1024.0 * 1024.0)
-    val isLikelyLossyM4A = (format == "m4a" || format == "mp4" || format == "aac") && 
-        ((durationMin > 0 && (sizeMb / durationMin) < 2.3) || (bitrate > 0 && bitrate < 400000))
+    val isLikelyLossyM4A = (format == "m4a" || format == "mp4" || format == "aac") &&
+            ((durationMin > 0 && (sizeMb / durationMin) < 2.3) || (bitrate > 0 && bitrate < 400000))
 
     val isALAC = format.contains("alac") || ((format == "m4a" || format == "mp4") && !isLikelyLossyM4A)
     val isLosslessFormat = format.contains("flac") || isALAC || format.contains("wav") || format.contains("dsd") || format.contains("aiff") || format.contains("dts") || format.contains("ac3")
     val isHiRes = (bitDepth >= 24 || sampleRate > 48000) && isLosslessFormat
-    
+
     val primaryColor = when {
         isHiRes -> Color(0xFFFFD54F)       // Premium Gold
         isLosslessFormat -> Color(0xFF4FC3F7) // Premium Cyan
@@ -1213,7 +1214,7 @@ private fun LyricsProgressSeekBar(
     val progress = if (durationMs > 0) {
         (progressMs().toFloat() / durationMs).coerceIn(0f, 1f)
     } else 0f
-    
+
     val seekHeight by animateDpAsState(
         targetValue = 40.dp,
         animationSpec = tween(600),
@@ -1255,7 +1256,7 @@ private fun MainProgressSeekBar(
     val progress = if (durationMs > 0) {
         (progressMs().toFloat() / durationMs).coerceIn(0f, 1f)
     } else 0f
-    
+
     val seekHeight by animateDpAsState(
         targetValue = if (showLyrics) 40.dp else 44.dp,
         animationSpec = tween(600),
@@ -1291,9 +1292,9 @@ private fun MainProgressSeekBar(
 @Composable
 private fun PlaybackTimerText(progressMs: () -> Long, isLeading: Boolean) {
     Text(
-        text = fmtTime(progressMs()), 
-        color = Color.White.copy(0.5f), 
-        fontSize = 12.sp, 
+        text = fmtTime(progressMs()),
+        color = Color.White.copy(0.5f),
+        fontSize = 12.sp,
         modifier = Modifier.width(45.dp),
         textAlign = if (isLeading) TextAlign.Start else TextAlign.End
     )
@@ -1310,9 +1311,9 @@ fun TechnicalInfo(song: Song, uiState: com.beatraxus.app.model.PlayerUiState) {
     }
     val sampleRate = song.sampleRateHz
     val bitrate = song.bitrate
-    
+
     val khz = String.format(Locale.US, "%.1f", sampleRate / 1000.0).removeSuffix(".0")
-    
+
     val accurateBitrate = if (bitrate > 0) {
         bitrate.toLong()
     } else if (song.durationMs > 0) {
@@ -1321,7 +1322,7 @@ fun TechnicalInfo(song: Song, uiState: com.beatraxus.app.model.PlayerUiState) {
     val kbps = accurateBitrate / 1000
 
     Surface(
-        shape = RoundedCornerShape(16.dp), 
+        shape = RoundedCornerShape(16.dp),
         color = Color.White.copy(alpha = 0.12f),
         border = BorderStroke(1.dp, Brush.verticalGradient(listOf(Color.White.copy(0.2f), Color.Transparent)))
     ) {
@@ -1342,9 +1343,9 @@ fun TechnicalInfo(song: Song, uiState: com.beatraxus.app.model.PlayerUiState) {
 
                 val durationMin = song.durationMs / 60000.0
                 val sizeMb = song.fileSizeBytes / (1024.0 * 1024.0)
-                val isLikelyLossyM4A = (rawFormat == "m4a" || rawFormat == "mp4" || rawFormat == "aac") && 
-                    ((durationMin > 0 && (sizeMb / durationMin) < 2.3) || (bitrate > 0 && bitrate < 400000))
-                
+                val isLikelyLossyM4A = (rawFormat == "m4a" || rawFormat == "mp4" || rawFormat == "aac") &&
+                        ((durationMin > 0 && (sizeMb / durationMin) < 2.3) || (bitrate > 0 && bitrate < 400000))
+
                 val displayFormat = when {
                     rawFormat.contains("alac") || ((rawFormat == "m4a" || rawFormat == "mp4") && !isLikelyLossyM4A) -> "ALAC"
                     rawFormat.contains("dts") -> "DTS"
@@ -1359,7 +1360,7 @@ fun TechnicalInfo(song: Song, uiState: com.beatraxus.app.model.PlayerUiState) {
             text = info,
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
             style = MaterialTheme.typography.labelSmall.copy(
-                fontSize = 11.sp, 
+                fontSize = 11.sp,
                 fontWeight = FontWeight.Bold,
                 letterSpacing = 0.5.sp
             ),
@@ -1380,13 +1381,13 @@ fun QueueView(
     dominantColor: Color
 ) {
     val context = LocalContext.current
-    
+
     val animatedDominantColor by animateColorAsState(
         targetValue = dominantColor,
         animationSpec = tween(500),
         label = "dominantColor"
     )
-    
+
     val isLight = remember(animatedDominantColor) {
         val luminance = 0.299 * animatedDominantColor.red + 0.587 * animatedDominantColor.green + 0.114 * animatedDominantColor.blue
         luminance > 0.5
@@ -1396,7 +1397,7 @@ fun QueueView(
 
     Column(modifier = Modifier.fillMaxSize()) {
         val lazyListState = rememberLazyListState()
-        
+
         val nextUpHeaderIndex = (if (previousSongs.isNotEmpty()) previousSongs.size + 1 else 0) + 1 // +1 for Now Playing
         val firstNextUpIndex = nextUpHeaderIndex + 1
 
@@ -1455,7 +1456,7 @@ fun QueueView(
                                     )
                                 )
                         )
-                        
+
                         Row(
                             modifier = Modifier.padding(16.dp),
                             verticalAlignment = Alignment.CenterVertically
@@ -1530,19 +1531,19 @@ fun QueueView(
                 items(upcomingSongs, key = { it.id }) { song ->
                     ReorderableItem(reorderableState, key = song.id) { isDragging ->
                         val elevation by animateDpAsState(if (isDragging) 12.dp else 0.dp)
-                        
+
                         Surface(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .shadow(elevation, RoundedCornerShape(18.dp))
                                 .clickable { onPlayFromQueue(song.id) },
                             shape = RoundedCornerShape(18.dp),
-                            color = if (isDragging) 
-                                animatedDominantColor.copy(alpha = 0.4f) 
-                            else 
+                            color = if (isDragging)
+                                animatedDominantColor.copy(alpha = 0.4f)
+                            else
                                 Color.White.copy(alpha = 0.05f),
                             border = BorderStroke(
-                                1.dp, 
+                                1.dp,
                                 if (isDragging) Color.White.copy(alpha = 0.3f) else Color.White.copy(alpha = 0.03f)
                             )
                         ) {
@@ -1660,7 +1661,7 @@ private fun SectionHeader(title: String, count: Int, color: Color) {
                 )
             }
         }
-        
+
         Text(
             "$count SONGS",
             style = MaterialTheme.typography.labelMedium.copy(
@@ -1689,7 +1690,7 @@ private fun SongQueueItem(
         shape = RoundedCornerShape(18.dp),
         color = if (isPrevious) Color.White.copy(alpha = 0.02f) else Color.White.copy(alpha = 0.05f),
         border = BorderStroke(
-            1.dp, 
+            1.dp,
             if (isPrevious) Color.White.copy(alpha = 0.01f) else Color.White.copy(alpha = 0.03f)
         )
     ) {
@@ -1756,7 +1757,7 @@ fun buildPipelineOverlayState(
     val bitrate = if (uiState.bitrate > 0) uiState.bitrate else song.bitrate
     val inputSampleRate = if (uiState.inputSampleRate > 0) uiState.inputSampleRate else song.sampleRateHz
     val outputSampleRate = if (uiState.outputSampleRate > 0) uiState.outputSampleRate else inputSampleRate
-    
+
     val isMtkHiFi = uiState.outputMode == "HI_RES"
     val outputPathLabel = if (isMtkHiFi) "MTK HI-FI" else "AAudio"
 
@@ -1770,14 +1771,14 @@ fun buildPipelineOverlayState(
     val bitDepthLabel = buildString {
         if (song.bitDepth > 0) append("${song.bitDepth}-bit")
         else if (uiState.bitDepth > 0) append("${uiState.bitDepth}-bit")
-        
+
         if (uiState.outputBitDepth > 0 && uiState.outputBitDepth != song.bitDepth && uiState.outputBitDepth != uiState.bitDepth) {
             append(" -> ${uiState.outputBitDepth}-bit")
         }
     }.ifBlank { "Unknown" }
 
-    val pipelineSummary = uiState.pipelineSummary.ifBlank { 
-        "$codec -> PCM -> DSP -> ${if (uiState.pipelineResamplerEnabled) uiState.pipelineResamplerType else "Bypass"} -> $outputPathLabel" 
+    val pipelineSummary = uiState.pipelineSummary.ifBlank {
+        "$codec -> PCM -> DSP -> ${if (uiState.pipelineResamplerEnabled) uiState.pipelineResamplerType else "Bypass"} -> $outputPathLabel"
     }
 
     return PipelineOverlayState(
@@ -1886,9 +1887,9 @@ private fun SleepTimerSheet(
                             letterSpacing = 0.5.sp
                         )
                     )
-                    
+
                     Spacer(Modifier.height(8.dp))
-                    
+
                     if (uiState.isSleepTimerActive) {
                         Surface(
                             color = Color(0xFFFFB2AD).copy(alpha = 0.15f),
@@ -1900,7 +1901,7 @@ private fun SleepTimerSheet(
                             val m = (remaining % 3600) / 60
                             val s = remaining % 60
                             val countdownText = if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%02d:%02d".format(m, s)
-                            
+
                             Row(
                                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                                 verticalAlignment = Alignment.CenterVertically
@@ -2069,7 +2070,7 @@ private fun SleepTimerSheet(
                                 fontSize = 16.sp
                             )
                         }
-                        
+
                         if (!uiState.isSleepTimerActive) {
                             IconButton(
                                 onClick = onDismiss,
@@ -2108,7 +2109,7 @@ fun PremiumSnappingSlider(
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
     val density = LocalDensity.current
     val horizontalPaddingPx = with(density) { 30.dp.toPx() }
-    
+
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -2122,7 +2123,7 @@ fun PremiumSnappingSlider(
                     val stepped = if (steps > 1) {
                         (raw * (steps - 1)).roundToInt() / (steps - 1).toFloat()
                     } else raw
-                    
+
                     if (stepped != value) {
                         haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
                         onValueChange(stepped)
@@ -2162,7 +2163,7 @@ fun PremiumSnappingSlider(
                 ),
                 size = Size(thumbX, size.height)
             )
-            
+
             // Draw Dots for steps if not too many
             if (steps in 2..12) {
                 for (i in 0 until steps) {
@@ -2174,7 +2175,7 @@ fun PremiumSnappingSlider(
                     )
                 }
             }
-            
+
             // Thumb
             drawRoundRect(
                 color = Color(0xFFFFB2AD),
