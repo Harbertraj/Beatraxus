@@ -4663,7 +4663,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun startSyncDismissTimer() {
         viewModelScope.launch {
-            delay(5000)
+            delay(2000)
             _uiState.update { it.copy(showSyncStatusOnHome = false, isSyncFinishedRecently = false) }
         }
     }

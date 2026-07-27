@@ -4099,7 +4099,7 @@ fun HomeScreen(
                                         Spacer(Modifier.height(12.dp))
                                     }
 
-                                    if (uiState.isCloudScanning) {
+                                    if (uiState.isCloudScanning && uiState.scanProgress < 1f) {
                                         LinearProgressIndicator(
                                             progress = { uiState.scanProgress },
                                             modifier = Modifier
