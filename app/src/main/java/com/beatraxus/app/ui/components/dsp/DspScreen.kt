@@ -214,8 +214,8 @@ fun DspScreen(
                                 ) {
                                     val pageIcons = listOf(
                                         Icons.Rounded.GraphicEq,
-                                        Icons.Rounded.SurroundSound,
                                         Icons.Rounded.AutoAwesome,
+                                        Icons.Rounded.SurroundSound,
                                         Icons.Rounded.Waves
                                     )
                                     pageIcons.forEachIndexed { i, icon ->
@@ -326,9 +326,9 @@ fun DspScreen(
                             onEditValue = { editingValue = it }
                         )
                     } else if (page == 1) {
-                        PremiumSoundStageCard(uiState, viewModel, onEditValue = { editingValue = it })
-                    } else if (page == 2) {
                         PremiumMasteringCard(uiState, viewModel, onEditValue = { editingValue = it })
+                    } else if (page == 2) {
+                        PremiumSoundStageCard(uiState, viewModel, onEditValue = { editingValue = it })
                     } else {
                         PremiumReverbCard(uiState, viewModel, onEditValue = { editingValue = it })
                     }
