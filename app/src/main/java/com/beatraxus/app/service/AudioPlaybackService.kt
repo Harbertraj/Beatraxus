@@ -1055,6 +1055,8 @@ class AudioPlaybackService : Service() {
                 }
             }
         }
+        activeCloudScanJobs[normalizedId] = job
+        job.invokeOnCompletion { activeCloudScanJobs.remove(normalizedId) }
     }
 
 
@@ -1149,6 +1151,8 @@ class AudioPlaybackService : Service() {
                 }
             }
         }
+        activeCloudScanJobs[normalizedId] = job
+        job.invokeOnCompletion { activeCloudScanJobs.remove(normalizedId) }
     }
 
 
@@ -1234,6 +1238,8 @@ class AudioPlaybackService : Service() {
                 }
             }
         }
+        activeCloudScanJobs[normalizedId] = job
+        job.invokeOnCompletion { activeCloudScanJobs.remove(normalizedId) }
     }
 
 
@@ -1302,7 +1308,6 @@ class AudioPlaybackService : Service() {
 
                     onComplete("Nextcloud sync complete. Found ${discovered.size} songs.")
                 } catch (e: Exception) {
-                } catch (e: Exception) {
                     if (e is CancellationException) {
                         val stillExists = nextcloudAccountRepository.accounts.first().any { it.serverUrl == normalizedServer && it.username == normalizedUser }
                         if (!stillExists) {
@@ -1319,6 +1324,9 @@ class AudioPlaybackService : Service() {
                 }
             }
         }
+        val nextcloudKey = "${normalizedServer}|${normalizedUser}"
+        activeCloudScanJobs[nextcloudKey] = job
+        job.invokeOnCompletion { activeCloudScanJobs.remove(nextcloudKey) }
     }
 
 
@@ -1524,6 +1532,8 @@ class AudioPlaybackService : Service() {
                 }
             }
         }
+        activeCloudScanJobs[normalizedId] = job
+        job.invokeOnCompletion { activeCloudScanJobs.remove(normalizedId) }
     }
 
 
