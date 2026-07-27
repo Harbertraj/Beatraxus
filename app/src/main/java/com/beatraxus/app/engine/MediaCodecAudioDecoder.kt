@@ -17,7 +17,6 @@ import java.io.File
 
 internal class MediaCodecAudioDecoder(
     private val context: Context,
-    private val driveAccountRepository: DriveAccountRepository,
     private val cloudCacheManager: com.beatraxus.app.drive.CloudCacheManager,
     private val tdLibManager: com.beatraxus.app.telegram.TdLibManager
 ) : AudioDecoder {
@@ -261,21 +260,17 @@ internal class MediaCodecAudioDecoder(
             return (path ?: "") to emptyMap()
         }
 
-        return if (song.source == SongSource.GDRIVE) {
-            val url = "https://www.googleapis.com/drive/v3/files/${song.driveFileId}?alt=media"
-            val headers = mutableMapOf<String, String>()
-            if (song.driveAccountEmail != null) {
-                val token = driveAccountRepository.getAccessToken(song.driveAccountEmail)
-                if (token != null) {
-                    headers["Authorization"] = "Bearer $token"
-                }
-            }
-            url to headers
-        } else if (song.uri.scheme?.startsWith("http") == true) {
-            song.uri.toString() to emptyMap()
-        } else {
-            "" to emptyMap()
+        val headers = cloudCacheManager.getCloudHeaders(song)
+        val url = when (song.source) {
+            SongSource.GDRIVE -> "https://www.googleapis.com/drive/v3/files/${song.driveFileId}?alt=media"
+            SongSource.DROPBOX -> "https://content.dropboxapi.com/2/files/download"
+            SongSource.ONEDRIVE -> "https://graph.microsoft.com/v1.0/me/drive/items/${song.onedriveFileId}/content"
+            SongSource.BOX -> "https://api.box.com/2.0/files/${song.boxFileId}/content"
+            SongSource.NEXTCLOUD -> song.uri.toString()
+            else -> if (song.uri.scheme?.startsWith("http") == true) song.uri.toString() else ""
         }
+
+        return url to headers
     }
 
     private fun selectBestAudioTrack(extractor: MediaExtractor): TrackSelection? {

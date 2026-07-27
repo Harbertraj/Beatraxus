@@ -20,7 +20,6 @@ import java.util.Locale
 
 internal class FfmpegAlacDecoder(
     private val context: Context,
-    private val driveAccountRepository: DriveAccountRepository,
     private val cloudCacheManager: com.beatraxus.app.drive.CloudCacheManager,
     private val tdLibManager: com.beatraxus.app.telegram.TdLibManager
 ) : AudioDecoder {
@@ -290,36 +289,25 @@ internal class FfmpegAlacDecoder(
     }
 
     private suspend fun resolveHeaders(song: Song): Map<String, String> {
-        val headers = mutableMapOf<String, String>()
-        
-        // Always provide a User-Agent for cloud sources
-        if (song.source != SongSource.LOCAL) {
-            headers["User-Agent"] = "Beatraxus/2.8"
-            headers["Connection"] = "keep-alive"
-        }
-
-        if (song.source == SongSource.GDRIVE) {
-            if (song.driveAccountEmail != null) {
-                val token = driveAccountRepository.getAccessToken(song.driveAccountEmail)
-                if (token != null) {
-                    headers["Authorization"] = "Bearer $token"
-                }
-            }
-        }
-        
-        return headers
+        return cloudCacheManager.getCloudHeaders(song)
     }
 
     private suspend fun resolveInputSource(song: Song): String {
-        return if (song.source == SongSource.GDRIVE) {
-            "https://www.googleapis.com/drive/v3/files/${song.driveFileId}?alt=media"
-        } else if (song.source == SongSource.TELEGRAM) {
-            cloudCacheManager.getTelegramFilePath(song, tdLibManager) ?: ""
-        } else if (song.uri.scheme?.startsWith("http") == true) {
-            song.uri.toString()
-        } else {
-            // Force generate a fresh SAF parameter
-            FFmpegKitConfig.getSafParameterForRead(context, song.uri)
+        return when (song.source) {
+            SongSource.GDRIVE -> "https://www.googleapis.com/drive/v3/files/${song.driveFileId}?alt=media"
+            SongSource.DROPBOX -> "https://content.dropboxapi.com/2/files/download"
+            SongSource.ONEDRIVE -> "https://graph.microsoft.com/v1.0/me/drive/items/${song.onedriveFileId}/content"
+            SongSource.BOX -> "https://api.box.com/2.0/files/${song.boxFileId}/content"
+            SongSource.NEXTCLOUD -> song.uri.toString()
+            SongSource.TELEGRAM -> cloudCacheManager.getTelegramFilePath(song, tdLibManager) ?: ""
+            else -> {
+                if (song.uri.scheme?.startsWith("http") == true) {
+                    song.uri.toString()
+                } else {
+                    // Force generate a fresh SAF parameter
+                    FFmpegKitConfig.getSafParameterForRead(context, song.uri)
+                }
+            }
         }
     }
 

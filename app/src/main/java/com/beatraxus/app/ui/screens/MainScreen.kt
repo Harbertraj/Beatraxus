@@ -28,6 +28,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
 import androidx.compose.material.icons.automirrored.rounded.PlaylistPlay
 import androidx.compose.material.icons.automirrored.rounded.Sort
@@ -894,7 +895,7 @@ fun MainScreen(
                                                             )
                                                         ) else LocalTextStyle.current
                                                     )
-                                                    if (uiState.isCloudScanning || uiState.scanProgress > 0f && uiState.scanProgress < 1f) {
+                                                    if ((uiState.isCloudScanning || uiState.isScanning) && uiState.scanProgress < 1f) {
                                                         LinearProgressIndicator(
                                                             progress = { uiState.scanProgress },
                                                             modifier = Modifier
@@ -1004,7 +1005,7 @@ fun MainScreen(
 
                             // Cloud Sync Status - New location requested
                             androidx.compose.animation.AnimatedVisibility(
-                                visible = uiState.currentView == LibraryView.CLOUD && uiState.isCloudScanning,
+                                visible = uiState.currentView == LibraryView.CLOUD && uiState.isCloudScanning && uiState.scanProgress < 1f,
                                 enter = expandVertically() + fadeIn(),
                                 exit = shrinkVertically() + fadeOut(),
                                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
@@ -1360,9 +1361,13 @@ fun MainScreen(
                                                     HomeScreen(viewModel, uiState, homeListState)
                                                 }
                                                 LibraryView.CLOUD -> {
-                                                    val accounts = uiState.driveAccounts
+                                                    val accounts = uiState.driveAccounts.isNotEmpty() ||
+                                                        uiState.dropboxAccounts.isNotEmpty() ||
+                                                        uiState.onedriveAccounts.isNotEmpty() ||
+                                                        uiState.boxAccounts.isNotEmpty() ||
+                                                        uiState.nextcloudAccounts.isNotEmpty()
                                                     val tgChannels = uiState.telegramChannels
-                                                    if (accounts.isEmpty() && tgChannels.isEmpty()) {
+                                                    if (!accounts && tgChannels.isEmpty()) {
                                                         Column(Modifier.fillMaxSize(), horizontalAlignment=Alignment.CenterHorizontally, verticalArrangement=Arrangement.Center) {
                                                             Icon(Icons.Rounded.Cloud, null, tint=Color(0xFF1A73E8), modifier=Modifier.size(64.dp))
                                                             Spacer(Modifier.height(16.dp))
@@ -3033,14 +3038,36 @@ fun MainScreen(
                                         )
                                     }
                                     MainSheetType.CLOUD -> {
-                                        val driveAccounts = uiState.driveAccounts
+                                        val allCloudAccounts = uiState.driveAccounts.map {
+                                            CloudAccountUi(it.email, it.accountName, it.enabled, com.beatraxus.app.model.SongSource.GDRIVE)
+                                        } + uiState.dropboxAccounts.map {
+                                            CloudAccountUi(it.email, it.accountName, it.enabled, com.beatraxus.app.model.SongSource.DROPBOX)
+                                        } + uiState.onedriveAccounts.map {
+                                            CloudAccountUi(it.email, it.accountName, it.enabled, com.beatraxus.app.model.SongSource.ONEDRIVE)
+                                        } + uiState.boxAccounts.map {
+                                            CloudAccountUi(it.email, it.accountName, it.enabled, com.beatraxus.app.model.SongSource.BOX)
+                                        } + uiState.nextcloudAccounts.map {
+                                            CloudAccountUi(it.username, it.displayName, it.enabled, com.beatraxus.app.model.SongSource.NEXTCLOUD)
+                                        }
                                         val telegramChannels = uiState.telegramChannels
                                         CloudSheetContent(
-                                            accounts = driveAccounts,
+                                            accounts = allCloudAccounts,
                                             telegramChannels = telegramChannels,
                                             onSelectAccount = { email -> viewModel.setLibraryView(LibraryView.CLOUD, email) },
                                             onSelectTelegramChannel = { url -> viewModel.setLibraryViewTelegram(url) },
-                                            onRefreshAccount = { email -> viewModel.scanDriveAccount(email) },
+                                            onRefreshAccount = { account ->
+                                                when (account.source) {
+                                                    com.beatraxus.app.model.SongSource.GDRIVE -> viewModel.scanDriveAccount(account.email)
+                                                    com.beatraxus.app.model.SongSource.DROPBOX -> viewModel.scanDropboxAccount(account.email)
+                                                    com.beatraxus.app.model.SongSource.ONEDRIVE -> viewModel.scanOneDriveAccount(account.email)
+                                                    com.beatraxus.app.model.SongSource.BOX -> viewModel.scanBoxAccount(account.email)
+                                                    com.beatraxus.app.model.SongSource.NEXTCLOUD -> {
+                                                        val nc = uiState.nextcloudAccounts.find { it.username == account.email }
+                                                        if (nc != null) viewModel.scanNextcloudAccount(nc.serverUrl, nc.username)
+                                                    }
+                                                    else -> {}
+                                                }
+                                            },
                                             onSyncTelegramChannel = { url -> viewModel.syncTelegramChannel(url) },
                                             onDismiss = { activeMainSheet = null }
                                         )
@@ -3505,16 +3532,23 @@ fun LayoutDensityPopup(
     }
 }
 
+data class CloudAccountUi(
+    val email: String,
+    val accountName: String,
+    val enabled: Boolean,
+    val source: com.beatraxus.app.model.SongSource
+)
+
 @Composable
 fun CloudDrivePopup(
     expanded: Boolean,
     onDismiss: () -> Unit,
     anchorBounds: Rect,
-    accounts: List<com.beatraxus.app.repository.DriveAccount>,
+    accounts: List<CloudAccountUi>,
     telegramChannels: List<com.beatraxus.app.model.TelegramChannel>,
     onSelectAccount: (String?) -> Unit,
     onSelectTelegramChannel: (String) -> Unit,
-    onRefreshAccount: (String) -> Unit,
+    onRefreshAccount: (CloudAccountUi) -> Unit,
     onSyncTelegramChannel: (String) -> Unit
 ) {
     val enabledAccounts = remember(accounts) { accounts.filter { it.enabled } }
@@ -3604,7 +3638,7 @@ fun CloudDrivePopup(
                         }
 
                         Surface(
-                            onClick = { onRefreshAccount(account.email) },
+                            onClick = { onRefreshAccount(account) },
                             color = AccentBlue.copy(0.15f),
                             shape = RoundedCornerShape(14.dp),
                             modifier = Modifier.height(26.dp)
@@ -4119,15 +4153,43 @@ fun HomeScreen(
                                 }
 
                                 if (showCloudPopup) {
+                                    val allCloudAccounts = remember(
+                                        uiState.driveAccounts, uiState.dropboxAccounts,
+                                        uiState.onedriveAccounts, uiState.boxAccounts, uiState.nextcloudAccounts
+                                    ) {
+                                        uiState.driveAccounts.map {
+                                            CloudAccountUi(it.email, it.accountName, it.enabled, com.beatraxus.app.model.SongSource.GDRIVE)
+                                        } + uiState.dropboxAccounts.map {
+                                            CloudAccountUi(it.email, it.accountName, it.enabled, com.beatraxus.app.model.SongSource.DROPBOX)
+                                        } + uiState.onedriveAccounts.map {
+                                            CloudAccountUi(it.email, it.accountName, it.enabled, com.beatraxus.app.model.SongSource.ONEDRIVE)
+                                        } + uiState.boxAccounts.map {
+                                            CloudAccountUi(it.email, it.accountName, it.enabled, com.beatraxus.app.model.SongSource.BOX)
+                                        } + uiState.nextcloudAccounts.map {
+                                            CloudAccountUi(it.username, it.displayName, it.enabled, com.beatraxus.app.model.SongSource.NEXTCLOUD)
+                                        }
+                                    }
                                     CloudDrivePopup(
                                         expanded = showCloudPopup,
                                         onDismiss = { showCloudPopup = false },
                                         anchorBounds = anchorBounds,
-                                        accounts = uiState.driveAccounts,
+                                        accounts = allCloudAccounts,
                                         telegramChannels = uiState.telegramChannels,
                                         onSelectAccount = { viewModel.setCloudAccount(it) },
                                         onSelectTelegramChannel = { viewModel.setCloudTelegram(it) },
-                                        onRefreshAccount = { viewModel.scanDriveAccount(it) },
+                                        onRefreshAccount = { account ->
+                                            when (account.source) {
+                                                com.beatraxus.app.model.SongSource.GDRIVE -> viewModel.scanDriveAccount(account.email)
+                                                com.beatraxus.app.model.SongSource.DROPBOX -> viewModel.scanDropboxAccount(account.email)
+                                                com.beatraxus.app.model.SongSource.ONEDRIVE -> viewModel.scanOneDriveAccount(account.email)
+                                                com.beatraxus.app.model.SongSource.BOX -> viewModel.scanBoxAccount(account.email)
+                                                com.beatraxus.app.model.SongSource.NEXTCLOUD -> {
+                                                    val nc = uiState.nextcloudAccounts.find { it.username == account.email }
+                                                    if (nc != null) viewModel.scanNextcloudAccount(nc.serverUrl, nc.username)
+                                                }
+                                                else -> {}
+                                            }
+                                        },
                                         onSyncTelegramChannel = { viewModel.syncTelegramChannel(it) }
                                     )
                                 }
@@ -4141,7 +4203,7 @@ fun HomeScreen(
                             HomeSectionHeader(
                                 title = "Browse by Mood",
                                 actionText = "See All",
-                                actionIcon = Icons.Rounded.KeyboardArrowRight,
+                                actionIcon = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
                                 onActionClick = { showAllMoodsDialog = true }
                             )
                             LazyRow(
@@ -5635,11 +5697,11 @@ fun SortSheetContent(
 
 @Composable
 fun CloudSheetContent(
-    accounts: List<com.beatraxus.app.repository.DriveAccount>,
+    accounts: List<CloudAccountUi>,
     telegramChannels: List<com.beatraxus.app.model.TelegramChannel>,
     onSelectAccount: (String?) -> Unit,
     onSelectTelegramChannel: (String) -> Unit,
-    onRefreshAccount: (String) -> Unit,
+    onRefreshAccount: (CloudAccountUi) -> Unit,
     onSyncTelegramChannel: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -5661,7 +5723,7 @@ fun CloudSheetContent(
                     Text(account.email, color = Color.White.copy(0.4f), fontSize = 11.sp)
                 }
                 Surface(
-                    onClick = { onRefreshAccount(account.email) },
+                    onClick = { onRefreshAccount(account) },
                     color = AccentBlue.copy(0.15f),
                     shape = RoundedCornerShape(14.dp),
                     modifier = Modifier.height(26.dp)

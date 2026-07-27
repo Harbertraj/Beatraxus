@@ -54,7 +54,7 @@ class DropboxLibraryScanner(private val context: Context) {
             title = title,
             artist = "Unknown Artist",
             album = "Unknown Album",
-            uri = Uri.parse("https://api.dropboxapi.com/2/files/download"),
+            uri = Uri.parse("https://content.dropboxapi.com/2/files/download"),
             durationMs = 0L,
             format = ext.ifEmpty { "AUDIO" },
             sampleRateHz = 0,

@@ -94,7 +94,7 @@ class AudioPlaybackService : Service() {
     private val scanMutex = Mutex()
     private val _outputRouteStateFlow = MutableStateFlow(OutputRouteState())
     val outputRouteStateFlow: StateFlow<OutputRouteState> = _outputRouteStateFlow.asStateFlow()
-    
+
     // Playback control state
     private var playbackJob: Job? = null
     private var originalPlaylist: List<Song> = emptyList()
@@ -108,7 +108,7 @@ class AudioPlaybackService : Service() {
 
     fun restorePlaylist(playlist: List<Song>, originalPlaylist: List<Song>, currentIndex: Int, positionMs: Long) {
         if (hasRestoredFromDisk) return
-        
+
         this.playlist = playlist
         this.originalPlaylist = originalPlaylist
         this.currentIndex = currentIndex
@@ -117,7 +117,7 @@ class AudioPlaybackService : Service() {
         }
         updateUpcomingSongs()
         updateNotification()
-        
+
         // Use sync=true here to ensure that as soon as the app successfully restores the queue,
         // it's persisted. This helps prevent "losing" the restored state if the app crashes 
         // or is killed shortly after launch.
@@ -168,7 +168,7 @@ class AudioPlaybackService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        
+
         // 1. Immediate Notification/MediaSession setup for Foreground state
         createNotificationChannel()
         mediaSession = MediaSessionCompat(this, "AudioPlaybackService").apply {
@@ -181,7 +181,7 @@ class AudioPlaybackService : Service() {
             })
             isActive = true
         }
-        
+
         // Call startForeground ASAP to satisfy the system 5s timeout
         startForeground(NOTIFICATION_ID, createNotification())
 
@@ -193,13 +193,13 @@ class AudioPlaybackService : Service() {
         dspPreferences = DspPreferences(this)
         audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         audioOutput = AudioTrackOutput(this)
-        
+
         val app = (application as com.beatraxus.app.BeatraxusApplication)
         val database = app.database
         tdLibManager = app.tdLibManager
-        
+
         cloudCacheManager = app.cloudCacheManager
-        
+
         telegramChannelRepository = com.beatraxus.app.repository.TelegramChannelRepository(this)
         metadataExtractor = com.beatraxus.app.repository.MetadataExtractor(this)
         engine = AudioEngine(this, audioOutput, cloudCacheManager, database, tdLibManager)
@@ -222,7 +222,7 @@ class AudioPlaybackService : Service() {
                 engine.updateDspConfig(config)
             }
         }
-        
+
         serviceScope.launch {
             engine.onCompletion.collect {
                 handleCompletion()
@@ -256,7 +256,7 @@ class AudioPlaybackService : Service() {
             com.beatraxus.app.cast.CastManager.castMediaStatus.collect { status ->
                 if (status != null && com.beatraxus.app.cast.CastManager.isConnected) {
                     val isPlaying = status.playerState == MediaStatus.PLAYER_STATE_PLAYING ||
-                                    status.playerState == MediaStatus.PLAYER_STATE_BUFFERING
+                            status.playerState == MediaStatus.PLAYER_STATE_BUFFERING
                     if (_playbackStateFlow.value.isPlaying != isPlaying) {
                         _playbackStateFlow.update { it.copy(isPlaying = isPlaying) }
                     }
@@ -268,7 +268,7 @@ class AudioPlaybackService : Service() {
             engine.playbackStateFlow
                 .collectLatest { state ->
                     val songChanged = state.currentSong?.id != lastSongId || state.sessionId != lastSessionId
-                    
+
                     if (songChanged) {
                         cloudCacheManager.setCurrentlyPlayingId(state.currentSong?.id)
                         // Scrobble previous song if needed before resetting
@@ -280,12 +280,12 @@ class AudioPlaybackService : Service() {
                         lastSessionId = state.sessionId
                         currentAlbumArt = null
                         currentAlbumArtSongId = null
-                        
+
                         currentSongStartTime = System.currentTimeMillis() / 1000
                         currentSongPlaybackTimeMs = 0
                         lastProgressUpdateTime = System.currentTimeMillis()
                         isScrobbled = false
-                        
+
                         // Update current index if the song changed (gapless transition)
                         state.currentSong?.let { song ->
                             val newIndex = playlist.indexOfFirst { it.id == song.id }
@@ -327,7 +327,7 @@ class AudioPlaybackService : Service() {
                             currentSongPlaybackTimeMs += (now - lastProgressUpdateTime)
                         }
                         lastProgressUpdateTime = now
-                        
+
                         // Check for scrobble threshold (50% or 4 mins)
                         val song = state.currentSong
                         if (scrobblingEnabled && !isScrobbled && lastFmSessionKey != null && song != null && song.durationMs > 30000) {
@@ -421,7 +421,7 @@ class AudioPlaybackService : Service() {
         val state = engine.playbackStateFlow.value
         val currentRepeatMode = state.repeatMode
         val engineSessionId = state.sessionId
-        
+
         // If engine already transitioned (e.g. gapless playback), it will already be playing 
         // the next song. We just need to sync our internal currentIndex and return to avoid double-skipping.
         if (state.isPlaying && state.currentSong != null) {
@@ -459,6 +459,7 @@ class AudioPlaybackService : Service() {
             ACTION_PREVIOUS -> previous()
             ACTION_TOGGLE_SHUFFLE -> toggleShuffle()
             ACTION_TOGGLE_REPEAT -> toggleRepeat()
+            ACTION_REFRESH_WIDGETS -> serviceScope.launch { updateAllWidgets(engine.playbackStateFlow.value) }
         }
         return START_STICKY
     }
@@ -475,7 +476,7 @@ class AudioPlaybackService : Service() {
         try {
             val context = this@AudioPlaybackService
             val manager = GlanceAppWidgetManager(context)
-            
+
             val widgetClasses = listOf(
                 MusicWidgetSmall::class.java to MusicWidgetSmall(),
                 MusicWidgetMedium::class.java to MusicWidgetMedium(),
@@ -496,13 +497,15 @@ class AudioPlaybackService : Service() {
                                 set(MusicWidgetKeys.REPEAT_MODE, repeatMode)
                             }.toPreferences()
                         }
-                        Log.d("Beatraxus", "Updating widget ${clazz.simpleName} (id: $id)")
+                        Log.d("Beatraxus", "Updating widget ${clazz.simpleName} (id: $id) isPlaying=$isPlaying title=$title")
                         widget.update(context, id)
                     } catch (e: Exception) {
+                        Log.e("Beatraxus", "Failed to update widget ${clazz.simpleName} (id: $id)", e)
                     }
                 }
             }
         } catch (e: Exception) {
+            Log.e("Beatraxus", "updateAllWidgets failed", e)
         }
     }
 
@@ -556,7 +559,7 @@ class AudioPlaybackService : Service() {
             playlist.subList(0, currentIndex)
         }
         _previousSongs.value = previous
-        
+
         serviceScope.launch {
             val tdLib = (application as com.beatraxus.app.BeatraxusApplication).tdLibManager
             cloudCacheManager.prepareCache(current, upcoming, previous, tdLib)
@@ -667,17 +670,17 @@ class AudioPlaybackService : Service() {
     fun previous(isAutoAdvance: Boolean = false) {
         performTrackChange(-1, isAutoAdvance)
     }
-    
+
     private fun performTrackChange(delta: Int, isAutoAdvance: Boolean = false) {
         if (playlist.isEmpty()) return
-        
+
         playbackJob?.cancel()
-        
+
         currentIndex = (currentIndex + delta) % playlist.size
         if (currentIndex < 0) currentIndex += playlist.size
-        
+
         val nextSong = playlist[currentIndex]
-        
+
         if (com.beatraxus.app.cast.CastManager.isConnected) {
             val route = androidx.mediarouter.media.MediaRouter.getInstance(this).selectedRoute
             com.beatraxus.app.cast.CastManager.castSong(this, route, nextSong, nextSong.uri.toString())
@@ -687,7 +690,7 @@ class AudioPlaybackService : Service() {
 
         engine.prepare(nextSong)
         saveState()
-        
+
         playbackJob = serviceScope.launch {
             if (!isAutoAdvance) {
                 delay(150)
@@ -719,7 +722,7 @@ class AudioPlaybackService : Service() {
 
     fun setShuffleMode(enabled: Boolean) {
         if (engine.playbackStateFlow.value.shuffleMode == enabled) return
-        
+
         val currentSong = engine.playbackStateFlow.value.currentSong
         if (enabled) {
             val shuffled = playlist.shuffled().toMutableList()
@@ -771,12 +774,12 @@ class AudioPlaybackService : Service() {
             try {
                 val blocked = musicRepository.getBlockedFolders()
                 val currentLocalSongsMap = currentSongs.filter { it.source == SongSource.LOCAL }.associateBy { it.id }
-                
+
                 val resultsFromMediaStore = musicRepository.scanAudioFiles(fullScan = fullScan, excludedPaths = blocked) { count, albums, artists, progress ->
                     onProgress(progress, count, albums, artists)
                     updateScanningProgress(progress, count, false)
                 }
-                
+
                 val results = resultsFromMediaStore.map { scanned ->
                     currentLocalSongsMap[scanned.id] ?: scanned
                 }
@@ -785,7 +788,7 @@ class AudioPlaybackService : Service() {
                 val resultIds = results.map { it.id }.toSet()
                 val newSongs = results.filter { it.id !in currentLocalIds }
                 val removedLocalIds = currentLocalIds - resultIds
-                
+
                 val hasChanges = fullScan || currentLocalSongsMap.size != results.size || newSongs.isNotEmpty() || removedLocalIds.isNotEmpty()
 
                 if (hasChanges) {
@@ -828,7 +831,11 @@ class AudioPlaybackService : Service() {
                 onComplete(results, newSongs, removedLocalIds.toList(), message, hasChanges)
                 updateScanningProgress(1.0f, results.size, true)
             } catch (e: Exception) {
-                if (e is CancellationException) throw e
+                if (e is CancellationException) {
+                    onError("Scan cancelled")
+                    updateScanningProgress(1.0f, 0, true)
+                    return@launch
+                }
                 onError(e.message ?: "Unknown error")
                 updateScanningProgress(1.0f, 0, true)
             } finally {
@@ -865,7 +872,7 @@ class AudioPlaybackService : Service() {
                     val credential = driveAccountRepository.getCredential(email)
                     val scanner = com.beatraxus.app.drive.DriveLibraryScanner(application)
                     val newSongs = scanner.scanAccount(credential, allowedFormats)
-                    
+
                     val existingSongs = withContext(Dispatchers.IO) {
                         songDao.getSongsByAccount(email.lowercase()).associateBy { it.id }
                     }
@@ -908,7 +915,7 @@ class AudioPlaybackService : Service() {
 
                         songDao.insertSongs(updatedNewSongs.map { it.toEntity() })
                         onDiscoveryComplete(updatedNewSongs)
-                        
+
                         val toEnrich = updatedNewSongs.filter {
                             !it.isEnriched || (it.albumArtUri == null && !it.albumArtFetchAttempted)
                         }
@@ -916,7 +923,7 @@ class AudioPlaybackService : Service() {
                             val extractor = com.beatraxus.app.repository.MetadataExtractor(application)
                             var processed = 0
                             val total = toEnrich.size
-                            
+
                             onStatusUpdate("Enriching $total new songs...")
 
                             try {
@@ -926,7 +933,7 @@ class AudioPlaybackService : Service() {
                                     onProgress(progress)
                                     onEnrichmentProgress(progress, processed, total)
                                     updateEnrichingProgress(progress, processed, total)
-                                    
+
                                     songDao.insertSong(updatedSong.toEntity())
                                     onSongUpdated(updatedSong)
                                 }
@@ -947,7 +954,8 @@ class AudioPlaybackService : Service() {
                                 songDao.deleteSongsByAccount(normalizedId)
                             }
                         }
-                        throw e
+                        onError("Drive scan cancelled", null)
+                        return@launch
                     }
                     if (e is UserRecoverableAuthIOException) {
                         onError(e.message ?: "Auth error", e.intent)
@@ -961,9 +969,9 @@ class AudioPlaybackService : Service() {
         }
         libraryScanJob = job
         activeCloudScanJobs[normalizedId] = job
-        job.invokeOnCompletion { 
+        job.invokeOnCompletion {
             if (libraryScanJob == job) libraryScanJob = null
-            activeCloudScanJobs.remove(normalizedId) 
+            activeCloudScanJobs.remove(normalizedId)
         }
     }
 
@@ -973,6 +981,8 @@ class AudioPlaybackService : Service() {
         allowedFormats: Set<String>,
         onProgress: (Float) -> Unit,
         onDiscoveryComplete: (List<Song>) -> Unit,
+        onEnrichmentProgress: (Float, Int, Int) -> Unit,
+        onStatusUpdate: (String?) -> Unit,
         onSongUpdated: (Song) -> Unit,
         onComplete: (String) -> Unit,
         onError: (String) -> Unit
@@ -1008,17 +1018,23 @@ class AudioPlaybackService : Service() {
                             val extractor = com.beatraxus.app.repository.MetadataExtractor(application)
                             var processed = 0
                             val total = toEnrich.size
-                            
-                            extractor.extractCloudMetadataBatch(toEnrich, null) { updatedSong ->
-                                processed++
-                                val progress = processed.toFloat() / total.toFloat()
-                                onProgress(progress)
-                                updateEnrichingProgress(progress, processed, total)
-                                
-                                songDao.insertSong(updatedSong.toEntity())
-                                onSongUpdated(updatedSong)
+
+                            onStatusUpdate("Enriching $total new songs...")
+                            try {
+                                extractor.extractCloudMetadataBatch(toEnrich, null) { updatedSong ->
+                                    processed++
+                                    val progress = processed.toFloat() / total.toFloat()
+                                    onProgress(progress)
+                                    onEnrichmentProgress(progress, processed, total)
+                                    updateEnrichingProgress(progress, processed, total)
+
+                                    songDao.insertSong(updatedSong.toEntity())
+                                    onSongUpdated(updatedSong)
+                                }
+                            } finally {
+                                onStatusUpdate(null)
+                                updateEnrichingProgress(1.0f, total, total)
                             }
-                            updateEnrichingProgress(1.0f, total, total)
                         }
                     }
                     onComplete("Dropbox sync complete. Found ${discovered.size} songs.")
@@ -1030,7 +1046,8 @@ class AudioPlaybackService : Service() {
                                 songDao.deleteSongsByDropboxAccount(normalizedId)
                             }
                         }
-                        throw e
+                        onError("Dropbox scan cancelled")
+                        return@launch
                     }
                     onError(e.message ?: "Dropbox scan failed")
                 } finally {
@@ -1046,6 +1063,8 @@ class AudioPlaybackService : Service() {
         allowedFormats: Set<String>,
         onProgress: (Float) -> Unit,
         onDiscoveryComplete: (List<Song>) -> Unit,
+        onEnrichmentProgress: (Float, Int, Int) -> Unit,
+        onStatusUpdate: (String?) -> Unit,
         onSongUpdated: (Song) -> Unit,
         onComplete: (String) -> Unit,
         onError: (String) -> Unit
@@ -1077,20 +1096,42 @@ class AudioPlaybackService : Service() {
                         }
                         .buildClient()
 
-                    var totalFound = 0
+                    var discovered = mutableListOf<Song>()
                     scanner.scanAccountFlow(graphClient, account.email, allowedFormats).collect { page ->
-                        totalFound += page.size
+                        discovered.addAll(page)
                         withContext(Dispatchers.IO) {
                             songDao.insertSongs(page.map { it.toEntity() })
                         }
                         onDiscoveryComplete(page)
                     }
 
-                    if (totalFound > 0) {
-                        // Similar enrichment logic as GDrive/Dropbox could be added here
+                    if (discovered.isNotEmpty()) {
+                        val toEnrich = discovered.filter { !it.isEnriched }
+                        if (toEnrich.isNotEmpty()) {
+                            val extractor = com.beatraxus.app.repository.MetadataExtractor(application)
+                            var processed = 0
+                            val total = toEnrich.size
+
+                            onStatusUpdate("Enriching $total new songs...")
+                            try {
+                                extractor.extractCloudMetadataBatch(toEnrich, null) { updatedSong ->
+                                    processed++
+                                    val progress = processed.toFloat() / total.toFloat()
+                                    onProgress(progress)
+                                    onEnrichmentProgress(progress, processed, total)
+                                    updateEnrichingProgress(progress, processed, total)
+
+                                    songDao.insertSong(updatedSong.toEntity())
+                                    onSongUpdated(updatedSong)
+                                }
+                            } finally {
+                                onStatusUpdate(null)
+                                updateEnrichingProgress(1.0f, total, total)
+                            }
+                        }
                     }
-                    
-                    onComplete("OneDrive sync complete. Found $totalFound songs.")
+
+                    onComplete("OneDrive sync complete. Found ${discovered.size} songs.")
                 } catch (e: Exception) {
                     if (e is CancellationException) {
                         val stillExists = onedriveAccountRepository.accounts.first().any { it.email.lowercase() == normalizedId }
@@ -1099,7 +1140,8 @@ class AudioPlaybackService : Service() {
                                 songDao.deleteSongsByOneDriveAccount(normalizedId)
                             }
                         }
-                        throw e
+                        onError("OneDrive scan cancelled")
+                        return@launch
                     }
                     onError(e.message ?: "OneDrive scan failed")
                 } finally {
@@ -1115,6 +1157,8 @@ class AudioPlaybackService : Service() {
         allowedFormats: Set<String>,
         onProgress: (Float) -> Unit,
         onDiscoveryComplete: (List<Song>) -> Unit,
+        onEnrichmentProgress: (Float, Int, Int) -> Unit,
+        onStatusUpdate: (String?) -> Unit,
         onSongUpdated: (Song) -> Unit,
         onComplete: (String) -> Unit,
         onError: (String) -> Unit
@@ -1136,15 +1180,43 @@ class AudioPlaybackService : Service() {
                     val session = com.box.androidsdk.content.models.BoxSession(application)
                     // session.setUserId(account.userId)
                     val scanner = com.beatraxus.app.drive.BoxLibraryScanner(application)
-                    var totalFound = 0
-                    scanner.scanAccountFlow(session, account.email, allowedFormats).collect { discovered ->
-                        totalFound += discovered.size
+                    val discovered = mutableListOf<Song>()
+                    scanner.scanAccountFlow(session, account.email, allowedFormats).collect { page ->
+                        discovered.addAll(page)
                         withContext(Dispatchers.IO) {
-                            songDao.insertSongs(discovered.map { it.toEntity() })
+                            songDao.insertSongs(page.map { it.toEntity() })
                         }
-                        onDiscoveryComplete(discovered)
+                        onDiscoveryComplete(page)
                     }
-                    onComplete("Box sync complete. Found $totalFound songs.")
+
+                    if (discovered.isNotEmpty()) {
+                        val toEnrich = discovered.filter { !it.isEnriched }
+                        if (toEnrich.isNotEmpty()) {
+                            val extractor = com.beatraxus.app.repository.MetadataExtractor(application)
+                            var processed = 0
+                            val total = toEnrich.size
+
+                            onStatusUpdate("Enriching $total new songs...")
+                            try {
+                                extractor.extractCloudMetadataBatch(toEnrich, null) { updatedSong ->
+                                    processed++
+                                    val progress = processed.toFloat() / total.toFloat()
+                                    onProgress(progress)
+                                    onEnrichmentProgress(progress, processed, total)
+                                    updateEnrichingProgress(progress, processed, total)
+
+                                    songDao.insertSong(updatedSong.toEntity())
+                                    onSongUpdated(updatedSong)
+                                }
+                            } finally {
+                                onStatusUpdate(null)
+                                updateEnrichingProgress(1.0f, total, total)
+                            }
+                        }
+                    }
+
+                    onComplete("Box sync complete. Found ${discovered.size} songs.")
+                } catch (e: Exception) {
                 } catch (e: Exception) {
                     if (e is CancellationException) {
                         val stillExists = boxAccountRepository.accounts.first().any { it.email.lowercase() == normalizedId }
@@ -1153,7 +1225,8 @@ class AudioPlaybackService : Service() {
                                 songDao.deleteSongsByBoxAccount(normalizedId)
                             }
                         }
-                        throw e
+                        onError("Box scan cancelled")
+                        return@launch
                     }
                     onError(e.message ?: "Box scan failed")
                 } finally {
@@ -1169,6 +1242,8 @@ class AudioPlaybackService : Service() {
         allowedFormats: Set<String>,
         onProgress: (Float) -> Unit,
         onDiscoveryComplete: (List<Song>) -> Unit,
+        onEnrichmentProgress: (Float, Int, Int) -> Unit,
+        onStatusUpdate: (String?) -> Unit,
         onSongUpdated: (Song) -> Unit,
         onComplete: (String) -> Unit,
         onError: (String) -> Unit
@@ -1189,16 +1264,44 @@ class AudioPlaybackService : Service() {
                     }
 
                     val scanner = com.beatraxus.app.drive.NextcloudLibraryScanner(application)
-                    var totalFound = 0
+                    val discovered = mutableListOf<Song>()
                     // Nextcloud scanner needs credentials
-                    scanner.scanAccountFlow(account.serverUrl, account.username, account.appPassword, allowedFormats).collect { discovered ->
-                        totalFound += discovered.size
+                    scanner.scanAccountFlow(account.serverUrl, account.username, account.appPassword, allowedFormats).collect { page ->
+                        discovered.addAll(page)
                         withContext(Dispatchers.IO) {
-                            songDao.insertSongs(discovered.map { it.toEntity() })
+                            songDao.insertSongs(page.map { it.toEntity() })
                         }
-                        onDiscoveryComplete(discovered)
+                        onDiscoveryComplete(page)
                     }
-                    onComplete("Nextcloud sync complete. Found $totalFound songs.")
+
+                    if (discovered.isNotEmpty()) {
+                        val toEnrich = discovered.filter { !it.isEnriched }
+                        if (toEnrich.isNotEmpty()) {
+                            val extractor = com.beatraxus.app.repository.MetadataExtractor(application)
+                            var processed = 0
+                            val total = toEnrich.size
+
+                            onStatusUpdate("Enriching $total new songs...")
+                            try {
+                                extractor.extractCloudMetadataBatch(toEnrich, null) { updatedSong ->
+                                    processed++
+                                    val progress = processed.toFloat() / total.toFloat()
+                                    onProgress(progress)
+                                    onEnrichmentProgress(progress, processed, total)
+                                    updateEnrichingProgress(progress, processed, total)
+
+                                    songDao.insertSong(updatedSong.toEntity())
+                                    onSongUpdated(updatedSong)
+                                }
+                            } finally {
+                                onStatusUpdate(null)
+                                updateEnrichingProgress(1.0f, total, total)
+                            }
+                        }
+                    }
+
+                    onComplete("Nextcloud sync complete. Found ${discovered.size} songs.")
+                } catch (e: Exception) {
                 } catch (e: Exception) {
                     if (e is CancellationException) {
                         val stillExists = nextcloudAccountRepository.accounts.first().any { it.serverUrl == normalizedServer && it.username == normalizedUser }
@@ -1207,7 +1310,8 @@ class AudioPlaybackService : Service() {
                                 songDao.deleteSongsByNextcloudAccount("${normalizedServer}|${normalizedUser}")
                             }
                         }
-                        throw e
+                        onError("Nextcloud scan cancelled")
+                        return@launch
                     }
                     onError(e.message ?: "Nextcloud scan failed")
                 } finally {
@@ -1231,7 +1335,7 @@ class AudioPlaybackService : Service() {
                 var totalProcessed = 0
                 val allAlbums = mutableSetOf<String>()
                 val allArtists = mutableSetOf<String>()
-                
+
                 for ((index, folder) in folders.withIndex()) {
                     val results = musicRepository.scanAudioFiles(fullScan = false, targetPath = folder) { count, albums, artists, progress ->
                         // Partial progress
@@ -1244,7 +1348,7 @@ class AudioPlaybackService : Service() {
                     allAlbums.addAll(results.map { it.album })
                     allArtists.addAll(results.map { it.artist })
                 }
-                
+
                 // Save to DB
                 withContext(Dispatchers.IO) {
                     val entities = allResults.map { it.toEntity() }
@@ -1252,11 +1356,15 @@ class AudioPlaybackService : Service() {
                         songDao.insertSongs(chunk)
                     }
                 }
-                
+
                 onComplete(allResults, "Added ${allResults.size} songs from folders")
                 updateScanningProgress(1.0f, allResults.size, true)
             } catch (e: Exception) {
-                if (e is CancellationException) throw e
+                if (e is CancellationException) {
+                    onError("Folder scan cancelled")
+                    updateScanningProgress(1.0f, 0, true)
+                    return@launch
+                }
                 onError(e.message ?: "Folder scan failed")
                 updateScanningProgress(1.0f, 0, true)
             } finally {
@@ -1270,6 +1378,8 @@ class AudioPlaybackService : Service() {
         allowedFormats: Set<String>,
         onProgress: (Float) -> Unit,
         onDiscoveryComplete: (List<Song>) -> Unit,
+        onEnrichmentProgress: (Float, Int, Int) -> Unit,
+        onStatusUpdate: (String?) -> Unit,
         onSongUpdated: (Song) -> Unit,
         onComplete: (String) -> Unit,
         onError: (String) -> Unit
@@ -1290,14 +1400,14 @@ class AudioPlaybackService : Service() {
 
                     val normalizedUrl = url.trim().removeSuffix("/")
                     val channelName = normalizedUrl.substringAfterLast("/")
-                    
+
                     val existingSongs = songDao.getSongsByTelegramChannel(normalizedUrl).associateBy { it.id }
 
                     // 1. Fast scan messages
                     val discoveredSongs = telegramChannelRepository.scanChannel(
-                        tdLibManager, 
-                        cloudCacheManager, 
-                        normalizedUrl, 
+                        tdLibManager,
+                        cloudCacheManager,
+                        normalizedUrl,
                         existingSongs.mapValues { (_, entity) ->
                             Song(
                                 id = entity.id,
@@ -1353,37 +1463,45 @@ class AudioPlaybackService : Service() {
                         // Initial insert
                         songDao.insertSongs(discoveredSongs.map { it.toEntity() })
                         onDiscoveryComplete(discoveredSongs)
-                        
+
                         // 2. Deep Enrichment
                         val toEnrich = discoveredSongs.filter {
                             !it.isEnriched || (it.albumArtUri == null && !it.albumArtFetchAttempted)
                         }
-                        
+
                         if (toEnrich.isNotEmpty()) {
                             val processed = java.util.concurrent.atomic.AtomicInteger(0)
                             val total = toEnrich.size
                             val enrichmentSemaphore = Semaphore(500)
-                            
-                            // High-speed parallel enrichment
-                            coroutineScope {
-                                toEnrich.map { song ->
-                                    async {
-                                        enrichmentSemaphore.withPermit {
-                                            val enriched = extractTelegramMetadata(song)
-                                            if (enriched != null) {
-                                                songDao.insertSong(enriched.toEntity())
-                                                onSongUpdated(enriched)
+
+                            onStatusUpdate("Enriching $total new songs...")
+                            try {
+                                // High-speed parallel enrichment
+                                coroutineScope {
+                                    toEnrich.map { song ->
+                                        async {
+                                            enrichmentSemaphore.withPermit {
+                                                val enriched = extractTelegramMetadata(song)
+                                                if (enriched != null) {
+                                                    songDao.insertSong(enriched.toEntity())
+                                                    onSongUpdated(enriched)
+                                                }
+
+                                                val currentProcessed = processed.incrementAndGet()
+                                                val enrichmentProgressFactor = currentProcessed.toFloat() / total.toFloat()
+                                                val overallProgress = 0.1f + (enrichmentProgressFactor * 0.9f)
+                                                
+                                                onProgress(overallProgress)
+                                                onEnrichmentProgress(enrichmentProgressFactor, currentProcessed, total)
+                                                updateEnrichingProgress(overallProgress, currentProcessed, total)
                                             }
-                                            
-                                            val currentProcessed = processed.incrementAndGet()
-                                            val enrichmentProgress = 0.1f + (currentProcessed.toFloat() / total.toFloat() * 0.9f)
-                                            onProgress(enrichmentProgress)
-                                            updateEnrichingProgress(enrichmentProgress, currentProcessed, total)
                                         }
-                                    }
-                                }.awaitAll()
+                                    }.awaitAll()
+                                }
+                            } finally {
+                                onStatusUpdate(null)
+                                updateEnrichingProgress(1.0f, total, total)
                             }
-                            updateEnrichingProgress(1.0f, total, total)
                         }
                         onComplete("Synced ${discoveredSongs.size} songs from $channelName")
                     } else {
@@ -1397,7 +1515,8 @@ class AudioPlaybackService : Service() {
                                 songDao.deleteSongsByTelegramChannel(normalizedId)
                             }
                         }
-                        throw e
+                        onError("Telegram scan cancelled")
+                        return@launch
                     }
                     onError(e.message ?: "Telegram sync failed")
                 } finally {
@@ -1414,12 +1533,12 @@ class AudioPlaybackService : Service() {
             val downloadSize = 1024 * 1024L
             tdLibManager.send(org.drinkless.tdlib.TdApi.DownloadFile(fileId, 32, 0, downloadSize, true))
             val path = tdLibManager.waitForFile(fileId, downloadSize = downloadSize, timeoutMs = 10000) ?: return null
-            
+
             val tempFile = File(path)
             if (!tempFile.exists()) return null
 
             var enriched = metadataExtractor.extractMetadataFromLocalFile(song, tempFile)
-            
+
             // WAV/M4A/ALAC Tail handling: Often tags and album art are stored in the footer.
             val format = song.format.lowercase()
             val isSpecial = format.contains("wav") || format == "alac" || format == "m4a" || format == "mp4"
@@ -1428,7 +1547,7 @@ class AudioPlaybackService : Service() {
                 val offset = (song.fileSizeBytes - tailSize).coerceAtLeast(downloadSize)
                 // Request tail download (priority 32)
                 tdLibManager.send(org.drinkless.tdlib.TdApi.DownloadFile(fileId, 32, offset, song.fileSizeBytes - offset, true))
-                
+
                 // Request full download to ensure tail is reached and can be verified via prefix/completion
                 tdLibManager.send(org.drinkless.tdlib.TdApi.DownloadFile(fileId, 32, 0, 0, true))
 
@@ -1503,7 +1622,7 @@ class AudioPlaybackService : Service() {
                 .setPriority(NotificationCompat.PRIORITY_LOW)
                 .setOnlyAlertOnce(true)
                 .build()
-            
+
             notificationManager.notify(SCAN_NOTIFICATION_ID, notification)
         }
     }
@@ -1528,7 +1647,7 @@ class AudioPlaybackService : Service() {
                 .setPriority(NotificationCompat.PRIORITY_LOW)
                 .setOnlyAlertOnce(true)
                 .build()
-            
+
             notificationManager.notify(ENRICH_NOTIFICATION_ID, notification)
         }
     }
@@ -1542,7 +1661,7 @@ class AudioPlaybackService : Service() {
             RepeatMode.OFF -> if (currentIndex < playlist.size - 1) playlist[currentIndex + 1] else null
         }
     }
-    
+
     fun getUpcomingSongs(): List<Song> {
         if (playlist.isEmpty()) return emptyList()
         val repeatMode = engine.playbackStateFlow.value.repeatMode
@@ -1586,14 +1705,14 @@ class AudioPlaybackService : Service() {
             saveState()
         }
     }
-    
+
     fun moveInQueue(from: Int, to: Int) {
         if (from !in playlist.indices || to !in playlist.indices) return
         val mutable = playlist.toMutableList()
         val item = mutable.removeAt(from)
         mutable.add(to, item)
         playlist = mutable
-        
+
         if (from == currentIndex) {
             currentIndex = to
         } else if (from < currentIndex && to >= currentIndex) {
@@ -1616,10 +1735,10 @@ class AudioPlaybackService : Service() {
             playbackJob?.cancel()
             currentIndex = index
             val song = playlist[currentIndex]
-            
+
             engine.prepare(song)
             saveState()
-            
+
             playbackJob = serviceScope.launch {
                 delay(150)
                 if (isActive && requestAudioFocus()) {
@@ -1655,7 +1774,7 @@ class AudioPlaybackService : Service() {
         updateUpcomingSongs()
         saveState()
     }
-    
+
     fun playList(songs: List<Song>, startIndex: Int) {
         playbackJob?.cancel()
 
@@ -1791,7 +1910,7 @@ class AudioPlaybackService : Service() {
     private fun createNotification(): Notification {
         val state = _playbackStateFlow.value
         val song = state.currentSong
-        
+
         val intent = Intent(this, MainActivity::class.java).apply {
             putExtra("open_now_playing", true)
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
@@ -1860,7 +1979,7 @@ class AudioPlaybackService : Service() {
                 .putString(android.support.v4.media.MediaMetadataCompat.METADATA_KEY_ARTIST, song.artist)
                 .putString(android.support.v4.media.MediaMetadataCompat.METADATA_KEY_ALBUM, song.album)
                 .putLong(android.support.v4.media.MediaMetadataCompat.METADATA_KEY_DURATION, song.durationMs)
-            
+
             if (currentAlbumArt != null) {
                 metadataBuilder.putBitmap(android.support.v4.media.MediaMetadataCompat.METADATA_KEY_ALBUM_ART, currentAlbumArt)
                 metadataBuilder.putBitmap(android.support.v4.media.MediaMetadataCompat.METADATA_KEY_ART, currentAlbumArt)
@@ -1908,6 +2027,7 @@ class AudioPlaybackService : Service() {
         const val ACTION_PREVIOUS = "com.beatraxus.app.ACTION_PREVIOUS"
         const val ACTION_TOGGLE_SHUFFLE = "com.beatraxus.app.ACTION_TOGGLE_SHUFFLE"
         const val ACTION_TOGGLE_REPEAT = "com.beatraxus.app.ACTION_TOGGLE_REPEAT"
+        const val ACTION_REFRESH_WIDGETS = "com.beatraxus.app.ACTION_REFRESH_WIDGETS"
     }
 
     private fun refreshOutputRoute(reconfigure: Boolean = false) {
@@ -1922,14 +2042,14 @@ class AudioPlaybackService : Service() {
         val prefs = getSharedPreferences("beatraxus", Context.MODE_PRIVATE)
         val currentSong = playlist.getOrNull(currentIndex)
         val editor = prefs.edit()
-        
+
         // Ensure we only save the queue if we have valid data and a valid index.
         // This prevents overwriting a good saved state with an incomplete/initial one.
         if (playlist.isNotEmpty() && currentIndex in playlist.indices) {
             editor.putString("last_queue_ids", playlist.joinToString(",") { it.id })
             editor.putString("last_original_queue_ids", originalPlaylist.joinToString(",") { it.id })
             editor.putInt("last_queue_index", currentIndex)
-            
+
             if (currentSong != null) {
                 editor.putString("last_song_id", currentSong.id)
                 editor.putLong("last_song_pos", engine.currentPositionMs())
@@ -1940,7 +2060,7 @@ class AudioPlaybackService : Service() {
             editor.putBoolean("last_shuffle_mode", state.shuffleMode)
             editor.putString("last_repeat_mode", state.repeatMode.name)
         }
-        
+
         if (sync) {
             editor.commit()
         } else {
@@ -2014,11 +2134,10 @@ class AudioPlaybackService : Service() {
         engine.release()
         mediaSession.release()
         abandonAudioFocus()
-        
+
         // Close TDLib when the service is destroyed to prevent background processing
         (application as com.beatraxus.app.BeatraxusApplication).tdLibManager.close()
 
         super.onDestroy()
     }
 }
-

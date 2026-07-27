@@ -338,6 +338,8 @@ fun SongListItem(
 
                                 if (song.source == SongSource.GDRIVE) {
                                     append(" | G DRIVE")
+                                } else if (song.source == SongSource.DROPBOX) {
+                                    append(" | DROPBOX")
                                 } else if (song.source == SongSource.TELEGRAM) {
                                     append(" | TELEGRAM")
                                 } else if (song.source == SongSource.WEB) {

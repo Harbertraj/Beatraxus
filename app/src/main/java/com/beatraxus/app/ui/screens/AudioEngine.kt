@@ -66,8 +66,8 @@ class AudioEngine(
         driveAccountRepository = driveAccountRepository,
         cloudCacheManager = cloudCacheManager,
         tdLibManager = tdLibManager,
-        ffmpegAlacDecoder = FfmpegAlacDecoder(context, driveAccountRepository, cloudCacheManager, tdLibManager),
-        mediaCodecDecoder = MediaCodecAudioDecoder(context, driveAccountRepository, cloudCacheManager, tdLibManager)
+        ffmpegAlacDecoder = FfmpegAlacDecoder(context, cloudCacheManager, tdLibManager),
+        mediaCodecDecoder = MediaCodecAudioDecoder(context, cloudCacheManager, tdLibManager)
     )
 
     private val audioSpectrumAnalyzer by lazy { AudioSpectrumAnalyzer(context, decoderFactory) }

@@ -826,6 +826,11 @@ class CloudCacheManager private constructor(
                 if (token != null) {
                     headers["Authorization"] = "Bearer $token"
                 }
+                val fileId = song.dropboxFileId
+                if (fileId != null) {
+                    val argJson = org.json.JSONObject().put("path", fileId).toString()
+                    headers["Dropbox-API-Arg"] = argJson
+                }
             }
             SongSource.ONEDRIVE -> {
                 val email = song.onedriveAccountEmail ?: return headers
@@ -868,9 +873,11 @@ class CloudCacheManager private constructor(
                 else "https://www.googleapis.com/drive/v3/files/${song.driveFileId}?alt=media"
             }
             SongSource.DROPBOX -> {
-                // For Dropbox, we usually need to call the SDK or use a special URL
-                // Let's use the one from the scanner if it's there
-                song.uri.toString()
+                // Content-transfer endpoints live on content.dropboxapi.com, not
+                // api.dropboxapi.com. The file itself is selected via the
+                // Dropbox-API-Arg header (see getCloudHeaders), not the URL.
+                if (song.dropboxFileId == null) null
+                else "https://content.dropboxapi.com/2/files/download"
             }
             SongSource.ONEDRIVE -> "https://graph.microsoft.com/v1.0/me/drive/items/${song.onedriveFileId}/content"
             SongSource.BOX -> "https://api.box.com/2.0/files/${song.boxFileId}/content"

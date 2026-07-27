@@ -263,7 +263,7 @@ fun SettingsScreen(
                         } else {
                             currentSection ?: "SETTINGS"
                         }
-                        
+
                         Text(
                             text = displayTitle.uppercase(Locale.getDefault()),
                             color = TextWhite,
@@ -311,7 +311,7 @@ fun SettingsScreen(
                 )
             }
         )
-{ padding ->
+        { padding ->
             Crossfade(
                 targetState = currentSection,
                 modifier = Modifier.padding(padding),
@@ -327,118 +327,118 @@ fun SettingsScreen(
                         .padding(horizontal = 16.dp, vertical = 10.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                        if (section == null) {
-                            SettingMenuItem(
-                                title = "Audio Engine",
-                                subtitle = "Configure output, sample rates, Resampler, Dither...",
-                                icon = Icons.Rounded.GraphicEq,
-                                iconColor = Color(0xFF4CAF50),
-                                onClick = { sectionStack.add("Audio Engine") }
+                    if (section == null) {
+                        SettingMenuItem(
+                            title = "Audio Engine",
+                            subtitle = "Configure output, sample rates, Resampler, Dither...",
+                            icon = Icons.Rounded.GraphicEq,
+                            iconColor = Color(0xFF4CAF50),
+                            onClick = { sectionStack.add("Audio Engine") }
+                        )
+                        SettingMenuItem(
+                            title = "DSP Enhancements",
+                            subtitle = "USB Direct, Bit-Perfect, DVC, Limiter",
+                            icon = Icons.Rounded.Tune,
+                            iconColor = Color(0xFFFF9800),
+                            onClick = { sectionStack.add("DSP Enhancements") }
+                        )
+                        SettingMenuItem(
+                            title = "Appearance",
+                            subtitle = "Main Screen, Now Playing, Home Screen",
+                            icon = Icons.Rounded.Palette,
+                            iconColor = Color(0xFF9C27B0),
+                            onClick = { sectionStack.add("Appearance") }
+                        )
+                        SettingMenuItem(
+                            title = "Replay Gain",
+                            subtitle = "Normalize volume across tracks",
+                            icon = Icons.AutoMirrored.Rounded.VolumeUp,
+                            iconColor = Color(0xFF2196F3),
+                            onClick = { sectionStack.add("Replay Gain") }
+                        )
+                        SettingMenuItem(
+                            title = "Library",
+                            subtitle = "Manage music folders and scanning",
+                            icon = Icons.Rounded.AudioFile,
+                            iconColor = Color(0xFFE91E63),
+                            onClick = { sectionStack.add("Library") }
+                        )
+                        SettingMenuItem(
+                            title = "Cloud Account",
+                            subtitle = "Cloud, Telegram and Metadata Sync",
+                            icon = Icons.Rounded.Cloud,
+                            iconColor = Color(0xFF1A73E8),
+                            showBetaBadge = true,
+                            onClick = { sectionStack.add("Cloud") }
+                        )
+                        SettingMenuItem(
+                            title = "Last.fm",
+                            subtitle = "Scrobble your music and sync data",
+                            icon = Icons.Rounded.MusicNote,
+                            iconColor = Color(0xFFD32F2F),
+                            onClick = { sectionStack.add("Last.fm") }
+                        )
+                        SettingMenuItem(
+                            title = "Backup & Restore",
+                            subtitle = "Export/Import settings and assign to devices",
+                            icon = Icons.Rounded.Backup,
+                            iconColor = Color(0xFF4CAF50),
+                            onClick = { sectionStack.add("Backup & Restore") }
+                        )
+                        SettingMenuItem(
+                            title = "About",
+                            subtitle = "App version and information",
+                            icon = Icons.Rounded.Info,
+                            iconColor = Color(0xFF9C27B0),
+                            onClick = { sectionStack.add("About") }
+                        )
+                    } else {
+                        when (section) {
+                            "Audio Engine" -> AudioEngineContent(uiState, playerViewModel, onEditValue = { editingValue = it })
+                            "DSP Enhancements" -> DspEnhancementsContent(uiState, playerViewModel, onEditValue = { editingValue = it })
+                            "Appearance" -> AppearanceContent(sectionStack)
+                            "Appearance: Main Screen" -> MainScreenAppearanceContent(uiState, playerViewModel)
+                            "Appearance: Now Playing" -> NowPlayingAppearanceContent(uiState, playerViewModel, sectionStack)
+                            "Appearance: Seekbar Settings" -> SeekbarSettingsContent(uiState, playerViewModel)
+                            "Appearance: Home Screen" -> HomeScreenAppearanceContent(uiState, playerViewModel, sectionStack)
+                            "Appearance: Home Screen Layout" -> HomeScreenLayoutContent(uiState, playerViewModel)
+                            "Appearance: Settings Screen" -> SettingsScreenAppearanceContent(uiState, playerViewModel)
+                            "Replay Gain" -> ReplayGainContent(uiState, playerViewModel, onEditValue = { editingValue = it })
+                            "Library" -> LibraryContent(uiState, playerViewModel, onShowInfo = { showInfoPopup = true })
+                            "Cloud" -> CloudContent(
+                                uiState,
+                                playerViewModel,
+                                onRequestGDriveAccount = onRequestGDriveAccount,
+                                onNavigateToGDriveSettings = { sectionStack.add("GDrive Settings") },
+                                onNavigateToTelegramCloud = { sectionStack.add("Telegram Channels") },
+                                onNavigateToDropboxSettings = { sectionStack.add("Dropbox Settings") },
+                                onNavigateToOneDriveSettings = { sectionStack.add("OneDrive Settings") },
+                                onNavigateToBoxSettings = { sectionStack.add("Box Settings") },
+                                onNavigateToNextcloudSettings = { sectionStack.add("Nextcloud Settings") }
                             )
-                            SettingMenuItem(
-                                title = "DSP Enhancements",
-                                subtitle = "USB Direct, Bit-Perfect, DVC, Limiter",
-                                icon = Icons.Rounded.Tune,
-                                iconColor = Color(0xFFFF9800),
-                                onClick = { sectionStack.add("DSP Enhancements") }
+                            "Telegram Channels" -> TelegramCloudContent(
+                                uiState,
+                                playerViewModel,
+                                onNavigateToTelegramSettings = { sectionStack.add("Telegram Settings") }
                             )
-                            SettingMenuItem(
-                                title = "Appearance",
-                                subtitle = "Main Screen, Now Playing, Home Screen",
-                                icon = Icons.Rounded.Palette,
-                                iconColor = Color(0xFF9C27B0),
-                                onClick = { sectionStack.add("Appearance") }
+                            "GDrive Settings" -> MetadataSyncContent(uiState, playerViewModel, provider = com.beatraxus.app.model.CloudProvider.GDRIVE)
+                            "Telegram Settings" -> MetadataSyncContent(uiState, playerViewModel, provider = com.beatraxus.app.model.CloudProvider.TELEGRAM)
+                            "Dropbox Settings" -> MetadataSyncContent(uiState, playerViewModel, provider = com.beatraxus.app.model.CloudProvider.DROPBOX)
+                            "OneDrive Settings" -> MetadataSyncContent(uiState, playerViewModel, provider = com.beatraxus.app.model.CloudProvider.ONEDRIVE)
+                            "Box Settings" -> MetadataSyncContent(uiState, playerViewModel, provider = com.beatraxus.app.model.CloudProvider.BOX)
+                            "Nextcloud Settings" -> MetadataSyncContent(uiState, playerViewModel, provider = com.beatraxus.app.model.CloudProvider.NEXTCLOUD)
+                            "Last.fm" -> LastFmContent(uiState, playerViewModel)
+                            "About" -> AboutContent()
+                            "Backup & Restore" -> BackupRestoreContent(
+                                playerViewModel = playerViewModel,
+                                onExport = { exportLauncher.launch("beatraxus_backup.json") },
+                                onImport = { importLauncher.launch("application/json") }
                             )
-                            SettingMenuItem(
-                                title = "Replay Gain",
-                                subtitle = "Normalize volume across tracks",
-                                icon = Icons.AutoMirrored.Rounded.VolumeUp,
-                                iconColor = Color(0xFF2196F3),
-                                onClick = { sectionStack.add("Replay Gain") }
-                            )
-                            SettingMenuItem(
-                                title = "Library",
-                                subtitle = "Manage music folders and scanning",
-                                icon = Icons.Rounded.AudioFile,
-                                iconColor = Color(0xFFE91E63),
-                                onClick = { sectionStack.add("Library") }
-                            )
-                            SettingMenuItem(
-                                title = "Cloud Account",
-                                subtitle = "Cloud, Telegram and Metadata Sync",
-                                icon = Icons.Rounded.Cloud,
-                                iconColor = Color(0xFF1A73E8),
-                                showBetaBadge = true,
-                                onClick = { sectionStack.add("Cloud") }
-                            )
-                            SettingMenuItem(
-                                title = "Last.fm",
-                                subtitle = "Scrobble your music and sync data",
-                                icon = Icons.Rounded.MusicNote,
-                                iconColor = Color(0xFFD32F2F),
-                                onClick = { sectionStack.add("Last.fm") }
-                            )
-                            SettingMenuItem(
-                                title = "Backup & Restore",
-                                subtitle = "Export/Import settings and assign to devices",
-                                icon = Icons.Rounded.Backup,
-                                iconColor = Color(0xFF4CAF50),
-                                onClick = { sectionStack.add("Backup & Restore") }
-                            )
-                            SettingMenuItem(
-                                title = "About",
-                                subtitle = "App version and information",
-                                icon = Icons.Rounded.Info,
-                                iconColor = Color(0xFF9C27B0),
-                                onClick = { sectionStack.add("About") }
-                            )
-                        } else {
-                            when (section) {
-                                "Audio Engine" -> AudioEngineContent(uiState, playerViewModel, onEditValue = { editingValue = it })
-                                "DSP Enhancements" -> DspEnhancementsContent(uiState, playerViewModel, onEditValue = { editingValue = it })
-                                "Appearance" -> AppearanceContent(sectionStack)
-                                "Appearance: Main Screen" -> MainScreenAppearanceContent(uiState, playerViewModel)
-                                "Appearance: Now Playing" -> NowPlayingAppearanceContent(uiState, playerViewModel, sectionStack)
-                                "Appearance: Seekbar Settings" -> SeekbarSettingsContent(uiState, playerViewModel)
-                                "Appearance: Home Screen" -> HomeScreenAppearanceContent(uiState, playerViewModel, sectionStack)
-                                "Appearance: Home Screen Layout" -> HomeScreenLayoutContent(uiState, playerViewModel)
-                                "Appearance: Settings Screen" -> SettingsScreenAppearanceContent(uiState, playerViewModel)
-                                "Replay Gain" -> ReplayGainContent(uiState, playerViewModel, onEditValue = { editingValue = it })
-                                "Library" -> LibraryContent(uiState, playerViewModel, onShowInfo = { showInfoPopup = true })
-                                "Cloud" -> CloudContent(
-                                    uiState, 
-                                    playerViewModel, 
-                                    onRequestGDriveAccount = onRequestGDriveAccount, 
-                                    onNavigateToGDriveSettings = { sectionStack.add("GDrive Settings") },
-                                    onNavigateToTelegramCloud = { sectionStack.add("Telegram Channels") },
-                                    onNavigateToDropboxSettings = { sectionStack.add("Dropbox Settings") },
-                                    onNavigateToOneDriveSettings = { sectionStack.add("OneDrive Settings") },
-                                    onNavigateToBoxSettings = { sectionStack.add("Box Settings") },
-                                    onNavigateToNextcloudSettings = { sectionStack.add("Nextcloud Settings") }
-                                )
-                                "Telegram Channels" -> TelegramCloudContent(
-                                    uiState,
-                                    playerViewModel,
-                                    onNavigateToTelegramSettings = { sectionStack.add("Telegram Settings") }
-                                )
-                                "GDrive Settings" -> MetadataSyncContent(uiState, playerViewModel, provider = com.beatraxus.app.model.CloudProvider.GDRIVE)
-                                "Telegram Settings" -> MetadataSyncContent(uiState, playerViewModel, provider = com.beatraxus.app.model.CloudProvider.TELEGRAM)
-                                "Dropbox Settings" -> MetadataSyncContent(uiState, playerViewModel, provider = com.beatraxus.app.model.CloudProvider.DROPBOX)
-                                "OneDrive Settings" -> MetadataSyncContent(uiState, playerViewModel, provider = com.beatraxus.app.model.CloudProvider.ONEDRIVE)
-                                "Box Settings" -> MetadataSyncContent(uiState, playerViewModel, provider = com.beatraxus.app.model.CloudProvider.BOX)
-                                "Nextcloud Settings" -> MetadataSyncContent(uiState, playerViewModel, provider = com.beatraxus.app.model.CloudProvider.NEXTCLOUD)
-                                "Last.fm" -> LastFmContent(uiState, playerViewModel)
-                                "About" -> AboutContent()
-                                "Backup & Restore" -> BackupRestoreContent(
-                                    playerViewModel = playerViewModel,
-                                    onExport = { exportLauncher.launch("beatraxus_backup.json") },
-                                    onImport = { importLauncher.launch("application/json") }
-                                )
-                            }
                         }
                     }
                 }
             }
+        }
 
         if (uiState.isFullScanning) {
             FullScanPopup(
@@ -582,7 +582,7 @@ private fun ValueEditDialog(
                     value = textValue,
                     onValueChange = { textValue = it },
                     keyboardOptions = KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number, imeAction = ImeAction.Done),
-                    keyboardActions = KeyboardActions(onDone = { 
+                    keyboardActions = KeyboardActions(onDone = {
                         textValue.replace(",", ".").toFloatOrNull()?.let { onConfirm(it.coerceIn(range)) }
                         onDismiss()
                     }),
@@ -817,7 +817,7 @@ fun SeekbarSettingsContent(uiState: PlayerUiState, playerViewModel: PlayerViewMo
 
         styles.forEach { style ->
             val isSelected = currentStyle == style
-            
+
             Surface(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -826,9 +826,9 @@ fun SeekbarSettingsContent(uiState: PlayerUiState, playerViewModel: PlayerViewMo
                 color = if (isSelected) PremiumAccent.copy(alpha = 0.08f) else CardSurface.copy(alpha = 0.6f),
                 border = BorderStroke(
                     width = 1.2.dp,
-                    brush = if (isSelected) 
+                    brush = if (isSelected)
                         Brush.verticalGradient(listOf(PremiumAccent, PremiumAccent.copy(0.5f)))
-                    else 
+                    else
                         Brush.verticalGradient(listOf(Color.White.copy(0.08f), Color.Transparent))
                 )
             ) {
@@ -1041,8 +1041,8 @@ fun SettingsScreenAppearanceContent(uiState: PlayerUiState, playerViewModel: Pla
 @Composable
 fun HomeScreenLayoutContent(uiState: PlayerUiState, playerViewModel: PlayerViewModel) {
     val appearance = uiState.appearance
-    var sections by remember(appearance.homeScreenSectionsOrder) { 
-        mutableStateOf(appearance.homeScreenSectionsOrder) 
+    var sections by remember(appearance.homeScreenSectionsOrder) {
+        mutableStateOf(appearance.homeScreenSectionsOrder)
     }
     val lazyListState = rememberLazyListState()
     val reorderableLazyListState = rememberReorderableLazyListState(lazyListState) { from, to ->
@@ -1453,7 +1453,7 @@ fun AudioEngineContent(
             Spacer(Modifier.height(16.dp))
 
             val activeMode = OutputMode.fromName(uiState.outputMode)
-            
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -1463,7 +1463,7 @@ fun AudioEngineContent(
                     Text(activeMode.title, color = PrimaryCyan, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                     Text(activeMode.subtitle, color = TextWhite.copy(0.7f), fontSize = 14.sp, lineHeight = 18.sp)
                 }
-                
+
                 Button(
                     onClick = { showBufferSizeDialog = true },
                     colors = ButtonDefaults.buttonColors(
@@ -1479,7 +1479,7 @@ fun AudioEngineContent(
                     Text("BUFFER SIZE", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 }
             }
-            
+
             if (showBufferSizeDialog) {
                 BufferSizeDialog(
                     uiState = uiState,
@@ -1558,9 +1558,9 @@ fun AudioEngineContent(
         ) {
             Column(modifier = Modifier.fillMaxWidth()) {
                 Text(
-                    "TARGET SAMPLE RATE", 
-                    color = PrimaryCyan.copy(if (isResamplerBypassed) 0.3f else 0.8f), 
-                    fontSize = 11.sp, 
+                    "TARGET SAMPLE RATE",
+                    color = PrimaryCyan.copy(if (isResamplerBypassed) 0.3f else 0.8f),
+                    fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
                     letterSpacing = 1.5.sp
                 )
@@ -1602,9 +1602,9 @@ fun AudioEngineContent(
             isActive = true
         ) {
             Text(
-                "TARGET SAMPLE FORMAT", 
-                color = PrimaryCyan.copy(0.8f), 
-                fontSize = 11.sp, 
+                "TARGET SAMPLE FORMAT",
+                color = PrimaryCyan.copy(0.8f),
+                fontSize = 11.sp,
                 fontWeight = FontWeight.Bold,
                 letterSpacing = 1.5.sp
             )
@@ -1896,12 +1896,12 @@ private fun HardwareVolumeCard(uiState: PlayerUiState, viewModel: PlayerViewMode
     ) {
         Text(
             "When enabled, the app never scales the digital signal for volume — " +
-            "it always sends full-scale audio and relies on your device's own " +
-            "volume control (hardware buttons / system volume / DAC volume knob) " +
-            "instead. This avoids any possible digital attenuation of the bitstream. " +
-            "Note: this does not yet route volume through a dedicated hardware " +
-            "volume-control command to external DACs — it only guarantees the app " +
-            "itself applies zero digital gain.",
+                    "it always sends full-scale audio and relies on your device's own " +
+                    "volume control (hardware buttons / system volume / DAC volume knob) " +
+                    "instead. This avoids any possible digital attenuation of the bitstream. " +
+                    "Note: this does not yet route volume through a dedicated hardware " +
+                    "volume-control command to external DACs — it only guarantees the app " +
+                    "itself applies zero digital gain.",
             color = TextWhite.copy(0.7f),
             fontSize = 12.sp,
             lineHeight = 16.sp
@@ -1989,7 +1989,7 @@ private fun BitPerfectCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
                         fontWeight = FontWeight.Black,
                         letterSpacing = 1.2.sp
                     )
-                    
+
                     FlowRow(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -2025,7 +2025,7 @@ private fun BitPerfectCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
                             onToggle = { viewModel.setBitPerfectUnbypassDithering(it) }
                         )
                     }
-                    
+
                     Text(
                         "Enabling unbypass options allows specific DSP effects to run even in Bit-Perfect mode. If all are enabled, Bit-Perfect mode will automatically turn off.",
                         color = TextWhite.copy(0.45f),
@@ -2048,13 +2048,13 @@ private fun UnbypassChip(
     FilterChip(
         selected = selected,
         onClick = { onToggle(!selected) },
-        label = { 
+        label = {
             Text(
-                label, 
-                fontSize = 11.sp, 
+                label,
+                fontSize = 11.sp,
                 fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
                 color = if (selected) Color.Black else Color.White.copy(0.6f)
-            ) 
+            )
         },
         colors = FilterChipDefaults.filterChipColors(
             selectedContainerColor = PremiumAccent,
@@ -2083,7 +2083,7 @@ private fun PremiumChip(
     } else {
         BorderStroke(1.dp, Color.White.copy(0.05f))
     }
-    
+
     Box(
         modifier = modifier
             .widthIn(min = 52.dp)
@@ -2267,9 +2267,9 @@ private fun DvcCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
             if (isActive) {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(
-                        "DVC MODE", 
-                        color = PrimaryCyan.copy(0.8f), 
-                        fontSize = 11.sp, 
+                        "DVC MODE",
+                        color = PrimaryCyan.copy(0.8f),
+                        fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
                         letterSpacing = 1.5.sp
                     )
@@ -2560,7 +2560,7 @@ private fun DitherCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
             types.forEach { type ->
                 val isSelected = currentType == type
                 val canSelect = !isBypassed && config.ditherEnabled
-                
+
                 val background = if (isSelected && canSelect) {
                     Brush.linearGradient(listOf(Color.Black, Color.Black))
                 } else {
@@ -3369,6 +3369,7 @@ fun CloudContent(
     var showNextcloudDialog by remember { mutableStateOf(false) }
     var showSmbDialog by remember { mutableStateOf(false) }
     var showFtpDialog by remember { mutableStateOf(false) }
+    var showDropboxLoginOptions by remember { mutableStateOf(false) }
 
     if (showNextcloudDialog) {
         NextcloudLoginDialog(
@@ -3380,23 +3381,49 @@ fun CloudContent(
         )
     }
 
+    if (showDropboxLoginOptions) {
+        val dropboxContext = LocalContext.current
+        DropboxLoginOptionsDialog(
+            onDismiss = { showDropboxLoginOptions = false },
+            onChooseEmail = {
+                showDropboxLoginOptions = false
+                viewModel.startDropboxLogin(dropboxContext, preferGoogle = false)
+            },
+            onChooseGoogle = {
+                showDropboxLoginOptions = false
+                viewModel.startDropboxLogin(dropboxContext, preferGoogle = true)
+            }
+        )
+    }
+
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        // --- GOOGLE DRIVE ---
         SettingsSection(
             title = "GOOGLE DRIVE",
             icon = Icons.Rounded.Cloud,
             isActive = true,
             subtitle = "Enrichment rules, network and data saver",
-            accentColor = Color(0xFF4285F4)
+            accentColor = Color(0xFF34A853)
         ) {
             AddCloudAccountButton(
                 text = "Add Google Drive Account",
                 onClick = onRequestGDriveAccount
             )
 
-            uiState.driveErrorMessage?.let { error ->
+            val error = uiState.driveErrorMessage
+            val status = uiState.enrichmentStatus
+            
+            if (error != null) {
                 Text(
                     text = error,
-                    color = if (error.contains("failed", ignoreCase = true)) Color.Red else Color(0xFF4285F4),
+                    color = if (error.contains("failed", ignoreCase = true)) Color.Red else Color(0xFF34A853),
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(top = 4.dp, start = 4.dp)
+                )
+            } else if (status != null && driveAccounts.any { it.email == uiState.selectedCloudEmail }) {
+                Text(
+                    text = status,
+                    color = Color(0xFF34A853),
                     fontSize = 12.sp,
                     modifier = Modifier.padding(top = 4.dp, start = 4.dp)
                 )
@@ -3410,7 +3437,7 @@ fun CloudContent(
                         email = account.email,
                         enabled = account.enabled,
                         icon = Icons.Rounded.Person,
-                        iconColor = Color(0xFF4285F4),
+                        iconColor = Color(0xFF34A853),
                         onSync = { viewModel.scanDriveAccount(account.email) },
                         onToggle = { enabled -> viewModel.toggleDriveAccountEnabled(account.email, enabled) },
                         onRemove = { viewModel.removeDriveAccount(account.email) }
@@ -3419,12 +3446,12 @@ fun CloudContent(
             }
 
             HorizontalDivider(color = Color.White.copy(0.08f), modifier = Modifier.padding(vertical = 8.dp))
-            
+
             CloudSettingsButton(
                 title = "GDrive Settings",
                 subtitle = "Network, data saver and sync options",
                 icon = Icons.Rounded.Settings,
-                accentColor = Color(0xFF4285F4),
+                accentColor = Color(0xFF34A853),
                 onClick = onNavigateToGDriveSettings
             )
         }
@@ -3435,18 +3462,27 @@ fun CloudContent(
             icon = Icons.Rounded.CloudQueue,
             isActive = true,
             subtitle = "Enrichment rules, network and data saver",
-            accentColor = Color(0xFF3D9AE8)
+            accentColor = Color(0xFF0061FF)
         ) {
-            val context = LocalContext.current
             AddCloudAccountButton(
                 text = "Add Dropbox Account",
-                onClick = { viewModel.startDropboxLogin(context) }
+                onClick = { showDropboxLoginOptions = true }
             )
 
-            uiState.dropboxErrorMessage?.let { error ->
+            val error = uiState.dropboxErrorMessage
+            val status = uiState.enrichmentStatus
+
+            if (error != null) {
                 Text(
                     text = error,
-                    color = if (error.contains("failed", ignoreCase = true)) Color.Red else Color(0xFF3D9AE8),
+                    color = if (error.contains("failed", ignoreCase = true)) Color.Red else Color(0xFF0061FF),
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(top = 4.dp, start = 4.dp)
+                )
+            } else if (status != null && dropboxAccounts.any { it.email == uiState.selectedCloudEmail }) {
+                Text(
+                    text = status,
+                    color = Color(0xFF0061FF),
                     fontSize = 12.sp,
                     modifier = Modifier.padding(top = 4.dp, start = 4.dp)
                 )
@@ -3460,7 +3496,7 @@ fun CloudContent(
                         email = account.email,
                         enabled = account.enabled,
                         icon = Icons.Rounded.CloudQueue,
-                        iconColor = Color(0xFF3D9AE8),
+                        iconColor = Color(0xFF0061FF),
                         onSync = { viewModel.scanDropboxAccount(account.email) },
                         onToggle = { enabled -> viewModel.toggleDropboxAccountEnabled(account.email, enabled) },
                         onRemove = { viewModel.removeDropboxAccount(account.email) }
@@ -3474,7 +3510,7 @@ fun CloudContent(
                 title = "Dropbox Settings",
                 subtitle = "Network, data saver and sync options",
                 icon = Icons.Rounded.Settings,
-                accentColor = Color(0xFF3D9AE8),
+                accentColor = Color(0xFF0061FF),
                 onClick = onNavigateToDropboxSettings
             )
         }
@@ -3490,16 +3526,26 @@ fun CloudContent(
             val context = LocalContext.current
             AddCloudAccountButton(
                 text = "Add OneDrive Account",
-                onClick = { 
+                onClick = {
                     val activity = context.findActivity()
                     if (activity != null) viewModel.startOneDriveLogin(activity)
                 }
             )
 
-            uiState.onedriveErrorMessage?.let { error ->
+            val error = uiState.onedriveErrorMessage
+            val status = uiState.enrichmentStatus
+
+            if (error != null) {
                 Text(
                     text = error,
                     color = if (error.contains("failed", ignoreCase = true)) Color.Red else Color(0xFF00A1F1),
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(top = 4.dp, start = 4.dp)
+                )
+            } else if (status != null && onedriveAccounts.any { it.email == uiState.selectedCloudEmail }) {
+                Text(
+                    text = status,
+                    color = Color(0xFF00A1F1),
                     fontSize = 12.sp,
                     modifier = Modifier.padding(top = 4.dp, start = 4.dp)
                 )
@@ -3543,7 +3589,7 @@ fun CloudContent(
             val context = LocalContext.current
             AddCloudAccountButton(
                 text = "Add Box Account",
-                onClick = { 
+                onClick = {
                     val activity = context.findActivity()
                     if (activity != null) viewModel.startBoxLogin(activity)
                 }
@@ -3737,9 +3783,9 @@ private fun TelegramLoginCard(uiState: PlayerUiState, viewModel: PlayerViewModel
     val authError = uiState.telegramAuthError
 
     // When auth state is LoggedOut or WaitPhoneNumber, we are NOT done with phone
-    val isPhoneDone = authState !is AuthState.LoggedOut && 
-                      authState !is AuthState.WaitPhoneNumber && 
-                      authState !is AuthState.NotReady
+    val isPhoneDone = authState !is AuthState.LoggedOut &&
+            authState !is AuthState.WaitPhoneNumber &&
+            authState !is AuthState.NotReady
 
     Column(
         modifier = Modifier
@@ -3880,7 +3926,7 @@ private fun TelegramLoginCard(uiState: PlayerUiState, viewModel: PlayerViewModel
                         ) {
                             OutlinedTextField(
                                 value = countryCode,
-                                onValueChange = { 
+                                onValueChange = {
                                     if (it.startsWith("+")) {
                                         countryCode = it.filter { char -> char == '+' || char.isDigit() }.take(5)
                                     } else if (it.isEmpty()) {
@@ -3917,8 +3963,8 @@ private fun TelegramLoginCard(uiState: PlayerUiState, viewModel: PlayerViewModel
                                 trailingIcon = {
                                     if (isPhoneDone) {
                                         TextButton(
-                                            onClick = { 
-                                                viewModel.restartTelegramAuth() 
+                                            onClick = {
+                                                viewModel.restartTelegramAuth()
                                                 countryCode = "+"
                                                 mobileNumber = ""
                                                 code = ""
@@ -3931,9 +3977,9 @@ private fun TelegramLoginCard(uiState: PlayerUiState, viewModel: PlayerViewModel
                                     }
                                 },
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone, imeAction = ImeAction.Send),
-                                keyboardActions = KeyboardActions(onSend = { 
+                                keyboardActions = KeyboardActions(onSend = {
                                     if (!isPhoneDone && mobileNumber.isNotBlank()) {
-                                        viewModel.submitTelegramPhone(countryCode + mobileNumber) 
+                                        viewModel.submitTelegramPhone(countryCode + mobileNumber)
                                     }
                                 }),
                                 singleLine = true,
@@ -4131,6 +4177,67 @@ private fun TelegramChannelRow(
                 checked = channel.enabled,
                 onCheckedChange = onToggle
             )
+        }
+    }
+}
+
+@Composable
+private fun DropboxLoginOptionsDialog(
+    onDismiss: () -> Unit,
+    onChooseEmail: () -> Unit,
+    onChooseGoogle: () -> Unit
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp))
+                .background(Color(0xFF1A1A1A))
+                .border(1.dp, Color.White.copy(0.08f), RoundedCornerShape(16.dp))
+                .padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Text("Sign in to Dropbox", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            Text(
+                "Choose how you'd like to continue. Both open Dropbox's secure sign-in page.",
+                color = Color.White.copy(0.55f),
+                fontSize = 12.sp
+            )
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Color(0xFF3D9AE8))
+                    .clickable { onChooseEmail() }
+                    .padding(horizontal = 16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(Icons.Rounded.Email, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(10.dp))
+                Text("Continue with Email", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Color.Black.copy(0.25f))
+                    .border(1.dp, Color.White.copy(0.12f), RoundedCornerShape(10.dp))
+                    .clickable { onChooseGoogle() }
+                    .padding(horizontal = 16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(Icons.Rounded.AccountCircle, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(10.dp))
+                Text("Continue with Google", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            }
+
+            TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.End)) {
+                Text("Cancel", color = Color.White.copy(0.6f), fontSize = 13.sp)
+            }
         }
     }
 }
@@ -4881,15 +4988,15 @@ private fun StatChip(label: String, value: String) {
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Text(
-                label.uppercase(), 
-                color = TextWhite.copy(0.5f), 
-                fontSize = 9.sp, 
+                label.uppercase(),
+                color = TextWhite.copy(0.5f),
+                fontSize = 9.sp,
                 fontWeight = FontWeight.Bold,
                 letterSpacing = 0.5.sp
             )
             Text(
-                value, 
-                color = PrimaryCyan, 
+                value,
+                color = PrimaryCyan,
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Bold,
                 fontFamily = FontFamily.Monospace
@@ -4998,7 +5105,7 @@ fun MetadataSyncContent(uiState: PlayerUiState, playerViewModel: PlayerViewModel
         ) {
             val formats = listOf("FLAC", "ALAC", "WAV", "DSD", "DSF", "DFF", "AIFF", "APE", "WV", "TTA", "MP3", "M4A", "AAC", "OGG", "OPUS", "WMA", "MP4")
             val allowedFormats = if (provider == com.beatraxus.app.model.CloudProvider.TELEGRAM) uiState.telegramAllowedFormats else uiState.gdriveAllowedFormats
-            
+
             Text(
                 "Only sync and enrich selected formats. If none selected, all supported formats are allowed.",
                 color = Color.White.copy(0.5f),
@@ -5070,14 +5177,14 @@ fun MetadataSyncContent(uiState: PlayerUiState, playerViewModel: PlayerViewModel
                 checked = uiState.artworkEnrichmentEnabled,
                 onCheckedChange = { playerViewModel.setArtworkEnrichmentEnabled(it) }
             )
-            
+
             Text(
                 "Sync Quality",
                 color = Color.White.copy(0.7f),
                 fontSize = 14.sp,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
             )
-            
+
             Row(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -5508,10 +5615,20 @@ fun TelegramCloudContent(
                     textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 14.sp)
                 )
 
-                uiState.telegramSyncErrorMessage?.let { error ->
+                val error = uiState.telegramSyncErrorMessage
+                val status = uiState.enrichmentStatus
+
+                if (error != null) {
                     Text(
                         text = error,
                         color = if (error.contains("failed", ignoreCase = true)) Color.Red else Color(0xFF2AABEE),
+                        fontSize = 12.sp,
+                        modifier = Modifier.padding(top = 4.dp, start = 4.dp)
+                    )
+                } else if (status != null && uiState.selectedTelegramChannelUrl != null) {
+                    Text(
+                        text = status,
+                        color = Color(0xFF2AABEE),
                         fontSize = 12.sp,
                         modifier = Modifier.padding(top = 4.dp, start = 4.dp)
                     )
