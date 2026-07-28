@@ -252,6 +252,7 @@ private class NativeDspProcessor(
         val spatialUnbypassed = !isBP || cfg.bitPerfectUnbypass3DStage
         val spatialActive = if (spatialUnbypassed) (cfg.spatialAudioEnabled || cfg.soundStageEnabled) else false
         dsp.setSpatialEnabled(spatialActive)
+        dsp.setHrtfMode(cfg.hrtfMode.ordinal)
         
         // Separation logic: 
         // 1. The "Soundstage" knob (width) is now processed independently in the native engine.
@@ -259,16 +260,20 @@ private class NativeDspProcessor(
         val effectiveIntensity = if (cfg.spatialAudioEnabled) cfg.spatialAudioIntensity else 0.0f
         dsp.setSpatialIntensity(effectiveIntensity)
         
-        // 5-band Sound Stage mapping
+        // 8-band Sound Stage mapping
         fun getPos(node: String) = cfg.soundStageNodePositions[node] ?: SoundStageNodePosition()
 
         val nodesToBands = listOf(
-            listOf("Bass"), // Band 0: 20-150 Hz
-            listOf("Drums"), // Band 1: 150-400 Hz
-            listOf("Backing Vocals", "Keys"), // Band 2: 400-1000 Hz
-            listOf("Vocals", "Guitar"), // Band 3: 1000-3000 Hz
-            listOf("Lead Guitar", "Ambience") // Band 4: 3000+ Hz
+            listOf("Bass"),           // Band 0: < 120 Hz
+            listOf("Drums"),          // Band 1: 120 - 280 Hz
+            listOf("Vocals", "Backing Vocals"), // Band 2: 280 - 550 Hz
+            listOf("Vocals", "Keys"),           // Band 3: 550 - 1.1 kHz
+            listOf("Vocals"),                   // Band 4: 1.1 - 2.5 kHz
+            listOf("Vocals", "Guitar"),         // Band 5: 2.5 - 5 kHz
+            listOf("Lead Guitar"),              // Band 6: 5 - 10 kHz
+            listOf("Ambience")                  // Band 7: > 10 kHz
         )
+
 
         nodesToBands.forEachIndexed { bandIdx, nodes ->
             if (nodes.isEmpty()) return@forEachIndexed

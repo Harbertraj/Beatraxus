@@ -229,7 +229,7 @@ void kiss_fft(const kiss_fft_state& state, const std::complex<double>* in, std::
     }
 }
 
-// ===================== BIQUAD FILTER =====================
+// ===================== BIQUAD FILTER [RETAINED FOR EQ] =====================
 
 enum class EqBandType : int {
     PEAKING = 0, LOW_SHELF = 1, HIGH_SHELF = 2,
@@ -267,6 +267,20 @@ struct BiquadState {
         z1_r = in_r * b1 + z2_r - a1 * out_r;
         z2_r = in_r * b2 - a2 * out_r;
         r = (T)out_r;
+    }
+
+    template<typename T>
+    inline void processSingle(T& s, bool isRight) {
+        if (!enabled || (filterType <= (EqBandType)2 && std::abs(gain) < 0.001f)) return;
+
+        double in = (double)s;
+        double& z1 = isRight ? z1_r : z1_l;
+        double& z2 = isRight ? z2_r : z2_l;
+
+        double out = in * b0 + z1;
+        z1 = in * b1 + z2 - a1 * out;
+        z2 = in * b2 - a2 * out;
+        s = (T)out;
     }
 
     void update(double sr) {
@@ -387,6 +401,75 @@ struct BiquadState {
         return (b0 + b1 * ejw + b2 * ejw2) / (1.0 + a1 * ejw + a2 * ejw2);
     }
 };
+
+// ===================== LINKWITZ-RILEY 4TH ORDER (LR4) =====================
+// High-precision crossover filter. LR4 consists of two cascaded 2nd-order Butterworth
+// filters, which provides a 24dB/octave slope and perfectly flat summation.
+class LR4Filter {
+    struct Biquad {
+        double b0, b1, b2, a1, a2;
+        double z1[2], z2[2]; // Stereo state
+        void reset() { z1[0]=z1[1]=z2[0]=z2[1]=0.0; }
+        void setLP(double f, double sr) {
+            double omega = M_PI * f / sr;
+            double sn = std::sin(omega), cs = std::cos(omega);
+            double alpha = sn / std::sqrt(2.0);
+            double a0 = 1.0 + alpha;
+            b0 = (1.0 - cs) * 0.5 / a0; b1 = (1.0 - cs) / a0; b2 = (1.0 - cs) * 0.5 / a0;
+            a1 = -2.0 * cs / a0; a2 = (1.0 - alpha) / a0;
+        }
+        void setHP(double f, double sr) {
+            double omega = M_PI * f / sr;
+            double sn = std::sin(omega), cs = std::cos(omega);
+            double alpha = sn / std::sqrt(2.0);
+            double a0 = 1.0 + alpha;
+            b0 = (1.0 + cs) * 0.5 / a0; b1 = -(1.0 + cs) / a0; b2 = (1.0 + cs) * 0.5 / a0;
+            a1 = -2.0 * cs / a0; a2 = (1.0 - alpha) / a0;
+        }
+        inline void process(double& l, double& r) {
+            double in[2] = {l, r};
+            for(int i=0; i<2; i++) {
+                double out = in[i] * b0 + z1[i];
+                z1[i] = in[i] * b1 + z2[i] - a1 * out;
+                z2[i] = in[i] * b2 - a2 * out;
+                in[i] = out;
+            }
+            l = in[0]; r = in[1];
+        }
+    };
+    Biquad b1, b2; // Cascaded Butterworths
+public:
+    void reset() { b1.reset(); b2.reset(); }
+    void setLP(double f, double sr) { b1.setLP(f, sr); b2.setLP(f, sr); }
+    void setHP(double f, double sr) { b1.setHP(f, sr); b2.setHP(f, sr); }
+    inline void process(double& l, double& r) { b1.process(l, r); b2.process(l, r); }
+};
+
+// 8-Band Crossover using a tree of LR4 filters
+class Crossover8Band {
+    LR4Filter tree[7][2]; // 7 split points, each has LP and HP
+    double splitFreqs[7] = {120, 280, 550, 1100, 2500, 5000, 10000};
+public:
+    void init(double sr) {
+        for(int i=0; i<7; i++) {
+            tree[i][0].setLP(splitFreqs[i], sr);
+            tree[i][1].setHP(splitFreqs[i], sr);
+            tree[i][0].reset(); tree[i][1].reset();
+        }
+    }
+    // Splits input signal into 8 bands using sequential Linkwitz-Riley stages.
+    void split(double l, double r, double outL[8], double outR[8]) {
+        double curL = l; double curR = r;
+        for(int i=0; i<7; i++) {
+            double bandL = curL, bandR = curR;
+            tree[i][0].process(bandL, bandR);
+            outL[i] = bandL; outR[i] = bandR;
+            tree[i][1].process(curL, curR);
+        }
+        outL[7] = curL; outR[7] = curR;
+    }
+};
+
 
 class EqEngine {
     static constexpr int FIR_LEN = 2047;
@@ -935,186 +1018,230 @@ public:
     }
 };
 
-// ===================== 3D AUDIO STAGE ENGINE =====================
-// Replaces the old per-instrument-node SoundStageEngine/BandSplitter pair with a single,
-// full-band engine driven by six global parameters (Width/Depth/Height/Distance/CenterFocus/
-// RoomReflections) plus a small set of virtual speaker positions used only to derive the
-// perceived stereo "opening angle" (dragging a speaker in the UI audibly widens/narrows the
-// image). All parameters are smoothed sample-by-sample to avoid zipper/click artifacts on
-// rapid slider or drag updates.
+// Refactored to support 8-band per-stem spatialization with HRTF cues.
+// The engine splits the signal using an LR4 crossover and applies independent
+// Panning, Distance, Depth, and Spectral (HRTF) processing to each band.
 class Audio3DStageEngine {
-    static constexpr int MAX_SPEAKERS = 8;
-    struct SpeakerPos { double azimuthDeg = 0.0; double elevationDeg = 0.0; double distanceM = 2.0; };
-    SpeakerPos speakers[MAX_SPEAKERS];
-    int numKnownSpeakers = 0;
+    static constexpr int NUM_BANDS = 8;
+    Crossover8Band crossover;
 
-    // Smoothed parameter state (target set from control thread, current ramps in audio thread)
+    struct BandSpatialState {
+        double targetAz = 0.0, curAz = 0.0;
+        double targetEl = 0.0, curEl = 0.0;
+        double targetDist = 2.0, curDist = 2.0;
+
+        // Per-band depth delay
+        std::vector<double> delayL, delayR;
+        size_t delaySize = 0, writePos = 0;
+        double lpStateL = 0.0, lpStateR = 0.0;
+
+        // ITD Delay buffers (Max ~1ms for extreme HRTF)
+        std::vector<double> itdBufL, itdBufR;
+        size_t itdSize = 0, itdWritePos = 0;
+
+        // Spectral cues (HRTF) - Cascade of 2 Biquads per ear
+        BiquadState hrtfL[2], hrtfR[2];
+
+        // Elevation filters (persistent state to prevent clicks)
+        BiquadState elFilterL, elFilterR;
+    };
+
+    BandSpatialState bands[NUM_BANDS];
     double targetWidth = 1.0, curWidth = 1.0;
-    double targetDepth = 0.5, curDepth = 0.5;
-    double targetHeight = 0.0, curHeight = 0.0;
-    double targetDistance = 1.0, curDistance = 1.0;
-    double targetCenterFocus = 0.5, curCenterFocus = 0.5;
-    double targetRoomReflections = 0.2, curRoomReflections = 0.2;
+    double targetCenterLock = 0.0, curCenterLock = 0.0;
     double targetSpatialIntensity = 1.0, curSpatialIntensity = 1.0;
+    int hrtfMode = 0; // 0=Natural, 1=Natural Wide, 2=Cinematic, 3=Studio
     bool engineEnabled = false;
-
-    // Depth: short additional delay + HF damping, proportional to how "far back" content is placed
-    std::vector<double> depthDelayL, depthDelayR;
-    size_t depthDelaySize = 0, depthWritePos = 0;
-    double depthLpStateL = 0.0, depthLpStateR = 0.0;
-
-    // Room reflections: 4 short comb-style taps, deliberately simpler/cheaper than the
-    // dedicated Freeverb engine used on the Reverb page — do not confuse the two.
-    static constexpr int NUM_REFLECTIONS = 4;
-    std::vector<double> reflBufL[NUM_REFLECTIONS];
-    std::vector<double> reflBufR[NUM_REFLECTIONS];
-    size_t reflSize[NUM_REFLECTIONS] = {0, 0, 0, 0};
-    size_t reflPos[NUM_REFLECTIONS] = {0, 0, 0, 0};
-
     int currentSampleRate = 48000;
 
 public:
     void init(int sampleRate) {
         currentSampleRate = sampleRate;
+        crossover.init((double)sampleRate);
 
-        depthDelaySize = (size_t)std::ceil(0.025 * sampleRate) + 4; // up to ~25ms of depth delay
-        depthDelayL.assign(depthDelaySize, 0.0);
-        depthDelayR.assign(depthDelaySize, 0.0);
-        depthWritePos = 0;
-        depthLpStateL = 0.0;
-        depthLpStateR = 0.0;
+        for (int i = 0; i < NUM_BANDS; i++) {
+            // Up to 25ms of depth delay per band
+            bands[i].delaySize = (size_t)std::ceil(0.025 * sampleRate) + 4;
+            bands[i].delayL.assign(bands[i].delaySize, 0.0);
+            bands[i].delayR.assign(bands[i].delaySize, 0.0);
+            bands[i].writePos = 0;
+            bands[i].lpStateL = 0.0;
+            bands[i].lpStateR = 0.0;
 
-        static const double reflMs[NUM_REFLECTIONS] = {7.0, 13.0, 19.0, 29.0};
-        for (int i = 0; i < NUM_REFLECTIONS; i++) {
-            reflSize[i] = (size_t)std::ceil((reflMs[i] / 1000.0) * sampleRate) + 2;
-            reflBufL[i].assign(reflSize[i], 0.0);
-            reflBufR[i].assign(reflSize[i], 0.0);
-            reflPos[i] = 0;
+            // ITD Delay (Max 1ms)
+            bands[i].itdSize = (size_t)std::ceil(0.001 * sampleRate) + 4;
+            bands[i].itdBufL.assign(bands[i].itdSize, 0.0);
+            bands[i].itdBufR.assign(bands[i].itdSize, 0.0);
+            bands[i].itdWritePos = 0;
+
+            for(int j=0; j<2; j++) {
+                bands[i].hrtfL[j].reset(); bands[i].hrtfR[j].reset();
+            }
+            bands[i].elFilterL.reset(); bands[i].elFilterR.reset();
         }
     }
 
     void setEnabled(bool enabled) { engineEnabled = enabled; }
     bool isEnabled() const { return engineEnabled; }
 
-    void setParams(double width, double depth, double height, double distance,
-                    double centerFocus, double roomReflections) {
-        targetWidth = std::clamp(width, 0.0, 2.0);
-        targetDepth = std::clamp(depth, 0.0, 1.0);
-        targetHeight = std::clamp(height, -1.0, 1.0);
-        targetDistance = std::clamp(distance, 0.3, 3.0);
-        targetCenterFocus = std::clamp(centerFocus, 0.0, 1.0);
-        targetRoomReflections = std::clamp(roomReflections, 0.0, 1.0);
-    }
-
     void setWidth(double width) { targetWidth = std::clamp(width, 0.0, 2.0); }
-    void setCenterLock(double centerFocus) { targetCenterFocus = std::clamp(centerFocus, 0.0, 1.0); }
+    void setCenterLock(double centerLock) { targetCenterLock = std::clamp(centerLock, 0.0, 1.0); }
     void setSpatialIntensity(double intensity) { targetSpatialIntensity = std::clamp(intensity, 0.0, 1.0); }
+    void setHrtfMode(int mode) { hrtfMode = std::clamp(mode, 0, 3); }
 
-    void setSpeakerPosition(int index, double azimuthDeg, double elevationDeg, double distanceM) {
-        if (index < 0 || index >= MAX_SPEAKERS) return;
-        speakers[index].azimuthDeg = azimuthDeg;
-        speakers[index].elevationDeg = elevationDeg;
-        speakers[index].distanceM = std::max(0.3, distanceM);
-        if (index + 1 > numKnownSpeakers) numKnownSpeakers = index + 1;
+    void setBandPosition(int index, double azimuthDeg, double elevationDeg, double distanceM) {
+        if (index < 0 || index >= NUM_BANDS) return;
+        bands[index].targetAz = azimuthDeg;
+        bands[index].targetEl = elevationDeg;
+        bands[index].targetDist = std::max(0.3, distanceM);
     }
 
     void process(double& left, double& right) {
         if (!engineEnabled) return;
 
-        // ---- Parameter smoothing (one-pole, ~a few ms) to avoid zipper/click artifacts ----
-        const double smoothCoeff = 0.002;
+        const double smoothCoeff = 0.0015; // Smooth over ~10-20ms
         curWidth += (targetWidth - curWidth) * smoothCoeff;
-        curDepth += (targetDepth - curDepth) * smoothCoeff;
-        curHeight += (targetHeight - curHeight) * smoothCoeff;
-        curDistance += (targetDistance - curDistance) * smoothCoeff;
-        curCenterFocus += (targetCenterFocus - curCenterFocus) * smoothCoeff;
-        curRoomReflections += (targetRoomReflections - curRoomReflections) * smoothCoeff;
+        curCenterLock += (targetCenterLock - curCenterLock) * smoothCoeff;
         curSpatialIntensity += (targetSpatialIntensity - curSpatialIntensity) * smoothCoeff;
 
-        // ---- Derive a physical "opening angle" from the first two virtual speakers ----
-        // Default stereo triangle is +/-30deg (60deg total spread); dragging a speaker
-        // wider/narrower scales the Width processing on top of the Width knob itself, so the
-        // visual drag interaction has an audible effect even with Width held constant.
-        double spreadFactor = 1.0;
-        if (numKnownSpeakers >= 2) {
-            double spreadDeg = std::clamp(std::abs(speakers[1].azimuthDeg - speakers[0].azimuthDeg), 5.0, 180.0);
-            spreadFactor = spreadDeg / 60.0;
-        }
+        double bandL[NUM_BANDS], bandR[NUM_BANDS];
+        crossover.split(left, right, bandL, bandR);
 
-        // ---- 1. Width: mid/side stereo scaling ----
-        double mid = (left + right) * 0.5;
-        double side = (left - right) * 0.5;
-        double widenedSide = side * curWidth * spreadFactor;
+        double outSumL = 0.0, outSumR = 0.0;
 
-        // ---- 2. Center focus: blend the wide (processed) and mono-safe (unprocessed) side ----
-        // signal so center-panned/mono content stays anchored as focus increases toward 1.0.
-        double focusedSide = widenedSide * (1.0 - curCenterFocus) + side * curCenterFocus;
-        double wideL = mid + focusedSide;
-        double wideR = mid - focusedSide;
+        for (int i = 0; i < NUM_BANDS; i++) {
+            BandSpatialState& s = bands[i];
 
-        // ---- 3. Depth: a short extra delay + gentle HF damping proportional to how far ----
-        // back the stage is pushed (reuses the same delay-line-from-distance idea the old
-        // per-node engine used, applied once to the full signal instead of per band).
-        int depthDelaySamples = (int)std::round((curDepth * 18.0 / 1000.0) * currentSampleRate);
-        depthDelaySamples = std::clamp(depthDelaySamples, 0, (int)depthDelaySize - 1);
+            // 1. Parameter Smoothing
+            s.curAz += (s.targetAz - s.curAz) * smoothCoeff;
+            s.curEl += (s.targetEl - s.curEl) * smoothCoeff;
+            s.curDist += (s.targetDist - s.curDist) * smoothCoeff;
 
-        depthDelayL[depthWritePos] = wideL;
-        depthDelayR[depthWritePos] = wideR;
-        size_t readPos = (depthWritePos + depthDelaySize - (size_t)depthDelaySamples) % depthDelaySize;
-        double delayedL = depthDelayL[readPos];
-        double delayedR = depthDelayR[readPos];
-        depthWritePos = (depthWritePos + 1) % depthDelaySize;
+            double bL = bandL[i];
+            double bR = bandR[i];
 
-        double depthMixL = wideL * (1.0 - curDepth) + delayedL * curDepth;
-        double depthMixR = wideR * (1.0 - curDepth) + delayedR * curDepth;
+            // 2. Width Expansion (Independent of 3D Pos)
+            double mid = (bL + bR) * 0.5;
+            double side = (bL - bR) * 0.5;
+            double focusedSide = (side * curWidth) * (1.0 - curCenterLock) + (side * curCenterLock);
+            bL = mid + focusedSide;
+            bR = mid - focusedSide;
 
-        // Apply Spatial Intensity blend: 1.0 = full 3D, 0.0 = only width expansion
-        depthMixL = wideL * (1.0 - curSpatialIntensity) + depthMixL * curSpatialIntensity;
-        depthMixR = wideR * (1.0 - curSpatialIntensity) + depthMixR * curSpatialIntensity;
+            // 3. 3D Spatialization (Apply only if Intensity > 0)
+            if (curSpatialIntensity > 0.001) {
+                double azRad = (s.curAz - 90.0) * M_PI / 180.0;
+                double cosAz = std::cos(azRad); // Positive = Right, Negative = Left
+                double sinAz = std::sin(azRad); // Front/Back factor
 
-        double lpCoeff = 0.15 + curDepth * 0.35; // deeper placement -> darker (more damping)
-        depthLpStateL += (depthMixL - depthLpStateL) * lpCoeff;
-        depthLpStateR += (depthMixR - depthLpStateR) * lpCoeff;
-        double depthedL = depthMixL * (1.0 - curDepth * 0.5) + depthLpStateL * (curDepth * 0.5);
-        double depthedR = depthMixR * (1.0 - curDepth * 0.5) + depthLpStateR * (curDepth * 0.5);
+                // a. Equal-Power Panning (Inter-aural Level Difference - ILD)
+                double panL = std::sqrt(std::max(0.0, (1.0 - cosAz) * 0.5));
+                double panR = std::sqrt(std::max(0.0, (1.0 + cosAz) * 0.5));
 
-        // ---- 4. Height: lightweight elevation cue ----
-        // True binaural elevation relies on pinna-notch HRTF filtering, which this engine does
-        // not implement. As a cheap, practical substitute we nudge a crude high-frequency
-        // residual (signal minus its own lowpassed version) up or down with Height, which
-        // reads perceptually as "brighter/higher" vs "darker/lower" — an approximation, not
-        // physically accurate elevation synthesis.
-        double hfEstL = depthedL - depthLpStateL;
-        double hfEstR = depthedR - depthLpStateR;
-        double heightedL = depthedL + hfEstL * curHeight * 0.35;
-        double heightedR = depthedR + hfEstR * curHeight * 0.35;
+                double mono = (bL + bR) * 0.5;
+                double spatialL = mono * panL;
+                double spatialR = mono * panR;
 
-        // ---- 5. Distance: overall perceived distance via inverse-falloff-style gain ----
-        double distGain = 1.0 / (1.0 + (curDistance - 1.0) * 0.35);
-        distGain = std::clamp(distGain, 0.35, 1.4);
-        double distancedL = heightedL * distGain;
-        double distancedR = heightedR * distGain;
+                // b. Inter-aural Time Difference (ITD)
+                // Head is ~17.5cm wide -> max ITD is ~0.66ms.
+                double itdMaxSamples = 0.00066 * currentSampleRate;
+                double itdSamples = cosAz * itdMaxSamples; // Positive -> sound from right
 
-        // ---- 6. Room reflections: small, cheap early-reflections network (2-4 short ----
-        // comb taps with feedback proportional to amount) — intentionally separate from, and
-        // does not call into, the full Freeverb engine used on the Reverb page.
-        double reflSumL = 0.0, reflSumR = 0.0;
-        if (curRoomReflections > 0.0005) {
-            static const double reflGains[NUM_REFLECTIONS] = {0.5, 0.4, 0.32, 0.22};
-            for (int i = 0; i < NUM_REFLECTIONS; i++) {
-                reflBufL[i][reflPos[i]] = distancedL + reflSumL * 0.2;
-                reflBufR[i][reflPos[i]] = distancedR + reflSumR * 0.2;
-                size_t nextPos = (reflPos[i] + 1) % reflSize[i];
-                reflSumL += reflBufL[i][nextPos] * reflGains[i];
-                reflSumR += reflBufR[i][nextPos] * reflGains[i];
-                reflPos[i] = nextPos;
+                s.itdBufL[s.itdWritePos] = spatialL;
+                s.itdBufR[s.itdWritePos] = spatialR;
+
+                auto getInterpolated = [](const std::vector<double>& buf, double delay, size_t writePos, size_t size) -> double {
+                    double readPos = (double)writePos + (double)size - delay;
+                    int i0 = (int)std::floor(readPos) % (int)size;
+                    int i1 = (i0 + 1) % (int)size;
+                    double frac = readPos - std::floor(readPos);
+                    return buf[i0] * (1.0 - frac) + buf[i1] * frac;
+                };
+
+                if (itdSamples >= 0) { // Sound from RIGHT, delay LEFT ear
+                    spatialL = getInterpolated(s.itdBufL, itdSamples, s.itdWritePos, s.itdSize);
+                } else { // Sound from LEFT, delay RIGHT ear
+                    spatialR = getInterpolated(s.itdBufR, -itdSamples, s.itdWritePos, s.itdSize);
+                }
+                s.itdWritePos = (s.itdWritePos + 1) % s.itdSize;
+
+                // c. Spectral Cues (HRTF Shadowing & Pinna Notches)
+                // Posterior Cue: if sound is behind (sinAz > 0), apply muffling.
+                // Note: azimuth 0 is front (sinAz = -1), 180 is back (sinAz = 1).
+                double backFactor = std::clamp((sinAz + 1.0) * 0.5, 0.0, 1.0); // 0 (front) to 1 (back)
+
+                if (backFactor > 0.01) {
+                    double mufflingDb = -6.0 * backFactor;
+                    double notchDb = -12.0 * backFactor;
+
+                    // Shadowing: High-shelf at 4kHz
+                    s.hrtfL[0].setHighShelf(currentSampleRate, 4000.0, mufflingDb, 0.7);
+                    s.hrtfR[0].setHighShelf(currentSampleRate, 4000.0, mufflingDb, 0.7);
+
+                    // Pinna Notch: 6.5kHz (universal "behind" cue)
+                    s.hrtfL[1].setPeaking(currentSampleRate, 6500.0, notchDb, 4.0);
+                    s.hrtfR[1].setPeaking(currentSampleRate, 6500.0, notchDb, 4.0);
+                } else {
+                    s.hrtfL[0].reset(); s.hrtfR[0].reset();
+                    s.hrtfL[1].reset(); s.hrtfR[1].reset();
+                }
+
+                // Elevation Cue: Higher frequency tilt for "up", lower for "down"
+                double elFactor = s.curEl / 90.0; // -1 (down) to 1 (up)
+                if (std::abs(elFactor) > 0.01) {
+                    double elDb = 3.0 * elFactor;
+                    s.elFilterL.setHighShelf(currentSampleRate, 3000.0, elDb, 0.7);
+                    s.elFilterR.setHighShelf(currentSampleRate, 3000.0, elDb, 0.7);
+                } else {
+                    s.elFilterL.reset(); s.elFilterR.reset();
+                }
+
+                s.elFilterL.processSingle(spatialL, false);
+                s.elFilterR.processSingle(spatialR, true);
+
+                s.hrtfL[0].processSingle(spatialL, false);
+                s.hrtfR[0].processSingle(spatialR, true);
+                s.hrtfL[1].processSingle(spatialL, false);
+                s.hrtfR[1].processSingle(spatialR, true);
+
+                // d. Distance Falloff
+                double distGain = 1.0 / std::pow(s.curDist, 0.7);
+                spatialL *= distGain;
+                spatialR *= distGain;
+
+                // e. Air Absorption
+                double lpCoeff = std::clamp(1.0 - (s.curDist - 1.0) * 0.04, 0.2, 1.0);
+                s.lpStateL += (spatialL - s.lpStateL) * lpCoeff;
+                s.lpStateR += (spatialR - s.lpStateR) * lpCoeff;
+                spatialL = s.lpStateL;
+                spatialR = s.lpStateR;
+
+                // f. Depth Delay
+                double depthT = std::clamp((s.curDist - 0.3) / 10.0, 0.0, 1.0);
+                int delaySamples = (int)(depthT * 0.02 * currentSampleRate);
+
+                s.delayL[s.writePos] = spatialL;
+                s.delayR[s.writePos] = spatialR;
+                size_t readPos = (s.writePos + s.delaySize - delaySamples) % s.delaySize;
+
+                spatialL = s.delayL[readPos];
+                spatialR = s.delayR[readPos];
+                s.writePos = (s.writePos + 1) % s.delaySize;
+
+                // Blend spatialized vs width-expanded signal
+                bL = bL * (1.0 - curSpatialIntensity) + spatialL * curSpatialIntensity;
+                bR = bR * (1.0 - curSpatialIntensity) + spatialR * curSpatialIntensity;
             }
+
+            outSumL += bL;
+            outSumR += bR;
         }
-        double reflAmount = curRoomReflections * 0.35; // kept subtle vs. the full Reverb page
-        left = distancedL + reflSumL * reflAmount;
-        right = distancedR + reflSumR * reflAmount;
+
+        left = outSumL;
+        right = outSumR;
     }
 };
+
+
 
 struct ReverbPreset {
     float roomSize; float damping; float predelayMs; float width;
@@ -1695,16 +1822,18 @@ public:
     }
     void setAudio3DStageParams(float width, float depth, float height, float distance,
                                 float centerFocus, float roomReflections) {
-        audio3DStage.setParams((double)width, (double)depth, (double)height,
-                                (double)distance, (double)centerFocus, (double)roomReflections);
+        audio3DStage.setWidth((double)width);
+        audio3DStage.setCenterLock((double)centerFocus);
     }
     void setSoundStageWidth(float width) { audio3DStage.setWidth((double)width); }
     void setSoundStageCenterLock(float amount) { audio3DStage.setCenterLock((double)amount); }
     void setSpatialIntensity(float intensity) { audio3DStage.setSpatialIntensity((double)intensity); }
+    void setHrtfMode(int mode) { audio3DStage.setHrtfMode(mode); }
 
     void setAudio3DSpeakerPosition(int index, float az, float el, float dist) {
-        audio3DStage.setSpeakerPosition(index, (double)az, (double)el, (double)dist);
+        audio3DStage.setBandPosition(index, (double)az, (double)el, (double)dist);
     }
+
     void setLimiter(bool enabled) {
         limiterEnabled = enabled;
         if (enabled) softLimiterEnabled = false;
@@ -2237,6 +2366,7 @@ JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetTone(JNIEnv* 
 JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetSpatial(JNIEnv* env, jobject thiz, jlong handle, jfloat balance, jfloat widen) { if (handle) ((DSP*)handle)->setSpatial(balance, widen); }
 JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetSpatialEnabled(JNIEnv* env, jobject thiz, jlong handle, jboolean enabled) { if (handle) ((DSP*)handle)->setAudio3DStageEnabled(enabled); }
 JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetSpatialIntensity(JNIEnv* env, jobject thiz, jlong handle, jfloat intensity) { if (handle) ((DSP*)handle)->setSpatialIntensity(intensity); }
+JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetHrtfMode(JNIEnv* env, jobject thiz, jlong handle, jint mode) { if (handle) ((DSP*)handle)->setHrtfMode(mode); }
 JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetBand(JNIEnv* env, jobject thiz, jlong handle, jint index, jfloat freq, jfloat gainDb, jfloat Q, jint type) { if (handle) ((DSP*)handle)->setBand(index, freq, gainDb, Q, type); }
 JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetEqEnabled(JNIEnv* env, jobject thiz, jlong handle, jboolean enabled) { if (handle) ((DSP*)handle)->setEqEnabled(enabled); }
 JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetEqPhaseMode(JNIEnv* env, jobject thiz, jlong handle, jboolean linearPhase) { if (handle) ((DSP*)handle)->setEqPhaseMode(linearPhase); }

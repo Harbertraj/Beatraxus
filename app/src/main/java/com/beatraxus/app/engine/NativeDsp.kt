@@ -92,6 +92,10 @@ class NativeDsp : AutoCloseable {
         if (nativeHandle != 0L) nSetSpatialIntensity(nativeHandle, intensity)
     }
 
+    fun setHrtfMode(mode: Int) = lock.readLock().withLock {
+        if (nativeHandle != 0L) nSetHrtfMode(nativeHandle, mode)
+    }
+
     fun setSoundStageNodePosition(bandIdx: Int, azimuth: Float, elevation: Float, distance: Float) = lock.readLock().withLock {
         if (nativeHandle != 0L) nSetSoundStageNodePosition(nativeHandle, bandIdx, azimuth, elevation, distance)
     }
@@ -329,6 +333,7 @@ class NativeDsp : AutoCloseable {
     private external fun nSetSpatial(handle: Long, balance: Float, widen: Float)
     private external fun nSetSpatialEnabled(handle: Long, enabled: Boolean)
     private external fun nSetSpatialIntensity(handle: Long, intensity: Float)
+    private external fun nSetHrtfMode(handle: Long, mode: Int)
     private external fun nSetSoundStageNodePosition(handle: Long, bandIdx: Int, az: Float, el: Float, dist: Float)
     private external fun nSetSoundStageWidth(handle: Long, width: Float)
     private external fun nSetSoundStageCenterLock(handle: Long, amount: Float)
