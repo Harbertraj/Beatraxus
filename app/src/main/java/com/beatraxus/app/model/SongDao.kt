@@ -58,6 +58,18 @@ interface SongDao {
     @Query("SELECT * FROM songs WHERE LOWER(driveAccountEmail) = LOWER(:email)")
     suspend fun getSongsByAccount(email: String): List<SongEntity>
 
+    @Query("SELECT * FROM songs WHERE LOWER(dropboxAccountEmail) = LOWER(:email)")
+    suspend fun getSongsByDropboxAccount(email: String): List<SongEntity>
+
+    @Query("SELECT * FROM songs WHERE LOWER(onedriveAccountEmail) = LOWER(:email)")
+    suspend fun getSongsByOneDriveAccount(email: String): List<SongEntity>
+
+    @Query("SELECT * FROM songs WHERE LOWER(boxAccountEmail) = LOWER(:email)")
+    suspend fun getSongsByBoxAccount(email: String): List<SongEntity>
+
+    @Query("SELECT * FROM songs WHERE LOWER(nextcloudAccountEmail) = LOWER(:email)")
+    suspend fun getSongsByNextcloudAccount(email: String): List<SongEntity>
+
     @Query("SELECT * FROM songs WHERE source = 'GDRIVE'")
     suspend fun getAllCloudSongs(): List<SongEntity>
 

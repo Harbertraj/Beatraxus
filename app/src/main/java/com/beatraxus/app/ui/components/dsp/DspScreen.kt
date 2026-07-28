@@ -190,7 +190,7 @@ fun DspScreen(
                 )
         )
 
-        val pagerState = rememberPagerState(pageCount = { 4 })
+        val pagerState = rememberPagerState(pageCount = { 5 })
 
         Scaffold(
             containerColor = Color.Transparent,
@@ -215,8 +215,9 @@ fun DspScreen(
                                     val pageIcons = listOf(
                                         Icons.Rounded.GraphicEq,
                                         Icons.Rounded.AutoAwesome,
-                                        Icons.Rounded.SurroundSound,
-                                        Icons.Rounded.Waves
+                                        Icons.Rounded.Waves,
+                                        Icons.Rounded.Layers,
+                                        Icons.Rounded.SurroundSound
                                     )
                                     pageIcons.forEachIndexed { i, icon ->
                                         val isActive = pagerState.currentPage == i
@@ -300,7 +301,7 @@ fun DspScreen(
                                 val activeCustom = uiState.dsp.customEqPresets.find { custom ->
                                     custom.bands.map { it.gainDb } == currentGains
                                 }?.name
-                                
+
                                 val exportName = activeCustom ?: activeBuiltIn ?: "Custom Preset"
                                 val safeFileName = exportName.replace(Regex("[^a-zA-Z0-9\\.\\-]"), "_") + ".json"
 
@@ -328,9 +329,11 @@ fun DspScreen(
                     } else if (page == 1) {
                         PremiumMasteringCard(uiState, viewModel, onEditValue = { editingValue = it })
                     } else if (page == 2) {
-                        PremiumSoundStageCard(uiState, viewModel, onEditValue = { editingValue = it })
-                    } else {
                         PremiumReverbCard(uiState, viewModel, onEditValue = { editingValue = it })
+                    } else if (page == 3) {
+                        PremiumStemsCard(uiState, viewModel)
+                    } else {
+                        PremiumSoundStageCard(uiState, viewModel, onEditValue = { editingValue = it })
                     }
                 }
             }
@@ -390,7 +393,7 @@ fun DspScreen(
                         val currentGains = uiState.dsp.config.eqBands.map { it.gainDb }
                         val presetGains = preset.bands.map { it.gainDb }
                         val isActive = currentGains == presetGains
-                        
+
                         Card(
                             onClick = {
                                 viewModel.applySavedEqPreset(preset.name)
@@ -441,7 +444,7 @@ fun DspScreen(
                                             )
                                             Spacer(Modifier.width(8.dp))
                                         }
-                                        
+
                                         var showItemMenu by remember { mutableStateOf(false) }
                                         Box(contentAlignment = Alignment.Center) {
                                             IconButton(
@@ -471,7 +474,7 @@ fun DspScreen(
                                                     verticalAlignment = Alignment.CenterVertically
                                                 ) {
                                                     IconButton(
-                                                        onClick = { 
+                                                        onClick = {
                                                             showItemMenu = false
                                                             presetToRename = preset.name
                                                             newPresetName = preset.name
@@ -657,7 +660,7 @@ fun DspScreen(
                                     singleLine = true,
                                     textStyle = androidx.compose.ui.text.TextStyle(fontSize = 13.sp),
                                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                                    keyboardActions = KeyboardActions(onSearch = { 
+                                    keyboardActions = KeyboardActions(onSearch = {
                                         viewModel.searchAutoEqProfiles()
                                         focusManager.clearFocus()
                                         keyboardController?.hide()
@@ -798,7 +801,7 @@ fun DspScreen(
                                 }
                             }
                         }
-                        
+
                         Spacer(Modifier.height(16.dp))
                     }
                 }
@@ -834,7 +837,7 @@ fun DspScreen(
 
         if (showDevicePicker) {
             val knownDevices by viewModel.listKnownDevices().collectAsStateWithLifecycle(initialValue = emptySet())
-            
+
             AlertDialog(
                 onDismissRequest = { showDevicePicker = false },
                 containerColor = Color(0xFF1A1A24),
@@ -1051,9 +1054,9 @@ private fun AiOptionsPopup(
                         fontSize = 13.sp,
                         lineHeight = 18.sp
                     )
-                    
+
                     Spacer(Modifier.height(4.dp))
-                    
+
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1072,7 +1075,7 @@ private fun AiOptionsPopup(
                     }
                 }
             }
-            
+
             Button(
                 onClick = onDismiss,
                 modifier = Modifier.fillMaxWidth().height(56.dp),
@@ -1273,7 +1276,7 @@ private fun PremiumEqualizerCard(
             Box(modifier = Modifier.weight(1f).height(24.dp), contentAlignment = Alignment.Center) {
                 // Background track line
                 Box(Modifier.fillMaxWidth().height(1.dp).background(Color.White.copy(alpha = 0.1f)))
-                
+
                 Slider(
                     value = config.preampDb,
                     onValueChange = { viewModel.setPreampDb(it) },
@@ -1294,7 +1297,7 @@ private fun PremiumEqualizerCard(
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier
                     .width(54.dp)
-                    .clickable(enabled = config.eqEnabled && !isLocked) { 
+                    .clickable(enabled = config.eqEnabled && !isLocked) {
                         onEditValue(EditingValue("PREAMP", config.preampDb, -15f..15f, viewModel::setPreampDb))
                     },
                 textAlign = TextAlign.End
@@ -1354,7 +1357,7 @@ private fun PremiumVerticalBand(
         animationSpec = spring(stiffness = Spring.StiffnessLow),
         label = "gain_anim"
     )
-    
+
     val gainColor = when {
         !isActive -> Color.White.copy(0.12f)
         band.gainDb > 0.5f -> Color(0xFF00FFCC)
@@ -1429,7 +1432,7 @@ private fun PremiumVerticalBand(
             Canvas(modifier = Modifier.fillMaxSize()) {
                 val midY = size.height / 2f
                 val targetY = size.height * (1f - gainProgress)
-                
+
                 if (isActive && abs(gainProgress - 0.5f) > 0.01f) {
                     val rectTop = min(midY, targetY)
                     val rectBottom = max(midY, targetY)
@@ -1661,7 +1664,7 @@ private fun UnifiedPresetSection(
                     )
                 }
             }
-            
+
             Box {
                 IconButton(onClick = { onShowMenuChange(true) }, modifier = Modifier.size(20.dp)) {
                     Icon(
@@ -1671,7 +1674,7 @@ private fun UnifiedPresetSection(
                         modifier = Modifier.size(16.dp)
                     )
                 }
-                
+
                 DropdownMenu(
                     expanded = showMenu,
                     onDismissRequest = { onShowMenuChange(false) },
@@ -1682,7 +1685,7 @@ private fun UnifiedPresetSection(
                     val menuItemPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp)
                     DropdownMenuItem(
                         text = { Text("Import Presets", color = Color.White, fontSize = 12.sp) },
-                        onClick = { 
+                        onClick = {
                             onShowMenuChange(false)
                             onImport()
                         },
@@ -1691,7 +1694,7 @@ private fun UnifiedPresetSection(
                     )
                     DropdownMenuItem(
                         text = { Text("Export Presets", color = Color.White, fontSize = 12.sp) },
-                        onClick = { 
+                        onClick = {
                             onShowMenuChange(false)
                             onExport()
                         },
@@ -1700,7 +1703,7 @@ private fun UnifiedPresetSection(
                     )
                     DropdownMenuItem(
                         text = { Text("AI Options", color = Color.White, fontSize = 12.sp) },
-                        onClick = { 
+                        onClick = {
                             onShowMenuChange(false)
                             onShowAiOptions()
                         },
@@ -1725,7 +1728,7 @@ private fun UnifiedPresetSection(
                     )
                     DropdownMenuItem(
                         text = { Text("Copy from Device", color = Color.White, fontSize = 12.sp) },
-                        onClick = { 
+                        onClick = {
                             onShowMenuChange(false)
                             onShowDevicePicker()
                         },
@@ -1734,7 +1737,7 @@ private fun UnifiedPresetSection(
                     )
                     DropdownMenuItem(
                         text = { Text("Reset this Device", color = Color.White, fontSize = 12.sp) },
-                        onClick = { 
+                        onClick = {
                             onShowMenuChange(false)
                             viewModel.resetCurrentDevicePreset()
                         },
@@ -1744,7 +1747,7 @@ private fun UnifiedPresetSection(
                     if (isTweak) {
                         DropdownMenuItem(
                             text = { Text("Save Preset", color = Color.White, fontSize = 12.sp) },
-                            onClick = { 
+                            onClick = {
                                 onShowMenuChange(false)
                                 onToggleSaveDialog(true)
                             },
@@ -1908,7 +1911,7 @@ private fun PremiumSoundStageCard(
                 val angleRad = (deg - 90f) * PI.toFloat() / 180f
                 // Move 90 and 270 degrees further inside the circle
                 val labelRadius = if (deg == 90 || deg == 270) maxOrbitRadius * 0.80f else maxOrbitRadius * 0.96f
-                
+
                 Text(
                     text = label,
                     color = Color.White.copy(0.35f),
@@ -1940,7 +1943,7 @@ private fun PremiumSoundStageCard(
                             )
                         )
                 )
-                
+
                 // Character Container with Depth
                 Surface(
                     onClick = { if (!isSpatialBypassed) viewModel.
@@ -1988,9 +1991,9 @@ private fun PremiumSoundStageCard(
 
                 // Dot Position (Dynamic - moves with animated azimuth/distance)
                 val dotAngleRad = (animAzimuth - 90f) * PI.toFloat() / 180f
-                
+
                 // Start from the edge of the center listener area (approx 0.35 of radius)
-                val minRadiusFactor = 0.35f 
+                val minRadiusFactor = 0.35f
                 val distNormalized = (minRadiusFactor + (animDistance / 15f) * (1f - minRadiusFactor)).coerceIn(minRadiusFactor, 1.0f)
                 val dotRadius = maxOrbitRadius * distNormalized
 
@@ -2019,7 +2022,7 @@ private fun PremiumSoundStageCard(
 
                 // Premium Info Card (Static position)
                 val isSelected = config.soundStageSelectedNode == nodeTemplate.name
-                
+
                 // Increased offset slightly to ensure labels don't touch the outer radar circle
                 val cardRadius = maxOrbitRadius + with(density) { 36.dp.toPx() }
 
@@ -2071,9 +2074,9 @@ private fun PremiumSoundStageCard(
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
-                                nodeTemplate.icon, 
-                                null, 
-                                tint = nodeTemplate.color, 
+                                nodeTemplate.icon,
+                                null,
+                                tint = nodeTemplate.color,
                                 modifier = Modifier.size(13.dp)
                             )
                         }
@@ -2136,7 +2139,7 @@ private fun PremiumSoundStageCard(
 
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 val selectedNodePos = config.soundStageNodePositions[config.soundStageSelectedNode] ?: com.beatraxus.app.model.SoundStageNodePosition()
-                
+
                 // Joystick State: Decoupled from VM during interaction
                 var displayAzimuth by remember(config.soundStageSelectedNode) { mutableFloatStateOf(selectedNodePos.azimuth) }
                 var displayDistance by remember(config.soundStageSelectedNode) { mutableFloatStateOf(selectedNodePos.distance) }
@@ -2213,7 +2216,7 @@ private fun PremiumSoundStageCard(
                                 while (az >= 360.0) az -= 360.0
                                 val distPx = sqrt(dx * dx + dy * dy)
                                 val dist = ((distPx / maxRadius) * 15.0).coerceIn(0.3, 15.0)
-                                
+
                                 displayAzimuth = az.toFloat()
                                 displayDistance = dist.toFloat()
                             }
@@ -2246,7 +2249,7 @@ private fun PremiumSoundStageCard(
                                     while (az >= 360.0) az -= 360.0
                                     val distPx = sqrt(dx * dx + dy * dy)
                                     val dist = ((distPx / maxRadius) * 15.0).coerceIn(0.3, 15.0)
-                                    
+
                                     displayAzimuth = az.toFloat()
                                     displayDistance = dist.toFloat()
                                 }
@@ -2266,7 +2269,7 @@ private fun PremiumSoundStageCard(
                     val thumbAngleRad = (displayAzimuth - 90f) * PI.toFloat() / 180f
                     val thumbDistNorm = (displayDistance / 15f).coerceIn(0f, 1f)
                     val maxThumbRadius = 55.dp // half of 110dp
-                    
+
                     Box(
                         modifier = Modifier
                             .offset(
@@ -2350,7 +2353,7 @@ private fun PremiumSoundStageCard(
 
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text("HRTF Mode", modifier = Modifier.weight(1f), color = if (spatialActive) Color.White.copy(0.9f) else Color.White.copy(0.3f), fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                
+
                 var expanded by remember { mutableStateOf(false) }
                 ExposedDropdownMenuBox(
                     expanded = expanded,
@@ -2424,7 +2427,7 @@ private fun PremiumSoundStageCard(
             )
 
             Text("ROOM ACOUSTICS", color = Color.White.copy(if (spatialActive) 0.4f else 0.2f), fontWeight = FontWeight.Black, fontSize = 10.sp, letterSpacing = 1.sp)
-            
+
             SoundStageSliderRow(
                 title = "Room Size",
                 value = config.reverbRoomSize,
@@ -2472,7 +2475,7 @@ private fun SoundStageActionChip(
         shape = RoundedCornerShape(8.dp),
         color = if (isAccent) PremiumAccent.copy(0.12f) else Color.White.copy(0.04f),
         border = BorderStroke(
-            0.6.dp, 
+            0.6.dp,
             if (isAccent) PremiumAccent.copy(0.3f) else Color.White.copy(0.1f)
         )
     ) {
@@ -2482,8 +2485,8 @@ private fun SoundStageActionChip(
             horizontalArrangement = Arrangement.spacedBy(5.dp)
         ) {
             Icon(
-                icon, 
-                null, 
+                icon,
+                null,
                 tint = if (isAccent) PremiumAccent else Color.White.copy(0.5f),
                 modifier = Modifier.size(10.dp)
             )
@@ -2525,7 +2528,7 @@ private fun SoundStageSliderRow(
     onEditValue: ((EditingValue) -> Unit)? = null
 ) {
     val interactionSource = remember { MutableInteractionSource() }
-    
+
     // De-couple internal state for absolute stability during and after interaction
     var internalValue by remember(value, enabled) { mutableFloatStateOf(value) }
     var isDragging by remember { mutableStateOf(false) }
@@ -2565,7 +2568,7 @@ private fun SoundStageSliderRow(
                 )
             }
         }
-        
+
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -2581,7 +2584,7 @@ private fun SoundStageSliderRow(
             )
 
             val progress = ((internalValue - range.start) / (range.endInclusive - range.start)).coerceIn(0f, 1f)
-            
+
             // Active Track with Glow
             Box(
                 modifier = Modifier
@@ -2600,7 +2603,7 @@ private fun SoundStageSliderRow(
                         )
                 )
             }
-            
+
             Slider(
                 value = internalValue,
                 onValueChange = {
@@ -2608,8 +2611,8 @@ private fun SoundStageSliderRow(
                     internalValue = it
                     onValueChange(it)
                 },
-                onValueChangeFinished = { 
-                    isDragging = false 
+                onValueChangeFinished = {
+                    isDragging = false
                     onValueChange(internalValue) // Force final update
                 },
                 valueRange = range,
@@ -2700,7 +2703,7 @@ private fun PremiumReverbCard(uiState: PlayerUiState, viewModel: PlayerViewModel
             verticalAlignment = Alignment.CenterVertically
         ) {
             val isEnabled = config.reverbEnabled && !isReverbBypassed
-            
+
             // Preset Selection Button
             Surface(
                 onClick = { if (!isReverbBypassed) showPresetPicker = true },
@@ -2723,7 +2726,7 @@ private fun PremiumReverbCard(uiState: PlayerUiState, viewModel: PlayerViewModel
             // Quick Actions
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 ReverbActionIcon(Icons.Rounded.Save, onClick = { viewModel.setReverbPreset("CUSTOM") }, enabled = !isReverbBypassed)
-                ReverbActionIcon(Icons.Rounded.RestartAlt, onClick = { 
+                ReverbActionIcon(Icons.Rounded.RestartAlt, onClick = {
                     viewModel.setReverbPreset("FLAT")
                     viewModel.setReverbAmount(0f)
                 }, enabled = !isReverbBypassed)
@@ -2897,7 +2900,7 @@ private fun PremiumMasteringCard(uiState: PlayerUiState, viewModel: PlayerViewMo
         // GRID 3x2 (3 rows, 2 columns) with enhanced styling
         val knobSize = 92.dp
         val controlsEnabled = !isBypassed
-        
+
         Column(
             modifier = Modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(14.dp)
@@ -2910,7 +2913,7 @@ private fun PremiumMasteringCard(uiState: PlayerUiState, viewModel: PlayerViewMo
                     KnobControl("TREBLE", config.trebleDb, viewModel::setTrebleDb, -12f..12f, "dB", knobSize, true, controlsEnabled, config.trebleEnabled, { viewModel.setTrebleEnabled(!config.trebleEnabled) }, { onEditValue(EditingValue("TREBLE", config.trebleDb, -12f..12f, viewModel::setTrebleDb)) })
                 }
             }
-            
+
             // Section 2: Space
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 MasteringSectionHeader("STEREO IMAGING", Icons.Rounded.CenterFocusWeak, isActive = config.stereoExpansionEnabled || config.balanceEnabled)
@@ -2945,7 +2948,7 @@ private fun PremiumMasteringCard(uiState: PlayerUiState, viewModel: PlayerViewMo
 }
 
 @Composable
-private fun MasteringSectionHeader(label: String, icon: ImageVector, isActive: Boolean = false) {
+internal fun MasteringSectionHeader(label: String, icon: ImageVector, isActive: Boolean = false) {
     val alpha = if (isActive) 1f else 0.3f
     val iconAlpha = if (isActive) 0.8f else 0.2f
     Row(
@@ -2965,7 +2968,7 @@ private fun MasteringSectionHeader(label: String, icon: ImageVector, isActive: B
 }
 
 @Composable
-private fun StatChip(label: String, value: String) {
+internal fun StatChip(label: String, value: String) {
     Surface(
         color = Color.White.copy(0.05f),
         shape = RoundedCornerShape(8.dp),
@@ -2997,7 +3000,7 @@ private fun KnobControl(
 ) {
     var isDragging by remember { mutableStateOf(false) }
     var internalValue by remember { mutableFloatStateOf(value) }
-    
+
     LaunchedEffect(value, isDragging) {
         if (!isDragging) {
             delay(50)
@@ -3007,7 +3010,7 @@ private fun KnobControl(
 
     val progress = ((internalValue - range.start) / (range.endInclusive - range.start)).coerceIn(0f, 1f)
     val isActive = enabled && active
-    
+
     val isNeutralValue = when (unit) {
         "dB", "L/R" -> abs(internalValue) <= 0.05f
         "x" -> abs(internalValue - 1f) <= 0.02f
@@ -3034,14 +3037,14 @@ private fun KnobControl(
                     val centerX = size.width / 2f
                     val centerY = size.height / 2f
                     val centerThreshold = (size.width / 2f) * 0.5f
-                    
+
                     detectDragGestures(
                         onDragStart = { offset ->
                             val dist = sqrt((offset.x - centerX).pow(2) + (offset.y - centerY).pow(2))
                             isDragging = dist >= centerThreshold
                         },
-                        onDragEnd = { 
-                            isDragging = false 
+                        onDragEnd = {
+                            isDragging = false
                             onValueChange(internalValue)
                         },
                         onDragCancel = { isDragging = false },
@@ -3051,10 +3054,10 @@ private fun KnobControl(
                                 val pos = change.position
                                 val angleRad = atan2(pos.y - centerY, pos.x - centerX)
                                 var angleDeg = (angleRad * 180f / PI.toFloat())
-                                
+
                                 var normalizedAngle = angleDeg - 135f
                                 while (normalizedAngle < 0) normalizedAngle += 360f
-                                
+
                                 if (normalizedAngle <= 270f) {
                                     val p = normalizedAngle / 270f
                                     val newValue = range.start + p * (range.endInclusive - range.start)
@@ -3073,7 +3076,7 @@ private fun KnobControl(
             Canvas(modifier = Modifier.fillMaxSize()) {
                 val center = Offset(size.width / 2f, size.height / 2f)
                 val r = size.minDimension / 2f - 8.dp.toPx()
-                
+
                 // Outer subtle glow
                 if (isActive) {
                     drawArc(
@@ -3107,7 +3110,7 @@ private fun KnobControl(
                     val angleRad = angle * PI.toFloat() / 180f
                     val innerR = r - 12.dp.toPx()
                     val outerR = r - 8.dp.toPx()
-                    
+
                     drawLine(
                         color = if (isActive && progress >= i.toFloat()/(tickCount-1)) sliderColor.copy(0.5f) else Color.White.copy(0.1f),
                         start = Offset(center.x + innerR * cos(angleRad), center.y + innerR * sin(angleRad)),
@@ -3168,7 +3171,7 @@ private fun KnobControl(
                                 else sliderColor
                             )
                     )
-                    
+
                     // Center subtle texture
                     Box(
                         modifier = Modifier

@@ -805,10 +805,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 songs.filter { s ->
                     s.isCloud() && when {
                         email != null -> s.driveAccountEmail == email ||
-                            s.dropboxAccountEmail == email ||
-                            s.onedriveAccountEmail == email ||
-                            s.boxAccountEmail == email ||
-                            s.nextcloudAccountEmail == email
+                                s.dropboxAccountEmail == email ||
+                                s.onedriveAccountEmail == email ||
+                                s.boxAccountEmail == email ||
+                                s.nextcloudAccountEmail == email
                         telegramUrl != null -> s.telegramChannelUrl == telegramUrl
                         else -> true
                     }
@@ -859,8 +859,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             _songs.value
                 .filter {
                     it.source == SongSource.LOCAL &&
-                    ((analyzed[it.id] == null || analyzed[it.id]?.moodTags.isNullOrBlank()) ||
-                            qualityDone[it.id] == null)
+                            ((analyzed[it.id] == null || analyzed[it.id]?.moodTags.isNullOrBlank()) ||
+                                    qualityDone[it.id] == null)
                 }
                 .forEach { aiAnalysisChannel.send(it) }
         }
@@ -1017,6 +1017,14 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                             source = SongSource.valueOf(entity.source),
                             driveFileId = entity.driveFileId,
                             driveAccountEmail = entity.driveAccountEmail,
+                            dropboxFileId = entity.dropboxFileId,
+                            dropboxAccountEmail = entity.dropboxAccountEmail,
+                            onedriveFileId = entity.onedriveFileId,
+                            onedriveAccountEmail = entity.onedriveAccountEmail,
+                            boxFileId = entity.boxFileId,
+                            boxAccountEmail = entity.boxAccountEmail,
+                            nextcloudFileId = entity.nextcloudFileId,
+                            nextcloudAccountEmail = entity.nextcloudAccountEmail,
                             telegramChannelUrl = entity.telegramChannelUrl,
                             telegramChatId = entity.telegramChatId,
                             telegramMessageId = entity.telegramMessageId,
@@ -1291,25 +1299,92 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun removeDriveAccount(email: String) {
         viewModelScope.launch {
             driveAccountRepository.removeAccount(email)
-            // Optionally remove songs from this account from database
-            songDao.deleteSongsByAccount(email.lowercase())
-            _songs.update { current -> current.filterNot { it.driveAccountEmail?.lowercase() == email.lowercase() } }
+            cleanupCloudAccountData(email, SongSource.GDRIVE)
         }
     }
 
     fun removeDropboxAccount(email: String) {
         viewModelScope.launch {
             dropboxAccountRepository.removeAccount(email)
-            songDao.deleteSongsByDropboxAccount(email.lowercase())
-            _songs.update { current -> current.filterNot { it.dropboxAccountEmail?.lowercase() == email.lowercase() } }
+            cleanupCloudAccountData(email, SongSource.DROPBOX)
         }
     }
 
     fun removeOneDriveAccount(email: String) {
         viewModelScope.launch {
             onedriveAccountRepository.removeAccount(email)
-            songDao.deleteSongsByOneDriveAccount(email.lowercase())
-            _songs.update { current -> current.filterNot { it.onedriveAccountEmail?.lowercase() == email.lowercase() } }
+            cleanupCloudAccountData(email, SongSource.ONEDRIVE)
+        }
+    }
+
+    fun removeBoxAccount(email: String) {
+        viewModelScope.launch {
+            boxAccountRepository.removeAccount(email)
+            cleanupCloudAccountData(email, SongSource.BOX)
+        }
+    }
+
+    fun removeNextcloudAccount(email: String) {
+        viewModelScope.launch {
+            nextcloudAccountRepository.removeAccount(email)
+            cleanupCloudAccountData(email, SongSource.NEXTCLOUD)
+        }
+    }
+
+    private suspend fun cleanupCloudAccountData(email: String, source: SongSource) {
+        withContext(Dispatchers.IO) {
+            val emailLower = email.lowercase()
+            
+            // 1. Identify songs to be removed
+            val songsToRemove = when (source) {
+                SongSource.GDRIVE -> songDao.getSongsByAccount(emailLower)
+                SongSource.DROPBOX -> songDao.getSongsByDropboxAccount(emailLower)
+                SongSource.ONEDRIVE -> songDao.getSongsByOneDriveAccount(emailLower)
+                SongSource.BOX -> songDao.getSongsByBoxAccount(emailLower)
+                SongSource.NEXTCLOUD -> songDao.getSongsByNextcloudAccount(emailLower)
+                else -> emptyList()
+            }
+            val songIds = songsToRemove.map { it.id }
+
+            // 2. Remove songs and associated data from DB
+            when (source) {
+                SongSource.GDRIVE -> songDao.deleteSongsByAccount(emailLower)
+                SongSource.DROPBOX -> songDao.deleteSongsByDropboxAccount(emailLower)
+                SongSource.ONEDRIVE -> songDao.deleteSongsByOneDriveAccount(emailLower)
+                SongSource.BOX -> songDao.deleteSongsByBoxAccount(emailLower)
+                SongSource.NEXTCLOUD -> songDao.deleteSongsByNextcloudAccount(emailLower)
+                else -> {}
+            }
+            
+            favoriteDao.deleteByAccount(emailLower)
+            recentlyPlayedDao.deleteByAccount(emailLower)
+            if (songIds.isNotEmpty()) {
+                database.lyricsDao().deleteLyricsBySongIds(songIds)
+            }
+
+            // 3. Clear disk caches
+            val albumArtDir = File(app.filesDir, "album_art")
+            val cloudCacheDir = File(app.cacheDir, "cloud_cache")
+            
+            songIds.forEach { id ->
+                File(albumArtDir, "$id.jpg").delete()
+                // Cloud cache might have multiple .tmp files for a song
+                cloudCacheDir.listFiles { _, name -> name.startsWith("$id.") }?.forEach { it.delete() }
+            }
+
+            // 4. Update in-memory state
+            _songs.update { current -> 
+                current.filterNot { song ->
+                    when (source) {
+                        SongSource.GDRIVE -> song.driveAccountEmail?.lowercase() == emailLower
+                        SongSource.DROPBOX -> song.dropboxAccountEmail?.lowercase() == emailLower
+                        SongSource.ONEDRIVE -> song.onedriveAccountEmail?.lowercase() == emailLower
+                        SongSource.BOX -> song.boxAccountEmail?.lowercase() == emailLower
+                        SongSource.NEXTCLOUD -> song.nextcloudAccountEmail?.lowercase() == emailLower
+                        else -> false
+                    }
+                }
+            }
         }
     }
 
@@ -2996,6 +3071,34 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun setReverbPredelay(value: Float) = applyDspConfig { it.copy(reverbPredelayMs = value.coerceIn(0f, 1000f)) }
     fun setCrossfeedEnabled(enabled: Boolean) = applyDspConfig { it.copy(crossfeedEnabled = enabled) }
     fun setCrossfeedLevel(value: Float) = applyDspConfig { it.copy(crossfeedLevel = value.coerceIn(0f, 1f), crossfeedEnabled = true) }
+
+    // --- Stem Mixer (Moises-style per-instrument isolate/mute) ---
+    fun setStemMixerEnabled(enabled: Boolean) = applyDspConfig { it.copy(stemMixerEnabled = enabled) }
+
+    fun setStemVolume(channel: com.beatraxus.app.model.StemChannel, volume: Float) = applyDspConfig { cfg ->
+        val states = cfg.stemStates.toMutableMap()
+        val current = states[channel] ?: com.beatraxus.app.model.StemChannelState()
+        states[channel] = current.copy(volume = volume.coerceIn(0f, 1f))
+        cfg.copy(stemStates = states)
+    }
+
+    fun toggleStemMute(channel: com.beatraxus.app.model.StemChannel) = applyDspConfig { cfg ->
+        val states = cfg.stemStates.toMutableMap()
+        val current = states[channel] ?: com.beatraxus.app.model.StemChannelState()
+        states[channel] = current.copy(muted = !current.muted)
+        cfg.copy(stemStates = states)
+    }
+
+    fun toggleStemSolo(channel: com.beatraxus.app.model.StemChannel) = applyDspConfig { cfg ->
+        val states = cfg.stemStates.toMutableMap()
+        val current = states[channel] ?: com.beatraxus.app.model.StemChannelState()
+        states[channel] = current.copy(soloed = !current.soloed)
+        cfg.copy(stemStates = states)
+    }
+
+    fun resetStemMixer() = applyDspConfig { cfg ->
+        cfg.copy(stemStates = com.beatraxus.app.model.defaultStemStates())
+    }
 
     fun setSpatialAudioEnabled(enabled: Boolean) = applyDspConfig { it.copy(spatialAudioEnabled = enabled) }
     fun setSpatialAudioIntensity(value: Float) = applyDspConfig { it.copy(spatialAudioIntensity = value) }

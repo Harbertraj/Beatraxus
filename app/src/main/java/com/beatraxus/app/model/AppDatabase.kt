@@ -33,12 +33,18 @@ interface FavoriteDao {
 
     @Query("DELETE FROM favorites WHERE songId = :songId")
     suspend fun removeFavorite(songId: String)
+
+    @Query("DELETE FROM favorites WHERE LOWER(accountEmail) = LOWER(:email)")
+    suspend fun deleteByAccount(email: String)
 }
 
 @Dao
 interface LyricsDao {
     @Query("SELECT * FROM lyrics WHERE songId = :songId")
     suspend fun getLyrics(songId: String): LyricsEntity?
+
+    @Query("DELETE FROM lyrics WHERE songId IN (:songIds)")
+    suspend fun deleteLyricsBySongIds(songIds: List<String>)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertLyrics(lyrics: LyricsEntity)
@@ -54,6 +60,9 @@ interface RecentlyPlayedDao {
 
     @Query("DELETE FROM recently_played WHERE songId = :songId")
     suspend fun removeRecentlyPlayed(songId: String)
+
+    @Query("DELETE FROM recently_played WHERE LOWER(accountEmail) = LOWER(:email)")
+    suspend fun deleteByAccount(email: String)
 }
 
 @Database(
