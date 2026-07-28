@@ -3055,34 +3055,6 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun setCrossfeedEnabled(enabled: Boolean) = applyDspConfig { it.copy(crossfeedEnabled = enabled) }
     fun setCrossfeedLevel(value: Float) = applyDspConfig { it.copy(crossfeedLevel = value.coerceIn(0f, 1f), crossfeedEnabled = true) }
 
-    // --- Stem Mixer (Moises-style per-instrument isolate/mute) ---
-    fun setStemMixerEnabled(enabled: Boolean) = applyDspConfig { it.copy(stemMixerEnabled = enabled) }
-
-    fun setStemVolume(channel: com.beatraxus.app.model.StemChannel, volume: Float) = applyDspConfig { cfg ->
-        val states = cfg.stemStates.toMutableMap()
-        val current = states[channel] ?: com.beatraxus.app.model.StemChannelState()
-        states[channel] = current.copy(volume = volume.coerceIn(0f, 1f))
-        cfg.copy(stemStates = states)
-    }
-
-    fun toggleStemMute(channel: com.beatraxus.app.model.StemChannel) = applyDspConfig { cfg ->
-        val states = cfg.stemStates.toMutableMap()
-        val current = states[channel] ?: com.beatraxus.app.model.StemChannelState()
-        states[channel] = current.copy(muted = !current.muted)
-        cfg.copy(stemStates = states)
-    }
-
-    fun toggleStemSolo(channel: com.beatraxus.app.model.StemChannel) = applyDspConfig { cfg ->
-        val states = cfg.stemStates.toMutableMap()
-        val current = states[channel] ?: com.beatraxus.app.model.StemChannelState()
-        states[channel] = current.copy(soloed = !current.soloed)
-        cfg.copy(stemStates = states)
-    }
-
-    fun resetStemMixer() = applyDspConfig { cfg ->
-        cfg.copy(stemStates = com.beatraxus.app.model.defaultStemStates())
-    }
-
     fun setSpatialAudioEnabled(enabled: Boolean) = applyDspConfig { it.copy(spatialAudioEnabled = enabled) }
     fun setSpatialAudioIntensity(value: Float) = applyDspConfig { it.copy(spatialAudioIntensity = value) }
     fun setSpatialStageWidth(value: Float) = applyDspConfig { it.copy(spatialStageWidth = value) }

@@ -190,7 +190,7 @@ fun DspScreen(
                 )
         )
 
-        val pagerState = rememberPagerState(pageCount = { 5 })
+        val pagerState = rememberPagerState(pageCount = { 4 })
 
         Scaffold(
             containerColor = Color.Transparent,
@@ -216,7 +216,6 @@ fun DspScreen(
                                         Icons.Rounded.GraphicEq,
                                         Icons.Rounded.AutoAwesome,
                                         Icons.Rounded.Waves,
-                                        Icons.Rounded.Layers,
                                         Icons.Rounded.SurroundSound
                                     )
                                     pageIcons.forEachIndexed { i, icon ->
@@ -330,8 +329,6 @@ fun DspScreen(
                         PremiumMasteringCard(uiState, viewModel, onEditValue = { editingValue = it })
                     } else if (page == 2) {
                         PremiumReverbCard(uiState, viewModel, onEditValue = { editingValue = it })
-                    } else if (page == 3) {
-                        PremiumStemsCard(uiState, viewModel)
                     } else {
                         PremiumSoundStageCard(uiState, viewModel, onEditValue = { editingValue = it })
                     }

@@ -153,22 +153,6 @@ enum class HrtfMode(val displayName: String) {
     STUDIO("Studio (Reference)")
 }
 
-enum class StemChannel(val displayName: String) {
-    VOCALS("Vocals"),
-    DRUMS("Drums"),
-    BASS("Bass"),
-    OTHER("Other")
-}
-
-data class StemChannelState(
-    val volume: Float = 1f,     // 0f..1f
-    val muted: Boolean = false,
-    val soloed: Boolean = false
-)
-
-fun defaultStemStates(): Map<StemChannel, StemChannelState> =
-    StemChannel.entries.associateWith { StemChannelState() }
-
 data class DspConfig(
     val outputMode: OutputMode = OutputMode.HI_RES,
     val highQualityResampler: Boolean = true,
@@ -318,13 +302,7 @@ data class DspConfig(
     val customUsbDriverEnabled: Boolean = false,
 
     // Phase 4.2: A/B Bypass
-    val bypassAll: Boolean = false,
-
-    // Phase 5: Stem Mixer (Moises-style per-instrument isolate/mute)
-    val stemMixerEnabled: Boolean = false,
-    val stemStates: Map<StemChannel, StemChannelState> = defaultStemStates(),
-    // True once vocals/drums/bass/other stems have been separated & cached for the current track
-    val stemSourceReady: Boolean = false
+    val bypassAll: Boolean = false
 ) {
     fun activeEffects(): List<String> = buildList {
         if (outputMode == OutputMode.HI_RES) add("MTK HiFi")
@@ -359,7 +337,6 @@ data class DspConfig(
         if (limiterEnabled) add("Limiter")
         if (noHeadroomGainEnabled) add("No Headroom Gain")
         if (ditherEnabled && ditherType != DitherType.NONE) add(ditherType.displayName)
-        if (stemMixerEnabled && stemStates.values.any { it.muted || it.soloed || it.volume < 0.99f }) add("Stems")
     }
 }
 
