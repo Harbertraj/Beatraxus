@@ -21,6 +21,8 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -32,6 +34,7 @@ fun PremiumSwitch(
     modifier: Modifier = Modifier,
     enabled: Boolean = true
 ) {
+    val haptic = LocalHapticFeedback.current
     val interactionSource = remember { MutableInteractionSource() }
     
     val thumbOffset by animateDpAsState(
@@ -40,7 +43,7 @@ fun PremiumSwitch(
         label = "thumbOffset"
     )
     
-    val indicatorColor = if (checked) Color(0xFFFF9800) else Color(0xFF1A1D24)
+    val indicatorColor = if (checked) Color(0xFFD4A24C) else Color(0xFF1A1D24)
     val indicatorGlow by animateFloatAsState(
         targetValue = if (checked) 1f else 0f,
         animationSpec = tween(300),
@@ -52,13 +55,14 @@ fun PremiumSwitch(
             .width(64.dp)
             .height(36.dp)
             .clip(RoundedCornerShape(18.dp))
-            .background(Color(0xFF0F1218)) // Deep background
+            .background(Color(0xFF0A0C10)) // Onyx Black
             .border(1.dp, Color.White.copy(alpha = 0.05f), RoundedCornerShape(18.dp))
             .clickable(
                 interactionSource = interactionSource,
                 indication = null,
                 enabled = enabled
             ) {
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                 onCheckedChange?.invoke(!checked)
             },
         contentAlignment = Alignment.CenterStart
@@ -71,7 +75,7 @@ fun PremiumSwitch(
         ) {
             Text(
                 text = "ON",
-                color = if (checked) Color(0xFFFF9800).copy(alpha = 0.9f) else Color.Transparent,
+                color = if (checked) Color(0xFFD4A24C).copy(alpha = 0.9f) else Color.Transparent,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Black,
                 modifier = Modifier.graphicsLayer {
@@ -129,7 +133,7 @@ fun PremiumSwitch(
                     modifier = Modifier
                         .size(16.dp)
                         .graphicsLayer { alpha = 0.3f * indicatorGlow }
-                        .background(Brush.radialGradient(listOf(Color(0xFFFF9800), Color.Transparent)), CircleShape)
+                        .background(Brush.radialGradient(listOf(Color(0xFFD4A24C), Color.Transparent)), CircleShape)
                 )
             }
         }

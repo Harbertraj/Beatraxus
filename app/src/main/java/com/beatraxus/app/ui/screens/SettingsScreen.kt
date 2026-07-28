@@ -10,17 +10,35 @@ import com.beatraxus.app.ui.utils.RenderEffectHelper
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.EaseInOutCubic
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.animateOffsetAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.interaction.collectIsPressedAsState
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -119,6 +137,58 @@ private val SecondaryText = Color(0xFFAAB3BC)
 private val BgColor = Color(0xFF0A0A0C)
 private val CardSurface = Color(0xFF15161A)
 
+@Composable
+fun AnimatedMeshBackground() {
+    val transition = rememberInfiniteTransition(label = "mesh")
+    
+    val x1 by transition.animateFloat(
+        initialValue = 0f, targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(12000, easing = LinearEasing), RepeatMode.Reverse),
+        label = "x1"
+    )
+    val y1 by transition.animateFloat(
+        initialValue = 0f, targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(15000, easing = LinearEasing), RepeatMode.Reverse),
+        label = "y1"
+    )
+    val x2 by transition.animateFloat(
+        initialValue = 1f, targetValue = 0f,
+        animationSpec = infiniteRepeatable(tween(18000, easing = LinearEasing), RepeatMode.Reverse),
+        label = "x2"
+    )
+    val y2 by transition.animateFloat(
+        initialValue = 1f, targetValue = 0f,
+        animationSpec = infiniteRepeatable(tween(11000, easing = LinearEasing), RepeatMode.Reverse),
+        label = "y2"
+    )
+
+    Canvas(modifier = Modifier.fillMaxSize()) {
+        drawRect(Color(0xFF060608))
+        
+        drawCircle(
+            brush = Brush.radialGradient(
+                colors = listOf(PremiumAccent.copy(alpha = 0.15f), Color.Transparent),
+                center = Offset(size.width * x1, size.height * y1),
+                radius = size.minDimension * 0.8f
+            ),
+            center = Offset(size.width * x1, size.height * y1),
+            radius = size.minDimension * 0.8f,
+            blendMode = BlendMode.Screen
+        )
+        
+        drawCircle(
+            brush = Brush.radialGradient(
+                colors = listOf(Color(0xFF0066FF).copy(alpha = 0.1f), Color.Transparent),
+                center = Offset(size.width * x2, size.height * y2),
+                radius = size.minDimension * 0.7f
+            ),
+            center = Offset(size.width * x2, size.height * y2),
+            radius = size.minDimension * 0.7f,
+            blendMode = BlendMode.Screen
+        )
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
@@ -189,7 +259,9 @@ fun SettingsScreen(
     }
 
     val bgGradient = Brush.verticalGradient(listOf(Color(0xFF0A0A0C), Color(0xFF14110C)))
-    Box(modifier = Modifier.fillMaxSize().background(bgGradient)) {
+    Box(modifier = Modifier.fillMaxSize()) {
+        AnimatedMeshBackground()
+        
         val settingsMode = uiState.appearance.settingsBackgroundMode
         val settingsSolidIntensity = uiState.appearance.settingsSolidColorIntensity
         val settingsSolidDarkness = uiState.appearance.settingsSolidColorDarkness
@@ -248,14 +320,14 @@ fun SettingsScreen(
         }
 
         Scaffold(
-            modifier = Modifier.blur(if (uiState.isFullScanning) 20.dp else 0.dp),
+            modifier = Modifier.blur(if (uiState.isFullScanning) 24.dp else 0.dp),
             containerColor = Color.Transparent,
             contentWindowInsets = WindowInsets.systemBars,
             topBar = {
                 CenterAlignedTopAppBar(
                     colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
-                        containerColor = Color.Transparent,
-                        scrolledContainerColor = Color.Transparent
+                        containerColor = Color.Black.copy(0.15f),
+                        scrolledContainerColor = Color.Black.copy(0.3f)
                     ),
                     title = {
                         val displayTitle = if (currentSection != null && currentSection.contains(": ")) {
@@ -267,31 +339,31 @@ fun SettingsScreen(
                         Text(
                             text = displayTitle.uppercase(Locale.getDefault()),
                             color = TextWhite,
-                            fontWeight = FontWeight.ExtraBold,
-                            fontSize = if (currentSection == null) 24.sp else 18.sp,
-                            letterSpacing = if (currentSection == null) (-0.2).sp else 1.5.sp,
-                            textAlign = TextAlign.Center,
+                            style = TextStyle(
+                                fontWeight = FontWeight.Black,
+                                fontSize = if (currentSection == null) 22.sp else 16.sp,
+                                letterSpacing = 2.sp,
+                                textAlign = TextAlign.Center
+                            ),
                             modifier = Modifier.animateContentSize()
                         )
                     },
                     navigationIcon = {
-                        var lastClickTime by remember { mutableLongStateOf(0L) }
+                        val haptic = LocalHapticFeedback.current
                         IconButton(
                             onClick = {
-                                val currentTime = System.currentTimeMillis()
-                                if (currentTime - lastClickTime < 500) return@IconButton
-                                lastClickTime = currentTime
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                 if (sectionStack.isNotEmpty()) sectionStack.removeAt(sectionStack.size - 1) else onBack()
                             },
-                            modifier = Modifier.padding(start = 8.dp)
+                            modifier = Modifier.padding(start = 12.dp)
                         ) {
                             Box(
                                 modifier = Modifier
-                                    .size(36.dp)
+                                    .size(38.dp)
                                     .glassIconBackground(
-                                        backgroundColor = Color.White.copy(alpha = 0.07f),
+                                        backgroundColor = Color.White.copy(alpha = 0.05f),
                                         shape = CircleShape,
-                                        borderColor = Color.White.copy(alpha = 0.12f)
+                                        borderColor = Color.White.copy(alpha = 0.1f)
                                     ),
                                 contentAlignment = Alignment.Center
                             ) {
@@ -299,23 +371,34 @@ fun SettingsScreen(
                                     Icons.AutoMirrored.Rounded.ArrowBack,
                                     "Back",
                                     tint = TextWhite,
-                                    modifier = Modifier.size(18.dp)
+                                    modifier = Modifier.size(20.dp)
                                 )
                             }
                         }
                     },
                     actions = {
-                        // Empty balancing spacer for perfect centering
-                        Spacer(Modifier.width(50.dp))
+                        Spacer(Modifier.width(60.dp))
                     }
                 )
             }
         )
         { padding ->
-            Crossfade(
+            AnimatedContent(
                 targetState = currentSection,
                 modifier = Modifier.padding(padding),
-                animationSpec = tween(220, easing = EaseInOutCubic),
+                transitionSpec = {
+                    if (targetState != null) {
+                        // Navigating deeper
+                        (slideInHorizontally { it } + fadeIn()).togetherWith(
+                            slideOutHorizontally { -it / 2 } + fadeOut())
+                    } else {
+                        // Navigating back to root
+                        (slideInHorizontally { -it / 2 } + fadeIn()).togetherWith(
+                            slideOutHorizontally { it } + fadeOut())
+                    }.using(
+                        SizeTransform(clip = false)
+                    )
+                },
                 label = "settings_transition"
             ) { section ->
                 val scrollState = rememberScrollState()
@@ -1257,77 +1340,66 @@ fun SettingMenuItem(
     centered: Boolean = false,
     onClick: () -> Unit
 ) {
+    val haptic = LocalHapticFeedback.current
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
-    val bgAlpha by animateFloatAsState(
-        targetValue = if (isPressed) 0.15f else 0.08f,
-        animationSpec = tween(220, easing = EaseInOutCubic),
-        label = "bg"
-    )
+    
     val scale by animateFloatAsState(
-        targetValue = if (isPressed) 0.98f else 1f,
-        animationSpec = tween(220, easing = EaseInOutCubic),
+        targetValue = if (isPressed) 0.96f else 1f,
+        animationSpec = tween(250, easing = EaseInOutCubic),
         label = "scale"
     )
+    val glowAlpha by animateFloatAsState(
+        targetValue = if (isPressed) 0.6f else 0f,
+        animationSpec = tween(250),
+        label = "glow"
+    )
 
-    Row(
+    Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
-            .background(CardSurface.copy(alpha = bgAlpha))
-            .border(
-                width = 1.2.dp,
-                brush = Brush.linearGradient(
-                    listOf(
-                        iconColor.copy(alpha = 0.25f),
-                        Color.White.copy(alpha = 0.05f)
-                    )
-                ),
-                shape = RoundedCornerShape(14.dp)
-            )
             .scale(scale)
-            .clickable(interactionSource = interactionSource, indication = null, onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = if (centered) Arrangement.Center else Arrangement.Start
-    ) {
-        if (!centered) {
-            // Icon with colored glass background
-            Box(
-                modifier = Modifier
-                    .size(40.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .glassIconBackground(
-                        backgroundColor = iconColor.copy(alpha = 0.12f),
-                        shape = RoundedCornerShape(12.dp),
-                        borderColor = iconColor.copy(alpha = 0.18f)
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    tint = iconColor,
-                    modifier = Modifier.size(20.dp)
+            .shadow(
+                elevation = (glowAlpha * 15).dp,
+                shape = RoundedCornerShape(20.dp),
+                ambientColor = iconColor.copy(alpha = 0.5f),
+                spotColor = iconColor.copy(alpha = 0.5f)
+            )
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onClick()
+                }
+            ),
+        shape = RoundedCornerShape(20.dp),
+        color = Color.Black.copy(alpha = 0.15f),
+        border = BorderStroke(
+            width = 0.8.dp,
+            brush = Brush.linearGradient(
+                listOf(
+                    Color.White.copy(alpha = 0.15f),
+                    Color.White.copy(alpha = 0.02f),
+                    iconColor.copy(alpha = 0.2f)
                 )
-            }
-
-            Spacer(Modifier.width(14.dp))
-        }
-
-        Column(
-            modifier = Modifier.weight(1f),
-            horizontalAlignment = if (centered) Alignment.CenterHorizontally else Alignment.Start
+            )
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .padding(horizontal = 18.dp, vertical = 16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = if (centered) Arrangement.Center else Arrangement.Start
         ) {
-            if (centered) {
+            if (!centered) {
                 Box(
                     modifier = Modifier
-                        .size(44.dp)
-                        .clip(RoundedCornerShape(12.dp))
+                        .size(46.dp)
                         .glassIconBackground(
                             backgroundColor = iconColor.copy(alpha = 0.12f),
-                            shape = RoundedCornerShape(12.dp),
-                            borderColor = iconColor.copy(alpha = 0.18f)
+                            shape = RoundedCornerShape(14.dp),
+                            borderColor = iconColor.copy(alpha = 0.25f)
                         ),
                     contentAlignment = Alignment.Center
                 ) {
@@ -1338,62 +1410,93 @@ fun SettingMenuItem(
                         modifier = Modifier.size(22.dp)
                     )
                 }
-                Spacer(Modifier.height(10.dp))
+
+                Spacer(Modifier.width(18.dp))
             }
 
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = if (centered) Arrangement.Center else Arrangement.Start,
-                modifier = if (centered) Modifier.fillMaxWidth() else Modifier
+            Column(
+                modifier = Modifier.weight(1f),
+                horizontalAlignment = if (centered) Alignment.CenterHorizontally else Alignment.Start
             ) {
-                Text(
-                    text = title,
-                    color = TextWhite,
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    textAlign = if (centered) TextAlign.Center else TextAlign.Start
-                )
-                if (showBetaBadge) {
-                    Spacer(Modifier.width(8.dp))
-                    Surface(
-                        color = Color.Red.copy(0.12f),
-                        shape = RoundedCornerShape(3.dp),
-                        border = BorderStroke(0.8.dp, Color.Red.copy(0.4f))
+                if (centered) {
+                    Box(
+                        modifier = Modifier
+                            .size(50.dp)
+                            .glassIconBackground(
+                                backgroundColor = iconColor.copy(alpha = 0.12f),
+                                shape = RoundedCornerShape(16.dp),
+                                borderColor = iconColor.copy(alpha = 0.25f)
+                            ),
+                        contentAlignment = Alignment.Center
                     ) {
-                        Text(
-                            text = "BETA",
-                            color = Color.Red,
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
-                            style = TextStyle(
-                                platformStyle = PlatformTextStyle(includeFontPadding = false),
-                                textAlign = TextAlign.Center
-                            )
+                        Icon(
+                            imageVector = icon,
+                            contentDescription = null,
+                            tint = iconColor,
+                            modifier = Modifier.size(24.dp)
                         )
                     }
+                    Spacer(Modifier.height(12.dp))
                 }
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = if (centered) Arrangement.Center else Arrangement.Start,
+                    modifier = if (centered) Modifier.fillMaxWidth() else Modifier
+                ) {
+                    Text(
+                        text = title,
+                        color = TextWhite,
+                        style = TextStyle(
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 0.3.sp
+                        ),
+                        textAlign = if (centered) TextAlign.Center else TextAlign.Start
+                    )
+                    if (showBetaBadge) {
+                        Spacer(Modifier.width(8.dp))
+                        Surface(
+                            color = Color(0xFFFF4D4D).copy(0.15f),
+                            shape = RoundedCornerShape(4.dp),
+                            border = BorderStroke(1.dp, Color(0xFFFF4D4D).copy(0.4f))
+                        ) {
+                            Text(
+                                text = "BETA",
+                                color = Color(0xFFFF4D4D),
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Black,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                style = TextStyle(
+                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                    textAlign = TextAlign.Center
+                                )
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = subtitle,
+                    color = TextWhite.copy(alpha = 0.55f),
+                    style = TextStyle(
+                        fontSize = 12.sp,
+                        lineHeight = 16.sp,
+                        fontWeight = FontWeight.Medium
+                    ),
+                    textAlign = if (centered) TextAlign.Center else TextAlign.Start,
+                    modifier = if (centered) Modifier.fillMaxWidth() else Modifier
+                )
             }
-            Spacer(Modifier.height(2.dp))
-            Text(
-                text = subtitle,
-                color = TextWhite.copy(alpha = 0.7f),
-                fontSize = 12.sp,
-                lineHeight = 16.sp,
-                textAlign = if (centered) TextAlign.Center else TextAlign.Start,
-                modifier = if (centered) Modifier.fillMaxWidth() else Modifier
-            )
-        }
 
-        if (!centered) {
-            Spacer(Modifier.width(8.dp))
-
-            Icon(
-                Icons.AutoMirrored.Rounded.KeyboardArrowRight,
-                null,
-                tint = TextWhite.copy(0.3f),
-                modifier = Modifier.size(20.dp)
-            )
+            if (!centered) {
+                Icon(
+                    Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                    null,
+                    tint = TextWhite.copy(0.2f),
+                    modifier = Modifier.size(22.dp)
+                )
+            }
         }
     }
 }
@@ -1427,7 +1530,12 @@ fun AudioEngineContent(
                 modifier = Modifier.padding(bottom = 12.dp)
             )
 
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
                 OutputModeButton(
                     text = "AAudio",
                     selected = uiState.outputMode == OutputMode.AAUDIO.name,
@@ -1500,8 +1608,12 @@ fun AudioEngineContent(
 
                 val bufferOptions = listOf(64, 96, 128, 192, 256)
                 Row(
-                    modifier = Modifier.padding(top = 12.dp).horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 12.dp)
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     bufferOptions.forEach { frames ->
                         val isSelected = uiState.dsp.config.mmapRequestedBufferSizeFrames == frames
@@ -1566,7 +1678,10 @@ fun AudioEngineContent(
                 )
                 Spacer(Modifier.height(12.dp))
                 Row(
-                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 16.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     ResamplerMode.entries.forEach { mode ->
@@ -1610,7 +1725,10 @@ fun AudioEngineContent(
             )
             Spacer(Modifier.height(12.dp))
             Row(
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 sampleFormats.forEach { format ->
@@ -2077,39 +2195,52 @@ private fun PremiumChip(
     label: String,
     modifier: Modifier = Modifier
 ) {
-    val background = if (selected) Color.Black else Color(0xFF1A232D)
-    val borderStroke = if (selected) {
-        BorderStroke(1.dp, PrimaryCyan)
-    } else {
-        BorderStroke(1.dp, Color.White.copy(0.05f))
-    }
-
+    val haptic = LocalHapticFeedback.current
+    val scale by animateFloatAsState(if (selected) 1.05f else 1f, label = "scale")
+    
     Box(
         modifier = modifier
-            .widthIn(min = 52.dp)
-            .then(if (selected) Modifier.shadow(elevation = 12.dp, shape = RoundedCornerShape(10.dp), ambientColor = PrimaryCyan.copy(0.2f), spotColor = PrimaryCyan.copy(0.2f)) else Modifier)
-            .clip(RoundedCornerShape(10.dp))
-            .background(background)
-            .border(borderStroke, RoundedCornerShape(10.dp))
-            .clickable { onClick() }
-            .padding(horizontal = 12.dp, vertical = 8.dp),
+            .widthIn(min = 64.dp)
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
+            .shadow(
+                elevation = if (selected) 12.dp else 0.dp,
+                shape = CircleShape,
+                ambientColor = PrimaryCyan.copy(0.3f),
+                spotColor = PrimaryCyan.copy(0.3f)
+            )
+            .clip(CircleShape)
+            .background(
+                if (selected) Brush.verticalGradient(listOf(PrimaryCyan.copy(0.15f), Color.Black.copy(0.8f)))
+                else Brush.verticalGradient(listOf(Color.White.copy(0.03f), Color.Transparent))
+            )
+            .border(
+                width = 1.dp,
+                brush = if (selected) 
+                    Brush.verticalGradient(listOf(PrimaryCyan, PrimaryCyan.copy(0.4f)))
+                else 
+                    Brush.verticalGradient(listOf(Color.White.copy(0.08f), Color.Transparent)),
+                shape = CircleShape
+            )
+            .clickable { 
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                onClick() 
+            }
+            .padding(horizontal = 12.dp, vertical = 10.dp),
         contentAlignment = Alignment.Center
     ) {
-        if (selected) {
-            Box(
-                Modifier
-                    .align(Alignment.TopCenter)
-                    .width(16.dp)
-                    .height(2.dp)
-                    .background(PrimaryCyan.copy(0.5f), CircleShape)
-            )
-        }
         Text(
             text = label,
-            color = if (selected) PrimaryCyan else TextWhite.copy(0.7f),
-            fontSize = 13.sp,
-            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-            fontFamily = FontFamily.Monospace
+            color = if (selected) PrimaryCyan else TextWhite.copy(0.45f),
+            style = TextStyle(
+                fontSize = 12.sp,
+                fontWeight = if (selected) FontWeight.Black else FontWeight.Bold,
+                fontFamily = FontFamily.Monospace,
+                letterSpacing = 0.5.sp
+            ),
+            maxLines = 1
         )
     }
 }
@@ -2274,7 +2405,10 @@ private fun DvcCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
                         letterSpacing = 1.5.sp
                     )
                     Row(
-                        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState())
+                            .padding(horizontal = 16.dp),
                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         DvcMode.entries.forEach { mode ->
@@ -2310,6 +2444,7 @@ private fun DvcCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
 
 @Composable
 private fun SoxrQualityCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
+    val haptic = LocalHapticFeedback.current
     val config = uiState.dsp.config
     val isResamplerOn = config.highQualityResampler
     val isResampling = uiState.inputSampleRate != uiState.outputSampleRate
@@ -2360,7 +2495,8 @@ private fun SoxrQualityCard(uiState: PlayerUiState, viewModel: PlayerViewModel) 
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .horizontalScroll(rememberScrollState()),
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             qualities.forEach { quality ->
@@ -2373,34 +2509,47 @@ private fun SoxrQualityCard(uiState: PlayerUiState, viewModel: PlayerViewModel) 
 
                 Box(
                     modifier = Modifier
-                        .widthIn(min = 52.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(background)
-                        .then(if (isSelected && canChange) Modifier.border(1.dp, PrimaryCyan, RoundedCornerShape(10.dp)) else Modifier)
-                        .then(if (isSelected && canChange) Modifier.shadow(elevation = 12.dp, shape = RoundedCornerShape(10.dp), ambientColor = PrimaryCyan.copy(0.2f), spotColor = PrimaryCyan.copy(0.2f)) else Modifier)
+                        .widthIn(min = 80.dp)
+                        .graphicsLayer {
+                            scaleX = if (isSelected && canChange) 1.05f else 1f
+                            scaleY = if (isSelected && canChange) 1.05f else 1f
+                        }
+                        .shadow(
+                            elevation = if (isSelected && canChange) 12.dp else 0.dp,
+                            shape = RoundedCornerShape(18.dp),
+                            ambientColor = PrimaryCyan.copy(0.3f),
+                            spotColor = PrimaryCyan.copy(0.3f)
+                        )
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(
+                            if (isSelected && canChange) Brush.verticalGradient(listOf(PrimaryCyan.copy(0.15f), Color.Black.copy(0.8f)))
+                            else Brush.verticalGradient(listOf(Color.White.copy(0.03f), Color.Transparent))
+                        )
+                        .border(
+                            width = 1.dp,
+                            brush = if (isSelected && canChange) 
+                                Brush.verticalGradient(listOf(PrimaryCyan, PrimaryCyan.copy(0.4f)))
+                            else 
+                                Brush.verticalGradient(listOf(Color.White.copy(0.08f), Color.Transparent)),
+                            shape = RoundedCornerShape(18.dp)
+                        )
                         .clickable(enabled = canChange) {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                             viewModel.setSoxrQuality(quality)
                         }
                         .padding(horizontal = 16.dp, vertical = 12.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    if (isSelected && canChange) {
-                        Box(
-                            Modifier
-                                .align(Alignment.TopCenter)
-                                .width(16.dp)
-                                .height(2.dp)
-                                .background(PrimaryCyan.copy(0.5f), CircleShape)
-                        )
-                    }
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(
                             quality.displayName.uppercase(),
-                            color = if (isSelected && canChange) PrimaryCyan else TextWhite.copy(if (canChange) 0.8f else 0.3f),
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            letterSpacing = 0.5.sp,
-                            fontFamily = FontFamily.Monospace
+                            color = if (isSelected && canChange) PrimaryCyan else TextWhite.copy(if (canChange) 0.5f else 0.2f),
+                            style = TextStyle(
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Black,
+                                letterSpacing = 0.5.sp,
+                                fontFamily = FontFamily.Monospace
+                            )
                         )
                         Text(
                             when (quality) {
@@ -2410,8 +2559,11 @@ private fun SoxrQualityCard(uiState: PlayerUiState, viewModel: PlayerViewModel) 
                                 SoxrQualityEnum.HIGH     -> "Recommended"
                                 SoxrQualityEnum.VERY_HIGH -> "Max quality"
                             },
-                            color = if (isSelected && canChange) PrimaryCyan.copy(0.7f) else TextWhite.copy(if (canChange) 0.45f else 0.15f),
-                            fontSize = 10.sp
+                            color = if (isSelected && canChange) PrimaryCyan.copy(0.6f) else TextWhite.copy(if (canChange) 0.35f else 0.1f),
+                            style = TextStyle(
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold
+                            )
                         )
                     }
                 }
@@ -2512,6 +2664,7 @@ private fun Float64Card(uiState: PlayerUiState, viewModel: PlayerViewModel) {
 
 @Composable
 private fun DitherCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
+    val haptic = LocalHapticFeedback.current
     val config = uiState.dsp.config
     val currentType = config.ditherType
     val isBypassed = config.bitPerfectEnabled && !config.bitPerfectUnbypassDithering
@@ -2554,7 +2707,8 @@ private fun DitherCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .horizontalScroll(rememberScrollState()),
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             types.forEach { type ->
@@ -2569,34 +2723,47 @@ private fun DitherCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
 
                 Box(
                     modifier = Modifier
-                        .widthIn(min = 52.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(background)
-                        .then(if (isSelected && canSelect) Modifier.border(1.dp, PrimaryCyan, RoundedCornerShape(10.dp)) else Modifier)
-                        .then(if (isSelected && canSelect) Modifier.shadow(elevation = 12.dp, shape = RoundedCornerShape(10.dp), ambientColor = PrimaryCyan.copy(0.2f), spotColor = PrimaryCyan.copy(0.2f)) else Modifier)
+                        .widthIn(min = 80.dp)
+                        .graphicsLayer {
+                            scaleX = if (isSelected && canSelect) 1.05f else 1f
+                            scaleY = if (isSelected && canSelect) 1.05f else 1f
+                        }
+                        .shadow(
+                            elevation = if (isSelected && canSelect) 12.dp else 0.dp,
+                            shape = RoundedCornerShape(18.dp),
+                            ambientColor = PrimaryCyan.copy(0.3f),
+                            spotColor = PrimaryCyan.copy(0.3f)
+                        )
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(
+                            if (isSelected && canSelect) Brush.verticalGradient(listOf(PrimaryCyan.copy(0.15f), Color.Black.copy(0.8f)))
+                            else Brush.verticalGradient(listOf(Color.White.copy(0.03f), Color.Transparent))
+                        )
+                        .border(
+                            width = 1.dp,
+                            brush = if (isSelected && canSelect) 
+                                Brush.verticalGradient(listOf(PrimaryCyan, PrimaryCyan.copy(0.4f)))
+                            else 
+                                Brush.verticalGradient(listOf(Color.White.copy(0.08f), Color.Transparent)),
+                            shape = RoundedCornerShape(18.dp)
+                        )
                         .clickable(enabled = canSelect) {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                             viewModel.setDitherType(type)
                         }
                         .padding(horizontal = 16.dp, vertical = 12.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    if (isSelected && canSelect) {
-                        Box(
-                            Modifier
-                                .align(Alignment.TopCenter)
-                                .width(16.dp)
-                                .height(2.dp)
-                                .background(PrimaryCyan.copy(0.5f), CircleShape)
-                        )
-                    }
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(
                             type.displayName.uppercase(),
-                            color = if (isSelected && canSelect) PrimaryCyan else TextWhite.copy(if (canSelect) 0.8f else 0.3f),
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            letterSpacing = 0.5.sp,
-                            fontFamily = FontFamily.Monospace
+                            color = if (isSelected && canSelect) PrimaryCyan else TextWhite.copy(if (canSelect) 0.5f else 0.2f),
+                            style = TextStyle(
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Black,
+                                letterSpacing = 0.5.sp,
+                                fontFamily = FontFamily.Monospace
+                            )
                         )
                         Text(
                             when (type) {
@@ -2605,8 +2772,11 @@ private fun DitherCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
                                 DitherType.HIGHPASS -> "Optimal"
                                 else -> ""
                             },
-                            color = if (isSelected && canSelect) Color.White.copy(0.8f) else TextWhite.copy(if (canSelect) 0.45f else 0.15f),
-                            fontSize = 10.sp
+                            color = if (isSelected && canSelect) PrimaryCyan.copy(0.6f) else TextWhite.copy(if (canSelect) 0.35f else 0.1f),
+                            style = TextStyle(
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold
+                            )
                         )
                     }
                 }
@@ -2881,7 +3051,10 @@ fun ReplayGainContent(
                 )
                 Spacer(Modifier.height(12.dp))
                 Row(
-                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 16.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     com.beatraxus.app.model.ReplayGainOption.entries.forEach { option ->
@@ -2905,7 +3078,9 @@ fun ReplayGainContent(
                 )
                 Spacer(Modifier.height(12.dp))
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     com.beatraxus.app.model.ReplayGainSource.entries.forEach { source ->
@@ -2958,17 +3133,27 @@ private fun LibraryStatItem(
 ) {
     Column(
         modifier = modifier
-            .clip(RoundedCornerShape(16.dp))
-            .background(Color.White.copy(0.04f))
-            .border(1.dp, Color.White.copy(0.06f), RoundedCornerShape(16.dp))
-            .padding(vertical = 14.dp),
+            .clip(RoundedCornerShape(20.dp))
+            .background(Color.White.copy(0.03f))
+            .border(
+                width = 0.8.dp,
+                brush = Brush.verticalGradient(
+                    listOf(iconColor.copy(alpha = 0.2f), Color.Transparent)
+                ),
+                shape = RoundedCornerShape(20.dp)
+            )
+            .padding(vertical = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
         Box(
             modifier = Modifier
-                .size(38.dp)
-                .glassIconBackground(backgroundColor.copy(alpha = 0.15f), CircleShape, backgroundColor.copy(alpha = 0.2f)),
+                .size(42.dp)
+                .glassIconBackground(
+                    backgroundColor = backgroundColor.copy(alpha = 0.08f),
+                    shape = CircleShape,
+                    borderColor = backgroundColor.copy(alpha = 0.15f)
+                ),
             contentAlignment = Alignment.Center
         ) {
             Icon(
@@ -2978,44 +3163,62 @@ private fun LibraryStatItem(
                 modifier = Modifier.size(20.dp)
             )
         }
-        Spacer(Modifier.height(10.dp))
+        Spacer(Modifier.height(12.dp))
         Text(
             text = count.toString(),
             color = Color.White,
-            fontSize = 17.sp,
-            fontWeight = FontWeight.Bold
+            style = TextStyle(
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Black,
+                fontFamily = FontFamily.Monospace
+            )
         )
         Text(
             text = label,
-            color = Color.White.copy(0.5f),
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Medium
+            color = Color.White.copy(0.45f),
+            style = TextStyle(
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 0.5.sp
+            )
         )
     }
 }
 
 @Composable
 fun LibraryContent(uiState: PlayerUiState, viewModel: PlayerViewModel, onShowInfo: () -> Unit) {
+    val haptic = LocalHapticFeedback.current
     Column(modifier = Modifier.fillMaxWidth()) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(14.dp))
+                .clip(RoundedCornerShape(16.dp))
                 .background(
-                    Brush.linearGradient(listOf(PremiumAccent.copy(0.14f), Color(0xFF0066FF).copy(0.10f)))
+                    Brush.linearGradient(
+                        listOf(PremiumAccent.copy(0.12f), Color(0xFF0066FF).copy(0.08f))
+                    )
                 )
                 .border(
-                    1.dp,
-                    Brush.linearGradient(listOf(PremiumAccent.copy(0.45f), Color(0xFF0066FF).copy(0.4f))),
-                    RoundedCornerShape(14.dp)
+                    0.8.dp,
+                    Brush.linearGradient(
+                        listOf(PremiumAccent.copy(0.4f), Color(0xFF0066FF).copy(0.3f))
+                    ),
+                    RoundedCornerShape(16.dp)
                 )
-                .clickable { viewModel.startFullScan() }
-                .padding(vertical = 10.dp),
+                .clickable { 
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    viewModel.startFullScan() 
+                }
+                .padding(vertical = 14.dp),
             contentAlignment = Alignment.Center
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Icon(Icons.Rounded.Sync, null, tint = PremiumAccent, modifier = Modifier.size(16.dp))
-                Text("Full Rescan Library", color = PremiumAccent, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Icon(Icons.Rounded.Sync, null, tint = PremiumAccent, modifier = Modifier.size(18.dp))
+                Text(
+                    "Full Rescan Library", 
+                    color = PremiumAccent, 
+                    style = TextStyle(fontWeight = FontWeight.Black, fontSize = 14.sp, letterSpacing = 0.5.sp)
+                )
             }
         }
 
@@ -3025,16 +3228,23 @@ fun LibraryContent(uiState: PlayerUiState, viewModel: PlayerViewModel, onShowInf
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(Color.White.copy(0.05f))
-                    .border(1.dp, Color.White.copy(0.1f), RoundedCornerShape(14.dp))
-                    .clickable { viewModel.quickScan() }
-                    .padding(vertical = 10.dp),
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(Color.White.copy(0.03f))
+                    .border(0.8.dp, Color.White.copy(0.08f), RoundedCornerShape(16.dp))
+                    .clickable { 
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        viewModel.quickScan() 
+                    }
+                    .padding(vertical = 12.dp),
                 contentAlignment = Alignment.Center
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Icon(Icons.Rounded.Search, null, tint = Color.White.copy(0.7f), modifier = Modifier.size(16.dp))
-                    Text("Quick Scan", color = Color.White.copy(0.8f), fontWeight = FontWeight.Medium, fontSize = 14.sp)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Icon(Icons.Rounded.Search, null, tint = Color.White.copy(0.6f), modifier = Modifier.size(18.dp))
+                    Text(
+                        "Quick Scan", 
+                        color = Color.White.copy(0.7f), 
+                        style = TextStyle(fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    )
                 }
             }
 
@@ -4371,43 +4581,58 @@ private fun WhatsNewSection(title: String, items: List<Pair<String, List<String>
 
 @Composable
 fun WhatsNewCard() {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = Color.White.copy(alpha = 0.03f)
-        ),
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .shadow(
+                elevation = 12.dp,
+                shape = RoundedCornerShape(26.dp),
+                ambientColor = Color.Black.copy(0.4f),
+                spotColor = Color.Black.copy(0.4f)
+            ),
+        shape = RoundedCornerShape(26.dp),
+        color = Color.Black.copy(alpha = 0.1f),
         border = BorderStroke(
-            1.dp,
-            Color.White.copy(0.08f)
+            0.6.dp,
+            Brush.linearGradient(
+                listOf(PremiumAccent.copy(0.2f), Color.White.copy(0.01f))
+            )
         )
     ) {
         Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
+            modifier = Modifier
+                .background(
+                    Brush.verticalGradient(
+                        listOf(PremiumAccent.copy(0.03f), Color.Transparent)
+                    )
+                )
+                .padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(18.dp)
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                horizontalArrangement = Arrangement.spacedBy(14.dp)
             ) {
                 Box(
                     modifier = Modifier
-                        .size(32.dp)
+                        .size(40.dp)
                         .glassIconBackground(
-                            backgroundColor = PremiumAccent.copy(alpha = 0.15f),
-                            shape = RoundedCornerShape(8.dp),
-                            borderColor = PremiumAccent.copy(alpha = 0.25f)
+                            backgroundColor = PremiumAccent.copy(alpha = 0.1f),
+                            shape = RoundedCornerShape(12.dp),
+                            borderColor = PremiumAccent.copy(alpha = 0.2f)
                         ),
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(Icons.Rounded.NewReleases, null, tint = PremiumAccent, modifier = Modifier.size(18.dp))
+                    Icon(Icons.Rounded.NewReleases, null, tint = PremiumAccent, modifier = Modifier.size(20.dp))
                 }
                 Text(
                     "WHAT'S NEW",
                     color = Color.White,
-                    fontWeight = FontWeight.ExtraBold,
-                    fontSize = 13.sp,
-                    letterSpacing = 1.sp
+                    style = TextStyle(
+                        fontWeight = FontWeight.Black,
+                        fontSize = 14.sp,
+                        letterSpacing = 1.2.sp
+                    )
                 )
             }
 
@@ -4519,84 +4744,101 @@ fun AboutContent() {
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         WhatsNewCard()
 
-        Box(
+        Surface(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(14.dp))
-                .background(
-                    Brush.linearGradient(
-                        listOf(
-                            PremiumAccent.copy(0.08f),
-                            Color(0xFF0066FF).copy(0.06f),
-                            Color.Transparent
+                .shadow(
+                    elevation = 12.dp,
+                    shape = RoundedCornerShape(26.dp),
+                    ambientColor = Color.Black.copy(0.4f),
+                    spotColor = Color.Black.copy(0.4f)
+                ),
+            shape = RoundedCornerShape(26.dp),
+            color = Color.Black.copy(alpha = 0.12f),
+            border = BorderStroke(
+                0.6.dp,
+                Brush.linearGradient(
+                    listOf(PremiumAccent.copy(0.25f), Color.White.copy(0.02f))
+                )
+            )
+        ) {
+            Box(
+                modifier = Modifier
+                    .background(
+                        Brush.linearGradient(
+                            listOf(
+                                PremiumAccent.copy(0.08f),
+                                Color(0xFF0066FF).copy(0.05f),
+                                Color.Transparent
+                            )
                         )
                     )
-                )
-                .border(
-                    1.dp,
-                    Brush.linearGradient(
-                        listOf(PremiumAccent.copy(0.25f), Color.White.copy(0.06f))
-                    ),
-                    RoundedCornerShape(14.dp)
-                )
-                .padding(20.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+                    .padding(24.dp)
             ) {
-                Column {
-                    Text(
-                        "Beatraxus Music player",
-                        color = Color.White,
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 0.2.sp
-                    )
-                    Spacer(Modifier.height(2.dp))
-                    Text("HarbertRaj", color = Color.White.copy(0.5f), fontSize = 12.sp)
-                    Spacer(Modifier.height(10.dp))
-                    Box(
-                        modifier = Modifier
-                            .clip(CircleShape)
-                            .background(
-                                Brush.horizontalGradient(
-                                    listOf(PremiumAccent.copy(0.18f), Color(0xFF0066FF).copy(0.14f))
-                                )
-                            )
-                            .border(1.dp, PremiumAccent.copy(0.3f), CircleShape)
-                            .padding(horizontal = 10.dp, vertical = 4.dp)
-                    ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column {
                         Text(
-                            "v$versionName",
-                            color = PremiumAccent,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.SemiBold
+                            "BEATRAXUS",
+                            color = Color.White,
+                            style = TextStyle(
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Black,
+                                letterSpacing = 2.sp
+                            )
+                        )
+                        Text(
+                            "Professional Audio Engine",
+                            color = Color.White.copy(0.4f),
+                            style = TextStyle(fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                        )
+                        
+                        Spacer(Modifier.height(14.dp))
+                        
+                        Surface(
+                            color = PremiumAccent.copy(0.12f),
+                            shape = CircleShape,
+                            border = BorderStroke(1.dp, PremiumAccent.copy(0.3f))
+                        ) {
+                            Text(
+                                "VERSION $versionName",
+                                color = PremiumAccent,
+                                style = TextStyle(
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Black,
+                                    letterSpacing = 1.sp
+                                ),
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
+
+                    val haptic = LocalHapticFeedback.current
+                    IconButton(
+                        onClick = { 
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            uriHandler.openUri("https://github.com/Harbertraj/Beatraxus") 
+                        },
+                        modifier = Modifier
+                            .size(52.dp)
+                            .glassIconBackground(
+                                backgroundColor = Color.White.copy(0.05f),
+                                shape = RoundedCornerShape(16.dp),
+                                borderColor = Color.White.copy(0.1f)
+                            )
+                    ) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_github),
+                            contentDescription = "GitHub",
+                            tint = Color.White,
+                            modifier = Modifier.size(24.dp)
                         )
                     }
                 }
-
-                IconButton(
-                    onClick = { uriHandler.openUri("https://github.com/Harbertraj/Beatraxus") },
-                    modifier = Modifier
-                        .align(Alignment.Top)
-                        .size(44.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(Color.White.copy(0.07f))
-                ) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_github),
-                        contentDescription = "GitHub",
-                        tint = Color.White,
-                        modifier = Modifier.size(22.dp)
-                    )
-                }
             }
-
-
-
-
         }
     }
 }
@@ -4611,114 +4853,140 @@ fun FullScanPopup(progress: Float, count: Int, albums: Int, artists: Int, onDism
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.45f)),
+                .background(Color.Black.copy(alpha = 0.65f)),
             contentAlignment = Alignment.Center
         ) {
-            Box(
+            Surface(
                 modifier = Modifier
-                    .fillMaxWidth(0.9f)
-                    .wrapContentHeight()
+                    .fillMaxWidth(0.88f)
                     .shadow(
-                        elevation = 28.dp,
-                        shape = RoundedCornerShape(28.dp),
-                        ambientColor = Color(0xFF00F2FF).copy(0.15f),
-                        spotColor = Color(0xFF00F2FF).copy(0.2f)
+                        elevation = 40.dp,
+                        shape = RoundedCornerShape(32.dp),
+                        ambientColor = PremiumAccent.copy(0.2f),
+                        spotColor = PremiumAccent.copy(0.2f)
+                    ),
+                shape = RoundedCornerShape(32.dp),
+                color = Color(0xFF0E1116),
+                border = BorderStroke(
+                    0.8.dp,
+                    Brush.verticalGradient(
+                        listOf(PremiumAccent.copy(0.4f), Color.White.copy(0.02f))
                     )
-                    .clip(RoundedCornerShape(28.dp))
-                    .background(
-                        Brush.verticalGradient(
-                            listOf(Color(0xFF131B2A), Color(0xFF0A0E18))
-                        )
-                    )
-                    .border(
-                        1.dp,
-                        Brush.verticalGradient(
-                            listOf(Color(0xFF00F2FF).copy(0.3f), Color.White.copy(0.05f))
-                        ),
-                        RoundedCornerShape(28.dp)
-                    )
-                    .padding(24.dp),
-                contentAlignment = Alignment.Center
+                )
             ) {
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier.verticalScroll(rememberScrollState())
+                    modifier = Modifier
+                        .background(
+                            Brush.radialGradient(
+                                colors = listOf(PremiumAccent.copy(0.05f), Color.Transparent),
+                                radius = 400f
+                            )
+                        )
+                        .padding(28.dp)
+                        .verticalScroll(rememberScrollState())
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(48.dp)
-                            .shadow(16.dp, CircleShape, ambientColor = PremiumAccent.copy(0.4f), spotColor = PremiumAccent.copy(0.4f))
-                            .clip(CircleShape)
-                            .background(Brush.radialGradient(listOf(PremiumAccent.copy(0.25f), Color.Transparent))),
+                            .size(56.dp)
+                            .glassIconBackground(
+                                backgroundColor = PremiumAccent.copy(alpha = 0.12f),
+                                shape = CircleShape,
+                                borderColor = PremiumAccent.copy(alpha = 0.25f)
+                            ),
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(Icons.Rounded.LibraryMusic, null, tint = PremiumAccent, modifier = Modifier.size(24.dp))
+                        Icon(
+                            Icons.Rounded.LibraryMusic,
+                            null,
+                            tint = PremiumAccent,
+                            modifier = Modifier.size(28.dp)
+                        )
                     }
 
-                    Spacer(Modifier.height(12.dp))
+                    Spacer(Modifier.height(18.dp))
 
                     Text(
-                        "Syncing Music",
+                        "Synchronizing Library",
                         color = Color.White,
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 0.3.sp
+                        style = TextStyle(
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.Black,
+                            letterSpacing = 0.5.sp
+                        )
                     )
 
-                    Spacer(Modifier.height(24.dp))
+                    Spacer(Modifier.height(28.dp))
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceEvenly
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        ScanStatItem(Icons.Rounded.MusicNote, count.toString(), "Songs", Color(0xFFFF4081))
-                        ScanStatItem(Icons.Rounded.Album, albums.toString(), "Albums", Color(0xFFB2FF59))
-                        ScanStatItem(Icons.Rounded.Person, artists.toString(), "Artists", Color(0xFF7C4DFF))
+                        ScanStatItem(Icons.Rounded.MusicNote, count.toString(), "Tracks", Color(0xFFFF4081), Modifier.weight(1f))
+                        ScanStatItem(Icons.Rounded.Album, albums.toString(), "Albums", Color(0xFF00E5FF), Modifier.weight(1f))
+                        ScanStatItem(Icons.Rounded.Person, artists.toString(), "Artists", Color(0xFF7C4DFF), Modifier.weight(1f))
                     }
 
-                    Spacer(Modifier.height(24.dp))
+                    Spacer(Modifier.height(32.dp))
 
-                    LinearProgressIndicator(
-                        progress = { progress },
-                        modifier = Modifier.fillMaxWidth().height(6.dp).clip(CircleShape),
-                        color = PremiumAccent,
-                        trackColor = Color.White.copy(0.1f)
-                    )
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator(
+                                progress = { progress },
+                                modifier = Modifier.size(100.dp),
+                                color = PremiumAccent,
+                                strokeWidth = 8.dp,
+                                trackColor = Color.White.copy(0.05f),
+                                strokeCap = androidx.compose.ui.graphics.StrokeCap.Round
+                            )
+                            Text(
+                                "${(progress * 100).toInt()}%",
+                                color = TextWhite,
+                                style = TextStyle(
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.Black,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            )
+                        }
+                    }
 
-                    Spacer(Modifier.height(12.dp))
-
-                    Text(
-                        "${(progress * 100).toInt()}%",
-                        color = PremiumAccent,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 14.sp
-                    )
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(Modifier.height(28.dp))
+                    
+                    TextButton(
+                        onClick = onDismiss,
+                        colors = ButtonDefaults.textButtonColors(contentColor = Color.White.copy(0.4f))
+                    ) {
+                        Text("CANCEL SCAN", style = TextStyle(fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp, fontSize = 12.sp))
+                    }
                 }
             }
-
-
-
-
         }
     }
 }
 
 
 @Composable
-fun ScanStatItem(icon: ImageVector, value: String, label: String, color: Color) {
+fun ScanStatItem(icon: ImageVector, value: String, label: String, color: Color, modifier: Modifier = Modifier) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier
-            .clip(RoundedCornerShape(14.dp))
-            .background(color.copy(alpha = 0.08f))
-            .border(1.dp, color.copy(alpha = 0.2f), RoundedCornerShape(14.dp))
-            .padding(horizontal = 12.dp, vertical = 10.dp)
+        modifier = modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(color.copy(alpha = 0.06f))
+            .border(0.8.dp, color.copy(alpha = 0.15f), RoundedCornerShape(16.dp))
+            .padding(vertical = 12.dp)
     ) {
-        Icon(icon, null, tint = color, modifier = Modifier.size(20.dp))
-        Spacer(Modifier.height(4.dp))
-        Text(value, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-        Text(label, color = Color.White.copy(0.45f), fontSize = 10.sp)
+        Icon(icon, null, tint = color, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.height(6.dp))
+        Text(
+            value, 
+            color = Color.White, 
+            style = TextStyle(fontWeight = FontWeight.Black, fontSize = 15.sp, fontFamily = FontFamily.Monospace)
+        )
+        Text(label, color = Color.White.copy(0.4f), style = TextStyle(fontWeight = FontWeight.Medium, fontSize = 10.sp))
     }
 }
 
@@ -4734,29 +5002,39 @@ fun SettingsSection(
     accentColor: Color = PrimaryCyan,
     content: @Composable ColumnScope.() -> Unit
 ) {
-    val alpha by animateFloatAsState(if (enabled) 1f else 0.45f, label = "alpha")
+    val alpha by animateFloatAsState(if (enabled) 1f else 0.4f, label = "alpha")
 
-    Card(
-        modifier = Modifier.fillMaxWidth().graphicsLayer(alpha = alpha).shadow(
-            elevation = 8.dp,
-            shape = RoundedCornerShape(24.dp),
-            ambientColor = Color.Black.copy(0.35f),
-            spotColor = Color.Black.copy(0.35f)
-        ),
-        shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = CardSurface.copy(alpha = 0.85f)
-        ),
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .graphicsLayer(alpha = alpha)
+            .shadow(
+                elevation = if (isActive) 12.dp else 4.dp,
+                shape = RoundedCornerShape(26.dp),
+                ambientColor = Color.Black.copy(0.5f),
+                spotColor = Color.Black.copy(0.5f)
+            ),
+        shape = RoundedCornerShape(26.dp),
+        color = Color.Black.copy(alpha = 0.12f),
         border = BorderStroke(
-            1.2.dp,
-            if (isActive) accentColor.copy(0.3f) else accentColor.copy(0.15f)
+            0.6.dp,
+            Brush.linearGradient(
+                listOf(
+                    accentColor.copy(alpha = if (isActive) 0.5f else 0.15f),
+                    Color.White.copy(alpha = 0.02f)
+                )
+            )
         )
     ) {
         Column(
             modifier = Modifier
-                .background(accentColor.copy(alpha = 0.04f))
-                .padding(horizontal = 16.dp, vertical = 14.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+                .background(
+                    Brush.verticalGradient(
+                        listOf(accentColor.copy(alpha = 0.03f), Color.Transparent)
+                    )
+                )
+                .padding(horizontal = 20.dp, vertical = 18.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -4766,14 +5044,14 @@ fun SettingsSection(
                 Row(
                     modifier = Modifier.weight(1f),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                    horizontalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(40.dp)
+                            .size(44.dp)
                             .glassIconBackground(
-                                backgroundColor = accentColor.copy(alpha = 0.1f),
-                                shape = RoundedCornerShape(12.dp),
+                                backgroundColor = accentColor.copy(alpha = 0.08f),
+                                shape = RoundedCornerShape(14.dp),
                                 borderColor = accentColor.copy(alpha = 0.2f)
                             ),
                         contentAlignment = Alignment.Center
@@ -4782,17 +5060,17 @@ fun SettingsSection(
                             icon,
                             null,
                             tint = accentColor,
-                            modifier = Modifier.size(20.dp)
+                            modifier = Modifier.size(22.dp)
                         )
 
                         if (statusDot != null) {
                             Box(
                                 modifier = Modifier
                                     .align(Alignment.BottomEnd)
-                                    .offset(x = 2.dp, y = 2.dp)
-                                    .size(8.dp)
-                                    .background(Color(0xFF121212), CircleShape)
-                                    .padding(1.2.dp)
+                                    .offset(x = 1.dp, y = 1.dp)
+                                    .size(10.dp)
+                                    .background(Color(0xFF0A0A0C), CircleShape)
+                                    .padding(1.5.dp)
                             ) {
                                 Box(
                                     modifier = Modifier
@@ -4804,24 +5082,27 @@ fun SettingsSection(
                     }
                     Column {
                         Text(
-                            title,
+                            title.uppercase(),
                             color = TextWhite,
-                            fontSize = 17.sp,
-                            fontWeight = FontWeight.SemiBold
+                            style = TextStyle(
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Black,
+                                letterSpacing = 1.2.sp
+                            )
                         )
                         if (subtitle != null) {
                             Text(
                                 subtitle,
-                                color = TextWhite.copy(alpha = 0.7f),
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Normal
+                                color = TextWhite.copy(alpha = 0.45f),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium
                             )
                         }
                     }
                 }
                 if (headerActions != null) {
                     headerActions()
-                } else null
+                }
             }
             content()
         }
@@ -4837,34 +5118,55 @@ fun OutputModeButton(
     enabled: Boolean = true,
     modifier: Modifier = Modifier
 ) {
-    val background = if (selected) Color.Black else Color(0xFF1A232D)
-    val borderStroke = if (selected) {
-        BorderStroke(1.dp, PrimaryCyan)
-    } else {
-        BorderStroke(1.dp, Color.White.copy(0.05f))
-    }
+    val haptic = LocalHapticFeedback.current
+    val scale by animateFloatAsState(if (selected) 1.05f else 1f, label = "scale")
 
     Box(
         modifier = modifier
-            .then(if (selected) Modifier.shadow(elevation = 12.dp, shape = RoundedCornerShape(14.dp), ambientColor = PrimaryCyan.copy(0.2f), spotColor = PrimaryCyan.copy(0.2f)) else Modifier)
-            .clip(RoundedCornerShape(14.dp))
-            .background(background)
-            .border(borderStroke, RoundedCornerShape(14.dp))
-            .clickable(enabled = enabled, onClick = onClick)
-            .padding(vertical = 10.dp),
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
+            .shadow(
+                elevation = if (selected) 12.dp else 0.dp,
+                shape = CircleShape,
+                ambientColor = PrimaryCyan.copy(0.3f),
+                spotColor = PrimaryCyan.copy(0.3f)
+            )
+            .clip(CircleShape)
+            .background(
+                if (selected) Brush.verticalGradient(listOf(PrimaryCyan.copy(0.15f), Color.Black.copy(0.8f)))
+                else Brush.verticalGradient(listOf(Color.White.copy(0.03f), Color.Transparent))
+            )
+            .border(
+                width = 1.dp,
+                brush = if (selected) 
+                    Brush.verticalGradient(listOf(PrimaryCyan, PrimaryCyan.copy(0.4f)))
+                else 
+                    Brush.verticalGradient(listOf(Color.White.copy(0.08f), Color.Transparent)),
+                shape = CircleShape
+            )
+            .clickable(enabled = enabled) { 
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                onClick() 
+            }
+            .padding(vertical = 12.dp, horizontal = 4.dp),
         contentAlignment = Alignment.Center
     ) {
         Text(
             text = text,
             color = when {
-                !enabled -> TextWhite.copy(0.2f)
+                !enabled -> TextWhite.copy(0.15f)
                 selected -> PrimaryCyan
-                else -> TextWhite.copy(0.7f)
+                else -> TextWhite.copy(0.5f)
             },
-            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-            fontSize = 13.sp,
-            letterSpacing = 0.2.sp,
-            fontFamily = FontFamily.Monospace
+            style = TextStyle(
+                fontWeight = if (selected) FontWeight.Black else FontWeight.Bold,
+                fontSize = 12.sp,
+                letterSpacing = 0.5.sp,
+                fontFamily = FontFamily.Monospace
+            ),
+            maxLines = 1
         )
     }
 }
@@ -4928,6 +5230,8 @@ private fun DspSliderRow(
     onValueChange: (Float) -> Unit,
     onValueClick: () -> Unit = {}
 ) {
+    val haptic = LocalHapticFeedback.current
+    
     Column {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -4935,41 +5239,56 @@ private fun DspSliderRow(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                title,
-                color = if (enabled) TextWhite else TextWhite.copy(alpha = 0.4f),
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Medium
+                title.uppercase(),
+                color = if (enabled) TextWhite.copy(0.8f) else TextWhite.copy(alpha = 0.2f),
+                style = TextStyle(
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Black,
+                    letterSpacing = 1.sp
+                )
             )
             Box(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(PrimaryCyan.copy(alpha = if (enabled) 0.15f else 0.06f))
-                    .clickable(enabled = enabled) { onValueClick() }
-                    .padding(horizontal = 10.dp, vertical = 3.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(PrimaryCyan.copy(alpha = if (enabled) 0.1f else 0.03f))
+                    .clickable(enabled = enabled) { 
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        onValueClick() 
+                    }
+                    .padding(horizontal = 10.dp, vertical = 4.dp)
             ) {
                 Text(
                     valueText(value),
-                    color = PrimaryCyan.copy(alpha = if (enabled) 1f else 0.35f),
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold
+                    color = PrimaryCyan.copy(alpha = if (enabled) 1f else 0.2f),
+                    style = TextStyle(
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Black,
+                        fontFamily = FontFamily.Monospace
+                    )
                 )
             }
         }
+        
+        Spacer(Modifier.height(6.dp))
+        
         Slider(
             value = value,
-            onValueChange = onValueChange,
+            onValueChange = {
+                onValueChange(it)
+                // Subtle tick-like haptic? Maybe too much. Let's keep it simple.
+            },
             valueRange = range,
             steps = steps,
             enabled = enabled,
             colors = SliderDefaults.colors(
                 activeTrackColor = PrimaryCyan,
-                inactiveTrackColor = Color(0xFF1E2B36),
-                thumbColor = PrimaryCyan,
-                disabledActiveTrackColor = PrimaryCyan.copy(alpha = 0.2f),
-                disabledInactiveTrackColor = Color(0xFF1E2B36).copy(alpha = 0.5f),
-                disabledThumbColor = PrimaryCyan.copy(alpha = 0.28f)
+                inactiveTrackColor = Color.White.copy(0.08f),
+                thumbColor = Color.White,
+                disabledActiveTrackColor = PrimaryCyan.copy(0.2f),
+                disabledInactiveTrackColor = Color.White.copy(0.02f),
+                disabledThumbColor = Color.White.copy(0.15f)
             ),
-            modifier = Modifier.padding(vertical = 8.dp)
+            modifier = Modifier.height(34.dp)
         )
     }
 }

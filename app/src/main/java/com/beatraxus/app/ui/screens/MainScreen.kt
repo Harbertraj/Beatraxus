@@ -4321,7 +4321,7 @@ fun HomeScreen(
                                 horizontalArrangement = Arrangement.spacedBy(16.dp)
                             ) {
                                 itemsIndexed(recentlyAddedSongs, key = { _, song -> "recent_${song.id}" }) { index, song ->
-                                    HomeSongCard(song) {
+                                    HomeSongItem(song) {
                                         viewModel.playList(recentlyAddedSongs, index)
                                     }
                                 }
@@ -4339,7 +4339,7 @@ fun HomeScreen(
                                 horizontalArrangement = Arrangement.spacedBy(16.dp)
                             ) {
                                 itemsIndexed(favoriteSongs, key = { _, song -> "fav_${song.id}" }) { index, song ->
-                                    HomeSongCard(song) {
+                                    HomeSongItem(song) {
                                         viewModel.playList(favoriteSongs, index)
                                     }
                                 }
