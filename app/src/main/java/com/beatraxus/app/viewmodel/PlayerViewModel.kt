@@ -1324,10 +1324,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun removeNextcloudAccount(email: String) {
+    fun removeNextcloudAccount(serverUrl: String, username: String) {
         viewModelScope.launch {
-            nextcloudAccountRepository.removeAccount(email)
-            cleanupCloudAccountData(email, SongSource.NEXTCLOUD)
+            nextcloudAccountRepository.removeAccount(serverUrl, username)
+            cleanupCloudAccountData(username, SongSource.NEXTCLOUD)
         }
     }
 
@@ -1387,23 +1387,6 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
     }
-
-    fun removeBoxAccount(email: String) {
-        viewModelScope.launch {
-            boxAccountRepository.removeAccount(email)
-            songDao.deleteSongsByBoxAccount(email.lowercase())
-            _songs.update { current -> current.filterNot { it.boxAccountEmail?.lowercase() == email.lowercase() } }
-        }
-    }
-
-    fun removeNextcloudAccount(serverUrl: String, username: String) {
-        viewModelScope.launch {
-            nextcloudAccountRepository.removeAccount(serverUrl, username)
-            songDao.deleteSongsByNextcloudAccount(username.lowercase())
-            _songs.update { current -> current.filterNot { it.nextcloudAccountEmail?.lowercase() == username.lowercase() } }
-        }
-    }
-
 
     private val enrichmentJobs = mutableMapOf<String, kotlinx.coroutines.Job>()
     private val activeEnrichmentCount = AtomicInteger(0)
