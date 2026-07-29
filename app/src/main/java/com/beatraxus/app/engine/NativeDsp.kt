@@ -96,6 +96,10 @@ class NativeDsp : AutoCloseable {
         if (nativeHandle != 0L) nSetHrtfMode(nativeHandle, mode)
     }
 
+    fun setSpatialUiMode(mode: Int) = lock.readLock().withLock {
+        if (nativeHandle != 0L) nSetSpatialUiMode(nativeHandle, mode)
+    }
+
     fun setSoundStageNodePosition(bandIdx: Int, azimuth: Float, elevation: Float, distance: Float) = lock.readLock().withLock {
         if (nativeHandle != 0L) nSetSoundStageNodePosition(nativeHandle, bandIdx, azimuth, elevation, distance)
     }
@@ -106,6 +110,10 @@ class NativeDsp : AutoCloseable {
 
     fun setSoundStageCenterLock(amount: Float) = lock.readLock().withLock {
         if (nativeHandle != 0L) nSetSoundStageCenterLock(nativeHandle, amount)
+    }
+
+    fun setAudio3DStageParams(width: Float, depth: Float, height: Float, distance: Float, centerFocus: Float, roomReflections: Float) = lock.readLock().withLock {
+        if (nativeHandle != 0L) nSetAudio3DStageParams(nativeHandle, width, depth, height, distance, centerFocus, roomReflections)
     }
 
     fun setCrossfeed(enabled: Boolean, level: Float) = lock.readLock().withLock {
@@ -334,9 +342,11 @@ class NativeDsp : AutoCloseable {
     private external fun nSetSpatialEnabled(handle: Long, enabled: Boolean)
     private external fun nSetSpatialIntensity(handle: Long, intensity: Float)
     private external fun nSetHrtfMode(handle: Long, mode: Int)
+    private external fun nSetSpatialUiMode(handle: Long, mode: Int)
     private external fun nSetSoundStageNodePosition(handle: Long, bandIdx: Int, az: Float, el: Float, dist: Float)
     private external fun nSetSoundStageWidth(handle: Long, width: Float)
     private external fun nSetSoundStageCenterLock(handle: Long, amount: Float)
+    private external fun nSetAudio3DStageParams(handle: Long, width: Float, depth: Float, height: Float, distance: Float, centerFocus: Float, roomReflections: Float)
     private external fun nSetCrossfeed(handle: Long, enabled: Boolean, level: Float)
     private external fun nSetReverb(handle: Long, amount: Float)
     private external fun nSetReverbType(handle: Long, type: Int)

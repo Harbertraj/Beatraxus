@@ -1051,6 +1051,7 @@ class Audio3DStageEngine {
     double targetCenterLock = 0.0, curCenterLock = 0.0;
     double targetSpatialIntensity = 1.0, curSpatialIntensity = 1.0;
     int hrtfMode = 0; // 0=Natural, 1=Natural Wide, 2=Cinematic, 3=Studio
+    int spatialUiMode = 0; // 0=Modern, 1=Classic
     bool engineEnabled = false;
     int currentSampleRate = 48000;
 
@@ -1088,6 +1089,7 @@ public:
     void setCenterLock(double centerLock) { targetCenterLock = std::clamp(centerLock, 0.0, 1.0); }
     void setSpatialIntensity(double intensity) { targetSpatialIntensity = std::clamp(intensity, 0.0, 1.0); }
     void setHrtfMode(int mode) { hrtfMode = std::clamp(mode, 0, 3); }
+    void setSpatialUiMode(int mode) { spatialUiMode = mode; }
 
     void setBandPosition(int index, double azimuthDeg, double elevationDeg, double distanceM) {
         if (index < 0 || index >= NUM_BANDS) return;
@@ -1104,141 +1106,139 @@ public:
         curCenterLock += (targetCenterLock - curCenterLock) * smoothCoeff;
         curSpatialIntensity += (targetSpatialIntensity - curSpatialIntensity) * smoothCoeff;
 
-        double bandL[NUM_BANDS], bandR[NUM_BANDS];
-        crossover.split(left, right, bandL, bandR);
+        if (spatialUiMode == 1) {
+            // Classic Mode: treated as two independent speakers (L and R)
+            double l0 = left, r0 = 0.0;
+            processBand(0, l0, r0, smoothCoeff);
+            double l1 = 0.0, r1 = right;
+            processBand(1, l1, r1, smoothCoeff);
+            left = l0 + l1;
+            right = r0 + r1;
+        } else {
+            // Modern Mode: 8-band crossover
+            double bandL[NUM_BANDS], bandR[NUM_BANDS];
+            crossover.split(left, right, bandL, bandR);
+            double outSumL = 0.0, outSumR = 0.0;
+            for (int i = 0; i < NUM_BANDS; i++) {
+                processBand(i, bandL[i], bandR[i], smoothCoeff);
+                outSumL += bandL[i];
+                outSumR += bandR[i];
+            }
+            left = outSumL;
+            right = outSumR;
+        }
+    }
 
-        double outSumL = 0.0, outSumR = 0.0;
+private:
+    void processBand(int i, double& bL, double& bR, double smoothCoeff) {
+        BandSpatialState& s = bands[i];
 
-        for (int i = 0; i < NUM_BANDS; i++) {
-            BandSpatialState& s = bands[i];
+        // 1. Parameter Smoothing
+        s.curAz += (s.targetAz - s.curAz) * smoothCoeff;
+        s.curEl += (s.targetEl - s.curEl) * smoothCoeff;
+        s.curDist += (s.targetDist - s.curDist) * smoothCoeff;
 
-            // 1. Parameter Smoothing
-            s.curAz += (s.targetAz - s.curAz) * smoothCoeff;
-            s.curEl += (s.targetEl - s.curEl) * smoothCoeff;
-            s.curDist += (s.targetDist - s.curDist) * smoothCoeff;
+        // 2. Width Expansion (Independent of 3D Pos)
+        double mid = (bL + bR) * 0.5;
+        double side = (bL - bR) * 0.5;
+        double focusedSide = (side * curWidth) * (1.0 - curCenterLock) + (side * curCenterLock);
+        bL = mid + focusedSide;
+        bR = mid - focusedSide;
 
-            double bL = bandL[i];
-            double bR = bandR[i];
+        // 3. 3D Spatialization (Apply only if Intensity > 0)
+        if (curSpatialIntensity > 0.001) {
+            double azRad = (s.curAz - 90.0) * M_PI / 180.0;
+            double cosAz = std::cos(azRad); // Positive = Right, Negative = Left
+            double sinAz = std::sin(azRad); // Front/Back factor
 
-            // 2. Width Expansion (Independent of 3D Pos)
-            double mid = (bL + bR) * 0.5;
-            double side = (bL - bR) * 0.5;
-            double focusedSide = (side * curWidth) * (1.0 - curCenterLock) + (side * curCenterLock);
-            bL = mid + focusedSide;
-            bR = mid - focusedSide;
+            // a. Equal-Power Panning (Inter-aural Level Difference - ILD)
+            double panL = std::sqrt(std::max(0.0, (1.0 - cosAz) * 0.5));
+            double panR = std::sqrt(std::max(0.0, (1.0 + cosAz) * 0.5));
 
-            // 3. 3D Spatialization (Apply only if Intensity > 0)
-            if (curSpatialIntensity > 0.001) {
-                double azRad = (s.curAz - 90.0) * M_PI / 180.0;
-                double cosAz = std::cos(azRad); // Positive = Right, Negative = Left
-                double sinAz = std::sin(azRad); // Front/Back factor
+            double mono = (bL + bR) * 0.5;
+            double spatialL = mono * panL;
+            double spatialR = mono * panR;
 
-                // a. Equal-Power Panning (Inter-aural Level Difference - ILD)
-                double panL = std::sqrt(std::max(0.0, (1.0 - cosAz) * 0.5));
-                double panR = std::sqrt(std::max(0.0, (1.0 + cosAz) * 0.5));
+            // b. Inter-aural Time Difference (ITD)
+            double itdMaxSamples = 0.00066 * currentSampleRate;
+            double itdSamples = cosAz * itdMaxSamples;
 
-                double mono = (bL + bR) * 0.5;
-                double spatialL = mono * panL;
-                double spatialR = mono * panR;
+            s.itdBufL[s.itdWritePos] = spatialL;
+            s.itdBufR[s.itdWritePos] = spatialR;
 
-                // b. Inter-aural Time Difference (ITD)
-                // Head is ~17.5cm wide -> max ITD is ~0.66ms.
-                double itdMaxSamples = 0.00066 * currentSampleRate;
-                double itdSamples = cosAz * itdMaxSamples; // Positive -> sound from right
+            auto getInterpolated = [](const std::vector<double>& buf, double delay, size_t writePos, size_t size) -> double {
+                double readPos = (double)writePos + (double)size - delay;
+                int i0 = (int)std::floor(readPos) % (int)size;
+                int i1 = (i0 + 1) % (int)size;
+                double frac = readPos - std::floor(readPos);
+                return buf[i0] * (1.0 - frac) + buf[i1] * frac;
+            };
 
-                s.itdBufL[s.itdWritePos] = spatialL;
-                s.itdBufR[s.itdWritePos] = spatialR;
+            if (itdSamples >= 0) {
+                spatialL = getInterpolated(s.itdBufL, itdSamples, s.itdWritePos, s.itdSize);
+            } else {
+                spatialR = getInterpolated(s.itdBufR, -itdSamples, s.itdWritePos, s.itdSize);
+            }
+            s.itdWritePos = (s.itdWritePos + 1) % s.itdSize;
 
-                auto getInterpolated = [](const std::vector<double>& buf, double delay, size_t writePos, size_t size) -> double {
-                    double readPos = (double)writePos + (double)size - delay;
-                    int i0 = (int)std::floor(readPos) % (int)size;
-                    int i1 = (i0 + 1) % (int)size;
-                    double frac = readPos - std::floor(readPos);
-                    return buf[i0] * (1.0 - frac) + buf[i1] * frac;
-                };
-
-                if (itdSamples >= 0) { // Sound from RIGHT, delay LEFT ear
-                    spatialL = getInterpolated(s.itdBufL, itdSamples, s.itdWritePos, s.itdSize);
-                } else { // Sound from LEFT, delay RIGHT ear
-                    spatialR = getInterpolated(s.itdBufR, -itdSamples, s.itdWritePos, s.itdSize);
-                }
-                s.itdWritePos = (s.itdWritePos + 1) % s.itdSize;
-
-                // c. Spectral Cues (HRTF Shadowing & Pinna Notches)
-                // Posterior Cue: if sound is behind (sinAz > 0), apply muffling.
-                // Note: azimuth 0 is front (sinAz = -1), 180 is back (sinAz = 1).
-                double backFactor = std::clamp((sinAz + 1.0) * 0.5, 0.0, 1.0); // 0 (front) to 1 (back)
-
-                if (backFactor > 0.01) {
-                    double mufflingDb = -6.0 * backFactor;
-                    double notchDb = -12.0 * backFactor;
-
-                    // Shadowing: High-shelf at 4kHz
-                    s.hrtfL[0].setHighShelf(currentSampleRate, 4000.0, mufflingDb, 0.7);
-                    s.hrtfR[0].setHighShelf(currentSampleRate, 4000.0, mufflingDb, 0.7);
-
-                    // Pinna Notch: 6.5kHz (universal "behind" cue)
-                    s.hrtfL[1].setPeaking(currentSampleRate, 6500.0, notchDb, 4.0);
-                    s.hrtfR[1].setPeaking(currentSampleRate, 6500.0, notchDb, 4.0);
-                } else {
-                    s.hrtfL[0].reset(); s.hrtfR[0].reset();
-                    s.hrtfL[1].reset(); s.hrtfR[1].reset();
-                }
-
-                // Elevation Cue: Higher frequency tilt for "up", lower for "down"
-                double elFactor = s.curEl / 90.0; // -1 (down) to 1 (up)
-                if (std::abs(elFactor) > 0.01) {
-                    double elDb = 3.0 * elFactor;
-                    s.elFilterL.setHighShelf(currentSampleRate, 3000.0, elDb, 0.7);
-                    s.elFilterR.setHighShelf(currentSampleRate, 3000.0, elDb, 0.7);
-                } else {
-                    s.elFilterL.reset(); s.elFilterR.reset();
-                }
-
-                s.elFilterL.processSingle(spatialL, false);
-                s.elFilterR.processSingle(spatialR, true);
-
-                s.hrtfL[0].processSingle(spatialL, false);
-                s.hrtfR[0].processSingle(spatialR, true);
-                s.hrtfL[1].processSingle(spatialL, false);
-                s.hrtfR[1].processSingle(spatialR, true);
-
-                // d. Distance Falloff
-                double distGain = 1.0 / std::pow(s.curDist, 0.7);
-                spatialL *= distGain;
-                spatialR *= distGain;
-
-                // e. Air Absorption
-                double lpCoeff = std::clamp(1.0 - (s.curDist - 1.0) * 0.04, 0.2, 1.0);
-                s.lpStateL += (spatialL - s.lpStateL) * lpCoeff;
-                s.lpStateR += (spatialR - s.lpStateR) * lpCoeff;
-                spatialL = s.lpStateL;
-                spatialR = s.lpStateR;
-
-                // f. Depth Delay
-                double depthT = std::clamp((s.curDist - 0.3) / 10.0, 0.0, 1.0);
-                int delaySamples = (int)(depthT * 0.02 * currentSampleRate);
-
-                s.delayL[s.writePos] = spatialL;
-                s.delayR[s.writePos] = spatialR;
-                size_t readPos = (s.writePos + s.delaySize - delaySamples) % s.delaySize;
-
-                spatialL = s.delayL[readPos];
-                spatialR = s.delayR[readPos];
-                s.writePos = (s.writePos + 1) % s.delaySize;
-
-                // Blend spatialized vs width-expanded signal
-                bL = bL * (1.0 - curSpatialIntensity) + spatialL * curSpatialIntensity;
-                bR = bR * (1.0 - curSpatialIntensity) + spatialR * curSpatialIntensity;
+            // c. Spectral Cues
+            double backFactor = std::clamp((sinAz + 1.0) * 0.5, 0.0, 1.0);
+            if (backFactor > 0.01) {
+                double mufflingDb = -6.0 * backFactor;
+                double notchDb = -12.0 * backFactor;
+                s.hrtfL[0].setHighShelf(currentSampleRate, 4000.0, mufflingDb, 0.7);
+                s.hrtfR[0].setHighShelf(currentSampleRate, 4000.0, mufflingDb, 0.7);
+                s.hrtfL[1].setPeaking(currentSampleRate, 6500.0, notchDb, 4.0);
+                s.hrtfR[1].setPeaking(currentSampleRate, 6500.0, notchDb, 4.0);
+            } else {
+                s.hrtfL[0].reset(); s.hrtfR[0].reset();
+                s.hrtfL[1].reset(); s.hrtfR[1].reset();
             }
 
-            outSumL += bL;
-            outSumR += bR;
-        }
+            double elFactor = s.curEl / 90.0;
+            if (std::abs(elFactor) > 0.01) {
+                double elDb = 3.0 * elFactor;
+                s.elFilterL.setHighShelf(currentSampleRate, 3000.0, elDb, 0.7);
+                s.elFilterR.setHighShelf(currentSampleRate, 3000.0, elDb, 0.7);
+            } else {
+                s.elFilterL.reset(); s.elFilterR.reset();
+            }
 
-        left = outSumL;
-        right = outSumR;
+            s.elFilterL.processSingle(spatialL, false);
+            s.elFilterR.processSingle(spatialR, true);
+            s.hrtfL[0].processSingle(spatialL, false);
+            s.hrtfR[0].processSingle(spatialR, true);
+            s.hrtfL[1].processSingle(spatialL, false);
+            s.hrtfR[1].processSingle(spatialR, true);
+
+            // d. Distance Falloff
+            double distGain = 1.0 / std::pow(s.curDist, 0.7);
+            spatialL *= distGain;
+            spatialR *= distGain;
+
+            // e. Air Absorption
+            double lpCoeff = std::clamp(1.0 - (s.curDist - 1.0) * 0.04, 0.2, 1.0);
+            s.lpStateL += (spatialL - s.lpStateL) * lpCoeff;
+            s.lpStateR += (spatialR - s.lpStateR) * lpCoeff;
+            spatialL = s.lpStateL;
+            spatialR = s.lpStateR;
+
+            // f. Depth Delay
+            double depthT = std::clamp((s.curDist - 0.3) / 10.0, 0.0, 1.0);
+            int delaySamples = (int)(depthT * 0.02 * currentSampleRate);
+            s.delayL[s.writePos] = spatialL;
+            s.delayR[s.writePos] = spatialR;
+            size_t readPos = (s.writePos + s.delaySize - delaySamples) % s.delaySize;
+            spatialL = s.delayL[readPos];
+            spatialR = s.delayR[readPos];
+            s.writePos = (s.writePos + 1) % s.delaySize;
+
+            bL = bL * (1.0 - curSpatialIntensity) + spatialL * curSpatialIntensity;
+            bR = bR * (1.0 - curSpatialIntensity) + spatialR * curSpatialIntensity;
+        }
     }
+
+public:
 };
 
 
@@ -1828,6 +1828,7 @@ public:
     void setSoundStageWidth(float width) { audio3DStage.setWidth((double)width); }
     void setSoundStageCenterLock(float amount) { audio3DStage.setCenterLock((double)amount); }
     void setSpatialIntensity(float intensity) { audio3DStage.setSpatialIntensity((double)intensity); }
+    void setSpatialUiMode(int mode) { audio3DStage.setSpatialUiMode(mode); }
     void setHrtfMode(int mode) { audio3DStage.setHrtfMode(mode); }
 
     void setAudio3DSpeakerPosition(int index, float az, float el, float dist) {
@@ -2367,6 +2368,7 @@ JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetSpatial(JNIEn
 JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetSpatialEnabled(JNIEnv* env, jobject thiz, jlong handle, jboolean enabled) { if (handle) ((DSP*)handle)->setAudio3DStageEnabled(enabled); }
 JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetSpatialIntensity(JNIEnv* env, jobject thiz, jlong handle, jfloat intensity) { if (handle) ((DSP*)handle)->setSpatialIntensity(intensity); }
 JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetHrtfMode(JNIEnv* env, jobject thiz, jlong handle, jint mode) { if (handle) ((DSP*)handle)->setHrtfMode(mode); }
+JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetSpatialUiMode(JNIEnv* env, jobject thiz, jlong handle, jint mode) { if (handle) ((DSP*)handle)->setSpatialUiMode(mode); }
 JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetBand(JNIEnv* env, jobject thiz, jlong handle, jint index, jfloat freq, jfloat gainDb, jfloat Q, jint type) { if (handle) ((DSP*)handle)->setBand(index, freq, gainDb, Q, type); }
 JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetEqEnabled(JNIEnv* env, jobject thiz, jlong handle, jboolean enabled) { if (handle) ((DSP*)handle)->setEqEnabled(enabled); }
 JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetEqPhaseMode(JNIEnv* env, jobject thiz, jlong handle, jboolean linearPhase) { if (handle) ((DSP*)handle)->setEqPhaseMode(linearPhase); }

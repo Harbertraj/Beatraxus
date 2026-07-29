@@ -3061,6 +3061,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun setSpatialAudioIntensity(value: Float) = applyDspConfig { it.copy(spatialAudioIntensity = value) }
     fun setSpatialStageWidth(value: Float) = applyDspConfig { it.copy(spatialStageWidth = value) }
     fun setHrtfMode(mode: com.beatraxus.app.model.HrtfMode) = applyDspConfig { it.copy(hrtfMode = mode) }
+    fun setSpatialUiMode(mode: com.beatraxus.app.model.SpatialUiMode) = applyDspConfig { it.copy(spatialUiMode = mode) }
     fun setSoundStageEnabled(enabled: Boolean) = applyDspConfig { it.copy(soundStageEnabled = enabled) }
     fun setSoundStageWidth(value: Float) = applyDspConfig { it.copy(soundStageWidth = value) }
     fun setSoundStageCenterLock(value: Float) = applyDspConfig { it.copy(soundStageCenterLock = value) }
@@ -3115,8 +3116,13 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun setSpeakerPosition(id: String, azimuth: Float, elevation: Float, distance: Float) {
         applyDspConfig { cfg ->
-            val newList = cfg.audio3DSpeakerPositions.map {
-                if (it.id == id) it.copy(azimuthDeg = azimuth, elevationDeg = elevation, distance = distance) else it
+            val exists = cfg.audio3DSpeakerPositions.any { it.id == id }
+            val newList = if (exists) {
+                cfg.audio3DSpeakerPositions.map {
+                    if (it.id == id) it.copy(azimuthDeg = azimuth, elevationDeg = elevation, distance = distance) else it
+                }
+            } else {
+                cfg.audio3DSpeakerPositions + com.beatraxus.app.model.Audio3DSpeakerPosition(id, azimuth, elevation, distance)
             }
             cfg.copy(audio3DSpeakerPositions = newList)
         }
@@ -3296,6 +3302,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun setDvcMode(mode: DvcMode) = applyDspConfig { it.copy(dvcMode = mode) }
     fun setDvcLevel(level: Float) = applyDspConfig { it.copy(dvcLevel = level.coerceIn(0f, 1f)) }
     fun setCompensateDvcVolumeEnabled(enabled: Boolean) = applyDspConfig { it.copy(compensateDvcVolumeEnabled = enabled) }
+    fun setDvcCompensationDb(db: Float) = applyDspConfig { it.copy(dvcCompensationDb = db) }
     fun setSoftLimiterEnabled(enabled: Boolean) = applyDspConfig {
         if (enabled) it.copy(softLimiterEnabled = true, limiterEnabled = false)
         else it.copy(softLimiterEnabled = false)

@@ -59,7 +59,7 @@ data class SoundStagePreset(
 data class SoundStageNodePosition(
     val azimuth: Float = 0f,
     val elevation: Float = 0f,
-    val distance: Float = 1.0f
+    val distance: Float = 2.0f
 )
 
 data class Audio3DSpeakerPosition(
@@ -153,6 +153,11 @@ enum class HrtfMode(val displayName: String) {
     STUDIO("Studio (Reference)")
 }
 
+enum class SpatialUiMode {
+    MODERN,
+    CLASSIC
+}
+
 data class DspConfig(
     val outputMode: OutputMode = OutputMode.HI_RES,
     val highQualityResampler: Boolean = true,
@@ -189,19 +194,20 @@ data class DspConfig(
     val spatialAudioIntensity: Float = 0.6f,
     val soundStageSelectedNode: String = "Vocals",
     val soundStageNodePositions: Map<String, SoundStageNodePosition> = mapOf(
-        "Vocals" to SoundStageNodePosition(0f, 0f, 1.0f),
-        "Drums" to SoundStageNodePosition(45f, 0f, 1.0f),
-        "Keys" to SoundStageNodePosition(90f, 0f, 1.0f),
-        "Lead Guitar" to SoundStageNodePosition(135f, 0f, 1.0f),
-        "Ambience" to SoundStageNodePosition(180f, 0f, 1.0f),
-        "Backing Vocals" to SoundStageNodePosition(225f, 0f, 1.0f),
-        "Bass" to SoundStageNodePosition(270f, 0f, 1.0f),
-        "Guitar" to SoundStageNodePosition(315f, 0f, 1.0f)
+        "Vocals" to SoundStageNodePosition(0f, 0f, 2.0f),
+        "Drums" to SoundStageNodePosition(45f, 0f, 2.0f),
+        "Keys" to SoundStageNodePosition(90f, 0f, 2.0f),
+        "Lead Guitar" to SoundStageNodePosition(135f, 0f, 2.0f),
+        "Ambience" to SoundStageNodePosition(180f, 0f, 2.0f),
+        "Backing Vocals" to SoundStageNodePosition(225f, 0f, 2.0f),
+        "Bass" to SoundStageNodePosition(270f, 0f, 2.0f),
+        "Guitar" to SoundStageNodePosition(315f, 0f, 2.0f)
     ),
     val soundStageWidth: Float = 1.0f,
     val spatialStageWidth: Float = 1.0f,
     val soundStageCenterLock: Float = 0f,
     val hrtfMode: HrtfMode = HrtfMode.NATURAL_BALANCED,
+    val spatialUiMode: SpatialUiMode = SpatialUiMode.MODERN,
     val reverbEnabled: Boolean = false,
     val reverbAmount: Float = 0f,
     val reverbPreset: String = "FLAT",
@@ -226,6 +232,7 @@ data class DspConfig(
     val dvcMode: DvcMode = DvcMode.DAC,
     val dvcLevel: Float = 1f,
     val compensateDvcVolumeEnabled: Boolean = true,
+    val dvcCompensationDb: Float = 3.5f,
 
     // USB
     val usbExclusiveEnabled: Boolean = false,

@@ -174,6 +174,7 @@ class DspPreferences(private val context: Context) {
             dvcMode = DvcMode.valueOf(prefNullable(DVC_MODE) ?: DvcMode.DAC.name),
             dvcLevel = pref(DVC_LEVEL, 1f),
             compensateDvcVolumeEnabled = pref(COMPENSATE_DVC_VOLUME, true),
+            dvcCompensationDb = pref(COMPENSATE_DVC_VOLUME_DB, 3.5f),
             ditherEnabled = pref(DITHER_ENABLED, false),
             ditherType = runCatching {
                 DitherType.valueOf(prefNullable(DITHER_TYPE) ?: DitherType.SHAPED.name)
@@ -294,6 +295,7 @@ class DspPreferences(private val context: Context) {
             set(DVC_MODE, config.dvcMode.name)
             set(DVC_LEVEL, config.dvcLevel)
             set(COMPENSATE_DVC_VOLUME, config.compensateDvcVolumeEnabled)
+            set(COMPENSATE_DVC_VOLUME_DB, config.dvcCompensationDb)
             set(DITHER_ENABLED, config.ditherEnabled)
             set(DITHER_TYPE, config.ditherType.name)
             set(LIMITER_ENABLED, config.limiterEnabled)
@@ -647,6 +649,7 @@ class DspPreferences(private val context: Context) {
         private val DVC_MODE = stringPreferencesKey("dvc_mode")
         private val DVC_LEVEL = floatPreferencesKey("dvc_level")
         private val COMPENSATE_DVC_VOLUME = booleanPreferencesKey("compensate_dvc_volume")
+        private val COMPENSATE_DVC_VOLUME_DB = floatPreferencesKey("compensate_dvc_volume_db")
         private val DITHER_ENABLED = booleanPreferencesKey("dither_enabled")
         private val DITHER_TYPE = stringPreferencesKey("dither_type")
         private val LIMITER_ENABLED = booleanPreferencesKey("limiter_enabled")

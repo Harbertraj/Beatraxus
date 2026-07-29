@@ -6,6 +6,18 @@ import android.graphics.Shader
 import android.os.Build
 import androidx.activity.compose.BackHandler
 import java.util.Locale
+import kotlin.math.atan2
+import kotlin.math.pow
+import kotlin.math.sqrt
+import kotlin.math.min
+import com.beatraxus.app.model.SpatialUiMode
+import com.beatraxus.app.ui.components.PremiumSwitch
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInParent
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import androidx.compose.animation.*
@@ -2177,26 +2189,347 @@ private fun PremiumSoundStageCard(
         verticalArrangement = Arrangement.spacedBy(20.dp)
     ) {
         // Spatial Audio Title
-        Box(
-            modifier = Modifier
-                .align(Alignment.CenterHorizontally)
-                .background(
-                    Color.White.copy(0.05f),
-                    RoundedCornerShape(12.dp)
-                )
-                .border(1.dp, Color.White.copy(0.1f), RoundedCornerShape(12.dp))
-                .padding(horizontal = 16.dp, vertical = 6.dp)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
         ) {
+            Box(
+                modifier = Modifier
+                    .background(
+                        Color.White.copy(0.05f),
+                        RoundedCornerShape(12.dp)
+                    )
+                    .border(1.dp, Color.White.copy(0.1f), RoundedCornerShape(12.dp))
+                    .padding(horizontal = 16.dp, vertical = 6.dp)
+            ) {
+                Text(
+                    text = "SPATIAL AUDIO",
+                    color = PremiumAccent,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Black,
+                    letterSpacing = 2.sp
+                )
+            }
+
+            // UI Mode Toggle
+            Row(
+                modifier = Modifier
+                    .background(Color.Black.copy(0.3f), RoundedCornerShape(20.dp))
+                    .border(1.dp, Color.White.copy(0.05f), RoundedCornerShape(20.dp))
+                    .padding(2.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                SpatialModeChip("CLASSIC", config.spatialUiMode == SpatialUiMode.CLASSIC) {
+                    viewModel.setSpatialUiMode(SpatialUiMode.CLASSIC)
+                }
+                SpatialModeChip("MODERN", config.spatialUiMode == SpatialUiMode.MODERN) {
+                    viewModel.setSpatialUiMode(SpatialUiMode.MODERN)
+                }
+            }
+        }
+
+        if (config.spatialUiMode == SpatialUiMode.MODERN) {
+            ModernSpatialAudioContent(uiState, viewModel, onEditValue)
+        } else {
+            ClassicSpatialAudioCard(uiState, viewModel, onEditValue)
+        }
+    }
+}
+
+@Composable
+private fun SpatialModeChip(
+    text: String,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(18.dp))
+            .background(if (selected) PremiumAccent else Color.Transparent)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 4.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = text,
+            color = if (selected) Color.Black else Color.White.copy(0.5f),
+            fontSize = 9.sp,
+            fontWeight = FontWeight.Black,
+            letterSpacing = 1.sp
+        )
+    }
+}
+
+@Composable
+private fun ClassicSpatialAudioCard(
+    uiState: PlayerUiState,
+    viewModel: PlayerViewModel,
+    onEditValue: (EditingValue) -> Unit
+) {
+    val config = uiState.dsp.config
+    val spatialActive = config.audio3DStageEnabled
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(20.dp)
+    ) {
+        ClassicSoundStageView(uiState, viewModel)
+        ClassicControlPanel(uiState, viewModel, onEditValue)
+    }
+}
+
+@Composable
+private fun ClassicSoundStageView(
+    uiState: PlayerUiState,
+    viewModel: PlayerViewModel
+) {
+    val density = LocalDensity.current
+    val config = uiState.dsp.config
+    val spatialActive = config.audio3DStageEnabled
+
+    BoxWithConstraints(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 24.dp)
+            .aspectRatio(1.0f),
+        contentAlignment = Alignment.Center
+    ) {
+        val viewWidth = with(density) { maxWidth.toPx() }
+        val viewHeight = with(density) { maxHeight.toPx() }
+        val centerX = viewWidth / 2f
+        val centerY = viewHeight / 2f
+        val maxOrbitRadius = (min(viewWidth, viewHeight) / 2f) * 0.58f
+
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            for (i in 1..4) {
+                drawCircle(
+                    color = Color.White.copy(0.04f + (i * 0.01f)),
+                    radius = maxOrbitRadius * (i / 4f),
+                    center = Offset(centerX, centerY),
+                    style = Stroke(width = 1.dp.toPx())
+                )
+            }
+            drawLine(Color.White.copy(0.05f), Offset(centerX, centerY - maxOrbitRadius * 1.02f), Offset(centerX, centerY + maxOrbitRadius * 1.02f), 1.dp.toPx())
+            drawLine(Color.White.copy(0.05f), Offset(centerX - maxOrbitRadius * 1.02f, centerY), Offset(centerX + maxOrbitRadius * 1.02f, centerY), 1.dp.toPx())
+        }
+
+        listOf(0 to "0°", 90 to "90°", 180 to "180°", 270 to "270°").forEach { (deg, label) ->
+            val angleRad = (deg - 90f) * PI.toFloat() / 180f
+            val labelRadius = if (deg == 90 || deg == 270) maxOrbitRadius * 0.80f else maxOrbitRadius * 0.96f
             Text(
-                text = "SPATIAL AUDIO",
-                color = PremiumAccent,
-                fontSize = 12.sp,
+                text = label,
+                color = Color.White.copy(0.35f),
+                fontSize = 10.sp,
                 fontWeight = FontWeight.Black,
-                letterSpacing = 2.sp
+                modifier = Modifier.graphicsLayer {
+                    translationX = labelRadius * cos(angleRad)
+                    translationY = labelRadius * sin(angleRad)
+                }
             )
         }
 
-        // 2. Main Visualization
+        Box(
+            modifier = Modifier
+                .size(120.dp)
+                .clip(CircleShape)
+                .graphicsLayer { alpha = if (spatialActive) 1f else 0.4f },
+            contentAlignment = Alignment.Center
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Brush.radialGradient(listOf(PremiumAccent.copy(0.15f), Color.Transparent), radius = 400f))
+            )
+
+            Surface(
+                onClick = { viewModel.setAudio3DStageEnabled(!config.audio3DStageEnabled) },
+                modifier = Modifier.size(80.dp),
+                shape = CircleShape,
+                color = Color(0xFF0D1117),
+                border = BorderStroke(1.5.dp, if (spatialActive) PremiumAccent.copy(0.6f) else Color.White.copy(0.1f)),
+                shadowElevation = 24.dp
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(Icons.Rounded.GraphicEq, null, tint = PremiumAccent, modifier = Modifier.size(40.dp))
+                }
+            }
+        }
+
+        val speakerL = config.audio3DSpeakerPositions.find { it.id == "L" } ?: com.beatraxus.app.model.Audio3DSpeakerPosition("L", 270f, 0f, 2.0f)
+        val speakerR = config.audio3DSpeakerPositions.find { it.id == "R" } ?: com.beatraxus.app.model.Audio3DSpeakerPosition("R", 90f, 0f, 2.0f)
+
+        listOf(speakerL to Color(0xFF42A5F5), speakerR to Color(0xFFFF7043)).forEach { (speaker, color) ->
+            ClassicSpeakerBubble(speaker, color, maxOrbitRadius, centerX, centerY, spatialActive) { az, dist ->
+                viewModel.setSpeakerPosition(speaker.id, az, 0f, dist)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ClassicSpeakerBubble(
+    speaker: com.beatraxus.app.model.Audio3DSpeakerPosition,
+    color: Color,
+    maxOrbitRadius: Float,
+    centerX: Float,
+    centerY: Float,
+    enabled: Boolean,
+    onPositionChange: (Float, Float) -> Unit
+) {
+    val minRadiusFactor = 0.35f
+    val animAzimuth by animateFloatAsState(targetValue = speaker.azimuthDeg, animationSpec = spring(stiffness = Spring.StiffnessMediumLow))
+    val animDistance by animateFloatAsState(targetValue = speaker.distance, animationSpec = spring(stiffness = Spring.StiffnessMediumLow))
+
+    val distNormalized = (minRadiusFactor + (animDistance / 15f) * (1f - minRadiusFactor)).coerceIn(minRadiusFactor, 1.0f)
+    val dotRadius = maxOrbitRadius * distNormalized
+    val angleRad = (animAzimuth - 90f) * PI.toFloat() / 180f
+
+    Box(
+        modifier = Modifier
+            .offset {
+                IntOffset(
+                    (dotRadius * cos(angleRad)).toInt(),
+                    (dotRadius * sin(angleRad)).toInt()
+                )
+            }
+            .size(52.dp)
+            .shadow(12.dp, CircleShape, ambientColor = color, spotColor = color)
+            .background(color, CircleShape)
+            .border(2.dp, Color.White.copy(0.4f), CircleShape)
+            .pointerInput(enabled, speaker.id) {
+                if (!enabled) return@pointerInput
+                detectDragGestures { change, _ ->
+                    change.consume()
+                    val touchPos = Offset(
+                        centerX + dotRadius * cos(angleRad) + change.position.x - 26.dp.toPx(),
+                        centerY + dotRadius * sin(angleRad) + change.position.y - 26.dp.toPx()
+                    )
+                    val dx = touchPos.x - centerX
+                    val dy = touchPos.y - centerY
+                    val newAngleRad = atan2(dy.toDouble(), dx.toDouble())
+                    var az = (newAngleRad * 180.0 / PI) + 90.0
+                    while (az < 0.0) az += 360.0
+                    while (az >= 360.0) az -= 360.0
+                    
+                    val distPx = sqrt((dx * dx + dy * dy).toDouble()).toFloat()
+                    val newDistNormalized = (distPx / maxOrbitRadius).coerceIn(minRadiusFactor, 1.0f)
+                    val newDistance = (newDistNormalized - minRadiusFactor) / (1f - minRadiusFactor) * 15f
+                    
+                    onPositionChange(az.toFloat(), newDistance.toFloat())
+                }
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Text(speaker.id, color = Color.White, fontWeight = FontWeight.Black, fontSize = 16.sp)
+    }
+}
+
+@Composable
+private fun ClassicControlPanel(
+    uiState: PlayerUiState,
+    viewModel: PlayerViewModel,
+    onEditValue: (EditingValue) -> Unit
+) {
+    val config = uiState.dsp.config
+    val spatialActive = config.audio3DStageEnabled
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(28.dp))
+            .background(Color(0xFF0D1117).copy(0.7f))
+            .border(1.dp, Color.White.copy(0.06f), RoundedCornerShape(28.dp))
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                "SPATIAL ANALYZER (CLASSIC)",
+                color = PremiumAccent.copy(0.8f),
+                fontWeight = FontWeight.Black,
+                fontSize = 10.sp,
+                letterSpacing = 1.5.sp
+            )
+
+            PremiumSwitch(
+                checked = config.audio3DStageEnabled,
+                onCheckedChange = { viewModel.setAudio3DStageEnabled(it) },
+                accentColor = PremiumAccent
+            )
+        }
+
+        SoundStageSliderRow(
+            title = "Width",
+            value = config.audio3DWidth,
+            range = 0f..2f,
+            valueText = { String.format(Locale.US, "%.2f", it) },
+            onValueChange = { viewModel.setAudio3DWidth(it) },
+            enabled = spatialActive,
+            onEditValue = onEditValue
+        )
+
+        SoundStageSliderRow(
+            title = "Distance",
+            value = config.audio3DDistance,
+            range = 0.3f..3f,
+            valueText = { String.format(Locale.US, "%.1f m", it) },
+            onValueChange = { viewModel.setAudio3DDistance(it) },
+            enabled = spatialActive,
+            onEditValue = onEditValue
+        )
+
+        SoundStageSliderRow(
+            title = "Intensity / Room Reflections",
+            value = config.audio3DRoomReflections,
+            range = 0f..1f,
+            valueText = { "${(it * 100).toInt()}%" },
+            onValueChange = { viewModel.setAudio3DRoomReflections(it) },
+            enabled = spatialActive,
+            onEditValue = onEditValue
+        )
+    }
+}
+
+@Composable
+private fun ModernSpatialAudioContent(
+    uiState: PlayerUiState,
+    viewModel: PlayerViewModel,
+    onEditValue: (EditingValue) -> Unit
+) {
+    val density = LocalDensity.current
+    val config = uiState.dsp.config
+    val isSpatialBypassed = config.bitPerfectEnabled && !config.bitPerfectUnbypass3DStage
+    val spatialActive = config.spatialAudioEnabled && !isSpatialBypassed
+
+    data class StageNode(
+        val name: String,
+        val icon: ImageVector,
+        val az: Float,
+        val dist: Float,
+        val color: Color
+    )
+
+    val nodes = remember {
+        listOf(
+            StageNode("Vocals", Icons.Rounded.Person, 0f, 2.0f, Color(0xFF42A5F5)),
+            StageNode("Drums", Icons.Rounded.LibraryMusic, 45f, 2.8f, Color(0xFFFF7043)),
+            StageNode("Keys", Icons.Rounded.Piano, 90f, 1.8f, Color(0xFFEC407A)),
+            StageNode("Lead Guitar", Icons.Rounded.MusicNote, 135f, 2.3f, Color(0xFF66BB6A)),
+            StageNode("Ambience", Icons.Rounded.GraphicEq, 180f, 3.5f, Color(0xFFAB47BC)),
+            StageNode("Backing Vocals", Icons.Rounded.Groups, 225f, 2.5f, Color(0xFFFFEE58)),
+            StageNode("Bass", Icons.Rounded.Speaker, 270f, 2.2f, Color(0xFF26C6DA)),
+            StageNode("Guitar", Icons.Rounded.MusicNote, 315f, 2.6f, Color(0xFF7E57C2))
+        )
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
         BoxWithConstraints(
             modifier = Modifier
                 .fillMaxWidth()
