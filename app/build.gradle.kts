@@ -18,7 +18,7 @@ if (localPropertiesFile.exists()) {
 configure<ApplicationExtension> {
     namespace = "com.beatraxus.app"
     compileSdk = 36
-    ndkVersion = "26.1.10909125"
+    ndkVersion = "29.0.14206865"
 
     defaultConfig {
         applicationId = "com.beatraxus.app"
