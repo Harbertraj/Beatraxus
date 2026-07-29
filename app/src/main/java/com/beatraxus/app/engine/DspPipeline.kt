@@ -263,17 +263,19 @@ private class NativeDspProcessor(
         // 8-band Sound Stage mapping
         fun getPos(node: String) = cfg.soundStageNodePositions[node] ?: SoundStageNodePosition()
 
+        // Each of the 8 nodes owns exactly ONE dedicated band — no sharing.
+        // Sharing bands between nodes causes their azimuths to be averaged together,
+        // which is why moving one stem used to visibly drag others with it.
         val nodesToBands = listOf(
-            listOf("Bass"),           // Band 0: < 120 Hz
-            listOf("Drums"),          // Band 1: 120 - 280 Hz
-            listOf("Vocals", "Backing Vocals"), // Band 2: 280 - 550 Hz
-            listOf("Vocals", "Keys"),           // Band 3: 550 - 1.1 kHz
-            listOf("Vocals"),                   // Band 4: 1.1 - 2.5 kHz
-            listOf("Vocals", "Guitar"),         // Band 5: 2.5 - 5 kHz
-            listOf("Lead Guitar"),              // Band 6: 5 - 10 kHz
-            listOf("Ambience")                  // Band 7: > 10 kHz
+            listOf("Bass"),            // Band 0: < 120 Hz
+            listOf("Drums"),           // Band 1: 120 - 280 Hz
+            listOf("Backing Vocals"),  // Band 2: 280 - 550 Hz
+            listOf("Keys"),            // Band 3: 550 - 1.1 kHz
+            listOf("Vocals"),          // Band 4: 1.1 - 2.5 kHz  (vocal presence range)
+            listOf("Guitar"),          // Band 5: 2.5 - 5 kHz
+            listOf("Lead Guitar"),     // Band 6: 5 - 10 kHz
+            listOf("Ambience")         // Band 7: > 10 kHz
         )
-
 
         nodesToBands.forEachIndexed { bandIdx, nodes ->
             if (nodes.isEmpty()) return@forEachIndexed
@@ -282,8 +284,6 @@ private class NativeDspProcessor(
             var avgDist = 0f
             nodes.forEach { node ->
                 val p = getPos(node)
-                // Only apply 3D positioning (azimuth/distance) if Spatial Audio is actually ON.
-                // If only Soundstage knob is ON, we keep them centered to act as a pure width expander.
                 if (cfg.spatialAudioEnabled) {
                     avgAz += p.azimuth
                     avgEl += p.elevation
@@ -291,7 +291,7 @@ private class NativeDspProcessor(
                 } else {
                     avgAz += 0f
                     avgEl += 0f
-                    avgDist += 2.0f // Reference distance
+                    avgDist += 1.0f
                 }
             }
             dsp.setSoundStageNodePosition(bandIdx, avgAz / nodes.size, avgEl / nodes.size, avgDist / nodes.size)

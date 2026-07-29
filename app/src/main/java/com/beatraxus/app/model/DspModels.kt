@@ -59,7 +59,7 @@ data class SoundStagePreset(
 data class SoundStageNodePosition(
     val azimuth: Float = 0f,
     val elevation: Float = 0f,
-    val distance: Float = 2.0f
+    val distance: Float = 1.0f
 )
 
 data class Audio3DSpeakerPosition(
@@ -189,14 +189,14 @@ data class DspConfig(
     val spatialAudioIntensity: Float = 0.6f,
     val soundStageSelectedNode: String = "Vocals",
     val soundStageNodePositions: Map<String, SoundStageNodePosition> = mapOf(
-        "Vocals" to SoundStageNodePosition(0f, 0f, 2.0f),
-        "Drums" to SoundStageNodePosition(45f, 0f, 2.8f),
-        "Keys" to SoundStageNodePosition(90f, 0f, 1.8f),
-        "Lead Guitar" to SoundStageNodePosition(135f, 0f, 2.3f),
-        "Ambience" to SoundStageNodePosition(180f, 0f, 3.5f),
-        "Backing Vocals" to SoundStageNodePosition(225f, 0f, 2.5f),
-        "Bass" to SoundStageNodePosition(270f, 0f, 2.2f),
-        "Guitar" to SoundStageNodePosition(315f, 0f, 2.6f)
+        "Vocals" to SoundStageNodePosition(0f, 0f, 1.0f),
+        "Drums" to SoundStageNodePosition(45f, 0f, 1.0f),
+        "Keys" to SoundStageNodePosition(90f, 0f, 1.0f),
+        "Lead Guitar" to SoundStageNodePosition(135f, 0f, 1.0f),
+        "Ambience" to SoundStageNodePosition(180f, 0f, 1.0f),
+        "Backing Vocals" to SoundStageNodePosition(225f, 0f, 1.0f),
+        "Bass" to SoundStageNodePosition(270f, 0f, 1.0f),
+        "Guitar" to SoundStageNodePosition(315f, 0f, 1.0f)
     ),
     val soundStageWidth: Float = 1.0f,
     val spatialStageWidth: Float = 1.0f,

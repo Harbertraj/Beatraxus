@@ -87,6 +87,7 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -121,6 +122,7 @@ import com.beatraxus.app.model.ResamplerMode
 import com.beatraxus.app.model.SoxrQuality
 import com.beatraxus.app.model.DitherType
 import com.beatraxus.app.model.NowPlayingBackgroundMode
+import com.beatraxus.app.model.AlbumArtTransform
 import com.beatraxus.app.model.PlayerUiState
 import com.beatraxus.app.model.SoxrQuality as SoxrQualityEnum
 import com.beatraxus.app.telegram.AuthState
@@ -129,9 +131,9 @@ import com.beatraxus.app.repository.DriveAccount
 import com.beatraxus.app.ui.theme.BgDeep
 import com.beatraxus.app.viewmodel.PlayerViewModel
 
-private val PremiumAccent = Color(0xFFD4A24C)
-private val PrimaryCyan = Color(0xFFD4A24C)
-private val SecondaryCyan = Color(0xFFB8860B)
+private val PremiumAccent = Color(0xFF00C2A8)
+private val PrimaryCyan = Color(0xFF00C2A8)
+private val SecondaryCyan = Color(0xFF00897B)
 private val TextWhite = Color(0xFFF4F6F8)
 private val SecondaryText = Color(0xFFAAB3BC)
 private val BgColor = Color(0xFF0A0A0C)
@@ -384,15 +386,15 @@ fun SettingsScreen(
         )
         { padding ->
             AnimatedContent(
-                targetState = currentSection,
+                targetState = currentSection to sectionStack.size,
                 modifier = Modifier.padding(padding),
                 transitionSpec = {
-                    if (targetState != null) {
+                    if (targetState.second > initialState.second) {
                         // Navigating deeper
                         (slideInHorizontally { it } + fadeIn()).togetherWith(
                             slideOutHorizontally { -it / 2 } + fadeOut())
                     } else {
-                        // Navigating back to root
+                        // Navigating back
                         (slideInHorizontally { -it / 2 } + fadeIn()).togetherWith(
                             slideOutHorizontally { it } + fadeOut())
                     }.using(
@@ -400,7 +402,7 @@ fun SettingsScreen(
                     )
                 },
                 label = "settings_transition"
-            ) { section ->
+            ) { (section, _) ->
                 val scrollState = rememberScrollState()
                 Column(
                     modifier = Modifier
@@ -846,6 +848,54 @@ fun NowPlayingAppearanceContent(uiState: PlayerUiState, playerViewModel: PlayerV
             checked = uiState.appearance.showSleepTimerIcon,
             onCheckedChange = { playerViewModel.setShowSleepTimerIcon(it) }
         )
+
+        HorizontalDivider(color = Color.White.copy(0.05f))
+
+        var expandedTransform by remember { mutableStateOf(false) }
+        Column {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Album Art Animation", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    Text("Transition style when switching songs", color = Color.White.copy(0.6f), fontSize = 12.sp)
+                }
+                Box {
+                    TextButton(
+                        onClick = { expandedTransform = true },
+                        colors = ButtonDefaults.textButtonColors(contentColor = PremiumAccent)
+                    ) {
+                        Text(
+                            uiState.appearance.albumArtTransform.name.lowercase().replaceFirstChar { it.uppercase() },
+                            fontWeight = FontWeight.Bold
+                        )
+                        Icon(Icons.Rounded.ArrowDropDown, null)
+                    }
+                    DropdownMenu(
+                        expanded = expandedTransform,
+                        onDismissRequest = { expandedTransform = false },
+                        modifier = Modifier.background(CardSurface)
+                    ) {
+                        AlbumArtTransform.entries.forEach { transform ->
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        transform.name.lowercase().replaceFirstChar { it.uppercase() },
+                                        color = if (uiState.appearance.albumArtTransform == transform) PremiumAccent else Color.White
+                                    )
+                                },
+                                onClick = {
+                                    playerViewModel.setAlbumArtTransform(transform)
+                                    expandedTransform = false
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+        }
 
         HorizontalDivider(color = Color.White.copy(0.05f))
 
@@ -1338,6 +1388,9 @@ fun SettingMenuItem(
     iconColor: Color,
     showBetaBadge: Boolean = false,
     centered: Boolean = false,
+    titleFontSize: androidx.compose.ui.unit.TextUnit = 17.sp,
+    titleFontWeight: FontWeight = FontWeight.Bold,
+    titleLetterSpacing: androidx.compose.ui.unit.TextUnit = 0.3.sp,
     onClick: () -> Unit
 ) {
     val haptic = LocalHapticFeedback.current
@@ -1448,11 +1501,14 @@ fun SettingMenuItem(
                         text = title,
                         color = TextWhite,
                         style = TextStyle(
-                            fontSize = 17.sp,
-                            fontWeight = FontWeight.Bold,
-                            letterSpacing = 0.3.sp
+                            fontSize = titleFontSize,
+                            fontWeight = titleFontWeight,
+                            letterSpacing = titleLetterSpacing
                         ),
-                        textAlign = if (centered) TextAlign.Center else TextAlign.Start
+                        textAlign = if (centered) TextAlign.Center else TextAlign.Start,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
                     )
                     if (showBetaBadge) {
                         Spacer(Modifier.width(8.dp))
@@ -3954,8 +4010,11 @@ fun CloudContent(
             title = "TELEGRAM CHANNELS",
             subtitle = "Access private channels and login to your account",
             icon = Icons.AutoMirrored.Rounded.Send,
-            iconColor = Color(0xFF2AABEE),
+            iconColor = PremiumAccent,
             showBetaBadge = true,
+            titleFontSize = 14.sp,
+            titleFontWeight = FontWeight.Black,
+            titleLetterSpacing = 1.2.sp,
             onClick = onNavigateToTelegramCloud
         )
     }

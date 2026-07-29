@@ -791,7 +791,7 @@ fun WelcomeScreen(
                                             .fillMaxWidth()
                                             .height(6.dp)
                                             .clip(CircleShape),
-                                        color = Color(0xFFD4A24C),
+                                        color = Color(0xFF00C2A8),
                                         trackColor = Color.White.copy(alpha = 0.1f)
                                     )
                                 }
@@ -800,7 +800,7 @@ fun WelcomeScreen(
 
                                 Text(
                                     "${(uiState.scanProgress * 100).toInt()}%",
-                                    color = Color(0xFFD4A24C),
+                                    color = Color(0xFF00C2A8),
                                     fontSize = 18.sp,
                                     fontWeight = FontWeight.Black
                                 )

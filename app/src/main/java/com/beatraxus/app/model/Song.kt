@@ -116,6 +116,8 @@ data class Playlist(
 
 enum class NowPlayingBackgroundMode { BLACK, SOLID, BLUR }
 
+enum class AlbumArtTransform { NONE, FADE, SLIDE, SCALE, ROTATE, FLIP, ZOOM }
+
 enum class SeekbarStyle {
     WAVEFORM,          // existing WaveformSeekBar, kept as-is, default
     SPECTRUM_TIMELINE,
@@ -146,6 +148,7 @@ data class AppearanceConfig(
     val nowPlayingSolidColorDarkness: Float = 0.4f,
     val nowPlayingBlurIntensity: Float = 210f,
     val nowPlayingBlurDarkness: Float = 0.3f,
+    val albumArtTransform: AlbumArtTransform = AlbumArtTransform.NONE,
 
     val seekbarStyle: SeekbarStyle = SeekbarStyle.WAVEFORM,
 

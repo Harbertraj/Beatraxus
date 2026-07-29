@@ -32,7 +32,8 @@ fun PremiumSwitch(
     checked: Boolean,
     onCheckedChange: ((Boolean) -> Unit)?,
     modifier: Modifier = Modifier,
-    enabled: Boolean = true
+    enabled: Boolean = true,
+    accentColor: Color = Color(0xFF00C2A8) // Default Teal
 ) {
     val haptic = LocalHapticFeedback.current
     val interactionSource = remember { MutableInteractionSource() }
@@ -43,7 +44,7 @@ fun PremiumSwitch(
         label = "thumbOffset"
     )
     
-    val indicatorColor = if (checked) Color(0xFFD4A24C) else Color(0xFF1A1D24)
+    val indicatorColor = if (checked) accentColor else Color(0xFF1A1D24)
     val indicatorGlow by animateFloatAsState(
         targetValue = if (checked) 1f else 0f,
         animationSpec = tween(300),
@@ -75,7 +76,7 @@ fun PremiumSwitch(
         ) {
             Text(
                 text = "ON",
-                color = if (checked) Color(0xFFD4A24C).copy(alpha = 0.9f) else Color.Transparent,
+                color = if (checked) accentColor.copy(alpha = 0.9f) else Color.Transparent,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Black,
                 modifier = Modifier.graphicsLayer {
@@ -133,7 +134,7 @@ fun PremiumSwitch(
                     modifier = Modifier
                         .size(16.dp)
                         .graphicsLayer { alpha = 0.3f * indicatorGlow }
-                        .background(Brush.radialGradient(listOf(Color(0xFFD4A24C), Color.Transparent)), CircleShape)
+                        .background(Brush.radialGradient(listOf(accentColor, Color.Transparent)), CircleShape)
                 )
             }
         }

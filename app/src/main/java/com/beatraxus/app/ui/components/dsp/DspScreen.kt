@@ -1,5 +1,7 @@
 package com.beatraxus.app.ui.components.dsp
 
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.graphics.lerp
 import android.graphics.Shader
 import android.os.Build
 import androidx.activity.compose.BackHandler
@@ -37,6 +39,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
@@ -77,8 +80,9 @@ import kotlin.math.*
 
 // Premium Studio Color Palette
 private val PremiumSurface = Color(0xFF08090C) // Onyx Black
-private val PremiumAccent = Color(0xFFD4A24C)  // Champagne Gold
-private val PremiumAccentSoft = Color(0xFFE5C185)
+private val PremiumAccent = Color(0xFF00C2A8)  // Teal
+private val PremiumAccentSoft = Color(0xFF80E1D4)
+private val GraphicGold = Color(0xFFD4A24C)   // Keep Graphic Line Gold
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -167,6 +171,57 @@ fun DspScreen(
 
     BackHandler(onBack = safeBack)
 
+    // Real-time FFT state for Graphic Response
+    var liveFftBars by remember { mutableStateOf(FloatArray(32)) }
+    LaunchedEffect(viewModel) {
+        val fftSize = 512
+        val ring = FloatArray(fftSize)
+        var ringPos = 0
+        while (true) {
+            val capture = viewModel.captureLiveWindow()
+            if (capture != null && capture.samples.isNotEmpty()) {
+                val ch = capture.channels.coerceAtLeast(1)
+                val frames = capture.samples.size / ch
+                if (frames > 0) {
+                    for (f in 0 until frames) {
+                        val l = capture.samples[f * ch]
+                        val r = if (ch > 1) capture.samples[f * ch + 1] else l
+                        ring[ringPos] = (l + r) * 0.5f
+                        ringPos = (ringPos + 1) % fftSize
+                    }
+                    val windowed = FloatArray(fftSize) { idx ->
+                        val sample = ring[(ringPos + idx) % fftSize]
+                        val hann = 0.5f - 0.5f * cos(2.0 * PI * idx / (fftSize - 1)).toFloat()
+                        sample * hann
+                    }
+                    val mags = fftMagnitude(windowed)
+                    val bars = FloatArray(32)
+                    val numBins = mags.size
+                    val logMin = log10(40.0)
+                    val logMax = log10(20000.0)
+                    for (b in bars.indices) {
+                        val fStart = 10.0.pow(logMin + (b.toDouble() / bars.size) * (logMax - logMin))
+                        val fEnd = 10.0.pow(logMin + ((b + 1).toDouble() / bars.size) * (logMax - logMin))
+                        val binStart = (fStart * fftSize / 44100.0).toInt().coerceIn(0, numBins - 1)
+                        val binEnd = (fEnd * fftSize / 44100.0).toInt().coerceIn(binStart + 1, numBins)
+                        var s = 0f
+                        var count = 0
+                        for (i in binStart until binEnd) {
+                            s += mags[i]
+                            count++
+                        }
+                        if (count > 0) {
+                            val boost = 1.0f + (b.toFloat() / bars.size) * 1.5f
+                            bars[b] = (s / count / (fftSize / 8f) * boost).coerceIn(0f, 1f)
+                        }
+                    }
+                    liveFftBars = bars
+                }
+            }
+            delay(16) // ~60fps
+        }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -211,16 +266,23 @@ fun DspScreen(
                                 style = MaterialTheme.typography.titleLarge,
                                 modifier = Modifier.graphicsLayer { alpha = 0.9f }
                             )
+                            Text(
+                                text = "Settings for: ${uiState.dsp.activeOutputDeviceLabel}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color.White.copy(0.4f),
+                                fontSize = 9.sp,
+                                modifier = Modifier.padding(top = 2.dp)
+                            )
                             Surface(
-                                modifier = Modifier.padding(top = 6.dp),
+                                modifier = Modifier.padding(top = 8.dp),
                                 color = Color.White.copy(0.03f),
                                 shape = RoundedCornerShape(50),
                                 border = BorderStroke(0.5.dp, Color.White.copy(0.1f))
                             ) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
                                 ) {
                                     val pageIcons = listOf(
                                         Icons.Rounded.GraphicEq,
@@ -273,19 +335,13 @@ fun DspScreen(
                     verticalArrangement = Arrangement.spacedBy(if (page == 0) 4.dp else 2.dp)
                 ) {
                     if (page == 0) {
-                        Text(
-                            text = "Settings for: ${uiState.dsp.activeOutputDeviceLabel}",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = Color.White.copy(0.5f),
-                            modifier = Modifier.padding(start = 8.dp, top = 6.dp, bottom = 0.dp)
-                        )
-
+                        // Settings text moved to top bar
                         val currentGains = uiState.dsp.config.eqBands.map { it.gainDb }
                         val activePresetName = uiState.dsp.customEqPresets.find { it.bands.map { b -> b.gainDb } == currentGains }?.name
                             ?: builtInPresets.find { it.gains == currentGains }?.name
                             ?: "Custom"
 
-                        PremiumGraphicCard(uiState, activePresetName)
+                        PremiumGraphicCard(uiState, activePresetName, liveFftBars)
 
                         UnifiedPresetSection(
                             uiState = uiState,
@@ -1016,7 +1072,8 @@ private fun AiOptionsPopup(
                         }
                         PremiumSwitch(
                             checked = uiState.dsp.config.aiEqEnabled,
-                            onCheckedChange = { viewModel.setAiEqEnabled(it) }
+                            onCheckedChange = { viewModel.setAiEqEnabled(it) },
+                            accentColor = PremiumAccent
                         )
                     }
 
@@ -1107,19 +1164,19 @@ private fun AnalysisDetailsRow(label: String, value: String) {
 }
 
 @Composable
-private fun PremiumGraphicCard(uiState: PlayerUiState, presetName: String) {
+private fun PremiumGraphicCard(uiState: PlayerUiState, presetName: String, fftBars: FloatArray = FloatArray(0)) {
     val config = uiState.dsp.config
     val displayBands = config.eqBands
     val displayEnabled = config.eqEnabled
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(24.dp))
+            .clip(RoundedCornerShape(16.dp))
             .background(PremiumSurface.copy(alpha = 0.4f))
             .border(
                 1.dp,
                 Brush.linearGradient(listOf(Color.White.copy(0.1f), Color.Transparent)),
-                RoundedCornerShape(24.dp)
+                RoundedCornerShape(16.dp)
             )
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -1157,7 +1214,7 @@ private fun PremiumGraphicCard(uiState: PlayerUiState, presetName: String) {
                 .background(Color.Black.copy(alpha = 0.3f))
                 .border(1.dp, Color.White.copy(alpha = 0.05f), RoundedCornerShape(14.dp))
         ) {
-            EqPreviewGraph(displayBands, displayEnabled)
+            EqPreviewGraph(displayBands, displayEnabled, fftBars = fftBars)
         }
     }
 }
@@ -1176,15 +1233,15 @@ private fun PremiumEqualizerCard(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(24.dp))
+            .clip(RoundedCornerShape(16.dp))
             .background(PremiumSurface.copy(alpha = 0.4f))
             .border(
                 1.dp,
                 Brush.linearGradient(listOf(Color.White.copy(0.1f), Color.Transparent)),
-                RoundedCornerShape(24.dp)
+                RoundedCornerShape(16.dp)
             )
             .padding(4.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp)
+        verticalArrangement = Arrangement.spacedBy(2.dp)
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -1262,54 +1319,21 @@ private fun PremiumEqualizerCard(
             } else {
                 PremiumSwitch(
                     checked = config.eqEnabled,
-                    onCheckedChange = { viewModel.setEqEnabled(it) }
+                    onCheckedChange = { viewModel.setEqEnabled(it) },
+                    accentColor = PremiumAccent
                 )
             }
         }
 
-        // Preamp Horizontal Line Control
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Text(
-                "PREAMP",
-                color = Color.White.copy(alpha = 0.5f),
-                fontWeight = FontWeight.Black,
-                fontSize = 9.sp,
-                letterSpacing = 1.sp
-            )
-            Box(modifier = Modifier.weight(1f).height(24.dp), contentAlignment = Alignment.Center) {
-                // Background track line
-                Box(Modifier.fillMaxWidth().height(1.dp).background(Color.White.copy(alpha = 0.1f)))
-
-                Slider(
-                    value = config.preampDb,
-                    onValueChange = { viewModel.setPreampDb(it) },
-                    valueRange = -15f..15f,
-                    enabled = !isEqBypassed && config.eqEnabled && !isLocked,
-                    colors = SliderDefaults.colors(
-                        thumbColor = if (config.eqEnabled && !isLocked) PremiumAccent else Color.Gray,
-                        activeTrackColor = PremiumAccent.copy(alpha = 0.5f),
-                        inactiveTrackColor = Color.Transparent
-                    ),
-                    modifier = Modifier.fillMaxWidth()
-                )
+        // Custom Premium Preamp Slider
+        PremiumPreampSlider(
+            value = config.preampDb,
+            onValueChange = { viewModel.setPreampDb(it) },
+            enabled = !isEqBypassed && config.eqEnabled && !isLocked,
+            onEditValue = {
+                onEditValue(EditingValue("PREAMP", config.preampDb, -15f..15f, viewModel::setPreampDb))
             }
-            Text(
-                text = if (config.preampDb >= 0) "+%.1f dB".format(config.preampDb) else "%.1f dB".format(config.preampDb),
-                color = if (config.eqEnabled) (if (isLocked) PremiumAccent.copy(0.4f) else PremiumAccent) else Color.White.copy(0.3f),
-                fontSize = 10.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier
-                    .width(54.dp)
-                    .clickable(enabled = config.eqEnabled && !isLocked) {
-                        onEditValue(EditingValue("PREAMP", config.preampDb, -15f..15f, viewModel::setPreampDb))
-                    },
-                textAlign = TextAlign.End
-            )
-        }
+        )
 
         Row(
             modifier = Modifier
@@ -1350,6 +1374,199 @@ private fun PremiumEqualizerCard(
 }
 
 @Composable
+private fun PremiumPreampSlider(
+    value: Float,
+    onValueChange: (Float) -> Unit,
+    enabled: Boolean,
+    onEditValue: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 4.dp)
+            .graphicsLayer { alpha = if (enabled) 1f else 0.4f }
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                "PREAMP GAIN",
+                color = PremiumAccent.copy(0.6f),
+                fontWeight = FontWeight.Black,
+                fontSize = 10.sp,
+                letterSpacing = 1.5.sp
+            )
+            Surface(
+                onClick = { if (enabled) onEditValue() },
+                color = Color.White.copy(0.04f),
+                shape = RoundedCornerShape(6.dp),
+                border = BorderStroke(0.5.dp, Color.White.copy(0.1f))
+            ) {
+                Text(
+                    text = if (value >= 0) "+%.1f dB".format(value) else "%.1f dB".format(value),
+                    color = if (value != 0f) (if (value > 0) Color(0xFFDDDDDD) else Color(0xFF888888)) else Color.White.copy(0.4f),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Black,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                )
+            }
+        }
+
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(48.dp)
+                .pointerInput(enabled) {
+                    if (!enabled) return@pointerInput
+                    detectDragGestures { change, _ ->
+                        change.consume()
+                        val pos = (change.position.x / size.width).coerceIn(0f, 1f)
+                        onValueChange((pos * 30f) - 15f)
+                    }
+                }
+                .pointerInput(enabled) {
+                    if (!enabled) return@pointerInput
+                    detectTapGestures { offset ->
+                        val pos = (offset.x / size.width).coerceIn(0f, 1f)
+                        onValueChange((pos * 30f) - 15f)
+                    }
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val w = size.width
+                val h = size.height
+                val midX = w / 2f
+                val trackH = 6.dp.toPx()
+                val corner = CornerRadius(trackH / 2f, trackH / 2f)
+
+                // 1. Recessed Track
+                drawRoundRect(
+                    color = Color.Black.copy(0.4f),
+                    topLeft = Offset(0f, (h - trackH) / 2f),
+                    size = Size(w, trackH),
+                    cornerRadius = corner
+                )
+                drawRoundRect(
+                    color = Color.White.copy(0.05f),
+                    topLeft = Offset(0f, (h - trackH) / 2f),
+                    size = Size(w, trackH),
+                    cornerRadius = corner,
+                    style = Stroke(1.dp.toPx())
+                )
+
+                // 2. Center Detent (0dB)
+                drawLine(
+                    color = Color.White.copy(0.2f),
+                    start = Offset(midX, (h - 20.dp.toPx()) / 2f),
+                    end = Offset(midX, (h + 20.dp.toPx()) / 2f),
+                    strokeWidth = 2.dp.toPx()
+                )
+
+                // 3. Etched Micro-Ticks
+                val tickStep = w / 30f
+                for (i in 0..30) {
+                    val x = i * tickStep
+                    val isMajor = i % 5 == 0
+                    val tickH = if (isMajor) 12.dp.toPx() else 6.dp.toPx()
+                    drawLine(
+                        color = Color.White.copy(if (isMajor) 0.15f else 0.05f),
+                        start = Offset(x, (h - tickH) / 2f),
+                        end = Offset(x, (h + tickH) / 2f),
+                        strokeWidth = 1.dp.toPx()
+                    )
+                }
+
+                // 4. Bipolar Gradient Fill
+                val progressX = ((value + 15f) / 30f) * w
+                if (value != 0f) {
+                    val startX = midX
+                    val endX = progressX
+                    val color = if (value > 0) Color(0xFFDDDDDD) else Color(0xFF888888)
+                    
+                    drawRoundRect(
+                        brush = Brush.horizontalGradient(
+                            colors = if (value > 0) listOf(color.copy(0.2f), color) else listOf(color, color.copy(0.2f)),
+                            startX = min(startX, endX),
+                            endX = max(startX, endX)
+                        ),
+                        topLeft = Offset(min(startX, endX), (h - trackH) / 2f),
+                        size = Size(abs(endX - startX), trackH),
+                        cornerRadius = corner
+                    )
+
+                    // Active Glow
+                    drawRoundRect(
+                        color = color.copy(0.15f),
+                        topLeft = Offset(min(startX, endX) - 2f, (h - trackH) / 2f - 2f),
+                        size = Size(abs(endX - startX) + 4f, trackH + 4f),
+                        cornerRadius = corner
+                    )
+                }
+
+                // 5. Machined Aluminum Thumb
+                val thumbW = 42.dp.toPx()
+                val thumbH = 28.dp.toPx()
+                val thumbX = progressX - thumbW / 2f
+                val thumbY = (h - thumbH) / 2f
+
+                // Thumb Body
+                drawRoundRect(
+                    brush = Brush.verticalGradient(
+                        listOf(Color(0xFF4A4E58), Color(0xFF2A2E38), Color(0xFF1A1E26))
+                    ),
+                    topLeft = Offset(thumbX, thumbY),
+                    size = Size(thumbW, thumbH),
+                    cornerRadius = CornerRadius(4.dp.toPx(), 4.dp.toPx())
+                )
+                drawRoundRect(
+                    color = Color.White.copy(0.15f),
+                    topLeft = Offset(thumbX, thumbY),
+                    size = Size(thumbW, thumbH),
+                    cornerRadius = CornerRadius(4.dp.toPx(), 4.dp.toPx()),
+                    style = Stroke(1.dp.toPx())
+                )
+
+                // Neon Indicator Line on Thumb
+                val indicatorColor = if (value == 0f) Color.White.copy(0.4f) else (if (value > 0) Color(0xFFDDDDDD) else Color(0xFF888888))
+                drawLine(
+                    color = indicatorColor,
+                    start = Offset(progressX, thumbY + 4.dp.toPx()),
+                    end = Offset(progressX, thumbY + thumbH - 4.dp.toPx()),
+                    strokeWidth = 3.dp.toPx(),
+                    cap = StrokeCap.Round
+                )
+                // Glow for indicator
+                if (value != 0f) {
+                    drawLine(
+                        color = indicatorColor.copy(0.4f),
+                        start = Offset(progressX, thumbY + 2.dp.toPx()),
+                        end = Offset(progressX, thumbY + thumbH - 2.dp.toPx()),
+                        strokeWidth = 6.dp.toPx(),
+                        cap = StrokeCap.Round
+                    )
+                }
+
+                // Thumb Texture (Grip)
+                for (j in 0..2) {
+                    val gripX = thumbX + (j + 1) * (thumbW / 4f)
+                    if (abs(gripX - progressX) > 4.dp.toPx()) {
+                        drawLine(
+                            color = Color.Black.copy(0.3f),
+                            start = Offset(gripX, thumbY + 8.dp.toPx()),
+                            end = Offset(gripX, thumbY + thumbH - 8.dp.toPx()),
+                            strokeWidth = 1.5.dp.toPx()
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun PremiumVerticalBand(
     band: ParametricEqBand,
     enabled: Boolean,
@@ -1375,7 +1592,7 @@ private fun PremiumVerticalBand(
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier.width(42.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp)
+        verticalArrangement = Arrangement.spacedBy(8.dp) // Increased spacing to prevent knob overlap
     ) {
         Text(
             text = if (band.gainDb >= 0) "+%.1f".format(band.gainDb) else "%.1f".format(band.gainDb),
@@ -1388,9 +1605,9 @@ private fun PremiumVerticalBand(
 
         Box(
             modifier = Modifier
-                .height(270.dp) 
+                .height(250.dp) 
                 .width(36.dp)
-                .padding(vertical = 24.dp)
+                .padding(vertical = 12.dp)
                 .pointerInput(isActive) {
                     if (!isActive) return@pointerInput
                     detectVerticalDragGestures { change, _ ->
@@ -1459,7 +1676,7 @@ private fun PremiumVerticalBand(
                 Box(
                     modifier = Modifier
                         .align(Alignment.TopCenter)
-                        .offset(y = (222.dp * (1f - gainProgress)) - 20.dp)
+                        .offset(y = (202.dp * (1f - gainProgress)) - 20.dp)
                         .size(40.dp, 60.dp)
                         .background(
                             Brush.radialGradient(
@@ -1473,7 +1690,7 @@ private fun PremiumVerticalBand(
             Box(
                 modifier = Modifier
                     .align(Alignment.TopCenter)
-                    .offset(y = (222.dp * (1f - gainProgress)))
+                    .offset(y = (202.dp * (1f - gainProgress)))
                     .graphicsLayer { translationY = -24.dp.toPx() }
                     .size(40.dp, 48.dp)
                     .shadow(12.dp, RoundedCornerShape(4.dp), spotColor = Color.Black)
@@ -1526,12 +1743,80 @@ private fun PremiumVerticalBand(
 }
 
 @Composable
-private fun EqPreviewGraph(bands: List<ParametricEqBand>, enabled: Boolean, showDots: Boolean = true) {
+private fun EqPreviewGraph(bands: List<ParametricEqBand>, enabled: Boolean, showDots: Boolean = true, fftBars: FloatArray = FloatArray(0)) {
     Canvas(modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 12.dp)) {
         val w = size.width
         val h = size.height
         val midY = h / 2f
         val dbScale = h / 28f // Scale for +/- 12dB plus margin
+
+        // Draw FFT "Premium Spectral Beam" Spectrum behind the curve
+        if (fftBars.isNotEmpty()) {
+            val barGap = 4f
+            val barW = (w / fftBars.size) - barGap
+            val cornerRadius = CornerRadius(barW / 2f, barW / 2f)
+
+            fftBars.forEachIndexed { i, mag ->
+                val x = i * (barW + barGap)
+                val barH = (mag * h * 0.45f).coerceAtLeast(2f)
+
+                // Frequency-dependent color selection (Deep Gray -> Medium Gray -> Dim White)
+                val colorFraction = i.toFloat() / fftBars.size
+                val baseColor = when {
+                    colorFraction < 0.5f -> lerp(Color(0xFF444444), Color(0xFF888888), colorFraction / 0.5f)
+                    else -> lerp(Color(0xFF888888), Color(0xFFDDDDDD), (colorFraction - 0.5f) / 0.5f)
+                }
+
+                // 1. Neon Bloom (Glow)
+                if (mag > 0.05f) {
+                    drawRoundRect(
+                        color = baseColor.copy(alpha = 0.15f * mag),
+                        topLeft = Offset(x - 4f, midY - barH - 4f),
+                        size = Size(barW + 8f, barH + 4f),
+                        cornerRadius = cornerRadius
+                    )
+                }
+
+                // 2. Main Spectral Beam
+                drawRoundRect(
+                    brush = Brush.verticalGradient(
+                        colors = listOf(
+                            baseColor.copy(alpha = 0.9f),
+                            baseColor.copy(alpha = 0.4f)
+                        ),
+                        startY = midY - barH,
+                        endY = midY
+                    ),
+                    topLeft = Offset(x, midY - barH),
+                    size = Size(barW, barH),
+                    cornerRadius = cornerRadius
+                )
+
+                // 3. High-Intensity Luminous Tip
+                if (mag > 0.4f) {
+                    drawCircle(
+                        color = Color.White.copy(alpha = (mag - 0.4f).coerceIn(0f, 0.8f)),
+                        radius = barW / 2.5f,
+                        center = Offset(x + barW / 2f, midY - barH + barW / 2f)
+                    )
+                }
+
+                // 4. Mirrored Studio Glass Reflection
+                drawRoundRect(
+                    brush = Brush.verticalGradient(
+                        colors = listOf(
+                            baseColor.copy(alpha = 0.3f * mag),
+                            Color.Transparent
+                        ),
+                        startY = midY,
+                        endY = midY + barH * 0.8f
+                    ),
+                    topLeft = Offset(x, midY),
+                    size = Size(barW, barH * 0.8f),
+                    cornerRadius = cornerRadius
+                )
+            }
+        }
 
         // Draw professional grid lines
         listOf(-12f, -6f, 0f, 6f, 12f).forEach { db ->
@@ -1581,14 +1866,14 @@ private fun EqPreviewGraph(bands: List<ParametricEqBand>, enabled: Boolean, show
             if (enabled) {
                 drawPath(
                     path = path,
-                    color = PremiumAccent.copy(0.3f),
+                    color = GraphicGold.copy(0.3f),
                     style = Stroke(width = 6.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
                 )
             }
             
             drawPath(
                 path = path,
-                color = if (enabled) PremiumAccent else Color.White.copy(0.2f),
+                color = if (enabled) GraphicGold else Color.White.copy(0.2f),
                 style = Stroke(width = 2.5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
             )
 
@@ -1602,8 +1887,8 @@ private fun EqPreviewGraph(bands: List<ParametricEqBand>, enabled: Boolean, show
                 path = fillPath,
                 brush = Brush.verticalGradient(
                     colors = listOf(
-                        (if (enabled) PremiumAccent else Color.White).copy(alpha = 0.15f),
-                        (if (enabled) PremiumAccent else Color.White).copy(alpha = 0.02f),
+                        (if (enabled) GraphicGold else Color.White).copy(alpha = 0.15f),
+                        (if (enabled) GraphicGold else Color.White).copy(alpha = 0.02f),
                         Color.Transparent
                     ),
                     startY = 0f,
@@ -1617,7 +1902,7 @@ private fun EqPreviewGraph(bands: List<ParametricEqBand>, enabled: Boolean, show
                     if (i < bands.size) {
                         val band = bands[i]
                         if (band.enabled) {
-                            val dotColor = if (enabled) PremiumAccent else Color.White.copy(0.4f)
+                            val dotColor = if (enabled) GraphicGold else Color.White.copy(0.4f)
                             // Outer glow
                             drawCircle(color = dotColor.copy(0.3f), radius = 6.dp.toPx(), center = pt)
                             // Core
@@ -1659,15 +1944,15 @@ private fun UnifiedPresetSection(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(24.dp))
+            .clip(RoundedCornerShape(16.dp))
             .background(PremiumSurface.copy(alpha = 0.4f))
             .border(
                 1.dp,
                 Brush.linearGradient(listOf(Color.White.copy(0.1f), Color.Transparent)),
-                RoundedCornerShape(24.dp)
+                RoundedCornerShape(16.dp)
             )
             .padding(4.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp)
+        verticalArrangement = Arrangement.spacedBy(2.dp)
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -2336,9 +2621,9 @@ private fun PremiumSoundStageCard(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(24.dp))
+                .clip(RoundedCornerShape(16.dp))
                 .background(Color(0xFF0D1117).copy(0.6f))
-                .border(1.dp, Color.White.copy(0.05f), RoundedCornerShape(24.dp))
+                .border(1.dp, Color.White.copy(0.05f), RoundedCornerShape(16.dp))
                 .padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
@@ -2369,10 +2654,11 @@ private fun PremiumSoundStageCard(
                         )
                     }
                 } else {
-                    PremiumSwitch(
-                        checked = config.spatialAudioEnabled,
-                        onCheckedChange = { viewModel.setSpatialAudioEnabled(it) }
-                    )
+                PremiumSwitch(
+                    checked = config.spatialAudioEnabled,
+                    onCheckedChange = { viewModel.setSpatialAudioEnabled(it) },
+                    accentColor = PremiumAccent
+                )
                 }
             }
 
@@ -2456,7 +2742,8 @@ private fun PremiumSoundStageCard(
                 PremiumSwitch(
                     checked = config.soundStageCenterLock > 0.5f,
                     enabled = (spatialActive || config.soundStageEnabled) && !isSpatialBypassed,
-                    onCheckedChange = { viewModel.setSoundStageCenterLock(if (it) 1f else 0f) }
+                    onCheckedChange = { viewModel.setSoundStageCenterLock(if (it) 1f else 0f) },
+                    accentColor = PremiumAccent
                 )
             }
 
@@ -2700,12 +2987,12 @@ private fun PremiumReverbCard(uiState: PlayerUiState, viewModel: PlayerViewModel
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(24.dp))
+            .clip(RoundedCornerShape(16.dp))
             .background(PremiumSurface.copy(alpha = 0.4f))
             .border(
                 1.dp,
                 Brush.linearGradient(listOf(Color.White.copy(0.1f), Color.Transparent)),
-                RoundedCornerShape(24.dp)
+                RoundedCornerShape(16.dp)
             )
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -2739,7 +3026,8 @@ private fun PremiumReverbCard(uiState: PlayerUiState, viewModel: PlayerViewModel
             } else {
                 PremiumSwitch(
                     checked = config.reverbEnabled,
-                    onCheckedChange = { viewModel.setReverbEnabled(it) }
+                    onCheckedChange = { viewModel.setReverbEnabled(it) },
+                    accentColor = PremiumAccent
                 )
             }
         }
@@ -2912,12 +3200,12 @@ private fun PremiumMasteringCard(uiState: PlayerUiState, viewModel: PlayerViewMo
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(24.dp))
+            .clip(RoundedCornerShape(16.dp))
             .background(PremiumSurface.copy(alpha = 0.4f))
             .border(
                 1.dp,
                 Brush.linearGradient(listOf(Color.White.copy(0.1f), Color.Transparent)),
-                RoundedCornerShape(24.dp)
+                RoundedCornerShape(16.dp)
             )
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
@@ -3078,7 +3366,7 @@ private fun KnobControl(
 
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(4.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
         modifier = Modifier.width(knobSize + 28.dp)
     ) {
         Box(
@@ -3390,3 +3678,49 @@ private fun builtInEqPresets() = listOf(
     BuiltInEqPreset("DEEP", listOf(7f, 5f, 3f, 1f, 0f, -1f, -2f, -3f, -4f, -5f)),
     BuiltInEqPreset("BRIGHT", listOf(-5f, -4f, -3f, -2f, -1f, 1f, 3f, 5f, 7f, 8f))
 )
+
+private fun fftMagnitude(real: FloatArray): FloatArray {
+    val n = real.size
+    val imag = FloatArray(n)
+    fftFloat(real, imag)
+    val mag = FloatArray(n / 2)
+    for (i in 0 until n / 2) {
+        mag[i] = sqrt(real[i] * real[i] + imag[i] * imag[i])
+    }
+    return mag
+}
+
+private fun fftFloat(real: FloatArray, imag: FloatArray) {
+    val n = real.size
+    var j = 0
+    for (i in 1 until n) {
+        var bit = n shr 1
+        while (j and bit != 0) { j = j xor bit; bit = bit shr 1 }
+        j = j or bit
+        if (i < j) {
+            val tr = real[i]; real[i] = real[j]; real[j] = tr
+            val ti = imag[i]; imag[i] = imag[j]; imag[j] = ti
+        }
+    }
+    var len = 2
+    while (len <= n) {
+        val ang = -2.0 * PI / len
+        val wR = cos(ang).toFloat(); val wI = sin(ang).toFloat()
+        var i = 0
+        while (i < n) {
+            var curR = 1.0f; var curI = 0.0f
+            for (k in 0 until len / 2) {
+                val uR = real[i + k]; val uI = imag[i + k]
+                val vR = real[i + k + len / 2] * curR - imag[i + k + len / 2] * curI
+                val vI = real[i + k + len / 2] * curI + imag[i + k + len / 2] * curR
+                real[i + k] = uR + vR; imag[i + k] = uI + vI
+                real[i + k + len / 2] = uR - vR; imag[i + k + len / 2] = uI - vI
+                val nextR = curR * wR - curI * wI
+                val nextI = curR * wI + curI * wR
+                curR = nextR; curI = nextI
+            }
+            i += len
+        }
+        len = len shl 1
+    }
+}

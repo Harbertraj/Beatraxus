@@ -40,6 +40,8 @@ import com.beatraxus.app.model.PlaylistEntity
 import com.beatraxus.app.model.FavoriteEntity
 import com.beatraxus.app.model.AutoEqProfileSummary
 import com.beatraxus.app.model.DspConfig
+import com.beatraxus.app.model.AlbumArtTransform
+import com.beatraxus.app.model.AppearanceConfig
 import com.beatraxus.app.model.DvcMode
 import com.beatraxus.app.model.ParametricEqBand
 import com.beatraxus.app.model.SavedEqPreset
@@ -4647,6 +4649,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun setShowSleepTimerIcon(value: Boolean) {
         viewModelScope.launch {
             appearancePreferences.setShowSleepTimerIcon(value)
+        }
+    }
+
+    fun setAlbumArtTransform(transform: AlbumArtTransform) {
+        viewModelScope.launch {
+            appearancePreferences.setAlbumArtTransform(transform)
         }
     }
 

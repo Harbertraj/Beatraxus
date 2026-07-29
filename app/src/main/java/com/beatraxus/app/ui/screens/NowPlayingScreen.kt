@@ -66,6 +66,7 @@ import android.graphics.drawable.BitmapDrawable
 import android.net.Uri
 import androidx.palette.graphics.Palette
 import com.beatraxus.app.R
+import com.beatraxus.app.model.AlbumArtTransform
 import com.beatraxus.app.model.NowPlayingBackgroundMode
 import com.beatraxus.app.model.Song
 import com.beatraxus.app.model.SongSource
@@ -468,7 +469,7 @@ fun NowPlayingScreen(
 
                         Box(
                             modifier = Modifier
-                                .fillMaxWidth(0.93f)
+                                .fillMaxWidth(0.96f)
                                 .aspectRatio(1f)
                                 .graphicsLayer {
                                     alpha = albumArtAlpha
@@ -500,7 +501,35 @@ fun NowPlayingScreen(
                                     AnimatedContent(
                                         targetState = song.id to song.albumArtUri,
                                         transitionSpec = {
-                                            fadeIn(tween(150)).togetherWith(fadeOut(tween(150)))
+                                            val transform = uiState.appearance.albumArtTransform
+                                            when (transform) {
+                                                AlbumArtTransform.FADE -> {
+                                                    fadeIn(tween(600)).togetherWith(fadeOut(tween(600)))
+                                                }
+                                                AlbumArtTransform.SLIDE -> {
+                                                    (slideInHorizontally(tween(600)) { it } + fadeIn(tween(600)))
+                                                        .togetherWith(slideOutHorizontally(tween(600)) { -it } + fadeOut(tween(600)))
+                                                }
+                                                AlbumArtTransform.SCALE -> {
+                                                    (scaleIn(tween(600), 0.8f) + fadeIn(tween(600)))
+                                                        .togetherWith(scaleOut(tween(600), 1.2f) + fadeOut(tween(600)))
+                                                }
+                                                AlbumArtTransform.ROTATE -> {
+                                                    (fadeIn(tween(600)) + scaleIn(tween(600), 0.8f))
+                                                        .togetherWith(fadeOut(tween(600)) + scaleOut(tween(600), 0.8f))
+                                                }
+                                                AlbumArtTransform.FLIP -> {
+                                                    (fadeIn(tween(400)) + scaleIn(tween(400), 0.5f))
+                                                        .togetherWith(fadeOut(tween(400)) + scaleOut(tween(400), 0.5f))
+                                                }
+                                                AlbumArtTransform.ZOOM -> {
+                                                    (scaleIn(tween(600), 1.5f) + fadeIn(tween(600)))
+                                                        .togetherWith(scaleOut(tween(600), 0.5f) + fadeOut(tween(600)))
+                                                }
+                                                else -> {
+                                                    fadeIn(tween(150)).togetherWith(fadeOut(tween(150)))
+                                                }
+                                            }
                                         },
                                         label = "albumArtTransition",
                                         modifier = Modifier.fillMaxSize()
