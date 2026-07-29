@@ -21,6 +21,7 @@ local.properties
 /Beatraxus Key/
 
 hs_err_pid*.log
+replay_pid*.log
 buildlog.txt
 compile_out.txt
 .artifacts
