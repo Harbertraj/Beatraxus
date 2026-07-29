@@ -142,7 +142,7 @@ private val CardSurface = Color(0xFF15161A)
 @Composable
 fun AnimatedMeshBackground() {
     val transition = rememberInfiniteTransition(label = "mesh")
-    
+
     val x1 by transition.animateFloat(
         initialValue = 0f, targetValue = 1f,
         animationSpec = infiniteRepeatable(tween(12000, easing = LinearEasing), RepeatMode.Reverse),
@@ -166,7 +166,7 @@ fun AnimatedMeshBackground() {
 
     Canvas(modifier = Modifier.fillMaxSize()) {
         drawRect(Color(0xFF060608))
-        
+
         drawCircle(
             brush = Brush.radialGradient(
                 colors = listOf(PremiumAccent.copy(alpha = 0.15f), Color.Transparent),
@@ -177,7 +177,7 @@ fun AnimatedMeshBackground() {
             radius = size.minDimension * 0.8f,
             blendMode = BlendMode.Screen
         )
-        
+
         drawCircle(
             brush = Brush.radialGradient(
                 colors = listOf(Color(0xFF0066FF).copy(alpha = 0.1f), Color.Transparent),
@@ -263,7 +263,7 @@ fun SettingsScreen(
     val bgGradient = Brush.verticalGradient(listOf(Color(0xFF0A0A0C), Color(0xFF14110C)))
     Box(modifier = Modifier.fillMaxSize()) {
         AnimatedMeshBackground()
-        
+
         val settingsMode = uiState.appearance.settingsBackgroundMode
         val settingsSolidIntensity = uiState.appearance.settingsSolidColorIntensity
         val settingsSolidDarkness = uiState.appearance.settingsSolidColorDarkness
@@ -787,6 +787,13 @@ fun MainScreenAppearanceContent(uiState: PlayerUiState, playerViewModel: PlayerV
     }
 }
 
+private fun qualityBadgeStyleLabel(style: com.beatraxus.app.model.QualityBadgeStyle): String = when (style) {
+    com.beatraxus.app.model.QualityBadgeStyle.GOLDEN_SHIMMER -> "Golden Shimmer"
+    com.beatraxus.app.model.QualityBadgeStyle.MINIMAL_OUTLINE -> "Minimal Outline"
+    com.beatraxus.app.model.QualityBadgeStyle.GLASSMORPHIC -> "Glassmorphic"
+    com.beatraxus.app.model.QualityBadgeStyle.NEON_PULSE -> "Neon Pulse"
+}
+
 @Composable
 fun NowPlayingAppearanceContent(uiState: PlayerUiState, playerViewModel: PlayerViewModel, sectionStack: SnapshotStateList<String>) {
     val isClassic = com.beatraxus.app.utils.DeviceUtils.isClassicDevice()
@@ -889,6 +896,102 @@ fun NowPlayingAppearanceContent(uiState: PlayerUiState, playerViewModel: PlayerV
                                 onClick = {
                                     playerViewModel.setAlbumArtTransform(transform)
                                     expandedTransform = false
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        HorizontalDivider(color = Color.White.copy(0.05f))
+
+        var expandedBadgeStyle by remember { mutableStateOf(false) }
+        Column {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Quality Badge Style", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    Text("Visual style of the Hi-Res / Lossless badge", color = Color.White.copy(0.6f), fontSize = 12.sp)
+                }
+                Box {
+                    TextButton(
+                        onClick = { expandedBadgeStyle = true },
+                        colors = ButtonDefaults.textButtonColors(contentColor = PremiumAccent)
+                    ) {
+                        Text(
+                            qualityBadgeStyleLabel(uiState.appearance.qualityBadgeStyle),
+                            fontWeight = FontWeight.Bold
+                        )
+                        Icon(Icons.Rounded.ArrowDropDown, null)
+                    }
+                    DropdownMenu(
+                        expanded = expandedBadgeStyle,
+                        onDismissRequest = { expandedBadgeStyle = false },
+                        modifier = Modifier.background(CardSurface)
+                    ) {
+                        com.beatraxus.app.model.QualityBadgeStyle.entries.forEach { style ->
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        qualityBadgeStyleLabel(style),
+                                        color = if (uiState.appearance.qualityBadgeStyle == style) PremiumAccent else Color.White
+                                    )
+                                },
+                                onClick = {
+                                    playerViewModel.setQualityBadgeStyle(style)
+                                    expandedBadgeStyle = false
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        HorizontalDivider(color = Color.White.copy(0.05f))
+
+        var expandedIconStyle by remember { mutableStateOf(false) }
+        Column {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Now Playing Icon Style", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    Text("Shape of the play/pause/skip control icons", color = Color.White.copy(0.6f), fontSize = 12.sp)
+                }
+                Box {
+                    TextButton(
+                        onClick = { expandedIconStyle = true },
+                        colors = ButtonDefaults.textButtonColors(contentColor = PremiumAccent)
+                    ) {
+                        Text(
+                            uiState.appearance.nowPlayingIconStyle.name.lowercase().replaceFirstChar { it.uppercase() },
+                            fontWeight = FontWeight.Bold
+                        )
+                        Icon(Icons.Rounded.ArrowDropDown, null)
+                    }
+                    DropdownMenu(
+                        expanded = expandedIconStyle,
+                        onDismissRequest = { expandedIconStyle = false },
+                        modifier = Modifier.background(CardSurface)
+                    ) {
+                        com.beatraxus.app.model.NowPlayingIconStyle.entries.forEach { style ->
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        style.name.lowercase().replaceFirstChar { it.uppercase() },
+                                        color = if (uiState.appearance.nowPlayingIconStyle == style) PremiumAccent else Color.White
+                                    )
+                                },
+                                onClick = {
+                                    playerViewModel.setNowPlayingIconStyle(style)
+                                    expandedIconStyle = false
                                 }
                             )
                         }
@@ -1396,7 +1499,7 @@ fun SettingMenuItem(
     val haptic = LocalHapticFeedback.current
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
-    
+
     val scale by animateFloatAsState(
         targetValue = if (isPressed) 0.96f else 1f,
         animationSpec = tween(250, easing = EaseInOutCubic),
@@ -2253,7 +2356,7 @@ private fun PremiumChip(
 ) {
     val haptic = LocalHapticFeedback.current
     val scale by animateFloatAsState(if (selected) 1.05f else 1f, label = "scale")
-    
+
     Box(
         modifier = modifier
             .widthIn(min = 64.dp)
@@ -2274,15 +2377,15 @@ private fun PremiumChip(
             )
             .border(
                 width = 1.dp,
-                brush = if (selected) 
+                brush = if (selected)
                     Brush.verticalGradient(listOf(PrimaryCyan, PrimaryCyan.copy(0.4f)))
-                else 
+                else
                     Brush.verticalGradient(listOf(Color.White.copy(0.08f), Color.Transparent)),
                 shape = CircleShape
             )
-            .clickable { 
+            .clickable {
                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                onClick() 
+                onClick()
             }
             .padding(horizontal = 12.dp, vertical = 10.dp),
         contentAlignment = Alignment.Center
@@ -2599,9 +2702,9 @@ private fun SoxrQualityCard(uiState: PlayerUiState, viewModel: PlayerViewModel) 
                         )
                         .border(
                             width = 1.dp,
-                            brush = if (isSelected && canChange) 
+                            brush = if (isSelected && canChange)
                                 Brush.verticalGradient(listOf(PrimaryCyan, PrimaryCyan.copy(0.4f)))
-                            else 
+                            else
                                 Brush.verticalGradient(listOf(Color.White.copy(0.08f), Color.Transparent)),
                             shape = RoundedCornerShape(18.dp)
                         )
@@ -2813,9 +2916,9 @@ private fun DitherCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
                         )
                         .border(
                             width = 1.dp,
-                            brush = if (isSelected && canSelect) 
+                            brush = if (isSelected && canSelect)
                                 Brush.verticalGradient(listOf(PrimaryCyan, PrimaryCyan.copy(0.4f)))
-                            else 
+                            else
                                 Brush.verticalGradient(listOf(Color.White.copy(0.08f), Color.Transparent)),
                             shape = RoundedCornerShape(18.dp)
                         )
@@ -3277,9 +3380,9 @@ fun LibraryContent(uiState: PlayerUiState, viewModel: PlayerViewModel, onShowInf
                     ),
                     RoundedCornerShape(16.dp)
                 )
-                .clickable { 
+                .clickable {
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                    viewModel.startFullScan() 
+                    viewModel.startFullScan()
                 }
                 .padding(vertical = 14.dp),
             contentAlignment = Alignment.Center
@@ -3287,8 +3390,8 @@ fun LibraryContent(uiState: PlayerUiState, viewModel: PlayerViewModel, onShowInf
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Icon(Icons.Rounded.Sync, null, tint = PremiumAccent, modifier = Modifier.size(18.dp))
                 Text(
-                    "Full Rescan Library", 
-                    color = PremiumAccent, 
+                    "Full Rescan Library",
+                    color = PremiumAccent,
                     style = TextStyle(fontWeight = FontWeight.Black, fontSize = 14.sp, letterSpacing = 0.5.sp)
                 )
             }
@@ -3303,9 +3406,9 @@ fun LibraryContent(uiState: PlayerUiState, viewModel: PlayerViewModel, onShowInf
                     .clip(RoundedCornerShape(16.dp))
                     .background(Color.White.copy(0.03f))
                     .border(0.8.dp, Color.White.copy(0.08f), RoundedCornerShape(16.dp))
-                    .clickable { 
+                    .clickable {
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        viewModel.quickScan() 
+                        viewModel.quickScan()
                     }
                     .padding(vertical = 12.dp),
                 contentAlignment = Alignment.Center
@@ -3313,8 +3416,8 @@ fun LibraryContent(uiState: PlayerUiState, viewModel: PlayerViewModel, onShowInf
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Icon(Icons.Rounded.Search, null, tint = Color.White.copy(0.6f), modifier = Modifier.size(18.dp))
                     Text(
-                        "Quick Scan", 
-                        color = Color.White.copy(0.7f), 
+                        "Quick Scan",
+                        color = Color.White.copy(0.7f),
                         style = TextStyle(fontWeight = FontWeight.Bold, fontSize = 14.sp)
                     )
                 }
@@ -3694,7 +3797,7 @@ fun CloudContent(
 
             val error = uiState.driveErrorMessage
             val status = uiState.enrichmentStatus
-            
+
             if (error != null) {
                 Text(
                     text = error,
@@ -4840,9 +4943,9 @@ fun AboutContent() {
                             color = Color.White.copy(0.4f),
                             style = TextStyle(fontSize = 12.sp, fontWeight = FontWeight.Medium)
                         )
-                        
+
                         Spacer(Modifier.height(14.dp))
-                        
+
                         Surface(
                             color = PremiumAccent.copy(0.12f),
                             shape = CircleShape,
@@ -4863,9 +4966,9 @@ fun AboutContent() {
 
                     val haptic = LocalHapticFeedback.current
                     IconButton(
-                        onClick = { 
+                        onClick = {
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            uriHandler.openUri("https://github.com/Harbertraj/Beatraxus") 
+                            uriHandler.openUri("https://github.com/Harbertraj/Beatraxus")
                         },
                         modifier = Modifier
                             .size(52.dp)
@@ -5000,7 +5103,7 @@ fun FullScanPopup(progress: Float, count: Int, albums: Int, artists: Int, onDism
                     }
 
                     Spacer(Modifier.height(28.dp))
-                    
+
                     TextButton(
                         onClick = onDismiss,
                         colors = ButtonDefaults.textButtonColors(contentColor = Color.White.copy(0.4f))
@@ -5027,8 +5130,8 @@ fun ScanStatItem(icon: ImageVector, value: String, label: String, color: Color, 
         Icon(icon, null, tint = color, modifier = Modifier.size(18.dp))
         Spacer(Modifier.height(6.dp))
         Text(
-            value, 
-            color = Color.White, 
+            value,
+            color = Color.White,
             style = TextStyle(fontWeight = FontWeight.Black, fontSize = 15.sp, fontFamily = FontFamily.Monospace)
         )
         Text(label, color = Color.White.copy(0.4f), style = TextStyle(fontWeight = FontWeight.Medium, fontSize = 10.sp))
@@ -5185,15 +5288,15 @@ fun OutputModeButton(
             )
             .border(
                 width = 1.dp,
-                brush = if (selected) 
+                brush = if (selected)
                     Brush.verticalGradient(listOf(PrimaryCyan, PrimaryCyan.copy(0.4f)))
-                else 
+                else
                     Brush.verticalGradient(listOf(Color.White.copy(0.08f), Color.Transparent)),
                 shape = CircleShape
             )
-            .clickable(enabled = enabled) { 
+            .clickable(enabled = enabled) {
                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                onClick() 
+                onClick()
             }
             .padding(vertical = 12.dp, horizontal = 4.dp),
         contentAlignment = Alignment.Center
@@ -5276,7 +5379,7 @@ private fun DspSliderRow(
     onValueClick: () -> Unit = {}
 ) {
     val haptic = LocalHapticFeedback.current
-    
+
     Column {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -5296,9 +5399,9 @@ private fun DspSliderRow(
                 modifier = Modifier
                     .clip(RoundedCornerShape(8.dp))
                     .background(PrimaryCyan.copy(alpha = if (enabled) 0.1f else 0.03f))
-                    .clickable(enabled = enabled) { 
+                    .clickable(enabled = enabled) {
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        onValueClick() 
+                        onValueClick()
                     }
                     .padding(horizontal = 10.dp, vertical = 4.dp)
             ) {
@@ -5313,9 +5416,9 @@ private fun DspSliderRow(
                 )
             }
         }
-        
+
         Spacer(Modifier.height(6.dp))
-        
+
         Slider(
             value = value,
             onValueChange = {

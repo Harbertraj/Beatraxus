@@ -116,7 +116,14 @@ data class Playlist(
 
 enum class NowPlayingBackgroundMode { BLACK, SOLID, BLUR }
 
-enum class AlbumArtTransform { NONE, FADE, SLIDE, SCALE, ROTATE, FLIP, ZOOM }
+enum class AlbumArtTransform {
+    NONE, FADE, SLIDE, SCALE, ROTATE, FLIP, ZOOM,
+    CROSSFADE_BLUR, VINYL_SPIN, PARALLAX_DEPTH, SHUTTER, GLITCH_SHIFT
+}
+
+enum class QualityBadgeStyle { GOLDEN_SHIMMER, MINIMAL_OUTLINE, GLASSMORPHIC, NEON_PULSE }
+
+enum class NowPlayingIconStyle { FILLED, OUTLINED, ROUNDED, SHARP_MINIMAL }
 
 enum class SeekbarStyle {
     WAVEFORM,          // existing WaveformSeekBar, kept as-is, default
@@ -149,6 +156,8 @@ data class AppearanceConfig(
     val nowPlayingBlurIntensity: Float = 210f,
     val nowPlayingBlurDarkness: Float = 0.3f,
     val albumArtTransform: AlbumArtTransform = AlbumArtTransform.NONE,
+    val qualityBadgeStyle: QualityBadgeStyle = QualityBadgeStyle.GOLDEN_SHIMMER,
+    val nowPlayingIconStyle: NowPlayingIconStyle = NowPlayingIconStyle.FILLED,
 
     val seekbarStyle: SeekbarStyle = SeekbarStyle.WAVEFORM,
 
@@ -345,13 +354,13 @@ data class PlayerUiState(
     val useOriginalQualityArt: Boolean = false,
     val showLyrics: Boolean = false,
     val cameFromNowPlaying: Boolean = false,
-    
+
     // Online Metadata (Last.fm etc)
     val lastFmTrackInfo: com.beatraxus.app.repository.lastfm.LastFmTrack? = null,
     val lastFmArtistInfo: com.beatraxus.app.repository.lastfm.LastFmArtistDetail? = null,
     val lastFmAlbumInfo: com.beatraxus.app.repository.lastfm.LastFmAlbum? = null,
     val isLoadingOnlineInfo: Boolean = false,
-    
+
     // Online Metadata for selected song (in lists/popups)
     val selectedLastFmTrackInfo: com.beatraxus.app.repository.lastfm.LastFmTrack? = null,
     val selectedLastFmArtistInfo: com.beatraxus.app.repository.lastfm.LastFmArtistDetail? = null,

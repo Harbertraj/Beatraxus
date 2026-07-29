@@ -1355,7 +1355,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private suspend fun cleanupCloudAccountData(email: String, source: SongSource) {
         withContext(Dispatchers.IO) {
             val emailLower = email.lowercase()
-            
+
             // 1. Identify songs to be removed
             val songsToRemove = when (source) {
                 SongSource.GDRIVE -> songDao.getSongsByAccount(emailLower)
@@ -1376,7 +1376,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 SongSource.NEXTCLOUD -> songDao.deleteSongsByNextcloudAccount(emailLower)
                 else -> {}
             }
-            
+
             favoriteDao.deleteByAccount(emailLower)
             recentlyPlayedDao.deleteByAccount(emailLower)
             if (songIds.isNotEmpty()) {
@@ -1386,7 +1386,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             // 3. Clear disk caches
             val albumArtDir = File(app.filesDir, "album_art")
             val cloudCacheDir = File(app.cacheDir, "cloud_cache")
-            
+
             songIds.forEach { id ->
                 File(albumArtDir, "$id.jpg").delete()
                 // Cloud cache might have multiple .tmp files for a song
@@ -1394,7 +1394,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             }
 
             // 4. Update in-memory state
-            _songs.update { current -> 
+            _songs.update { current ->
                 current.filterNot { song ->
                     when (source) {
                         SongSource.GDRIVE -> song.driveAccountEmail?.lowercase() == emailLower
@@ -4681,6 +4681,18 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun setAlbumArtTransform(transform: AlbumArtTransform) {
         viewModelScope.launch {
             appearancePreferences.setAlbumArtTransform(transform)
+        }
+    }
+
+    fun setQualityBadgeStyle(style: com.beatraxus.app.model.QualityBadgeStyle) {
+        viewModelScope.launch {
+            appearancePreferences.setQualityBadgeStyle(style)
+        }
+    }
+
+    fun setNowPlayingIconStyle(style: com.beatraxus.app.model.NowPlayingIconStyle) {
+        viewModelScope.launch {
+            appearancePreferences.setNowPlayingIconStyle(style)
         }
     }
 

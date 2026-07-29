@@ -3,6 +3,18 @@ package com.beatraxus.app.ui.screens
 import androidx.compose.material.icons.outlined.Equalizer
 import androidx.compose.material.icons.outlined.Repeat
 import androidx.compose.material.icons.outlined.Shuffle
+import androidx.compose.material.icons.outlined.SkipPrevious
+import androidx.compose.material.icons.outlined.SkipNext
+import androidx.compose.material.icons.outlined.PlayArrow
+import androidx.compose.material.icons.outlined.Pause
+import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.sharp.SkipPrevious
+import androidx.compose.material.icons.sharp.SkipNext
+import androidx.compose.material.icons.sharp.PlayArrow
+import androidx.compose.material.icons.sharp.Pause
 import androidx.compose.material.icons.automirrored.outlined.QueueMusic
 import kotlinx.coroutines.delay
 import com.beatraxus.app.utils.ImageUtils
@@ -526,6 +538,37 @@ fun NowPlayingScreen(
                                                     (scaleIn(tween(600), 1.5f) + fadeIn(tween(600)))
                                                         .togetherWith(scaleOut(tween(600), 0.5f) + fadeOut(tween(600)))
                                                 }
+                                                AlbumArtTransform.CROSSFADE_BLUR -> {
+                                                    (fadeIn(tween(700)) + scaleIn(tween(700), 1.04f))
+                                                        .togetherWith(fadeOut(tween(700)) + scaleOut(tween(700), 0.96f))
+                                                }
+                                                AlbumArtTransform.VINYL_SPIN -> {
+                                                    (scaleIn(
+                                                        animationSpec = spring(
+                                                            dampingRatio = Spring.DampingRatioMediumBouncy,
+                                                            stiffness = Spring.StiffnessLow
+                                                        ),
+                                                        initialScale = 0.3f
+                                                    ) + fadeIn(tween(500)))
+                                                        .togetherWith(scaleOut(tween(350), 0.3f) + fadeOut(tween(300)))
+                                                }
+                                                AlbumArtTransform.PARALLAX_DEPTH -> {
+                                                    (slideInVertically(tween(650)) { it / 6 } + scaleIn(tween(650), 0.92f) + fadeIn(tween(650)))
+                                                        .togetherWith(slideOutVertically(tween(650)) { -it / 6 } + scaleOut(tween(650), 1.08f) + fadeOut(tween(650)))
+                                                }
+                                                AlbumArtTransform.SHUTTER -> {
+                                                    (expandHorizontally(tween(500), expandFrom = Alignment.CenterHorizontally) { 0 } + fadeIn(tween(300)))
+                                                        .togetherWith(shrinkHorizontally(tween(500), shrinkTowards = Alignment.CenterHorizontally) { 0 } + fadeOut(tween(250)))
+                                                }
+                                                AlbumArtTransform.GLITCH_SHIFT -> {
+                                                    (slideInHorizontally(
+                                                        animationSpec = spring(
+                                                            dampingRatio = Spring.DampingRatioHighBouncy,
+                                                            stiffness = Spring.StiffnessHigh
+                                                        )
+                                                    ) { it / 12 } + fadeIn(tween(180)))
+                                                        .togetherWith(fadeOut(tween(120)))
+                                                }
                                                 else -> {
                                                     fadeIn(tween(150)).togetherWith(fadeOut(tween(150)))
                                                 }
@@ -533,7 +576,41 @@ fun NowPlayingScreen(
                                         },
                                         label = "albumArtTransition",
                                         modifier = Modifier.fillMaxSize()
-                                    ) { (_, targetArtUri) ->
+                                    ) { (targetId, targetArtUri) ->
+                                        val transform = uiState.appearance.albumArtTransform
+                                        var glitchTick by remember(targetId) { mutableStateOf(0) }
+                                        val blurAnim = remember(targetId) { Animatable(if (transform == AlbumArtTransform.CROSSFADE_BLUR) 20f else 0f) }
+                                        val rotationAnim = remember(targetId) { Animatable(if (transform == AlbumArtTransform.VINYL_SPIN) -35f else 0f) }
+                                        LaunchedEffect(targetId) {
+                                            if (transform == AlbumArtTransform.GLITCH_SHIFT) {
+                                                glitchTick = 1
+                                                kotlinx.coroutines.delay(70)
+                                                glitchTick = 2
+                                                kotlinx.coroutines.delay(60)
+                                                glitchTick = 0
+                                            }
+                                        }
+                                        LaunchedEffect(targetId) {
+                                            if (transform == AlbumArtTransform.CROSSFADE_BLUR) {
+                                                blurAnim.animateTo(0f, animationSpec = tween(700))
+                                            }
+                                        }
+                                        LaunchedEffect(targetId) {
+                                            if (transform == AlbumArtTransform.VINYL_SPIN) {
+                                                rotationAnim.animateTo(
+                                                    0f,
+                                                    animationSpec = spring(
+                                                        dampingRatio = Spring.DampingRatioMediumBouncy,
+                                                        stiffness = Spring.StiffnessLow
+                                                    )
+                                                )
+                                            }
+                                        }
+                                        val glitchOffsetX by animateFloatAsState(
+                                            targetValue = when (glitchTick) { 1 -> 14f; 2 -> -10f; else -> 0f },
+                                            animationSpec = tween(60),
+                                            label = "glitchOffset"
+                                        )
                                         AsyncImage(
                                             model = ImageRequest.Builder(LocalContext.current)
                                                 .data(targetArtUri)
@@ -546,7 +623,19 @@ fun NowPlayingScreen(
                                                 .fallback(ImageUtils.getDefaultAlbumArtRes())
                                                 .build(),
                                             contentDescription = null,
-                                            modifier = Modifier.fillMaxSize(),
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .then(
+                                                    if (transform == AlbumArtTransform.CROSSFADE_BLUR)
+                                                        Modifier.blur(blurAnim.value.dp) else Modifier
+                                                )
+                                                .graphicsLayer {
+                                                    when (transform) {
+                                                        AlbumArtTransform.VINYL_SPIN -> rotationZ = rotationAnim.value
+                                                        AlbumArtTransform.GLITCH_SHIFT -> translationX = glitchOffsetX
+                                                        else -> {}
+                                                    }
+                                                },
                                             contentScale = ContentScale.Crop
                                         )
                                     }
@@ -790,8 +879,12 @@ fun NowPlayingScreen(
                         horizontalArrangement = Arrangement.Center,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+                        val iconStyle = uiState.appearance.nowPlayingIconStyle
+                        val (prevIcon, playIcon, pauseIcon, nextIcon) = remember(iconStyle) {
+                            transportIconsFor(iconStyle)
+                        }
                         IconButton(onClick = onPrevious) {
-                            Icon(Icons.Rounded.SkipPrevious, null, tint = Color.White, modifier = Modifier.size(44.dp))
+                            Icon(prevIcon, null, tint = Color.White, modifier = Modifier.size(44.dp))
                         }
                         Spacer(Modifier.width(24.dp))
                         Surface(
@@ -814,7 +907,7 @@ fun NowPlayingScreen(
                             ) {
                                 val currentIsPlaying = remember(isPlaying) { isPlaying }
                                 Icon(
-                                    if (currentIsPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                                    if (currentIsPlaying) pauseIcon else playIcon,
                                     null,
                                     tint = Color.Black,
                                     modifier = Modifier.size(40.dp)
@@ -823,7 +916,7 @@ fun NowPlayingScreen(
                         }
                         Spacer(Modifier.width(24.dp))
                         IconButton(onClick = onNext) {
-                            Icon(Icons.Rounded.SkipNext, null, tint = Color.White, modifier = Modifier.size(44.dp))
+                            Icon(nextIcon, null, tint = Color.White, modifier = Modifier.size(44.dp))
                         }
                     }
 
@@ -993,6 +1086,30 @@ fun NowPlayingScreen(
     }
 }
 
+private data class TransportIconSet(
+    val prev: androidx.compose.ui.graphics.vector.ImageVector,
+    val play: androidx.compose.ui.graphics.vector.ImageVector,
+    val pause: androidx.compose.ui.graphics.vector.ImageVector,
+    val next: androidx.compose.ui.graphics.vector.ImageVector
+)
+
+private fun transportIconsFor(style: com.beatraxus.app.model.NowPlayingIconStyle): TransportIconSet {
+    return when (style) {
+        com.beatraxus.app.model.NowPlayingIconStyle.FILLED -> TransportIconSet(
+            Icons.Filled.SkipPrevious, Icons.Filled.PlayArrow, Icons.Filled.Pause, Icons.Filled.SkipNext
+        )
+        com.beatraxus.app.model.NowPlayingIconStyle.OUTLINED -> TransportIconSet(
+            Icons.Outlined.SkipPrevious, Icons.Outlined.PlayArrow, Icons.Outlined.Pause, Icons.Outlined.SkipNext
+        )
+        com.beatraxus.app.model.NowPlayingIconStyle.ROUNDED -> TransportIconSet(
+            Icons.Rounded.SkipPrevious, Icons.Rounded.PlayArrow, Icons.Rounded.Pause, Icons.Rounded.SkipNext
+        )
+        com.beatraxus.app.model.NowPlayingIconStyle.SHARP_MINIMAL -> TransportIconSet(
+            Icons.Sharp.SkipPrevious, Icons.Sharp.PlayArrow, Icons.Sharp.Pause, Icons.Sharp.SkipNext
+        )
+    }
+}
+
 @Composable
 fun AudioQualityBadge(
     song: Song,
@@ -1032,6 +1149,34 @@ fun AudioQualityBadge(
         else -> "${format.uppercase(Locale.US)} QUALITY"
     }
 
+    val icon = if (isHiRes) Icons.Rounded.Diamond else Icons.Rounded.HighQuality
+
+    when (uiState.appearance.qualityBadgeStyle) {
+        com.beatraxus.app.model.QualityBadgeStyle.MINIMAL_OUTLINE -> QualityBadgeMinimalOutline(
+            primaryColor, label, icon, onClick, onLongPress
+        )
+        com.beatraxus.app.model.QualityBadgeStyle.GLASSMORPHIC -> QualityBadgeGlassmorphic(
+            primaryColor, secondaryColor, label, icon, onClick, onLongPress
+        )
+        com.beatraxus.app.model.QualityBadgeStyle.NEON_PULSE -> QualityBadgeNeonPulse(
+            primaryColor, secondaryColor, label, icon, onClick, onLongPress
+        )
+        com.beatraxus.app.model.QualityBadgeStyle.GOLDEN_SHIMMER -> QualityBadgeGoldenShimmer(
+            primaryColor, secondaryColor, label, icon, onClick, onLongPress
+        )
+    }
+}
+
+/** The original badge style: gradient border, shimmer sweep, animated glow shadow. */
+@Composable
+private fun QualityBadgeGoldenShimmer(
+    primaryColor: Color,
+    secondaryColor: Color,
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    onClick: () -> Unit,
+    onLongPress: () -> Unit
+) {
     val infiniteTransition = rememberInfiniteTransition(label = "premiumBadge")
     val glowAlpha by infiniteTransition.animateFloat(
         initialValue = 0.45f,
@@ -1114,7 +1259,7 @@ fun AudioQualityBadge(
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
             ) {
                 Icon(
-                    imageVector = if (isHiRes) Icons.Rounded.Diamond else Icons.Rounded.HighQuality,
+                    imageVector = icon,
                     contentDescription = null,
                     tint = primaryColor,
                     modifier = Modifier
@@ -1134,6 +1279,153 @@ fun AudioQualityBadge(
                     color = primaryColor
                 )
             }
+        }
+    }
+}
+
+/** A flat, quiet pill: thin outline, no shimmer, no glow — for users who find the gold style too loud. */
+@Composable
+private fun QualityBadgeMinimalOutline(
+    primaryColor: Color,
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    onClick: () -> Unit,
+    onLongPress: () -> Unit
+) {
+    Surface(
+        modifier = Modifier.combinedClickable(onClick = onClick, onLongClick = onLongPress),
+        shape = RoundedCornerShape(14.dp),
+        color = Color.Transparent,
+        border = BorderStroke(1.dp, primaryColor.copy(alpha = 0.6f))
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 5.dp)
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = primaryColor,
+                modifier = Modifier.size(16.dp)
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontWeight = FontWeight.SemiBold,
+                    letterSpacing = 1.sp
+                ),
+                color = primaryColor.copy(alpha = 0.9f)
+            )
+        }
+    }
+}
+
+/** Frosted glass pill: blurred translucent backdrop, soft border, static (no shimmer/glow animation). */
+@Composable
+private fun QualityBadgeGlassmorphic(
+    primaryColor: Color,
+    secondaryColor: Color,
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    onClick: () -> Unit,
+    onLongPress: () -> Unit
+) {
+    Surface(
+        modifier = Modifier
+            .combinedClickable(onClick = onClick, onLongClick = onLongPress),
+        shape = RoundedCornerShape(20.dp),
+        color = Color.White.copy(alpha = 0.08f),
+        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.25f))
+    ) {
+        Box(
+            modifier = Modifier
+                .blur(18.dp)
+                .background(
+                    Brush.linearGradient(
+                        colors = listOf(
+                            primaryColor.copy(alpha = 0.18f),
+                            secondaryColor.copy(alpha = 0.1f)
+                        )
+                    )
+                )
+        )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = primaryColor,
+                modifier = Modifier.size(18.dp)
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelMedium.copy(
+                    fontWeight = FontWeight.Medium,
+                    letterSpacing = 1.2.sp
+                ),
+                color = Color.White.copy(alpha = 0.92f)
+            )
+        }
+    }
+}
+
+/** Bold flat fill with a pulsing glow ring — no shimmer sweep, just a steady heartbeat-like pulse. */
+@Composable
+private fun QualityBadgeNeonPulse(
+    primaryColor: Color,
+    secondaryColor: Color,
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    onClick: () -> Unit,
+    onLongPress: () -> Unit
+) {
+    val infiniteTransition = rememberInfiniteTransition(label = "neonPulseBadge")
+    val pulse by infiniteTransition.animateFloat(
+        initialValue = 0.5f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(900, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "pulse"
+    )
+
+    Surface(
+        modifier = Modifier
+            .shadow(
+                elevation = (18 * pulse).dp,
+                shape = RoundedCornerShape(16.dp),
+                ambientColor = primaryColor.copy(alpha = pulse),
+                spotColor = secondaryColor.copy(alpha = pulse)
+            )
+            .combinedClickable(onClick = onClick, onLongClick = onLongPress),
+        shape = RoundedCornerShape(16.dp),
+        color = primaryColor.copy(alpha = 0.16f),
+        border = BorderStroke(1.6.dp, primaryColor.copy(alpha = pulse))
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = primaryColor,
+                modifier = Modifier.size(20.dp)
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelMedium.copy(
+                    fontWeight = FontWeight.Black,
+                    letterSpacing = 1.5.sp
+                ),
+                color = primaryColor
+            )
         }
     }
 }

@@ -7,6 +7,8 @@ import androidx.datastore.preferences.preferencesDataStore
 import com.beatraxus.app.model.AppearanceConfig
 import com.beatraxus.app.model.NowPlayingBackgroundMode
 import com.beatraxus.app.model.AlbumArtTransform
+import com.beatraxus.app.model.QualityBadgeStyle
+import com.beatraxus.app.model.NowPlayingIconStyle
 import com.beatraxus.app.model.SeekbarStyle
 import com.beatraxus.app.utils.DeviceUtils
 import kotlinx.coroutines.flow.Flow
@@ -21,7 +23,7 @@ class AppearancePreferences(context: Context) {
         val isClassic = DeviceUtils.isClassicDevice()
         val defaultMode = if (isClassic) NowPlayingBackgroundMode.BLACK.name else NowPlayingBackgroundMode.BLUR.name
         val defaultNowPlayingMode = if (isClassic) NowPlayingBackgroundMode.SOLID.name else NowPlayingBackgroundMode.BLUR.name
-        
+
         AppearanceConfig(
             nowPlayingBackgroundMode = NowPlayingBackgroundMode.valueOf(
                 preferences[NOW_PLAYING_BACKGROUND_MODE] ?: defaultNowPlayingMode
@@ -32,6 +34,12 @@ class AppearancePreferences(context: Context) {
             nowPlayingBlurDarkness = preferences[BLUR_DARKNESS] ?: 0.3f,
             albumArtTransform = AlbumArtTransform.valueOf(
                 preferences[ALBUM_ART_TRANSFORM] ?: AlbumArtTransform.NONE.name
+            ),
+            qualityBadgeStyle = QualityBadgeStyle.valueOf(
+                preferences[QUALITY_BADGE_STYLE] ?: QualityBadgeStyle.GOLDEN_SHIMMER.name
+            ),
+            nowPlayingIconStyle = NowPlayingIconStyle.valueOf(
+                preferences[NOW_PLAYING_ICON_STYLE] ?: NowPlayingIconStyle.FILLED.name
             ),
             seekbarStyle = SeekbarStyle.valueOf(
                 preferences[SEEKBAR_STYLE] ?: SeekbarStyle.WAVEFORM.name
@@ -128,6 +136,14 @@ class AppearancePreferences(context: Context) {
 
     suspend fun setSeekbarStyle(style: SeekbarStyle) {
         dataStore.edit { it[SEEKBAR_STYLE] = style.name }
+    }
+
+    suspend fun setQualityBadgeStyle(style: QualityBadgeStyle) {
+        dataStore.edit { it[QUALITY_BADGE_STYLE] = style.name }
+    }
+
+    suspend fun setNowPlayingIconStyle(style: NowPlayingIconStyle) {
+        dataStore.edit { it[NOW_PLAYING_ICON_STYLE] = style.name }
     }
 
     suspend fun setShowAudioQualityBadge(value: Boolean) {
@@ -340,6 +356,8 @@ class AppearancePreferences(context: Context) {
         private val BLUR_INTENSITY = floatPreferencesKey("blur_intensity")
         private val BLUR_DARKNESS = floatPreferencesKey("blur_darkness")
         private val ALBUM_ART_TRANSFORM = stringPreferencesKey("album_art_transform")
+        private val QUALITY_BADGE_STYLE = stringPreferencesKey("quality_badge_style")
+        private val NOW_PLAYING_ICON_STYLE = stringPreferencesKey("now_playing_icon_style")
         private val SEEKBAR_STYLE = stringPreferencesKey("seekbar_style")
         private val SHOW_QUALITY_BADGE = booleanPreferencesKey("show_quality_badge")
         private val SHOW_PIPELINE_OVERLAY = booleanPreferencesKey("show_pipeline_overlay")
