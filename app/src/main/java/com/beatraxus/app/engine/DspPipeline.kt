@@ -27,6 +27,7 @@ internal interface DspProcessor {
     fun updateAiAnalysis(aiAnalysis: AiAnalysisEntity?) {}
     fun flush() {}
     fun release() {}
+    fun getLevels(): FloatArray = floatArrayOf(0f, 0f)
 }
 
 internal class AudioDspPipeline(
@@ -124,6 +125,8 @@ internal class AudioDspPipeline(
     fun release() {
         processors.forEach { it.release() }
     }
+
+    fun getLevels(): FloatArray = processors.find { it is NativeDspProcessor }?.getLevels() ?: floatArrayOf(0f, 0f)
 
     fun getHeadroomDb(): Float {
         return processors.filterIsInstance<NativeDspProcessor>().firstOrNull()?.getHeadroomDb() ?: 0f
@@ -502,6 +505,8 @@ private class NativeDspProcessor(
     fun getHeadroomDb(): Float = native.getHeadroomDb()
 
     fun getLatencyFrames(): Int = native.getEqLatencyFrames()
+
+    override fun getLevels(): FloatArray = native.getLevels()
 
     override fun process(input: DspProcessResult, channels: Int): DspProcessResult {
         val speedActive = abs(currentConfig.playbackSpeed - 1.0f) > 0.001f

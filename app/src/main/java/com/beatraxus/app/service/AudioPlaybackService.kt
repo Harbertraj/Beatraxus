@@ -166,6 +166,8 @@ class AudioPlaybackService : Service() {
     fun captureLiveWindow(): com.beatraxus.app.engine.AudioOutput.LiveCapture? =
         if (::audioOutput.isInitialized) audioOutput.captureLiveWindow() else null
 
+    fun getLevels(): FloatArray = engine.getLevels()
+
     override fun onCreate() {
         super.onCreate()
 

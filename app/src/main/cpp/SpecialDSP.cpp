@@ -1212,9 +1212,12 @@ private:
             s.hrtfR[1].processSingle(spatialR, true);
 
             // d. Distance Falloff
-            double distGain = 1.0 / std::pow(s.curDist, 0.7);
-            spatialL *= distGain;
-            spatialR *= distGain;
+            // Normalize so that 1.0m = 0dB.
+            // 2.0m (default) was causing -4.2dB drop.
+            double distGain = 1.0 / std::pow(std::max(0.5, s.curDist), 0.7);
+            // Boost base spatial signal slightly to compensate for ITD/Spectral losses
+            spatialL *= distGain * 1.35;
+            spatialR *= distGain * 1.35;
 
             // e. Air Absorption
             double lpCoeff = std::clamp(1.0 - (s.curDist - 1.0) * 0.04, 0.2, 1.0);
@@ -1233,8 +1236,11 @@ private:
             spatialR = s.delayR[readPos];
             s.writePos = (s.writePos + 1) % s.delaySize;
 
-            bL = bL * (1.0 - curSpatialIntensity) + spatialL * curSpatialIntensity;
-            bR = bR * (1.0 - curSpatialIntensity) + spatialR * curSpatialIntensity;
+            // g. Final Blend (Equal Power)
+            double dryGain = std::cos(curSpatialIntensity * M_PI * 0.5);
+            double wetGain = std::sin(curSpatialIntensity * M_PI * 0.5);
+            bL = bL * dryGain + spatialL * wetGain;
+            bR = bR * dryGain + spatialR * wetGain;
         }
     }
 
@@ -1571,6 +1577,19 @@ public:
     template<typename T>
     void processChain(T* input, int inFrames) {
         int samples = inFrames * channels;
+
+        // Update real-time levels (decaying peak)
+        float currentPeakL = 0.0f, currentPeakR = 0.0f;
+        for (int f = 0; f < inFrames; f++) {
+            currentPeakL = std::max(currentPeakL, std::abs((float)input[f * channels]));
+            if (channels >= 2) currentPeakR = std::max(currentPeakR, std::abs((float)input[f * channels + 1]));
+        }
+        float lastL = levelL.load(std::memory_order_relaxed);
+        float lastR = levelR.load(std::memory_order_relaxed);
+        // Fast attack, slower release (per-buffer)
+        levelL.store(std::max(currentPeakL, lastL * 0.92f), std::memory_order_relaxed);
+        levelR.store(std::max(currentPeakR, lastR * 0.92f), std::memory_order_relaxed);
+
         // Smooth tone targets towards current values to avoid coefficient jumps
         bool needUpdateFilters = false;
         {
@@ -1912,6 +1931,11 @@ public:
         return l + al + sl;
     }
 
+    void getLevels(float* l, float* r) {
+        *l = levelL.load(std::memory_order_relaxed);
+        *r = levelR.load(std::memory_order_relaxed);
+    }
+
 private:
     std::array<float, 32> bandDbs, bandQs, bandFreqs;
 
@@ -1942,6 +1966,7 @@ private:
     bool noHeadroomGainEnabled;
     bool hardwareVolumeEnabled;
     bool monoEnabled;
+    std::atomic<float> levelL{0.0f}, levelR{0.0f};
 
     // RMS Leveler State
     double levelerGain = 1.0;
@@ -2383,6 +2408,15 @@ JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetAiBand(JNIEnv
 JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetAiEqEnabled(JNIEnv* env, jobject thiz, jlong handle, jboolean enabled) {
     if (handle) ((DSP*)handle)->setAiEqEnabled(enabled);
 }
+
+JNIEXPORT jfloatArray JNICALL Java_com_beatraxus_app_engine_NativeDsp_nGetLevels(JNIEnv* env, jobject thiz, jlong handle) {
+    float levels[2] = {0, 0};
+    if (handle) ((DSP*)handle)->getLevels(&levels[0], &levels[1]);
+    jfloatArray result = env->NewFloatArray(2);
+    env->SetFloatArrayRegion(result, 0, 2, levels);
+    return result;
+}
+
 JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetSimBand(JNIEnv* env, jobject thiz, jlong handle, jint index, jfloat freq, jfloat gainDb, jfloat Q, jint type) {
     if (handle) ((DSP*)handle)->setSimBand(index, freq, gainDb, Q, type);
 }

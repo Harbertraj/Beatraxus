@@ -172,6 +172,10 @@ class NativeDsp : AutoCloseable {
         return if (nativeHandle != 0L) nGetEqLatencyFrames(nativeHandle) else 0
     }
 
+    fun getLevels(): FloatArray = lock.readLock().withLock {
+        return if (nativeHandle != 0L) nGetLevels(nativeHandle) else floatArrayOf(0f, 0f)
+    }
+
     fun setAiEqEnabled(enabled: Boolean) = lock.readLock().withLock {
         if (nativeHandle != 0L) nSetAiEqEnabled(nativeHandle, enabled)
     }
@@ -366,6 +370,7 @@ class NativeDsp : AutoCloseable {
     private external fun nSetNoHeadroomGain(handle: Long, enabled: Boolean)
     private external fun nGetHeadroomDb(handle: Long): Float
     private external fun nGetEqLatencyFrames(handle: Long): Int
+    private external fun nGetLevels(handle: Long): FloatArray
     private external fun nSetHighQualityResampler(handle: Long, enabled: Boolean)
     private external fun nSetSoxrQuality(handle: Long, quality: Int)
     private external fun nSetFloat64(handle: Long, enabled: Boolean)

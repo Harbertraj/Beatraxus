@@ -2289,6 +2289,9 @@ private fun ClassicSoundStageView(
     val density = LocalDensity.current
     val config = uiState.dsp.config
     val spatialActive = config.audio3DStageEnabled
+    val realtimeLevels by viewModel.realtimeLevels.collectAsState()
+    val levelL = realtimeLevels[0]
+    val levelR = realtimeLevels[1]
 
     BoxWithConstraints(
         modifier = Modifier
@@ -2301,7 +2304,7 @@ private fun ClassicSoundStageView(
         val viewHeight = with(density) { maxHeight.toPx() }
         val centerX = viewWidth / 2f
         val centerY = viewHeight / 2f
-        val maxOrbitRadius = (min(viewWidth, viewHeight) / 2f) * 0.58f
+        val maxOrbitRadius = (min(viewWidth, viewHeight) / 2f) * 0.82f
 
         Canvas(modifier = Modifier.fillMaxSize()) {
             for (i in 1..4) {
@@ -2312,6 +2315,42 @@ private fun ClassicSoundStageView(
                     style = Stroke(width = 1.dp.toPx())
                 )
             }
+
+            // Real-time Spatial Analyzer Visualizer
+            if (spatialActive) {
+                val barCount = 48
+                val innerRadius = maxOrbitRadius * 0.22f
+                for (i in 0 until barCount) {
+                    val angle = (i.toFloat() / barCount) * 2f * PI.toFloat() - PI.toFloat() / 2f
+                    // Map left half of circle to L level, right half to R level
+                    val isLeft = cos(angle) < 0
+                    val rawLevel = if (isLeft) levelL else levelR
+                    val level = rawLevel.coerceIn(0f, 1.2f)
+                    
+                    val barLen = 4.dp.toPx() + (level * 24.dp.toPx())
+                    val start = Offset(
+                        centerX + innerRadius * cos(angle),
+                        centerY + innerRadius * sin(angle)
+                    )
+                    val end = Offset(
+                        centerX + (innerRadius + barLen) * cos(angle),
+                        centerY + (innerRadius + barLen) * sin(angle)
+                    )
+                    
+                    drawLine(
+                        brush = Brush.linearGradient(
+                            colors = listOf(PremiumAccent.copy(0.2f), PremiumAccent.copy(0.5f + level * 0.4f)),
+                            start = start,
+                            end = end
+                        ),
+                        start = start,
+                        end = end,
+                        strokeWidth = (2.dp.toPx() + level * 1.5.dp.toPx()),
+                        cap = StrokeCap.Round
+                    )
+                }
+            }
+
             drawLine(Color.White.copy(0.05f), Offset(centerX, centerY - maxOrbitRadius * 1.02f), Offset(centerX, centerY + maxOrbitRadius * 1.02f), 1.dp.toPx())
             drawLine(Color.White.copy(0.05f), Offset(centerX - maxOrbitRadius * 1.02f, centerY), Offset(centerX + maxOrbitRadius * 1.02f, centerY), 1.dp.toPx())
         }
@@ -2349,11 +2388,36 @@ private fun ClassicSoundStageView(
                 modifier = Modifier.size(80.dp),
                 shape = CircleShape,
                 color = Color(0xFF0D1117),
-                border = BorderStroke(1.5.dp, if (spatialActive) PremiumAccent.copy(0.6f) else Color.White.copy(0.1f)),
-                shadowElevation = 24.dp
+                border = BorderStroke(2.dp, if (spatialActive) PremiumAccent.copy(0.8f) else Color.White.copy(0.1f)),
+                shadowElevation = if (spatialActive) 32.dp else 0.dp
             ) {
                 Box(contentAlignment = Alignment.Center) {
-                    Icon(Icons.Rounded.GraphicEq, null, tint = PremiumAccent, modifier = Modifier.size(40.dp))
+                    if (spatialActive) {
+                        val infiniteTransition = rememberInfiniteTransition(label = "classic_pulse")
+                        val pulseScale by infiniteTransition.animateFloat(
+                            initialValue = 0.85f,
+                            targetValue = 1.25f,
+                            animationSpec = infiniteRepeatable(tween(2500), RepeatMode.Reverse),
+                            label = "pulse"
+                        )
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .graphicsLayer { 
+                                    scaleX = pulseScale
+                                    scaleY = pulseScale
+                                    alpha = 0.15f + (levelL + levelR) * 0.2f
+                                }
+                                .background(Brush.radialGradient(listOf(PremiumAccent, Color.Transparent)))
+                        )
+                    }
+
+                    Icon(
+                        Icons.Rounded.GraphicEq, 
+                        null, 
+                        tint = if (spatialActive) PremiumAccent else Color.White.copy(0.25f), 
+                        modifier = Modifier.size(40.dp)
+                    )
                 }
             }
         }
@@ -2362,7 +2426,8 @@ private fun ClassicSoundStageView(
         val speakerR = config.audio3DSpeakerPositions.find { it.id == "R" } ?: com.beatraxus.app.model.Audio3DSpeakerPosition("R", 90f, 0f, 2.0f)
 
         listOf(speakerL to Color(0xFF42A5F5), speakerR to Color(0xFFFF7043)).forEach { (speaker, color) ->
-            ClassicSpeakerBubble(speaker, color, maxOrbitRadius, centerX, centerY, spatialActive) { az, dist ->
+            val level = if (speaker.id == "L") levelL else levelR
+            ClassicSpeakerBubble(speaker, color, maxOrbitRadius, centerX, centerY, spatialActive, level) { az, dist ->
                 viewModel.setSpeakerPosition(speaker.id, az, 0f, dist)
             }
         }
@@ -2377,6 +2442,7 @@ private fun ClassicSpeakerBubble(
     centerX: Float,
     centerY: Float,
     enabled: Boolean,
+    level: Float,
     onPositionChange: (Float, Float) -> Unit
 ) {
     val minRadiusFactor = 0.35f
@@ -2387,6 +2453,11 @@ private fun ClassicSpeakerBubble(
     val dotRadius = maxOrbitRadius * distNormalized
     val angleRad = (animAzimuth - 90f) * PI.toFloat() / 180f
 
+    val pulseScale by animateFloatAsState(
+        targetValue = 1f + (level.coerceIn(0f, 1f) * 0.12f),
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow)
+    )
+
     Box(
         modifier = Modifier
             .offset {
@@ -2395,17 +2466,26 @@ private fun ClassicSpeakerBubble(
                     (dotRadius * sin(angleRad)).toInt()
                 )
             }
-            .size(52.dp)
-            .shadow(12.dp, CircleShape, ambientColor = color, spotColor = color)
-            .background(color, CircleShape)
-            .border(2.dp, Color.White.copy(0.4f), CircleShape)
+            .size(38.dp)
+            .graphicsLayer {
+                scaleX = if (enabled) pulseScale else 1f
+                scaleY = if (enabled) pulseScale else 1f
+            }
+            .shadow(
+                (8 + level * 16).dp, 
+                CircleShape, 
+                ambientColor = color.copy(alpha = if (enabled) 0.8f else 0.2f), 
+                spotColor = color.copy(alpha = if (enabled) 0.8f else 0.2f)
+            )
+            .background(if (enabled) color else color.copy(0.3f), CircleShape)
+            .border(1.5.dp, Color.White.copy(if (enabled) 0.5f else 0.1f), CircleShape)
             .pointerInput(enabled, speaker.id) {
                 if (!enabled) return@pointerInput
                 detectDragGestures { change, _ ->
                     change.consume()
                     val touchPos = Offset(
-                        centerX + dotRadius * cos(angleRad) + change.position.x - 26.dp.toPx(),
-                        centerY + dotRadius * sin(angleRad) + change.position.y - 26.dp.toPx()
+                        centerX + dotRadius * cos(angleRad) + change.position.x - 19.dp.toPx(),
+                        centerY + dotRadius * sin(angleRad) + change.position.y - 19.dp.toPx()
                     )
                     val dx = touchPos.x - centerX
                     val dy = touchPos.y - centerY
@@ -2423,7 +2503,7 @@ private fun ClassicSpeakerBubble(
             },
         contentAlignment = Alignment.Center
     ) {
-        Text(speaker.id, color = Color.White, fontWeight = FontWeight.Black, fontSize = 16.sp)
+        Text(speaker.id, color = Color.White.copy(if (enabled) 1f else 0.4f), fontWeight = FontWeight.Black, fontSize = 14.sp)
     }
 }
 
@@ -2486,7 +2566,7 @@ private fun ClassicControlPanel(
         )
 
         SoundStageSliderRow(
-            title = "Intensity / Room Reflections",
+            title = "Spatial Intensity",
             value = config.audio3DRoomReflections,
             range = 0f..1f,
             valueText = { "${(it * 100).toInt()}%" },

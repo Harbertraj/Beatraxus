@@ -144,7 +144,9 @@ class AudioEngine(
                     currentSong = song
                     nextSong = null
 
-                    activeSession?.setStartFrameOffset(output.playbackPositionFrames())
+                    // Use write-cursor (totalFramesWritten) as the reference for live-track continuation,
+                    // so the counter only starts once the new song's first written sample is rendered.
+                    activeSession?.setStartFrameOffset(output.totalFramesWritten())
 
                     // Don't reset positionMs to 0 if we are promoting a prepared session
                     // instead, sync it with the session's current internal position.
@@ -288,7 +290,9 @@ class AudioEngine(
                     nextSession = null
                     nextSong = null
 
-                    activeSession?.setStartFrameOffset(output.playbackPositionFrames())
+                    // Use write-cursor (totalFramesWritten) as the reference for live-track continuation,
+                    // so the counter only starts once the new song's first written sample is rendered.
+                    activeSession?.setStartFrameOffset(output.totalFramesWritten())
 
                     this@AudioEngine.positionMs = activeSession?.currentRenderedPositionMs() ?: positionMs
 
@@ -569,9 +573,9 @@ class AudioEngine(
                         // computes elapsed frames against startFrameOffset captured back when
                         // it was preloaded (seconds/minutes ago), producing a huge garbage
                         // position (e.g. showing "3245:14" instead of the real elapsed time).
-                        // FIX: Use playbackPositionFrames() consistently instead of totalFramesWritten()
-                        // to ensure the subtraction in currentRenderedPositionMs is accurate.
-                        val currentHwPos = output.playbackPositionFrames()
+                        // FIX: Use totalFramesWritten() (the write cursor) to anchor the new track
+                        // in the continuous stream, matching the point where its samples are inserted.
+                        val currentHwPos = output.totalFramesWritten()
                         activeSession?.setStartFrameOffset(currentHwPos)
                         updateAudioStateForSong(currentSong!!)
                         this@AudioEngine.positionMs = 0L
@@ -675,8 +679,9 @@ class AudioEngine(
                             if (newFormat != null && oldFormat != newFormat) {
                                 next.configure(newFormat)
                             }
-                            // FIX: Use playbackPositionFrames() consistently
-                            val framesAtTransition = output.playbackPositionFrames()
+                            // FIX: Use totalFramesWritten() (the write cursor) to anchor the next track
+                            // in the continuous stream, matching the point where its samples are inserted.
+                            val framesAtTransition = output.totalFramesWritten()
                             next.setStartFrameOffset(framesAtTransition)
 
                             updateAudioStateForSong(currentSong!!)
@@ -1091,6 +1096,8 @@ class AudioEngine(
             )
         }
     }
+
+    fun getLevels(): FloatArray = activeSession?.dspPipeline?.getLevels() ?: floatArrayOf(0f, 0f)
 
     private fun resolveTargetSampleRate(inputRate: Int, config: DspConfig): Int {
         // Bit-Perfect: always pass source rate unchanged, unless resampler is unbypassed

@@ -208,6 +208,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     ))
     val uiState: StateFlow<PlayerUiState> = _uiState.asStateFlow()
 
+    private val _realtimeLevels = MutableStateFlow(floatArrayOf(0f, 0f))
+    val realtimeLevels: StateFlow<FloatArray> = _realtimeLevels.asStateFlow()
+
     private val _progressMs = MutableStateFlow(0L)
     val progressMs: StateFlow<Long> = _progressMs.asStateFlow()
 
@@ -847,6 +850,22 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
 
         checkBatteryOptimizations()
+
+        // Start level polling loop for spatial UI animations
+        viewModelScope.launch {
+            while (isActive) {
+                val serviceRef = service
+                if (serviceRef != null && uiState.value.isPlaying && uiState.value.dsp.config.audio3DStageEnabled) {
+                    _realtimeLevels.value = serviceRef.getLevels()
+                    delay(16) // ~60fps
+                } else {
+                    if (_realtimeLevels.value[0] != 0f || _realtimeLevels.value[1] != 0f) {
+                        _realtimeLevels.value = floatArrayOf(0f, 0f)
+                    }
+                    delay(150)
+                }
+            }
+        }
     }
 
     /**
