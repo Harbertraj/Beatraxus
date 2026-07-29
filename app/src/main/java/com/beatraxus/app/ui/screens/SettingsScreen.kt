@@ -4655,7 +4655,7 @@ private fun WhatsNewSection(title: String, items: List<Pair<String, List<String>
 
 
 @Composable
-fun WhatsNewCard() {
+fun FeatureCatalogCard() {
     Surface(
         modifier = Modifier
             .fillMaxWidth()
@@ -4698,10 +4698,10 @@ fun WhatsNewCard() {
                         ),
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(Icons.Rounded.NewReleases, null, tint = PremiumAccent, modifier = Modifier.size(20.dp))
+                    Icon(Icons.Rounded.AutoAwesome, null, tint = PremiumAccent, modifier = Modifier.size(20.dp))
                 }
                 Text(
-                    "WHAT'S NEW",
+                    "APP FEATURE CATALOG",
                     color = Color.White,
                     style = TextStyle(
                         fontWeight = FontWeight.Black,
@@ -4712,68 +4712,45 @@ fun WhatsNewCard() {
             }
 
             Text(
-                "All notable updates and improvements to Beatraxus are documented here.",
+                "Explore the high-fidelity capabilities of the Beatraxus professional audio engine.",
                 color = Color.White.copy(0.6f),
                 fontSize = 12.sp
             )
 
             HorizontalDivider(color = Color.White.copy(0.08f))
 
-            Text(
-                "[June 2026 Update] - June 2026",
-                color = PremiumAccent,
-                fontSize = 15.sp,
-                fontWeight = FontWeight.Bold
-            )
-
             WhatsNewSection(
-                title = "🚀 Added",
-                items = listOf(
-                    "🎵 Audio Features" to listOf(
-                        "Added **Bit-Perfect Mode** for untouched, high-fidelity audio playback",
-                        "Added **USB Direct Output** support for external DACs",
-                        "Added **Dithering** for improved audio precision and playback quality"
-                    ),
-                    "🎚️ Equalizer" to listOf(
-                        "Added **EQ Export & Import** functionality",
-                        "Redesigned the **Equalizer UI** for a cleaner and improved experience"
-                    ),
-                    "☁️ Cloud & Metadata" to listOf(
-                        "Added **Metadata Settings** for better cloud sync customization"
-                    )
-                )
-            )
-
-            WhatsNewSection(
-                title = "⚡ Improved",
-                items = listOf(
-                    "🎧 Audio Processing" to listOf(
-                        "Improved **Peak Limiter** for cleaner playback and better distortion control",
-                        "Enhanced **ReplayGain** for more accurate and consistent volume normalization"
-                    ),
-                    "🖥️ UI & Performance" to listOf(
-                        "Enhanced **overall UI smoothness**",
-                        "Improved **app responsiveness and performance**",
-                        "General optimization improvements for a smoother experience"
-                    )
-                )
-            )
-
-            WhatsNewSection(
-                title = "⚠️ Known Issues",
-                items = listOf(
-                    "❗ Widget Sync Issue" to listOf(
-                        "Widgets may not sync properly with the app in certain situations"
-                    )
-                )
-            )
-
-            WhatsNewSection(
-                title = "🔮 Coming Soon",
+                title = "🎧 Pro-Audio Engine",
                 items = listOf(
                     "" to listOf(
-                        "🎼 **Built-in Hi-Res Song Download Support**",
-                        "More **audio enhancements, performance optimizations, and ecosystem improvements**"
+                        "**Bit-Perfect Mode**: Direct hardware access bypassing the Android mixer.",
+                        "**USB Direct Output**: Full support for external DACs up to 384kHz.",
+                        "**64-bit Processing**: Internal double-precision floating point chain.",
+                        "**SOXR Resampler**: Ultra-clean industry standard sample rate conversion."
+                    )
+                )
+            )
+
+            WhatsNewSection(
+                title = "🎚️ Advanced DSP",
+                items = listOf(
+                    "" to listOf(
+                        "**Parametric EQ**: 10-band high-precision equalizer.",
+                        "**Auto-EQ**: Support for over 4,000 headphone calibration profiles.",
+                        "**Dithering**: Advanced noise-shaping for reduced quantization error.",
+                        "**Peak Limiter**: Dynamic soft-knee protection for fatigue-free audio."
+                    )
+                )
+            )
+
+            WhatsNewSection(
+                title = "☁️ Connectivity",
+                items = listOf(
+                    "" to listOf(
+                        "**Cloud Sync**: Stream from GDrive, Dropbox, OneDrive, Box, and Nextcloud.",
+                        "**NAS Support**: Direct high-speed streaming via SMB and FTP/SFTP.",
+                        "**Telegram**: Access your music library directly from Telegram channels.",
+                        "**AI Intelligence**: Automated mood and genre tagging via local TFLite models."
                     )
                 )
             )
@@ -4782,23 +4759,16 @@ fun WhatsNewCard() {
 
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
-                    "❤️ Thank You",
+                    "❤️ Open Source",
                     color = Color.White,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    "Your feedback helps shape Beatraxus into a smarter, smoother, and more powerful music experience.",
+                    "Beatraxus is built for audiophiles who value privacy, transparency, and pure audio performance.",
                     color = Color.White.copy(0.6f),
                     fontSize = 12.sp,
                     lineHeight = 18.sp
-                )
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    "⭐ If you enjoy Beatraxus, consider starring the repository and sharing your feedback!",
-                    color = PremiumAccent.copy(0.8f),
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium
                 )
             }
         }
@@ -4817,7 +4787,7 @@ fun AboutContent() {
     }
 
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        WhatsNewCard()
+        FeatureCatalogCard()
 
         Surface(
             modifier = Modifier
