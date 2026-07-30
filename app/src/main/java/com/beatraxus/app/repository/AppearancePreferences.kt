@@ -36,7 +36,7 @@ class AppearancePreferences(context: Context) {
                 preferences[ALBUM_ART_TRANSFORM] ?: AlbumArtTransform.NONE.name
             ),
             qualityBadgeStyle = QualityBadgeStyle.valueOf(
-                preferences[QUALITY_BADGE_STYLE] ?: QualityBadgeStyle.GOLDEN_SHIMMER.name
+                preferences[QUALITY_BADGE_STYLE] ?: QualityBadgeStyle.GLASSMORPHIC.name
             ),
             nowPlayingIconStyle = NowPlayingIconStyle.valueOf(
                 preferences[NOW_PLAYING_ICON_STYLE] ?: NowPlayingIconStyle.FILLED.name
@@ -44,10 +44,6 @@ class AppearancePreferences(context: Context) {
             seekbarStyle = SeekbarStyle.valueOf(
                 preferences[SEEKBAR_STYLE] ?: SeekbarStyle.WAVEFORM.name
             ),
-            showAudioQualityBadge = preferences[SHOW_QUALITY_BADGE] ?: true,
-            showAudioPipelineOverlay = preferences[SHOW_PIPELINE_OVERLAY] ?: true,
-            showTechnicalInfoPanel = preferences[SHOW_TECHNICAL_INFO] ?: true,
-            showLyricsButton = preferences[SHOW_LYRICS_BUTTON] ?: true,
 
             // Home Screen Sections
             showGreetingHeader = preferences[SHOW_GREETING_HEADER] ?: true,
@@ -59,12 +55,6 @@ class AppearancePreferences(context: Context) {
             showFeaturedAlbums = preferences[SHOW_FEATURED_ALBUMS] ?: true,
             showArtistsYouLove = preferences[SHOW_ARTISTS_YOU_LOVE] ?: true,
             showYourPlaylists = preferences[SHOW_YOUR_PLAYLISTS] ?: true,
-
-            // Now Playing Shortcuts
-            showFavoriteButton = preferences[SHOW_FAVORITE_BUTTON] ?: true,
-            showEqualizerShortcut = preferences[SHOW_EQUALIZER_SHORTCUT] ?: true,
-            showQueueButton = preferences[SHOW_QUEUE_BUTTON] ?: true,
-            showSleepTimerIcon = preferences[SHOW_SLEEP_TIMER_ICON] ?: true,
 
             // Main Screen Background
             mainBackgroundMode = NowPlayingBackgroundMode.valueOf(
@@ -146,22 +136,6 @@ class AppearancePreferences(context: Context) {
         dataStore.edit { it[NOW_PLAYING_ICON_STYLE] = style.name }
     }
 
-    suspend fun setShowAudioQualityBadge(value: Boolean) {
-        dataStore.edit { it[SHOW_QUALITY_BADGE] = value }
-    }
-
-    suspend fun setShowAudioPipelineOverlay(value: Boolean) {
-        dataStore.edit { it[SHOW_PIPELINE_OVERLAY] = value }
-    }
-
-    suspend fun setShowTechnicalInfoPanel(value: Boolean) {
-        dataStore.edit { it[SHOW_TECHNICAL_INFO] = value }
-    }
-
-    suspend fun setShowLyricsButton(value: Boolean) {
-        dataStore.edit { it[SHOW_LYRICS_BUTTON] = value }
-    }
-
     // Home Screen Sections Setters
     suspend fun setShowGreetingHeader(value: Boolean) {
         dataStore.edit { it[SHOW_GREETING_HEADER] = value }
@@ -197,23 +171,6 @@ class AppearancePreferences(context: Context) {
 
     suspend fun setShowYourPlaylists(value: Boolean) {
         dataStore.edit { it[SHOW_YOUR_PLAYLISTS] = value }
-    }
-
-    // Now Playing Shortcuts Setters
-    suspend fun setShowFavoriteButton(value: Boolean) {
-        dataStore.edit { it[SHOW_FAVORITE_BUTTON] = value }
-    }
-
-    suspend fun setShowEqualizerShortcut(value: Boolean) {
-        dataStore.edit { it[SHOW_EQUALIZER_SHORTCUT] = value }
-    }
-
-    suspend fun setShowQueueButton(value: Boolean) {
-        dataStore.edit { it[SHOW_QUEUE_BUTTON] = value }
-    }
-
-    suspend fun setShowSleepTimerIcon(value: Boolean) {
-        dataStore.edit { it[SHOW_SLEEP_TIMER_ICON] = value }
     }
 
     // Main Screen Background Setters
@@ -359,10 +316,6 @@ class AppearancePreferences(context: Context) {
         private val QUALITY_BADGE_STYLE = stringPreferencesKey("quality_badge_style")
         private val NOW_PLAYING_ICON_STYLE = stringPreferencesKey("now_playing_icon_style")
         private val SEEKBAR_STYLE = stringPreferencesKey("seekbar_style")
-        private val SHOW_QUALITY_BADGE = booleanPreferencesKey("show_quality_badge")
-        private val SHOW_PIPELINE_OVERLAY = booleanPreferencesKey("show_pipeline_overlay")
-        private val SHOW_TECHNICAL_INFO = booleanPreferencesKey("show_technical_info")
-        private val SHOW_LYRICS_BUTTON = booleanPreferencesKey("show_lyrics_button")
 
         // Home Screen Sections
         private val SHOW_GREETING_HEADER = booleanPreferencesKey("show_greeting_header")
@@ -374,12 +327,6 @@ class AppearancePreferences(context: Context) {
         private val SHOW_FEATURED_ALBUMS = booleanPreferencesKey("show_featured_albums")
         private val SHOW_ARTISTS_YOU_LOVE = booleanPreferencesKey("show_artists_you_love")
         private val SHOW_YOUR_PLAYLISTS = booleanPreferencesKey("show_your_playlists")
-
-        // Now Playing Shortcuts
-        private val SHOW_FAVORITE_BUTTON = booleanPreferencesKey("show_favorite_button")
-        private val SHOW_EQUALIZER_SHORTCUT = booleanPreferencesKey("show_equalizer_shortcut")
-        private val SHOW_QUEUE_BUTTON = booleanPreferencesKey("show_queue_button")
-        private val SHOW_SLEEP_TIMER_ICON = booleanPreferencesKey("show_sleep_timer_icon")
 
         // Main Screen Background
         private val MAIN_BACKGROUND_MODE = stringPreferencesKey("main_background_mode")

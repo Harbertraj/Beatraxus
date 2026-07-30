@@ -87,6 +87,8 @@ import com.beatraxus.app.ui.components.seekbars.AppSeekBar
 import com.beatraxus.app.ui.components.KaraokeLyricsView
 import com.beatraxus.app.ui.components.PremiumSwitch
 import com.beatraxus.app.ui.components.SongInfoDialog
+import com.beatraxus.app.ui.components.SongOptionsSheet
+import com.beatraxus.app.ui.components.glassIconBackground
 import com.beatraxus.app.ui.utils.FastBlurTransformation
 import com.beatraxus.app.ui.utils.RenderEffectHelper
 import android.graphics.Shader
@@ -134,12 +136,18 @@ fun NowPlayingScreen(
     showPipelineOverlay: Boolean = false,
     onTogglePipeline: (Boolean) -> Unit = {},
     onSetSleepTimer: (Int, Boolean, Int) -> Unit = { _, _, _ -> },
-    onStopSleepTimer: () -> Unit = {}
+    onStopSleepTimer: () -> Unit = {},
+    onAddToPlaylist: (Song) -> Unit = {},
+    onDeleteSong: (Song) -> Unit = {},
+    onGoToArtist: (String) -> Unit = {},
+    onGoToFolder: (String, String) -> Unit = { _, _ -> },
+    onGoToGenre: (String) -> Unit = {}
 ) {
     if (song == null) return
     val showQueue = uiState.showQueue
     val showLyrics = uiState.showLyrics
     var showSleepTimerSheet by remember { mutableStateOf(false) }
+    var showSongOptions by remember { mutableStateOf(false) }
     var showSongInfo by remember { mutableStateOf(false) }
 
     // Sink the one-shot ViewModel flag: MainActivity sets uiState.showSongInfo = true right
@@ -188,6 +196,7 @@ fun NowPlayingScreen(
     // Key ensures derived state (progress calc) resets on song change
     val songChangeKey = song.id to (durationMs)
 
+    val isBadgeEnabled = uiState.appearance.qualityBadgeStyle != com.beatraxus.app.model.QualityBadgeStyle.NONE
     var badgeVisible by rememberSaveable(song.id) { mutableStateOf(false) }
     var shouldAnimateBadge by rememberSaveable(song.id) { mutableStateOf(true) }
 
@@ -202,7 +211,7 @@ fun NowPlayingScreen(
     }
 
     val metadataHeight by animateDpAsState(
-        targetValue = if (showLyrics) 64.dp else 90.dp,
+        targetValue = if (showLyrics || !isBadgeEnabled) 64.dp else 90.dp,
         animationSpec = tween(600),
         label = "metadataHeight"
     )
@@ -322,7 +331,7 @@ fun NowPlayingScreen(
                     title = {
                         AnimatedContent(
                             targetState = showLyrics,
-                            modifier = Modifier.offset(y = (-4).dp),
+                            modifier = Modifier.offset(y = (-8).dp),
                             transitionSpec = {
                                 (fadeIn(tween(600)) + slideInVertically(tween(600)) { it / 2 })
                                     .togetherWith(fadeOut(tween(600)) + slideOutVertically(tween(600)) { -it / 2 })
@@ -364,13 +373,16 @@ fun NowPlayingScreen(
                         }
                     },
                     navigationIcon = {
-                        IconButton(onClick = {
-                            if (showQueue) onToggleQueue()
-                            else {
-                                onTogglePipeline(false)
-                                onClose()
+                        IconButton(
+                            modifier = Modifier.offset(y = (-8).dp),
+                            onClick = {
+                                if (showQueue) onToggleQueue()
+                                else {
+                                    onTogglePipeline(false)
+                                    onClose()
+                                }
                             }
-                        }) {
+                        ) {
                             Icon(
                                 Icons.Rounded.KeyboardArrowDown,
                                 null,
@@ -387,7 +399,9 @@ fun NowPlayingScreen(
                                     .togetherWith(fadeOut(tween(700)) + scaleOut(targetScale = 0.85f))
                             },
                             label = "actionToggle",
-                            modifier = Modifier.padding(end = 12.dp)
+                            modifier = Modifier
+                                .padding(end = 12.dp)
+                                .offset(y = (-8).dp)
                         ) { queueVisible ->
                             if (!queueVisible) {
                                 Box(
@@ -405,32 +419,30 @@ fun NowPlayingScreen(
                                 }
                             } else {
                                 // Sleep Timer Button
-                                if (uiState.appearance.showSleepTimerIcon) {
-                                    Surface(
-                                        onClick = { showSleepTimerSheet = true },
-                                        shape = RoundedCornerShape(14.dp),
-                                        color = if (uiState.isSleepTimerActive) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f) else Color.White.copy(alpha = 0.08f),
-                                        border = BorderStroke(1.dp, if (uiState.isSleepTimerActive) MaterialTheme.colorScheme.primary.copy(alpha = 0.4f) else Color.White.copy(alpha = 0.05f))
+                                Surface(
+                                    onClick = { showSleepTimerSheet = true },
+                                    shape = RoundedCornerShape(14.dp),
+                                    color = if (uiState.isSleepTimerActive) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f) else Color.White.copy(alpha = 0.08f),
+                                    border = BorderStroke(1.dp, if (uiState.isSleepTimerActive) MaterialTheme.colorScheme.primary.copy(alpha = 0.4f) else Color.White.copy(alpha = 0.05f))
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.padding(horizontal = if (uiState.isSleepTimerActive) 10.dp else 8.dp, vertical = 8.dp)
                                     ) {
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            modifier = Modifier.padding(horizontal = if (uiState.isSleepTimerActive) 10.dp else 8.dp, vertical = 8.dp)
-                                        ) {
-                                            Icon(
-                                                Icons.Rounded.Timer,
-                                                null,
-                                                tint = if (uiState.isSleepTimerActive) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.8f),
-                                                modifier = Modifier.size(20.dp)
+                                        Icon(
+                                            Icons.Rounded.Timer,
+                                            null,
+                                            tint = if (uiState.isSleepTimerActive) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.8f),
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                        if (uiState.isSleepTimerActive) {
+                                            Spacer(Modifier.width(6.dp))
+                                            Text(
+                                                text = fmtSleepTime(uiState.sleepTimerRemainingSeconds),
+                                                color = MaterialTheme.colorScheme.primary,
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Bold
                                             )
-                                            if (uiState.isSleepTimerActive) {
-                                                Spacer(Modifier.width(6.dp))
-                                                Text(
-                                                    text = fmtSleepTime(uiState.sleepTimerRemainingSeconds),
-                                                    color = MaterialTheme.colorScheme.primary,
-                                                    fontSize = 12.sp,
-                                                    fontWeight = FontWeight.Bold
-                                                )
-                                            }
                                         }
                                     }
                                 }
@@ -461,12 +473,12 @@ fun NowPlayingScreen(
                         dominantColor = currentDominantColor
                     )
                 } else {
-                    Spacer(Modifier.height(8.dp))
                     // Middle Section: Album Art or Lyrics
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .weight(1f),
+                            .weight(1f)
+                            .offset(y = (-3).dp),
                         contentAlignment = Alignment.Center
                     ) {
                         val albumArtAlpha by animateFloatAsState(
@@ -482,7 +494,7 @@ fun NowPlayingScreen(
 
                         Box(
                             modifier = Modifier
-                                .fillMaxWidth(0.96f)
+                                .fillMaxWidth()
                                 .aspectRatio(1f)
                                 .graphicsLayer {
                                     alpha = albumArtAlpha
@@ -699,7 +711,7 @@ fun NowPlayingScreen(
                             verticalArrangement = Arrangement.Center
                         ) {
                             androidx.compose.animation.AnimatedVisibility(
-                                visible = !showLyrics,
+                                visible = !showLyrics && isBadgeEnabled,
                                 enter = expandVertically(expandFrom = Alignment.Top) + fadeIn(),
                                 exit = shrinkVertically(shrinkTowards = Alignment.Top) + fadeOut()
                             ) {
@@ -708,28 +720,26 @@ fun NowPlayingScreen(
                                         modifier = Modifier.height(36.dp),
                                         contentAlignment = Alignment.BottomCenter
                                     ) {
-                                        if (uiState.appearance.showAudioQualityBadge) {
-                                            key(song.id) {
-                                                androidx.compose.animation.AnimatedVisibility(
-                                                    visible = badgeVisible,
-                                                    enter = if (shouldAnimateBadge) {
-                                                        fadeIn(tween(500)) + scaleIn(
-                                                            initialScale = 0.6f,
-                                                            animationSpec = spring(
-                                                                dampingRatio = Spring.DampingRatioMediumBouncy,
-                                                                stiffness = Spring.StiffnessLow
-                                                            )
+                                        key(song.id) {
+                                            androidx.compose.animation.AnimatedVisibility(
+                                                visible = badgeVisible,
+                                                enter = if (shouldAnimateBadge) {
+                                                    fadeIn(tween(500)) + scaleIn(
+                                                        initialScale = 0.6f,
+                                                        animationSpec = spring(
+                                                            dampingRatio = Spring.DampingRatioMediumBouncy,
+                                                            stiffness = Spring.StiffnessLow
                                                         )
-                                                    } else EnterTransition.None,
-                                                    exit = fadeOut(tween(100))
-                                                ) {
-                                                    AudioQualityBadge(
-                                                        song = song,
-                                                        uiState = uiState,
-                                                        onClick = { },
-                                                        onLongPress = { onTogglePipeline(true) }
                                                     )
-                                                }
+                                                } else EnterTransition.None,
+                                                exit = fadeOut(tween(100))
+                                            ) {
+                                                AudioQualityBadge(
+                                                    song = song,
+                                                    uiState = uiState,
+                                                    onClick = { },
+                                                    onLongPress = { onTogglePipeline(true) }
+                                                )
                                             }
                                         }
                                     }
@@ -741,16 +751,13 @@ fun NowPlayingScreen(
                                 modifier = Modifier.fillMaxWidth(),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                // Favorite Icon
-                                if (uiState.appearance.showFavoriteButton) {
-                                    IconButton(onClick = onFavoriteClick) {
-                                        Icon(
-                                            if (isFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
-                                            null,
-                                            tint = if (isFavorite) Color(0xFFFF4081) else Color.White.copy(0.7f),
-                                            modifier = Modifier.size(28.dp)
-                                        )
-                                    }
+                                IconButton(onClick = onFavoriteClick) {
+                                    Icon(
+                                        if (isFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                                        null,
+                                        tint = if (isFavorite) Color(0xFFFF4081) else Color.White.copy(0.7f),
+                                        modifier = Modifier.size(28.dp)
+                                    )
                                 }
 
 
@@ -826,16 +833,14 @@ fun NowPlayingScreen(
                                     }
                                 }
 
-                                // Lyrics Icon
-                                if (uiState.appearance.showLyricsButton) {
-                                    IconButton(onClick = onToggleLyrics) {
-                                        Icon(
-                                            Icons.Rounded.Lyrics,
-                                            null,
-                                            tint = if (showLyrics) MaterialTheme.colorScheme.primary else Color.White.copy(0.7f),
-                                            modifier = Modifier.size(28.dp)
-                                        )
-                                    }
+                                // Song Options Menu (replacing lyrics button)
+                                IconButton(onClick = { showSongOptions = true }) {
+                                    Icon(
+                                        Icons.Rounded.MoreVert,
+                                        null,
+                                        tint = Color.White.copy(0.7f),
+                                        modifier = Modifier.size(28.dp)
+                                    )
                                 }
                             }
                         }
@@ -864,9 +869,7 @@ fun NowPlayingScreen(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 PlaybackTimerText(progressMs, true)
-                                if (uiState.appearance.showTechnicalInfoPanel) {
-                                    TechnicalInfo(song, uiState)
-                                }
+                                TechnicalInfo(song, uiState)
                                 Text(fmtTime(durationMs), color = Color.White.copy(0.5f), fontSize = 12.sp, modifier = Modifier.width(45.dp), textAlign = TextAlign.End)
                             }
                         }
@@ -967,7 +970,6 @@ fun NowPlayingScreen(
                             .padding(top = 8.dp, bottom = 24.dp)
                             .fillMaxWidth(0.95f)
                             .height(90.dp)
-                            .shadow(8.dp, RoundedCornerShape(24.dp))
                             .background(Color.White.copy(alpha = 0.08f), RoundedCornerShape(24.dp))
                             .border(1.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(24.dp))
                             .clip(RoundedCornerShape(24.dp))
@@ -977,6 +979,14 @@ fun NowPlayingScreen(
                             horizontalArrangement = Arrangement.SpaceEvenly,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
+                            // Sleep Timer
+                            UtilityItem(
+                                icon = Icons.Rounded.Timer,
+                                label = "Sleep Timer",
+                                isActive = uiState.isSleepTimerActive,
+                                onClick = { showSleepTimerSheet = true }
+                            )
+
                             // Lyrics
                             UtilityItem(
                                 icon = Icons.Rounded.Lyrics,
@@ -990,7 +1000,8 @@ fun NowPlayingScreen(
                                 icon = Icons.AutoMirrored.Rounded.PlaylistPlay,
                                 label = "Queue",
                                 isActive = showQueue,
-                                onClick = onToggleQueue
+                                onClick = onToggleQueue,
+                                iconSize = 34.dp // Slightly larger to match visual weight
                             )
 
                             // Equalizer
@@ -999,14 +1010,6 @@ fun NowPlayingScreen(
                                 label = "Equalizer",
                                 isActive = uiState.dsp.config.eqEnabled,
                                 onClick = onOpenEqualizer
-                            )
-
-                            // Sleep Timer
-                            UtilityItem(
-                                icon = Icons.Rounded.Timer,
-                                label = "Sleep Timer",
-                                isActive = uiState.isSleepTimerActive,
-                                onClick = { showSleepTimerSheet = true }
                             )
                         }
                     }
@@ -1025,6 +1028,51 @@ fun NowPlayingScreen(
                 },
                 onStopTimer = onStopSleepTimer,
                 onDismiss = { showSleepTimerSheet = false }
+            )
+        }
+
+        if (showSongOptions) {
+            SongOptionsSheet(
+                song = song,
+                currentPlayingSong = uiState.currentSong,
+                onDismiss = { showSongOptions = false },
+                onPlayNext = { /* Not shown */ },
+                onAddToQueue = {
+                    onToggleQueue()
+                    showSongOptions = false
+                },
+                onAddToPlaylist = {
+                    onAddToPlaylist(song)
+                    showSongOptions = false
+                },
+                onInfo = {
+                    showSongInfo = true
+                    showSongOptions = false
+                },
+                onDelete = {
+                    onDeleteSong(song)
+                    showSongOptions = false
+                },
+                isFavorite = isFavorite,
+                onToggleFavorite = onFavoriteClick,
+                onGoToArtist = {
+                    onGoToArtist(song.artist)
+                    showSongOptions = false
+                },
+                onGoToAlbum = {
+                    onNavigateToAlbum(song.album)
+                    showSongOptions = false
+                },
+                onGoToFolder = {
+                    onGoToFolder(song.folder, song.folder.substringAfterLast("/"))
+                    showSongOptions = false
+                },
+                onGoToGenre = {
+                    onGoToGenre(song.genre)
+                    showSongOptions = false
+                },
+                showPlayNext = false,
+                showMark = false
             )
         }
 
@@ -1110,20 +1158,21 @@ fun AudioQualityBadge(
 
     val icon = if (isHiRes) Icons.Rounded.Diamond else Icons.Rounded.HighQuality
 
-    when (uiState.appearance.qualityBadgeStyle) {
-        com.beatraxus.app.model.QualityBadgeStyle.MINIMAL_OUTLINE -> QualityBadgeMinimalOutline(
-            primaryColor, label, icon, onClick, onLongPress
-        )
-        com.beatraxus.app.model.QualityBadgeStyle.GLASSMORPHIC -> QualityBadgeGlassmorphic(
-            primaryColor, secondaryColor, label, icon, onClick, onLongPress
-        )
-        com.beatraxus.app.model.QualityBadgeStyle.NEON_PULSE -> QualityBadgeNeonPulse(
-            primaryColor, secondaryColor, label, icon, onClick, onLongPress
-        )
-        com.beatraxus.app.model.QualityBadgeStyle.GOLDEN_SHIMMER -> QualityBadgeGoldenShimmer(
-            primaryColor, secondaryColor, label, icon, onClick, onLongPress
-        )
-    }
+                        when (uiState.appearance.qualityBadgeStyle) {
+                            com.beatraxus.app.model.QualityBadgeStyle.NONE -> {}
+                            com.beatraxus.app.model.QualityBadgeStyle.MINIMAL_OUTLINE -> QualityBadgeMinimalOutline(
+                                primaryColor, label, icon, onClick, onLongPress
+                            )
+                            com.beatraxus.app.model.QualityBadgeStyle.GLASSMORPHIC -> QualityBadgeGlassmorphic(
+                                primaryColor, secondaryColor, label, icon, onClick, onLongPress
+                            )
+                            com.beatraxus.app.model.QualityBadgeStyle.NEON_PULSE -> QualityBadgeNeonPulse(
+                                primaryColor, secondaryColor, label, icon, onClick, onLongPress
+                            )
+                            com.beatraxus.app.model.QualityBadgeStyle.GOLDEN_SHIMMER -> QualityBadgeGoldenShimmer(
+                                primaryColor, secondaryColor, label, icon, onClick, onLongPress
+                            )
+                        }
 }
 
 /** The original badge style: gradient border, shimmer sweep, animated glow shadow. */
@@ -1815,7 +1864,6 @@ fun QueueView(
                         Surface(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .shadow(elevation, RoundedCornerShape(18.dp))
                                 .clickable { onPlayFromQueue(song.id) },
                             shape = RoundedCornerShape(18.dp),
                             color = if (isDragging)
@@ -2024,12 +2072,14 @@ private fun UtilityItem(
     icon: ImageVector,
     label: String,
     isActive: Boolean,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    iconSize: androidx.compose.ui.unit.Dp = 28.dp
 ) {
     Column(
         modifier = Modifier
+            .clip(RoundedCornerShape(16.dp))
             .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp),
+            .padding(horizontal = 12.dp, vertical = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
@@ -2037,7 +2087,7 @@ private fun UtilityItem(
             imageVector = icon,
             contentDescription = label,
             tint = if (isActive) Color.White else Color.White.copy(alpha = 0.6f),
-            modifier = Modifier.size(28.dp)
+            modifier = Modifier.size(iconSize)
         )
         Spacer(Modifier.height(4.dp))
         Text(
@@ -2133,6 +2183,10 @@ private fun SleepTimerSheet(
     var endOfTrack by remember { mutableStateOf(uiState.sleepTimerFinishTrack) }
     var showCustomPicker by remember { mutableStateOf(false) }
 
+    val sheetState = rememberModalBottomSheetState(
+        skipPartiallyExpanded = true
+    )
+
     val selectedMinutes = remember(timerValue) {
         val index = (timerValue * (presets.size - 1)).roundToInt()
         presets[index]
@@ -2144,6 +2198,7 @@ private fun SleepTimerSheet(
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
+        sheetState = sheetState,
         containerColor = Color.Transparent,
         scrimColor = Color.Black.copy(alpha = 0.8f),
         dragHandle = null
@@ -2153,7 +2208,6 @@ private fun SleepTimerSheet(
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(topStart = 42.dp, topEnd = 42.dp))
                 .background(Color(0xFF0F0E0E))
-                .windowInsetsPadding(WindowInsets(0.dp))
         ) {
             // Background Layer with enhanced blur and subtle animation
             if (uiState.appearance.nowPlayingBackgroundMode == NowPlayingBackgroundMode.BLUR) {
@@ -2163,7 +2217,7 @@ private fun SleepTimerSheet(
                         .build(),
                     contentDescription = null,
                     modifier = Modifier
-                        .fillMaxSize()
+                        .matchParentSize()
                         .blur(160.dp)
                         .alpha(0.3f)
                         .graphicsLayer {
@@ -2177,10 +2231,9 @@ private fun SleepTimerSheet(
             Column(
                 modifier = Modifier
                     .padding(horizontal = 24.dp)
-                    .padding(top = 16.dp, bottom = 48.dp)
-                    .navigationBarsPadding(),
+                    .padding(top = 16.dp, bottom = 8.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(28.dp)
+                verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 // Refined Drag handle
                 Box(
@@ -2200,7 +2253,7 @@ private fun SleepTimerSheet(
                         )
                     )
 
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(Modifier.height(4.dp))
 
                     if (uiState.isSleepTimerActive) {
                         Surface(
@@ -2247,10 +2300,10 @@ private fun SleepTimerSheet(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(Color.White.copy(0.03f), RoundedCornerShape(32.dp))
-                        .border(1.dp, Color.White.copy(0.05f), RoundedCornerShape(32.dp))
-                        .padding(24.dp),
-                    verticalArrangement = Arrangement.spacedBy(32.dp)
+                        .background(Color.White.copy(0.04f), RoundedCornerShape(32.dp))
+                        .border(1.dp, Color.White.copy(0.06f), RoundedCornerShape(32.dp))
+                        .padding(horizontal = 24.dp, vertical = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(20.dp)
                 ) {
                     // Timer Slider
                     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -2306,7 +2359,7 @@ private fun SleepTimerSheet(
                 }
 
                 // Switch and Buttons Section
-                Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                     // End of track switch
                     Surface(
                         onClick = { endOfTrack = !endOfTrack },
@@ -2317,7 +2370,7 @@ private fun SleepTimerSheet(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 20.dp, vertical = 18.dp),
+                                .padding(horizontal = 20.dp, vertical = 14.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {

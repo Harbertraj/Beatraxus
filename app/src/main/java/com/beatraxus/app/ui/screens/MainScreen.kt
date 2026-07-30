@@ -530,7 +530,7 @@ fun MainScreen(
         if (drawerProgress > 0f) {
             Box(
                 Modifier
-                    .width(210.dp)
+                    .width(180.dp)
                     .fillMaxHeight(1.0f)
                     .align(Alignment.TopStart)
                     .zIndex(1f)
@@ -571,7 +571,7 @@ fun MainScreen(
                 .fillMaxSize()
                 .zIndex(2f) // Main content is on top
                 .graphicsLayer {
-                    translationX = drawerProgress * with(density) { 210.dp.toPx() }
+                    translationX = drawerProgress * with(density) { 180.dp.toPx() }
                     scaleX = contentScale
                     scaleY = 1f - (0.08f * drawerProgress)
                     rotationY = contentRotation
@@ -2998,6 +2998,11 @@ fun MainScreen(
                                     viewModel.setLibraryView(com.beatraxus.app.model.LibraryView.GENRE_DETAIL, song.genre)
                                     selectedSongForOptions = null
                                 },
+                                onMark = {
+                                    viewModel.setMultiSelectMode(true)
+                                    viewModel.toggleSongSelection(song.id)
+                                    selectedSongForOptions = null
+                                },
                                 onOpenInspector = { s ->
                                     viewModel.setPendingInspectorReturn(s)
                                     onNavigateToInspector(s.id)
@@ -3260,12 +3265,33 @@ fun MainScreen(
                 onSetSleepTimer = { seconds, finishTrack, playCount ->
                     viewModel.setSleepTimer(seconds, finishTrack, playCount)
                 },
-                onStopSleepTimer = { viewModel.stopSleepTimer() }
+                onStopSleepTimer = { viewModel.stopSleepTimer() },
+                onAddToPlaylist = { song ->
+                    playlistDialogSong = song
+                    showPlaylistDialog = true
+                },
+                onDeleteSong = { song ->
+                    // We'll reuse the existing songToDelete state if possible, or just call directly if safe
+                    // MainScreen already has songToDelete logic for the main list
+                    viewModel.deleteSong(song)
+                },
+                onGoToArtist = { artist ->
+                    viewModel.setLibraryView(com.beatraxus.app.model.LibraryView.ARTIST_DETAIL, artist)
+                    showFullPlayer = false
+                },
+                onGoToFolder = { folder, name ->
+                    viewModel.navigateToFolder(folder, name)
+                    showFullPlayer = false
+                },
+                onGoToGenre = { genre ->
+                    viewModel.setLibraryView(com.beatraxus.app.model.LibraryView.GENRE_DETAIL, genre)
+                    showFullPlayer = false
+                }
             )
         }
 
         AnimatedVisibility(
-            visible = showPipelineOverlay && !uiState.showQueue && uiState.appearance.showAudioPipelineOverlay,
+            visible = showPipelineOverlay && !uiState.showQueue,
             modifier = Modifier.fillMaxSize().zIndex(110f),
             enter = fadeIn(tween(220)),
             exit = fadeOut(tween(180))
@@ -5555,17 +5581,18 @@ fun SlideDrawerMenu(
                             .clickable { onNavigateToSettings(); onClose() }
                     ) {
                         Row(
-                            modifier = Modifier.padding(horizontal = 16.dp),
+                            modifier = Modifier.padding(horizontal = 8.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.Center
                         ) {
-                            Icon(Icons.Rounded.Settings, null, tint = Color.White.copy(0.7f), modifier = Modifier.size(22.dp))
-                            Spacer(Modifier.width(8.dp))
+                            Icon(Icons.Rounded.Settings, null, tint = Color.White.copy(0.7f), modifier = Modifier.size(20.dp))
+                            Spacer(Modifier.width(6.dp))
                             Text(
                                 "Settings",
                                 color = Color.White.copy(0.7f),
-                                fontSize = 15.sp,
-                                fontWeight = FontWeight.Bold
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1
                             )
                         }
                     }

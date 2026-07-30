@@ -788,6 +788,7 @@ fun MainScreenAppearanceContent(uiState: PlayerUiState, playerViewModel: PlayerV
 }
 
 private fun qualityBadgeStyleLabel(style: com.beatraxus.app.model.QualityBadgeStyle): String = when (style) {
+    com.beatraxus.app.model.QualityBadgeStyle.NONE -> "None"
     com.beatraxus.app.model.QualityBadgeStyle.GOLDEN_SHIMMER -> "Golden Shimmer"
     com.beatraxus.app.model.QualityBadgeStyle.MINIMAL_OUTLINE -> "Minimal Outline"
     com.beatraxus.app.model.QualityBadgeStyle.GLASSMORPHIC -> "Glassmorphic"
@@ -800,64 +801,6 @@ fun NowPlayingAppearanceContent(uiState: PlayerUiState, playerViewModel: PlayerV
     val appearance = uiState.appearance
 
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        AppearanceToggleRow(
-            title = "Audio Quality Badge",
-            subtitle = "Display bitrate and format badges (Hi-Res, Lossless)",
-            checked = uiState.appearance.showAudioQualityBadge,
-            onCheckedChange = { playerViewModel.setShowAudioQualityBadge(it) }
-        )
-        HorizontalDivider(color = Color.White.copy(0.05f))
-        AppearanceToggleRow(
-            title = "Live Pipeline Overlay",
-            subtitle = "Show real-time audio engine processing status",
-            checked = uiState.appearance.showAudioPipelineOverlay,
-            onCheckedChange = { playerViewModel.setShowAudioPipelineOverlay(it) }
-        )
-        HorizontalDivider(color = Color.White.copy(0.05f))
-        AppearanceToggleRow(
-            title = "Technical Info Panel",
-            subtitle = "View detailed audio metrics in the player",
-            checked = uiState.appearance.showTechnicalInfoPanel,
-            onCheckedChange = { playerViewModel.setShowTechnicalInfoPanel(it) }
-        )
-        HorizontalDivider(color = Color.White.copy(0.05f))
-        AppearanceToggleRow(
-            title = "Lyrics Button",
-            subtitle = "Quick access to lyrics from the player screen",
-            checked = uiState.appearance.showLyricsButton,
-            onCheckedChange = { playerViewModel.setShowLyricsButton(it) }
-        )
-        HorizontalDivider(color = Color.White.copy(0.05f))
-        AppearanceToggleRow(
-            title = "Favorite Button",
-            subtitle = "Toggle heart icon to add songs to favorites",
-            checked = uiState.appearance.showFavoriteButton,
-            onCheckedChange = { playerViewModel.setShowFavoriteButton(it) }
-        )
-        HorizontalDivider(color = Color.White.copy(0.05f))
-        AppearanceToggleRow(
-            title = "Equalizer Shortcut",
-            subtitle = "Quick jump to DSP and EQ settings",
-            checked = uiState.appearance.showEqualizerShortcut,
-            onCheckedChange = { playerViewModel.setShowEqualizerShortcut(it) }
-        )
-        HorizontalDivider(color = Color.White.copy(0.05f))
-        AppearanceToggleRow(
-            title = "Queue Button",
-            subtitle = "Show the upcoming tracks list shortcut",
-            checked = uiState.appearance.showQueueButton,
-            onCheckedChange = { playerViewModel.setShowQueueButton(it) }
-        )
-        HorizontalDivider(color = Color.White.copy(0.05f))
-        AppearanceToggleRow(
-            title = "Sleep Timer Icon",
-            subtitle = "Show shortcut to set the sleep timer",
-            checked = uiState.appearance.showSleepTimerIcon,
-            onCheckedChange = { playerViewModel.setShowSleepTimerIcon(it) }
-        )
-
-        HorizontalDivider(color = Color.White.copy(0.05f))
-
         var expandedTransform by remember { mutableStateOf(false) }
         Column {
             Row(

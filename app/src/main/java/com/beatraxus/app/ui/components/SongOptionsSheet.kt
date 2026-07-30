@@ -66,7 +66,10 @@ fun SongOptionsSheet(
     selectedLastFmArtistInfo: LastFmArtistDetail? = null,
     selectedLastFmAlbumInfo: LastFmAlbum? = null,
     isSelectedLoading: Boolean = false,
-    initialShowInfoOverlay: Boolean = false
+    initialShowInfoOverlay: Boolean = false,
+    showPlayNext: Boolean = true,
+    onMark: () -> Unit = {},
+    showMark: Boolean = true
 ) {
     var showInfoOverlay by remember { mutableStateOf(initialShowInfoOverlay) }
 
@@ -163,61 +166,37 @@ fun SongOptionsSheet(
                 Spacer(Modifier.height(8.dp))
 
                 // Options Grid
+                val options = remember(showPlayNext, showMark) {
+                    buildList {
+                        add(OptionItem(Icons.AutoMirrored.Rounded.PlaylistAdd, "Playlist", onAddToPlaylist))
+                        if (showPlayNext) {
+                            add(OptionItem(Icons.AutoMirrored.Rounded.PlaylistPlay, "Play Next", onPlayNext))
+                        }
+                        if (showMark) {
+                            add(OptionItem(Icons.Rounded.CheckCircle, "Mark", onMark))
+                        }
+                        add(OptionItem(Icons.AutoMirrored.Rounded.QueueMusic, "Add to Queue", onAddToQueue))
+                        add(OptionItem(Icons.Rounded.Info, "Info/Tags", { onInfo(); showInfoOverlay = true }))
+                        add(OptionItem(Icons.Rounded.Person, "Artist", onGoToArtist))
+                        add(OptionItem(Icons.Rounded.Album, "Album", onGoToAlbum))
+                        add(OptionItem(Icons.Rounded.FolderOpen, "Folder", onGoToFolder))
+                        add(OptionItem(Icons.Rounded.Headphones, "Genre", onGoToGenre))
+                        add(OptionItem(Icons.Rounded.Delete, "Delete", onDelete, tint = Color(0xFFFF5252)))
+                    }
+                }
+
                 Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                    // Row 1: Playlist & Play Next
-                    Row(modifier = Modifier.fillMaxWidth()) {
-                        OptionGridItem(OptionItem(Icons.AutoMirrored.Rounded.PlaylistAdd, "Playlist", {}), contentColor, Modifier.weight(1f)) {
-                            onAddToPlaylist()
-                            onDismiss()
-                        }
-                        OptionGridItem(OptionItem(Icons.AutoMirrored.Rounded.PlaylistPlay, "Play Next", {}), contentColor, Modifier.weight(1f)) {
-                            onPlayNext()
-                            onDismiss()
-                        }
-                    }
-
-                    // Row 2: Add to Queue & Info
-                    Row(modifier = Modifier.fillMaxWidth()) {
-                        OptionGridItem(OptionItem(Icons.AutoMirrored.Rounded.QueueMusic, "Add to Queue", {}), contentColor, Modifier.weight(1f)) {
-                            onAddToQueue()
-                            onDismiss()
-                        }
-                        OptionGridItem(OptionItem(Icons.Rounded.Info, "Info/Tags", {}), contentColor, Modifier.weight(1f)) {
-                            onInfo()
-                            showInfoOverlay = true
-                        }
-                    }
-
-                    // Row 3: Artist & Album
-                    Row(modifier = Modifier.fillMaxWidth()) {
-                        OptionGridItem(OptionItem(Icons.Rounded.Person, "Artist", {}), contentColor, Modifier.weight(1f)) {
-                            onGoToArtist()
-                            onDismiss()
-                        }
-                        OptionGridItem(OptionItem(Icons.Rounded.Album, "Album", {}), contentColor, Modifier.weight(1f)) {
-                            onGoToAlbum()
-                            onDismiss()
-                        }
-                    }
-
-                    // Row 4: Folder
-                    Row(modifier = Modifier.fillMaxWidth()) {
-                        OptionGridItem(OptionItem(Icons.Rounded.FolderOpen, "Folder", {}), contentColor, Modifier.weight(1f)) {
-                            onGoToFolder()
-                            onDismiss()
-                        }
-                        Spacer(Modifier.weight(1f))
-                    }
-
-                    // Row 5: Genre & Delete
-                    Row(modifier = Modifier.fillMaxWidth()) {
-                        OptionGridItem(OptionItem(Icons.Rounded.Headphones, "Genre", {}), contentColor, Modifier.weight(1f)) {
-                            onGoToGenre()
-                            onDismiss()
-                        }
-                        OptionGridItem(OptionItem(Icons.Rounded.Delete, "Delete", {}, tint = Color(0xFFFF5252)), contentColor, Modifier.weight(1f)) {
-                            onDelete()
-                            onDismiss()
+                    options.chunked(2).forEach { rowOptions ->
+                        Row(modifier = Modifier.fillMaxWidth()) {
+                            rowOptions.forEach { option ->
+                                OptionGridItem(option, contentColor, Modifier.weight(1f)) {
+                                    option.onClick()
+                                    if (option.label != "Info/Tags") onDismiss()
+                                }
+                            }
+                            if (rowOptions.size == 1) {
+                                Spacer(Modifier.weight(1f))
+                            }
                         }
                     }
                 }

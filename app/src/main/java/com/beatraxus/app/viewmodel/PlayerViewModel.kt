@@ -4554,30 +4554,6 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun setShowAudioQualityBadge(value: Boolean) {
-        viewModelScope.launch {
-            appearancePreferences.setShowAudioQualityBadge(value)
-        }
-    }
-
-    fun setShowAudioPipelineOverlay(value: Boolean) {
-        viewModelScope.launch {
-            appearancePreferences.setShowAudioPipelineOverlay(value)
-        }
-    }
-
-    fun setShowTechnicalInfoPanel(value: Boolean) {
-        viewModelScope.launch {
-            appearancePreferences.setShowTechnicalInfoPanel(value)
-        }
-    }
-
-    fun setShowLyricsButton(value: Boolean) {
-        viewModelScope.launch {
-            appearancePreferences.setShowLyricsButton(value)
-        }
-    }
-
     fun setSeekbarStyle(style: com.beatraxus.app.model.SeekbarStyle) {
         viewModelScope.launch {
             appearancePreferences.setSeekbarStyle(style)
@@ -4654,30 +4630,6 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     // Now Playing Shortcuts
-    fun setShowFavoriteButton(value: Boolean) {
-        viewModelScope.launch {
-            appearancePreferences.setShowFavoriteButton(value)
-        }
-    }
-
-    fun setShowEqualizerShortcut(value: Boolean) {
-        viewModelScope.launch {
-            appearancePreferences.setShowEqualizerShortcut(value)
-        }
-    }
-
-    fun setShowQueueButton(value: Boolean) {
-        viewModelScope.launch {
-            appearancePreferences.setShowQueueButton(value)
-        }
-    }
-
-    fun setShowSleepTimerIcon(value: Boolean) {
-        viewModelScope.launch {
-            appearancePreferences.setShowSleepTimerIcon(value)
-        }
-    }
-
     fun setAlbumArtTransform(transform: AlbumArtTransform) {
         viewModelScope.launch {
             appearancePreferences.setAlbumArtTransform(transform)

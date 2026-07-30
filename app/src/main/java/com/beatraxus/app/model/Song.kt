@@ -121,7 +121,7 @@ enum class AlbumArtTransform {
     CROSSFADE_BLUR, VINYL_SPIN, PARALLAX_DEPTH, SHUTTER, GLITCH_SHIFT
 }
 
-enum class QualityBadgeStyle { GOLDEN_SHIMMER, MINIMAL_OUTLINE, GLASSMORPHIC, NEON_PULSE }
+enum class QualityBadgeStyle { NONE, GOLDEN_SHIMMER, MINIMAL_OUTLINE, GLASSMORPHIC, NEON_PULSE }
 
 enum class NowPlayingIconStyle { FILLED, OUTLINED, ROUNDED, SHARP_MINIMAL }
 
@@ -156,7 +156,7 @@ data class AppearanceConfig(
     val nowPlayingBlurIntensity: Float = 210f,
     val nowPlayingBlurDarkness: Float = 0.3f,
     val albumArtTransform: AlbumArtTransform = AlbumArtTransform.NONE,
-    val qualityBadgeStyle: QualityBadgeStyle = QualityBadgeStyle.GOLDEN_SHIMMER,
+    val qualityBadgeStyle: QualityBadgeStyle = QualityBadgeStyle.GLASSMORPHIC,
     val nowPlayingIconStyle: NowPlayingIconStyle = NowPlayingIconStyle.FILLED,
 
     val seekbarStyle: SeekbarStyle = SeekbarStyle.WAVEFORM,
@@ -189,11 +189,6 @@ data class AppearanceConfig(
     val miniPlayerBlurIntensity: Float = 70f,
     val miniPlayerBlurDarkness: Float = 0.5f,
 
-    val showAudioQualityBadge: Boolean = true,
-    val showAudioPipelineOverlay: Boolean = true,
-    val showTechnicalInfoPanel: Boolean = true,
-    val showLyricsButton: Boolean = true,
-
     // Home Screen Sections
     val showGreetingHeader: Boolean = true,
     val showBrowseByMood: Boolean = true,
@@ -204,12 +199,6 @@ data class AppearanceConfig(
     val showFeaturedAlbums: Boolean = true,
     val showArtistsYouLove: Boolean = true,
     val showYourPlaylists: Boolean = true,
-
-    // Now Playing Shortcuts
-    val showFavoriteButton: Boolean = true,
-    val showEqualizerShortcut: Boolean = true,
-    val showQueueButton: Boolean = true,
-    val showSleepTimerIcon: Boolean = true,
 
     // Home Screen Layout
     val homeScreenSectionsOrder: List<String> = listOf(
