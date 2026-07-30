@@ -48,6 +48,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
@@ -858,7 +859,7 @@ fun NowPlayingScreen(
                             }
 
                             Row(
-                                modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+                                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
@@ -871,184 +872,142 @@ fun NowPlayingScreen(
                         }
                     }
 
-                    // Controls
-                    Row(
+                    // Redesigned Controls Pill
+                    val transportIconStyle = uiState.appearance.nowPlayingIconStyle
+                    val (prevIcon, playIcon, pauseIcon, nextIcon) = remember(transportIconStyle) {
+                        transportIconsFor(transportIconStyle)
+                    }
+
+                    Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(vertical = 12.dp),
-                        horizontalArrangement = Arrangement.Center,
-                        verticalAlignment = Alignment.CenterVertically
+                            .padding(top = 4.dp, bottom = 0.dp)
+                            .height(84.dp),
+                        contentAlignment = Alignment.Center
                     ) {
-                        val iconStyle = uiState.appearance.nowPlayingIconStyle
-                        val (prevIcon, playIcon, pauseIcon, nextIcon) = remember(iconStyle) {
-                            transportIconsFor(iconStyle)
+                        // The Pill Background
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth(0.95f)
+                                .height(68.dp)
+                                .align(Alignment.Center)
+                                .shadow(8.dp, RoundedCornerShape(34.dp))
+                                .background(Color.White.copy(alpha = 0.08f), RoundedCornerShape(34.dp))
+                                .border(1.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(34.dp))
+                                .clip(RoundedCornerShape(34.dp))
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                // Shuffle
+                                IconButton(onClick = onShuffle, modifier = Modifier.weight(1f)) {
+                                    Icon(
+                                        if (shuffleMode) Icons.Rounded.Shuffle else Icons.Outlined.Shuffle,
+                                        null,
+                                        tint = if (shuffleMode) Color.White else Color.White.copy(0.5f),
+                                        modifier = Modifier.size(24.dp)
+                                    )
+                                }
+
+                                // Previous
+                                IconButton(onClick = onPrevious, modifier = Modifier.weight(1f)) {
+                                    Icon(prevIcon, null, tint = Color.White, modifier = Modifier.size(28.dp))
+                                }
+
+                                // Placeholder for Play/Pause (which is elevated)
+                                Spacer(modifier = Modifier.weight(1.2f))
+
+                                // Next
+                                IconButton(onClick = onNext, modifier = Modifier.weight(1f)) {
+                                    Icon(nextIcon, null, tint = Color.White, modifier = Modifier.size(28.dp))
+                                }
+
+                                // Repeat
+                                IconButton(onClick = onRepeat, modifier = Modifier.weight(1f)) {
+                                    val repeatIcon = when (repeatMode) {
+                                        1 -> Icons.Rounded.RepeatOne
+                                        2 -> Icons.Rounded.Repeat
+                                        else -> Icons.Outlined.Repeat
+                                    }
+                                    Icon(
+                                        repeatIcon,
+                                        null,
+                                        tint = if (repeatMode != 0) Color.White else Color.White.copy(0.5f),
+                                        modifier = Modifier.size(24.dp)
+                                    )
+                                }
+                            }
                         }
-                        IconButton(onClick = onPrevious) {
-                            Icon(prevIcon, null, tint = Color.White, modifier = Modifier.size(44.dp))
-                        }
-                        Spacer(Modifier.width(24.dp))
+
+                        // Elevated Play/Pause Button
                         Surface(
                             onClick = onPlayPause,
                             modifier = Modifier
-                                .size(78.dp)
-                                .shadow(16.dp, CircleShape, ambientColor = Color.White.copy(0.2f)),
+                                .size(72.dp)
+                                .shadow(16.dp, CircleShape, ambientColor = Color.Black.copy(0.5f)),
                             shape = CircleShape,
-                            color = Color.White,
-                            border = BorderStroke(4.dp, Brush.verticalGradient(listOf(Color.White, Color.White.copy(0.8f))))
+                            color = Color.White
                         ) {
-                            Box(
-                                contentAlignment = Alignment.Center,
-                                modifier = Modifier.background(
-                                    Brush.radialGradient(
-                                        colors = listOf(Color.White, Color(0xFFE0E0E0)),
-                                        radius = 120f
-                                    )
-                                )
-                            ) {
-                                val currentIsPlaying = remember(isPlaying) { isPlaying }
+                            Box(contentAlignment = Alignment.Center) {
                                 Icon(
-                                    if (currentIsPlaying) pauseIcon else playIcon,
+                                    if (isPlaying) pauseIcon else playIcon,
                                     null,
                                     tint = Color.Black,
-                                    modifier = Modifier.size(40.dp)
+                                    modifier = Modifier.size(36.dp)
                                 )
                             }
-                        }
-                        Spacer(Modifier.width(24.dp))
-                        IconButton(onClick = onNext) {
-                            Icon(nextIcon, null, tint = Color.White, modifier = Modifier.size(44.dp))
                         }
                     }
 
-                    // Redesigned Bottom Control Pills - Claymorphism with Transparency
-                    Row(
+                    // Utility Pill
+                    Box(
                         modifier = Modifier
-                            .padding(top = 16.dp)
-                            .padding(bottom = 24.dp)
+                            .padding(top = 8.dp, bottom = 24.dp)
                             .fillMaxWidth(0.95f)
-                            .height(64.dp),
-                        horizontalArrangement = Arrangement.spacedBy(16.dp)
+                            .height(90.dp)
+                            .shadow(8.dp, RoundedCornerShape(24.dp))
+                            .background(Color.White.copy(alpha = 0.08f), RoundedCornerShape(24.dp))
+                            .border(1.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(24.dp))
+                            .clip(RoundedCornerShape(24.dp))
                     ) {
-                        val pillModifier = Modifier
-                            .weight(1f)
-                            .fillMaxHeight()
-                            .shadow(
-                                elevation = 12.dp,
-                                shape = RoundedCornerShape(32.dp),
-                                ambientColor = Color.Black.copy(alpha = 0.4f),
-                                spotColor = Color.Black.copy(alpha = 0.6f)
+                        Row(
+                            modifier = Modifier.fillMaxSize().padding(vertical = 8.dp),
+                            horizontalArrangement = Arrangement.SpaceEvenly,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            // Lyrics
+                            UtilityItem(
+                                icon = Icons.Rounded.Lyrics,
+                                label = "Lyrics",
+                                isActive = showLyrics,
+                                onClick = onToggleLyrics
                             )
-                            .background(Color.White.copy(alpha = 0.08f), RoundedCornerShape(32.dp))
-                            .border(
-                                width = 1.dp,
-                                brush = Brush.verticalGradient(
-                                    listOf(Color.White.copy(alpha = 0.2f), Color.Transparent)
-                                ),
-                                shape = RoundedCornerShape(32.dp)
+
+                            // Queue
+                            UtilityItem(
+                                icon = Icons.AutoMirrored.Rounded.PlaylistPlay,
+                                label = "Queue",
+                                isActive = showQueue,
+                                onClick = onToggleQueue
                             )
-                            .drawBehind {
-                                // Top-left inner highlight (Clay volume effect)
-                                drawRoundRect(
-                                    brush = Brush.linearGradient(
-                                        colors = listOf(Color.White.copy(alpha = 0.25f), Color.Transparent),
-                                        start = Offset(0f, 0f),
-                                        end = Offset(size.width * 0.45f, size.height * 0.45f)
-                                    ),
-                                    cornerRadius = CornerRadius(32.dp.toPx())
-                                )
-                                // Bottom-right inner shadow (Clay depth effect)
-                                drawRoundRect(
-                                    brush = Brush.linearGradient(
-                                        colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.15f)),
-                                        start = Offset(size.width * 0.55f, size.height * 0.55f),
-                                        end = Offset(size.width, size.height)
-                                    ),
-                                    cornerRadius = CornerRadius(32.dp.toPx())
-                                )
-                            }
 
-                        // Pill 1: Shuffle and Repeat
-                        Box(modifier = pillModifier, contentAlignment = Alignment.Center) {
-                            Row(
-                                modifier = Modifier.fillMaxSize(),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                                    IconButton(onClick = onShuffle) {
-                                        Icon(
-                                            if (shuffleMode) Icons.Rounded.Shuffle else Icons.Outlined.Shuffle,
-                                            null,
-                                            tint = if (shuffleMode) Color.White else Color.White.copy(0.45f),
-                                            modifier = Modifier.size(24.dp)
-                                        )
-                                    }
-                                }
-                                VerticalDivider(
-                                    modifier = Modifier.height(20.dp),
-                                    thickness = 1.dp,
-                                    color = Color.White.copy(alpha = 0.1f)
-                                )
-                                Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                                    IconButton(onClick = onRepeat) {
-                                        val icon = when (repeatMode) {
-                                            1 -> Icons.Rounded.RepeatOne
-                                            2 -> Icons.Rounded.Repeat
-                                            else -> Icons.Outlined.Repeat
-                                        }
-                                        Icon(
-                                            icon,
-                                            null,
-                                            tint = if (repeatMode != 0) Color.White else Color.White.copy(0.45f),
-                                            modifier = Modifier.size(24.dp)
-                                        )
-                                    }
-                                }
-                            }
-                        }
+                            // Equalizer
+                            UtilityItem(
+                                icon = Icons.Rounded.Equalizer,
+                                label = "Equalizer",
+                                isActive = uiState.dsp.config.eqEnabled,
+                                onClick = onOpenEqualizer
+                            )
 
-                        // Pill 2: Queue and Equalizer
-                        if (uiState.appearance.showQueueButton || uiState.appearance.showEqualizerShortcut) {
-                            Box(modifier = pillModifier, contentAlignment = Alignment.Center) {
-                                Row(
-                                    modifier = Modifier.fillMaxSize(),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    if (uiState.appearance.showQueueButton) {
-                                        Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                                            IconButton(onClick = onToggleQueue) {
-                                                Icon(
-                                                    if (showQueue) Icons.AutoMirrored.Rounded.PlaylistPlay else Icons.AutoMirrored.Outlined.PlaylistPlay,
-                                                    null,
-                                                    tint = if (showQueue) Color.White else Color.White.copy(0.45f),
-                                                    modifier = Modifier.size(24.dp)
-                                                )
-                                            }
-                                        }
-                                    }
-
-                                    if (uiState.appearance.showQueueButton && uiState.appearance.showEqualizerShortcut) {
-                                        VerticalDivider(
-                                            modifier = Modifier.height(20.dp),
-                                            thickness = 1.dp,
-                                            color = Color.White.copy(alpha = 0.1f)
-                                        )
-                                    }
-
-                                    if (uiState.appearance.showEqualizerShortcut) {
-                                        Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                                            IconButton(onClick = onOpenEqualizer) {
-                                                val eqEnabled = uiState.dsp.config.eqEnabled
-                                                Icon(
-                                                    if (eqEnabled) Icons.Rounded.Equalizer else Icons.Outlined.Equalizer,
-                                                    null,
-                                                    tint = if (eqEnabled) Color.White else Color.White.copy(0.45f),
-                                                    modifier = Modifier.size(24.dp)
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                            }
+                            // Sleep Timer
+                            UtilityItem(
+                                icon = Icons.Rounded.Timer,
+                                label = "Sleep Timer",
+                                isActive = uiState.isSleepTimerActive,
+                                onClick = { showSleepTimerSheet = true }
+                            )
                         }
                     }
 
@@ -2057,6 +2016,38 @@ private fun SongQueueItem(
                 Icon(Icons.Rounded.RemoveCircleOutline, null, tint = Color.White, modifier = Modifier.size(20.dp))
             }
         }
+    }
+}
+
+@Composable
+private fun UtilityItem(
+    icon: ImageVector,
+    label: String,
+    isActive: Boolean,
+    onClick: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = label,
+            tint = if (isActive) Color.White else Color.White.copy(alpha = 0.6f),
+            modifier = Modifier.size(28.dp)
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall.copy(
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Medium
+            ),
+            color = if (isActive) Color.White else Color.White.copy(alpha = 0.6f)
+        )
     }
 }
 
