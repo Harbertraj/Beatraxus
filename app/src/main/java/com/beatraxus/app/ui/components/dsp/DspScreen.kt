@@ -3706,7 +3706,7 @@ private fun PremiumMasteringCard(uiState: PlayerUiState, viewModel: PlayerViewMo
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column {
+                    Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
                         Text(
                             "🎬 CINEMA MODE",
                             color = if (config.cinemaModeEnabled) PremiumAccent else Color.White.copy(0.6f),

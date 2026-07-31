@@ -2422,21 +2422,6 @@ private fun DvcCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
                     )
                 }
 
-                AnimatedVisibility(visible = config.compensateDvcVolumeEnabled) {
-                    Column {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        DspSliderRow(
-                            title = "DVC Compensation Gain",
-                            value = config.dvcCompensationDb,
-                            range = 1f..5f,
-                            enabled = true,
-                            valueText = { String.format("%.1f dB", it) },
-                            onValueChange = { viewModel.setDvcCompensationDb(it) },
-                            onValueClick = { viewModel.setDvcCompensationDb(3.5f) }
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                    }
-                }
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),

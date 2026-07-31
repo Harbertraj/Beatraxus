@@ -11,6 +11,7 @@ import com.beatraxus.app.model.Audio3DSpeakerPosition
 import com.beatraxus.app.model.SoundStageNodePosition
 import kotlin.math.abs
 import kotlin.math.pow
+import kotlin.math.log10
 
 internal data class DspProcessResult(
     val data: FloatArray,
@@ -491,7 +492,13 @@ private class NativeDspProcessor(
         val manualPreamp = if (!isBP && config.preampEnabled) config.preampDb else 0f
         val eqMasterGain = if (effectiveEqEnabled) config.eqMasterGainDb else 0f
         val appliedEqMasterGain = eqMasterGain
-        val dvcCompensationDb = if (config.dvcEnabled && config.compensateDvcVolumeEnabled && !isBP) config.dvcCompensationDb else 0f
+        val dvcCompensationDb = if (config.dvcEnabled && config.compensateDvcVolumeEnabled && !isBP) {
+            val attenuationDb = if (config.dvcLevel > 0f)
+                -20f * log10(config.dvcLevel)
+            else 0f
+            // Cap so compensation doesn't blow up as dvcLevel approaches 0
+            attenuationDb.coerceIn(0f, 12f)
+        } else 0f
 
         val totalPreamp = manualPreamp + autoEqPreamp + reverbCompensation + appliedEqMasterGain + dvcCompensationDb
 
