@@ -691,9 +691,11 @@ class AudioTrackOutput(
         return try {
             val head = track.playbackHeadPosition
             synchronized(stateLock) {
-                if (head < lastPlaybackHeadPosition) playbackHeadWraps++
+                val headLong = head.toLong() and 0xFFFFFFFFL
+                val lastLong = lastPlaybackHeadPosition.toLong() and 0xFFFFFFFFL
+                if (headLong < lastLong) playbackHeadWraps++
                 lastPlaybackHeadPosition = head
-                (playbackHeadWraps shl 32) + (head.toLong() and 0xFFFFFFFFL)
+                (playbackHeadWraps shl 32) + headLong
             }
         } catch (_: Exception) { 0L }
     }
@@ -946,9 +948,12 @@ class AudioTrackOutput(
 
         return when (ditherType) {
             2 -> { // Shaped: simple error-feedback
-                val res = inputSample + (noise / scale) - 0.9f * ditherLastErr
-                val rounded = res.roundToInt().toFloat()
-                ditherLastErr = rounded - res
+                // For noise-shaping to be effective, the injected noise and the quantization
+                // error-feedback must both operate at the same scale as the target bit depth's
+                // LSB. At 24/32-bit (scale > 1), we round to the nearest 'scale' multiple.
+                val res = inputSample + noise - 0.9f * ditherLastErr * scale
+                val rounded = (kotlin.math.round(res / scale) * scale)
+                ditherLastErr = (rounded - res) / scale
                 rounded
             }
             3 -> { // HighPass: one-pole high-pass to the noise

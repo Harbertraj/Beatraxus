@@ -23,6 +23,7 @@
 
 #define LOG_TAG "BeatraxusDSP"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
+#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -530,7 +531,7 @@ class EqEngine {
         const int kProbePoints = 256;
         double peakLinear = 0.0;
         int bandsIdx = activeBandsIdx.load(std::memory_order_acquire);
-        auto& currentBands = bands[bandsIdx];
+        std::array<BiquadState, 32> currentBands = bands[bandsIdx]; // COPY, not reference
 
         for (int i = 0; i < kProbePoints; ++i) {
             double t = (double)i / (kProbePoints - 1);
@@ -645,7 +646,7 @@ public:
 private:
     void recomputeFir() {
         int bandsIdx = activeBandsIdx.load(std::memory_order_acquire);
-        auto& currentBands = bands[bandsIdx];
+        std::array<BiquadState, 32> currentBands = bands[bandsIdx]; // COPY, not reference
         float sr = lastSr.load();
 
         for (int i = 0; i <= FFT_SIZE / 2; ++i) {
@@ -1659,6 +1660,23 @@ public:
             }
         }
 
+        // Cinema Mode: dedicated dialogue-presence filter (~1-4kHz peaking boost).
+        // Fully separate biquad from eq/aiEq/simEq/toneFilters so it never interacts
+        // with the user's own EQ, AI EQ, headphone sim, or tone settings.
+        if (cinemaModeEnabled) {
+            if (channels >= 2) {
+                for (int f = 0; f < inFrames; f++) {
+                    T& l = input[f * channels]; T& r = input[f * channels + 1];
+                    cinemaDialogueFilter.process(l, r);
+                }
+            } else {
+                for (int i = 0; i < samples; i++) {
+                    T& s = input[i]; T dummy = 0;
+                    cinemaDialogueFilter.process(s, dummy);
+                }
+            }
+        }
+
         // --- Mono Downmix ---
         if (monoEnabled && channels >= 2) {
             for (int f = 0; f < inFrames; f++) {
@@ -1747,7 +1765,7 @@ public:
         dither.process(input, inFrames, channels);
     }
 
-    void process(float* input, int inFrames, float* output, int& outFrames) {
+    void process(float* input, int inFrames, float* output, int& outFrames, int outputCapacityFrames) {
         processInPlace(input, inFrames);
 
         float* effectiveInput = input;
@@ -1780,10 +1798,19 @@ public:
                 resample_cubic(effectiveInput, effectiveInFrames, resampleBuffer.data(), expectedOutFrames, channels, ratio);
                 outFrames = expectedOutFrames;
             }
+
+            if (outFrames > outputCapacityFrames) {
+                LOGE("DSP::process: Output frames (%d) exceed capacity (%d). Clamping to prevent overflow.", outFrames, outputCapacityFrames);
+                outFrames = outputCapacityFrames;
+            }
             std::copy(resampleBuffer.begin(), resampleBuffer.begin() + (outFrames * channels), output);
         } else {
-            std::copy(effectiveInput, effectiveInput + (effectiveInFrames * channels), output);
-            outFrames = effectiveInFrames;
+            int framesToCopy = std::min(effectiveInFrames, outputCapacityFrames);
+            if (effectiveInFrames > outputCapacityFrames) {
+                LOGE("DSP::process: Effective input frames (%d) exceed capacity (%d). Clamping to prevent overflow.", effectiveInFrames, outputCapacityFrames);
+            }
+            std::copy(effectiveInput, effectiveInput + (framesToCopy * channels), output);
+            outFrames = framesToCopy;
         }
     }
 
@@ -1875,6 +1902,19 @@ public:
     void setBitDepth(int bd) { bitDepth = bd; }
     void setDither(bool enabled, int bd) { dither.setEnabled(enabled, bd); }
     void setDitherType(int mode) { dither.setType(mode); }
+    void setCinemaMode(bool enabled, float intensity) {
+        intensity = std::clamp(intensity, 0.0f, 1.0f);
+        bool changed = (cinemaModeEnabled != enabled) || (fabsf(cinemaIntensity - intensity) > 0.005f);
+        cinemaModeEnabled = enabled;
+        cinemaIntensity = intensity;
+        if (!changed) return;
+        if (enabled) {
+            // ~2.5kHz peaking presence boost covering the 1-4kHz dialogue range, scaled by intensity.
+            cinemaDialogueFilter.setPeaking((double)inRate, 2500.0, 3.0f * intensity, 1.1f);
+        } else {
+            cinemaDialogueFilter.reset();
+        }
+    }
     void setTone(float bass, float treble, float air) {
         // Set targets atomically; actual application is smoothed in audio thread
         toneTargetBass.store(bass, std::memory_order_relaxed);
@@ -1979,6 +2019,7 @@ private:
     EqEngine aiEq; // New AI EQ Engine
     EqEngine simEq; // Headphone simulation EQ (Phase 3.5)
     BiquadState toneFilters[3]; LookaheadLimiter limiter; Bs2b crossfeed;
+    bool cinemaModeEnabled = false; float cinemaIntensity = 1.0f; BiquadState cinemaDialogueFilter;
     Audio3DStageEngine audio3DStage;
     bool audio3DStageEnabled;
     bool crossfeedEnabled; float crossfeedLevel; Freeverb reverb; float reverbAmount; int reverbType;
@@ -2393,6 +2434,7 @@ JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetSpatialEnable
 JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetSpatialIntensity(JNIEnv* env, jobject thiz, jlong handle, jfloat intensity) { if (handle) ((DSP*)handle)->setSpatialIntensity(intensity); }
 JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetHrtfMode(JNIEnv* env, jobject thiz, jlong handle, jint mode) { if (handle) ((DSP*)handle)->setHrtfMode(mode); }
 JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetSpatialUiMode(JNIEnv* env, jobject thiz, jlong handle, jint mode) { if (handle) ((DSP*)handle)->setSpatialUiMode(mode); }
+JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetCinemaMode(JNIEnv* env, jobject thiz, jlong handle, jboolean enabled, jfloat intensity) { if (handle) ((DSP*)handle)->setCinemaMode(enabled, intensity); }
 JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetBand(JNIEnv* env, jobject thiz, jlong handle, jint index, jfloat freq, jfloat gainDb, jfloat Q, jint type) { if (handle) ((DSP*)handle)->setBand(index, freq, gainDb, Q, type); }
 JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetEqEnabled(JNIEnv* env, jobject thiz, jlong handle, jboolean enabled) { if (handle) ((DSP*)handle)->setEqEnabled(enabled); }
 JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetEqPhaseMode(JNIEnv* env, jobject thiz, jlong handle, jboolean linearPhase) { if (handle) ((DSP*)handle)->setEqPhaseMode(linearPhase); }
@@ -2439,9 +2481,9 @@ JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetBitDepth(JNIE
 JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetDither(JNIEnv* env, jobject thiz, jlong handle, jboolean enabled, jint bitDepth) { if (handle) ((DSP*)handle)->setDither(enabled, bitDepth); }
 JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetDitherType(JNIEnv* env, jobject thiz, jlong handle, jint type) { if (handle) ((DSP*)handle)->setDitherType(type); }
 JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetCrossfeed(JNIEnv* env, jobject thiz, jlong handle, jboolean enabled, jfloat level) { if (handle) ((DSP*)handle)->setCrossfeed(enabled, level); }
-JNIEXPORT jint JNICALL Java_com_beatraxus_app_engine_NativeDsp_nProcessResampled(JNIEnv* env, jobject thiz, jlong handle, jfloatArray input, jint inFrames, jfloatArray output) {
+JNIEXPORT jint JNICALL Java_com_beatraxus_app_engine_NativeDsp_nProcessResampled(JNIEnv* env, jobject thiz, jlong handle, jfloatArray input, jint inFrames, jfloatArray output, jint outputCapacityFrames) {
     if (!handle) return 0; jfloat* inBody = env->GetFloatArrayElements(input, 0); jfloat* outBody = env->GetFloatArrayElements(output, 0);
-    int outFrames = 0; ((DSP*)handle)->process(inBody, inFrames, outBody, outFrames);
+    int outFrames = 0; ((DSP*)handle)->process(inBody, inFrames, outBody, outFrames, outputCapacityFrames);
     env->ReleaseFloatArrayElements(input, inBody, JNI_ABORT); env->ReleaseFloatArrayElements(output, outBody, 0); return outFrames;
 }
 JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nInit(JNIEnv* env, jobject thiz, jlong handle, jfloat sampleRate, jint channels) {

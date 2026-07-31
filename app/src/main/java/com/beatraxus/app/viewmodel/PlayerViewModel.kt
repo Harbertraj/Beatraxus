@@ -2798,7 +2798,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun getCurrentDeviceId(): String = dspPreferences.getCurrentDeviceId()
 
     fun setPlaybackSpeed(speed: Float) {
-        applyDspConfig { it.copy(playbackSpeed = speed) }
+        applyDspConfig { it.copy(playbackSpeed = speed.coerceIn(com.beatraxus.app.model.PLAYBACK_SPEED_RANGE)) }
     }
 
     fun setPreservePitch(preserve: Boolean) {
@@ -3126,6 +3126,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun setAudio3DStageEnabled(enabled: Boolean) = applyDspConfig { it.copy(audio3DStageEnabled = enabled) }
+
+    fun setCinemaModeEnabled(enabled: Boolean) = applyDspConfig { it.copy(cinemaModeEnabled = enabled) }
+    fun setCinemaIntensity(intensity: Float) = applyDspConfig { it.copy(cinemaIntensity = intensity.coerceIn(0f, 1f)) }
     fun setAudio3DWidth(value: Float) = applyDspConfig { it.copy(audio3DWidth = value.coerceIn(0f, 2f)) }
     fun setAudio3DDepth(value: Float) = applyDspConfig { it.copy(audio3DDepth = value.coerceIn(0f, 1f)) }
     fun setAudio3DHeight(value: Float) = applyDspConfig { it.copy(audio3DHeight = value.coerceIn(-1f, 1f)) }

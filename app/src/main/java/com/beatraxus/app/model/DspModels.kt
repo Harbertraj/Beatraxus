@@ -2,6 +2,8 @@ package com.beatraxus.app.model
 
 import kotlin.math.abs
 
+val PLAYBACK_SPEED_RANGE = 0.5f..2.0f
+
 enum class EqBandType(val displayName: String, val nativeValue: Int) {
     PEAKING("Peaking", 0),
     LOW_SHELF("Low Shelf", 1),
@@ -208,6 +210,14 @@ data class DspConfig(
     val soundStageCenterLock: Float = 0f,
     val hrtfMode: HrtfMode = HrtfMode.NATURAL_BALANCED,
     val spatialUiMode: SpatialUiMode = SpatialUiMode.MODERN,
+
+    // Cinema Mode: single toggle that drives its own self-contained preset chain
+    // (virtual surround, dialogue presence, bass/air lift, width, light leveling, subtle reverb).
+    // Does NOT read or modify the user's parametric EQ, tone, width, spatial, or reverb settings —
+    // those fields above stay exactly as the user left them so turning Cinema Mode back off
+    // restores prior behavior untouched.
+    val cinemaModeEnabled: Boolean = false,
+    val cinemaIntensity: Float = 1f, // 0f..1f, scales the whole Cinema Mode chain
     val reverbEnabled: Boolean = false,
     val reverbAmount: Float = 0f,
     val reverbPreset: String = "FLAT",

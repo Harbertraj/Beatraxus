@@ -68,6 +68,10 @@ class NativeDsp : AutoCloseable {
         if (nativeHandle != 0L) nSetRmsLeveler(nativeHandle, enabled)
     }
 
+    fun setCinemaMode(enabled: Boolean, intensity: Float) = lock.readLock().withLock {
+        if (nativeHandle != 0L) nSetCinemaMode(nativeHandle, enabled, intensity)
+    }
+
     fun setDvcLevel(level: Float) = lock.readLock().withLock {
         if (nativeHandle != 0L) nSetDvcLevel(nativeHandle, level)
     }
@@ -252,8 +256,8 @@ class NativeDsp : AutoCloseable {
         if (nativeHandle != 0L) nProcess(nativeHandle, data, frames)
     }
 
-    fun processResampled(input: FloatArray, inFrames: Int, output: FloatArray): Int = lock.readLock().withLock {
-        return if (nativeHandle != 0L) nProcessResampled(nativeHandle, input, inFrames, output) else 0
+    fun processResampled(input: FloatArray, inFrames: Int, output: FloatArray, outputCapacityFrames: Int): Int = lock.readLock().withLock {
+        return if (nativeHandle != 0L) nProcessResampled(nativeHandle, input, inFrames, output, outputCapacityFrames) else 0
     }
 
     suspend fun extractFeatures(context: android.content.Context, uri: android.net.Uri, seconds: Int): AudioFeatures? = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
@@ -347,6 +351,7 @@ class NativeDsp : AutoCloseable {
     private external fun nSetSpatialIntensity(handle: Long, intensity: Float)
     private external fun nSetHrtfMode(handle: Long, mode: Int)
     private external fun nSetSpatialUiMode(handle: Long, mode: Int)
+    private external fun nSetCinemaMode(handle: Long, enabled: Boolean, intensity: Float)
     private external fun nSetSoundStageNodePosition(handle: Long, bandIdx: Int, az: Float, el: Float, dist: Float)
     private external fun nSetSoundStageWidth(handle: Long, width: Float)
     private external fun nSetSoundStageCenterLock(handle: Long, amount: Float)
@@ -387,5 +392,5 @@ class NativeDsp : AutoCloseable {
     private external fun nDsdToPcm(dsd: ByteArray, pcm: FloatArray, frames: Int, channels: Int)
     private external fun nSetSpeed(handle: Long, speed: Float, preservePitch: Boolean)
     private external fun nProcess(handle: Long, data: FloatArray, frames: Int)
-    private external fun nProcessResampled(handle: Long, input: FloatArray, inFrames: Int, output: FloatArray): Int
+    private external fun nProcessResampled(handle: Long, input: FloatArray, inFrames: Int, output: FloatArray, outputCapacityFrames: Int): Int
 }

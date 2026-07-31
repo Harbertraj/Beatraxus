@@ -3695,6 +3695,70 @@ private fun PremiumMasteringCard(uiState: PlayerUiState, viewModel: PlayerViewMo
                         onLongPress = { onEditValue(EditingValue("SOUNDSTAGE", config.soundStageWidth - 1f, -1f..1f, { viewModel.setSoundStageWidth(it + 1f) })) }
                     )
                 }
+
+                // Cinema Mode: single toggle, self-contained preset chain. Does not read or
+                // touch any of the EQ/tone/width/spatial/reverb knobs above — it drives its
+                // own fixed targets in the native engine only while this switch is on.
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 10.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(
+                            "🎬 CINEMA MODE",
+                            color = if (config.cinemaModeEnabled) PremiumAccent else Color.White.copy(0.6f),
+                            fontWeight = FontWeight.Black,
+                            fontSize = 11.sp,
+                            letterSpacing = 0.5.sp
+                        )
+                        Text(
+                            "Wider soundstage · clearer dialogue · enhanced bass · immersive surround",
+                            color = Color.White.copy(0.4f),
+                            fontSize = 9.sp
+                        )
+                    }
+                    PremiumSwitch(
+                        checked = config.cinemaModeEnabled,
+                        onCheckedChange = { viewModel.setCinemaModeEnabled(it) },
+                        accentColor = PremiumAccent
+                    )
+                }
+
+                if (config.cinemaModeEnabled) {
+                    Column(modifier = Modifier.padding(top = 6.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                "INTENSITY",
+                                color = Color.White.copy(0.4f),
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = 0.5.sp
+                            )
+                            Text(
+                                "${(config.cinemaIntensity * 100).toInt()}%",
+                                color = PremiumAccent,
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Slider(
+                            value = config.cinemaIntensity,
+                            onValueChange = { viewModel.setCinemaIntensity(it) },
+                            valueRange = 0f..1f,
+                            colors = SliderDefaults.colors(
+                                thumbColor = PremiumAccent,
+                                activeTrackColor = PremiumAccent,
+                                inactiveTrackColor = Color.White.copy(0.1f)
+                            )
+                        )
+                    }
+                }
             }
         }
     }
