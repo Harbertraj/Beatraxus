@@ -186,7 +186,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         isFirstRun = prefs.getBoolean("first_run", true),
         useOriginalQualityArt = prefs.getBoolean("use_original_quality_art", false),
         outputMode = OutputMode.fromName(prefs.getString(KEY_OUTPUT_MODE, null)).name,
-        musicFolders = musicRepository.getMusicFolders(),
+        musicFolders = emptyList(),
         blockedFolders = musicRepository.getBlockedFolders(),
         dsp = com.beatraxus.app.model.DspUiState(
             customEqPresets = loadCustomEqPresets()
@@ -525,6 +525,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     init {
         prefs.registerOnSharedPreferenceChangeListener(prefListener)
         FFmpegKitConfig.setLogLevel(Level.AV_LOG_ERROR)
+
+        viewModelScope.launch {
+            val folders = musicRepository.getMusicFolders()
+            _uiState.update { it.copy(musicFolders = folders) }
+        }
 
         // Load persistent play history
         viewModelScope.launch {
@@ -2015,7 +2020,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     isLoadingLibrary = false,
                     isScanning = false,
                     errorMessage = message,
-                    musicFolders = musicRepository.getMusicFolders(),
+                    musicFolders = results.map { it.folder }.distinct(),
                     blockedFolders = musicRepository.getBlockedFolders()
                 ) }
 
@@ -2062,7 +2067,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 }
 
                 updateLibraryCounts(results)
-
+                val folders = musicRepository.getMusicFolders()
                 _uiState.update {
                     it.copy(
                         isScanning = false,
@@ -2071,7 +2076,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         scanCount = results.size,
                         albumCount = results.map { song -> song.album }.toSet().size,
                         artistCount = results.map { song -> song.artist }.toSet().size,
-                        musicFolders = musicRepository.getMusicFolders(),
+                        musicFolders = folders,
                         blockedFolders = musicRepository.getBlockedFolders(),
                         errorMessage = message
                     )
@@ -2881,7 +2886,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun addMusicFolder(uri: String) {
         viewModelScope.launch {
             musicRepository.addMusicFolder(uri)
-            _uiState.update { it.copy(triggerFolderPicker = false, musicFolders = musicRepository.getMusicFolders()) }
+            val folders = musicRepository.getMusicFolders()
+            _uiState.update { it.copy(triggerFolderPicker = false, musicFolders = folders) }
             if (!_uiState.value.isFirstRun) {
                 quickScan()
             }
@@ -2891,9 +2897,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun removeMusicFolder(path: String) {
         viewModelScope.launch {
             musicRepository.removeMusicFolder(path)
+            val folders = musicRepository.getMusicFolders()
             val isFirstRun = _uiState.value.isFirstRun
             _uiState.update { it.copy(
-                musicFolders = musicRepository.getMusicFolders(),
+                musicFolders = folders,
                 blockedFolders = musicRepository.getBlockedFolders()
             ) }
             if (!isFirstRun) {
@@ -2905,8 +2912,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun unblockMusicFolder(path: String) {
         viewModelScope.launch {
             musicRepository.removeBlockedFolder(path)
+            val folders = musicRepository.getMusicFolders()
             _uiState.update { it.copy(
-                musicFolders = musicRepository.getMusicFolders(),
+                musicFolders = folders,
                 blockedFolders = musicRepository.getBlockedFolders()
             ) }
             quickScan()
@@ -3127,8 +3135,6 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun setAudio3DStageEnabled(enabled: Boolean) = applyDspConfig { it.copy(audio3DStageEnabled = enabled) }
 
-    fun setCinemaModeEnabled(enabled: Boolean) = applyDspConfig { it.copy(cinemaModeEnabled = enabled) }
-    fun setCinemaIntensity(intensity: Float) = applyDspConfig { it.copy(cinemaIntensity = intensity.coerceIn(0f, 1f)) }
     fun setAudio3DWidth(value: Float) = applyDspConfig { it.copy(audio3DWidth = value.coerceIn(0f, 2f)) }
     fun setAudio3DDepth(value: Float) = applyDspConfig { it.copy(audio3DDepth = value.coerceIn(0f, 1f)) }
     fun setAudio3DHeight(value: Float) = applyDspConfig { it.copy(audio3DHeight = value.coerceIn(-1f, 1f)) }

@@ -6,7 +6,8 @@ import androidx.room.PrimaryKey
 @Entity(tableName = "music_folders")
 data class FolderEntity(
     @PrimaryKey val path: String,
-    val state: String = "ACTIVE"
+    val state: String = "ACTIVE",
+    val lastModified: Long = 0L
 ) {
     companion object {
         const val STATE_ACTIVE = "ACTIVE"

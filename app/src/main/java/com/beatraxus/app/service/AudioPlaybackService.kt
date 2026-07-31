@@ -783,23 +783,89 @@ class AudioPlaybackService : Service() {
             acquireScanWakeLock()
             try {
                 val blocked = musicRepository.getBlockedFolders()
+                val folderDao = database.folderDao()
+                val activeFolders = folderDao.getActiveFoldersList()
+                
+                val foldersToScan = mutableListOf<String>()
+                val unchangedFolders = mutableListOf<String>()
+                
+                if (fullScan) {
+                    foldersToScan.addAll(activeFolders.map { it.path })
+                } else {
+                    activeFolders.forEach { folderEntity ->
+                        val path = musicRepository.normalizePath(folderEntity.path)
+                        val file = File(path)
+                        val actualLastModified = if (file.exists()) file.lastModified() else 0L
+                        
+                        if (actualLastModified > folderEntity.lastModified || folderEntity.lastModified == 0L) {
+                            foldersToScan.add(folderEntity.path)
+                        } else {
+                            unchangedFolders.add(folderEntity.path)
+                        }
+                    }
+                }
+
+                if (!fullScan && foldersToScan.isEmpty()) {
+                    onProgress(1.0f, 0, 0, 0)
+                    val currentLocal = currentSongs.filter { it.source == SongSource.LOCAL }
+                    onComplete(currentLocal, emptyList(), emptyList(), "Library is up to date", false)
+                    updateScanningProgress(1.0f, currentLocal.size, true)
+                    return@launch
+                }
+
                 val currentLocalSongsMap = currentSongs.filter { it.source == SongSource.LOCAL }.associateBy { it.id }
-
-                val resultsFromMediaStore = musicRepository.scanAudioFiles(fullScan = fullScan, excludedPaths = blocked) { count, albums, artists, progress ->
-                    onProgress(progress, count, albums, artists)
-                    updateScanningProgress(progress, count, false)
+                
+                // If we are only scanning a subset of folders, we need to collect results and merge
+                val scannedResults = mutableListOf<Song>()
+                
+                if (fullScan) {
+                    val results = musicRepository.scanAudioFiles(fullScan = true, excludedPaths = blocked) { count, albums, artists, progress ->
+                        onProgress(progress, count, albums, artists)
+                        updateScanningProgress(progress, count, false)
+                    }
+                    scannedResults.addAll(results)
+                } else {
+                    // Incremental scan of ONLY changed folders
+                    for ((index, folderPath) in foldersToScan.withIndex()) {
+                        val results = musicRepository.scanAudioFiles(fullScan = false, targetPath = folderPath, excludedPaths = blocked) { count, albums, artists, progress ->
+                            val overallProgress = (index.toFloat() + progress) / foldersToScan.size.toFloat()
+                            onProgress(overallProgress, scannedResults.size + count, 0, 0) // Simplified counts for progress
+                            updateScanningProgress(overallProgress, scannedResults.size + count, false)
+                        }
+                        scannedResults.addAll(results)
+                        
+                        // Update lastModified in DB
+                        val path = musicRepository.normalizePath(folderPath)
+                        val actualLastModified = File(path).lastModified()
+                        folderDao.updateLastModified(folderPath, actualLastModified)
+                    }
                 }
 
-                val results = resultsFromMediaStore.map { scanned ->
-                    currentLocalSongsMap[scanned.id] ?: scanned
+                // Songs from unchanged folders
+                val unchangedSongs = if (fullScan) emptyList() else {
+                    currentLocalSongsMap.values.filter { song ->
+                        unchangedFolders.any { folder -> song.folder.startsWith(folder) }
+                    }
                 }
+
+                val results = (scannedResults + unchangedSongs).distinctBy { it.id }
 
                 val currentLocalIds = currentLocalSongsMap.keys
                 val resultIds = results.map { it.id }.toSet()
                 val newSongs = results.filter { it.id !in currentLocalIds }
-                val removedLocalIds = currentLocalIds - resultIds
+                
+                // For removed songs, we only consider songs that WERE in the scanned folders but are NO LONGER there.
+                // Or if it's a full scan, we consider all missing songs.
+                val removedLocalIds = if (fullScan) {
+                    currentLocalIds - resultIds
+                } else {
+                    currentLocalSongsMap.values
+                        .filter { song -> foldersToScan.any { folder -> song.folder.startsWith(folder) } }
+                        .map { it.id }
+                        .toSet() - resultIds
+                }
 
-                val hasChanges = fullScan || currentLocalSongsMap.size != results.size || newSongs.isNotEmpty() || removedLocalIds.isNotEmpty()
+                val hasChanges = fullScan || newSongs.isNotEmpty() || removedLocalIds.isNotEmpty()
 
                 if (hasChanges) {
                     val entities = results.map { it.toEntity() }
@@ -817,17 +883,14 @@ class AudioPlaybackService : Service() {
                     }
                 }
 
-                val allFolders = results.map { it.folder }.filter { it != "Unknown" }.toSet()
-                val sortedFolders = allFolders.sortedBy { it.length }
-                val minimalFolders = mutableListOf<String>()
-                val blockedSet = blocked.toSet()
-                for (folder in sortedFolders) {
-                    if (blockedSet.any { folder.startsWith(it + "/") || folder == it }) continue
-                    if (minimalFolders.none { folder.startsWith(it + "/") || folder == it }) {
-                        minimalFolders.add(folder)
+                if (fullScan) {
+                    // Update all lastModified after full scan
+                    activeFolders.forEach { folder ->
+                        val path = musicRepository.normalizePath(folder.path)
+                        val actualLastModified = File(path).lastModified()
+                        folderDao.updateLastModified(folder.path, actualLastModified)
                     }
                 }
-                musicRepository.addMusicFolders(minimalFolders)
 
                 val message = when {
                     fullScan -> "Full scan complete"
@@ -841,12 +904,12 @@ class AudioPlaybackService : Service() {
                 onComplete(results, newSongs, removedLocalIds.toList(), message, hasChanges)
                 updateScanningProgress(1.0f, results.size, true)
             } catch (e: Exception) {
+                Log.e(TAG, "Scan error", e)
                 if (e is CancellationException) {
                     onError("Scan cancelled")
-                    updateScanningProgress(1.0f, 0, true)
-                    return@launch
+                } else {
+                    onError(e.message ?: "Unknown error")
                 }
-                onError(e.message ?: "Unknown error")
                 updateScanningProgress(1.0f, 0, true)
             } finally {
                 releaseScanWakeLock()
@@ -1353,6 +1416,7 @@ class AudioPlaybackService : Service() {
                 var totalProcessed = 0
                 val allAlbums = mutableSetOf<String>()
                 val allArtists = mutableSetOf<String>()
+                val folderDao = database.folderDao()
 
                 for ((index, folder) in folders.withIndex()) {
                     val results = musicRepository.scanAudioFiles(fullScan = false, targetPath = folder) { count, albums, artists, progress ->
@@ -1365,6 +1429,11 @@ class AudioPlaybackService : Service() {
                     totalProcessed += results.size
                     allAlbums.addAll(results.map { it.album })
                     allArtists.addAll(results.map { it.artist })
+                    
+                    // Update lastModified in DB
+                    val path = musicRepository.normalizePath(folder)
+                    val actualLastModified = File(path).lastModified()
+                    folderDao.updateLastModified(folder, actualLastModified)
                 }
 
                 // Save to DB

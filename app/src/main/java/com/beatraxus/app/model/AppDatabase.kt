@@ -72,7 +72,7 @@ interface RecentlyPlayedDao {
         SongQualityEntity::class, BookmarkEntity::class, ChapterEntity::class, HighlightEntity::class,
         LoudnessEntity::class
     ],
-    version = 19,
+    version = 20,
     exportSchema = false
 )
 @TypeConverters(Converters::class)
@@ -212,6 +212,12 @@ abstract class AppDatabase : RoomDatabase() {
                         FOREIGN KEY(songId) REFERENCES songs(id) ON UPDATE NO ACTION ON DELETE CASCADE)
                 """.trimIndent())
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_loudness_cache_songId ON loudness_cache(songId)")
+            }
+        }
+
+        val MIGRATION_19_20 = object : Migration(19, 20) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE music_folders ADD COLUMN lastModified INTEGER NOT NULL DEFAULT 0")
             }
         }
     }

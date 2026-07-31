@@ -1,5 +1,6 @@
 package com.beatraxus.app.engine
 
+import android.os.Build
 import com.beatraxus.app.model.AiAnalysisEntity
 import com.beatraxus.app.model.DspConfig
 import com.beatraxus.app.model.ParametricEqBand
@@ -172,12 +173,7 @@ private class NativeDspProcessor(
     private var previousBassEnabled = config.bassEnabled
     private var previousTrebleEnabled = config.trebleEnabled
     private var previousAirEnabled = config.airEnabled
-    private var previousCinemaActive = !config.bitPerfectEnabled && config.cinemaModeEnabled
     private var isFirstConfig = true
-
-    // Fraction of the remaining difference to apply per audio buffer (0..1)
-    private val toneSmoothingFactor = 0.25f
-    private val toneSnapThreshold = 0.001f
 
     private val native = NativeDsp().also { dsp ->
         dsp.init(inputSampleRate.toFloat(), channels, outputSampleRate)
@@ -195,15 +191,6 @@ private class NativeDspProcessor(
     private fun updateNativeConfig(cfg: DspConfig, dsp: NativeDsp) {
         val isBP = cfg.bitPerfectEnabled
 
-        // Cinema Mode: a single self-contained preset chain. When active it drives its own
-        // tone/width/spatial/reverb/leveling targets below WITHOUT reading or mutating the
-        // user's own eqBands/bassDb/stereoWidth/etc config values, so switching it off restores
-        // whatever the user had configured, byte for byte. `ci` (0f..1f) scales every value in
-        // the chain toward neutral as the Cinema Intensity slider is lowered.
-        val cinemaActive = !isBP && cfg.cinemaModeEnabled
-        val ci = cfg.cinemaIntensity.coerceIn(0f, 1f)
-        dsp.setCinemaMode(cinemaActive, ci)
-
         // DC Blocker is typically not unbypassed, but usually kept for safety. 
         // For strict bit-perfect, we should disable it unless specifically bypassed (though not in user's list)
         dsp.setDcBlocker(if (isBP) false else cfg.dcBlockerEnabled)
@@ -215,7 +202,7 @@ private class NativeDspProcessor(
 
         dsp.setDvc(if (isBP) false else cfg.dvcEnabled)
         dsp.setRmsDvc(if (isBP) false else cfg.rmsDvcEnabled)
-        dsp.setRmsLeveler(if (isBP) false else (cfg.rmsLevelerEnabled || cinemaActive))
+        dsp.setRmsLeveler(if (isBP) false else cfg.rmsLevelerEnabled)
 
         dsp.setDvcLevel(if (isBP || cfg.hardwareVolumeEnabled) 1f else cfg.dvcLevel)
 
@@ -232,17 +219,13 @@ private class NativeDspProcessor(
         dsp.setCutoffRatio(if (resampleActive) cfg.resamplerCutoffRatio else 0.999f)
         
         // Tone knobs - smooth application is handled inside NativeDsp
-        // Cinema Mode preset: Bass +2dB (~80Hz, punch), Air +1.5dB (8-12kHz openness).
-        // Treble is left alone (dialogue clarity comes from the dedicated native
-        // dialogue-presence filter driven by setCinemaMode, not the treble shelf).
-        val targetBass = if (cinemaActive) 2.0f * ci else if (!isBP && cfg.bassEnabled) cfg.bassDb else 0f
-        val targetTreble = if (cinemaActive) 0f else if (!isBP && cfg.trebleEnabled) cfg.trebleDb else 0f
-        val targetAir = if (cinemaActive) 1.5f * ci else if (!isBP && cfg.airEnabled) cfg.airDb else 0f
+        val targetBass = if (!isBP && cfg.bassEnabled) cfg.bassDb else 0f
+        val targetTreble = if (!isBP && cfg.trebleEnabled) cfg.trebleDb else 0f
+        val targetAir = if (!isBP && cfg.airEnabled) cfg.airDb else 0f
 
         val bassToggled = cfg.bassEnabled != previousBassEnabled
         val trebleToggled = cfg.trebleEnabled != previousTrebleEnabled
         val airToggled = cfg.airEnabled != previousAirEnabled
-        val cinemaToggled = cinemaActive != previousCinemaActive
 
         var forceApplyTone = isFirstConfig
         if (bassToggled) {
@@ -257,10 +240,6 @@ private class NativeDspProcessor(
             previousAirEnabled = cfg.airEnabled
             forceApplyTone = true
         }
-        if (cinemaToggled) {
-            previousCinemaActive = cinemaActive
-            forceApplyTone = true
-        }
 
         if (forceApplyTone || cfg.bassDb != targetBass || cfg.trebleDb != targetTreble || cfg.airDb != targetAir) {
             dsp.setTone(targetBass, targetTreble, targetAir)
@@ -269,27 +248,12 @@ private class NativeDspProcessor(
 
         dsp.setSpatial(
             if (!isBP && cfg.balanceEnabled) cfg.balance else 0f,
-            if (cinemaActive) 1f + 0.22f * ci else if (!isBP && cfg.stereoExpansionEnabled) cfg.stereoWidth else 1f
+            if (!isBP && cfg.stereoExpansionEnabled) cfg.stereoWidth else 1f
         )
 
         dsp.setCrossfeed(if (!isBP) cfg.crossfeedEnabled else false, cfg.crossfeedLevel)
         val spatialUnbypassed = !isBP || cfg.bitPerfectUnbypass3DStage
 
-        if (cinemaActive) {
-            // Cinema Mode virtual surround: force the 3D stage engine on with a fixed,
-            // gentle preset (Cinematic HRTF, intensity scaled by the Cinema Intensity slider)
-            // regardless of the user's own Spatial Audio / Sound Stage toggles or node layout,
-            // which are left untouched in cfg. Node distance is intentionally kept at 1.2m
-            // (not the buggy 2.0m soundstage default) to avoid the air-absorption darkening /
-            // depth-delay side effects that come with a larger default distance.
-            dsp.setSpatialUiMode(0)
-            dsp.setHrtfMode(com.beatraxus.app.model.HrtfMode.CINEMATIC.ordinal)
-            dsp.setSpatialEnabled(ci > 0.001f)
-            dsp.setSpatialIntensity(0.28f * ci)
-            for (bandIdx in 0 until 8) {
-                dsp.setSoundStageNodePosition(bandIdx, 0f, 0f, 1.2f)
-            }
-        } else {
         dsp.setHrtfMode(cfg.hrtfMode.ordinal)
         
         if (cfg.spatialUiMode == com.beatraxus.app.model.SpatialUiMode.CLASSIC) {
@@ -360,13 +324,11 @@ private class NativeDspProcessor(
                 dsp.setSoundStageNodePosition(bandIdx, avgAz / nodes.size, avgEl / nodes.size, avgDist / nodes.size)
             }
         }
-        }
 
         // 3D stage width/center-lock (separate from the plain mid-side stereoWidth above).
-        // Cinema Mode uses a gentle fixed width + slight center lock to keep dialogue focused.
-        val effectiveWidth = if (cinemaActive) 1f + 0.15f * ci else if (cfg.soundStageEnabled) cfg.soundStageWidth else cfg.spatialStageWidth
+        val effectiveWidth = if (cfg.soundStageEnabled) cfg.soundStageWidth else cfg.spatialStageWidth
         dsp.setSoundStageWidth(effectiveWidth)
-        dsp.setSoundStageCenterLock(if (cinemaActive) 0.15f * ci else cfg.soundStageCenterLock)
+        dsp.setSoundStageCenterLock(cfg.soundStageCenterLock)
 
         data class ReverbParams(val type: Int, val room: Float, val damp: Float, val width: Float, val delay: Float)
         val params = when (cfg.reverbPreset) {
@@ -380,16 +342,7 @@ private class NativeDspProcessor(
         }
         
         val reverbUnbypassed = !isBP || cfg.bitPerfectUnbypassReverb
-        if (cinemaActive) {
-            // Very subtle ambience (~4% at full intensity), HALL-shaped, short predelay —
-            // enough to feel like a room without smearing dialogue. Independent of the
-            // user's own reverb settings, and scales toward 0 as ci drops.
-            dsp.setReverb(0.04f * ci)
-            dsp.setReverbType(2)
-            dsp.setReverbParams(0.5f, 0.35f)
-            dsp.setReverbWidth(0.8f)
-            dsp.setReverbPredelay(10f)
-        } else if (!cfg.reverbEnabled || !reverbUnbypassed) {
+        if (!cfg.reverbEnabled || !reverbUnbypassed) {
             dsp.setReverb(0.0f)
             dsp.muteReverb()
             dsp.setReverbType(params.type)
@@ -493,11 +446,9 @@ private class NativeDspProcessor(
         val eqMasterGain = if (effectiveEqEnabled) config.eqMasterGainDb else 0f
         val appliedEqMasterGain = eqMasterGain
         val dvcCompensationDb = if (config.dvcEnabled && config.compensateDvcVolumeEnabled && !isBP) {
-            val attenuationDb = if (config.dvcLevel > 0f)
-                -20f * log10(config.dvcLevel)
-            else 0f
-            // Cap so compensation doesn't blow up as dvcLevel approaches 0
-            attenuationDb.coerceIn(0f, 12f)
+            val dvcAttenuationDb = if (config.dvcLevel > 0f) -20f * log10(config.dvcLevel) else 0f
+            val makeupGainDb = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) 4f else 0f
+            (dvcAttenuationDb + makeupGainDb).coerceIn(0f, 12f)
         } else 0f
 
         val totalPreamp = manualPreamp + autoEqPreamp + reverbCompensation + appliedEqMasterGain + dvcCompensationDb

@@ -68,10 +68,6 @@ class NativeDsp : AutoCloseable {
         if (nativeHandle != 0L) nSetRmsLeveler(nativeHandle, enabled)
     }
 
-    fun setCinemaMode(enabled: Boolean, intensity: Float) = lock.readLock().withLock {
-        if (nativeHandle != 0L) nSetCinemaMode(nativeHandle, enabled, intensity)
-    }
-
     fun setDvcLevel(level: Float) = lock.readLock().withLock {
         if (nativeHandle != 0L) nSetDvcLevel(nativeHandle, level)
     }
@@ -351,7 +347,6 @@ class NativeDsp : AutoCloseable {
     private external fun nSetSpatialIntensity(handle: Long, intensity: Float)
     private external fun nSetHrtfMode(handle: Long, mode: Int)
     private external fun nSetSpatialUiMode(handle: Long, mode: Int)
-    private external fun nSetCinemaMode(handle: Long, enabled: Boolean, intensity: Float)
     private external fun nSetSoundStageNodePosition(handle: Long, bandIdx: Int, az: Float, el: Float, dist: Float)
     private external fun nSetSoundStageWidth(handle: Long, width: Float)
     private external fun nSetSoundStageCenterLock(handle: Long, amount: Float)

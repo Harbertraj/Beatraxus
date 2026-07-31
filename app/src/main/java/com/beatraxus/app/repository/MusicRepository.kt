@@ -15,6 +15,8 @@ import com.arthenica.ffmpegkit.FFprobeKit
 import com.arthenica.ffmpegkit.ReturnCode
 import com.beatraxus.app.model.Song
 import com.beatraxus.app.model.SongSource
+import com.beatraxus.app.model.FolderEntity
+import com.beatraxus.app.model.AppDatabase
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import org.json.JSONObject
@@ -24,6 +26,8 @@ import java.util.Locale
 import kotlin.math.max
 
 class MusicRepository(private val context: Context) {
+
+    private val folderDao = (context.applicationContext as com.beatraxus.app.BeatraxusApplication).database.folderDao()
 
     @OptIn(ExperimentalCoroutinesApi::class)
     suspend fun scanAudioFiles(
@@ -631,6 +635,9 @@ class MusicRepository(private val context: Context) {
     }
 
     fun normalizePath(path: String): String {
+        if (path.startsWith("content://")) {
+            resolveUriToPath(path)?.let { return it }
+        }
         return try {
             val file = File(path)
             file.canonicalPath
@@ -661,42 +668,44 @@ class MusicRepository(private val context: Context) {
     }
 
     // Deprecated: Moving to Room-based folder management
-    fun getMusicFolders(): List<String> {
+    suspend fun getMusicFolders(): List<String> = withContext(Dispatchers.IO) {
+        val folders = folderDao.getActiveFoldersList().map { it.path }
+        if (folders.isNotEmpty()) return@withContext folders
+
+        // Migration from SharedPreferences to Room
         val prefs = context.getSharedPreferences("beatraxus", Context.MODE_PRIVATE)
-        val foldersJson = prefs.getString("music_folders", null) ?: return emptyList()
-        return try {
+        val foldersJson = prefs.getString("music_folders", null) ?: return@withContext emptyList<String>()
+        try {
             val array = org.json.JSONArray(foldersJson)
-            List(array.length()) { array.getString(it) }
+            val legacyFolders = List(array.length()) { array.getString(it) }
+            legacyFolders.forEach { path ->
+                folderDao.insertFolder(FolderEntity(path))
+            }
+            // Clear legacy prefs after migration
+            prefs.edit().remove("music_folders").apply()
+            legacyFolders
         } catch (e: Exception) {
-            emptyList()
+            emptyList<String>()
         }
     }
 
     fun addMusicFolder(uri: String) {
-        val current = getMusicFolders().toMutableList()
-        if (!current.contains(uri)) {
-            current.add(uri)
-            saveMusicFolders(current)
+        CoroutineScope(Dispatchers.IO).launch {
+            folderDao.insertFolder(FolderEntity(uri))
         }
     }
 
     fun addMusicFolders(uris: List<String>) {
-        val current = getMusicFolders().toMutableSet()
-        var changed = false
-        uris.forEach { uri ->
-            if (current.add(uri)) {
-                changed = true
+        CoroutineScope(Dispatchers.IO).launch {
+            uris.forEach { uri ->
+                folderDao.insertFolder(FolderEntity(uri))
             }
-        }
-        if (changed) {
-            saveMusicFolders(current.toList())
         }
     }
 
     fun removeMusicFolder(uri: String) {
-        val current = getMusicFolders().toMutableList()
-        if (current.remove(uri)) {
-            saveMusicFolders(current)
+        CoroutineScope(Dispatchers.IO).launch {
+            folderDao.deleteFolder(uri)
             addBlockedFolder(uri)
         }
     }

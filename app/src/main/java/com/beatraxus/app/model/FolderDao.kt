@@ -23,6 +23,9 @@ interface FolderDao {
     @Query("UPDATE music_folders SET state = :state WHERE path = :path")
     suspend fun updateFolderState(path: String, state: String)
 
+    @Query("UPDATE music_folders SET lastModified = :lastModified WHERE path = :path")
+    suspend fun updateLastModified(path: String, lastModified: Long)
+
     @Query("DELETE FROM music_folders WHERE path = :path")
     suspend fun deleteFolder(path: String)
 }
