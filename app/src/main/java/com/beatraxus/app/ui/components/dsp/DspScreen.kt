@@ -2189,10 +2189,10 @@ private fun PremiumSoundStageCard(
         verticalArrangement = Arrangement.spacedBy(20.dp)
     ) {
         // Spatial Audio Title
-        Row(
+        Column(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Box(
                 modifier = Modifier

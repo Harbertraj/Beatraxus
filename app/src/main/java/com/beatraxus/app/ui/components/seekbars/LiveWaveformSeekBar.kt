@@ -32,7 +32,8 @@ fun LiveWaveformSeekBar(
     onProgressFinished: (Float) -> Unit = {},
     activeColor: Color = Color(0xFFE23AF0),
     inactiveColor: Color = Color.White.copy(alpha = 0.25f),
-    seed: Int = 0
+    seed: Int = 0,
+    isPlaying: Boolean = false
 ) {
     var draggingProgress by remember { mutableStateOf<Float?>(null) }
     var lastSeekTarget by remember { mutableStateOf<Float?>(null) }
@@ -44,11 +45,15 @@ fun LiveWaveformSeekBar(
     }
 
     val infinite = rememberInfiniteTransition(label = "wave_pulse")
-    val pulse by infinite.animateFloat(
-        initialValue = 0f, targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(900, easing = LinearEasing)),
-        label = "pulse"
-    )
+    val pulse by if (isPlaying) {
+        infinite.animateFloat(
+            initialValue = 0f, targetValue = 1f,
+            animationSpec = infiniteRepeatable(tween(900, easing = LinearEasing)),
+            label = "pulse"
+        )
+    } else {
+        remember { mutableStateOf(0f) }
+    }
 
     val barHeights = remember(seed) {
         val r = Random(seed)
@@ -99,7 +104,7 @@ fun LiveWaveformSeekBar(
                 val isPlayed = i <= playedIndex
                 val distFromPlayhead = abs(i - playedIndex)
 
-                if (distFromPlayhead < 3) {
+                if (isPlaying && distFromPlayhead < 3) {
                     val wobble = 1f + 0.3f * sin(pulse * 2 * Math.PI.toFloat() + i)
                     barHeight *= wobble.coerceIn(0.7f, 1.4f)
                 }
@@ -113,22 +118,6 @@ fun LiveWaveformSeekBar(
                     cap = StrokeCap.Round
                 )
             }
-
-            // Playhead glow marker
-            val thumbX = displayProgress * width
-            for (i in 3 downTo 1) {
-                drawLine(
-                    color = activeColor.copy(alpha = 0.15f * i),
-                    start = Offset(thumbX, centerY - height / 2f),
-                    end = Offset(thumbX, centerY + height / 2f),
-                    strokeWidth = i * 3.dp.toPx()
-                )
-            }
-            drawCircle(
-                color = activeColor,
-                radius = 3.5.dp.toPx(),
-                center = Offset(thumbX, centerY - height / 2f + 2.dp.toPx())
-            )
         }
     }
 }

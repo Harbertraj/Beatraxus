@@ -23,7 +23,8 @@ fun AppSeekBar(
     chapters: List<ChapterEntity> = emptyList(),
     lyrics: List<LrcLine> = emptyList(),
     loudnessData: FloatArray? = null,
-    spectrumData: FloatArray? = null
+    spectrumData: FloatArray? = null,
+    isPlaying: Boolean = false
 ) {
     when (style) {
         SeekbarStyle.WAVEFORM -> WaveformSeekBar(
@@ -130,7 +131,8 @@ fun AppSeekBar(
             onProgressFinished = onProgressFinished,
             activeColor = activeColor,
             inactiveColor = inactiveColor,
-            seed = seed
+            seed = seed,
+            isPlaying = isPlaying
         )
         SeekbarStyle.VINYL_GROOVE -> VinylGrooveSeekBar(
             progress = progress,

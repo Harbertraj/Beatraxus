@@ -33,7 +33,7 @@ class AppearancePreferences(context: Context) {
             nowPlayingBlurIntensity = preferences[BLUR_INTENSITY] ?: 210f,
             nowPlayingBlurDarkness = preferences[BLUR_DARKNESS] ?: 0.3f,
             albumArtTransform = AlbumArtTransform.valueOf(
-                preferences[ALBUM_ART_TRANSFORM] ?: AlbumArtTransform.NONE.name
+                preferences[ALBUM_ART_TRANSFORM] ?: AlbumArtTransform.FADE.name
             ),
             qualityBadgeStyle = QualityBadgeStyle.valueOf(
                 preferences[QUALITY_BADGE_STYLE] ?: QualityBadgeStyle.GLASSMORPHIC.name
@@ -42,7 +42,7 @@ class AppearancePreferences(context: Context) {
                 preferences[NOW_PLAYING_ICON_STYLE] ?: NowPlayingIconStyle.FILLED.name
             ),
             seekbarStyle = SeekbarStyle.valueOf(
-                preferences[SEEKBAR_STYLE] ?: SeekbarStyle.WAVEFORM.name
+                preferences[SEEKBAR_STYLE] ?: SeekbarStyle.LIVE_WAVEFORM.name
             ),
 
             // Home Screen Sections

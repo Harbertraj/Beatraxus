@@ -3023,9 +3023,10 @@ fun MainScreen(
                         if (activeMainSheet != null) {
                             ModalBottomSheet(
                                 onDismissRequest = { activeMainSheet = null },
+                                modifier = Modifier.fillMaxHeight(0.6f),
                                 containerColor = BgDeep.copy(alpha = 0.95f),
                                 scrimColor = Color.Black.copy(alpha = 0.6f),
-                                shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+                                shape = RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp),
                                 tonalElevation = 8.dp
                             ) {
                                 when (activeMainSheet) {

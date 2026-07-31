@@ -1212,12 +1212,11 @@ private:
             s.hrtfR[1].processSingle(spatialR, true);
 
             // d. Distance Falloff
-            // Normalize so that 1.0m = 0dB.
-            // 2.0m (default) was causing -4.2dB drop.
-            double distGain = 1.0 / std::pow(std::max(0.5, s.curDist), 0.7);
-            // Boost base spatial signal slightly to compensate for ITD/Spectral losses
-            spatialL *= distGain * 1.35;
-            spatialR *= distGain * 1.35;
+            // Reduced exponent (0.2) to prevent aggressive volume drop at high distance.
+            double distGain = 1.0 / std::pow(std::max(0.5, s.curDist), 0.2);
+            // Boost factor increased to 1.6 to better maintain perceived loudness
+            spatialL *= distGain * 1.6;
+            spatialR *= distGain * 1.6;
 
             // e. Air Absorption
             double lpCoeff = std::clamp(1.0 - (s.curDist - 1.0) * 0.04, 0.2, 1.0);

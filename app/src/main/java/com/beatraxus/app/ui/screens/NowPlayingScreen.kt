@@ -828,7 +828,8 @@ fun NowPlayingScreen(
                                             onSeek = onSeek,
                                             songId = song.id,
                                             uiState = uiState,
-                                            dominantColor = currentDominantColor
+                                            dominantColor = currentDominantColor,
+                                            isPlaying = isPlaying
                                         )
                                     }
                                 }
@@ -859,7 +860,8 @@ fun NowPlayingScreen(
                                     songId = song.id,
                                     showLyrics = showLyrics,
                                     uiState = uiState,
-                                    dominantColor = currentDominantColor
+                                    dominantColor = currentDominantColor,
+                                    isPlaying = isPlaying
                                 )
                             }
 
@@ -920,7 +922,7 @@ fun NowPlayingScreen(
                                 }
 
                                 // Placeholder for Play/Pause (which is elevated)
-                                Spacer(modifier = Modifier.weight(1.2f))
+                                Spacer(modifier = Modifier.weight(1.6f))
 
                                 // Next
                                 IconButton(onClick = onNext, modifier = Modifier.weight(1f)) {
@@ -1538,7 +1540,8 @@ private fun LyricsProgressSeekBar(
     onSeek: (Long) -> Unit,
     songId: String,
     uiState: com.beatraxus.app.model.PlayerUiState,
-    dominantColor: Color
+    dominantColor: Color,
+    isPlaying: Boolean = false
 ) {
     val progress = if (durationMs > 0) {
         (progressMs().toFloat() / durationMs).coerceIn(0f, 1f)
@@ -1568,7 +1571,8 @@ private fun LyricsProgressSeekBar(
         chapters = uiState.chapters,
         lyrics = uiState.lyrics,
         loudnessData = uiState.loudnessData,
-        spectrumData = uiState.spectrumData
+        spectrumData = uiState.spectrumData,
+        isPlaying = isPlaying
     )
 }
 
@@ -1580,7 +1584,8 @@ private fun MainProgressSeekBar(
     songId: String,
     showLyrics: Boolean,
     uiState: com.beatraxus.app.model.PlayerUiState,
-    dominantColor: Color
+    dominantColor: Color,
+    isPlaying: Boolean = false
 ) {
     val progress = if (durationMs > 0) {
         (progressMs().toFloat() / durationMs).coerceIn(0f, 1f)
@@ -1612,7 +1617,8 @@ private fun MainProgressSeekBar(
             chapters = uiState.chapters,
             lyrics = uiState.lyrics,
             loudnessData = uiState.loudnessData,
-            spectrumData = uiState.spectrumData
+            spectrumData = uiState.spectrumData,
+            isPlaying = isPlaying
         )
         Spacer(Modifier.height(8.dp))
     }

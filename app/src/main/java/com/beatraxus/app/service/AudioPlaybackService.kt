@@ -95,6 +95,9 @@ class AudioPlaybackService : Service() {
     private val _outputRouteStateFlow = MutableStateFlow(OutputRouteState())
     val outputRouteStateFlow: StateFlow<OutputRouteState> = _outputRouteStateFlow.asStateFlow()
 
+    private var wakeLock: PowerManager.WakeLock? = null
+    private var wifiLock: android.net.wifi.WifiManager.WifiLock? = null
+
     // Playback control state
     private var playbackJob: Job? = null
     private var originalPlaylist: List<Song> = emptyList()
@@ -651,15 +654,19 @@ class AudioPlaybackService : Service() {
             engine.pause()
             abandonAudioFocus()
             resumeOnFocusGain = false
+            releaseWakeLocks()
             saveState()
         } else {
             if (requestAudioFocus()) {
                 val song = engine.playbackStateFlow.value.currentSong
                 if (song != null) {
+                    acquireWakeLocks(song)
                     engine.resume()
                 } else if (playlist.isNotEmpty()) {
                     currentIndex = 0
-                    engine.play(playlist[currentIndex])
+                    val firstSong = playlist[currentIndex]
+                    acquireWakeLocks(firstSong)
+                    engine.play(firstSong)
                 }
             }
         }
@@ -690,6 +697,7 @@ class AudioPlaybackService : Service() {
             return
         }
 
+        acquireWakeLocks(nextSong)
         engine.prepare(nextSong)
         saveState()
 
@@ -1614,6 +1622,33 @@ class AudioPlaybackService : Service() {
         scanWakeLock = null
     }
 
+    private fun acquireWakeLocks(song: Song) {
+        if (wakeLock == null) {
+            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+            wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Beatraxus:Playback")
+        }
+        if (wakeLock?.isHeld == false) wakeLock?.acquire(2 * 60 * 60 * 1000L) // 2 hour max
+
+        if (song.isCloud()) {
+            if (wifiLock == null) {
+                val wm = getSystemService(Context.WIFI_SERVICE) as android.net.wifi.WifiManager
+                wifiLock = wm.createWifiLock(android.net.wifi.WifiManager.WIFI_MODE_FULL_HIGH_PERF, "Beatraxus:CloudPlayback")
+            }
+            if (wifiLock?.isHeld == false) wifiLock?.acquire()
+        } else {
+            releaseWifiLock()
+        }
+    }
+
+    private fun releaseWakeLocks() {
+        wakeLock?.let { if (it.isHeld) it.release() }
+        releaseWifiLock()
+    }
+
+    private fun releaseWifiLock() {
+        wifiLock?.let { if (it.isHeld) it.release() }
+    }
+
     fun updateScanningProgress(progress: Float, count: Int, completed: Boolean) {
         val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (completed) {
@@ -1883,6 +1918,7 @@ class AudioPlaybackService : Service() {
             return
         }
 
+        acquireWakeLocks(song)
         engine.prepare(song)
         saveState()
 
@@ -1904,6 +1940,7 @@ class AudioPlaybackService : Service() {
 
     fun stopSong() {
         engine.stop()
+        releaseWakeLocks()
         abandonAudioFocus()
     }
 

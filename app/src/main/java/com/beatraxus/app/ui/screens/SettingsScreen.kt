@@ -1948,57 +1948,7 @@ fun DspEnhancementsContent(
                 }
             }
 
-            val isSpatialBypassed = config.bitPerfectEnabled && !config.bitPerfectUnbypass3DStage
-            SettingsSection(
-                title = "SPATIAL AUDIO",
-                icon = Icons.Rounded.SpatialAudioOff,
-                isActive = config.spatialAudioEnabled && !isSpatialBypassed,
-                headerActions = {
-                    if (isSpatialBypassed) {
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(Color.White.copy(0.05f))
-                                .padding(horizontal = 10.dp, vertical = 5.dp)
-                        ) {
-                            Text(
-                                "BYPASSED",
-                                color = TextWhite.copy(0.3f),
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                    } else {
-                        PremiumSwitch(
-                            checked = config.spatialAudioEnabled,
-                            onCheckedChange = { viewModel.setSpatialAudioEnabled(it) }
-                        )
-                    }
-                }
-            ) {
-                if (config.spatialAudioEnabled && !isSpatialBypassed) {
-                    DspSliderRow(
-                        title = "Intensity",
-                        value = config.spatialAudioIntensity,
-                        range = 0f..1f,
-                        enabled = true,
-                        valueText = { "${(it * 100).toInt()}%" },
-                        onValueChange = viewModel::setSpatialAudioIntensity,
-                        onValueClick = {
-                            onEditValue(EditingValue("Intensity", config.spatialAudioIntensity, 0f..1f, viewModel::setSpatialAudioIntensity))
-                        }
-                    )
-                } else {
-                    Text(
-                        if (isSpatialBypassed) "Spatial Audio engine is currently bypassed because Bit-Perfect mode is active."
-                        else "Parametric binaural engine that simulates natural speaker placement. Recommended for headphones (pick either Spatial or Crossfeed, not both).",
-                        color = TextWhite.copy(0.7f),
-                        fontSize = 14.sp,
-                        lineHeight = 18.sp
-                    )
-                }
-            }
-        }
+       }
     }
 }
 
