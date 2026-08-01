@@ -507,6 +507,7 @@ class EqEngine {
     std::atomic<bool> workerExit{false};
     std::atomic<bool> recomputeRequested{false};
     std::atomic<double> autoHeadroomGain{1.0};
+    std::atomic<double> autoHeadroomMeterDb{0.0};
 
     void workerLoop() {
         while (!workerExit) {
@@ -522,8 +523,8 @@ class EqEngine {
             double peakDb = computePeakGainDb(lastSr.load());
             // Only attenuate if peak would clip above 0dBFS. Small positive headroom
             // is handled by the limiter — don't penalise normal EQ boosts.
-            double autoHeadroomDb = (peakDb > 0.0) ? 0.0 : 0.0;
             autoHeadroomGain.store(1.0, std::memory_order_release);
+            autoHeadroomMeterDb.store(peakDb > 0.0 ? peakDb : 0.0, std::memory_order_release);
         }
     }
 
@@ -633,6 +634,9 @@ public:
 
     double getAutoHeadroomGain() const {
         return autoHeadroomGain.load(std::memory_order_acquire);
+    }
+    double getAutoHeadroomMeterDb() const {
+        return autoHeadroomMeterDb.load(std::memory_order_acquire);
     }
 
     void flush() {
@@ -1934,12 +1938,12 @@ public:
     void setHeadroomManagement(bool enabled) { headroomManagementEnabled = enabled; }
     void setNoHeadroomGain(bool enabled) { noHeadroomGainEnabled = enabled; }
     float getAutoHeadroomDb() {
-        double g = eq.getAutoHeadroomGain();
-        double aiG = aiEq.getAutoHeadroomGain();
-        double simG = simEq.getAutoHeadroomGain();
-        if (aiG < g) g = aiG;
-        if (simG < g) g = simG;
-        return (float)(20.0 * std::log10(std::max(g, 1e-6)));
+        if (!headroomManagementEnabled) return 0.0f;
+        double d = eq.getAutoHeadroomMeterDb();
+        double aiD = aiEq.getAutoHeadroomMeterDb();
+        double simD = simEq.getAutoHeadroomMeterDb();
+        double worst = std::max({d, aiD, simD});
+        return (float)(-worst);
     }
 
     void setAiBand(int index, float freq, float gainDb, float Q, int type) {
