@@ -952,7 +952,7 @@ class AudioEngine(
             dspPipeline.flush()
             // BUGFIX: this used to be hardcoded to 0L, which made currentRenderedPositionMs()
             // compute elapsed time from the RAW absolute hardware frame counter (running since
-            // the audio output was first created) instead of relative to this seek point. That
+            // the audio output was first created) instead of relative to this seeker point. That
             // produced huge bogus displayed positions/durations (e.g. "1634:43") after seeking.
             // Resetting it to the current hardware frame position — exactly like configure() and
             // requestOutputRestart() already do — keeps position math relative to "now".

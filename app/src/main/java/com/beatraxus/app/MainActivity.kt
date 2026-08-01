@@ -74,7 +74,6 @@ class MainActivity : FragmentActivity() {
 
     private var serviceBound = false
     private lateinit var frameJankMonitor: FrameJankMonitor
-    private var pendingPermissionAction: (() -> Unit)? = null
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
@@ -100,15 +99,16 @@ class MainActivity : FragmentActivity() {
 
         if (results[essentialPermission] == true) {
             Log.d("MainActivity", "Essential permission granted, loading library")
-            if (pendingPermissionAction == null) {
+            val action = viewModel.pendingPermissionAction
+            if (action == null) {
                 viewModel.loadLibrary()
             } else {
-                pendingPermissionAction?.invoke()
+                action.invoke()
             }
         } else {
             viewModel.onPermissionDenied()
         }
-        pendingPermissionAction = null
+        viewModel.pendingPermissionAction = null
     }
 
     override fun onStart() {
@@ -305,7 +305,7 @@ class MainActivity : FragmentActivity() {
             return
         }
 
-        pendingPermissionAction = onPermissionGranted
+        viewModel.pendingPermissionAction = onPermissionGranted
 
         val permissions = mutableListOf(essentialPermission)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {

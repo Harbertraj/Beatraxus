@@ -2200,8 +2200,6 @@ class AudioPlaybackService : Service() {
         originalPlaylist = emptyList()
         currentIndex = -1
 
-        stopForeground(STOP_FOREGROUND_REMOVE)
-
         // Do the heavier cleanup (engine stop/release, cache clearing) off the main thread,
         // in a NonCancellable coroutine so it survives the service stopping.
         serviceScope.launch(NonCancellable) {
@@ -2213,6 +2211,7 @@ class AudioPlaybackService : Service() {
             } else {
                 cloudCacheManager.clearFullCache()
             }
+            stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
         }
 

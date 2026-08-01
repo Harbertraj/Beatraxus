@@ -15,6 +15,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
@@ -141,6 +142,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private val songQualityDao = database.songQualityDao()
     private val recentlyPlayedDao = database.recentlyPlayedDao()
     private val aiAnalysisEngine = com.beatraxus.app.engine.AiAnalysisEngine(application)
+    private val cloudAccountManager = com.beatraxus.app.repository.CloudAccountManager(application, database)
+    private val libraryScanner = com.beatraxus.app.repository.LibraryScanner(application, musicRepository, songDao, viewModelScope)
 
     private val decoderFactory = DecoderFactory(
         context = application,
@@ -159,7 +162,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     val ftpServers = ftpConnectionRepository.connections
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    private val aiAnalysisChannel = kotlinx.coroutines.channels.Channel<Song>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+    var pendingPermissionAction: (() -> Unit)? = null
+    private val aiAnalysisChannel = kotlinx.coroutines.channels.Channel<Song>(100, onBufferOverflow = BufferOverflow.DROP_OLDEST)
     private val musicBrainzService = com.beatraxus.app.repository.MusicBrainzService() // NEW
     private val yearEnrichmentChannel = kotlinx.coroutines.channels.Channel<Song>(kotlinx.coroutines.channels.Channel.UNLIMITED) // NEW
 
@@ -856,6 +860,29 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
         checkBatteryOptimizations()
 
+        // Observe Library Scanner state
+        viewModelScope.launch {
+            libraryScanner.isScanning.collect { value -> _uiState.update { it.copy(isScanning = value) } }
+        }
+        viewModelScope.launch {
+            libraryScanner.scanProgress.collect { value -> _uiState.update { it.copy(scanProgress = value) } }
+        }
+        viewModelScope.launch {
+            libraryScanner.scanCount.collect { value -> _uiState.update { it.copy(scanCount = value) } }
+        }
+        viewModelScope.launch {
+            libraryScanner.albumCount.collect { value -> _uiState.update { it.copy(albumCount = value) } }
+        }
+        viewModelScope.launch {
+            libraryScanner.artistCount.collect { value -> _uiState.update { it.copy(artistCount = value) } }
+        }
+        viewModelScope.launch {
+            libraryScanner.isFullScanning.collect { value -> _uiState.update { it.copy(isFullScanning = value) } }
+        }
+        viewModelScope.launch {
+            libraryScanner.errorMessage.collect { value -> if (value != null) _uiState.update { it.copy(errorMessage = value) } }
+        }
+
         // Start level polling loop for spatial UI animations
         viewModelScope.launch {
             while (isActive) {
@@ -1324,95 +1351,53 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun removeDriveAccount(email: String) {
         viewModelScope.launch {
-            driveAccountRepository.removeAccount(email)
-            cleanupCloudAccountData(email, SongSource.GDRIVE)
+            cloudAccountManager.removeDriveAccount(email) { removedIds ->
+                _songs.update { it.filterNot { s -> s.id in removedIds } }
+            }
         }
     }
 
     fun removeDropboxAccount(email: String) {
         viewModelScope.launch {
-            dropboxAccountRepository.removeAccount(email)
-            cleanupCloudAccountData(email, SongSource.DROPBOX)
+            cloudAccountManager.removeDropboxAccount(email) { removedIds ->
+                _songs.update { it.filterNot { s -> s.id in removedIds } }
+            }
         }
     }
 
     fun removeOneDriveAccount(email: String) {
         viewModelScope.launch {
-            onedriveAccountRepository.removeAccount(email)
-            cleanupCloudAccountData(email, SongSource.ONEDRIVE)
+            cloudAccountManager.removeOneDriveAccount(email) { removedIds ->
+                _songs.update { it.filterNot { s -> s.id in removedIds } }
+            }
         }
     }
 
     fun removeBoxAccount(email: String) {
         viewModelScope.launch {
-            boxAccountRepository.removeAccount(email)
-            cleanupCloudAccountData(email, SongSource.BOX)
+            cloudAccountManager.removeBoxAccount(email) { removedIds ->
+                _songs.update { it.filterNot { s -> s.id in removedIds } }
+            }
         }
     }
 
     fun removeNextcloudAccount(serverUrl: String, username: String) {
         viewModelScope.launch {
-            nextcloudAccountRepository.removeAccount(serverUrl, username)
-            cleanupCloudAccountData(username, SongSource.NEXTCLOUD)
-        }
-    }
-
-    private suspend fun cleanupCloudAccountData(email: String, source: SongSource) {
-        withContext(Dispatchers.IO) {
-            val emailLower = email.lowercase()
-
-            // 1. Identify songs to be removed
-            val songsToRemove = when (source) {
-                SongSource.GDRIVE -> songDao.getSongsByAccount(emailLower)
-                SongSource.DROPBOX -> songDao.getSongsByDropboxAccount(emailLower)
-                SongSource.ONEDRIVE -> songDao.getSongsByOneDriveAccount(emailLower)
-                SongSource.BOX -> songDao.getSongsByBoxAccount(emailLower)
-                SongSource.NEXTCLOUD -> songDao.getSongsByNextcloudAccount(emailLower)
-                else -> emptyList()
-            }
-            val songIds = songsToRemove.map { it.id }
-
-            // 2. Remove songs and associated data from DB
-            when (source) {
-                SongSource.GDRIVE -> songDao.deleteSongsByAccount(emailLower)
-                SongSource.DROPBOX -> songDao.deleteSongsByDropboxAccount(emailLower)
-                SongSource.ONEDRIVE -> songDao.deleteSongsByOneDriveAccount(emailLower)
-                SongSource.BOX -> songDao.deleteSongsByBoxAccount(emailLower)
-                SongSource.NEXTCLOUD -> songDao.deleteSongsByNextcloudAccount(emailLower)
-                else -> {}
-            }
-
-            favoriteDao.deleteByAccount(emailLower)
-            recentlyPlayedDao.deleteByAccount(emailLower)
-            if (songIds.isNotEmpty()) {
-                database.lyricsDao().deleteLyricsBySongIds(songIds)
-            }
-
-            // 3. Clear disk caches
-            val albumArtDir = File(app.filesDir, "album_art")
-            val cloudCacheDir = File(app.cacheDir, "cloud_cache")
-
-            songIds.forEach { id ->
-                File(albumArtDir, "$id.jpg").delete()
-                // Cloud cache might have multiple .tmp files for a song
-                cloudCacheDir.listFiles { _, name -> name.startsWith("$id.") }?.forEach { it.delete() }
-            }
-
-            // 4. Update in-memory state
-            _songs.update { current ->
-                current.filterNot { song ->
-                    when (source) {
-                        SongSource.GDRIVE -> song.driveAccountEmail?.lowercase() == emailLower
-                        SongSource.DROPBOX -> song.dropboxAccountEmail?.lowercase() == emailLower
-                        SongSource.ONEDRIVE -> song.onedriveAccountEmail?.lowercase() == emailLower
-                        SongSource.BOX -> song.boxAccountEmail?.lowercase() == emailLower
-                        SongSource.NEXTCLOUD -> song.nextcloudAccountEmail?.lowercase() == emailLower
-                        else -> false
-                    }
-                }
+            cloudAccountManager.removeNextcloudAccount(serverUrl, username) { removedIds ->
+                _songs.update { it.filterNot { s -> s.id in removedIds } }
             }
         }
     }
+
+    fun removeTelegramChannel(url: String) {
+        viewModelScope.launch {
+            cloudAccountManager.removeTelegramChannel(url) { removedIds ->
+                _songs.update { it.filterNot { s -> s.id in removedIds } }
+            }
+        }
+    }
+
+    // Removed cleanupCloudAccountData as it's now in cloudAccountManager
 
     private val enrichmentJobs = mutableMapOf<String, kotlinx.coroutines.Job>()
     private val activeEnrichmentCount = AtomicInteger(0)
@@ -1978,118 +1963,65 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private var preloadLyricsJob: Job? = null
 
     fun quickScan() {
-        if (scanJob?.isActive == true) return
         val svc = service ?: return
-
         triggerMetadataEnrichment()
-        _uiState.update { it.copy(isLoadingLibrary = true, isScanning = true) }
-        svc.runLocalScan(
-            fullScan = false,
-            currentSongs = _songs.value,
-            onProgress = { progress, count, albums, artists ->
-                _uiState.update { it.copy(
-                    scanCount = count,
-                    albumCount = albums,
-                    artistCount = artists,
-                    scanProgress = progress
-                )}
-            },
-            onComplete = { results, newSongs, removedLocalIds, message, hasChanges ->
-                if (hasChanges) {
-                    val cloudSongs = _songs.value.filter { it.source != SongSource.LOCAL }
-                    _songs.value = (results + cloudSongs).sortedBy { it.title }
+        libraryScanner.quickScan(svc, _songs.value) { results, newSongs, _, message, hasChanges ->
+            if (hasChanges) {
+                val cloudSongs = _songs.value.filter { it.source != SongSource.LOCAL }
+                _songs.value = (results + cloudSongs).sortedBy { it.title }
 
-                    if (newSongs.isNotEmpty()) {
-                        viewModelScope.launch(Dispatchers.Default) {
-                            val toAnalyze = if (_uiState.value.isFirstRun) newSongs.take(20) else newSongs
-                            toAnalyze.forEach { song ->
-                                try {
-                                    aiAnalysisChannel.send(song)
-                                    if (song.year == 0) yearEnrichmentChannel.send(song) // NEW
-                                } catch (e: Exception) {
-                                    Log.e("PlayerViewModel", "Failed to queue song for analysis", e)
-                                }
+                if (newSongs.isNotEmpty()) {
+                    viewModelScope.launch(Dispatchers.Default) {
+                        val toAnalyze = if (_uiState.value.isFirstRun) newSongs.take(20) else newSongs
+                        toAnalyze.forEach { song ->
+                            try {
+                                aiAnalysisChannel.send(song)
+                                if (song.year == 0) yearEnrichmentChannel.send(song)
+                            } catch (e: Exception) {
+                                Log.e("PlayerViewModel", "Failed to queue song for analysis", e)
                             }
                         }
                     }
                 }
-
-                updateLibraryCounts(results)
-
+            }
+            updateLibraryCounts(results)
+            viewModelScope.launch {
+                val folders = results.map { it.folder }.distinct()
                 _uiState.update { it.copy(
-                    isLoadingLibrary = false,
-                    isScanning = false,
-                    errorMessage = message,
-                    musicFolders = results.map { it.folder }.distinct(),
+                    musicFolders = folders,
                     blockedFolders = musicRepository.getBlockedFolders()
                 ) }
-
-                viewModelScope.launch {
-                    delay(2000)
-                    _uiState.update { it.copy(errorMessage = null) }
-                }
-            },
-            onError = { error ->
-                _uiState.update { it.copy(isLoadingLibrary = false, isScanning = false, errorMessage = "Scan failed: $error") }
             }
-        )
+        }
     }
 
     fun startFullScan() {
         val svc = service ?: return
-
         triggerMetadataEnrichment()
-        _uiState.update { it.copy(isScanning = true, isFullScanning = true, scanProgress = 0f, scanCount = 0, showScanOptions = false, errorMessage = null) }
+        libraryScanner.startFullScan(svc, _songs.value) { results, message ->
+            val cloudSongs = _songs.value.filter { it.source != SongSource.LOCAL }
+            _songs.value = (results + cloudSongs).sortedBy { it.title }
 
-        svc.runLocalScan(
-            fullScan = true,
-            currentSongs = _songs.value,
-            onProgress = { progress, count, albums, artists ->
-                _uiState.update { it.copy(
-                    scanCount = count,
-                    albumCount = albums,
-                    artistCount = artists,
-                    scanProgress = progress
-                )}
-            },
-            onComplete = { results, _, _, message, _ ->
-                val cloudSongs = _songs.value.filter { it.source != SongSource.LOCAL }
-                _songs.value = (results + cloudSongs).sortedBy { it.title }
-
-                // AI Analysis for all songs in full scan
-                viewModelScope.launch(Dispatchers.Default) {
-                    results.forEachIndexed { index, song ->
-                        if (index % 10 == 0) {
-                            aiAnalysisChannel.send(song)
-                        }
-                        if (song.year == 0) yearEnrichmentChannel.send(song) // NEW — check every song's year, not just every 10th
-                    }
+            viewModelScope.launch(Dispatchers.Default) {
+                results.forEachIndexed { index, song ->
+                    if (index % 10 == 0) aiAnalysisChannel.send(song)
+                    if (song.year == 0) yearEnrichmentChannel.send(song)
                 }
+            }
 
-                updateLibraryCounts(results)
+            updateLibraryCounts(results)
+            viewModelScope.launch {
                 val folders = musicRepository.getMusicFolders()
                 _uiState.update {
                     it.copy(
-                        isScanning = false,
-                        isFullScanning = false,
-                        scanProgress = 1.0f,
-                        scanCount = results.size,
-                        albumCount = results.map { song -> song.album }.toSet().size,
-                        artistCount = results.map { song -> song.artist }.toSet().size,
                         musicFolders = folders,
-                        blockedFolders = musicRepository.getBlockedFolders(),
-                        errorMessage = message
+                        blockedFolders = musicRepository.getBlockedFolders()
                     )
                 }
-
-                if (_uiState.value.isFirstRun) {
-                    setFirstRunComplete()
-                }
-            },
-            onError = { error ->
-                _uiState.update { it.copy(isScanning = false, isFullScanning = false, errorMessage = "Full scan failed: $error", showScanOptions = true) }
             }
-        )
+
+            if (_uiState.value.isFirstRun) setFirstRunComplete()
+        }
     }
 
     fun startAddedFoldersScan() {
@@ -2098,58 +2030,24 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             _uiState.update { it.copy(errorMessage = "No folders added to scan") }
             return
         }
-
         val svc = service ?: return
-
         triggerMetadataEnrichment()
-        _uiState.update { it.copy(isScanning = true, scanProgress = 0f, scanCount = 0, albumCount = 0, artistCount = 0, showScanOptions = false, errorMessage = null) }
+        libraryScanner.startFolderScan(svc, folders) { results, message ->
+            val currentSongs = _songs.value
+            val newLocalIds = results.map { it.id }.toSet()
+            val unchanged = currentSongs.filter { it.id !in newLocalIds }
+            _songs.value = (unchanged + results).sortedBy { it.title }
 
-        svc.runFolderScan(
-            folders = folders,
-            onProgress = { progress, count, albums, artists ->
-                _uiState.update { it.copy(
-                    scanProgress = progress,
-                    scanCount = count,
-                    albumCount = albums,
-                    artistCount = artists
-                )}
-            },
-            onComplete = { results, message ->
-                val currentSongs = _songs.value
-                val newLocalIds = results.map { it.id }.toSet()
-                val unchanged = currentSongs.filter { it.id !in newLocalIds }
-                _songs.value = (unchanged + results).sortedBy { it.title }
-
-                // AI Analysis for added folders scan
-                viewModelScope.launch(Dispatchers.Default) {
-                    results.forEachIndexed { index, song ->
-                        if (index < 30) {
-                            aiAnalysisChannel.send(song)
-                        }
-                        if (song.year == 0) yearEnrichmentChannel.send(song) // NEW
-                    }
+            viewModelScope.launch(Dispatchers.Default) {
+                results.forEachIndexed { index, song ->
+                    if (index < 30) aiAnalysisChannel.send(song)
+                    if (song.year == 0) yearEnrichmentChannel.send(song)
                 }
-
-                updateLibraryCounts(_songs.value.filter { it.source == SongSource.LOCAL })
-                _uiState.update { it.copy(
-                    isScanning = false,
-                    scanProgress = 1.0f,
-                    errorMessage = message
-                ) }
-
-                if (_uiState.value.isFirstRun) {
-                    setFirstRunComplete()
-                }
-
-                viewModelScope.launch {
-                    delay(2000)
-                    _uiState.update { it.copy(errorMessage = null) }
-                }
-            },
-            onError = { error ->
-                _uiState.update { it.copy(isScanning = false, errorMessage = "Scan failed: $error", showScanOptions = true) }
             }
-        )
+
+            updateLibraryCounts(_songs.value.filter { it.source == SongSource.LOCAL })
+            if (_uiState.value.isFirstRun) setFirstRunComplete()
+        }
     }
 
     fun onPermissionDenied() {
@@ -2922,17 +2820,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun cancelScan() {
-        scanJob?.cancel()
-        scanJob = null
-        service?.cancelLibraryScan()
-        _uiState.update { it.copy(
-            isScanning = false,
-            isFullScanning = false,
-            isLoadingLibrary = false,
-            isCloudScanning = false,
-            scanProgress = 0f
-        ) }
-        service?.updateScanningProgress(1.0f, _uiState.value.scanCount, true)
+        libraryScanner.cancelScan(service)
     }
 
 
@@ -4367,13 +4255,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun removeTelegramChannel(url: String) {
-        viewModelScope.launch {
-            telegramChannelRepository.removeChannel(url)
-            songDao.deleteSongsByTelegramChannel(url)
-            _songs.update { current -> current.filterNot { it.telegramChannelUrl == url } }
-        }
-    }
+
 
     fun setScrobblingEnabled(enabled: Boolean) {
         prefs.edit().putBoolean("scrobbling_enabled", enabled).apply()

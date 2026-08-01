@@ -533,6 +533,10 @@ class AudioTrackOutput(
         }
     }
 
+    private val audioReaper = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+        Thread(r, "AudioReaper")
+    }
+
     private fun releaseInternal() {
         mmapOutput?.release()
         mmapOutput = null
@@ -541,9 +545,9 @@ class AudioTrackOutput(
         audioTrack = null
         if (track != null) {
             // SECURITY: AudioTrack.stop()/release() can block for 100ms+ on some drivers.
-            // We offload this to a background thread to prevent the engine control loop from "sticking"
-            // during source changes (e.g. Telegram to GDrive).
-            Thread {
+            // We offload this to a dedicated background thread to prevent the engine control loop
+            // from "sticking" during source changes, while ensuring releases are serialized.
+            audioReaper.execute {
                 try {
                     if (track.playState == AudioTrack.PLAYSTATE_PLAYING) {
                         track.pause()
@@ -555,7 +559,7 @@ class AudioTrackOutput(
                 } catch (e: Exception) {
                     Log.w(TAG, "Error in background track release: ${e.message}")
                 }
-            }.start()
+            }
         }
     }
 
@@ -916,7 +920,7 @@ class AudioTrackOutput(
         var inIndex = offset
         var outIndex = 0
         repeat(sampleCount) {
-            val sample = ditherSample(data[inIndex++] * PCM_24_MAX, 256f).roundToInt().coerceIn(-8_388_608, 8_388_607)
+            val sample = ditherSample(data[inIndex++] * PCM_24_MAX, 1f).roundToInt().coerceIn(-8_388_608, 8_388_607)
             pcm24Buffer[outIndex++] = (sample and 0xFF).toByte()
             pcm24Buffer[outIndex++] = ((sample shr 8) and 0xFF).toByte()
             pcm24Buffer[outIndex++] = ((sample shr 16) and 0xFF).toByte()
