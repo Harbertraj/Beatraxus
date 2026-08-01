@@ -522,11 +522,8 @@ class EqEngine {
             double peakDb = computePeakGainDb(lastSr.load());
             // Only attenuate if peak would clip above 0dBFS. Small positive headroom
             // is handled by the limiter — don't penalise normal EQ boosts.
-            double gain = 1.0;
-            if (peakDb > 0.0) {
-                gain = std::pow(10.0, -peakDb / 20.0);
-            }
-            autoHeadroomGain.store(gain, std::memory_order_release);
+            double autoHeadroomDb = (peakDb > 0.0) ? 0.0 : 0.0;
+            autoHeadroomGain.store(1.0, std::memory_order_release);
         }
     }
 
