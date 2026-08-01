@@ -2679,6 +2679,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         applyDspConfig { it.copy(noHeadroomGainEnabled = enabled) }
     }
 
+    fun setHeadroomLegacyMode(enabled: Boolean) {
+        applyDspConfig { it.copy(headroomLegacyModeEnabled = enabled) }
+    }
+
     fun setBypassAll(bypass: Boolean) {
         applyDspConfig { it.copy(bypassAll = bypass) }
     }

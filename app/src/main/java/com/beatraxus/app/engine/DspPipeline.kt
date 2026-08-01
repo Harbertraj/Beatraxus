@@ -376,6 +376,7 @@ private class NativeDspProcessor(
         // Phase 2.7: Headroom
         dsp.setHeadroomManagement(cfg.headroomManagementEnabled)
         dsp.setNoHeadroomGain(cfg.noHeadroomGainEnabled)
+        dsp.setHeadroomLegacyMode(cfg.headroomLegacyModeEnabled)
 
         // Phase 3.4: Hardware Volume
         dsp.setHardwareVolume(cfg.hardwareVolumeEnabled)

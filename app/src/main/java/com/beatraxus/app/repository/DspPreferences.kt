@@ -191,6 +191,7 @@ class DspPreferences(private val context: Context) {
             crossfadeDurationS = pref(CROSSFADE_DURATION, 0),
             headroomManagementEnabled = pref(HEADROOM_MANAGEMENT, true),
             noHeadroomGainEnabled = pref(NO_HEADROOM_GAIN, false),
+            headroomLegacyModeEnabled = pref(HEADROOM_LEGACY_MODE, false),
             hardwareVolumeEnabled = pref(HARDWARE_VOLUME, false),
             headphoneSimulationEnabled = pref(HEADPHONE_SIM_ENABLED, false),
             headphoneSimulationProfile = deserializeAutoEqProfile(prefNullable(HEADPHONE_SIM_PROFILE)),
@@ -310,6 +311,7 @@ class DspPreferences(private val context: Context) {
             set(CROSSFADE_DURATION, config.crossfadeDurationS)
             set(HEADROOM_MANAGEMENT, config.headroomManagementEnabled)
             set(NO_HEADROOM_GAIN, config.noHeadroomGainEnabled)
+            set(HEADROOM_LEGACY_MODE, config.headroomLegacyModeEnabled)
             set(HARDWARE_VOLUME, config.hardwareVolumeEnabled)
             set(HEADPHONE_SIM_ENABLED, config.headphoneSimulationEnabled)
             set(HEADPHONE_SIM_PROFILE, serializeAutoEqProfile(config.headphoneSimulationProfile))
@@ -665,6 +667,7 @@ class DspPreferences(private val context: Context) {
         private val CROSSFADE_DURATION = intPreferencesKey("crossfade_duration")
         private val HEADROOM_MANAGEMENT = booleanPreferencesKey("headroom_management")
         private val NO_HEADROOM_GAIN = booleanPreferencesKey("no_headroom_gain")
+        private val HEADROOM_LEGACY_MODE = booleanPreferencesKey("headroom_legacy_mode")
         private val HARDWARE_VOLUME = booleanPreferencesKey("hardware_volume")
         private val HEADPHONE_SIM_ENABLED = booleanPreferencesKey("headphone_sim_enabled")
         private val HEADPHONE_SIM_PROFILE = stringPreferencesKey("headphone_sim_profile")

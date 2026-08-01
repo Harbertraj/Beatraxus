@@ -2405,6 +2405,31 @@ private fun DvcCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
+                            "Legacy Headroom Algorithm",
+                            color = if (config.headroomManagementEnabled) Color.White else Color.White.copy(0.3f),
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            "Use old capped peak compensation",
+                            color = if (config.headroomManagementEnabled) Color.White.copy(0.5f) else Color.White.copy(0.15f),
+                            fontSize = 11.sp
+                        )
+                    }
+                    PremiumSwitch(
+                        checked = config.headroomLegacyModeEnabled,
+                        onCheckedChange = { viewModel.setHeadroomLegacyMode(it) },
+                        enabled = config.headroomManagementEnabled
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
                             "Compensate DVC Volume",
                             color = Color.White,
                             fontSize = 14.sp,

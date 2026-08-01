@@ -300,6 +300,7 @@ data class DspConfig(
     // Phase 2.7: Headroom Management
     val headroomManagementEnabled: Boolean = false,
     val noHeadroomGainEnabled: Boolean = true,
+    val headroomLegacyModeEnabled: Boolean = false,
 
     // Phase 3.4: Hardware Volume
     val hardwareVolumeEnabled: Boolean = false,

@@ -164,6 +164,10 @@ class NativeDsp : AutoCloseable {
         if (nativeHandle != 0L) nSetNoHeadroomGain(nativeHandle, enabled)
     }
 
+    fun setHeadroomLegacyMode(enabled: Boolean) = lock.readLock().withLock {
+        if (nativeHandle != 0L) nSetHeadroomLegacyMode(nativeHandle, enabled)
+    }
+
     fun getHeadroomDb(): Float = lock.readLock().withLock {
         return if (nativeHandle != 0L) nGetHeadroomDb(nativeHandle) else 0.0f
     }
@@ -368,6 +372,7 @@ class NativeDsp : AutoCloseable {
     private external fun nSetHardwareVolume(handle: Long, enabled: Boolean)
     private external fun nSetHeadroomManagement(handle: Long, enabled: Boolean)
     private external fun nSetNoHeadroomGain(handle: Long, enabled: Boolean)
+    private external fun nSetHeadroomLegacyMode(handle: Long, enabled: Boolean)
     private external fun nGetHeadroomDb(handle: Long): Float
     private external fun nGetEqLatencyFrames(handle: Long): Int
     private external fun nGetLevels(handle: Long): FloatArray
