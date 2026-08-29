@@ -51,6 +51,11 @@ import com.beatraxus.app.ui.screens.MainScreen
 import com.beatraxus.app.ui.screens.SettingsScreen
 import com.beatraxus.app.ui.screens.WelcomeScreen
 import com.beatraxus.app.ui.screens.LoadingScreen
+import com.beatraxus.app.ui.screens.VideoPlayerScreen
+import com.beatraxus.app.viewmodel.VideoPlayerViewModel
+import com.beatraxus.app.viewmodel.VideoPlayerViewModelFactory
+import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.media3.common.util.UnstableApi
 
 import com.beatraxus.app.ui.components.dsp.DspScreen
 import androidx.compose.ui.Modifier
@@ -91,17 +96,23 @@ class MainActivity : FragmentActivity() {
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { results ->
-        val essentialPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        val audioPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             Manifest.permission.READ_MEDIA_AUDIO
         } else {
             Manifest.permission.READ_EXTERNAL_STORAGE
         }
+        val videoPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            Manifest.permission.READ_MEDIA_VIDEO
+        } else {
+            Manifest.permission.READ_EXTERNAL_STORAGE
+        }
 
-        if (results[essentialPermission] == true) {
-            Log.d("MainActivity", "Essential permission granted, loading library")
+        if (results[audioPermission] == true || results[videoPermission] == true) {
+            Log.d("MainActivity", "Storage permissions granted, loading library")
             val action = viewModel.pendingPermissionAction
             if (action == null) {
                 viewModel.loadLibrary()
+                viewModel.loadVideos()
             } else {
                 action.invoke()
             }
@@ -289,16 +300,25 @@ class MainActivity : FragmentActivity() {
     }
 
     fun requestPermissions(onPermissionGranted: (() -> Unit)? = null) {
-        val essentialPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        val audioPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             Manifest.permission.READ_MEDIA_AUDIO
         } else {
             Manifest.permission.READ_EXTERNAL_STORAGE
         }
+        val videoPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            Manifest.permission.READ_MEDIA_VIDEO
+        } else {
+            Manifest.permission.READ_EXTERNAL_STORAGE
+        }
 
-        // If already granted, just trigger library load and return
-        if (ContextCompat.checkSelfPermission(this, essentialPermission) == PackageManager.PERMISSION_GRANTED) {
+        val hasAudio = ContextCompat.checkSelfPermission(this, audioPermission) == PackageManager.PERMISSION_GRANTED
+        val hasVideo = ContextCompat.checkSelfPermission(this, videoPermission) == PackageManager.PERMISSION_GRANTED
+
+        // If BOTH are already granted, just trigger actions and return
+        if (hasAudio && hasVideo) {
             if (onPermissionGranted == null) {
                 viewModel.loadLibrary()
+                viewModel.loadVideos()
             } else {
                 onPermissionGranted()
             }
@@ -307,23 +327,50 @@ class MainActivity : FragmentActivity() {
 
         viewModel.pendingPermissionAction = onPermissionGranted
 
-        val permissions = mutableListOf(essentialPermission)
+        val permissions = mutableListOf<String>()
+        if (!hasAudio) permissions.add(audioPermission)
+        if (!hasVideo) permissions.add(videoPermission)
+        
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            permissions.add(Manifest.permission.POST_NOTIFICATIONS)
-            permissions.add(Manifest.permission.NEARBY_WIFI_DEVICES)
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                permissions.add(Manifest.permission.POST_NOTIFICATIONS)
+            }
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.NEARBY_WIFI_DEVICES) != PackageManager.PERMISSION_GRANTED) {
+                permissions.add(Manifest.permission.NEARBY_WIFI_DEVICES)
+            }
         }
-        permissionLauncher.launch(permissions.toTypedArray())
+        
+        if (permissions.isNotEmpty()) {
+            permissionLauncher.launch(permissions.toTypedArray())
+        } else {
+            // This case handles if permissions were somehow granted between the checks
+            if (onPermissionGranted == null) {
+                viewModel.loadLibrary()
+                viewModel.loadVideos()
+            } else {
+                onPermissionGranted()
+            }
+        }
     }
 
     private fun checkAndRequestPermissions() {
-        val essentialPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        val audioPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             Manifest.permission.READ_MEDIA_AUDIO
         } else {
             Manifest.permission.READ_EXTERNAL_STORAGE
         }
+        val videoPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            Manifest.permission.READ_MEDIA_VIDEO
+        } else {
+            Manifest.permission.READ_EXTERNAL_STORAGE
+        }
 
-        if (ContextCompat.checkSelfPermission(this, essentialPermission) == PackageManager.PERMISSION_GRANTED) {
+        val hasAudio = ContextCompat.checkSelfPermission(this, audioPermission) == PackageManager.PERMISSION_GRANTED
+        val hasVideo = ContextCompat.checkSelfPermission(this, videoPermission) == PackageManager.PERMISSION_GRANTED
+
+        if (hasAudio && hasVideo) {
             viewModel.loadLibrary()
+            viewModel.loadVideos()
         } else {
             requestPermissions()
         }
@@ -343,6 +390,7 @@ sealed class Screen(val route: String) {
     object Inspector : Screen("inspector")
 }
 
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
 fun BeatraxusApp(
     viewModel: PlayerViewModel,
@@ -386,6 +434,13 @@ fun BeatraxusApp(
         } else {
             // Fallback for non-activity context, though it shouldn't happen in MainActivity
             GoogleSignIn.getClient(context, driveSignInOptions)
+        }
+    }
+
+    LaunchedEffect(uiState.navigateToVideoPlayer) {
+        uiState.navigateToVideoPlayer?.let { videoId ->
+            navController.navigate("video_player/$videoId")
+            viewModel.consumeVideoNavigation()
         }
     }
 
@@ -534,7 +589,8 @@ fun BeatraxusApp(
                     viewModel            = viewModel,
                     onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
                     onNavigateToDsp      = { navController.navigate(Screen.Dsp.route) },
-                    onNavigateToInspector = { songId -> navController.navigate("inspector/$songId") }
+                    onNavigateToInspector = { songId -> navController.navigate("inspector/$songId") },
+                    onRequestPermissions = onRequestPermissions
                 )
             }
             composable(
@@ -631,6 +687,38 @@ fun BeatraxusApp(
                         }
                         navController.popBackStack()
                     }
+                )
+            }
+            composable(
+                "video_player/{videoId}",
+                arguments = listOf(navArgument("videoId") { type = NavType.StringType }),
+                enterTransition = {
+                    slideIntoContainer(
+                        towards = AnimatedContentTransitionScope.SlideDirection.Up,
+                        animationSpec = tween(400, easing = FastOutSlowInEasing)
+                    ) + fadeIn(tween(400))
+                },
+                exitTransition = {
+                    slideOutOfContainer(
+                        towards = AnimatedContentTransitionScope.SlideDirection.Down,
+                        animationSpec = tween(400, easing = FastOutSlowInEasing)
+                    ) + fadeOut(tween(400))
+                }
+            ) { backStackEntry ->
+                val videoId = backStackEntry.arguments?.getString("videoId") ?: return@composable
+                val videoQueue = uiState.activeVideoQueue
+                
+                val videoPlayerViewModel: VideoPlayerViewModel = viewModel(
+                    factory = VideoPlayerViewModelFactory(
+                        application = context.applicationContext as android.app.Application,
+                        videoQueue = videoQueue,
+                        initialVideoId = videoId
+                    )
+                )
+                
+                VideoPlayerScreen(
+                    viewModel = videoPlayerViewModel,
+                    onBack = { navController.popBackStack() }
                 )
             }
         }

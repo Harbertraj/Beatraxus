@@ -141,9 +141,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private val artistArtDao = database.artistArtDao()
     private val songQualityDao = database.songQualityDao()
     private val recentlyPlayedDao = database.recentlyPlayedDao()
+    private val videoRecentlyPlayedDao = database.videoRecentlyPlayedDao()
     private val aiAnalysisEngine = com.beatraxus.app.engine.AiAnalysisEngine(application)
     private val cloudAccountManager = com.beatraxus.app.repository.CloudAccountManager(application, database)
     private val libraryScanner = com.beatraxus.app.repository.LibraryScanner(application, musicRepository, songDao, viewModelScope)
+    private val videoScanner = com.beatraxus.app.repository.VideoLibraryScanner(application)
 
     private val decoderFactory = DecoderFactory(
         context = application,
@@ -183,6 +185,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 val enabled = p.getBoolean(key, true)
                 _uiState.update { it.copy(scrobblingEnabled = enabled) }
             }
+            "playback_mode" -> {
+                val modeStr = p.getString(key, com.beatraxus.app.model.PlaybackMode.AUDIO.name)
+                val mode = com.beatraxus.app.model.PlaybackMode.valueOf(modeStr ?: com.beatraxus.app.model.PlaybackMode.AUDIO.name)
+                _uiState.update { it.copy(playbackMode = mode) }
+            }
         }
     }
 
@@ -196,6 +203,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             customEqPresets = loadCustomEqPresets()
         ),
         libraryMode = LibraryMode.valueOf(prefs.getString("library_mode", LibraryMode.LOCAL.name) ?: LibraryMode.LOCAL.name),
+        playbackMode = com.beatraxus.app.model.PlaybackMode.valueOf(prefs.getString("playback_mode", com.beatraxus.app.model.PlaybackMode.AUDIO.name) ?: com.beatraxus.app.model.PlaybackMode.AUDIO.name),
         metadataNetworkType = NetworkType.valueOf(prefs.getString("metadata_network_type", NetworkType.ASK_MOBILE.name) ?: NetworkType.ASK_MOBILE.name),
         dataSaverEnabled = prefs.getBoolean("data_saver_enabled", false),
         artworkEnrichmentEnabled = prefs.getBoolean("artwork_enrichment_enabled", true),
@@ -255,6 +263,48 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private val _songs = MutableStateFlow<List<Song>>(emptyList())
     val allSongs: StateFlow<List<Song>> = _songs.asStateFlow()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    private val _videos = MutableStateFlow<List<com.beatraxus.app.model.Video>>(emptyList())
+    val allVideos: StateFlow<List<com.beatraxus.app.model.Video>> = _videos.asStateFlow()
+
+    private val _recentlyPlayed = MutableStateFlow<List<String>>(emptyList())
+    private val _recentlyPlayedVideos = MutableStateFlow<List<String>>(emptyList())
+
+    private val filteredVideos: StateFlow<List<com.beatraxus.app.model.Video>> = combine(
+        allVideos,
+        _uiState.map { it.currentView }.distinctUntilChanged(),
+        _uiState.map { it.currentFolderPath }.distinctUntilChanged(),
+        _uiState.map { it.searchQuery }.distinctUntilChanged(),
+        _recentlyPlayedVideos
+    ) { all, view, folder, query, recentIds ->
+        var filtered = when (view) {
+            LibraryView.VIDEO_ALL -> all
+            LibraryView.VIDEO_FOLDER_DETAIL -> all.filter { it.folderPath == folder }
+            LibraryView.VIDEO_RECENTLY_ADDED -> all.sortedByDescending { it.dateAdded }
+            LibraryView.VIDEO_RECENTLY_PLAYED -> {
+                recentIds.mapNotNull { id -> all.find { it.id == id } }
+            }
+            else -> all
+        }
+        if (query.isNotEmpty()) {
+            filtered = filtered.filter { it.title.contains(query, ignoreCase = true) }
+        }
+        filtered
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val videos: StateFlow<List<com.beatraxus.app.model.Video>> = filteredVideos
+
+    val videoFolders: StateFlow<List<com.beatraxus.app.model.VideoFolder>> = allVideos.map { all ->
+        all.groupBy { it.folderPath }
+            .map { (path, list) ->
+                com.beatraxus.app.model.VideoFolder(
+                    name = path.substringAfterLast("/"),
+                    path = path,
+                    videoCount = list.size,
+                    previewThumbnails = list.take(4).mapNotNull { it.thumbnailUri }
+                )
+            }.sortedBy { it.name.lowercase() }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     private val allSongsWithFavorites: StateFlow<List<Song>> = combine(
         allSongs,
@@ -373,8 +423,6 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             .map { (genre, list) -> Triple(genre, "${list.size} songs", list.first().albumArtUri) }
             .sortedBy { it.first.lowercase() }
     }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
-    private val _recentlyPlayed = MutableStateFlow<List<String>>(emptyList())
 
     val homeRecentlyPlayed: StateFlow<List<Song>> = combine(allSongs, _recentlyPlayed) { all, ids ->
         ids.mapNotNull { id -> all.find { it.id == id } }.take(10)
@@ -535,10 +583,19 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             _uiState.update { it.copy(musicFolders = folders) }
         }
 
+        // Trigger video scan on init
+        loadVideos()
+
         // Load persistent play history
         viewModelScope.launch {
             recentlyPlayedDao.getAllRecentlyPlayed().collect { entities ->
                 _recentlyPlayed.value = entities.map { it.songId }
+            }
+        }
+
+        viewModelScope.launch {
+            videoRecentlyPlayedDao.getAllRecentlyPlayed().collect { entities ->
+                _recentlyPlayedVideos.value = entities.map { it.videoId }
             }
         }
 
@@ -883,6 +940,17 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             libraryScanner.errorMessage.collect { value -> if (value != null) _uiState.update { it.copy(errorMessage = value) } }
         }
 
+        viewModelScope.launch {
+            allVideos.collect { videos ->
+                _uiState.update { it.copy(videos = videos) }
+            }
+        }
+        viewModelScope.launch {
+            videoFolders.collect { folders ->
+                _uiState.update { it.copy(videoFolders = folders) }
+            }
+        }
+
         // Start level polling loop for spatial UI animations
         viewModelScope.launch {
             while (isActive) {
@@ -1190,6 +1258,30 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
 
+
+    fun loadVideos() {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoadingVideos = true) }
+            try {
+                val scannedVideos = videoScanner.scanVideos()
+                val context = getApplication<android.app.Application>()
+                
+                // Background thumbnail generation for videos missing them
+                val enrichedVideos = scannedVideos.map { video ->
+                    if (video.thumbnailUri == null) {
+                        val thumb = com.beatraxus.app.utils.VideoThumbnailHelper.getThumbnail(context, video.uri, video.id)
+                        video.copy(thumbnailUri = thumb)
+                    } else video
+                }
+                
+                _videos.value = enrichedVideos
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to load videos", e)
+            } finally {
+                _uiState.update { it.copy(isLoadingVideos = false) }
+            }
+        }
+    }
 
     private var service: AudioPlaybackService? = null
 
@@ -2161,7 +2253,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             val isDetailView = view in listOf(
                 LibraryView.ALBUM_DETAIL, LibraryView.ARTIST_DETAIL,
                 LibraryView.FOLDER_DETAIL, LibraryView.GENRE_DETAIL, LibraryView.YEAR_DETAIL,
-                LibraryView.PLAYLIST_DETAIL
+                LibraryView.PLAYLIST_DETAIL, LibraryView.VIDEO_FOLDER_DETAIL
             )
             it.copy(
                 previousView = it.currentView,
@@ -2171,10 +2263,39 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 isMultiSelectMode = false,
                 selectedIds = emptySet(),
                 selectedTelegramChannelUrl = null, // Clear telegram when changing view or account
-                currentFolderPath = if (view == LibraryView.FOLDER_DETAIL) it.currentFolderPath else null,
+                currentFolderPath = if (view == LibraryView.FOLDER_DETAIL || view == LibraryView.VIDEO_FOLDER_DETAIL) it.currentFolderPath else null,
                 wasSearchingBeforeDetail = if (isDetailView) it.isSearchActive else it.wasSearchingBeforeDetail
             )
         }
+    }
+
+    fun navigateToVideoFolder(path: String, name: String) {
+        _uiState.update {
+            it.copy(
+                previousView = it.currentView,
+                currentView = LibraryView.VIDEO_FOLDER_DETAIL,
+                selectedItemName = name,
+                currentFolderPath = path,
+                wasSearchingBeforeDetail = it.isSearchActive,
+                isSearchActive = false
+            )
+        }
+    }
+
+    fun playVideo(video: com.beatraxus.app.model.Video) {
+        val list = videos.value
+        val index = list.indexOfFirst { it.id == video.id }
+        
+        _uiState.update { it.copy(
+            activeVideoQueue = list,
+            navigateToVideoPlayer = video.id
+        ) }
+        
+        Log.d(TAG, "Navigating to video player: ${video.title} from list of ${list.size} at index $index")
+    }
+
+    fun consumeVideoNavigation() {
+        _uiState.update { it.copy(navigateToVideoPlayer = null) }
     }
 
     fun setLibraryViewTelegram(url: String) {
@@ -2832,6 +2953,19 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun setLibraryMode(mode: LibraryMode) {
         prefs.edit().putString("library_mode", mode.name).apply()
         _uiState.update { it.copy(libraryMode = mode) }
+    }
+
+    fun setPlaybackMode(mode: com.beatraxus.app.model.PlaybackMode) {
+        prefs.edit().putString("playback_mode", mode.name).apply()
+        _uiState.update { it.copy(
+            playbackMode = mode,
+            currentView = if (mode == com.beatraxus.app.model.PlaybackMode.VIDEO) LibraryView.VIDEO_ALL else LibraryView.HOME
+        ) }
+        
+        // Auto-scan videos if entering video mode and list is empty
+        if (mode == com.beatraxus.app.model.PlaybackMode.VIDEO && _videos.value.isEmpty()) {
+            loadVideos()
+        }
     }
 
     fun setMetadataNetworkType(type: com.beatraxus.app.model.NetworkType) {

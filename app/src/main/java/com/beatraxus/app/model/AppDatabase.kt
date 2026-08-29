@@ -65,14 +65,29 @@ interface RecentlyPlayedDao {
     suspend fun deleteByAccount(email: String)
 }
 
+@Dao
+interface VideoRecentlyPlayedDao {
+    @Query("SELECT * FROM recently_played_videos ORDER BY timestamp DESC")
+    fun getAllRecentlyPlayed(): Flow<List<VideoRecentlyPlayedEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun addRecentlyPlayed(item: VideoRecentlyPlayedEntity)
+
+    @Query("DELETE FROM recently_played_videos WHERE videoId = :videoId")
+    suspend fun removeRecentlyPlayed(videoId: String)
+
+    @Query("DELETE FROM recently_played_videos WHERE LOWER(accountEmail) = LOWER(:email)")
+    suspend fun deleteByAccount(email: String)
+}
+
 @Database(
     entities = [
         PlaylistEntity::class, FavoriteEntity::class, SongEntity::class, RecentlyPlayedEntity::class,
         LyricsEntity::class, FolderEntity::class, AiAnalysisEntity::class, ArtistArtEntity::class,
         SongQualityEntity::class, BookmarkEntity::class, ChapterEntity::class, HighlightEntity::class,
-        LoudnessEntity::class
+        LoudnessEntity::class, VideoRecentlyPlayedEntity::class
     ],
-    version = 20,
+    version = 21,
     exportSchema = false
 )
 @TypeConverters(Converters::class)
@@ -83,6 +98,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun lyricsDao(): LyricsDao
     abstract fun folderDao(): FolderDao
     abstract fun recentlyPlayedDao(): RecentlyPlayedDao
+    abstract fun videoRecentlyPlayedDao(): VideoRecentlyPlayedDao
     abstract fun aiAnalysisDao(): AiAnalysisDao
     abstract fun artistArtDao(): ArtistArtDao
     abstract fun songQualityDao(): SongQualityDao
@@ -218,6 +234,17 @@ abstract class AppDatabase : RoomDatabase() {
         val MIGRATION_19_20 = object : Migration(19, 20) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE music_folders ADD COLUMN lastModified INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        val MIGRATION_20_21 = object : Migration(20, 21) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS recently_played_videos (
+                        videoId TEXT NOT NULL PRIMARY KEY,
+                        timestamp INTEGER NOT NULL,
+                        accountEmail TEXT)
+                """.trimIndent())
             }
         }
     }

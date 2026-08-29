@@ -219,7 +219,8 @@ enum class AudioOutputDevice(val displayName: String) {
 enum class LibraryView {
     HOME, ALL_SONGS, ALBUMS, ARTISTS, FOLDERS, YEARS, GENRES, FAVORITES, RECENTLY_PLAYED, RECENTLY_ADDED,
     ALBUM_DETAIL, ARTIST_DETAIL, FOLDER_DETAIL, YEAR_DETAIL, GENRE_DETAIL, PLAYLISTS, PLAYLIST_DETAIL,
-    CLOUD, RADIO, SMB_NAS, FTP_SFTP
+    CLOUD, RADIO, SMB_NAS, FTP_SFTP,
+    VIDEO_ALL, VIDEO_FOLDERS, VIDEO_RECENTLY_ADDED, VIDEO_RECENTLY_PLAYED, VIDEO_FOLDER_DETAIL
 }
 
 data class RadioStation(
@@ -254,6 +255,10 @@ enum class ViewMode {
 
 enum class LibraryMode {
     LOCAL, CLOUD, COMBINED
+}
+
+enum class PlaybackMode {
+    AUDIO, VIDEO
 }
 
 enum class NetworkType {
@@ -378,6 +383,7 @@ data class PlayerUiState(
     val selectedCloudEmail: String? = null,
     val selectedTelegramChannelUrl: String? = null,
     val libraryMode: LibraryMode = LibraryMode.LOCAL,
+    val playbackMode: PlaybackMode = PlaybackMode.AUDIO,
     // Cloud
     val driveAccounts: List<com.beatraxus.app.repository.DriveAccount> = emptyList(),
     val dropboxAccounts: List<com.beatraxus.app.repository.DropboxAccount> = emptyList(),
@@ -413,7 +419,14 @@ data class PlayerUiState(
     val bookmarks: List<BookmarkEntity> = emptyList(),
     val loudnessData: FloatArray? = null,
     val spectrumData: FloatArray? = null,
-    val bufferedProgress: Float = 0f
+    val bufferedProgress: Float = 0f,
+
+    // Videos
+    val videos: List<com.beatraxus.app.model.Video> = emptyList(),
+    val videoFolders: List<com.beatraxus.app.model.VideoFolder> = emptyList(),
+    val isLoadingVideos: Boolean = false,
+    val activeVideoQueue: List<com.beatraxus.app.model.Video> = emptyList(),
+    val navigateToVideoPlayer: String? = null
 )
 {
     override fun equals(other: Any?): Boolean {
@@ -514,6 +527,7 @@ data class PlayerUiState(
                 selectedCloudEmail == other.selectedCloudEmail &&
                 selectedTelegramChannelUrl == other.selectedTelegramChannelUrl &&
                 libraryMode == other.libraryMode &&
+                playbackMode == other.playbackMode &&
                 driveAccounts == other.driveAccounts &&
                 dropboxAccounts == other.dropboxAccounts &&
                 onedriveAccounts == other.onedriveAccounts &&
@@ -539,7 +553,10 @@ data class PlayerUiState(
                 isIgnoringBatteryOptimizations == other.isIgnoringBatteryOptimizations &&
                 isOemBatteryManagerDetected == other.isOemBatteryManagerDetected &&
                 gdriveAllowedFormats == other.gdriveAllowedFormats &&
-                telegramAllowedFormats == other.telegramAllowedFormats
+                telegramAllowedFormats == other.telegramAllowedFormats &&
+                videos == other.videos &&
+                videoFolders == other.videoFolders &&
+                isLoadingVideos == other.isLoadingVideos
     }
 
     override fun hashCode(): Int {
@@ -638,6 +655,7 @@ data class PlayerUiState(
         result = 31 * result + (selectedCloudEmail?.hashCode() ?: 0)
         result = 31 * result + (selectedTelegramChannelUrl?.hashCode() ?: 0)
         result = 31 * result + libraryMode.hashCode()
+        result = 31 * result + playbackMode.hashCode()
         result = 31 * result + driveAccounts.hashCode()
         result = 31 * result + dropboxAccounts.hashCode()
         result = 31 * result + onedriveAccounts.hashCode()
@@ -664,6 +682,9 @@ data class PlayerUiState(
         result = 31 * result + isOemBatteryManagerDetected.hashCode()
         result = 31 * result + gdriveAllowedFormats.hashCode()
         result = 31 * result + telegramAllowedFormats.hashCode()
+        result = 31 * result + videos.hashCode()
+        result = 31 * result + videoFolders.hashCode()
+        result = 31 * result + isLoadingVideos.hashCode()
         return result
     }
 }

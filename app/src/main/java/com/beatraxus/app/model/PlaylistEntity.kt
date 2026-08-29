@@ -23,6 +23,13 @@ data class RecentlyPlayedEntity(
     val accountEmail: String? = null // null for local, email for cloud
 )
 
+@Entity(tableName = "recently_played_videos")
+data class VideoRecentlyPlayedEntity(
+    @PrimaryKey val videoId: String,
+    val timestamp: Long,
+    val accountEmail: String? = null
+)
+
 @Entity(tableName = "songs")
 data class SongEntity(
     @PrimaryKey val id: String,

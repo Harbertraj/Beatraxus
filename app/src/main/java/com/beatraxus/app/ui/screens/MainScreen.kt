@@ -1,5 +1,6 @@
 package com.beatraxus.app.ui.screens
 
+import android.util.Log
 import androidx.activity.compose.BackHandler
 import com.beatraxus.app.utils.ImageUtils
 import androidx.compose.animation.*
@@ -220,7 +221,8 @@ fun MainScreen(
     viewModel: PlayerViewModel,
     onNavigateToSettings: () -> Unit,
     onNavigateToDsp: () -> Unit,
-    onNavigateToInspector: (String) -> Unit = {}
+    onNavigateToInspector: (String) -> Unit = {},
+    onRequestPermissions: (onGranted: () -> Unit) -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val progressMs by viewModel.progressMs.collectAsStateWithLifecycle()
@@ -274,6 +276,10 @@ fun MainScreen(
         LibraryView.RADIO -> Color(0xFF00B8D4)
         LibraryView.SMB_NAS -> Color(0xFF546E7A)
         LibraryView.FTP_SFTP -> Color(0xFF8D6E63)
+        LibraryView.VIDEO_ALL, LibraryView.VIDEO_FOLDER_DETAIL -> Color(0xFF00E5FF)
+        LibraryView.VIDEO_FOLDERS -> Color(0xFFFFAB40)
+        LibraryView.VIDEO_RECENTLY_ADDED -> Color(0xFF00E676)
+        LibraryView.VIDEO_RECENTLY_PLAYED -> Color(0xFF40C4FF)
     }
     val viewAccentColor by animateColorAsState(
         targetValue = targetAccentColor,
@@ -312,6 +318,11 @@ fun MainScreen(
                 LibraryView.YEARS -> years.size
                 LibraryView.GENRES -> genres.size
                 LibraryView.PLAYLISTS -> playlists.size
+                LibraryView.VIDEO_ALL -> uiState.videos.size
+                LibraryView.VIDEO_FOLDERS -> uiState.videoFolders.size
+                LibraryView.VIDEO_FOLDER_DETAIL -> uiState.videos.size
+                LibraryView.VIDEO_RECENTLY_ADDED -> uiState.videos.size
+                LibraryView.VIDEO_RECENTLY_PLAYED -> uiState.videos.size
                 else -> songs.size
             }
         }
@@ -367,6 +378,10 @@ fun MainScreen(
     val genreDetailGridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
     val playlistDetailListState = rememberLazyListState()
     val playlistDetailGridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
+
+    val videoAllGridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
+    val videoFoldersGridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
+    val videoFolderDetailGridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
 
     val searchFieldRowVisible = uiState.isSearchActive
 
@@ -481,6 +496,7 @@ fun MainScreen(
                 LibraryView.YEAR_DETAIL -> LibraryView.YEARS
                 LibraryView.GENRE_DETAIL -> LibraryView.GENRES
                 LibraryView.PLAYLIST_DETAIL -> LibraryView.PLAYLISTS
+                LibraryView.VIDEO_FOLDER_DETAIL -> LibraryView.VIDEO_FOLDERS
                 else -> LibraryView.HOME
             }
             if (uiState.cameFromNowPlaying) {
@@ -543,6 +559,7 @@ fun MainScreen(
                 SlideDrawerMenu(
                     currentView = uiState.currentView,
                     libraryMode = uiState.libraryMode,
+                    playbackMode = uiState.playbackMode,
                     accentColor = viewAccentColor,
                     drawerProgress = drawerProgress,
                     isPlaying = uiState.isPlaying,
@@ -556,6 +573,19 @@ fun MainScreen(
                         scope.launch {
                             delay(150)
                             viewModel.setLibraryMode(mode)
+                        }
+                    },
+                    onSetPlaybackMode = { mode ->
+                        showDrawer = false
+                        scope.launch {
+                            delay(150)
+                            if (mode == com.beatraxus.app.model.PlaybackMode.VIDEO) {
+                                onRequestPermissions {
+                                    viewModel.setPlaybackMode(mode)
+                                }
+                            } else {
+                                viewModel.setPlaybackMode(mode)
+                            }
                         }
                     },
                     onNavigateToSettings = onNavigateToSettings,
@@ -677,6 +707,11 @@ fun MainScreen(
                                     LibraryView.RADIO -> "RADIO"
                                     LibraryView.SMB_NAS -> "SMB/NAS"
                                     LibraryView.FTP_SFTP -> "FTP/SFTP"
+                                    LibraryView.VIDEO_ALL -> "ALL VIDEOS"
+                                    LibraryView.VIDEO_FOLDERS -> "VIDEO FOLDERS"
+                                    LibraryView.VIDEO_FOLDER_DETAIL -> uiState.selectedItemName ?: "VIDEO FOLDER"
+                                    LibraryView.VIDEO_RECENTLY_ADDED -> "RECENTLY ADDED"
+                                    LibraryView.VIDEO_RECENTLY_PLAYED -> "RECENTLY PLAYED"
                                 }
                                 val titleIcon = when (uiState.currentView) {
                                     LibraryView.HOME -> Icons.Rounded.Home
@@ -700,6 +735,11 @@ fun MainScreen(
                                     LibraryView.RADIO -> Icons.Rounded.Radio
                                     LibraryView.SMB_NAS -> Icons.Rounded.Storage
                                     LibraryView.FTP_SFTP -> Icons.Rounded.NetworkCheck
+                                    LibraryView.VIDEO_ALL -> Icons.Rounded.Movie
+                                    LibraryView.VIDEO_FOLDERS -> Icons.Rounded.FolderOpen
+                                    LibraryView.VIDEO_FOLDER_DETAIL -> Icons.Rounded.Folder
+                                    LibraryView.VIDEO_RECENTLY_ADDED -> Icons.Rounded.VideoLibrary
+                                    LibraryView.VIDEO_RECENTLY_PLAYED -> Icons.Rounded.History
                                 }
 
                                 // Menu icon on the left
@@ -1080,7 +1120,8 @@ fun MainScreen(
                                     } else {
                                         val canShufflePlay = when (uiState.currentView) {
                                             LibraryView.ALBUMS, LibraryView.ARTISTS, LibraryView.FOLDERS,
-                                            LibraryView.YEARS, LibraryView.GENRES, LibraryView.PLAYLISTS -> false
+                                            LibraryView.YEARS, LibraryView.GENRES, LibraryView.PLAYLISTS,
+                                            LibraryView.VIDEO_ALL, LibraryView.VIDEO_FOLDERS, LibraryView.VIDEO_FOLDER_DETAIL -> false
                                             else -> true
                                         }
 
@@ -1227,7 +1268,8 @@ fun MainScreen(
                                         onZoomIn  = {
                                             val isGrid = uiState.currentView in listOf(
                                                 LibraryView.ALBUMS, LibraryView.ARTISTS, LibraryView.FOLDERS,
-                                                LibraryView.YEARS, LibraryView.GENRES, LibraryView.PLAYLISTS
+                                                LibraryView.YEARS, LibraryView.GENRES, LibraryView.PLAYLISTS,
+                                                LibraryView.VIDEO_ALL, LibraryView.VIDEO_FOLDERS, LibraryView.VIDEO_FOLDER_DETAIL
                                             )
                                             if (isGrid) {
                                                 categoryGridColumns = (categoryGridColumns - 1).coerceAtLeast(1)
@@ -1238,7 +1280,8 @@ fun MainScreen(
                                         onZoomOut = {
                                             val isGrid = uiState.currentView in listOf(
                                                 LibraryView.ALBUMS, LibraryView.ARTISTS, LibraryView.FOLDERS,
-                                                LibraryView.YEARS, LibraryView.GENRES, LibraryView.PLAYLISTS
+                                                LibraryView.YEARS, LibraryView.GENRES, LibraryView.PLAYLISTS,
+                                                LibraryView.VIDEO_ALL, LibraryView.VIDEO_FOLDERS, LibraryView.VIDEO_FOLDER_DETAIL
                                             )
                                             if (isGrid) {
                                                 categoryGridColumns = (categoryGridColumns + 1).coerceAtMost(5)
@@ -2368,6 +2411,56 @@ fun MainScreen(
                                                         }
                                                     }
                                                 }
+                                                LibraryView.VIDEO_ALL -> {
+                                                    com.beatraxus.app.ui.screens.library.VideoLibraryScreen(
+                                                        videos = uiState.videos,
+                                                        isRefreshing = uiState.isLoadingVideos,
+                                                        onRefresh = { viewModel.loadVideos() },
+                                                        onVideoClick = { video ->
+                                                            viewModel.playVideo(video)
+                                                        }
+                                                    )
+                                                }
+                                                LibraryView.VIDEO_FOLDERS -> {
+                                                    com.beatraxus.app.ui.screens.library.VideoFoldersScreen(
+                                                        folders = uiState.videoFolders,
+                                                        isRefreshing = uiState.isLoadingVideos,
+                                                        onRefresh = { viewModel.loadVideos() },
+                                                        onFolderClick = { folder ->
+                                                            viewModel.navigateToVideoFolder(folder.path, folder.name)
+                                                        }
+                                                    )
+                                                }
+                                                LibraryView.VIDEO_FOLDER_DETAIL -> {
+                                                    com.beatraxus.app.ui.screens.library.VideoLibraryScreen(
+                                                        videos = uiState.videos,
+                                                        isRefreshing = uiState.isLoadingVideos,
+                                                        onRefresh = { viewModel.loadVideos() },
+                                                        onVideoClick = { video ->
+                                                            viewModel.playVideo(video)
+                                                        }
+                                                    )
+                                                }
+                                                LibraryView.VIDEO_RECENTLY_ADDED -> {
+                                                    com.beatraxus.app.ui.screens.library.VideoLibraryScreen(
+                                                        videos = uiState.videos,
+                                                        isRefreshing = uiState.isLoadingVideos,
+                                                        onRefresh = { viewModel.loadVideos() },
+                                                        onVideoClick = { video ->
+                                                            viewModel.playVideo(video)
+                                                        }
+                                                    )
+                                                }
+                                                LibraryView.VIDEO_RECENTLY_PLAYED -> {
+                                                    com.beatraxus.app.ui.screens.library.VideoLibraryScreen(
+                                                        videos = uiState.videos,
+                                                        isRefreshing = uiState.isLoadingVideos,
+                                                        onRefresh = { viewModel.loadVideos() },
+                                                        onVideoClick = { video ->
+                                                            viewModel.playVideo(video)
+                                                        }
+                                                    )
+                                                }
                                                 LibraryView.FAVORITES -> {
                                                     val favSongs = songs.filter { favorites.contains(it.id) }
                                                     val isListView = trackLayoutDensity <= 2
@@ -2686,7 +2779,7 @@ fun MainScreen(
                                         .padding(horizontal = 12.dp)
                                 ) {
                                     androidx.compose.animation.AnimatedVisibility(
-                                        visible = uiState.currentSong != null && !showFullPlayer,
+                                        visible = uiState.currentSong != null && !showFullPlayer && uiState.playbackMode == PlaybackMode.AUDIO,
                                         enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
                                         exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
                                     ) {
@@ -5312,11 +5405,13 @@ data class DrawerMenuItem(
 fun SlideDrawerMenu(
     currentView: LibraryView,
     libraryMode: LibraryMode,
+    playbackMode: com.beatraxus.app.model.PlaybackMode,
     accentColor: Color,
     drawerProgress: Float = 1f,
     isPlaying: Boolean = false,
     onSelectView: (LibraryView) -> Unit,
     onSetLibraryMode: (LibraryMode) -> Unit,
+    onSetPlaybackMode: (com.beatraxus.app.model.PlaybackMode) -> Unit,
     onNavigateToSettings: () -> Unit,
     onNavigateToDsp: () -> Unit,
     onClose: () -> Unit
@@ -5332,24 +5427,33 @@ fun SlideDrawerMenu(
         label = "gradientOffset"
     )
 
-    val menuItems = remember(libraryMode) {
-        listOf(
-            DrawerMenuItem("Home", LibraryView.HOME, Icons.Rounded.Home, Color(0xFF00E676)),
-            DrawerMenuItem("All Songs", LibraryView.ALL_SONGS, Icons.Rounded.MusicNote, Color(0xFFFF4081)),
-            DrawerMenuItem("Albums", LibraryView.ALBUMS, Icons.Rounded.Album, Color(0xFFB2FF59)),
-            DrawerMenuItem("Artists", LibraryView.ARTISTS, Icons.Rounded.Person, Color(0xFF7C4DFF)),
-            DrawerMenuItem("Folders", LibraryView.FOLDERS, Icons.Rounded.Folder, Color(0xFFFFAB40)),
-            DrawerMenuItem("Years", LibraryView.YEARS, Icons.Rounded.CalendarToday, Color(0xFFFF5252)),
-            DrawerMenuItem("Genres", LibraryView.GENRES, Icons.Rounded.GridView, Color(0xFFE040FB)),
-            DrawerMenuItem("Playlists", LibraryView.PLAYLISTS, Icons.AutoMirrored.Rounded.PlaylistPlay, Color(0xFFFDD835)),
-            DrawerMenuItem("Favorite Songs", LibraryView.FAVORITES, Icons.Rounded.Favorite, Color(0xFFFF5252)),
-            DrawerMenuItem("Recently Added", LibraryView.RECENTLY_ADDED, Icons.Rounded.NewReleases, Color(0xFF00E676)),
-            DrawerMenuItem("Recently Played", LibraryView.RECENTLY_PLAYED, Icons.Rounded.History, Color(0xFF40C4FF)),
-            DrawerMenuItem("Radio", LibraryView.RADIO, Icons.Rounded.Radio, Color(0xFF00B8D4)),
-            DrawerMenuItem("SMB / NAS", LibraryView.SMB_NAS, Icons.Rounded.Storage, Color(0xFF546E7A)),
-            DrawerMenuItem("FTP / SFTP", LibraryView.FTP_SFTP, Icons.Rounded.Dns, Color(0xFF8D6E63))
-        ).filter { item ->
-            !(item.view == LibraryView.FOLDERS && libraryMode == LibraryMode.CLOUD)
+    val menuItems = remember(libraryMode, playbackMode) {
+        if (playbackMode == com.beatraxus.app.model.PlaybackMode.VIDEO) {
+            listOf(
+                DrawerMenuItem("All Videos", LibraryView.VIDEO_ALL, Icons.Rounded.Movie, Color(0xFF00E5FF)),
+                DrawerMenuItem("Folders", LibraryView.VIDEO_FOLDERS, Icons.Rounded.FolderOpen, Color(0xFFFFAB40)),
+                DrawerMenuItem("Recently Added", LibraryView.VIDEO_RECENTLY_ADDED, Icons.Rounded.VideoLibrary, Color(0xFF00E676)),
+                DrawerMenuItem("Recently Played", LibraryView.VIDEO_RECENTLY_PLAYED, Icons.Rounded.History, Color(0xFF40C4FF))
+            )
+        } else {
+            listOf(
+                DrawerMenuItem("Home", LibraryView.HOME, Icons.Rounded.Home, Color(0xFF00E676)),
+                DrawerMenuItem("All Songs", LibraryView.ALL_SONGS, Icons.Rounded.MusicNote, Color(0xFFFF4081)),
+                DrawerMenuItem("Albums", LibraryView.ALBUMS, Icons.Rounded.Album, Color(0xFFB2FF59)),
+                DrawerMenuItem("Artists", LibraryView.ARTISTS, Icons.Rounded.Person, Color(0xFF7C4DFF)),
+                DrawerMenuItem("Folders", LibraryView.FOLDERS, Icons.Rounded.Folder, Color(0xFFFFAB40)),
+                DrawerMenuItem("Years", LibraryView.YEARS, Icons.Rounded.CalendarToday, Color(0xFFFF5252)),
+                DrawerMenuItem("Genres", LibraryView.GENRES, Icons.Rounded.GridView, Color(0xFFE040FB)),
+                DrawerMenuItem("Playlists", LibraryView.PLAYLISTS, Icons.AutoMirrored.Rounded.PlaylistPlay, Color(0xFFFDD835)),
+                DrawerMenuItem("Favorite Songs", LibraryView.FAVORITES, Icons.Rounded.Favorite, Color(0xFFFF5252)),
+                DrawerMenuItem("Recently Added", LibraryView.RECENTLY_ADDED, Icons.Rounded.NewReleases, Color(0xFF00E676)),
+                DrawerMenuItem("Recently Played", LibraryView.RECENTLY_PLAYED, Icons.Rounded.History, Color(0xFF40C4FF)),
+                DrawerMenuItem("Radio", LibraryView.RADIO, Icons.Rounded.Radio, Color(0xFF00B8D4)),
+                DrawerMenuItem("SMB / NAS", LibraryView.SMB_NAS, Icons.Rounded.Storage, Color(0xFF546E7A)),
+                DrawerMenuItem("FTP / SFTP", LibraryView.FTP_SFTP, Icons.Rounded.Dns, Color(0xFF8D6E63))
+            ).filter { item ->
+                !(item.view == LibraryView.FOLDERS && libraryMode == LibraryMode.CLOUD)
+            }
         }
     }
 
@@ -5462,7 +5566,7 @@ fun SlideDrawerMenu(
                                 contentAlignment = Alignment.Center
                             ) {
                                 Icon(
-                                    Icons.Rounded.Headphones,
+                                    if (playbackMode == com.beatraxus.app.model.PlaybackMode.VIDEO) Icons.Rounded.Movie else Icons.Rounded.Headphones,
                                     null,
                                     modifier = Modifier.size(28.dp),
                                     tint = accentColor
@@ -5471,7 +5575,7 @@ fun SlideDrawerMenu(
                             Spacer(Modifier.height(12.dp))
 
                             Text(
-                                "Hello\nAudiophile",
+                                if (playbackMode == com.beatraxus.app.model.PlaybackMode.VIDEO) "Video\nLibrary" else "Hello\nAudiophile",
                                 color = Color.White,
                                 fontSize = 24.sp,
                                 fontWeight = FontWeight.Black,
@@ -5482,21 +5586,34 @@ fun SlideDrawerMenu(
                                     translationX = -10f * (1f - drawerProgress)
                                 }
                             )
-                            Spacer(Modifier.height(8.dp))
-                            LibraryModeSelector(
-                            currentMode = libraryMode,
-                            onModeSelected = onSetLibraryMode,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .graphicsLayer {
-                                    alpha = drawerProgress.coerceIn(0f, 1f)
-                                    translationX = -5f * (1f - drawerProgress)
-                                }
-                        )
+                            Spacer(Modifier.height(16.dp))
+                            com.beatraxus.app.ui.components.PlaybackModeSelector(
+                                currentMode = playbackMode,
+                                onModeSelected = onSetPlaybackMode,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .graphicsLayer {
+                                        alpha = drawerProgress.coerceIn(0f, 1f)
+                                        translationX = -7f * (1f - drawerProgress)
+                                    }
+                            )
+                            if (playbackMode == com.beatraxus.app.model.PlaybackMode.AUDIO) {
+                                Spacer(Modifier.height(8.dp))
+                                com.beatraxus.app.ui.components.LibraryModeSelector(
+                                    currentMode = libraryMode,
+                                    onModeSelected = onSetLibraryMode,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .graphicsLayer {
+                                            alpha = drawerProgress.coerceIn(0f, 1f)
+                                            translationX = -5f * (1f - drawerProgress)
+                                        }
+                                )
+                            }
+                        }
                     }
                 }
             }
-        }
 
         // SECTION 3 — Library items
             LazyColumn(
