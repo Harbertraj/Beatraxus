@@ -3,6 +3,7 @@ package com.beatraxus.app.ui.screens
 import android.app.Activity
 import android.content.Context
 import android.media.AudioManager
+import android.util.Log
 import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
@@ -81,6 +82,14 @@ fun VideoPlayerScreen(
     var isFastForwarding by remember { mutableStateOf(false) }
     var doubleTapRipplePos by remember { mutableStateOf<Offset?>(null) }
     var doubleTapRippleText by remember { mutableStateOf("") }
+
+    // Error handling
+    LaunchedEffect(uiState.error) {
+        uiState.error?.let {
+            Log.e("VideoPlayerScreen", "Player error: $it")
+            onBack()
+        }
+    }
 
     // Auto-hide controls
     LaunchedEffect(controlsVisible, uiState.isPlaying) {

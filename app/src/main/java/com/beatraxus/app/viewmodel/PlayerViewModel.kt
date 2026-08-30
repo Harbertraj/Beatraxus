@@ -941,7 +941,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
 
         viewModelScope.launch {
-            allVideos.collect { videos ->
+            videos.collect { videos ->
                 _uiState.update { it.copy(videos = videos) }
             }
         }
@@ -2283,15 +2283,23 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun playVideo(video: com.beatraxus.app.model.Video) {
-        val list = videos.value
-        val index = list.indexOfFirst { it.id == video.id }
+        val list = _uiState.value.videos
+        var index = list.indexOfFirst { it.id == video.id }
         
+        val finalQueue = if (index == -1) {
+            Log.w(TAG, "Tapped video ${video.id} not found in current list, falling back to single-item queue")
+            index = 0
+            listOf(video)
+        } else {
+            list
+        }
+
         _uiState.update { it.copy(
-            activeVideoQueue = list,
+            activeVideoQueue = finalQueue,
             navigateToVideoPlayer = video.id
         ) }
         
-        Log.d(TAG, "Navigating to video player: ${video.title} from list of ${list.size} at index $index")
+        Log.d(TAG, "Navigating to video player: ${video.title} from list of ${finalQueue.size} at index $index")
     }
 
     fun consumeVideoNavigation() {

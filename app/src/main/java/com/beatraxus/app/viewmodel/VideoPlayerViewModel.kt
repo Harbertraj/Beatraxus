@@ -39,7 +39,8 @@ data class VideoPlayerUiState(
     val availableSubtitleTracks: List<VideoTrackInfo> = emptyList(),
     val selectedAudioTrackIndex: Int = -1,
     val selectedSubtitleTrackIndex: Int = -1,
-    val aspectRatio: VideoAspectRatio = VideoAspectRatio.FIT
+    val aspectRatio: VideoAspectRatio = VideoAspectRatio.FIT,
+    val error: String? = null
 )
 
 data class VideoTrackInfo(
@@ -73,11 +74,23 @@ class VideoPlayerViewModel(
     private val viewModelScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
     init {
-        val initialIndex = videoQueue.indexOfFirst { it.id == initialVideoId }.coerceAtLeast(0)
-        setupPlayer(initialIndex)
+        if (videoQueue.isEmpty()) {
+            Log.e(TAG, "Video queue is empty, cannot initialize player")
+            _uiState.update { it.copy(error = "Video queue is empty") }
+        } else {
+            val foundIndex = videoQueue.indexOfFirst { it.id == initialVideoId }
+            if (foundIndex == -1) {
+                Log.w(TAG, "Initial video ID $initialVideoId not found in queue of size ${videoQueue.size}")
+                // If it's a single-item fallback from PlayerViewModel, it SHOULD be in the queue.
+                // If it's still not found, we could try to play index 0 or show error.
+            }
+            val initialIndex = foundIndex.coerceAtLeast(0)
+            setupPlayer(initialIndex)
+        }
     }
 
     private fun setupPlayer(startIndex: Int) {
+        if (videoQueue.isEmpty()) return
         val context = getApplication<Application>()
         val player = ExoPlayer.Builder(context, VideoRenderersFactory(context))
             .setHandleAudioBecomingNoisy(true)
@@ -93,7 +106,11 @@ class VideoPlayerViewModel(
                         .build()
                 }
                 setMediaItems(mediaItems)
-                seekTo(startIndex, 0L)
+                
+                if (startIndex < videoQueue.size) {
+                    seekTo(startIndex, 0L)
+                }
+                
                 prepare()
                 playWhenReady = true
             }
