@@ -91,6 +91,11 @@ class VideoPlayerViewModel(
 
     private fun setupPlayer(startIndex: Int) {
         if (videoQueue.isEmpty()) return
+
+        Log.d(TAG, "setupPlayer: startIndex=$startIndex queueSize=${videoQueue.size} " +
+            "uri=${videoQueue.getOrNull(startIndex)?.uri} " +
+            "mime=${videoQueue.getOrNull(startIndex)?.mimeType}")
+
         val context = getApplication<Application>()
         val player = ExoPlayer.Builder(context, VideoRenderersFactory(context))
             .setHandleAudioBecomingNoisy(true)
@@ -148,6 +153,12 @@ class VideoPlayerViewModel(
 
             override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
                 updateTracks()
+            }
+
+            override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                Log.e(TAG, "ExoPlayer error: code=${error.errorCode} " +
+                    "codeName=${error.errorCodeName} message=${error.message}", error)
+                _uiState.update { it.copy(error = "Playback failed: ${error.errorCodeName}") }
             }
         })
 

@@ -2433,7 +2433,7 @@ fun MainScreen(
                                                 }
                                                 LibraryView.VIDEO_FOLDER_DETAIL -> {
                                                     com.beatraxus.app.ui.screens.library.VideoLibraryScreen(
-                                                        videos = uiState.videos,
+                                                        videos = uiState.videos.filter { it.folderPath == uiState.currentFolderPath },
                                                         isRefreshing = uiState.isLoadingVideos,
                                                         onRefresh = { viewModel.loadVideos() },
                                                         onVideoClick = { video ->

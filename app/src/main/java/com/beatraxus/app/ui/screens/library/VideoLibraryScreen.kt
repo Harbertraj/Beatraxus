@@ -89,6 +89,7 @@ fun VideoItem(
 ) {
     val context = LocalContext.current
     var thumbnailUri by remember(video.id) { mutableStateOf(video.thumbnailUri) }
+    var clicked by remember(video.id) { mutableStateOf(false) }
 
     LaunchedEffect(video.id, video.thumbnailUri) {
         if (video.thumbnailUri == null) {
@@ -100,7 +101,12 @@ fun VideoItem(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(16.dp))
-            .clickable { onClick() }
+            .clickable {
+                if (!clicked) {
+                    clicked = true
+                    onClick()
+                }
+            }
     ) {
         Box(
             modifier = Modifier
