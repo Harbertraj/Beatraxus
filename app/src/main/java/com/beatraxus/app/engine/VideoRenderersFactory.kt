@@ -7,8 +7,10 @@ import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.Renderer
 import androidx.media3.exoplayer.audio.AudioRendererEventListener
 import androidx.media3.exoplayer.audio.AudioSink
+import androidx.media3.exoplayer.mediacodec.MediaCodecInfo
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.decoder.ffmpeg.FfmpegAudioRenderer
+import androidx.media3.common.MimeTypes
 
 /**
  * Custom RenderersFactory for video playback that includes the FFmpeg audio renderer
@@ -18,9 +20,9 @@ import androidx.media3.decoder.ffmpeg.FfmpegAudioRenderer
 class VideoRenderersFactory(context: Context) : DefaultRenderersFactory(context) {
 
     init {
-        // Prefer extensions (FFmpeg) over platform decoders for unsupported formats.
-        // This mode tries the platform decoder first and falls back to FFmpeg if needed.
+        // Prefer extensions (FFmpeg) over platform decoders.
         setExtensionRendererMode(EXTENSION_RENDERER_MODE_PREFER)
+        setEnableDecoderFallback(true)
     }
 
     override fun buildAudioRenderers(
@@ -33,19 +35,7 @@ class VideoRenderersFactory(context: Context) : DefaultRenderersFactory(context)
         eventListener: AudioRendererEventListener,
         out: ArrayList<Renderer>
     ) {
-        // 1. Build standard MediaCodec audio renderers
-        super.buildAudioRenderers(
-            context,
-            extensionRendererMode,
-            mediaCodecSelector,
-            enableDecoderFallback,
-            audioSink,
-            eventHandler,
-            eventListener,
-            out
-        )
-
-        // 2. Append FFmpeg audio renderer for software decoding fallback
+        // 1. Add FFmpeg audio renderer FIRST to ensure it's preferred for supported formats
         if (extensionRendererMode != EXTENSION_RENDERER_MODE_OFF) {
             out.add(
                 FfmpegAudioRenderer(
@@ -55,5 +45,31 @@ class VideoRenderersFactory(context: Context) : DefaultRenderersFactory(context)
                 )
             )
         }
+
+        // 2. Wrap MediaCodecSelector to filter out problematic decoders
+        val filteredSelector = MediaCodecSelector { mimeType, requiresSecureDecoder, requiresTunnelingDecoder ->
+            val decoderInfos = mediaCodecSelector.getDecoderInfos(
+                mimeType, requiresSecureDecoder, requiresTunnelingDecoder
+            )
+            
+            if (mimeType == MimeTypes.AUDIO_RAW) {
+                // Filter out c2.android.raw.decoder as it fails on some Oplus devices for 24-bit PCM
+                decoderInfos.filter { it.name != "c2.android.raw.decoder" }
+            } else {
+                decoderInfos
+            }
+        }
+
+        // 3. Build standard MediaCodec audio renderers with the filtered selector
+        super.buildAudioRenderers(
+            context,
+            extensionRendererMode,
+            filteredSelector,
+            enableDecoderFallback,
+            audioSink,
+            eventHandler,
+            eventListener,
+            out
+        )
     }
 }

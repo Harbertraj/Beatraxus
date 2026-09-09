@@ -92,9 +92,9 @@ class VideoPlayerViewModel(
     private fun setupPlayer(startIndex: Int) {
         if (videoQueue.isEmpty()) return
 
+        val video = videoQueue.getOrNull(startIndex)
         Log.d(TAG, "setupPlayer: startIndex=$startIndex queueSize=${videoQueue.size} " +
-            "uri=${videoQueue.getOrNull(startIndex)?.uri} " +
-            "mime=${videoQueue.getOrNull(startIndex)?.mimeType}")
+            "title=${video?.title} uri=${video?.uri} mime=${video?.mimeType}")
 
         val context = getApplication<Application>()
         val player = ExoPlayer.Builder(context, VideoRenderersFactory(context))
@@ -152,6 +152,18 @@ class VideoPlayerViewModel(
             }
 
             override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
+                Log.d(TAG, "onTracksChanged: ${tracks.groups.size} groups")
+                tracks.groups.forEach { group ->
+                    if (group.isSelected) {
+                        for (i in 0 until group.length) {
+                            if (group.isTrackSelected(i)) {
+                                val format = group.getTrackFormat(i)
+                                Log.i(TAG, "Selected track: type=${group.type} mime=${format.sampleMimeType} " +
+                                    "lang=${format.language} labels=${format.label}")
+                            }
+                        }
+                    }
+                }
                 updateTracks()
             }
 
