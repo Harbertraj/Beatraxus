@@ -53,7 +53,9 @@ data class Song(
     val isEnriched: Boolean = false,
     val albumArtFetchAttempted: Boolean = false,
     val lastSyncTimestamp: Long = 0L,
-    val lyricsOffsetMs: Long = 0L
+    val lyricsOffsetMs: Long = 0L,
+    val isFromVideo: Boolean = false,
+    val videoUri: Uri? = null
 ) {
     fun isCloud(): Boolean = source in setOf(
         SongSource.GDRIVE, SongSource.TELEGRAM,
@@ -105,7 +107,9 @@ fun Song.toEntity() = SongEntity(
     isEnriched = isEnriched,
     albumArtFetchAttempted = albumArtFetchAttempted,
     lastSyncTimestamp = lastSyncTimestamp,
-    lyricsOffsetMs = lyricsOffsetMs
+    lyricsOffsetMs = lyricsOffsetMs,
+    isFromVideo = isFromVideo,
+    videoUriString = videoUri?.toString()
 )
 
 data class Playlist(
@@ -426,7 +430,10 @@ data class PlayerUiState(
     val videoFolders: List<com.beatraxus.app.model.VideoFolder> = emptyList(),
     val isLoadingVideos: Boolean = false,
     val activeVideoQueue: List<com.beatraxus.app.model.Video> = emptyList(),
-    val navigateToVideoPlayer: String? = null
+    val navigateToVideoPlayer: String? = null,
+    val bgVideoActive: Boolean = false,
+    val bgVideoId: String? = null,
+    val bgVideoPos: Long = 0L
 )
 {
     override fun equals(other: Any?): Boolean {
@@ -447,6 +454,8 @@ data class PlayerUiState(
                 usbDeviceName == other.usbDeviceName &&
                 isLoadingLibrary == other.isLoadingLibrary &&
                 isScanning == other.isScanning &&
+                isFullScanning == other.isFullScanning &&
+                isCloudScanning == other.isCloudScanning &&
                 scanProgress == other.scanProgress &&
                 scanCount == other.scanCount &&
                 albumCount == other.albumCount &&
@@ -472,12 +481,15 @@ data class PlayerUiState(
                 showQueue == other.showQueue &&
                 showSongInfo == other.showSongInfo &&
                 pendingInspectorReturnSong == other.pendingInspectorReturnSong &&
+                previousSongs == other.previousSongs &&
                 upcomingSongs == other.upcomingSongs &&
                 searchQuery == other.searchQuery &&
+                authRecoveryIntent == other.authRecoveryIntent &&
                 isMultiSelectMode == other.isMultiSelectMode &&
                 selectedIds == other.selectedIds &&
                 sortType == other.sortType &&
                 isAscending == other.isAscending &&
+                qualityTierFilter == other.qualityTierFilter &&
                 viewMode == other.viewMode &&
                 isSearchActive == other.isSearchActive &&
                 bitDepth == other.bitDepth &&
@@ -488,6 +500,7 @@ data class PlayerUiState(
                 pipelineResamplerEnabled == other.pipelineResamplerEnabled &&
                 pipelineResamplerType == other.pipelineResamplerType &&
                 pipelineActiveEffects == other.pipelineActiveEffects &&
+                isOnline == other.isOnline &&
                 pipelineSummary == other.pipelineSummary &&
                 autoEqProfileName == other.autoEqProfileName &&
                 dsp == other.dsp &&
@@ -554,9 +567,17 @@ data class PlayerUiState(
                 isOemBatteryManagerDetected == other.isOemBatteryManagerDetected &&
                 gdriveAllowedFormats == other.gdriveAllowedFormats &&
                 telegramAllowedFormats == other.telegramAllowedFormats &&
+                chapters == other.chapters &&
+                highlights == other.highlights &&
+                bookmarks == other.bookmarks &&
+                (loudnessData contentEquals other.loudnessData) &&
+                (spectrumData contentEquals other.spectrumData) &&
+                bufferedProgress == other.bufferedProgress &&
                 videos == other.videos &&
                 videoFolders == other.videoFolders &&
-                isLoadingVideos == other.isLoadingVideos
+                isLoadingVideos == other.isLoadingVideos &&
+                activeVideoQueue == other.activeVideoQueue &&
+                navigateToVideoPlayer == other.navigateToVideoPlayer
     }
 
     override fun hashCode(): Int {
@@ -575,6 +596,8 @@ data class PlayerUiState(
         result = 31 * result + usbDeviceName.hashCode()
         result = 31 * result + isLoadingLibrary.hashCode()
         result = 31 * result + isScanning.hashCode()
+        result = 31 * result + isFullScanning.hashCode()
+        result = 31 * result + isCloudScanning.hashCode()
         result = 31 * result + scanProgress.hashCode()
         result = 31 * result + scanCount
         result = 31 * result + albumCount
@@ -598,6 +621,105 @@ data class PlayerUiState(
         result = 31 * result + (selectedItemName?.hashCode() ?: 0)
         result = 31 * result + showFullPlayer.hashCode()
         result = 31 * result + showQueue.hashCode()
+        result = 31 * result + showSongInfo.hashCode()
+        result = 31 * result + (pendingInspectorReturnSong?.hashCode() ?: 0)
+        result = 31 * result + previousSongs.hashCode()
+        result = 31 * result + upcomingSongs.hashCode()
+        result = 31 * result + searchQuery.hashCode()
+        result = 31 * result + (authRecoveryIntent?.hashCode() ?: 0)
+        result = 31 * result + isMultiSelectMode.hashCode()
+        result = 31 * result + selectedIds.hashCode()
+        result = 31 * result + sortType.hashCode()
+        result = 31 * result + isAscending.hashCode()
+        result = 31 * result + (qualityTierFilter?.hashCode() ?: 0)
+        result = 31 * result + viewMode.hashCode()
+        result = 31 * result + isSearchActive.hashCode()
+        result = 31 * result + bitDepth
+        result = 31 * result + bitrate
+        result = 31 * result + format.hashCode()
+        result = 31 * result + pipelineOutputPath.hashCode()
+        result = 31 * result + pipelineDvcEnabled.hashCode()
+        result = 31 * result + pipelineResamplerEnabled.hashCode()
+        result = 31 * result + pipelineResamplerType.hashCode()
+        result = 31 * result + pipelineActiveEffects.hashCode()
+        result = 31 * result + isOnline.hashCode()
+        result = 31 * result + pipelineSummary.hashCode()
+        result = 31 * result + (autoEqProfileName?.hashCode() ?: 0)
+        result = 31 * result + dsp.hashCode()
+        result = 31 * result + appearance.hashCode()
+        result = 31 * result + resamplingEnabled.hashCode()
+        result = 31 * result + (currentFolderPath?.hashCode() ?: 0)
+        result = 31 * result + isFirstRun.hashCode()
+        result = 31 * result + (previousView?.hashCode() ?: 0)
+        result = 31 * result + wasSearchingBeforeDetail.hashCode()
+        result = 31 * result + useOriginalQualityArt.hashCode()
+        result = 31 * result + showLyrics.hashCode()
+        result = 31 * result + cameFromNowPlaying.hashCode()
+        result = 31 * result + (lastFmTrackInfo?.hashCode() ?: 0)
+        result = 31 * result + (lastFmArtistInfo?.hashCode() ?: 0)
+        result = 31 * result + (lastFmAlbumInfo?.hashCode() ?: 0)
+        result = 31 * result + isLoadingOnlineInfo.hashCode()
+        result = 31 * result + (selectedLastFmTrackInfo?.hashCode() ?: 0)
+        result = 31 * result + (selectedLastFmArtistInfo?.hashCode() ?: 0)
+        result = 31 * result + (selectedLastFmAlbumInfo?.hashCode() ?: 0)
+        result = 31 * result + isSelectedLoadingOnlineInfo.hashCode()
+        result = 31 * result + (lyrics?.hashCode() ?: 0)
+        result = 31 * result + lyricsCurrentIndex
+        result = 31 * result + lyricsOffsetMs.hashCode()
+        result = 31 * result + isLoadingLyrics.hashCode()
+        result = 31 * result + (lyricsCurrentSongId?.hashCode() ?: 0)
+        result = 31 * result + (lyricsSource?.hashCode() ?: 0)
+        result = 31 * result + (lyricsErrorMessage?.hashCode() ?: 0)
+        result = 31 * result + sleepTimerRemainingSeconds
+        result = 31 * result + isSleepTimerActive.hashCode()
+        result = 31 * result + sleepTimerFinishTrack.hashCode()
+        result = 31 * result + sleepTimerPlayCount
+        result = 31 * result + sleepTimerRemainingPlayCount
+        result = 31 * result + musicFolders.hashCode()
+        result = 31 * result + blockedFolders.hashCode()
+        result = 31 * result + triggerFolderPicker.hashCode()
+        result = 31 * result + showScanOptions.hashCode()
+        result = 31 * result + (selectedCloudEmail?.hashCode() ?: 0)
+        result = 31 * result + (selectedTelegramChannelUrl?.hashCode() ?: 0)
+        result = 31 * result + libraryMode.hashCode()
+        result = 31 * result + playbackMode.hashCode()
+        result = 31 * result + driveAccounts.hashCode()
+        result = 31 * result + dropboxAccounts.hashCode()
+        result = 31 * result + onedriveAccounts.hashCode()
+        result = 31 * result + boxAccounts.hashCode()
+        result = 31 * result + nextcloudAccounts.hashCode()
+        result = 31 * result + telegramChannels.hashCode()
+        result = 31 * result + smbServers.hashCode()
+        result = 31 * result + ftpServers.hashCode()
+        result = 31 * result + (lastFmUsername?.hashCode() ?: 0)
+        result = 31 * result + scrobblingEnabled.hashCode()
+        result = 31 * result + metadataNetworkType.hashCode()
+        result = 31 * result + dataSaverEnabled.hashCode()
+        result = 31 * result + artworkEnrichmentEnabled.hashCode()
+        result = 31 * result + syncQuality.hashCode()
+        result = 31 * result + backgroundSyncEnabled.hashCode()
+        result = 31 * result + isEnrichmentPaused.hashCode()
+        result = 31 * result + (enrichmentStatus?.hashCode() ?: 0)
+        result = 31 * result + telegramAuthState.hashCode()
+        result = 31 * result + isSubmittingTelegram.hashCode()
+        result = 31 * result + (telegramAuthError?.hashCode() ?: 0)
+        result = 31 * result + (castErrorMessage?.hashCode() ?: 0)
+        result = 31 * result + showTelegramPhoneForm.hashCode()
+        result = 31 * result + isIgnoringBatteryOptimizations.hashCode()
+        result = 31 * result + isOemBatteryManagerDetected.hashCode()
+        result = 31 * result + gdriveAllowedFormats.hashCode()
+        result = 31 * result + telegramAllowedFormats.hashCode()
+        result = 31 * result + chapters.hashCode()
+        result = 31 * result + highlights.hashCode()
+        result = 31 * result + bookmarks.hashCode()
+        result = 31 * result + (loudnessData?.contentHashCode() ?: 0)
+        result = 31 * result + (spectrumData?.contentHashCode() ?: 0)
+        result = 31 * result + bufferedProgress.hashCode()
+        result = 31 * result + videos.hashCode()
+        result = 31 * result + videoFolders.hashCode()
+        result = 31 * result + isLoadingVideos.hashCode()
+        result = 31 * result + activeVideoQueue.hashCode()
+        result = 31 * result + (navigateToVideoPlayer?.hashCode() ?: 0)
         result = 31 * result + showSongInfo.hashCode()
         result = 31 * result + (pendingInspectorReturnSong?.hashCode() ?: 0)
         result = 31 * result + upcomingSongs.hashCode()

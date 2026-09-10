@@ -33,14 +33,22 @@ import com.beatraxus.app.model.Video
 import com.beatraxus.app.utils.VideoThumbnailHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.text.DecimalFormat
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.items as gridItems
 
 @Composable
 fun VideoLibraryScreen(
     videos: List<Video>,
     isRefreshing: Boolean,
+    columns: Int = 1,
     onRefresh: () -> Unit,
     onVideoClick: (Video) -> Unit
 ) {
@@ -67,15 +75,27 @@ fun VideoLibraryScreen(
                 }
             }
         } else {
-            LazyVerticalGrid(
-                columns = GridCells.Fixed(2),
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(16.dp, 8.dp, 16.dp, 140.dp),
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                items(videos, key = { it.id }) { video ->
-                    VideoItem(video = video, onClick = { onVideoClick(video) })
+            if (columns == 1) {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(16.dp, 8.dp, 16.dp, 140.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    items(videos, key = { it.id }) { video ->
+                        VideoListItem(video = video, onClick = { onVideoClick(video) })
+                    }
+                }
+            } else {
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(columns),
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(16.dp, 8.dp, 16.dp, 140.dp),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    gridItems(videos, key = { it.id }) { video ->
+                        VideoItem(video = video, onClick = { onVideoClick(video) })
+                    }
                 }
             }
         }
@@ -89,7 +109,6 @@ fun VideoItem(
 ) {
     val context = LocalContext.current
     var thumbnailUri by remember(video.id) { mutableStateOf(video.thumbnailUri) }
-    var clicked by remember(video.id) { mutableStateOf(false) }
 
     LaunchedEffect(video.id, video.thumbnailUri) {
         if (video.thumbnailUri == null) {
@@ -97,16 +116,17 @@ fun VideoItem(
         }
     }
 
+    val isNew = remember(video.dateAdded) {
+        val secondsInDay = 24 * 60 * 60
+        val diffSeconds = System.currentTimeMillis() / 1000 - video.dateAdded
+        diffSeconds < secondsInDay
+    }
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(16.dp))
-            .clickable {
-                if (!clicked) {
-                    clicked = true
-                    onClick()
-                }
-            }
+            .clickable { onClick() }
     ) {
         Box(
             modifier = Modifier
@@ -139,14 +159,32 @@ fun VideoItem(
                 )
             }
 
-            // HDR badge top-left (premium pill style)
-            if (video.isHdr) {
+            // NEW badge top-left
+            if (isNew) {
                 Box(
                     modifier = Modifier
                         .align(Alignment.TopStart)
-                        .padding(6.dp)
-                        .clip(RoundedCornerShape(20.dp))
-                        .background(Color(0xFFFFD54F).copy(alpha = 0.9f))
+                        .clip(RoundedCornerShape(bottomEnd = 8.dp))
+                        .background(Color(0xFFFF3B30))
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                ) {
+                    Text(
+                        text = "NEW",
+                        color = Color.White,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Black,
+                        letterSpacing = 0.5.sp
+                    )
+                }
+            }
+
+            // HDR badge top-right (golden tag)
+            if (video.isHdr) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .clip(RoundedCornerShape(bottomStart = 8.dp))
+                        .background(Color(0xFFFFD54F))
                         .padding(horizontal = 6.dp, vertical = 2.dp)
                 ) {
                     Text(
@@ -189,4 +227,200 @@ private fun formatDuration(durationMs: Long): String {
     } else {
         "%d:%02d".format(minutes, seconds)
     }
+}
+
+@Composable
+fun VideoListItem(
+    video: Video,
+    onClick: () -> Unit
+) {
+    val context = LocalContext.current
+    var thumbnailUri by remember(video.id) { mutableStateOf(video.thumbnailUri) }
+
+    LaunchedEffect(video.id, video.thumbnailUri) {
+        if (video.thumbnailUri == null) {
+            thumbnailUri = VideoThumbnailHelper.getThumbnail(context, video.uri, video.id)
+        }
+    }
+
+    val isNew = remember(video.dateAdded) {
+        val secondsInDay = 24 * 60 * 60
+        val diffSeconds = System.currentTimeMillis() / 1000 - video.dateAdded
+        diffSeconds < secondsInDay
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() }
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // Thumbnail
+        Box(
+            modifier = Modifier
+                .width(140.dp)
+                .aspectRatio(16f / 9f)
+                .clip(RoundedCornerShape(8.dp))
+                .background(Color.White.copy(alpha = 0.05f))
+        ) {
+            AsyncImage(
+                model = thumbnailUri ?: video.uri,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+
+            // Duration
+            Surface(
+                color = Color.Black.copy(alpha = 0.7f),
+                shape = RoundedCornerShape(4.dp),
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(4.dp)
+            ) {
+                Text(
+                    text = formatDuration(video.durationMs),
+                    color = Color.White,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                )
+            }
+
+            // NEW badge top-left
+            if (isNew) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .clip(RoundedCornerShape(bottomEnd = 8.dp))
+                        .background(Color(0xFFFF3B30))
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                ) {
+                    Text(
+                        text = "NEW",
+                        color = Color.White,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Black,
+                        letterSpacing = 0.5.sp
+                    )
+                }
+            }
+
+            // HDR badge top-right (golden tag)
+            if (video.isHdr) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .clip(RoundedCornerShape(bottomStart = 8.dp))
+                        .background(Color(0xFFFFD54F))
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                ) {
+                    Text(
+                        "HDR",
+                        color = Color.Black,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Black,
+                        letterSpacing = 0.5.sp
+                    )
+                }
+            }
+        }
+
+        Spacer(Modifier.width(12.dp))
+
+        // Info
+        Column(
+            modifier = Modifier.weight(1f)
+        ) {
+            Text(
+                text = video.title,
+                color = Color.White,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Medium,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis,
+                lineHeight = 20.sp
+            )
+
+            Spacer(Modifier.height(4.dp))
+
+            val daysAgo = remember(video.dateAdded) {
+                val diff = (System.currentTimeMillis() - (video.dateAdded * 1000)) / (1000 * 60 * 60 * 24)
+                if (diff == 0L) "Today" else if (diff == 1L) "1 day ago" else "$diff days ago"
+            }
+
+            Text(
+                text = "Added $daysAgo",
+                color = Color.White.copy(alpha = 0.5f),
+                fontSize = 13.sp
+            )
+
+            Spacer(Modifier.height(8.dp))
+
+            // Tags row
+            @OptIn(ExperimentalLayoutApi::class)
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                // Resolution
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(Color(0xFF34495E))
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                ) {
+                    Text(
+                        text = "${video.resolutionHeight}p",
+                        color = Color.White.copy(alpha = 0.9f),
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                // File size
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(Color(0xFF34495E))
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                ) {
+                    Text(
+                        text = formatFileSize(video.sizeBytes),
+                        color = Color.White.copy(alpha = 0.9f),
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                // Date added string
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(Color(0xFF34495E))
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                ) {
+                    Text(
+                        text = formatDateShort(video.dateAdded * 1000),
+                        color = Color.White.copy(alpha = 0.9f),
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun formatFileSize(size: Long): String {
+    if (size <= 0) return "0 B"
+    val units = arrayOf("B", "KB", "MB", "GB", "TB")
+    val digitGroups = (Math.log10(size.toDouble()) / Math.log10(1024.0)).toInt()
+    return DecimalFormat("#,##0.#").format(size / Math.pow(1024.0, digitGroups.toDouble())) + " " + units[digitGroups]
+}
+
+private fun formatDateShort(timestampMs: Long): String {
+    val sdf = SimpleDateFormat("d MMM", Locale.getDefault())
+    return sdf.format(Date(timestampMs))
 }

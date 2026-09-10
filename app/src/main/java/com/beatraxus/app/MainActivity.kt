@@ -375,6 +375,14 @@ class MainActivity : FragmentActivity() {
             requestPermissions()
         }
     }
+
+    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: android.content.res.Configuration) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+    }
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+    }
 }
 
 fun Context.findActivity(): Activity? = when (this) {

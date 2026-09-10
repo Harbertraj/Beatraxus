@@ -1531,7 +1531,9 @@ class AudioPlaybackService : Service() {
                                 telegramFileId = entity.telegramFileId,
                                 isEnriched = entity.isEnriched,
                                 albumArtFetchAttempted = entity.albumArtFetchAttempted,
-                                lastSyncTimestamp = entity.lastSyncTimestamp
+                                lastSyncTimestamp = entity.lastSyncTimestamp,
+                                isFromVideo = entity.isFromVideo,
+                                videoUri = entity.videoUriString?.let { Uri.parse(it) }
                             )
                         },
                         allowedFormats

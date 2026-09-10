@@ -445,6 +445,7 @@ fun MainScreen(
 
     var categoryGridColumns by rememberSaveable { mutableIntStateOf(2) }
     var trackLayoutDensity by rememberSaveable { mutableIntStateOf(1) }
+    var videoLayoutDensity by rememberSaveable { mutableIntStateOf(1) }
 
     val isCompactList = trackLayoutDensity == 2
 
@@ -1268,10 +1269,17 @@ fun MainScreen(
                                         onZoomIn  = {
                                             val isGrid = uiState.currentView in listOf(
                                                 LibraryView.ALBUMS, LibraryView.ARTISTS, LibraryView.FOLDERS,
-                                                LibraryView.YEARS, LibraryView.GENRES, LibraryView.PLAYLISTS,
-                                                LibraryView.VIDEO_ALL, LibraryView.VIDEO_FOLDERS, LibraryView.VIDEO_FOLDER_DETAIL
+                                                LibraryView.YEARS, LibraryView.GENRES, LibraryView.PLAYLISTS
                                             )
-                                            if (isGrid) {
+                                            val isVideo = uiState.currentView in listOf(
+                                                LibraryView.VIDEO_ALL, LibraryView.VIDEO_FOLDERS,
+                                                LibraryView.VIDEO_RECENTLY_ADDED, LibraryView.VIDEO_RECENTLY_PLAYED,
+                                                LibraryView.VIDEO_FOLDER_DETAIL
+                                            )
+                                            
+                                            if (isVideo) {
+                                                videoLayoutDensity = (videoLayoutDensity - 1).coerceAtLeast(1)
+                                            } else if (isGrid) {
                                                 categoryGridColumns = (categoryGridColumns - 1).coerceAtLeast(1)
                                             } else {
                                                 trackLayoutDensity = (trackLayoutDensity - 1).coerceAtLeast(1)
@@ -1280,10 +1288,17 @@ fun MainScreen(
                                         onZoomOut = {
                                             val isGrid = uiState.currentView in listOf(
                                                 LibraryView.ALBUMS, LibraryView.ARTISTS, LibraryView.FOLDERS,
-                                                LibraryView.YEARS, LibraryView.GENRES, LibraryView.PLAYLISTS,
-                                                LibraryView.VIDEO_ALL, LibraryView.VIDEO_FOLDERS, LibraryView.VIDEO_FOLDER_DETAIL
+                                                LibraryView.YEARS, LibraryView.GENRES, LibraryView.PLAYLISTS
                                             )
-                                            if (isGrid) {
+                                            val isVideo = uiState.currentView in listOf(
+                                                LibraryView.VIDEO_ALL, LibraryView.VIDEO_FOLDERS,
+                                                LibraryView.VIDEO_RECENTLY_ADDED, LibraryView.VIDEO_RECENTLY_PLAYED,
+                                                LibraryView.VIDEO_FOLDER_DETAIL
+                                            )
+                                            
+                                            if (isVideo) {
+                                                videoLayoutDensity = (videoLayoutDensity + 1).coerceAtMost(4)
+                                            } else if (isGrid) {
                                                 categoryGridColumns = (categoryGridColumns + 1).coerceAtMost(5)
                                             } else {
                                                 trackLayoutDensity = (trackLayoutDensity + 1).coerceAtMost(6)
@@ -2415,6 +2430,7 @@ fun MainScreen(
                                                     com.beatraxus.app.ui.screens.library.VideoLibraryScreen(
                                                         videos = uiState.videos,
                                                         isRefreshing = uiState.isLoadingVideos,
+                                                        columns = videoLayoutDensity.coerceIn(1, 4),
                                                         onRefresh = { viewModel.loadVideos() },
                                                         onVideoClick = { video ->
                                                             viewModel.playVideo(video)
@@ -2435,6 +2451,7 @@ fun MainScreen(
                                                     com.beatraxus.app.ui.screens.library.VideoLibraryScreen(
                                                         videos = uiState.videos.filter { it.folderPath == uiState.currentFolderPath },
                                                         isRefreshing = uiState.isLoadingVideos,
+                                                        columns = videoLayoutDensity.coerceIn(1, 4),
                                                         onRefresh = { viewModel.loadVideos() },
                                                         onVideoClick = { video ->
                                                             viewModel.playVideo(video)
@@ -2445,6 +2462,7 @@ fun MainScreen(
                                                     com.beatraxus.app.ui.screens.library.VideoLibraryScreen(
                                                         videos = uiState.videos,
                                                         isRefreshing = uiState.isLoadingVideos,
+                                                        columns = videoLayoutDensity.coerceIn(1, 4),
                                                         onRefresh = { viewModel.loadVideos() },
                                                         onVideoClick = { video ->
                                                             viewModel.playVideo(video)
@@ -2455,6 +2473,7 @@ fun MainScreen(
                                                     com.beatraxus.app.ui.screens.library.VideoLibraryScreen(
                                                         videos = uiState.videos,
                                                         isRefreshing = uiState.isLoadingVideos,
+                                                        columns = videoLayoutDensity.coerceIn(1, 4),
                                                         onRefresh = { viewModel.loadVideos() },
                                                         onVideoClick = { video ->
                                                             viewModel.playVideo(video)
@@ -2770,7 +2789,7 @@ fun MainScreen(
                                     }
                                 } // end Column
 
-                                // FIX 3: Mini player is now a sibling of Column inside Box — has BoxScope for .align()
+                                // Unified Now Playing Bar (Adaptive for Audio & Video)
                                 Box(
                                     modifier = Modifier
                                         .align(Alignment.BottomCenter)
@@ -2778,11 +2797,16 @@ fun MainScreen(
                                         .padding(bottom = paddingValues.calculateBottomPadding() + 12.dp)
                                         .padding(horizontal = 12.dp)
                                 ) {
+                                    val isVisible = uiState.currentSong != null && !showFullPlayer && 
+                                        (uiState.playbackMode != com.beatraxus.app.model.PlaybackMode.VIDEO || uiState.currentSong?.isFromVideo == true)
                                     androidx.compose.animation.AnimatedVisibility(
-                                        visible = uiState.currentSong != null && !showFullPlayer && uiState.playbackMode == PlaybackMode.AUDIO,
+                                        visible = isVisible,
                                         enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
                                         exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
                                     ) {
+                                        val currentSong = uiState.currentSong
+                                        val isFromVideo = currentSong?.isFromVideo == true
+                                        
                                         Box(
                                             modifier = Modifier
                                                 .fillMaxWidth()
@@ -2790,45 +2814,48 @@ fun MainScreen(
                                                 .shadow(16.dp, RoundedCornerShape(20.dp))
                                                 .clip(RoundedCornerShape(20.dp))
                                                 .combinedClickable(
-                                                    onClick = { showFullPlayer = true },
+                                                    onClick = { 
+                                                        if (isFromVideo) {
+                                                            viewModel.resumeBackgroundVideo()
+                                                        } else {
+                                                            showFullPlayer = true 
+                                                        }
+                                                    },
                                                     onLongClick = {
-                                                        uiState.currentSong?.let { current ->
-                                                            val index = songs.indexOfFirst { it.id == current.id }
-                                                            if (index >= 0) {
-                                                                val currentState = when(uiState.currentView) {
-                                                                    LibraryView.HOME -> homeListState
-                                                                    LibraryView.CLOUD -> cloudListState
-                                                                    LibraryView.ALBUMS -> null // No scroll for grid
-                                                                    LibraryView.ARTISTS -> null
-                                                                    LibraryView.ALBUM_DETAIL -> albumDetailListState
-                                                                    LibraryView.ARTIST_DETAIL -> artistDetailListState
-                                                                    LibraryView.FAVORITES -> favoritesListState
-                                                                    LibraryView.RECENTLY_PLAYED -> recentlyPlayedListState
-                                                                    LibraryView.RECENTLY_ADDED -> recentlyAddedListState
-                                                                    else -> allSongsListState
-                                                                }
-                                                                val currentGridState = when(uiState.currentView) {
-                                                                    LibraryView.ALBUMS -> albumsGridState
-                                                                    LibraryView.ARTISTS -> artistsGridState
-                                                                    LibraryView.FOLDERS -> foldersGridState
-                                                                    LibraryView.YEARS -> yearsGridState
-                                                                    LibraryView.GENRES -> genresGridState
-                                                                    LibraryView.PLAYLISTS -> playlistsGridState
-                                                                    LibraryView.ALBUM_DETAIL -> albumDetailGridState
-                                                                    LibraryView.ARTIST_DETAIL -> artistDetailGridState
-                                                                    else -> null
-                                                                }
-                                                                scope.launch {
-                                                                    if (trackLayoutDensity <= 2) {
-                                                                        currentState?.scrollToItem(
-                                                                            index = index,
-                                                                            scrollOffset = -200
-                                                                        )
-                                                                    } else {
-                                                                        currentGridState?.scrollToItem(
-                                                                            index = index,
-                                                                            scrollOffset = -200
-                                                                        )
+                                                        if (!isFromVideo) {
+                                                            uiState.currentSong?.let { current ->
+                                                                val index = songs.indexOfFirst { it.id == current.id }
+                                                                if (index >= 0) {
+                                                                    // ... existing scroll logic ...
+                                                                    val currentState = when(uiState.currentView) {
+                                                                        LibraryView.HOME -> homeListState
+                                                                        LibraryView.CLOUD -> cloudListState
+                                                                        LibraryView.ALBUMS -> null 
+                                                                        LibraryView.ARTISTS -> null
+                                                                        LibraryView.ALBUM_DETAIL -> albumDetailListState
+                                                                        LibraryView.ARTIST_DETAIL -> artistDetailListState
+                                                                        LibraryView.FAVORITES -> favoritesListState
+                                                                        LibraryView.RECENTLY_PLAYED -> recentlyPlayedListState
+                                                                        LibraryView.RECENTLY_ADDED -> recentlyAddedListState
+                                                                        else -> allSongsListState
+                                                                    }
+                                                                    val currentGridState = when(uiState.currentView) {
+                                                                        LibraryView.ALBUMS -> albumsGridState
+                                                                        LibraryView.ARTISTS -> artistsGridState
+                                                                        LibraryView.FOLDERS -> foldersGridState
+                                                                        LibraryView.YEARS -> yearsGridState
+                                                                        LibraryView.GENRES -> genresGridState
+                                                                        LibraryView.PLAYLISTS -> playlistsGridState
+                                                                        LibraryView.ALBUM_DETAIL -> albumDetailGridState
+                                                                        LibraryView.ARTIST_DETAIL -> artistDetailGridState
+                                                                        else -> null
+                                                                    }
+                                                                    scope.launch {
+                                                                        if (trackLayoutDensity <= 2) {
+                                                                            currentState?.scrollToItem(index = index, scrollOffset = -200)
+                                                                        } else {
+                                                                            currentGridState?.scrollToItem(index = index, scrollOffset = -200)
+                                                                        }
                                                                     }
                                                                 }
                                                             }
@@ -2936,28 +2963,34 @@ fun MainScreen(
                                                     shape = RoundedCornerShape(8.dp),
                                                     color = Color.White.copy(0.05f)
                                                 ) {
-                                                    AnimatedContent(
-                                                        targetState = uiState.currentSong,
-                                                        transitionSpec = {
-                                                            fadeIn(tween(300)) togetherWith fadeOut(tween(300))
-                                                        },
-                                                        label = "miniPlayerArt"
-                                                    ) { currentSong ->
-                                                        val context = LocalContext.current
-                                                        val model = remember(currentSong?.id) {
-                                                            ImageRequest.Builder(context)
-                                                                .data(currentSong?.albumArtUri)
-                                                                .diskCachePolicy(CachePolicy.ENABLED)
-                                                                .memoryCachePolicy(CachePolicy.ENABLED)
-                                                                .error(ImageUtils.getDefaultAlbumArtRes())
-                                                                .fallback(ImageUtils.getDefaultAlbumArtRes())
-                                                                .build()
+                                                    if (isFromVideo) {
+                                                        Box(contentAlignment = Alignment.Center, modifier = Modifier.background(AccentBlue.copy(0.15f))) {
+                                                            Icon(Icons.Rounded.Movie, null, tint = AccentBlue, modifier = Modifier.size(20.dp))
                                                         }
-                                                        AsyncImage(
-                                                            model = model,
-                                                            contentDescription = null,
-                                                            contentScale = ContentScale.Crop
-                                                        )
+                                                    } else {
+                                                        AnimatedContent(
+                                                            targetState = uiState.currentSong,
+                                                            transitionSpec = {
+                                                                fadeIn(tween(300)) togetherWith fadeOut(tween(300))
+                                                            },
+                                                            label = "miniPlayerArt"
+                                                        ) { currentSong ->
+                                                            val context = LocalContext.current
+                                                            val model = remember(currentSong?.id) {
+                                                                ImageRequest.Builder(context)
+                                                                    .data(currentSong?.albumArtUri)
+                                                                    .diskCachePolicy(CachePolicy.ENABLED)
+                                                                    .memoryCachePolicy(CachePolicy.ENABLED)
+                                                                    .error(ImageUtils.getDefaultAlbumArtRes())
+                                                                    .fallback(ImageUtils.getDefaultAlbumArtRes())
+                                                                    .build()
+                                                            }
+                                                            AsyncImage(
+                                                                model = model,
+                                                                contentDescription = null,
+                                                                contentScale = ContentScale.Crop
+                                                            )
+                                                        }
                                                     }
                                                 }
 
@@ -2974,7 +3007,7 @@ fun MainScreen(
                                                     )
                                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                                         Text(
-                                                            text = uiState.currentSong?.artist ?: "Unknown Artist",
+                                                            text = if (isFromVideo) "Playing in Background" else (uiState.currentSong?.artist ?: "Unknown Artist"),
                                                             color = Color.White.copy(0.7f),
                                                             fontSize = 13.sp,
                                                             maxLines = 1,
@@ -2998,19 +3031,24 @@ fun MainScreen(
                                                             modifier = Modifier.size(28.dp)
                                                         )
                                                     }
-                                                    IconButton(onClick = { viewModel.skipToNext() }) {
-                                                        Icon(
-                                                            Icons.Rounded.SkipNext,
-                                                            null,
-                                                            tint = Color.White.copy(0.8f),
-                                                            modifier = Modifier.size(24.dp)
-                                                        )
+                                                    if (isFromVideo) {
+                                                        IconButton(onClick = { viewModel.resumeBackgroundVideo() }) {
+                                                            Icon(Icons.Rounded.Fullscreen, null, tint = Color.White)
+                                                        }
+                                                    } else {
+                                                        IconButton(onClick = { viewModel.skipToNext() }) {
+                                                            Icon(
+                                                                Icons.Rounded.SkipNext,
+                                                                null,
+                                                                tint = Color.White.copy(0.8f),
+                                                                modifier = Modifier.size(24.dp)
+                                                            )
+                                                        }
                                                     }
                                                 }
                                             }
                                         }
                                     }
-                                    // END FIX 3
                                 }
                             }
                         }
@@ -3176,12 +3214,21 @@ fun MainScreen(
                                             LibraryView.ALBUMS, LibraryView.ARTISTS, LibraryView.FOLDERS,
                                             LibraryView.YEARS, LibraryView.GENRES, LibraryView.PLAYLISTS
                                         )
+                                        val isVideo = uiState.currentView in listOf(
+                                            LibraryView.VIDEO_ALL, LibraryView.VIDEO_FOLDERS,
+                                            LibraryView.VIDEO_RECENTLY_ADDED, LibraryView.VIDEO_RECENTLY_PLAYED,
+                                            LibraryView.VIDEO_FOLDER_DETAIL
+                                        )
+                                        
                                         LayoutDensitySheetContent(
                                             isGrid = isGrid,
+                                            isVideo = isVideo,
                                             categoryGridColumns = categoryGridColumns,
                                             onCategoryGridColumnsChange = { categoryGridColumns = it },
                                             trackLayoutDensity = trackLayoutDensity,
                                             onTrackLayoutDensityChange = { trackLayoutDensity = it },
+                                            videoLayoutDensity = videoLayoutDensity,
+                                            onVideoLayoutDensityChange = { videoLayoutDensity = it },
                                             onDismiss = { activeMainSheet = null }
                                         )
                                     }
@@ -3285,6 +3332,34 @@ fun MainScreen(
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Icon(Icons.Rounded.Add, null, tint = Color.Black, modifier = Modifier.size(28.dp))
+                    }
+                }
+            }
+        }
+
+        // Floating Video Quick Play Button
+        val isVideoView = uiState.currentView in listOf(
+            LibraryView.VIDEO_ALL, LibraryView.VIDEO_FOLDERS, LibraryView.VIDEO_FOLDER_DETAIL,
+            LibraryView.VIDEO_RECENTLY_ADDED, LibraryView.VIDEO_RECENTLY_PLAYED
+        )
+        if (uiState.playbackMode == com.beatraxus.app.model.PlaybackMode.VIDEO && isVideoView && drawerProgress == 0f && !showFullPlayer) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(bottom = 16.dp, end = 16.dp),
+                contentAlignment = Alignment.BottomEnd
+            ) {
+                Surface(
+                    onClick = { viewModel.playLastPlayedVideo() },
+                    shape = RoundedCornerShape(28.dp),
+                    color = AccentBlue,
+                    tonalElevation = 8.dp,
+                    modifier = Modifier
+                        .size(64.dp)
+                        .border(2.dp, Color.White.copy(0.2f), RoundedCornerShape(28.dp))
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(Icons.Rounded.PlayArrow, null, tint = Color.Black, modifier = Modifier.size(36.dp))
                     }
                 }
             }
@@ -5597,19 +5672,17 @@ fun SlideDrawerMenu(
                                         translationX = -7f * (1f - drawerProgress)
                                     }
                             )
-                            if (playbackMode == com.beatraxus.app.model.PlaybackMode.AUDIO) {
-                                Spacer(Modifier.height(8.dp))
-                                com.beatraxus.app.ui.components.LibraryModeSelector(
-                                    currentMode = libraryMode,
-                                    onModeSelected = onSetLibraryMode,
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .graphicsLayer {
-                                            alpha = drawerProgress.coerceIn(0f, 1f)
-                                            translationX = -5f * (1f - drawerProgress)
-                                        }
-                                )
-                            }
+                            Spacer(Modifier.height(8.dp))
+                            com.beatraxus.app.ui.components.LibraryModeSelector(
+                                currentMode = libraryMode,
+                                onModeSelected = onSetLibraryMode,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .graphicsLayer {
+                                        alpha = drawerProgress.coerceIn(0f, 1f)
+                                        translationX = -5f * (1f - drawerProgress)
+                                    }
+                            )
                         }
                     }
                 }
@@ -5917,18 +5990,40 @@ fun CloudSheetContent(
 @Composable
 fun LayoutDensitySheetContent(
     isGrid: Boolean,
+    isVideo: Boolean = false,
     categoryGridColumns: Int,
     onCategoryGridColumnsChange: (Int) -> Unit,
     trackLayoutDensity: Int,
     onTrackLayoutDensityChange: (Int) -> Unit,
+    videoLayoutDensity: Int = 1,
+    onVideoLayoutDensityChange: (Int) -> Unit = {},
     onDismiss: () -> Unit
 ) {
-    val maxVal = if (isGrid) 5f else 6f
-    val currentVal = if (isGrid) categoryGridColumns.toFloat() else trackLayoutDensity.toFloat()
+    val maxVal = if (isVideo) 4f else if (isGrid) 5f else 6f
+    val currentVal = if (isVideo) videoLayoutDensity.toFloat() 
+                     else if (isGrid) categoryGridColumns.toFloat() 
+                     else trackLayoutDensity.toFloat()
+                     
     Column(modifier = Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(if (isGrid) "GRID COLUMNS" else "LAYOUT DENSITY", color = Color.White, fontWeight = FontWeight.Black, fontSize = 14.sp, letterSpacing = 1.sp)
+        Text(
+            if (isVideo) "VIDEO COLUMNS" else if (isGrid) "GRID COLUMNS" else "LAYOUT DENSITY", 
+            color = Color.White, 
+            fontWeight = FontWeight.Black, 
+            fontSize = 14.sp, 
+            letterSpacing = 1.sp
+        )
         Spacer(Modifier.height(24.dp))
-        Slider(value = currentVal, onValueChange = { if (isGrid) onCategoryGridColumnsChange(it.toInt()) else onTrackLayoutDensityChange(it.toInt()) }, valueRange = 1f..maxVal, steps = (maxVal - 2).toInt(), colors = SliderDefaults.colors(thumbColor = AccentBlue, activeTrackColor = AccentBlue))
+        Slider(
+            value = currentVal, 
+            onValueChange = { 
+                if (isVideo) onVideoLayoutDensityChange(it.toInt())
+                else if (isGrid) onCategoryGridColumnsChange(it.toInt()) 
+                else onTrackLayoutDensityChange(it.toInt()) 
+            }, 
+            valueRange = 1f..maxVal, 
+            steps = (maxVal - 2).toInt(), 
+            colors = SliderDefaults.colors(thumbColor = AccentBlue, activeTrackColor = AccentBlue)
+        )
         Text(currentVal.toInt().toString(), color = AccentBlue, fontWeight = FontWeight.Black, fontSize = 24.sp)
         Spacer(Modifier.height(24.dp))
         Button(onClick = onDismiss, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = AccentBlue)) { Text("DONE", color = Color.White) }

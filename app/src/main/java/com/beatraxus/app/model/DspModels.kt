@@ -378,3 +378,38 @@ fun defaultEqBands(): List<ParametricEqBand> {
         )
     }
 }
+
+fun getBuiltInEqPresets(): List<SavedEqPreset> {
+    val standardFreqs = listOf(31.25f, 62.5f, 125f, 250f, 500f, 1000f, 2000f, 4000f, 8000f, 16000f)
+    fun buildPreset(name: String, gains: List<Float>): SavedEqPreset {
+        val bands = gains.mapIndexed { index, gain ->
+            ParametricEqBand(
+                id = index,
+                enabled = true,
+                frequencyHz = standardFreqs[index],
+                gainDb = gain,
+                q = 1.41f,
+                type = EqBandType.PEAKING
+            )
+        }
+        return SavedEqPreset(name = name, bands = bands, preampDb = 0f)
+    }
+
+    return listOf(
+        buildPreset("FLAT", List(10) { 0f }),
+        buildPreset("BASS BOOST", listOf(6f, 5f, 4f, 2f, 1f, 0f, 0f, 0f, 0f, 0f)),
+        buildPreset("TREBLE", listOf(0f, 0f, 0f, 0f, 0f, 1f, 2f, 4f, 5f, 6f)),
+        buildPreset("ROCK", listOf(4f, 3f, 2f, 0f, -1f, -1f, 0f, 1f, 3f, 4f)),
+        buildPreset("ELECTRONIC", listOf(5f, 4f, 2f, 0f, 0f, 2f, 1f, 3f, 5f, 6f)),
+        buildPreset("POP", listOf(-2f, -1f, 0f, 2f, 4f, 4f, 2f, 0f, -1f, -2f)),
+        buildPreset("CLASSICAL", listOf(5f, 4f, 3f, 2f, 0f, 0f, 0f, 2f, 4f, 5f)),
+        buildPreset("JAZZ", listOf(4f, 3f, 1f, 2f, -2f, -2f, 0f, 1f, 3f, 4f)),
+        buildPreset("DANCE", listOf(4f, 7f, 5f, 0f, 2f, 4f, 6f, 5f, 3f, 0f)),
+        buildPreset("METAL", listOf(5f, 4f, 3f, 1f, 0f, 1f, 3f, 4f, 5f, 6f)),
+        buildPreset("R&B", listOf(3f, 6f, 5f, 1f, -2f, -1f, 2f, 3f, 5f, 4f)),
+        buildPreset("VOCAL", listOf(-2f, -3f, -3f, 1f, 4f, 4f, 3f, 1f, -1f, -2f)),
+        buildPreset("ACOUSTIC", listOf(4f, 4f, 3f, 2f, 1f, 2f, 3f, 3f, 2f, 1f)),
+        buildPreset("DEEP", listOf(7f, 5f, 3f, 1f, 0f, -1f, -2f, -3f, -4f, -5f)),
+        buildPreset("BRIGHT", listOf(-5f, -4f, -3f, -2f, -1f, 1f, 3f, 5f, 7f, 8f))
+    )
+}

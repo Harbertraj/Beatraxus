@@ -275,16 +275,30 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         _uiState.map { it.currentView }.distinctUntilChanged(),
         _uiState.map { it.currentFolderPath }.distinctUntilChanged(),
         _uiState.map { it.searchQuery }.distinctUntilChanged(),
+        _uiState.map { it.libraryMode }.distinctUntilChanged(),
         _recentlyPlayedVideos
-    ) { all, view, folder, query, recentIds ->
+    ) { args ->
+        val all = args[0] as List<com.beatraxus.app.model.Video>
+        val view = args[1] as LibraryView
+        val folder = args[2] as String?
+        val query = args[3] as String
+        val libMode = args[4] as LibraryMode
+        val recentIds = args[5] as List<String>
+
+        // Currently videos are only local, so CLOUD mode will be empty
+        val modeFiltered = when (libMode) {
+            LibraryMode.LOCAL, LibraryMode.COMBINED -> all
+            LibraryMode.CLOUD -> emptyList()
+        }
+
         var filtered = when (view) {
-            LibraryView.VIDEO_ALL -> all
-            LibraryView.VIDEO_FOLDER_DETAIL -> all.filter { it.folderPath == folder }
-            LibraryView.VIDEO_RECENTLY_ADDED -> all.sortedByDescending { it.dateAdded }
+            LibraryView.VIDEO_ALL -> modeFiltered
+            LibraryView.VIDEO_FOLDER_DETAIL -> modeFiltered.filter { it.folderPath == folder }
+            LibraryView.VIDEO_RECENTLY_ADDED -> modeFiltered.sortedByDescending { it.dateAdded }
             LibraryView.VIDEO_RECENTLY_PLAYED -> {
-                recentIds.mapNotNull { id -> all.find { it.id == id } }
+                recentIds.mapNotNull { id -> modeFiltered.find { it.id == id } }
             }
-            else -> all
+            else -> modeFiltered
         }
         if (query.isNotEmpty()) {
             filtered = filtered.filter { it.title.contains(query, ignoreCase = true) }
@@ -915,6 +929,43 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
 
+        // Background Video Observer
+        viewModelScope.launch {
+            while (isActive) {
+                val active = prefs.getBoolean("bg_video_active", false)
+                if (active != _uiState.value.bgVideoActive) {
+                    val id = prefs.getString("bg_video_id", null)
+                    val pos = prefs.getLong("bg_video_pos", 0L)
+                    _uiState.update { it.copy(bgVideoActive = active, bgVideoId = id, bgVideoPos = pos) }
+                    
+                    if (active && id != null) {
+                        val video = _videos.value.find { it.id == id }
+                        if (video != null) {
+                            val song = com.beatraxus.app.model.Song(
+                                id = "video_${video.id}",
+                                uri = video.uri,
+                                title = video.title,
+                                artist = video.folderPath.substringAfterLast("/"),
+                                album = "Video Playback",
+                                durationMs = video.durationMs,
+                                format = video.mimeType.substringAfter("/").uppercase(),
+                                sampleRateHz = 44100,
+                                albumArtUri = video.thumbnailUri,
+                                isFromVideo = true,
+                                videoUri = video.uri
+                            )
+                            
+                            // Transfer to audio player
+                            while (service == null) delay(100)
+                            service?.prepareSong(song, pos)
+                            service?.togglePlayPause() // Start playing
+                        }
+                    }
+                }
+                delay(1000)
+            }
+        }
+
         checkBatteryOptimizations()
 
         // Observe Library Scanner state
@@ -1153,7 +1204,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                             isEnriched = entity.isEnriched,
                             albumArtFetchAttempted = entity.albumArtFetchAttempted,
                             lastSyncTimestamp = entity.lastSyncTimestamp,
-                            lyricsOffsetMs = entity.lyricsOffsetMs
+                            lyricsOffsetMs = entity.lyricsOffsetMs,
+                            isFromVideo = entity.isFromVideo,
+                            videoUri = entity.videoUriString?.let { Uri.parse(it) }
                         )
                     }
                 }
@@ -1380,6 +1433,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
                     if (resetProgress) {
                         if (pbState.currentSong != null) {
+                            if (!pbState.currentSong.isFromVideo) {
+                                prefs.edit().putBoolean("bg_video_active", false).apply()
+                            }
                             updateRecentlyPlayed(pbState.currentSong)
                             handleSongChangeForSleepTimer(pbState.currentSong)
                             fetchOnlineInfo(pbState.currentSong)
@@ -2282,6 +2338,18 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun playLastPlayedVideo() {
+        val lastId = _recentlyPlayedVideos.value.firstOrNull() ?: _videos.value.firstOrNull()?.id ?: return
+        val video = _videos.value.find { it.id == lastId } ?: return
+        playVideo(video)
+    }
+
+    fun resumeBackgroundVideo() {
+        val id = _uiState.value.bgVideoId ?: return
+        val video = _videos.value.find { it.id == id } ?: return
+        playVideo(video)
+    }
+
     fun playVideo(video: com.beatraxus.app.model.Video) {
         val list = _uiState.value.videos
         var index = list.indexOfFirst { it.id == video.id }
@@ -2298,6 +2366,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             activeVideoQueue = finalQueue,
             navigateToVideoPlayer = video.id
         ) }
+        
+        // Clear background state when starting fresh
+        prefs.edit().apply {
+            putBoolean("bg_video_active", false)
+            apply()
+        }
         
         Log.d(TAG, "Navigating to video player: ${video.title} from list of ${finalQueue.size} at index $index")
     }

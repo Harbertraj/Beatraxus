@@ -27,7 +27,9 @@ data class RecentlyPlayedEntity(
 data class VideoRecentlyPlayedEntity(
     @PrimaryKey val videoId: String,
     val timestamp: Long,
-    val accountEmail: String? = null
+    val accountEmail: String? = null,
+    val lastPosition: Long = 0L,
+    val lastAspectRatio: String? = null
 )
 
 @Entity(tableName = "songs")
@@ -75,5 +77,7 @@ data class SongEntity(
     val isEnriched: Boolean = false,
     val albumArtFetchAttempted: Boolean = false,
     val lastSyncTimestamp: Long = 0L,
-    val lyricsOffsetMs: Long = 0L
+    val lyricsOffsetMs: Long = 0L,
+    val isFromVideo: Boolean = false,
+    val videoUriString: String? = null
 )
