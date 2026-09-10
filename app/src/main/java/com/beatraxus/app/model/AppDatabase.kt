@@ -16,6 +16,9 @@ interface PlaylistDao {
     @Query("SELECT * FROM playlists")
     fun getAllPlaylists(): Flow<List<PlaylistEntity>>
 
+    @Query("SELECT * FROM recently_played_videos WHERE videoId = :videoId")
+    suspend fun getRecentlyPlayedByVideoId(videoId: String): VideoRecentlyPlayedEntity?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertPlaylist(playlist: PlaylistEntity)
 
@@ -27,6 +30,9 @@ interface PlaylistDao {
 interface FavoriteDao {
     @Query("SELECT * FROM favorites")
     fun getAllFavorites(): Flow<List<FavoriteEntity>>
+
+    @Query("SELECT * FROM recently_played_videos WHERE videoId = :videoId")
+    suspend fun getRecentlyPlayedByVideoId(videoId: String): VideoRecentlyPlayedEntity?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun addFavorite(favorite: FavoriteEntity)
@@ -46,6 +52,9 @@ interface LyricsDao {
     @Query("DELETE FROM lyrics WHERE songId IN (:songIds)")
     suspend fun deleteLyricsBySongIds(songIds: List<String>)
 
+    @Query("SELECT * FROM recently_played_videos WHERE videoId = :videoId")
+    suspend fun getRecentlyPlayedByVideoId(videoId: String): VideoRecentlyPlayedEntity?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertLyrics(lyrics: LyricsEntity)
 }
@@ -54,6 +63,9 @@ interface LyricsDao {
 interface RecentlyPlayedDao {
     @Query("SELECT * FROM recently_played ORDER BY timestamp DESC")
     fun getAllRecentlyPlayed(): Flow<List<RecentlyPlayedEntity>>
+
+    @Query("SELECT * FROM recently_played_videos WHERE videoId = :videoId")
+    suspend fun getRecentlyPlayedByVideoId(videoId: String): VideoRecentlyPlayedEntity?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun addRecentlyPlayed(item: RecentlyPlayedEntity)
@@ -69,6 +81,9 @@ interface RecentlyPlayedDao {
 interface VideoRecentlyPlayedDao {
     @Query("SELECT * FROM recently_played_videos ORDER BY timestamp DESC")
     fun getAllRecentlyPlayed(): Flow<List<VideoRecentlyPlayedEntity>>
+
+    @Query("SELECT * FROM recently_played_videos WHERE videoId = :videoId")
+    suspend fun getRecentlyPlayedByVideoId(videoId: String): VideoRecentlyPlayedEntity?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun addRecentlyPlayed(item: VideoRecentlyPlayedEntity)

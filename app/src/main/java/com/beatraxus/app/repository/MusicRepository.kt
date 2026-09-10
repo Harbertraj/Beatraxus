@@ -668,6 +668,10 @@ class MusicRepository(private val context: Context) {
     }
 
     // Deprecated: Moving to Room-based folder management
+    fun getMusicFoldersFlow(): Flow<List<String>> = folderDao.getActiveFolders().map { list -> 
+        list.map { it.path } 
+    }
+
     suspend fun getMusicFolders(): List<String> = withContext(Dispatchers.IO) {
         val folders = folderDao.getActiveFoldersList().map { it.path }
         if (folders.isNotEmpty()) return@withContext folders

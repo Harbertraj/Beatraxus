@@ -1,6 +1,11 @@
 package com.beatraxus.app.viewmodel
 
 import android.app.Application
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.media.AudioManager
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
@@ -13,6 +18,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import com.beatraxus.app.BeatraxusApplication
 import com.beatraxus.app.engine.VideoRenderersFactory
@@ -59,6 +65,7 @@ data class VideoPlayerUiState(
     val subtitleBackgroundColor: Int = android.graphics.Color.TRANSPARENT,
     val subtitleOutlineColor: Int = android.graphics.Color.BLACK,
     val subtitleWindowColor: Int = android.graphics.Color.TRANSPARENT,
+    val subtitleAlpha: Float = 1.0f,
     val isBackgroundPlayEnabled: Boolean = false
 )
 
@@ -95,8 +102,28 @@ class VideoPlayerViewModel(
     private val videoRecentlyPlayedDao = database.videoRecentlyPlayedDao()
     private val dspPreferences = com.beatraxus.app.repository.DspPreferences(application)
     private val prefs = application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE)
+    private val audioManager = application.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
-    private val _uiState = MutableStateFlow(VideoPlayerUiState())
+    private val volumeReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == "android.media.VOLUME_CHANGED_ACTION") {
+                val newVol = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+                if (!_uiState.value.isVolumeBoost || newVol < _uiState.value.volume) {
+                    _uiState.update { it.copy(volume = newVol) }
+                }
+            }
+        }
+    }
+
+    private val _uiState = MutableStateFlow(VideoPlayerUiState(
+        volume = (application.getSystemService(Context.AUDIO_SERVICE) as AudioManager).getStreamVolume(AudioManager.STREAM_MUSIC),
+        maxVolume = (application.getSystemService(Context.AUDIO_SERVICE) as AudioManager).getStreamMaxVolume(AudioManager.STREAM_MUSIC),
+        isEqEnabled = application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE).getBoolean("video_eq_enabled", true),
+        aspectRatio = VideoAspectRatio.entries.find { 
+            it.name == application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE).getString("video_aspect_ratio", VideoAspectRatio.FIT.name) 
+        } ?: VideoAspectRatio.FIT,
+        showTotalTime = application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE).getBoolean("video_show_remaining_time", false)
+    ))
     val uiState: StateFlow<VideoPlayerUiState> = _uiState.asStateFlow()
 
     private var progressJob: Job? = null
@@ -105,6 +132,8 @@ class VideoPlayerViewModel(
     private var equalizer: android.media.audiofx.Equalizer? = null
 
     init {
+        application.registerReceiver(volumeReceiver, IntentFilter("android.media.VOLUME_CHANGED_ACTION"))
+        
         if (videoQueue.isEmpty()) {
             Log.e(TAG, "Video queue is empty, cannot initialize player")
             _uiState.update { it.copy(error = "Video queue is empty") }
@@ -165,7 +194,19 @@ class VideoPlayerViewModel(
             "title=${video?.title} uri=${video?.uri} mime=${video?.mimeType}")
 
         val context = getApplication<Application>()
+        
+        val loadControl = DefaultLoadControl.Builder()
+            .setBufferDurationsMs(
+                15000, // minBufferMs
+                50000, // maxBufferMs
+                2500,  // bufferForPlaybackMs
+                5000   // bufferForPlaybackAfterRebufferMs
+            )
+            .setPrioritizeTimeOverSizeThresholds(true)
+            .build()
+
         val player = ExoPlayer.Builder(context, VideoRenderersFactory(context))
+            .setLoadControl(loadControl)
             .setHandleAudioBecomingNoisy(true)
             .build()
             .apply {
@@ -183,8 +224,7 @@ class VideoPlayerViewModel(
                 if (startIndex < videoQueue.size) {
                     val initialVideo = videoQueue[startIndex]
                     viewModelScope.launch(Dispatchers.IO) {
-                        val recentlyPlayedList = videoRecentlyPlayedDao.getAllRecentlyPlayed().first()
-                        val recentlyPlayed = recentlyPlayedList.find { it.videoId == initialVideo.id }
+                        val recentlyPlayed = videoRecentlyPlayedDao.getRecentlyPlayedByVideoId(initialVideo.id)
                         val lastPos = recentlyPlayed?.lastPosition ?: 0L
                         val lastRatio = recentlyPlayed?.lastAspectRatio?.let { ratioName ->
                             VideoAspectRatio.entries.find { it.name == ratioName }
@@ -356,6 +396,7 @@ class VideoPlayerViewModel(
 
     fun setAspectRatio(ratio: VideoAspectRatio) {
         _uiState.update { it.copy(aspectRatio = ratio, aspectRatioMessage = ratio.displayName) }
+        prefs.edit().putString("video_aspect_ratio", ratio.name).apply()
         viewModelScope.launch {
             delay(2000)
             _uiState.update { it.copy(aspectRatioMessage = null) }
@@ -403,6 +444,7 @@ class VideoPlayerViewModel(
         exoPlayer?.let {
             if (it.hasNextMediaItem()) {
                 it.seekToNext()
+                it.play()
             }
         }
     }
@@ -411,6 +453,7 @@ class VideoPlayerViewModel(
         exoPlayer?.let {
             if (it.hasPreviousMediaItem()) {
                 it.seekToPrevious()
+                it.play()
             }
         }
     }
@@ -465,13 +508,15 @@ class VideoPlayerViewModel(
 
     private fun updateLoudness() {
         val state = _uiState.value
+        val systemMax = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        
         if (!state.isVolumeBoost) {
             loudnessEnhancer?.setTargetGain(0)
             return
         }
         
-        if (state.volume > 15) {
-            val gain = (state.volume - 15) * 200 
+        if (state.volume > systemMax) {
+            val gain = (state.volume - systemMax) * 200 
             loudnessEnhancer?.setTargetGain(gain)
         } else {
             loudnessEnhancer?.setTargetGain(500) 
@@ -479,16 +524,24 @@ class VideoPlayerViewModel(
     }
 
     fun setVolume(volume: Int) {
-        val max = if (!_uiState.value.isVolumeBoost) 15 else 30
+        val systemMax = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        val max = if (!_uiState.value.isVolumeBoost) systemMax else systemMax * 2
         val newVol = volume.coerceIn(0, max)
+        
+        // Sync with system volume if not in boost range
+        if (newVol <= systemMax) {
+            audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, newVol, 0)
+        }
+        
         _uiState.update { it.copy(volume = newVol, maxVolume = max) }
         updateLoudness()
     }
 
     fun toggleVolumeBoost() {
+        val systemMax = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
         _uiState.update { 
             val nextBoost = !it.isVolumeBoost
-            val newMax = if (!nextBoost) 15 else 30
+            val newMax = if (!nextBoost) systemMax else systemMax * 2
             it.copy(
                 isVolumeBoost = nextBoost,
                 maxVolume = newMax,
@@ -499,11 +552,19 @@ class VideoPlayerViewModel(
     }
 
     fun toggleTimeDisplay() {
-        _uiState.update { it.copy(showTotalTime = !it.showTotalTime) }
+        _uiState.update { 
+            val next = !it.showTotalTime
+            prefs.edit().putBoolean("video_show_remaining_time", next).apply()
+            it.copy(showTotalTime = next) 
+        }
     }
 
     fun toggleEqEnabled() {
-        _uiState.update { it.copy(isEqEnabled = !it.isEqEnabled) }
+        _uiState.update { 
+            val next = !it.isEqEnabled
+            prefs.edit().putBoolean("video_eq_enabled", next).apply()
+            it.copy(isEqEnabled = next) 
+        }
         applyEqGains()
     }
 
@@ -547,6 +608,10 @@ class VideoPlayerViewModel(
         _uiState.update { it.copy(subtitleOutlineColor = color) }
     }
 
+    fun setSubtitleAlpha(alpha: Float) {
+        _uiState.update { it.copy(subtitleAlpha = alpha) }
+    }
+
     fun resetSubtitleStyle() {
         _uiState.update { it.copy(
             subtitleSize = 18f,
@@ -554,6 +619,7 @@ class VideoPlayerViewModel(
             subtitleBackgroundColor = android.graphics.Color.TRANSPARENT,
             subtitleOutlineColor = android.graphics.Color.BLACK,
             subtitleWindowColor = android.graphics.Color.TRANSPARENT,
+            subtitleAlpha = 1.0f,
             subtitleOffset = 0f
         ) }
     }
@@ -592,6 +658,7 @@ class VideoPlayerViewModel(
 
     override fun onCleared() {
         super.onCleared()
+        getApplication<Application>().unregisterReceiver(volumeReceiver)
         _uiState.value.currentVideo?.let { recordVideoPlayed(it) }
         loudnessEnhancer?.release()
         loudnessEnhancer = null

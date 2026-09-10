@@ -890,6 +890,27 @@ class AudioPlaybackService : Service() {
                         val actualLastModified = File(path).lastModified()
                         folderDao.updateLastModified(folder.path, actualLastModified)
                     }
+
+                    if (activeFolders.isEmpty() && results.isNotEmpty()) {
+                        // Auto-register common music roots to fix "Empty Music Folders" in settings
+                        val discoveredRoots = results.asSequence()
+                            .map { it.folder }
+                            .filter { it.isNotBlank() }
+                            .map { path ->
+                                val parts = path.split("/")
+                                if (parts.size >= 5 && parts[1] == "storage") {
+                                    parts.take(5).joinToString("/")
+                                } else {
+                                    path.substringBeforeLast("/", path)
+                                }
+                            }
+                            .distinct()
+                            .toList()
+
+                        discoveredRoots.forEach { root ->
+                            folderDao.insertFolder(com.beatraxus.app.model.FolderEntity(root))
+                        }
+                    }
                 }
 
                 val message = when {

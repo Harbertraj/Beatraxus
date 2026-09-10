@@ -427,6 +427,7 @@ fun MainScreen(
     }
     var activeMainSheet by remember { mutableStateOf<MainSheetType?>(null) }
     var selectedSongForOptions by remember { mutableStateOf<com.beatraxus.app.model.Song?>(null) }
+    var selectedVideoForOptions by remember { mutableStateOf<com.beatraxus.app.model.Video?>(null) }
     var reopenSongOptionsInfo by remember { mutableStateOf(false) }
 
     LaunchedEffect(uiState.pendingInspectorReturnSong) {
@@ -1396,6 +1397,26 @@ fun MainScreen(
                                                                     Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp).animateItem()) {
                                                                         LibraryGridItem(name, "Artist", art, onClick = {
                                                                             viewModel.setLibraryView(LibraryView.ARTIST_DETAIL, name)
+                                                                        })
+                                                                    }
+                                                                }
+                                                            }
+                                                            is com.beatraxus.app.model.Video -> {
+                                                                item(key = "video_${item.id}") {
+                                                                    Box(modifier = Modifier.padding(horizontal = 8.dp).animateItem()) {
+                                                                        com.beatraxus.app.ui.screens.library.VideoListItem(
+                                                                            video = item,
+                                                                            onClick = { viewModel.playVideo(item) },
+                                                                            onLongClick = { selectedVideoForOptions = item }
+                                                                        )
+                                                                    }
+                                                                }
+                                                            }
+                                                            is com.beatraxus.app.model.VideoFolder -> {
+                                                                item(key = "vfolder_${item.path}") {
+                                                                    Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp).animateItem()) {
+                                                                        LibraryGridItem(item.name, "${item.videoCount} videos", item.previewThumbnails.firstOrNull(), onClick = {
+                                                                            viewModel.navigateToVideoFolder(item.path, item.name)
                                                                         })
                                                                     }
                                                                 }
@@ -2434,6 +2455,9 @@ fun MainScreen(
                                                         onRefresh = { viewModel.loadVideos() },
                                                         onVideoClick = { video ->
                                                             viewModel.playVideo(video)
+                                                        },
+                                                        onVideoLongClick = { video ->
+                                                            selectedVideoForOptions = video
                                                         }
                                                     )
                                                 }
@@ -2455,6 +2479,9 @@ fun MainScreen(
                                                         onRefresh = { viewModel.loadVideos() },
                                                         onVideoClick = { video ->
                                                             viewModel.playVideo(video)
+                                                        },
+                                                        onVideoLongClick = { video ->
+                                                            selectedVideoForOptions = video
                                                         }
                                                     )
                                                 }
@@ -2466,6 +2493,9 @@ fun MainScreen(
                                                         onRefresh = { viewModel.loadVideos() },
                                                         onVideoClick = { video ->
                                                             viewModel.playVideo(video)
+                                                        },
+                                                        onVideoLongClick = { video ->
+                                                            selectedVideoForOptions = video
                                                         }
                                                     )
                                                 }
@@ -2477,6 +2507,9 @@ fun MainScreen(
                                                         onRefresh = { viewModel.loadVideos() },
                                                         onVideoClick = { video ->
                                                             viewModel.playVideo(video)
+                                                        },
+                                                        onVideoLongClick = { video ->
+                                                            selectedVideoForOptions = video
                                                         }
                                                     )
                                                 }
@@ -3249,6 +3282,74 @@ fun MainScreen(
                         .background(Color.Black.copy(alpha = (drawerProgress * 0.35f).coerceIn(0f, 0.35f)))
                 )
             }
+        }
+
+        var showVideoProperties by remember { mutableStateOf<com.beatraxus.app.model.Video?>(null) }
+        var videoToRename by remember { mutableStateOf<com.beatraxus.app.model.Video?>(null) }
+        var videoToDelete by remember { mutableStateOf<com.beatraxus.app.model.Video?>(null) }
+
+        selectedVideoForOptions?.let { video ->
+            ModalBottomSheet(
+                onDismissRequest = { selectedVideoForOptions = null },
+                containerColor = BgDeep,
+                scrimColor = Color.Black.copy(0.6f)
+            ) {
+                VideoOptionsSheetContent(
+                    video = video,
+                    onDismiss = { selectedVideoForOptions = null },
+                    onDelete = { videoToDelete = video },
+                    onEditName = { videoToRename = video },
+                    onMark = {
+                        viewModel.setMultiSelectMode(true)
+                        viewModel.toggleItemSelection(video.id)
+                        selectedVideoForOptions = null
+                    },
+                    onShare = { 
+                        val intent = viewModel.getShareVideoIntent(video)
+                        context.startActivity(android.content.Intent.createChooser(intent, "Share Video"))
+                    },
+                    onProperties = { showVideoProperties = video; selectedVideoForOptions = null }
+                )
+            }
+        }
+
+        videoToRename?.let { video ->
+            VideoRenameDialog(
+                video = video,
+                onDismiss = { videoToRename = null },
+                onRename = { newName ->
+                    viewModel.renameVideo(video, newName)
+                    videoToRename = null
+                }
+            )
+        }
+
+        videoToDelete?.let { video ->
+            AlertDialog(
+                onDismissRequest = { videoToDelete = null },
+                title = { Text("Delete Video?") },
+                text = { Text("Are you sure you want to delete '${video.title}'? This will permanently remove the file from your device.") },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            viewModel.deleteVideo(video)
+                            videoToDelete = null
+                            selectedVideoForOptions = null
+                        },
+                        colors = ButtonDefaults.textButtonColors(contentColor = Color.Red)
+                    ) {
+                        Text("DELETE")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { videoToDelete = null }) { Text("CANCEL", color = Color.White) }
+                },
+                containerColor = Color(0xFF1A1A1A)
+            )
+        }
+
+        showVideoProperties?.let { video ->
+            VideoPropertiesDialog(video = video, onDismiss = { showVideoProperties = null })
         }
 
         if (showPlaylistDialog) {
@@ -6029,3 +6130,120 @@ fun LayoutDensitySheetContent(
         Button(onClick = onDismiss, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = AccentBlue)) { Text("DONE", color = Color.White) }
     }
 }
+
+@Composable
+fun VideoOptionsSheetContent(
+    video: com.beatraxus.app.model.Video,
+    onDismiss: () -> Unit,
+    onDelete: () -> Unit,
+    onEditName: () -> Unit,
+    onMark: () -> Unit,
+    onShare: () -> Unit,
+    onProperties: () -> Unit
+) {
+    Column(modifier = Modifier.padding(16.dp).navigationBarsPadding()) {
+        Text(
+            text = video.title,
+            color = Color.White,
+            fontWeight = FontWeight.Bold,
+            fontSize = 18.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(bottom = 16.dp)
+        )
+        
+        val options = listOf(
+            Triple("Delete", Icons.Rounded.Delete, onDelete),
+            Triple("Edit Name", Icons.Rounded.Edit, onEditName),
+            Triple("Mark", Icons.Rounded.CheckCircle, onMark),
+            Triple("Share", Icons.Rounded.Share, onShare),
+            Triple("Properties", Icons.Rounded.Info, onProperties)
+        )
+        
+        options.forEach { (label, icon, action) ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { action(); if (label != "Delete" && label != "Edit Name") onDismiss() }
+                    .padding(vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(icon, null, tint = Color.White.copy(0.7f), modifier = Modifier.size(24.dp))
+                Spacer(Modifier.width(16.dp))
+                Text(label, color = Color.White, fontSize = 16.sp)
+            }
+        }
+    }
+}
+
+@Composable
+fun VideoRenameDialog(
+    video: com.beatraxus.app.model.Video,
+    onDismiss: () -> Unit,
+    onRename: (String) -> Unit
+) {
+    var name by remember { mutableStateOf(video.displayName) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Rename Video", color = Color.White) },
+        text = {
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                label = { Text("New Name") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+                colors = OutlinedTextFieldDefaults.colors(
+                    unfocusedTextColor = Color.White,
+                    focusedTextColor = Color.White,
+                    focusedBorderColor = AccentBlue,
+                    unfocusedBorderColor = Color.White.copy(0.3f)
+                )
+            )
+        },
+        confirmButton = {
+            Button(onClick = { onRename(name) }, colors = ButtonDefaults.buttonColors(containerColor = AccentBlue)) {
+                Text("SAVE")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("CANCEL", color = Color.White) }
+        },
+        containerColor = Color(0xFF1A1A1A)
+    )
+}
+
+@Composable
+fun VideoPropertiesDialog(
+    video: com.beatraxus.app.model.Video,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Color(0xFF1A1A1A),
+        title = { Text("Video Properties", color = Color.White, fontWeight = FontWeight.Bold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                PropertyRow("Title", video.title)
+                PropertyRow("Path", video.folderPath)
+                PropertyRow("Format", video.mimeType)
+                PropertyRow("Resolution", "${video.resolutionWidth} x ${video.resolutionHeight}")
+                PropertyRow("Duration", com.beatraxus.app.utils.FormatUtils.formatDuration(video.durationMs))
+                PropertyRow("Size", com.beatraxus.app.utils.FormatUtils.formatFileSize(video.sizeBytes))
+                PropertyRow("Added", com.beatraxus.app.utils.FormatUtils.formatDateShort(video.dateAdded * 1000))
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("CLOSE", color = AccentBlue) }
+        }
+    )
+}
+
+@Composable
+fun PropertyRow(label: String, value: String) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(label, color = Color.White.copy(0.4f), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+        Text(value, color = Color.White, fontSize = 14.sp)
+    }
+}
+

@@ -40,6 +40,7 @@ import java.util.Locale
 
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.items as gridItems
@@ -50,7 +51,8 @@ fun VideoLibraryScreen(
     isRefreshing: Boolean,
     columns: Int = 1,
     onRefresh: () -> Unit,
-    onVideoClick: (Video) -> Unit
+    onVideoClick: (Video) -> Unit,
+    onVideoLongClick: (Video) -> Unit = {}
 ) {
     PullToRefreshBox(
         isRefreshing = isRefreshing,
@@ -82,7 +84,7 @@ fun VideoLibraryScreen(
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
                     items(videos, key = { it.id }) { video ->
-                        VideoListItem(video = video, onClick = { onVideoClick(video) })
+                        VideoListItem(video = video, onClick = { onVideoClick(video) }, onLongClick = { onVideoLongClick(video) })
                     }
                 }
             } else {
@@ -94,7 +96,7 @@ fun VideoLibraryScreen(
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
                     gridItems(videos, key = { it.id }) { video ->
-                        VideoItem(video = video, onClick = { onVideoClick(video) })
+                        VideoItem(video = video, onClick = { onVideoClick(video) }, onLongClick = { onVideoLongClick(video) })
                     }
                 }
             }
@@ -102,10 +104,12 @@ fun VideoLibraryScreen(
     }
 }
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun VideoItem(
     video: Video,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onLongClick: () -> Unit = {}
 ) {
     val context = LocalContext.current
     var thumbnailUri by remember(video.id) { mutableStateOf(video.thumbnailUri) }
@@ -126,7 +130,10 @@ fun VideoItem(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(16.dp))
-            .clickable { onClick() }
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick
+            )
     ) {
         Box(
             modifier = Modifier
@@ -229,10 +236,12 @@ private fun formatDuration(durationMs: Long): String {
     }
 }
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun VideoListItem(
     video: Video,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onLongClick: () -> Unit = {}
 ) {
     val context = LocalContext.current
     var thumbnailUri by remember(video.id) { mutableStateOf(video.thumbnailUri) }
@@ -252,7 +261,10 @@ fun VideoListItem(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onClick() }
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick
+            )
             .padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {

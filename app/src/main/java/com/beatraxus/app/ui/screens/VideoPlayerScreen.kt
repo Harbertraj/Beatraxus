@@ -3,6 +3,8 @@ package com.beatraxus.app.ui.screens
 import android.app.Activity
 import android.content.Context
 import android.content.pm.ActivityInfo
+import android.os.Build
+import android.util.TypedValue
 import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
@@ -50,9 +52,11 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.media3.common.C
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
 import com.beatraxus.app.viewmodel.VideoAspectRatio
 import com.beatraxus.app.viewmodel.VideoPlayerUiState
@@ -83,12 +87,16 @@ fun VideoPlayerScreen(
     val activity = context as? Activity
     val scope = rememberCoroutineScope()
     val lifecycleOwner = LocalLifecycleOwner.current
+    val isInPiP = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+        activity?.isInPictureInPictureMode ?: false
+    } else false
 
     // Auto-pause on background
-    DisposableEffect(lifecycleOwner, uiState.isBackgroundPlayEnabled) {
+    DisposableEffect(lifecycleOwner, uiState.isBackgroundPlayEnabled, isInPiP) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_PAUSE) {
-                if (uiState.isPlaying && !uiState.isBackgroundPlayEnabled) {
+                // Don't pause if in PiP or if Background Play is enabled
+                if (uiState.isPlaying && !uiState.isBackgroundPlayEnabled && !isInPiP) {
                     viewModel.togglePlayPause()
                 }
             }
@@ -165,6 +173,7 @@ fun VideoPlayerScreen(
         } else if (uiState.isLocked) {
             // Locked
         } else {
+            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
             onBack()
         }
     }
@@ -221,16 +230,19 @@ fun VideoPlayerScreen(
 
                         if (dragStarted) {
                             gestureType = initialDragIntent
-                            // Only show overlay for navigation gestures, not for subtitle move
-                            showGestureOverlay = initialDragIntent != GestureType.SUBTITLE
+                            // Show overlay for navigation gestures
+                            showGestureOverlay = true
                             
                             val delta = change.position - change.previousPosition
                             when (initialDragIntent) {
                                 GestureType.BRIGHTNESS -> {
                                     val activity = context as? Activity
                                     val params = activity?.window?.attributes
-                                    val current = if (params?.screenBrightness ?: -1f < 0) 0.5f else params!!.screenBrightness
-                                    val next = (current - delta.y / size.height).coerceIn(0f, 1f)
+                                    // Use 0.5f as default if -1f (system default)
+                                    val current = if (params?.screenBrightness ?: -1f < 0f) 0.5f else params!!.screenBrightness
+                                    // Fix: handle the case where it gets stuck at 0 or doesn't increase
+                                    val sensitivity = 1.2f // Slightly higher sensitivity
+                                    val next = (current - (delta.y / size.height) * sensitivity).coerceIn(0.01f, 1f)
                                     params?.screenBrightness = next
                                     activity?.window?.attributes = params
                                     gestureValue = next * 100
@@ -291,12 +303,53 @@ fun VideoPlayerScreen(
                 }
             },
             update = { view ->
+                val player = viewModel.getPlayer() as? androidx.media3.exoplayer.ExoPlayer
+                val contentFrame = view.findViewById<AspectRatioFrameLayout>(androidx.media3.ui.R.id.exo_content_frame)
+                
                 view.resizeMode = when (uiState.aspectRatio) {
-                    VideoAspectRatio.FIT -> AspectRatioFrameLayout.RESIZE_MODE_FIT
-                    VideoAspectRatio.FILL -> AspectRatioFrameLayout.RESIZE_MODE_FILL
-                    VideoAspectRatio.ZOOM -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-                    else -> AspectRatioFrameLayout.RESIZE_MODE_FIT
+                    VideoAspectRatio.FIT -> {
+                        contentFrame?.setAspectRatio(0f)
+                        player?.videoScalingMode = C.VIDEO_SCALING_MODE_SCALE_TO_FIT
+                        AspectRatioFrameLayout.RESIZE_MODE_FIT
+                    }
+                    VideoAspectRatio.FILL -> {
+                        contentFrame?.setAspectRatio(0f)
+                        player?.videoScalingMode = C.VIDEO_SCALING_MODE_SCALE_TO_FIT
+                        AspectRatioFrameLayout.RESIZE_MODE_FILL
+                    }
+                    VideoAspectRatio.ZOOM -> {
+                        contentFrame?.setAspectRatio(0f)
+                        player?.videoScalingMode = C.VIDEO_SCALING_MODE_SCALE_TO_FIT_WITH_CROPPING
+                        AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                    }
+                    VideoAspectRatio.FOUR_THREE -> {
+                        contentFrame?.setAspectRatio(4f/3f)
+                        player?.videoScalingMode = C.VIDEO_SCALING_MODE_SCALE_TO_FIT
+                        AspectRatioFrameLayout.RESIZE_MODE_FIT
+                    }
+                    VideoAspectRatio.SIXTEEN_NINE -> {
+                        contentFrame?.setAspectRatio(16f/9f)
+                        player?.videoScalingMode = C.VIDEO_SCALING_MODE_SCALE_TO_FIT
+                        AspectRatioFrameLayout.RESIZE_MODE_FIT
+                    }
                 }
+                
+                // Update Subtitle Styles
+                val captionStyle = CaptionStyleCompat(
+                    uiState.subtitleTextColor,
+                    uiState.subtitleBackgroundColor,
+                    android.graphics.Color.TRANSPARENT, // windowColor
+                    CaptionStyleCompat.EDGE_TYPE_OUTLINE,
+                    uiState.subtitleOutlineColor,
+                    null // typeface
+                )
+                view.subtitleView?.setApplyEmbeddedStyles(false)
+                view.subtitleView?.setFixedTextSize(TypedValue.COMPLEX_UNIT_SP, uiState.subtitleSize)
+                view.subtitleView?.setStyle(captionStyle)
+                view.subtitleView?.alpha = uiState.subtitleAlpha
+                
+                // Vertical offset for subtitles
+                view.subtitleView?.translationY = uiState.subtitleOffset
             },
             modifier = Modifier
                 .fillMaxSize()
@@ -319,6 +372,23 @@ fun VideoPlayerScreen(
                 exit = fadeOut()
             ) {
                 GestureOverlay(type = gestureType, value = gestureValue)
+            }
+
+            // Aspect Ratio Overlay
+            uiState.aspectRatioMessage?.let { message ->
+                Surface(
+                    color = Color.Black.copy(0.6f),
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier.padding(16.dp)
+                ) {
+                    Text(
+                        text = message,
+                        color = Color.White,
+                        modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp),
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
 
             AnimatedVisibility(
@@ -346,7 +416,7 @@ fun VideoPlayerScreen(
 
         // UI Layer
         AnimatedVisibility(
-            visible = controlsVisible && sheetType == PlayerSheetType.NONE,
+            visible = controlsVisible && sheetType == PlayerSheetType.NONE && !isInPiP,
             enter = fadeIn(),
             exit = fadeOut()
         ) {
@@ -374,7 +444,7 @@ fun VideoPlayerScreen(
                         onRotationClick = { activity?.let { viewModel.toggleOrientation(it) } },
                         modifier = Modifier
                             .align(Alignment.TopCenter)
-                            .padding(top = 100.dp)
+                            .padding(top = 110.dp)
                     )
 
                     // Bottom Bar
@@ -463,16 +533,21 @@ fun FloatingControls(
             Icon(Icons.Rounded.PictureInPicture, null, tint = Color.White)
         }
         IconButton(onClick = onSpeedClick) {
-            Icon(Icons.Rounded.Speed, null, tint = if (sheetType == PlayerSheetType.SPEED) Color(0xFFFF8F00) else Color.White)
+            Icon(Icons.Rounded.Speed, null, tint = if (uiState.playbackSpeed != 1.0f) Color(0xFFFF8F00) else Color.White)
         }
         IconButton(onClick = onEqClick) {
-            Icon(Icons.Rounded.Equalizer, null, tint = if (sheetType == PlayerSheetType.EQUALIZER) Color(0xFFFF8F00) else Color.White)
+            Icon(Icons.Rounded.Equalizer, null, tint = if (uiState.isEqEnabled) Color(0xFFFF8F00) else Color.White)
         }
         IconButton(onClick = onToggleBoost) {
             Icon(if (uiState.isVolumeBoost) Icons.Rounded.VolumeUp else Icons.Rounded.VolumeDown, null, tint = if (uiState.isVolumeBoost) Color(0xFFFF8F00) else Color.White)
         }
         IconButton(onClick = onHeadphonesClick) {
-            Icon(if (uiState.isBackgroundPlayEnabled) Icons.Rounded.Headset else Icons.Rounded.HeadsetOff, null, tint = if (uiState.isBackgroundPlayEnabled) Color(0xFFFF8F00) else Color.White)
+            val iconColor = if (uiState.isBackgroundPlayEnabled) Color(0xFFFF8F00) else Color.White
+            Icon(
+                Icons.Rounded.Headset, 
+                null, 
+                tint = iconColor
+            )
         }
         IconButton(onClick = onRotationClick) {
             Icon(Icons.Rounded.ScreenRotation, null, tint = Color.White)
@@ -502,6 +577,7 @@ fun GestureOverlay(type: GestureType, value: Float) {
                     }
                 }
                 GestureType.SEEK -> if (value >= 0) Icons.Rounded.Forward10 else Icons.Rounded.Replay10
+                GestureType.SUBTITLE -> Icons.Rounded.Subtitles
                 else -> Icons.Rounded.TouchApp
             }
             
@@ -511,6 +587,7 @@ fun GestureOverlay(type: GestureType, value: Float) {
                 text = when (type) {
                     GestureType.BRIGHTNESS, GestureType.VOLUME -> "${value.toInt()}%"
                     GestureType.SEEK -> "${if (value >= 0) "+" else ""}${value.toInt()}s"
+                    GestureType.SUBTITLE -> "Move Subtitles"
                     else -> ""
                 },
                 color = Color.White,
@@ -633,7 +710,7 @@ fun PlayerBottomBar(
                     listOf(Color.Transparent, Color.Black.copy(0.7f))
                 )
             )
-            .padding(bottom = 40.dp, top = 20.dp, start = 16.dp, end = 16.dp)
+            .padding(bottom = 20.dp, top = 20.dp, start = 16.dp, end = 16.dp)
     ) {
         Column {
             // Seek bar
@@ -642,29 +719,34 @@ fun PlayerBottomBar(
                     text = formatTime(uiState.currentPosition),
                     color = Color.White,
                     fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium,
-                    modifier = Modifier.clickable { onTimeClick() }
+                    fontWeight = FontWeight.Medium
                 )
+                val mxOrange = Color(0xFFFF8F00)
                 Slider(
                     value = uiState.currentPosition.toFloat(),
                     onValueChange = { onSeek(it.toLong()) },
                     valueRange = 0f..uiState.duration.toFloat().coerceAtLeast(1f),
                     modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
                     colors = SliderDefaults.colors(
-                        thumbColor = Color.White,
-                        activeTrackColor = Color.White,
+                        thumbColor = mxOrange,
+                        activeTrackColor = mxOrange,
                         inactiveTrackColor = Color.White.copy(0.3f)
                     )
                 )
                 Text(
-                    text = formatTime(uiState.duration),
+                    text = if (uiState.showTotalTime) {
+                        "-${formatTime(uiState.duration - uiState.currentPosition)}"
+                    } else {
+                        formatTime(uiState.duration)
+                    },
                     color = Color.White,
                     fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.clickable { onTimeClick() }
                 )
             }
 
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(4.dp))
 
             // Controls
             Row(
@@ -954,7 +1036,22 @@ fun VideoSettingsSheetContent(
             Spacer(Modifier.height(8.dp))
             
             SubtitleColorRow("Text", uiState.subtitleTextColor, onColorChange = { viewModel.setSubtitleTextColor(it) }, mxOrange)
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(12.dp))
+            
+            // Subtitle Intensity (Alpha)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Intensity", color = Color.White.copy(0.7f), fontSize = 14.sp, modifier = Modifier.width(60.dp))
+                Slider(
+                    value = uiState.subtitleAlpha,
+                    onValueChange = { viewModel.setSubtitleAlpha(it) },
+                    valueRange = 0.1f..1f,
+                    modifier = Modifier.weight(1f),
+                    colors = SliderDefaults.colors(thumbColor = mxOrange, activeTrackColor = mxOrange)
+                )
+                Text("${(uiState.subtitleAlpha * 100).toInt()}%", color = Color.White, fontSize = 14.sp, modifier = Modifier.width(40.dp), textAlign = TextAlign.End)
+            }
+
+            Spacer(Modifier.height(12.dp))
             SubtitleColorRow("Background", uiState.subtitleBackgroundColor, onColorChange = { viewModel.setSubtitleBackgroundColor(it) }, mxOrange)
             Spacer(Modifier.height(8.dp))
             SubtitleColorRow("Outline", uiState.subtitleOutlineColor, onColorChange = { viewModel.setSubtitleOutlineColor(it) }, mxOrange)
@@ -1009,7 +1106,7 @@ fun SettingSectionHeader(title: String) {
 }
 
 private fun formatTime(ms: Long): String {
-    val totalSeconds = ms / 1000
+    val totalSeconds = (ms / 1000).coerceAtLeast(0)
     val hours = totalSeconds / 3600
     val minutes = (totalSeconds % 3600) / 60
     val seconds = totalSeconds % 60

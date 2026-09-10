@@ -276,6 +276,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         _uiState.map { it.currentFolderPath }.distinctUntilChanged(),
         _uiState.map { it.searchQuery }.distinctUntilChanged(),
         _uiState.map { it.libraryMode }.distinctUntilChanged(),
+        _uiState.map { it.sortType }.distinctUntilChanged(),
+        _uiState.map { it.isAscending }.distinctUntilChanged(),
         _recentlyPlayedVideos
     ) { args ->
         val all = args[0] as List<com.beatraxus.app.model.Video>
@@ -283,7 +285,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         val folder = args[2] as String?
         val query = args[3] as String
         val libMode = args[4] as LibraryMode
-        val recentIds = args[5] as List<String>
+        val sortType = args[5] as SortType
+        val isAscending = args[6] as Boolean
+        val recentIds = args[7] as List<String>
 
         // Currently videos are only local, so CLOUD mode will be empty
         val modeFiltered = when (libMode) {
@@ -300,6 +304,18 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             }
             else -> modeFiltered
         }
+
+        // Apply General Sort if not in a special view that defines its own order
+        if (view !in listOf(LibraryView.VIDEO_RECENTLY_ADDED, LibraryView.VIDEO_RECENTLY_PLAYED)) {
+            filtered = when (sortType) {
+                SortType.NAME -> if (isAscending) filtered.sortedBy { it.title.lowercase() } else filtered.sortedByDescending { it.title.lowercase() }
+                SortType.DATE_ADDED -> if (isAscending) filtered.sortedBy { it.dateAdded } else filtered.sortedByDescending { it.dateAdded }
+                SortType.FILE_SIZE -> if (isAscending) filtered.sortedBy { it.sizeBytes } else filtered.sortedByDescending { it.sizeBytes }
+                SortType.DURATION -> if (isAscending) filtered.sortedBy { it.durationMs } else filtered.sortedByDescending { it.durationMs }
+                else -> filtered
+            }
+        }
+
         if (query.isNotEmpty()) {
             filtered = filtered.filter { it.title.contains(query, ignoreCase = true) }
         }
@@ -452,31 +468,64 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         .distinctUntilChanged()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "")
 
-    val searchResults = combine(filteredSongsByMode, debouncedSearchQuery) { all, query ->
+    val searchResults = combine(
+        filteredSongsByMode,
+        filteredVideos,
+        debouncedSearchQuery,
+        _uiState.map { it.currentView }.distinctUntilChanged()
+    ) { songs, videos, query, currentView ->
         if (query.isEmpty()) return@combine emptyList<Any>()
         val list = mutableListOf<Any>()
 
-        val matchedSongs = all.filter { it.title.contains(query, ignoreCase = true) }
-        if (matchedSongs.isNotEmpty()) {
-            list.add("Songs")
-            list.addAll(matchedSongs.take(20))
-        }
+        val isVideoMode = currentView in listOf(
+            LibraryView.VIDEO_ALL, LibraryView.VIDEO_FOLDERS,
+            LibraryView.VIDEO_RECENTLY_ADDED, LibraryView.VIDEO_RECENTLY_PLAYED,
+            LibraryView.VIDEO_FOLDER_DETAIL
+        )
 
-        val matchedAlbums = all.filter { it.album.contains(query, ignoreCase = true) }
-            .distinctBy { it.album }
-        if (matchedAlbums.isNotEmpty()) {
-            list.add("Albums")
-            matchedAlbums.take(10).forEach {
-                list.add(Triple(it.album, it.artist, it.albumArtUri))
+        if (!isVideoMode) {
+            val matchedSongs = songs.filter { it.title.contains(query, ignoreCase = true) }
+            if (matchedSongs.isNotEmpty()) {
+                list.add("Songs")
+                list.addAll(matchedSongs.take(20))
             }
-        }
 
-        val matchedArtists = all.filter { it.artist.contains(query, ignoreCase = true) }
-            .distinctBy { it.artist }
-        if (matchedArtists.isNotEmpty()) {
-            list.add("Artists")
-            matchedArtists.take(10).forEach {
-                list.add(Pair(it.artist, it.albumArtUri))
+            val matchedAlbums = songs.filter { it.album.contains(query, ignoreCase = true) }
+                .distinctBy { it.album }
+            if (matchedAlbums.isNotEmpty()) {
+                list.add("Albums")
+                matchedAlbums.take(10).forEach {
+                    list.add(Triple(it.album, it.artist, it.albumArtUri))
+                }
+            }
+
+            val matchedArtists = songs.filter { it.artist.contains(query, ignoreCase = true) }
+                .distinctBy { it.artist }
+            if (matchedArtists.isNotEmpty()) {
+                list.add("Artists")
+                matchedArtists.take(10).forEach {
+                    list.add(Pair(it.artist, it.albumArtUri))
+                }
+            }
+        } else {
+            val matchedVideos = videos.filter { it.title.contains(query, ignoreCase = true) }
+            if (matchedVideos.isNotEmpty()) {
+                list.add("Videos")
+                list.addAll(matchedVideos.take(20))
+            }
+
+            val matchedFolders = videos.filter { it.folderPath.substringAfterLast("/").contains(query, ignoreCase = true) }
+                .distinctBy { it.folderPath }
+            if (matchedFolders.isNotEmpty()) {
+                list.add("Folders")
+                matchedFolders.take(5).forEach { v ->
+                    list.add(com.beatraxus.app.model.VideoFolder(
+                        name = v.folderPath.substringAfterLast("/"),
+                        path = v.folderPath,
+                        videoCount = videos.count { it.folderPath == v.folderPath },
+                        previewThumbnails = videos.filter { it.folderPath == v.folderPath }.take(1).mapNotNull { it.thumbnailUri }
+                    ))
+                }
             }
         }
         list
@@ -593,8 +642,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         FFmpegKitConfig.setLogLevel(Level.AV_LOG_ERROR)
 
         viewModelScope.launch {
-            val folders = musicRepository.getMusicFolders()
-            _uiState.update { it.copy(musicFolders = folders) }
+            musicRepository.getMusicFoldersFlow().collect { folders ->
+                _uiState.update { it.copy(musicFolders = folders) }
+            }
         }
 
         // Trigger video scan on init
@@ -1107,10 +1157,16 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         if (ids.isEmpty()) return
 
         viewModelScope.launch {
+            // Try deleting from both DAOs just in case
             songDao.deleteSongsByIds(ids)
+            
             _songs.update { currentSongs ->
                 currentSongs.filterNot { it.id in ids }
             }
+            _videos.update { currentVideos ->
+                currentVideos.filterNot { it.id in ids }
+            }
+            
             pendingDeleteIds = emptyList()
             setMultiSelectMode(false)
 
@@ -1120,6 +1176,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             }
             // Remove from queue
             ids.forEach { id -> service?.removeFromQueue(id) }
+            
+            // Refresh video folders if needed
+            loadVideos() 
         }
     }
 
@@ -2791,6 +2850,44 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             } else {
                 onDeleteSuccess()
             }
+        }
+    }
+
+    fun deleteVideo(video: com.beatraxus.app.model.Video) {
+        viewModelScope.launch {
+            pendingDeleteIds = listOf(video.id)
+            // reuse musicRepository logic as it's generic for MediaStore URIs
+            val intent = musicRepository.deleteSongs(listOf(video.uri))
+            if (intent != null) {
+                _deleteRequest.value = intent
+            } else {
+                onDeleteSuccess()
+            }
+        }
+    }
+
+    fun renameVideo(video: com.beatraxus.app.model.Video, newName: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val context = getApplication<android.app.Application>()
+                val values = android.content.ContentValues().apply {
+                    put(android.provider.MediaStore.Video.Media.DISPLAY_NAME, newName)
+                }
+                context.contentResolver.update(video.uri, values, null, null)
+                withContext(Dispatchers.Main) {
+                    loadVideos() // Refresh
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to rename video", e)
+            }
+        }
+    }
+
+    fun getShareVideoIntent(video: com.beatraxus.app.model.Video): android.content.Intent {
+        return android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+            type = video.mimeType
+            putExtra(android.content.Intent.EXTRA_STREAM, video.uri)
+            addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
     }
 

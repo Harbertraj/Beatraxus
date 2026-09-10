@@ -20,8 +20,8 @@ import androidx.media3.common.MimeTypes
 class VideoRenderersFactory(context: Context) : DefaultRenderersFactory(context) {
 
     init {
-        // Prefer extensions (FFmpeg) over platform decoders.
-        setExtensionRendererMode(EXTENSION_RENDERER_MODE_PREFER)
+        // Use hardware decoders where available, but keep extensions ON for manual audio renderer injection.
+        setExtensionRendererMode(EXTENSION_RENDERER_MODE_ON)
         setEnableDecoderFallback(true)
     }
 
