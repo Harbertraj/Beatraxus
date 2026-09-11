@@ -5,11 +5,13 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.ActivityInfo
 import android.media.AudioManager
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import android.view.Surface
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -25,6 +27,7 @@ import com.beatraxus.app.engine.VideoRenderersFactory
 import com.beatraxus.app.model.Video
 import com.beatraxus.app.model.SavedEqPreset
 import com.beatraxus.app.model.VideoRecentlyPlayedEntity
+import com.beatraxus.app.motionboost.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -66,7 +69,13 @@ data class VideoPlayerUiState(
     val subtitleOutlineColor: Int = android.graphics.Color.BLACK,
     val subtitleWindowColor: Int = android.graphics.Color.TRANSPARENT,
     val subtitleAlpha: Float = 1.0f,
-    val isBackgroundPlayEnabled: Boolean = false
+    val isBackgroundPlayEnabled: Boolean = false,
+    val motionBoostMode: MotionBoostMode = MotionBoostMode.ORIGINAL,
+    val motionBoostQuality: MotionBoostQuality = MotionBoostQuality.BALANCED,
+    val sourceFrameRateInfo: VideoFrameRateInfo? = null,
+    val motionBoostCapabilities: MotionBoostCapabilities? = null,
+    val isMotionBoostSupported: Boolean = false,
+    val motionBoostLiveFps: Int = 0
 )
 
 enum class VolumeBoostMode {
@@ -131,18 +140,49 @@ class VideoPlayerViewModel(
     private var loudnessEnhancer: android.media.audiofx.LoudnessEnhancer? = null
     private var equalizer: android.media.audiofx.Equalizer? = null
 
+    // Motion Boost Pipeline
+    private var frameCapture: DecodedFrameCapture? = null
+    private val frameBuffer = mutableListOf<VideoFrame>()
+    private var renderLoopActive = false
+    private val performanceMonitor = PerformanceMonitor()
+    private val thermalMonitor = ThermalMonitor(application)
+    private val motionBoostRenderer = MotionBoostRenderer()
+
+    // Smooth Clock & FPS Tracking
+    private var lastExoPositionMs = 0L
+    private var lastSystemTimeNs = 0L
+    private var frameCaptureIntervals = mutableListOf<Long>()
+    private var lastCaptureTimeUs = 0L
+    private val PRESENTATION_DELAY_US = 100_000L // 100ms lookahead delay
+
+    private val frameCallback = object : android.view.Choreographer.FrameCallback {
+        override fun doFrame(frameTimeNanos: Long) {
+            if (!renderLoopActive) return
+            renderFrame(frameTimeNanos)
+            android.view.Choreographer.getInstance().postFrameCallback(this)
+        }
+    }
+
     init {
         application.registerReceiver(volumeReceiver, IntentFilter("android.media.VOLUME_CHANGED_ACTION"))
         
-        if (videoQueue.isEmpty()) {
-            Log.e(TAG, "Video queue is empty, cannot initialize player")
-            _uiState.update { it.copy(error = "Video queue is empty") }
-        } else {
-            val foundIndex = videoQueue.indexOfFirst { it.id == initialVideoId }
-            if (foundIndex == -1) {
-                Log.w(TAG, "Initial video ID $initialVideoId not found in queue of size ${videoQueue.size}")
+        // Initial capabilities detection
+        updateMotionBoostCapabilities()
+        
+        thermalMonitor.start { newState ->
+            if (newState == ThermalState.HOT || newState == ThermalState.CRITICAL) {
+                viewModelScope.launch {
+                    if (_uiState.value.motionBoostMode != MotionBoostMode.ORIGINAL) {
+                        Log.w(TAG, "Thermal throttle: Disabling Motion Boost")
+                        setMotionBoostMode(MotionBoostMode.ORIGINAL)
+                        _uiState.update { it.copy(error = "Motion Boost reduced to protect device performance") }
+                    }
+                }
             }
-            val initialIndex = foundIndex.coerceAtLeast(0)
+        }
+
+        if (videoQueue.isNotEmpty()) {
+            val initialIndex = videoQueue.indexOfFirst { it.id == initialVideoId }.coerceAtLeast(0)
             setupPlayer(initialIndex)
         }
 
@@ -157,7 +197,6 @@ class VideoPlayerViewModel(
         if (raw != null) {
             runCatching {
                 val array = org.json.JSONArray(raw)
-                val customPresets = mutableListOf<SavedEqPreset>()
                 for (index in 0 until array.length()) {
                     val item = array.getJSONObject(index)
                     val name = item.optString("name")
@@ -166,21 +205,18 @@ class VideoPlayerViewModel(
                     val bands = mutableListOf<com.beatraxus.app.model.ParametricEqBand>()
                     for (bandIndex in 0 until bandsJson.length()) {
                         val band = bandsJson.getJSONObject(bandIndex)
-                        bands.add(
-                            com.beatraxus.app.model.ParametricEqBand(
-                                id = band.optInt("id", bandIndex),
-                                enabled = band.optBoolean("enabled", true),
-                                frequencyHz = band.optDouble("frequencyHz", 1000.0).toFloat(),
-                                gainDb = band.optDouble("gainDb", 0.0).toFloat(),
-                                q = band.optDouble("q", 1.0).toFloat()
-                            )
-                        )
+                        bands.add(com.beatraxus.app.model.ParametricEqBand(
+                            id = band.optInt("id", bandIndex),
+                            enabled = band.optBoolean("enabled", true),
+                            frequencyHz = band.optDouble("frequencyHz", 1000.0).toFloat(),
+                            gainDb = band.optDouble("gainDb", 0.0).toFloat(),
+                            q = band.optDouble("q", 1.0).toFloat()
+                        ))
                     }
                     if (name.isNotBlank() && bands.isNotEmpty()) {
-                        customPresets.add(SavedEqPreset(name, bands, preampDb))
+                        allPresets.add(SavedEqPreset(name, bands, preampDb))
                     }
                 }
-                allPresets.addAll(customPresets)
             }
         }
         _uiState.update { it.copy(availablePresets = allPresets) }
@@ -188,58 +224,30 @@ class VideoPlayerViewModel(
 
     private fun setupPlayer(startIndex: Int) {
         if (videoQueue.isEmpty()) return
-
-        val video = videoQueue.getOrNull(startIndex)
-        Log.d(TAG, "setupPlayer: startIndex=$startIndex queueSize=${videoQueue.size} " +
-            "title=${video?.title} uri=${video?.uri} mime=${video?.mimeType}")
-
+        val video = videoQueue[startIndex]
         val context = getApplication<Application>()
         
         val loadControl = DefaultLoadControl.Builder()
-            .setBufferDurationsMs(
-                15000, // minBufferMs
-                50000, // maxBufferMs
-                2500,  // bufferForPlaybackMs
-                5000   // bufferForPlaybackAfterRebufferMs
-            )
+            .setBufferDurationsMs(15000, 50000, 2500, 5000)
             .setPrioritizeTimeOverSizeThresholds(true)
             .build()
 
         val player = ExoPlayer.Builder(context, VideoRenderersFactory(context))
             .setLoadControl(loadControl)
-            .setHandleAudioBecomingNoisy(true)
             .build()
             .apply {
                 setVideoScalingMode(C.VIDEO_SCALING_MODE_SCALE_TO_FIT)
                 repeatMode = Player.REPEAT_MODE_OFF
+                setMediaItems(videoQueue.map { v -> MediaItem.Builder().setUri(v.uri).setMediaId(v.id).build() })
                 
-                val mediaItems = videoQueue.map { video ->
-                    MediaItem.Builder()
-                        .setUri(video.uri)
-                        .setMediaId(video.id)
-                        .build()
-                }
-                setMediaItems(mediaItems)
-                
-                if (startIndex < videoQueue.size) {
-                    val initialVideo = videoQueue[startIndex]
-                    viewModelScope.launch(Dispatchers.IO) {
-                        val recentlyPlayed = videoRecentlyPlayedDao.getRecentlyPlayedByVideoId(initialVideo.id)
-                        val lastPos = recentlyPlayed?.lastPosition ?: 0L
-                        val lastRatio = recentlyPlayed?.lastAspectRatio?.let { ratioName ->
-                            VideoAspectRatio.entries.find { it.name == ratioName }
-                        } ?: VideoAspectRatio.FIT
-                        
-                        withContext(Dispatchers.Main) {
-                            _uiState.update { it.copy(aspectRatio = lastRatio) }
-                            seekTo(startIndex, lastPos)
-                            prepare()
-                            playWhenReady = true
-                        }
+                viewModelScope.launch(Dispatchers.IO) {
+                    val recentlyPlayed = videoRecentlyPlayedDao.getRecentlyPlayedByVideoId(video.id)
+                    val lastPos = recentlyPlayed?.lastPosition ?: 0L
+                    withContext(Dispatchers.Main) {
+                        seekTo(startIndex, lastPos)
+                        prepare()
+                        playWhenReady = true
                     }
-                } else {
-                    prepare()
-                    playWhenReady = true
                 }
             }
 
@@ -258,14 +266,12 @@ class VideoPlayerViewModel(
                     _uiState.update { it.copy(duration = player.duration) }
                     updateTracks()
                     setupLoudnessEnhancer(player.audioSessionId)
+                    updateSourceFrameRate()
+                    updateMotionBoostCapabilities()
                 }
             }
 
-            override fun onPositionDiscontinuity(
-                oldPosition: Player.PositionInfo,
-                newPosition: Player.PositionInfo,
-                reason: Int
-            ) {
+            override fun onPositionDiscontinuity(old: Player.PositionInfo, new: Player.PositionInfo, reason: Int) {
                 updateCurrentVideo()
             }
 
@@ -280,16 +286,40 @@ class VideoPlayerViewModel(
 
             override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
                 updateTracks()
-            }
-
-            override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
-                Log.e(TAG, "ExoPlayer error: code=${error.errorCode} message=${error.message}", error)
-                _uiState.update { it.copy(error = "Playback failed: ${error.errorCodeName}") }
+                updateSourceFrameRate()
             }
         })
 
         exoPlayer = player
         updateCurrentVideo()
+
+        frameCapture = DecodedFrameCapture { frame ->
+            estimateSourceFps(frame.presentationTimeUs)
+            synchronized(frameBuffer) {
+                if (frameBuffer.size >= 15) frameBuffer.removeAt(0).release()
+                frameBuffer.add(frame)
+            }
+        }
+    }
+
+    private fun estimateSourceFps(timestampUs: Long) {
+        if (lastCaptureTimeUs > 0) {
+            val interval = timestampUs - lastCaptureTimeUs
+            if (interval in 5000..100000) { 
+                frameCaptureIntervals.add(interval)
+                if (frameCaptureIntervals.size > 10) { // Fast detection
+                    frameCaptureIntervals.removeAt(0)
+                    val avgInterval = frameCaptureIntervals.average()
+                    val fps = 1_000_000f / avgInterval.toFloat()
+                    
+                    val current = _uiState.value.sourceFrameRateInfo
+                    if (current?.sourceFrameRate == null || current.isEstimated) {
+                        _uiState.update { it.copy(sourceFrameRateInfo = VideoFrameRateInfo(fps, avgInterval.toLong(), true)) }
+                    }
+                }
+            }
+        }
+        lastCaptureTimeUs = timestampUs
     }
 
     private fun updateCurrentVideo() {
@@ -297,12 +327,8 @@ class VideoPlayerViewModel(
         val currentId = player.currentMediaItem?.mediaId
         val video = videoQueue.find { it.id == currentId }
         
-        // Save position of previous video before switching
         _uiState.value.currentVideo?.let { recordVideoPlayed(it) }
-        
         _uiState.update { it.copy(currentVideo = video, isHdr = video?.isHdr ?: false) }
-        
-        video?.let { recordVideoPlayed(it) }
     }
 
     private fun recordVideoPlayed(video: Video) {
@@ -325,67 +351,39 @@ class VideoPlayerViewModel(
         progressJob = viewModelScope.launch {
             while (isActive) {
                 exoPlayer?.let { player ->
-                    _uiState.update { it.copy(
-                        currentPosition = player.currentPosition,
-                        bufferedPercentage = player.bufferedPercentage
-                    ) }
+                    val pos = player.currentPosition
+                    lastExoPositionMs = pos
+                    lastSystemTimeNs = System.nanoTime()
+                    _uiState.update { it.copy(currentPosition = pos, bufferedPercentage = player.bufferedPercentage) }
                 }
-                delay(1000)
+                delay(16) // ~60fps UI sync
             }
         }
     }
 
-    private fun stopProgressUpdate() {
-        progressJob?.cancel()
-    }
+    private fun stopProgressUpdate() = progressJob?.cancel()
 
     private fun updateTracks() {
         val player = exoPlayer ?: return
-        val tracks = player.currentTracks
-        
         val audioTracks = mutableListOf<VideoTrackInfo>()
         val subtitleTracks = mutableListOf<VideoTrackInfo>()
 
-        tracks.groups.forEachIndexed { groupIndex, group ->
-            if (group.type == C.TRACK_TYPE_AUDIO) {
-                for (i in 0 until group.length) {
-                    val format = group.getTrackFormat(i)
-                    audioTracks.add(VideoTrackInfo(
-                        index = groupIndex,
-                        name = format.label ?: "Audio ${audioTracks.size + 1}",
-                        language = format.language,
-                        format = format.sampleMimeType,
-                        isSelected = group.isTrackSelected(i)
-                    ))
-                }
-            } else if (group.type == C.TRACK_TYPE_TEXT) {
-                for (i in 0 until group.length) {
-                    val format = group.getTrackFormat(i)
-                    subtitleTracks.add(VideoTrackInfo(
-                        index = groupIndex,
-                        name = format.label ?: "Subtitle ${subtitleTracks.size + 1}",
-                        language = format.language,
-                        format = format.sampleMimeType,
-                        isSelected = group.isTrackSelected(i)
-                    ))
-                }
+        player.currentTracks.groups.forEachIndexed { index, group ->
+            for (i in 0 until group.length) {
+                val format = group.getTrackFormat(i)
+                val info = VideoTrackInfo(index, format.label ?: "Track ${i+1}", format.language, format.sampleMimeType, group.isTrackSelected(i))
+                if (group.type == C.TRACK_TYPE_AUDIO) audioTracks.add(info)
+                else if (group.type == C.TRACK_TYPE_TEXT) subtitleTracks.add(info)
             }
         }
-
-        _uiState.update { it.copy(
-            availableAudioTracks = audioTracks,
-            availableSubtitleTracks = subtitleTracks
-        ) }
+        _uiState.update { it.copy(availableAudioTracks = audioTracks, availableSubtitleTracks = subtitleTracks) }
     }
 
-    fun togglePlayPause() {
-        exoPlayer?.let {
-            if (it.isPlaying) it.pause() else it.play()
-        }
-    }
+    fun togglePlayPause() = exoPlayer?.let { if (it.isPlaying) it.pause() else it.play() }
 
     fun seekTo(position: Long) {
         exoPlayer?.seekTo(position)
+        flushMotionBoost()
         _uiState.update { it.copy(currentPosition = position) }
     }
 
@@ -396,262 +394,185 @@ class VideoPlayerViewModel(
 
     fun setAspectRatio(ratio: VideoAspectRatio) {
         _uiState.update { it.copy(aspectRatio = ratio, aspectRatioMessage = ratio.displayName) }
-        prefs.edit().putString("video_aspect_ratio", ratio.name).apply()
-        viewModelScope.launch {
-            delay(2000)
-            _uiState.update { it.copy(aspectRatioMessage = null) }
-        }
+        viewModelScope.launch { delay(2000); _uiState.update { it.copy(aspectRatioMessage = null) } }
     }
 
     fun selectAudioTrack(track: VideoTrackInfo) {
-        exoPlayer?.let { player ->
-            val parameters = player.trackSelectionParameters
-                .buildUpon()
-                .setOverrideForType(
-                    androidx.media3.common.TrackSelectionOverride(
-                        player.currentTracks.groups[track.index].mediaTrackGroup,
-                        0 
-                    )
-                )
+        exoPlayer?.let { p ->
+            p.trackSelectionParameters = p.trackSelectionParameters.buildUpon()
+                .setOverrideForType(androidx.media3.common.TrackSelectionOverride(p.currentTracks.groups[track.index].mediaTrackGroup, 0))
                 .build()
-            player.trackSelectionParameters = parameters
         }
     }
 
     fun selectSubtitleTrack(track: VideoTrackInfo?) {
-        exoPlayer?.let { player ->
-            val builder = player.trackSelectionParameters.buildUpon()
-            if (track == null) {
-                builder.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
-            } else {
-                builder.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
-                    .setOverrideForType(
-                        androidx.media3.common.TrackSelectionOverride(
-                            player.currentTracks.groups[track.index].mediaTrackGroup,
-                            0
-                        )
-                    )
-            }
-            player.trackSelectionParameters = builder.build()
+        exoPlayer?.let { p ->
+            val builder = p.trackSelectionParameters.buildUpon()
+            if (track == null) builder.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+            else builder.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                .setOverrideForType(androidx.media3.common.TrackSelectionOverride(p.currentTracks.groups[track.index].mediaTrackGroup, 0))
+            p.trackSelectionParameters = builder.build()
         }
-    }
-
-    fun toggleLock() {
-        _uiState.update { it.copy(isLocked = !it.isLocked) }
-    }
-
-    fun playNext() {
-        exoPlayer?.let {
-            if (it.hasNextMediaItem()) {
-                it.seekToNext()
-                it.play()
-            }
-        }
-    }
-
-    fun playPrevious() {
-        exoPlayer?.let {
-            if (it.hasPreviousMediaItem()) {
-                it.seekToPrevious()
-                it.play()
-            }
-        }
-    }
-
-    private fun setupLoudnessEnhancer(audioSessionId: Int) {
-        if (audioSessionId == android.media.audiofx.AudioEffect.ERROR_BAD_VALUE) return
-        try {
-            loudnessEnhancer?.release()
-            loudnessEnhancer = android.media.audiofx.LoudnessEnhancer(audioSessionId).apply {
-                enabled = true
-            }
-            updateLoudness()
-
-            equalizer?.release()
-            equalizer = android.media.audiofx.Equalizer(0, audioSessionId).apply {
-                enabled = true
-                applyEqGains()
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to setup Audio Effects", e)
-        }
-    }
-
-    private fun applyEqGains() {
-        val eq = equalizer ?: return
-        val state = _uiState.value
-        
-        try {
-            eq.enabled = state.isEqEnabled
-
-            if (!state.isEqEnabled) return
-
-            val gains = state.eqGains
-            val numBands = eq.numberOfBands.toInt()
-            val range = eq.bandLevelRange
-            val minLevel = range[0]
-            val maxLevel = range[1]
-
-            for (i in 0 until numBands.coerceAtMost(gains.size)) {
-                val level = (gains[i] * 100).toInt().toShort() 
-                val clampedLevel = level.coerceIn(minLevel, maxLevel)
-                try {
-                    eq.setBandLevel(i.toShort(), clampedLevel)
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to set EQ band $i", e)
-                }
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Hardware Equalizer error in applyEqGains", e)
-        }
-    }
-
-    private fun updateLoudness() {
-        val state = _uiState.value
-        val systemMax = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-        
-        if (!state.isVolumeBoost) {
-            loudnessEnhancer?.setTargetGain(0)
-            return
-        }
-        
-        if (state.volume > systemMax) {
-            val gain = (state.volume - systemMax) * 200 
-            loudnessEnhancer?.setTargetGain(gain)
-        } else {
-            loudnessEnhancer?.setTargetGain(500) 
-        }
-    }
-
-    fun setVolume(volume: Int) {
-        val systemMax = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-        val max = if (!_uiState.value.isVolumeBoost) systemMax else systemMax * 2
-        val newVol = volume.coerceIn(0, max)
-        
-        // Sync with system volume if not in boost range
-        if (newVol <= systemMax) {
-            audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, newVol, 0)
-        }
-        
-        _uiState.update { it.copy(volume = newVol, maxVolume = max) }
-        updateLoudness()
-    }
-
-    fun toggleVolumeBoost() {
-        val systemMax = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-        _uiState.update { 
-            val nextBoost = !it.isVolumeBoost
-            val newMax = if (!nextBoost) systemMax else systemMax * 2
-            it.copy(
-                isVolumeBoost = nextBoost,
-                maxVolume = newMax,
-                volume = it.volume.coerceAtMost(newMax)
-            )
-        }
-        updateLoudness()
     }
 
     fun toggleTimeDisplay() {
         _uiState.update { 
             val next = !it.showTotalTime
-            prefs.edit().putBoolean("video_show_remaining_time", next).apply()
             it.copy(showTotalTime = next) 
         }
     }
 
-    fun toggleEqEnabled() {
-        _uiState.update { 
-            val next = !it.isEqEnabled
-            prefs.edit().putBoolean("video_eq_enabled", next).apply()
-            it.copy(isEqEnabled = next) 
-        }
-        applyEqGains()
+    fun toggleLock() = _uiState.update { it.copy(isLocked = !it.isLocked) }
+    fun playNext() = exoPlayer?.let { if (it.hasNextMediaItem()) it.seekToNext() }
+    fun playPrevious() = exoPlayer?.let { if (it.hasPreviousMediaItem()) it.seekToPrevious() }
+
+    private fun setupLoudnessEnhancer(sessionId: Int) {
+        if (sessionId == android.media.audiofx.AudioEffect.ERROR_BAD_VALUE) return
+        try {
+            loudnessEnhancer?.release()
+            loudnessEnhancer = android.media.audiofx.LoudnessEnhancer(sessionId).apply { enabled = true }
+            equalizer?.release()
+            equalizer = android.media.audiofx.Equalizer(0, sessionId).apply { enabled = true; applyEqGains() }
+        } catch (e: Exception) { Log.e(TAG, "AudioFX setup failed", e) }
     }
 
-    fun setEqPreset(preset: com.beatraxus.app.model.SavedEqPreset) {
-        val standardFreqs = listOf(31.25f, 62.5f, 125f, 250f, 500f, 1000f, 2000f, 4000f, 8000f, 16000f)
-        val newGains = standardFreqs.map { freq ->
-            preset.bands.minByOrNull { Math.abs(it.frequencyHz - freq) }?.gainDb ?: 0f
-        }
-        _uiState.update { it.copy(eqGains = newGains, selectedPreset = preset.name, isEqEnabled = true) }
+    private fun applyEqGains() {
+        val eq = equalizer ?: return
+        val state = _uiState.value
+        try {
+            if (runCatching { eq.enabled }.isFailure) return
+            eq.enabled = state.isEqEnabled
+            if (!state.isEqEnabled) return
+            val range = eq.bandLevelRange
+            state.eqGains.forEachIndexed { i, gain ->
+                if (i < eq.numberOfBands) {
+                    val level = (gain * 100).toInt().toShort().coerceIn(range[0], range[1])
+                    eq.setBandLevel(i.toShort(), level)
+                }
+            }
+        } catch (e: Exception) { Log.e(TAG, "EQ apply failed", e) }
+    }
+
+    fun setVolume(v: Int) {
+        val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        val newV = v.coerceIn(0, if (_uiState.value.isVolumeBoost) max * 2 else max)
+        if (newV <= max) audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, newV, 0)
+        _uiState.update { it.copy(volume = newV) }
+    }
+
+    fun toggleVolumeBoost() = _uiState.update { 
+        val next = !it.isVolumeBoost
+        it.copy(isVolumeBoost = next, maxVolume = if (next) 30 else 15) 
+    }
+
+    fun toggleEqEnabled() {
+        _uiState.update { it.copy(isEqEnabled = !it.isEqEnabled) }
         applyEqGains()
     }
 
     fun setEqGain(band: Int, gain: Float) {
-        _uiState.update { state ->
-            val newGains = state.eqGains.toMutableList()
-            if (band in newGains.indices) {
-                newGains[band] = gain
-            }
-            state.copy(eqGains = newGains, selectedPreset = "Manual")
+        _uiState.update { s ->
+            val newGains = s.eqGains.toMutableList().apply { this[band] = gain }
+            s.copy(eqGains = newGains, selectedPreset = "Manual")
         }
         applyEqGains()
     }
 
-    fun setSubtitleOffset(offset: Float) {
-        _uiState.update { it.copy(subtitleOffset = offset) }
+    fun setEqPreset(preset: SavedEqPreset) {
+        val standardFreqs = listOf(31.25f, 62.5f, 125f, 250f, 500f, 1000f, 2000f, 4000f, 8000f, 16000f)
+        val newGains = standardFreqs.map { f -> preset.bands.minByOrNull { Math.abs(it.frequencyHz - f) }?.gainDb ?: 0f }
+        _uiState.update { it.copy(eqGains = newGains, selectedPreset = preset.name, isEqEnabled = true) }
+        applyEqGains()
     }
 
-    fun setSubtitleSize(size: Float) {
-        _uiState.update { it.copy(subtitleSize = size) }
-    }
+    fun setSubtitleSize(s: Float) = _uiState.update { it.copy(subtitleSize = s) }
+    fun setSubtitleTextColor(c: Int) = _uiState.update { it.copy(subtitleTextColor = c) }
+    fun setSubtitleBackgroundColor(c: Int) = _uiState.update { it.copy(subtitleBackgroundColor = c) }
+    fun setSubtitleOutlineColor(c: Int) = _uiState.update { it.copy(subtitleOutlineColor = c) }
+    fun setSubtitleAlpha(a: Float) = _uiState.update { it.copy(subtitleAlpha = a) }
+    fun setSubtitleOffset(o: Float) = _uiState.update { it.copy(subtitleOffset = o) }
+    fun resetSubtitleStyle() = _uiState.update { it.copy(subtitleSize = 18f, subtitleTextColor = -1, subtitleBackgroundColor = 0, subtitleAlpha = 1f, subtitleOffset = 0f) }
 
-    fun setSubtitleTextColor(color: Int) {
-        _uiState.update { it.copy(subtitleTextColor = color) }
-    }
-
-    fun setSubtitleBackgroundColor(color: Int) {
-        _uiState.update { it.copy(subtitleBackgroundColor = color) }
-    }
-
-    fun setSubtitleOutlineColor(color: Int) {
-        _uiState.update { it.copy(subtitleOutlineColor = color) }
-    }
-
-    fun setSubtitleAlpha(alpha: Float) {
-        _uiState.update { it.copy(subtitleAlpha = alpha) }
-    }
-
-    fun resetSubtitleStyle() {
-        _uiState.update { it.copy(
-            subtitleSize = 18f,
-            subtitleTextColor = android.graphics.Color.WHITE,
-            subtitleBackgroundColor = android.graphics.Color.TRANSPARENT,
-            subtitleOutlineColor = android.graphics.Color.BLACK,
-            subtitleWindowColor = android.graphics.Color.TRANSPARENT,
-            subtitleAlpha = 1.0f,
-            subtitleOffset = 0f
-        ) }
-    }
-
-    fun toggleOrientation(activity: android.app.Activity) {
-        val current = activity.requestedOrientation
-        val next = when (current) {
-            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE
-            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT
-            else -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
-        }
-        activity.requestedOrientation = next
+    fun toggleOrientation(a: android.app.Activity) {
+        val next = if (a.requestedOrientation == ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE) ActivityInfo.SCREEN_ORIENTATION_PORTRAIT else ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+        a.requestedOrientation = next
         _uiState.update { it.copy(orientation = next) }
     }
 
-    fun toggleBackgroundPlay() {
-        _uiState.update { it.copy(isBackgroundPlayEnabled = !it.isBackgroundPlayEnabled) }
+    fun toggleBackgroundPlay() = _uiState.update { it.copy(isBackgroundPlayEnabled = !it.isBackgroundPlayEnabled) }
+
+    fun setMotionBoostMode(mode: MotionBoostMode) {
+        _uiState.update { it.copy(motionBoostMode = mode) }
+        flushMotionBoost()
+        val player = exoPlayer
+        if (mode != MotionBoostMode.ORIGINAL) {
+            player?.let { frameCapture?.attachToPlayer(it) }
+            if (!renderLoopActive) startRenderLoop()
+        } else {
+            player?.let { frameCapture?.detachFromPlayer(it) }
+            if (renderLoopActive) stopRenderLoop()
+        }
     }
 
-    fun enterBackgroundPlay(onClose: () -> Unit) {
-        val currentVideo = _uiState.value.currentVideo ?: return
-        val currentPos = exoPlayer?.currentPosition ?: 0L
-        
-        prefs.edit().apply {
-            putString("bg_video_id", currentVideo.id)
-            putLong("bg_video_pos", currentPos)
-            putBoolean("bg_video_active", true)
-            apply()
+    fun setPresentationSurface(surface: Surface?) = motionBoostRenderer.setSurface(surface)
+
+    private fun startRenderLoop() {
+        renderLoopActive = true
+        motionBoostRenderer.start()
+        android.view.Choreographer.getInstance().postFrameCallback(frameCallback)
+    }
+
+    private fun stopRenderLoop() {
+        renderLoopActive = false
+        motionBoostRenderer.stop()
+    }
+
+    private fun renderFrame(frameTimeNanos: Long) {
+        val player = exoPlayer ?: return
+        synchronized(frameBuffer) {
+            performanceMonitor.recordFrameGeneration(0.0)
+            updateLiveFps()
+
+            if (!player.isPlaying || frameBuffer.size < 2) return
+
+            // 100ms Presentation Delay for interpolation lookahead
+            val elapsedMs = (System.nanoTime() - lastSystemTimeNs) / 1_000_000
+            val predictedPositionUs = (lastExoPositionMs + (elapsedMs * _uiState.value.playbackSpeed)).toLong() * 1000
+            val targetTimeUs = predictedPositionUs - PRESENTATION_DELAY_US
+
+            val frameA = frameBuffer.findLast { it.presentationTimeUs <= targetTimeUs }
+            val frameB = frameBuffer.find { it.presentationTimeUs > targetTimeUs }
+
+            if (frameA != null && frameB != null) {
+                val alpha = ((targetTimeUs - frameA.presentationTimeUs).toFloat() / (frameB.presentationTimeUs - frameA.presentationTimeUs).toFloat()).coerceIn(0f, 1f)
+                motionBoostRenderer.render(frameA, frameB, alpha)
+            } else if (targetTimeUs > (frameBuffer.lastOrNull()?.presentationTimeUs ?: 0) + 500000) {
+                flushMotionBoost()
+            }
         }
-        
-        onClose()
+    }
+
+    private fun updateLiveFps() {
+        val liveFps = performanceMonitor.getLiveFps()
+        if (liveFps != _uiState.value.motionBoostLiveFps) _uiState.update { it.copy(motionBoostLiveFps = liveFps) }
+    }
+
+    fun setMotionBoostQuality(q: MotionBoostQuality) = _uiState.update { it.copy(motionBoostQuality = q) }
+
+    private fun updateMotionBoostCapabilities() {
+        val refreshRate = DisplayRefreshRateDetector.getRefreshRate(getApplication())
+        _uiState.update { it.copy(motionBoostCapabilities = MotionBoostCapabilities.compute(refreshRate), isMotionBoostSupported = true) }
+    }
+
+    private fun updateSourceFrameRate() {
+        exoPlayer?.let { p ->
+            val info = SourceFrameRateDetector.detect(p)
+            _uiState.update { it.copy(sourceFrameRateInfo = info) }
+        }
+    }
+
+    private fun flushMotionBoost() {
+        synchronized(frameBuffer) { frameBuffer.forEach { it.release() }; frameBuffer.clear() }
     }
 
     fun getPlayer(): Player? = exoPlayer
@@ -659,28 +580,18 @@ class VideoPlayerViewModel(
     override fun onCleared() {
         super.onCleared()
         getApplication<Application>().unregisterReceiver(volumeReceiver)
-        _uiState.value.currentVideo?.let { recordVideoPlayed(it) }
         loudnessEnhancer?.release()
-        loudnessEnhancer = null
         equalizer?.release()
-        equalizer = null
         exoPlayer?.release()
-        exoPlayer = null
+        motionBoostRenderer.stop()
         viewModelScope.cancel()
     }
 }
 
-class VideoPlayerViewModelFactory(
-    private val application: Application,
-    private val videoQueue: List<Video>,
-    private val initialVideoId: String
-) : ViewModelProvider.Factory {
+class VideoPlayerViewModelFactory(private val application: Application, private val videoQueue: List<Video>, private val initialVideoId: String) : ViewModelProvider.Factory {
     @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
-        if (modelClass.isAssignableFrom(VideoPlayerViewModel::class.java)) {
-            return VideoPlayerViewModel(application, videoQueue, initialVideoId) as T
-        }
-        throw IllegalArgumentException("Unknown ViewModel: ${modelClass.name}")
+        return VideoPlayerViewModel(application, videoQueue, initialVideoId) as T
     }
 }
