@@ -83,6 +83,7 @@ import com.beatraxus.app.repository.DspPreferences
 import com.beatraxus.app.repository.DriveAccount
 import com.beatraxus.app.repository.TelegramChannelRepository
 import com.beatraxus.app.util.ArtistNameUtils
+import com.beatraxus.app.util.PlaybackGlobalState
 import com.beatraxus.app.telegram.AuthState
 import com.beatraxus.app.telegram.TdLibManager
 import org.drinkless.tdlib.TdApi
@@ -691,18 +692,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             delay(2000)
 
             for (song in aiAnalysisChannel) {
-                // ROOT-CAUSE FIX: don't run the heavy per-song feature extraction
-                // (native MediaCodec decode + TFLite inference + 2 network calls)
-                // while a track is actively playing. This background scan used to
-                // fire ~4s after launch for the *entire* unanalyzed library, spinning
-                // up its own MediaCodec "audio/raw" decoder per song back-to-back.
-                // That starved the real playback decoder's CCodec pipeline (visible
-                // in logcat as "pipelineFull: too many frames in pipeline"), which
-                // the stuck-playback watcher then misread as an output-sink stall,
-                // recreated AudioTrack a few times, and finally gave up and skipped
-                // the song ("Max recovery attempts reached... Skipping track").
-                while (_uiState.value.isPlaying) {
-                    delay(1000)
+                // ROOT-CAUSE FIX: don't run heavy work while media is playing.
+                while (_uiState.value.isPlaying || PlaybackGlobalState.isAnyPlaybackActive.value) {
+                    delay(1500)
                 }
 
                 try {
@@ -1376,20 +1368,37 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             _uiState.update { it.copy(isLoadingVideos = true) }
             try {
                 val scannedVideos = videoScanner.scanVideos()
+                _videos.value = scannedVideos
+                _uiState.update { it.copy(isLoadingVideos = false) }
+
+                // Background enrichment (Thumbnails + HDR)
                 val context = getApplication<android.app.Application>()
-                
-                // Background thumbnail generation for videos missing them
-                val enrichedVideos = scannedVideos.map { video ->
-                    if (video.thumbnailUri == null) {
-                        val thumb = com.beatraxus.app.utils.VideoThumbnailHelper.getThumbnail(context, video.uri, video.id)
-                        video.copy(thumbnailUri = thumb)
-                    } else video
+                val semaphore = kotlinx.coroutines.sync.Semaphore(3) // Process 3 at a time
+
+                scannedVideos.forEach { video ->
+                    launch(Dispatchers.Default) {
+                        semaphore.withPermit {
+                            // Don't enrich while playback is active to avoid MediaCodec contention
+                            while (PlaybackGlobalState.isAnyPlaybackActive.value) {
+                                delay(2000)
+                            }
+
+                            val result = com.beatraxus.app.utils.VideoThumbnailHelper.enrichVideo(context, video.uri, video.id)
+                            if (result.thumbnailUri != null || result.isHdr) {
+                                _videos.update { current ->
+                                    current.map {
+                                        if (it.id == video.id) it.copy(
+                                            thumbnailUri = result.thumbnailUri,
+                                            isHdr = result.isHdr
+                                        ) else it
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
-                
-                _videos.value = enrichedVideos
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to load videos", e)
-            } finally {
                 _uiState.update { it.copy(isLoadingVideos = false) }
             }
         }
@@ -1489,6 +1498,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                             inputSampleRate = if (sameSong) it.inputSampleRate else pbState.currentSong?.sampleRateHz ?: 44100
                         )
                     }
+
+                    PlaybackGlobalState.setPlaybackActive(pbState.isPlaying)
 
                     if (resetProgress) {
                         if (pbState.currentSong != null) {

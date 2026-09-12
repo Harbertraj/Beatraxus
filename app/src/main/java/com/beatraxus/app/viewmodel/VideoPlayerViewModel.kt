@@ -27,7 +27,11 @@ import com.beatraxus.app.engine.VideoRenderersFactory
 import com.beatraxus.app.model.Video
 import com.beatraxus.app.model.SavedEqPreset
 import com.beatraxus.app.model.VideoRecentlyPlayedEntity
+<<<<<<< HEAD
 import com.beatraxus.app.motionboost.*
+=======
+import com.beatraxus.app.util.PlaybackGlobalState
+>>>>>>> 2d9abc7 (remove fps booster)
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -165,10 +169,10 @@ class VideoPlayerViewModel(
 
     init {
         application.registerReceiver(volumeReceiver, IntentFilter("android.media.VOLUME_CHANGED_ACTION"))
-        
+
         // Initial capabilities detection
         updateMotionBoostCapabilities()
-        
+
         thermalMonitor.start { newState ->
             if (newState == ThermalState.HOT || newState == ThermalState.CRITICAL) {
                 viewModelScope.launch {
@@ -239,7 +243,8 @@ class VideoPlayerViewModel(
                 setVideoScalingMode(C.VIDEO_SCALING_MODE_SCALE_TO_FIT)
                 repeatMode = Player.REPEAT_MODE_OFF
                 setMediaItems(videoQueue.map { v -> MediaItem.Builder().setUri(v.uri).setMediaId(v.id).build() })
-                
+
+<<<<<<< HEAD
                 viewModelScope.launch(Dispatchers.IO) {
                     val recentlyPlayed = videoRecentlyPlayedDao.getRecentlyPlayedByVideoId(video.id)
                     val lastPos = recentlyPlayed?.lastPosition ?: 0L
@@ -248,12 +253,43 @@ class VideoPlayerViewModel(
                         prepare()
                         playWhenReady = true
                     }
+=======
+                val mediaItems = videoQueue.map { video ->
+                    MediaItem.Builder()
+                        .setUri(video.uri)
+                        .setMediaId(video.id)
+                        .build()
+                }
+                setMediaItems(mediaItems)
+                
+                // PERFORMANCE FIX: Prepare immediately before seeking/loading history
+                prepare()
+                
+                if (startIndex < videoQueue.size) {
+                    val initialVideo = videoQueue[startIndex]
+                    viewModelScope.launch(Dispatchers.IO) {
+                        val recentlyPlayed = videoRecentlyPlayedDao.getRecentlyPlayedByVideoId(initialVideo.id)
+                        val lastPos = recentlyPlayed?.lastPosition ?: 0L
+                        val lastRatio = recentlyPlayed?.lastAspectRatio?.let { ratioName ->
+                            VideoAspectRatio.entries.find { it.name == ratioName }
+                        } ?: VideoAspectRatio.FIT
+                        
+                        withContext(Dispatchers.Main) {
+                            _uiState.update { it.copy(aspectRatio = lastRatio) }
+                            seekTo(startIndex, lastPos)
+                            playWhenReady = true
+                        }
+                    }
+                } else {
+                    playWhenReady = true
+>>>>>>> 2d9abc7 (remove fps booster)
                 }
             }
 
         player.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 _uiState.update { it.copy(isPlaying = isPlaying) }
+                PlaybackGlobalState.setPlaybackActive(isPlaying)
                 if (isPlaying) startProgressUpdate() else {
                     stopProgressUpdate()
                     _uiState.value.currentVideo?.let { recordVideoPlayed(it) }
@@ -305,13 +341,13 @@ class VideoPlayerViewModel(
     private fun estimateSourceFps(timestampUs: Long) {
         if (lastCaptureTimeUs > 0) {
             val interval = timestampUs - lastCaptureTimeUs
-            if (interval in 5000..100000) { 
+            if (interval in 5000..100000) {
                 frameCaptureIntervals.add(interval)
                 if (frameCaptureIntervals.size > 10) { // Fast detection
                     frameCaptureIntervals.removeAt(0)
                     val avgInterval = frameCaptureIntervals.average()
                     val fps = 1_000_000f / avgInterval.toFloat()
-                    
+
                     val current = _uiState.value.sourceFrameRateInfo
                     if (current?.sourceFrameRate == null || current.isEstimated) {
                         _uiState.update { it.copy(sourceFrameRateInfo = VideoFrameRateInfo(fps, avgInterval.toLong(), true)) }
@@ -415,6 +451,134 @@ class VideoPlayerViewModel(
         }
     }
 
+<<<<<<< HEAD
+=======
+    fun toggleLock() {
+        _uiState.update { it.copy(isLocked = !it.isLocked) }
+    }
+
+    fun playNext() {
+        exoPlayer?.let {
+            if (it.hasNextMediaItem()) {
+                it.seekToNext()
+                it.play()
+            }
+        }
+    }
+
+    fun playPrevious() {
+        exoPlayer?.let {
+            if (it.hasPreviousMediaItem()) {
+                it.seekToPrevious()
+                it.play()
+            }
+        }
+    }
+
+    private var lastAudioSessionId: Int = -1
+
+    private fun setupLoudnessEnhancer(audioSessionId: Int) {
+        if (audioSessionId == android.media.audiofx.AudioEffect.ERROR_BAD_VALUE) return
+        if (audioSessionId == lastAudioSessionId && loudnessEnhancer != null && equalizer != null) return
+        
+        try {
+            lastAudioSessionId = audioSessionId
+            
+            loudnessEnhancer?.release()
+            loudnessEnhancer = android.media.audiofx.LoudnessEnhancer(audioSessionId).apply {
+                enabled = true
+            }
+            updateLoudness()
+
+            equalizer?.release()
+            equalizer = android.media.audiofx.Equalizer(0, audioSessionId).apply {
+                applyEqGains() // Apply gains BEFORE enabling to prevent pops and state errors
+                enabled = _uiState.value.isEqEnabled
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to setup Audio Effects", e)
+        }
+    }
+
+    private fun applyEqGains() {
+        val eq = equalizer ?: return
+        val state = _uiState.value
+        
+        try {
+            // FIX: Don't set enabled here if it might be uninitialized
+            // The setupLoudnessEnhancer will handle initial enablement.
+            if (eq.enabled != state.isEqEnabled) {
+                eq.enabled = state.isEqEnabled
+            }
+
+            if (!state.isEqEnabled) return
+
+            val gains = state.eqGains
+            val numBands = eq.numberOfBands.toInt()
+            val range = eq.bandLevelRange
+            val minLevel = range[0]
+            val maxLevel = range[1]
+
+            for (i in 0 until numBands.coerceAtMost(gains.size)) {
+                val level = (gains[i] * 100).toInt().toShort() 
+                val clampedLevel = level.coerceIn(minLevel, maxLevel)
+                try {
+                    eq.setBandLevel(i.toShort(), clampedLevel)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to set EQ band $i", e)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Hardware Equalizer error in applyEqGains", e)
+        }
+    }
+
+    private fun updateLoudness() {
+        val state = _uiState.value
+        val systemMax = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        
+        if (!state.isVolumeBoost) {
+            loudnessEnhancer?.setTargetGain(0)
+            return
+        }
+        
+        if (state.volume > systemMax) {
+            val gain = (state.volume - systemMax) * 200 
+            loudnessEnhancer?.setTargetGain(gain)
+        } else {
+            loudnessEnhancer?.setTargetGain(500) 
+        }
+    }
+
+    fun setVolume(volume: Int) {
+        val systemMax = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        val max = if (!_uiState.value.isVolumeBoost) systemMax else systemMax * 2
+        val newVol = volume.coerceIn(0, max)
+        
+        // Sync with system volume if not in boost range
+        if (newVol <= systemMax) {
+            audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, newVol, 0)
+        }
+        
+        _uiState.update { it.copy(volume = newVol, maxVolume = max) }
+        updateLoudness()
+    }
+
+    fun toggleVolumeBoost() {
+        val systemMax = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        _uiState.update { 
+            val nextBoost = !it.isVolumeBoost
+            val newMax = if (!nextBoost) systemMax else systemMax * 2
+            it.copy(
+                isVolumeBoost = nextBoost,
+                maxVolume = newMax,
+                volume = it.volume.coerceAtMost(newMax)
+            )
+        }
+        updateLoudness()
+    }
+
+>>>>>>> 2d9abc7 (remove fps booster)
     fun toggleTimeDisplay() {
         _uiState.update { 
             val next = !it.showTotalTime
@@ -460,9 +624,9 @@ class VideoPlayerViewModel(
         _uiState.update { it.copy(volume = newV) }
     }
 
-    fun toggleVolumeBoost() = _uiState.update { 
+    fun toggleVolumeBoost() = _uiState.update {
         val next = !it.isVolumeBoost
-        it.copy(isVolumeBoost = next, maxVolume = if (next) 30 else 15) 
+        it.copy(isVolumeBoost = next, maxVolume = if (next) 30 else 15)
     }
 
     fun toggleEqEnabled() {
@@ -580,6 +744,11 @@ class VideoPlayerViewModel(
     override fun onCleared() {
         super.onCleared()
         getApplication<Application>().unregisterReceiver(volumeReceiver)
+<<<<<<< HEAD
+=======
+        _uiState.value.currentVideo?.let { recordVideoPlayed(it) }
+        PlaybackGlobalState.setPlaybackActive(false)
+>>>>>>> 2d9abc7 (remove fps booster)
         loudnessEnhancer?.release()
         equalizer?.release()
         exoPlayer?.release()

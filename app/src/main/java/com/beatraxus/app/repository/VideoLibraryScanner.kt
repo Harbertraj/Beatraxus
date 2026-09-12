@@ -64,9 +64,6 @@ class VideoLibraryScanner(private val context: Context) {
                 val contentUri = ContentUris.withAppendedId(collection, id)
                 val folderPath = data.substringBeforeLast("/", "Unknown")
 
-                // HDR Detection (API 24+)
-                val isHdr = detectHdr(contentUri)
-
                 videos.add(
                     Video(
                         id = id.toString(),
@@ -80,29 +77,12 @@ class VideoLibraryScanner(private val context: Context) {
                         resolutionHeight = height,
                         mimeType = mimeType,
                         dateAdded = dateAdded,
-                        thumbnailUri = null, // Will be handled in Phase 2
-                        isHdr = isHdr
+                        thumbnailUri = null,
+                        isHdr = false // Initially false, enriched in background
                     )
                 )
             }
         }
         videos
-    }
-
-    private fun detectHdr(uri: Uri): Boolean {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return false
-        
-        val retriever = MediaMetadataRetriever()
-        return try {
-            retriever.setDataSource(context, uri)
-            // METADATA_KEY_COLOR_TRANSFER = 36 (Available from API 30, but value 36 works on 24+ via raw int)
-            val colorTransfer = retriever.extractMetadata(36)
-            // 6 = HLG, 7 = PQ (HDR10/HDR10+)
-            colorTransfer == "6" || colorTransfer == "7"
-        } catch (e: Exception) {
-            false
-        } finally {
-            try { retriever.release() } catch (e: Exception) {}
-        }
     }
 }
