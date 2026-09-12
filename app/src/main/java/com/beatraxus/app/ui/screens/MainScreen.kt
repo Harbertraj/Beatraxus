@@ -461,6 +461,7 @@ fun MainScreen(
 
     LaunchedEffect(showFullPlayer) {
         if (showFullPlayer) {
+            viewModel.setSearchActive(false)
             keyboardController?.hide()
             focusManager.clearFocus()
             viewModel.setShowFullPlayer(false)
@@ -2830,8 +2831,8 @@ fun MainScreen(
                                         .padding(bottom = paddingValues.calculateBottomPadding() + 12.dp)
                                         .padding(horizontal = 12.dp)
                                 ) {
-                                    val isVisible = uiState.currentSong != null && !showFullPlayer && 
-                                        (uiState.playbackMode != com.beatraxus.app.model.PlaybackMode.VIDEO || uiState.currentSong?.isFromVideo == true)
+                                    val isVisible = uiState.currentSong != null && !showFullPlayer
+
                                     androidx.compose.animation.AnimatedVisibility(
                                         visible = isVisible,
                                         enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),

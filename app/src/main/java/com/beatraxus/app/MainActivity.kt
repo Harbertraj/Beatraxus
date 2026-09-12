@@ -17,6 +17,7 @@ import android.util.Log
 import java.security.MessageDigest
 import androidx.fragment.app.FragmentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.viewModels
@@ -191,6 +192,7 @@ class MainActivity : FragmentActivity() {
         }
 
         // Enable edge-to-edge
+        enableEdgeToEdge()
         WindowCompat.setDecorFitsSystemWindows(window, false)
         val controller = WindowCompat.getInsetsController(window, window.decorView)
         controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_DEFAULT

@@ -167,6 +167,7 @@ fun VideoPlayerScreen(
             if (window != null) {
                 val controller = WindowCompat.getInsetsController(window, window.decorView)
                 controller.show(WindowInsetsCompat.Type.systemBars())
+                controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_DEFAULT
                 window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             }
         }
