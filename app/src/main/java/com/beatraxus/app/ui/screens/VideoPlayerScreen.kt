@@ -1,6 +1,7 @@
 package com.beatraxus.app.ui.screens
 
 import android.app.Activity
+import android.app.PictureInPictureParams
 import android.content.Context
 import android.content.pm.ActivityInfo
 import android.graphics.SurfaceTexture
@@ -21,6 +22,9 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.material.icons.rounded.Bookmark
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -37,6 +41,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.*
 import androidx.compose.ui.layout.ContentScale
@@ -77,7 +82,7 @@ enum class GestureType {
 }
 
 enum class PlayerSheetType {
-    NONE, AUDIO, SUBTITLE, SPEED, ALL, EQUALIZER, MOTION_BOOST
+    NONE, AUDIO, SUBTITLE, SPEED, ALL, EQUALIZER, MOTION_BOOST, SLEEP_TIMER, COLOR
 }
 
 @UnstableApi
@@ -124,6 +129,8 @@ fun VideoPlayerScreen(
     var doubleTapRipplePos by remember { mutableStateOf<Offset?>(null) }
     var doubleTapRippleText by remember { mutableStateOf("") }
 
+    var showChapterStrip by remember { mutableStateOf(false) }
+
     // Auto-hide controls
     LaunchedEffect(controlsVisible, uiState.isPlaying) {
         if (controlsVisible && uiState.isPlaying && !uiState.isLocked) {
@@ -152,7 +159,7 @@ fun VideoPlayerScreen(
     // Orientation and Fullscreen management
     DisposableEffect(Unit) {
         val originalOrientation = activity?.requestedOrientation ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         
         val window = activity?.window
         if (window != null) {
@@ -444,16 +451,31 @@ fun VideoPlayerScreen(
 
         // UI Layer
         AnimatedVisibility(
-            visible = controlsVisible && sheetType == PlayerSheetType.NONE && !isInPiP,
+            visible = (controlsVisible || showChapterStrip) && sheetType == PlayerSheetType.NONE && !isInPiP,
             enter = fadeIn(),
             exit = fadeOut()
         ) {
             Box(modifier = Modifier.fillMaxSize()) {
                 if (!uiState.isLocked) {
+                    if (showChapterStrip) {
+                        ChapterThumbnailStrip(
+                            chapters = uiState.chapters,
+                            onChapterClick = { 
+                                viewModel.seekTo(it.timestampMs)
+                                showChapterStrip = false
+                            },
+                            onDismiss = { showChapterStrip = false },
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .padding(bottom = 120.dp)
+                        )
+                    }
+
                     // Top Bar
                     PlayerTopBar(
                         title = uiState.currentVideo?.title ?: "",
                         isHdr = uiState.isHdr,
+                        sleepTimerRemainingMs = uiState.sleepTimerRemainingMs,
                         onBack = onBack,
                         onAudioClick = { sheetType = PlayerSheetType.AUDIO },
                         onSubtitleClick = { sheetType = PlayerSheetType.SUBTITLE },
@@ -464,13 +486,22 @@ fun VideoPlayerScreen(
                     FloatingControls(
                         uiState = uiState,
                         sheetType = sheetType,
-                        onPiPClick = { activity?.enterPictureInPictureMode() },
+                        onPiPClick = { 
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                activity?.enterPictureInPictureMode(android.app.PictureInPictureParams.Builder().build()) 
+                            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                                activity?.enterPictureInPictureMode()
+                            }
+                        },
                         onSpeedClick = { sheetType = PlayerSheetType.SPEED },
                         onEqClick = { sheetType = PlayerSheetType.EQUALIZER },
                         onToggleBoost = { viewModel.toggleVolumeBoost() },
                         onHeadphonesClick = { viewModel.toggleBackgroundPlay() },
                         onRotationClick = { activity?.let { viewModel.toggleOrientation(it) } },
                         onMotionBoostClick = { sheetType = PlayerSheetType.MOTION_BOOST },
+                        onColorClick = { sheetType = PlayerSheetType.COLOR },
+                        onAbRepeatClick = { viewModel.toggleAbRepeat() },
+                        onSleepTimerClick = { sheetType = PlayerSheetType.SLEEP_TIMER },
                         modifier = Modifier
                             .align(Alignment.TopCenter)
                             .padding(top = 110.dp)
@@ -483,6 +514,7 @@ fun VideoPlayerScreen(
                         onPlayNext = { viewModel.playNext() },
                         onPlayPrevious = { viewModel.playPrevious() },
                         onSeek = { viewModel.seekTo(it) },
+                        onStepFrame = { viewModel.stepFrame(it) },
                         onLock = { viewModel.toggleLock() },
                         onTimeClick = { viewModel.toggleTimeDisplay() },
                         onAspectRatioClick = { 
@@ -495,8 +527,46 @@ fun VideoPlayerScreen(
                             }
                             viewModel.setAspectRatio(nextRatio)
                         },
+                        onScrubbing = { viewModel.updateScrubbingPreview(it) },
+                        onLongPress = { showChapterStrip = true },
                         modifier = Modifier.align(Alignment.BottomCenter)
                     )
+
+                    // Skip Intro Button
+                    androidx.compose.animation.AnimatedVisibility(
+                        visible = uiState.showSkipIntroButton,
+                        enter = fadeIn() + expandHorizontally(expandFrom = Alignment.End),
+                        exit = fadeOut() + shrinkHorizontally(shrinkTowards = Alignment.End),
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(bottom = 120.dp, end = 24.dp)
+                    ) {
+                        Surface(
+                            onClick = { viewModel.skipIntro() },
+                            color = Color.Black.copy(alpha = 0.6f),
+                            shape = RoundedCornerShape(24.dp),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    "Skip Intro",
+                                    color = Color.White,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Icon(
+                                    Icons.Rounded.ChevronRight,
+                                    null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+                    }
                 } else {
                     // Lock Icon only
                     Box(
@@ -549,45 +619,76 @@ fun FloatingControls(
     onHeadphonesClick: () -> Unit,
     onRotationClick: () -> Unit,
     onMotionBoostClick: () -> Unit,
+    onColorClick: () -> Unit,
+    onAbRepeatClick: () -> Unit,
+    onSleepTimerClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Row(
+    val scrollState = rememberScrollState()
+    
+    Box(
         modifier = modifier
+            .padding(horizontal = 24.dp)
             .clip(RoundedCornerShape(24.dp))
             .background(Color.Black.copy(0.4f))
-            .padding(horizontal = 12.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
+            .horizontalScroll(scrollState)
     ) {
-        IconButton(onClick = onPiPClick) {
-            Icon(Icons.Rounded.PictureInPicture, null, tint = Color.White)
-        }
-        IconButton(onClick = onSpeedClick) {
-            Icon(Icons.Rounded.Speed, null, tint = if (uiState.playbackSpeed != 1.0f) Color(0xFFFF8F00) else Color.White)
-        }
-        IconButton(onClick = onEqClick) {
-            Icon(Icons.Rounded.Equalizer, null, tint = if (uiState.isEqEnabled) Color(0xFFFF8F00) else Color.White)
-        }
-        IconButton(onClick = onToggleBoost) {
-            Icon(if (uiState.isVolumeBoost) Icons.Rounded.VolumeUp else Icons.Rounded.VolumeDown, null, tint = if (uiState.isVolumeBoost) Color(0xFFFF8F00) else Color.White)
-        }
-        IconButton(onClick = onHeadphonesClick) {
-            val iconColor = if (uiState.isBackgroundPlayEnabled) Color(0xFFFF8F00) else Color.White
-            Icon(
-                Icons.Rounded.Headset, 
-                null, 
-                tint = iconColor
-            )
-        }
-        IconButton(onClick = onRotationClick) {
-            Icon(Icons.Rounded.ScreenRotation, null, tint = Color.White)
-        }
-        IconButton(onClick = onMotionBoostClick) {
-            Icon(
-                Icons.Rounded.SlowMotionVideo,
-                null,
-                tint = if (uiState.motionBoostMode != MotionBoostMode.ORIGINAL) Color(0xFFFF8F00) else Color.White
-            )
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            IconButton(onClick = onPiPClick) {
+                Icon(Icons.Rounded.PictureInPicture, null, tint = Color.White)
+            }
+            IconButton(onClick = onAbRepeatClick) {
+                Icon(
+                    Icons.Rounded.Repeat, 
+                    null, 
+                    tint = if (uiState.isAbRepeatActive || uiState.abRepeatPointA != null) Color(0xFFFF8F00) else Color.White
+                )
+            }
+            IconButton(onClick = onSleepTimerClick) {
+                Icon(
+                    Icons.Rounded.Bedtime, 
+                    null, 
+                    tint = if (uiState.sleepTimerMode != com.beatraxus.app.viewmodel.SleepTimerMode.OFF) Color(0xFFFF8F00) else Color.White
+                )
+            }
+            IconButton(onClick = onSpeedClick) {
+                Icon(Icons.Rounded.Speed, null, tint = if (uiState.playbackSpeed != 1.0f) Color(0xFFFF8F00) else Color.White)
+            }
+            IconButton(onClick = onEqClick) {
+                Icon(Icons.Rounded.Equalizer, null, tint = if (uiState.isEqEnabled) Color(0xFFFF8F00) else Color.White)
+            }
+            IconButton(onClick = onToggleBoost) {
+                Icon(if (uiState.isVolumeBoost) Icons.Rounded.VolumeUp else Icons.Rounded.VolumeDown, null, tint = if (uiState.isVolumeBoost) Color(0xFFFF8F00) else Color.White)
+            }
+            IconButton(onClick = onHeadphonesClick) {
+                val iconColor = if (uiState.isBackgroundPlayEnabled) Color(0xFFFF8F00) else Color.White
+                Icon(
+                    Icons.Rounded.Headset, 
+                    null, 
+                    tint = iconColor
+                )
+            }
+            IconButton(onClick = onRotationClick) {
+                Icon(Icons.Rounded.ScreenRotation, null, tint = Color.White)
+            }
+            IconButton(onClick = onMotionBoostClick) {
+                Icon(
+                    Icons.Rounded.SlowMotionVideo,
+                    null,
+                    tint = if (uiState.motionBoostMode != MotionBoostMode.ORIGINAL) Color(0xFFFF8F00) else Color.White
+                )
+            }
+            IconButton(onClick = onColorClick) {
+                 Icon(
+                    Icons.Rounded.Tune,
+                    null,
+                    tint = if (uiState.colorBrightness != 0f || uiState.colorContrast != 1f || uiState.colorSaturation != 1f) Color(0xFFFF8F00) else Color.White
+                )
+            }
         }
     }
 }
@@ -667,6 +768,7 @@ fun DoubleTapRipple(offset: Offset, text: String) {
 fun PlayerTopBar(
     title: String,
     isHdr: Boolean,
+    sleepTimerRemainingMs: Long? = null,
     onBack: () -> Unit,
     onAudioClick: () -> Unit,
     onSubtitleClick: () -> Unit,
@@ -680,7 +782,8 @@ fun PlayerTopBar(
                     listOf(Color.Black.copy(0.7f), Color.Transparent)
                 )
             )
-            .padding(top = 40.dp, bottom = 20.dp, start = 8.dp, end = 8.dp)
+            .statusBarsPadding()
+            .padding(bottom = 20.dp, start = 8.dp, end = 8.dp)
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -691,14 +794,40 @@ fun PlayerTopBar(
             }
             Spacer(Modifier.width(8.dp))
             Column(Modifier.weight(1f)) {
-                Text(
-                    text = title,
-                    color = Color.White,
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = title,
+                        color = Color.White,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                    
+                    if (sleepTimerRemainingMs != null) {
+                        Spacer(Modifier.width(8.dp))
+                        Surface(
+                            color = Color(0xFFFF8F00).copy(alpha = 0.2f),
+                            shape = RoundedCornerShape(12.dp),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFF8F00).copy(alpha = 0.5f))
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Rounded.Timer, null, tint = Color(0xFFFF8F00), modifier = Modifier.size(14.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text(
+                                    formatTime(sleepTimerRemainingMs),
+                                    color = Color(0xFFFF8F00),
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+                }
             }
             if (isHdr) {
                 Box(
@@ -734,9 +863,12 @@ fun PlayerBottomBar(
     onPlayNext: () -> Unit,
     onPlayPrevious: () -> Unit,
     onSeek: (Long) -> Unit,
+    onStepFrame: (Boolean) -> Unit,
     onLock: () -> Unit,
     onTimeClick: () -> Unit,
     onAspectRatioClick: () -> Unit,
+    onScrubbing: (Long?) -> Unit,
+    onLongPress: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Box(
@@ -750,6 +882,62 @@ fun PlayerBottomBar(
             .padding(bottom = 20.dp, top = 20.dp, start = 16.dp, end = 16.dp)
     ) {
         Column {
+            // Scrub Preview Overlay
+            uiState.scrubbingTimeMs?.let { timeMs ->
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 8.dp),
+                    contentAlignment = Alignment.BottomStart
+                ) {
+                    val progress = if (uiState.duration > 0) timeMs.toFloat() / uiState.duration else 0f
+                    
+                    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+                        val xOffset = this.maxWidth * progress
+                        
+                        Column(
+                            modifier = Modifier
+                                .offset(x = xOffset - 80.dp) // center the 160dp wide preview
+                                .width(160.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Color.Black.copy(0.8f))
+                                .border(1.dp, Color.White.copy(0.2f), RoundedCornerShape(8.dp)),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            if (uiState.scrubbingThumbnail != null) {
+                                androidx.compose.foundation.Image(
+                                    bitmap = uiState.scrubbingThumbnail.asImageBitmap(),
+                                    contentDescription = null,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .aspectRatio(16f / 9f)
+                                        .clip(RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp)),
+                                    contentScale = ContentScale.Crop
+                                )
+                            } else {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .aspectRatio(16f / 9f)
+                                        .background(Color.DarkGray.copy(0.5f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp, color = Color.White)
+                                }
+                            }
+                            
+                            Text(
+                                text = formatTime(timeMs),
+                                color = Color.White,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(vertical = 4.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
             // Seek bar
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
@@ -759,17 +947,83 @@ fun PlayerBottomBar(
                     fontWeight = FontWeight.Medium
                 )
                 val mxOrange = Color(0xFFFF8F00)
-                Slider(
-                    value = uiState.currentPosition.toFloat(),
-                    onValueChange = { onSeek(it.toLong()) },
-                    valueRange = 0f..uiState.duration.toFloat().coerceAtLeast(1f),
-                    modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
-                    colors = SliderDefaults.colors(
-                        thumbColor = mxOrange,
-                        activeTrackColor = mxOrange,
-                        inactiveTrackColor = Color.White.copy(0.3f)
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(horizontal = 8.dp)
+                        .pointerInput(Unit) {
+                            detectTapGestures(
+                                onLongPress = { onLongPress() }
+                            )
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    // Chapter Ticks & AB Repeat Track Background
+                    if (uiState.duration > 0) {
+                        androidx.compose.foundation.Canvas(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(4.dp)
+                        ) {
+                            val trackWidth = size.width
+                            
+                            // Draw Chapter Ticks
+                            uiState.chapters.forEach { chapter ->
+                                val tickX = (chapter.timestampMs.toFloat() / uiState.duration.toFloat()) * trackWidth
+                                drawRect(
+                                    color = Color.White.copy(alpha = 0.6f),
+                                    topLeft = Offset(tickX - 0.5.dp.toPx(), 0f),
+                                    size = androidx.compose.ui.geometry.Size(1.dp.toPx(), size.height)
+                                )
+                            }
+
+                            val startX = (uiState.abRepeatPointA?.toFloat() ?: 0f) / uiState.duration.toFloat() * trackWidth
+                            val endX = (uiState.abRepeatPointB?.toFloat() ?: uiState.duration.toFloat()) / uiState.duration.toFloat() * trackWidth
+                            
+                            if (uiState.abRepeatPointA != null && uiState.abRepeatPointB != null) {
+                                drawRect(
+                                    color = mxOrange.copy(alpha = 0.3f),
+                                    topLeft = Offset(startX, 0f),
+                                    size = androidx.compose.ui.geometry.Size(endX - startX, size.height)
+                                )
+                            }
+                            
+                            uiState.abRepeatPointA?.let {
+                                drawRect(
+                                    color = mxOrange,
+                                    topLeft = Offset(startX - 1.dp.toPx(), -2.dp.toPx()),
+                                    size = androidx.compose.ui.geometry.Size(2.dp.toPx(), size.height + 4.dp.toPx())
+                                )
+                            }
+                            
+                            uiState.abRepeatPointB?.let {
+                                drawRect(
+                                    color = mxOrange,
+                                    topLeft = Offset(endX - 1.dp.toPx(), -2.dp.toPx()),
+                                    size = androidx.compose.ui.geometry.Size(2.dp.toPx(), size.height + 4.dp.toPx())
+                                )
+                            }
+                        }
+                    }
+
+                    Slider(
+                        value = (uiState.scrubbingTimeMs ?: uiState.currentPosition).toFloat(),
+                        onValueChange = { 
+                            onScrubbing(it.toLong())
+                        },
+                        onValueChangeFinished = {
+                            uiState.scrubbingTimeMs?.let { onSeek(it) }
+                            onScrubbing(null)
+                        },
+                        valueRange = 0f..uiState.duration.toFloat().coerceAtLeast(1f),
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = SliderDefaults.colors(
+                            thumbColor = mxOrange,
+                            activeTrackColor = mxOrange,
+                            inactiveTrackColor = Color.White.copy(0.3f)
+                        )
                     )
-                )
+                }
                 Text(
                     text = if (uiState.showTotalTime) {
                         "-${formatTime(uiState.duration - uiState.currentPosition)}"
@@ -799,6 +1053,16 @@ fun PlayerBottomBar(
                     IconButton(onClick = onPlayPrevious) {
                         Icon(Icons.Rounded.SkipPrevious, null, tint = Color.White, modifier = Modifier.size(32.dp))
                     }
+                    
+                    if (!uiState.isPlaying) {
+                        IconButton(
+                            onClick = { onStepFrame(false) },
+                            modifier = Modifier.size(24.dp)
+                        ) {
+                            Icon(Icons.Rounded.KeyboardArrowLeft, null, tint = Color.White.copy(0.7f), modifier = Modifier.size(20.dp))
+                        }
+                    }
+
                     IconButton(
                         onClick = onTogglePlayPause,
                         modifier = Modifier.size(64.dp)
@@ -810,6 +1074,16 @@ fun PlayerBottomBar(
                             modifier = Modifier.size(56.dp)
                         )
                     }
+
+                    if (!uiState.isPlaying) {
+                        IconButton(
+                            onClick = { onStepFrame(true) },
+                            modifier = Modifier.size(24.dp)
+                        ) {
+                            Icon(Icons.Rounded.KeyboardArrowRight, null, tint = Color.White.copy(0.7f), modifier = Modifier.size(20.dp))
+                        }
+                    }
+
                     IconButton(onClick = onPlayNext) {
                         Icon(Icons.Rounded.SkipNext, null, tint = Color.White, modifier = Modifier.size(32.dp))
                     }
@@ -850,6 +1124,8 @@ fun VideoSettingsSheetContent(
             PlayerSheetType.SPEED -> "Playback Speed"
             PlayerSheetType.EQUALIZER -> "Premium Equalizer"
             PlayerSheetType.MOTION_BOOST -> "Motion Boost"
+            PlayerSheetType.SLEEP_TIMER -> "Sleep Timer"
+            PlayerSheetType.COLOR -> "Color Grading"
             else -> "Settings"
         }
         
@@ -866,6 +1142,12 @@ fun VideoSettingsSheetContent(
                     onCheckedChange = { viewModel.toggleEqEnabled() },
                     colors = SwitchDefaults.colors(checkedThumbColor = mxOrange, checkedTrackColor = mxOrange.copy(0.4f))
                 )
+            }
+
+            if (sheetType == PlayerSheetType.COLOR) {
+                IconButton(onClick = { viewModel.resetColorGrading() }) {
+                    Icon(Icons.Rounded.RestartAlt, "Reset", tint = Color.White)
+                }
             }
         }
         
@@ -952,6 +1234,36 @@ fun VideoSettingsSheetContent(
                     }
                 }
             }
+        }
+
+        // Color Grading Section
+        if (sheetType == PlayerSheetType.COLOR) {
+            ColorGradingSection(uiState, viewModel)
+        }
+
+        // HDR Tone Mapping Toggle
+        if (uiState.isHdr && (sheetType == PlayerSheetType.COLOR || sheetType == PlayerSheetType.ALL)) {
+            Spacer(Modifier.height(16.dp))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Color.White.copy(0.05f))
+                    .padding(16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Force SDR Tone-mapping", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                    Text("Improve visibility on non-HDR displays", color = Color.White.copy(0.6f), fontSize = 12.sp)
+                }
+                Switch(
+                    checked = uiState.forceSdrToneMapping,
+                    onCheckedChange = { viewModel.setForceSdrToneMapping(it) },
+                    colors = SwitchDefaults.colors(checkedThumbColor = mxOrange, checkedTrackColor = mxOrange.copy(0.4f))
+                )
+            }
+            Spacer(Modifier.height(16.dp))
         }
 
         // Audio Tracks
@@ -1059,6 +1371,11 @@ fun VideoSettingsSheetContent(
             MotionBoostSheetContent(uiState, viewModel)
         }
 
+        // Sleep Timer
+        if (sheetType == PlayerSheetType.SLEEP_TIMER) {
+            SleepTimerSheetContent(uiState, viewModel)
+        }
+
         // Subtitle Style
         if (sheetType == PlayerSheetType.SUBTITLE || sheetType == PlayerSheetType.ALL) {
             SettingSectionHeader("Subtitle Appearance")
@@ -1114,6 +1431,7 @@ fun VideoSettingsSheetContent(
     }
 }
 
+@androidx.media3.common.util.UnstableApi
 @Composable
 fun MotionBoostSheetContent(
     uiState: VideoPlayerUiState,
@@ -1240,6 +1558,44 @@ fun MotionBoostSheetContent(
     }
 }
 
+@androidx.media3.common.util.UnstableApi
+@Composable
+fun SleepTimerSheetContent(
+    uiState: VideoPlayerUiState,
+    viewModel: VideoPlayerViewModel
+) {
+    val mxOrange = Color(0xFFFF8F00)
+    
+    Column(modifier = Modifier.fillMaxWidth()) {
+        SettingSectionHeader("Auto-Stop Playback")
+        
+        com.beatraxus.app.viewmodel.SleepTimerMode.entries.forEach { mode ->
+            val isSelected = uiState.sleepTimerMode == mode
+            
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { viewModel.setSleepTimer(mode) }
+                    .padding(vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                RadioButton(
+                    selected = isSelected,
+                    onClick = { viewModel.setSleepTimer(mode) },
+                    colors = RadioButtonDefaults.colors(selectedColor = mxOrange, unselectedColor = Color.White)
+                )
+                Text(
+                    text = mode.label,
+                    color = Color.White,
+                    fontSize = 16.sp,
+                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+    }
+}
+
 @Composable
 fun InfoRow(label: String, value: String) {
     Row(
@@ -1285,6 +1641,85 @@ fun SettingSectionHeader(title: String) {
     )
 }
 
+@Composable
+fun ChapterThumbnailStrip(
+    chapters: List<com.beatraxus.app.model.VideoChapterEntity>,
+    onChapterClick: (com.beatraxus.app.model.VideoChapterEntity) -> Unit,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    if (chapters.isEmpty()) return
+
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(Color.Black.copy(alpha = 0.8f))
+            .padding(vertical = 16.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("Chapters", color = Color.White, fontWeight = FontWeight.Bold)
+            IconButton(onClick = onDismiss) {
+                Icon(Icons.Rounded.Close, null, tint = Color.White)
+            }
+        }
+        
+        LazyRow(
+            contentPadding = PaddingValues(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            items(chapters) { chapter ->
+                Column(
+                    modifier = Modifier
+                        .width(140.dp)
+                        .clickable { onChapterClick(chapter) }
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .aspectRatio(16f / 9f)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color.White.copy(alpha = 0.1f))
+                    ) {
+                        if (chapter.thumbnailPath != null) {
+                            androidx.compose.foundation.Image(
+                                painter = coil.compose.rememberAsyncImagePainter(java.io.File(chapter.thumbnailPath)),
+                                contentDescription = null,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        }
+                        
+                        Text(
+                            text = formatTime(chapter.timestampMs),
+                            color = Color.White,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .background(Color.Black.copy(0.6f), RoundedCornerShape(topStart = 4.dp))
+                                .padding(horizontal = 4.dp, vertical = 2.dp)
+                        )
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = chapter.label,
+                        color = Color.White,
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        }
+    }
+}
+
 private fun formatTime(ms: Long): String {
     val totalSeconds = (ms / 1000).coerceAtLeast(0)
     val hours = totalSeconds / 3600
@@ -1294,5 +1729,50 @@ private fun formatTime(ms: Long): String {
         String.format("%d:%02d:%02d", hours, minutes, seconds)
     } else {
         String.format("%02d:%02d", minutes, seconds)
+    }
+}
+
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+@Composable
+fun ColorGradingSection(uiState: VideoPlayerUiState, viewModel: VideoPlayerViewModel) {
+    val mxOrange = Color(0xFFFF8F00)
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        ColorSliderRow(
+            label = "Brightness",
+            value = uiState.colorBrightness,
+            valueRange = -1f..1f,
+            onValueChange = { viewModel.setColorGrading(it, uiState.colorContrast, uiState.colorSaturation) },
+            mxOrange = mxOrange
+        )
+        ColorSliderRow(
+            label = "Contrast",
+            value = uiState.colorContrast,
+            valueRange = 0f..2f,
+            onValueChange = { viewModel.setColorGrading(uiState.colorBrightness, it, uiState.colorSaturation) },
+            mxOrange = mxOrange
+        )
+        ColorSliderRow(
+            label = "Saturation",
+            value = uiState.colorSaturation,
+            valueRange = 0f..2f,
+            onValueChange = { viewModel.setColorGrading(uiState.colorBrightness, uiState.colorContrast, it) },
+            mxOrange = mxOrange
+        )
+    }
+}
+
+@Composable
+fun ColorSliderRow(label: String, value: Float, valueRange: ClosedFloatingPointRange<Float>, onValueChange: (Float) -> Unit, mxOrange: Color) {
+    Column {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(label, color = Color.White.copy(0.7f), fontSize = 14.sp)
+            Text(String.format("%.2f", value), color = mxOrange, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+        }
+        Slider(
+            value = value,
+            onValueChange = onValueChange,
+            valueRange = valueRange,
+            colors = SliderDefaults.colors(thumbColor = mxOrange, activeTrackColor = mxOrange, inactiveTrackColor = Color.White.copy(0.1f))
+        )
     }
 }

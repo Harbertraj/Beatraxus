@@ -664,6 +664,20 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
 
+        viewModelScope.launch {
+            combine(
+                allVideos,
+                videoRecentlyPlayedDao.getContinueWatching(10)
+            ) { vids, entities ->
+                entities.mapNotNull { entity ->
+                    val video = vids.find { it.id == entity.videoId }
+                    if (video != null) video to entity else null
+                }
+            }.collect { list ->
+                _uiState.update { it.copy(continueWatching = list) }
+            }
+        }
+
         // Observe Telegram auth state
         viewModelScope.launch {
             tdLibManager.authState.collect { state ->

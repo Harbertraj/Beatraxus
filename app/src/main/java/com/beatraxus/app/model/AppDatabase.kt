@@ -93,6 +93,9 @@ interface VideoRecentlyPlayedDao {
 
     @Query("DELETE FROM recently_played_videos WHERE LOWER(accountEmail) = LOWER(:email)")
     suspend fun deleteByAccount(email: String)
+
+    @Query("SELECT * FROM recently_played_videos ORDER BY timestamp DESC LIMIT :limit")
+    fun getContinueWatching(limit: Int): Flow<List<VideoRecentlyPlayedEntity>>
 }
 
 @Database(
@@ -100,9 +103,9 @@ interface VideoRecentlyPlayedDao {
         PlaylistEntity::class, FavoriteEntity::class, SongEntity::class, RecentlyPlayedEntity::class,
         LyricsEntity::class, FolderEntity::class, AiAnalysisEntity::class, ArtistArtEntity::class,
         SongQualityEntity::class, BookmarkEntity::class, ChapterEntity::class, HighlightEntity::class,
-        LoudnessEntity::class, VideoRecentlyPlayedEntity::class
+        LoudnessEntity::class, VideoRecentlyPlayedEntity::class, IntroOutroRange::class, VideoChapterEntity::class
     ],
-    version = 24,
+    version = 27,
     exportSchema = false
 )
 @TypeConverters(Converters::class)
@@ -121,8 +124,40 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun chapterDao(): ChapterDao
     abstract fun highlightDao(): HighlightDao
     abstract fun loudnessDao(): LoudnessDao
+    abstract fun introOutroDao(): IntroOutroDao
+    abstract fun videoChapterDao(): VideoChapterDao
 
     companion object {
+        val MIGRATION_26_27 = object : Migration(26, 27) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS video_chapters (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        videoId TEXT NOT NULL,
+                        timestampMs INTEGER NOT NULL,
+                        label TEXT NOT NULL,
+                        thumbnailPath TEXT)
+                """.trimIndent())
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_video_chapters_videoId ON video_chapters(videoId)")
+            }
+        }
+        val MIGRATION_25_26 = object : Migration(25, 26) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE recently_played_videos RENAME COLUMN lastPosition TO lastPositionMs")
+                db.execSQL("ALTER TABLE recently_played_videos ADD COLUMN durationMs INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+        val MIGRATION_24_25 = object : Migration(24, 25) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS intro_outro_ranges (
+                        folderPath TEXT NOT NULL PRIMARY KEY,
+                        startMs INTEGER NOT NULL,
+                        endMs INTEGER NOT NULL,
+                        lastUpdated INTEGER NOT NULL)
+                """.trimIndent())
+            }
+        }
         val MIGRATION_22_23 = object : Migration(22, 23) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE recently_played_videos ADD COLUMN lastAspectRatio TEXT")

@@ -433,7 +433,10 @@ data class PlayerUiState(
     val navigateToVideoPlayer: String? = null,
     val bgVideoActive: Boolean = false,
     val bgVideoId: String? = null,
-    val bgVideoPos: Long = 0L
+    val bgVideoPos: Long = 0L,
+
+    // Continue Watching
+    val continueWatching: List<Pair<com.beatraxus.app.model.Video, VideoRecentlyPlayedEntity>> = emptyList()
 )
 {
     override fun equals(other: Any?): Boolean {

@@ -45,9 +45,15 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.items as gridItems
 
+import androidx.compose.foundation.lazy.grid.items as gridItems
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import com.beatraxus.app.model.VideoRecentlyPlayedEntity
+
 @Composable
 fun VideoLibraryScreen(
     videos: List<Video>,
+    continueWatching: List<Pair<Video, VideoRecentlyPlayedEntity>>,
     isRefreshing: Boolean,
     columns: Int = 1,
     onRefresh: () -> Unit,
@@ -83,6 +89,11 @@ fun VideoLibraryScreen(
                     contentPadding = PaddingValues(16.dp, 8.dp, 16.dp, 140.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
+                    if (continueWatching.isNotEmpty()) {
+                        item {
+                            ContinueWatchingRow(continueWatching, onVideoClick)
+                        }
+                    }
                     items(videos, key = { it.id }) { video ->
                         VideoListItem(video = video, onClick = { onVideoClick(video) }, onLongClick = { onVideoLongClick(video) })
                     }
@@ -95,12 +106,111 @@ fun VideoLibraryScreen(
                     horizontalArrangement = Arrangement.spacedBy(16.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
+                    if (continueWatching.isNotEmpty()) {
+                        item(span = { GridItemSpan(maxLineSpan) }) {
+                            ContinueWatchingRow(continueWatching, onVideoClick)
+                        }
+                    }
                     gridItems(videos, key = { it.id }) { video ->
                         VideoItem(video = video, onClick = { onVideoClick(video) }, onLongClick = { onVideoLongClick(video) })
                     }
                 }
             }
         }
+    }
+}
+
+@Composable
+fun ContinueWatchingRow(
+    items: List<Pair<Video, VideoRecentlyPlayedEntity>>,
+    onVideoClick: (Video) -> Unit
+) {
+    Column(modifier = Modifier.padding(bottom = 8.dp)) {
+        Text(
+            "Continue Watching",
+            color = Color.White,
+            fontSize = 18.sp,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(bottom = 12.dp)
+        )
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            contentPadding = PaddingValues(end = 16.dp)
+        ) {
+            items(items, key = { it.first.id }) { (video, entity) ->
+                ContinueWatchingItem(
+                    video = video,
+                    progress = if (entity.durationMs > 0) entity.lastPositionMs.toFloat() / entity.durationMs else 0f,
+                    onClick = { onVideoClick(video) }
+                )
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+    }
+}
+
+@Composable
+fun ContinueWatchingItem(
+    video: Video,
+    progress: Float,
+    onClick: () -> Unit
+) {
+    val context = LocalContext.current
+    var thumbnailUri by remember(video.id) { mutableStateOf(video.thumbnailUri) }
+
+    LaunchedEffect(video.id, video.thumbnailUri) {
+        if (video.thumbnailUri == null) {
+            thumbnailUri = VideoThumbnailHelper.getThumbnail(context, video.uri, video.id)
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .width(180.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(16f / 9f)
+                .clip(RoundedCornerShape(8.dp))
+                .background(Color.White.copy(alpha = 0.05f))
+        ) {
+            AsyncImage(
+                model = thumbnailUri ?: video.uri,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+
+            // Progress Bar at the bottom
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(3.dp)
+                    .align(Alignment.BottomCenter)
+                    .background(Color.White.copy(alpha = 0.2f))
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(progress.coerceIn(0f, 1f))
+                        .fillMaxHeight()
+                        .background(MaterialTheme.colorScheme.primary)
+                )
+            }
+        }
+        
+        Spacer(Modifier.height(6.dp))
+        
+        Text(
+            text = video.title,
+            color = Color.White,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 }
 

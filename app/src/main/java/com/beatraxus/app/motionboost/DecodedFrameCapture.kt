@@ -41,7 +41,12 @@ class DecodedFrameCapture(
         player.setVideoEffects(emptyList())
     }
 
-    private inner class CaptureEffect : GlEffect {
+    /**
+     * Returns a [GlEffect] that captures decoded frames.
+     */
+    fun getEffect(): GlEffect = CaptureEffect()
+
+    inner class CaptureEffect : GlEffect {
         override fun toGlShaderProgram(context: Context, useHdr: Boolean): GlShaderProgram {
             return CaptureShaderProgram(useHdr)
         }

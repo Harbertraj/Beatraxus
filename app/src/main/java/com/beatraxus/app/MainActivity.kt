@@ -396,8 +396,9 @@ fun Context.findActivity(): Activity? = when (this) {
 sealed class Screen(val route: String) {
     object Main      : Screen("main")
     object Settings  : Screen("settings")
-    object Dsp       : Screen("dsp")
-    object Inspector : Screen("inspector")
+    object Dsp             : Screen("dsp")
+    object Inspector       : Screen("inspector")
+    object StreamingAddons : Screen("streaming_addons")
 }
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
@@ -628,6 +629,7 @@ fun BeatraxusApp(
                     playerViewModel = viewModel,
                     onBack    = { navController.popBackStack() },
                     onNavigateToDsp = { navController.navigate(Screen.Dsp.route) },
+                    onNavigateToStreamingAddons = { navController.navigate(Screen.StreamingAddons.route) },
                     onRequestGDriveAccount = {
                         googleSignInClient.signOut().addOnCompleteListener {
                             try {
@@ -660,6 +662,32 @@ fun BeatraxusApp(
                     onBack = {
                         navController.popBackStack()
                     }
+                )
+            }
+            composable(
+                Screen.StreamingAddons.route,
+                enterTransition = {
+                    slideIntoContainer(
+                        towards = AnimatedContentTransitionScope.SlideDirection.Start,
+                        animationSpec = tween(450, easing = FastOutSlowInEasing)
+                    ) + fadeIn(tween(400))
+                },
+                exitTransition = {
+                    slideOutOfContainer(
+                        towards = AnimatedContentTransitionScope.SlideDirection.End,
+                        animationSpec = tween(450, easing = FastOutSlowInEasing)
+                    ) + fadeOut(tween(400))
+                },
+                popExitTransition = {
+                    slideOutOfContainer(
+                        towards = AnimatedContentTransitionScope.SlideDirection.End,
+                        animationSpec = tween(450, easing = FastOutSlowInEasing)
+                    ) + fadeOut(tween(400))
+                }
+            ) {
+                com.beatraxus.app.ui.screens.StreamingAddonsScreen(
+                    playerViewModel = viewModel,
+                    onBack = { navController.popBackStack() }
                 )
             }
             composable(

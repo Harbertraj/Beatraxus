@@ -2074,6 +2074,7 @@ struct AnalysisResults {
     float stereoWidth;
     float tempoBpm;
     std::vector<float> spectralData; // For TFLite input
+    std::vector<float> noveltyVector; // FFT novelty (spectral flux)
     // NEW: quality-analysis extensions
     float truePeakDb;       // estimated true (inter-sample) peak in dBFS
     float clippedSamplePct; // % of samples at or above ~-0.18 dBFS (0.0-100.0)
@@ -2179,6 +2180,7 @@ public:
                     else trebleEnergy += mag;
                 }
                 flux.push_back(std::max(0.0, currentEnergy - lastEnergy));
+                res.noveltyVector.push_back((float)std::max(0.0, currentEnergy - lastEnergy));
                 lastEnergy = currentEnergy;
                 fftCount++;
             }
@@ -2288,7 +2290,7 @@ JNIEXPORT jobject JNICALL Java_com_beatraxus_app_engine_NativeDsp_nExtractFeatur
             __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, "Failed to find AudioFeatures class");
             return nullptr;
         }
-        jmethodID constructor = env->GetMethodID(featuresClass, "<init>", "(FFFFFFFFF[FFFFF)V");
+        jmethodID constructor = env->GetMethodID(featuresClass, "<init>", "(FFFFFFFFF[F[FFFF)V");
         if (!constructor) {
             __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, "Failed to find AudioFeatures constructor");
             return nullptr;
@@ -2296,6 +2298,7 @@ JNIEXPORT jobject JNICALL Java_com_beatraxus_app_engine_NativeDsp_nExtractFeatur
         jfloatArray spectralData = env->NewFloatArray(128);
         float dummy[128] = {0};
         env->SetFloatArrayRegion(spectralData, 0, 128, dummy);
+        jfloatArray noveltyVector = env->NewFloatArray(0);
 
         return env->NewObject(featuresClass, constructor,
             -10.0f, // LUFS (dummy for DSD)
@@ -2308,7 +2311,8 @@ JNIEXPORT jobject JNICALL Java_com_beatraxus_app_engine_NativeDsp_nExtractFeatur
             1.0f,   // Stereo
             120.0f, // Tempo
             spectralData,
-            0.0f,     // truePeakDb (dummy for DSD - already lossless/DSD, no clipping concept here)
+            noveltyVector,
+            0.0f,     // truePeakDb (dummy for DSD)
             0.0f,     // clippedSamplePct
             20.0f,    // freqRangeLowHz
             22000.0f  // freqRangeHighHz
@@ -2418,7 +2422,7 @@ JNIEXPORT jobject JNICALL Java_com_beatraxus_app_engine_NativeDsp_nExtractFeatur
         __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, "Failed to find AudioFeatures class");
         return nullptr;
     }
-    jmethodID constructor = env->GetMethodID(featuresClass, "<init>", "(FFFFFFFFF[FFFFF)V");
+    jmethodID constructor = env->GetMethodID(featuresClass, "<init>", "(FFFFFFFFF[F[FFFF)V");
     if (!constructor) {
         __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, "Failed to find AudioFeatures constructor");
         return nullptr;
@@ -2426,9 +2430,12 @@ JNIEXPORT jobject JNICALL Java_com_beatraxus_app_engine_NativeDsp_nExtractFeatur
     jfloatArray spectralData = env->NewFloatArray(res.spectralData.size());
     env->SetFloatArrayRegion(spectralData, 0, res.spectralData.size(), res.spectralData.data());
 
+    jfloatArray noveltyVector = env->NewFloatArray(res.noveltyVector.size());
+    env->SetFloatArrayRegion(noveltyVector, 0, res.noveltyVector.size(), res.noveltyVector.data());
+
     return env->NewObject(featuresClass, constructor,
         res.lufs, res.rms, res.peak, res.dynamicRange, res.bassScore, res.midScore, res.trebleScore,
-        res.stereoWidth, res.tempoBpm, spectralData,
+        res.stereoWidth, res.tempoBpm, spectralData, noveltyVector,
         res.truePeakDb, res.clippedSamplePct, res.freqRangeLowHz, res.freqRangeHighHz
     );
 }

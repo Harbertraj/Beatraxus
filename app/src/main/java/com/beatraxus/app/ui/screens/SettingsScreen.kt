@@ -197,6 +197,7 @@ fun SettingsScreen(
     playerViewModel: PlayerViewModel,
     onBack: () -> Unit,
     onNavigateToDsp: () -> Unit,
+    onNavigateToStreamingAddons: () -> Unit,
     onRequestGDriveAccount: () -> Unit
 ) {
     val uiState by playerViewModel.uiState.collectAsStateWithLifecycle()
@@ -462,6 +463,13 @@ fun SettingsScreen(
                             icon = Icons.Rounded.MusicNote,
                             iconColor = Color(0xFFD32F2F),
                             onClick = { sectionStack.add("Last.fm") }
+                        )
+                        SettingMenuItem(
+                            title = "Streaming Add-ons",
+                            subtitle = "Spotify, YouTube Music, Apple Music, Amazon Music",
+                            icon = Icons.Rounded.AddLink,
+                            iconColor = Color(0xFF00C2A8),
+                            onClick = onNavigateToStreamingAddons
                         )
                         SettingMenuItem(
                             title = "Backup & Restore",

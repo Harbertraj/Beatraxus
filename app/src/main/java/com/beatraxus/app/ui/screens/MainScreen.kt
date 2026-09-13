@@ -678,6 +678,7 @@ fun MainScreen(
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
+                                    .statusBarsPadding()
                                     .padding(horizontal = 12.dp, vertical = 4.dp)
                                     .zIndex(10f),
                                 contentAlignment = Alignment.Center
@@ -2451,6 +2452,7 @@ fun MainScreen(
                                                 LibraryView.VIDEO_ALL -> {
                                                     com.beatraxus.app.ui.screens.library.VideoLibraryScreen(
                                                         videos = uiState.videos,
+                                                        continueWatching = uiState.continueWatching,
                                                         isRefreshing = uiState.isLoadingVideos,
                                                         columns = videoLayoutDensity.coerceIn(1, 4),
                                                         onRefresh = { viewModel.loadVideos() },
@@ -2475,6 +2477,7 @@ fun MainScreen(
                                                 LibraryView.VIDEO_FOLDER_DETAIL -> {
                                                     com.beatraxus.app.ui.screens.library.VideoLibraryScreen(
                                                         videos = uiState.videos.filter { it.folderPath == uiState.currentFolderPath },
+                                                        continueWatching = uiState.continueWatching.filter { it.first.folderPath == uiState.currentFolderPath },
                                                         isRefreshing = uiState.isLoadingVideos,
                                                         columns = videoLayoutDensity.coerceIn(1, 4),
                                                         onRefresh = { viewModel.loadVideos() },
@@ -2489,6 +2492,7 @@ fun MainScreen(
                                                 LibraryView.VIDEO_RECENTLY_ADDED -> {
                                                     com.beatraxus.app.ui.screens.library.VideoLibraryScreen(
                                                         videos = uiState.videos,
+                                                        continueWatching = uiState.continueWatching,
                                                         isRefreshing = uiState.isLoadingVideos,
                                                         columns = videoLayoutDensity.coerceIn(1, 4),
                                                         onRefresh = { viewModel.loadVideos() },
@@ -2503,6 +2507,7 @@ fun MainScreen(
                                                 LibraryView.VIDEO_RECENTLY_PLAYED -> {
                                                     com.beatraxus.app.ui.screens.library.VideoLibraryScreen(
                                                         videos = uiState.videos,
+                                                        continueWatching = uiState.continueWatching,
                                                         isRefreshing = uiState.isLoadingVideos,
                                                         columns = videoLayoutDensity.coerceIn(1, 4),
                                                         onRefresh = { viewModel.loadVideos() },

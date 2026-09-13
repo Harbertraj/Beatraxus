@@ -28,7 +28,8 @@ data class VideoRecentlyPlayedEntity(
     @PrimaryKey val videoId: String,
     val timestamp: Long,
     val accountEmail: String? = null,
-    val lastPosition: Long = 0L,
+    val lastPositionMs: Long = 0L,
+    val durationMs: Long = 0L,
     val lastAspectRatio: String? = null
 )
 
