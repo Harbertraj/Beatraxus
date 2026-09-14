@@ -66,6 +66,8 @@ configure<ApplicationExtension> {
         val googleWebClientId = localProperties.getProperty("GOOGLE_WEB_CLIENT_ID", "")
         buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", "\"$googleWebClientId\"")
 
+        manifestPlaceholders["redirectSchemeName"] = "beatraxus"
+        manifestPlaceholders["redirectHostName"] = "auth"
     }
 
     signingConfigs {
@@ -285,6 +287,9 @@ dependencies {
     implementation("commons-net:commons-net:3.11.1")       // FTP
     implementation("com.hierynomus:sshj:0.38.0")           // SFTP (SSH-based)
 
+    implementation(project(":spotify-app-remote"))
+    implementation("com.spotify.android:auth:2.1.1")
+    
     configurations.all {
         exclude(group = "xpp3", module = "xpp3")
         exclude(group = "xmlpull", module = "xmlpull")

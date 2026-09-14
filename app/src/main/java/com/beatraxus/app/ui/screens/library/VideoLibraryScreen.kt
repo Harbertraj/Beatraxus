@@ -8,6 +8,8 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Movie
 import androidx.compose.material3.Icon
@@ -56,6 +58,8 @@ fun VideoLibraryScreen(
     continueWatching: List<Pair<Video, VideoRecentlyPlayedEntity>>,
     isRefreshing: Boolean,
     columns: Int = 1,
+    selectedIds: Set<String> = emptySet(),
+    isMultiSelectMode: Boolean = false,
     onRefresh: () -> Unit,
     onVideoClick: (Video) -> Unit,
     onVideoLongClick: (Video) -> Unit = {}
@@ -95,7 +99,13 @@ fun VideoLibraryScreen(
                         }
                     }
                     items(videos, key = { it.id }) { video ->
-                        VideoListItem(video = video, onClick = { onVideoClick(video) }, onLongClick = { onVideoLongClick(video) })
+                        VideoListItem(
+                            video = video,
+                            isSelected = selectedIds.contains(video.id),
+                            isMultiSelectMode = isMultiSelectMode,
+                            onClick = { onVideoClick(video) },
+                            onLongClick = { onVideoLongClick(video) }
+                        )
                     }
                 }
             } else {
@@ -112,7 +122,13 @@ fun VideoLibraryScreen(
                         }
                     }
                     gridItems(videos, key = { it.id }) { video ->
-                        VideoItem(video = video, onClick = { onVideoClick(video) }, onLongClick = { onVideoLongClick(video) })
+                        VideoItem(
+                            video = video,
+                            isSelected = selectedIds.contains(video.id),
+                            isMultiSelectMode = isMultiSelectMode,
+                            onClick = { onVideoClick(video) },
+                            onLongClick = { onVideoLongClick(video) }
+                        )
                     }
                 }
             }
@@ -218,6 +234,8 @@ fun ContinueWatchingItem(
 @Composable
 fun VideoItem(
     video: Video,
+    isSelected: Boolean = false,
+    isMultiSelectMode: Boolean = false,
     onClick: () -> Unit,
     onLongClick: () -> Unit = {}
 ) {
@@ -313,6 +331,31 @@ fun VideoItem(
                     )
                 }
             }
+
+            // Selection Checkmark
+            if (isMultiSelectMode) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(if (isSelected) Color.Black.copy(alpha = 0.4f) else Color.Transparent),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (isSelected) {
+                        Icon(
+                            imageVector = Icons.Rounded.CheckCircle,
+                            contentDescription = null,
+                            tint = Color(0xFF00E5FF),
+                            modifier = Modifier.size(28.dp)
+                        )
+                    } else {
+                        Box(
+                            modifier = Modifier
+                                .size(20.dp)
+                                .border(1.5.dp, Color.White.copy(alpha = 0.5f), CircleShape)
+                        )
+                    }
+                }
+            }
         }
 
         Spacer(Modifier.height(6.dp))
@@ -350,6 +393,8 @@ private fun formatDuration(durationMs: Long): String {
 @Composable
 fun VideoListItem(
     video: Video,
+    isSelected: Boolean = false,
+    isMultiSelectMode: Boolean = false,
     onClick: () -> Unit,
     onLongClick: () -> Unit = {}
 ) {
@@ -445,6 +490,31 @@ fun VideoListItem(
                         fontWeight = FontWeight.Black,
                         letterSpacing = 0.5.sp
                     )
+                }
+            }
+
+            // Selection Checkmark
+            if (isMultiSelectMode) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(if (isSelected) Color.Black.copy(alpha = 0.4f) else Color.Transparent),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (isSelected) {
+                        Icon(
+                            imageVector = Icons.Rounded.CheckCircle,
+                            contentDescription = null,
+                            tint = Color(0xFF00E5FF),
+                            modifier = Modifier.size(28.dp)
+                        )
+                    } else {
+                        Box(
+                            modifier = Modifier
+                                .size(20.dp)
+                                .border(1.5.dp, Color.White.copy(alpha = 0.5f), CircleShape)
+                        )
+                    }
                 }
             }
         }

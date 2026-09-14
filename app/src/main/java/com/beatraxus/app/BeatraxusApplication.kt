@@ -27,7 +27,8 @@ class BeatraxusApplication : Application() {
             AppDatabase.MIGRATION_23_24,
             AppDatabase.MIGRATION_24_25,
             AppDatabase.MIGRATION_25_26,
-            AppDatabase.MIGRATION_26_27
+            AppDatabase.MIGRATION_26_27,
+            AppDatabase.MIGRATION_27_28
         )
          .fallbackToDestructiveMigration(false)
          .build()

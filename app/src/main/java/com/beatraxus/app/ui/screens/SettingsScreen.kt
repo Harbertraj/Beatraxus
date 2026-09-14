@@ -3634,8 +3634,86 @@ fun LibraryContent(uiState: PlayerUiState, viewModel: PlayerViewModel, onShowInf
                     }
                 }
             }
+        }
 
+        // New Video Folders Section
+        val videoFolders by viewModel.videoFolders.collectAsStateWithLifecycle()
+        if (videoFolders.isNotEmpty()) {
+            Spacer(Modifier.height(24.dp))
+            HorizontalDivider(color = Color.White.copy(0.06f))
+            Spacer(Modifier.height(16.dp))
 
+            Column {
+                Text(
+                    "Video Folders",
+                    color = Color.White,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    "${videoFolders.size} folder${if (videoFolders.size != 1) "s" else ""} containing videos",
+                    color = Color.White.copy(0.45f),
+                    fontSize = 11.sp
+                )
+            }
+
+            Spacer(Modifier.height(12.dp))
+
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                videoFolders.forEach { folder ->
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = Color.White.copy(0.04f),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(0.07f)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(Color(0xFF00E5FF).copy(0.1f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    Icons.Rounded.Movie,
+                                    null,
+                                    tint = Color(0xFF00E5FF),
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    folder.name,
+                                    color = Color.White,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    folder.path,
+                                    color = Color.White.copy(0.35f),
+                                    fontSize = 10.sp,
+                                    maxLines = 1,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                )
+                            }
+                            Text(
+                                text = "${folder.videoCount}",
+                                color = Color.White.copy(0.4f),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 8.dp)
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 }

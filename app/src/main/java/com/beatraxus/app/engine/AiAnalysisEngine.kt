@@ -278,12 +278,11 @@ data class AudioFeatures(
     val stereoWidth: Float,
     val tempoBpm: Float,
     val spectralData: FloatArray, // Pre-processed for TFLite
-    val noveltyVector: FloatArray? = null, // FFT novelty (spectral flux) for segment detection
-    // NEW: quality-analysis extensions (Phase 1)
-    val truePeakDb: Float = 0f,
-    val clippedSamplePct: Float = 0f,
-    val freqRangeLowHz: Float = 0f,
-    val freqRangeHighHz: Float = 0f
+    val noveltyVector: FloatArray?, // FFT novelty (spectral flux) for segment detection
+    val truePeakDb: Float,
+    val clippedSamplePct: Float,
+    val freqRangeLowHz: Float,
+    val freqRangeHighHz: Float
 )
 
 /** Result of [AiAnalysisEngine.analyzeSong], bundling the AI entity with the raw

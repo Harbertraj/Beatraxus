@@ -190,6 +190,10 @@ class VideoPlayerViewModel(
     private var lastCaptureTimeUs = 0L
     private val PRESENTATION_DELAY_US = 100_000L // 100ms lookahead delay
 
+    private var pendingAudioTrackIndex = -1
+    private var pendingSubtitleTrackIndex = -1
+    private var isInitialTrackRestorationDone = false
+
     private val frameCallback = object : android.view.Choreographer.FrameCallback {
         override fun doFrame(frameTimeNanos: Long) {
             if (!renderLoopActive) return
@@ -293,9 +297,6 @@ class VideoPlayerViewModel(
                 setVideoScalingMode(C.VIDEO_SCALING_MODE_SCALE_TO_FIT)
                 repeatMode = Player.REPEAT_MODE_OFF
                 setMediaItems(videoQueue.map { v -> MediaItem.Builder().setUri(v.uri).setMediaId(v.id).build() })
-
-                // PERFORMANCE FIX: Prepare immediately before seeking/loading history
-                prepare()
                 
                 viewModelScope.launch(Dispatchers.IO) {
                     val recentlyPlayed = videoRecentlyPlayedDao.getRecentlyPlayedByVideoId(video.id)
@@ -304,9 +305,19 @@ class VideoPlayerViewModel(
                         VideoAspectRatio.entries.find { it.name == ratioName }
                     } ?: VideoAspectRatio.FIT
                     
+                    val lastAudio = recentlyPlayed?.lastAudioTrackIndex ?: -1
+                    val lastSubtitle = recentlyPlayed?.lastSubtitleTrackIndex ?: -1
+
                     withContext(Dispatchers.Main) {
                         _uiState.update { it.copy(aspectRatio = lastRatio) }
+                        
+                        pendingAudioTrackIndex = lastAudio
+                        pendingSubtitleTrackIndex = lastSubtitle
+                        isInitialTrackRestorationDone = false
+                        
+                        // PERFORMANCE FIX: Seek BEFORE prepare to avoid redundant buffering
                         seekTo(startIndex, lastPos)
+                        prepare()
                         playWhenReady = true
                     }
                 }
@@ -354,6 +365,40 @@ class VideoPlayerViewModel(
             override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
                 updateTracks()
                 updateSourceFrameRate()
+                
+                // Initial track restoration after tracks are available
+                if (!isInitialTrackRestorationDone && (pendingAudioTrackIndex != -1 || pendingSubtitleTrackIndex != -1)) {
+                    val player = exoPlayer ?: return
+                    var params = player.trackSelectionParameters.buildUpon()
+                    var changed = false
+                    
+                    if (pendingAudioTrackIndex != -1 && pendingAudioTrackIndex < tracks.groups.size) {
+                        val group = tracks.groups[pendingAudioTrackIndex]
+                        if (group.type == C.TRACK_TYPE_AUDIO) {
+                            params = params.setOverrideForType(androidx.media3.common.TrackSelectionOverride(group.mediaTrackGroup, 0))
+                            changed = true
+                        }
+                    }
+                    
+                    if (pendingSubtitleTrackIndex != -1) {
+                        if (pendingSubtitleTrackIndex == -2) {
+                            params = params.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                            changed = true
+                        } else if (pendingSubtitleTrackIndex < tracks.groups.size) {
+                            val group = tracks.groups[pendingSubtitleTrackIndex]
+                            if (group.type == C.TRACK_TYPE_TEXT) {
+                                params = params.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                                    .setOverrideForType(androidx.media3.common.TrackSelectionOverride(group.mediaTrackGroup, 0))
+                                changed = true
+                            }
+                        }
+                    }
+                    
+                    if (changed) {
+                        player.trackSelectionParameters = params.build()
+                    }
+                    isInitialTrackRestorationDone = true
+                }
             }
         })
 
@@ -397,10 +442,15 @@ class VideoPlayerViewModel(
         _uiState.value.currentVideo?.let { recordVideoPlayed(it) }
         _uiState.update { it.copy(currentVideo = video, isHdr = video?.isHdr ?: false) }
         
-        // Trigger scrub preview generation
-        video?.let { 
-            generateScrubPreviews(it)
-            observeAndDetectChapters(it)
+        // PERFORMANCE FIX: Defer heavy background tasks to avoid startup jank
+        video?.let { v ->
+            viewModelScope.launch {
+                delay(2000) // 2 second delay
+                if (isActive && _uiState.value.currentVideo?.id == v.id) {
+                    generateScrubPreviews(v)
+                    observeAndDetectChapters(v)
+                }
+            }
         }
     }
 
@@ -485,6 +535,23 @@ class VideoPlayerViewModel(
         if (progress < 0.02 || progress > 0.95) return
 
         val currentRatio = _uiState.value.aspectRatio.name
+        
+        // Find current track indices for persistence
+        var audioIdx = -1
+        var subtitleIdx = -1
+        
+        player.currentTracks.groups.forEachIndexed { index, group ->
+            if (group.isSelected) {
+                if (group.type == C.TRACK_TYPE_AUDIO) audioIdx = index
+                else if (group.type == C.TRACK_TYPE_TEXT) subtitleIdx = index
+            }
+        }
+        
+        // If subtitles are disabled, we might want to store that explicitly
+        if (player.trackSelectionParameters.disabledTrackTypes.contains(C.TRACK_TYPE_TEXT)) {
+            subtitleIdx = -2
+        }
+
         viewModelScope.launch(Dispatchers.IO) {
             videoRecentlyPlayedDao.addRecentlyPlayed(
                 VideoRecentlyPlayedEntity(
@@ -492,7 +559,9 @@ class VideoPlayerViewModel(
                     timestamp = System.currentTimeMillis(),
                     lastPositionMs = currentPos,
                     durationMs = duration,
-                    lastAspectRatio = currentRatio
+                    lastAspectRatio = currentRatio,
+                    lastAudioTrackIndex = audioIdx,
+                    lastSubtitleTrackIndex = subtitleIdx
                 )
             )
         }
@@ -544,16 +613,30 @@ class VideoPlayerViewModel(
         val player = exoPlayer ?: return
         val audioTracks = mutableListOf<VideoTrackInfo>()
         val subtitleTracks = mutableListOf<VideoTrackInfo>()
+        var selectedAudio = -1
+        var selectedSubtitle = -1
 
         player.currentTracks.groups.forEachIndexed { index, group ->
             for (i in 0 until group.length) {
                 val format = group.getTrackFormat(i)
-                val info = VideoTrackInfo(index, format.label ?: "Track ${i+1}", format.language, format.sampleMimeType, group.isTrackSelected(i))
-                if (group.type == C.TRACK_TYPE_AUDIO) audioTracks.add(info)
-                else if (group.type == C.TRACK_TYPE_TEXT) subtitleTracks.add(info)
+                val isSelected = group.isTrackSelected(i)
+                val info = VideoTrackInfo(index, format.label ?: "Track ${i+1}", format.language, format.sampleMimeType, isSelected)
+                
+                if (group.type == C.TRACK_TYPE_AUDIO) {
+                    audioTracks.add(info)
+                    if (isSelected) selectedAudio = audioTracks.size - 1
+                } else if (group.type == C.TRACK_TYPE_TEXT) {
+                    subtitleTracks.add(info)
+                    if (isSelected) selectedSubtitle = subtitleTracks.size - 1
+                }
             }
         }
-        _uiState.update { it.copy(availableAudioTracks = audioTracks, availableSubtitleTracks = subtitleTracks) }
+        _uiState.update { it.copy(
+            availableAudioTracks = audioTracks, 
+            availableSubtitleTracks = subtitleTracks,
+            selectedAudioTrackIndex = selectedAudio,
+            selectedSubtitleTrackIndex = selectedSubtitle
+        ) }
     }
 
     fun togglePlayPause() = exoPlayer?.let { if (it.isPlaying) it.pause() else it.play() }

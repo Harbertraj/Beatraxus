@@ -98,6 +98,7 @@ import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import coil.compose.AsyncImage
+import com.beatraxus.app.ui.screens.library.VideoListItem
 import coil.request.CachePolicy
 import coil.request.ImageRequest
 import com.beatraxus.app.model.*
@@ -119,9 +120,53 @@ fun MainBackground(
     blurEffect: RenderEffect?,
     appearance: AppearanceConfig,
     currentView: LibraryView,
-    dominantColor: Color
+    dominantColor: Color,
+    playbackMode: com.beatraxus.app.model.PlaybackMode = com.beatraxus.app.model.PlaybackMode.AUDIO
 ) {
     val isHome = currentView == LibraryView.HOME
+    val isVideoMode = playbackMode == com.beatraxus.app.model.PlaybackMode.VIDEO
+
+    if (isVideoMode && isHome) {
+        // Unique Cinematic Background for Video Mode
+        Box(Modifier.fillMaxSize()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(Color(0xFF000814), Color(0xFF001D3D), Color(0xFF000814))
+                        )
+                    )
+            )
+            // Add some subtle animated or static cinematic elements
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val width = size.width
+                val height = size.height
+                
+                // Subtle top/bottom anamorphic shadows
+                drawRect(
+                    brush = Brush.verticalGradient(
+                        0f to Color.Black.copy(0.6f),
+                        0.2f to Color.Transparent,
+                        0.8f to Color.Transparent,
+                        1f to Color.Black.copy(0.6f)
+                    )
+                )
+                
+                // Dynamic accent glow
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        colors = listOf(Color(0xFF00E5FF).copy(0.08f), Color.Transparent),
+                        center = Offset(width * 0.8f, height * 0.2f),
+                        radius = width * 0.6f
+                    ),
+                    radius = width * 0.6f
+                )
+            }
+        }
+        return
+    }
+
     val mode = if (isHome) appearance.homeBackgroundMode else appearance.mainBackgroundMode
     val solidIntensity = if (isHome) appearance.homeSolidColorIntensity else appearance.mainSolidColorIntensity
     val solidDarkness = if (isHome) appearance.homeSolidColorDarkness else appearance.mainSolidColorDarkness
@@ -542,7 +587,8 @@ fun MainScreen(
             blurEffect = cachedBackgroundBlurEffect,
             appearance = uiState.appearance,
             currentView = uiState.currentView,
-            dominantColor = currentDominantColor
+            dominantColor = currentDominantColor,
+            playbackMode = uiState.playbackMode
         )
 
         // Slide drawer (Reveals the background behind it)
@@ -678,7 +724,6 @@ fun MainScreen(
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .statusBarsPadding()
                                     .padding(horizontal = 12.dp, vertical = 4.dp)
                                     .zIndex(10f),
                                 contentAlignment = Alignment.Center
@@ -2833,6 +2878,7 @@ fun MainScreen(
                                     modifier = Modifier
                                         .align(Alignment.BottomCenter)
                                         .fillMaxWidth()
+                                        .zIndex(20f)
                                         .padding(bottom = paddingValues.calculateBottomPadding() + 12.dp)
                                         .padding(horizontal = 12.dp)
                                 ) {
@@ -4041,6 +4087,10 @@ fun HomeScreen(
     val allSongs by viewModel.allSongs.collectAsStateWithLifecycle()
     val favorites by viewModel.favorites.collectAsStateWithLifecycle()
     val aiAnalysis by viewModel.aiAnalysis.collectAsStateWithLifecycle()
+    val videos by viewModel.allVideos.collectAsStateWithLifecycle()
+    val videoFolders by viewModel.videoFolders.collectAsStateWithLifecycle()
+    val isVideoMode = uiState.playbackMode == com.beatraxus.app.model.PlaybackMode.VIDEO
+    
     var showAllMoodsDialog by remember { mutableStateOf(false) }
 
     val allMoods = remember {
@@ -4108,7 +4158,79 @@ fun HomeScreen(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(bottom = 140.dp)
     ) {
-        uiState.appearance.homeScreenSectionsOrder.forEach { sectionKey ->
+        if (isVideoMode) {
+            // Video Mode Specific Home Sections
+            item(key = "VIDEO_GREETING") {
+                Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 20.dp)) {
+                    Column {
+                        Text(
+                            text = "$greeting, Video Enthusiast",
+                            color = Color.White,
+                            fontSize = 24.sp,
+                            fontWeight = FontWeight.Black
+                        )
+                        Text(
+                            text = "Explore your cinematic collection",
+                            color = Color.White.copy(0.6f),
+                            fontSize = 14.sp
+                        )
+                    }
+                }
+            }
+            
+            if (uiState.continueWatching.isNotEmpty()) {
+                item(key = "CONTINUE_WATCHING") {
+                    HomeSectionHeader(
+                        title = "Continue Watching",
+                        actionText = "Resume where you left off",
+                        actionIcon = Icons.Rounded.History
+                    )
+                    com.beatraxus.app.ui.screens.library.ContinueWatchingRow(
+                        items = uiState.continueWatching,
+                        onVideoClick = { viewModel.playVideo(it) }
+                    )
+                    Spacer(Modifier.height(16.dp))
+                }
+            }
+            
+            if (videoFolders.isNotEmpty()) {
+                item(key = "VIDEO_FOLDERS_HOME") {
+                    HomeSectionHeader("Video Folders", "${videoFolders.size} locations", Icons.Rounded.FolderCopy) {
+                        viewModel.setLibraryView(LibraryView.VIDEO_FOLDERS)
+                    }
+                    LazyRow(
+                        contentPadding = PaddingValues(horizontal = 16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        items(videoFolders.take(8)) { folder ->
+                            HomeGridItem(
+                                title = folder.name,
+                                subtitle = "${folder.videoCount} videos",
+                                artUri = null, // Video folders don't have arts yet
+                                onClick = { viewModel.navigateToVideoFolder(folder.path, folder.name) }
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(24.dp))
+                }
+            }
+
+            if (videos.isNotEmpty()) {
+                item(key = "ALL_VIDEOS_HOME") {
+                    HomeSectionHeader("Recent Videos", "Your latest additions", Icons.Rounded.VideoLibrary) {
+                        viewModel.setLibraryView(LibraryView.VIDEO_ALL)
+                    }
+                }
+                items(videos.take(10)) { video ->
+                    VideoListItem(
+                        video = video,
+                        onClick = { viewModel.playVideo(video) },
+                        onLongClick = { /* options */ }
+                    )
+                }
+            }
+        } else {
+            uiState.appearance.homeScreenSectionsOrder.forEach { sectionKey ->
             when (sectionKey) {
                 "GREETING" -> {
                     if (uiState.appearance.showGreetingHeader) {
@@ -4703,6 +4825,7 @@ fun HomeScreen(
             }
         }
     }
+}
 
     if (showAllMoodsDialog) {
         AllMoodsDialog(

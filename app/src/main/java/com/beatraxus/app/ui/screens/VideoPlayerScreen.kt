@@ -132,8 +132,8 @@ fun VideoPlayerScreen(
     var showChapterStrip by remember { mutableStateOf(false) }
 
     // Auto-hide controls
-    LaunchedEffect(controlsVisible, uiState.isPlaying) {
-        if (controlsVisible && uiState.isPlaying && !uiState.isLocked) {
+    LaunchedEffect(controlsVisible, uiState.isPlaying, uiState.isLocked) {
+        if (controlsVisible && (uiState.isPlaying || uiState.isLocked)) {
             delay(3000)
             controlsVisible = false
         }
@@ -282,10 +282,10 @@ fun VideoPlayerScreen(
                 }
             }
             .pointerInput(uiState.isLocked) {
-                if (uiState.isLocked) return@pointerInput
                 detectTapGestures(
                     onTap = { controlsVisible = !controlsVisible },
                     onDoubleTap = { offset ->
+                        if (uiState.isLocked) return@detectTapGestures
                         val isCenter = offset.x > size.width / 3 && offset.x < size.width * 2 / 3
                         if (isCenter) {
                             viewModel.togglePlayPause()
@@ -504,7 +504,7 @@ fun VideoPlayerScreen(
                         onSleepTimerClick = { sheetType = PlayerSheetType.SLEEP_TIMER },
                         modifier = Modifier
                             .align(Alignment.TopCenter)
-                            .padding(top = 110.dp)
+                            .padding(top = 70.dp)
                     )
 
                     // Bottom Bar
@@ -783,7 +783,7 @@ fun PlayerTopBar(
                 )
             )
             .statusBarsPadding()
-            .padding(bottom = 20.dp, start = 8.dp, end = 8.dp)
+            .padding(bottom = 8.dp, start = 8.dp, end = 8.dp)
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,

@@ -20,3 +20,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "Beatraxus"
 include(":app")
+include(":spotify-app-remote")

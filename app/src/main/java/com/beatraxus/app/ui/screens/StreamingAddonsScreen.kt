@@ -29,6 +29,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.beatraxus.app.ui.components.glassIconBackground
 import com.beatraxus.app.viewmodel.PlayerViewModel
+import com.beatraxus.app.repository.StreamingServiceType
+import com.beatraxus.app.repository.SpotifyConnectionState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import java.util.Locale
 
 private val PremiumAccent = Color(0xFF00C2A8)
@@ -41,6 +44,9 @@ fun StreamingAddonsScreen(
     playerViewModel: PlayerViewModel,
     onBack: () -> Unit
 ) {
+    val uiState by playerViewModel.uiState.collectAsStateWithLifecycle()
+    val spotifyState = uiState.spotifyConnectionState
+
     Scaffold(
         containerColor = Color.Transparent,
         contentWindowInsets = WindowInsets.systemBars,
@@ -118,22 +124,37 @@ fun StreamingAddonsScreen(
                     modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp)
                 )
 
-                // TODO: replace with StreamingAddonRepository / SpotifyRemoteRepository / StreamingLinkResolver once those are implemented
+                val spotifyButtonText = when (spotifyState) {
+                    is SpotifyConnectionState.Disconnected -> "Connect"
+                    is SpotifyConnectionState.Connecting -> "Connecting…"
+                    is SpotifyConnectionState.Connected -> "Connected"
+                    is SpotifyConnectionState.SpotifyNotInstalled -> "Install Spotify"
+                    is SpotifyConnectionState.NotPremium -> "Not Premium"
+                    is SpotifyConnectionState.Error -> "Error"
+                }
                 
                 StreamingServiceCard(
                     name = "Spotify",
                     subtitle = "Control playback",
-                    icon = Icons.Rounded.MusicNote, // Placeholder icon
+                    icon = Icons.Rounded.MusicNote,
                     iconColor = Color(0xFF1DB954),
-                    initialState = "Connect"
+                    buttonText = spotifyButtonText,
+                    onClick = {
+                        if (spotifyState is SpotifyConnectionState.Connected) {
+                            playerViewModel.disconnectSpotify()
+                        } else {
+                            playerViewModel.connectSpotify()
+                        }
+                    }
                 )
 
                 StreamingServiceCard(
                     name = "YouTube Music",
                     subtitle = "Open in app",
-                    icon = Icons.Rounded.PlayArrow, // Placeholder icon
+                    icon = Icons.Rounded.PlayArrow,
                     iconColor = Color(0xFFFF0000),
-                    initialState = "Open"
+                    buttonText = "Open",
+                    onClick = { playerViewModel.openStreamingApp(StreamingServiceType.YOUTUBE_MUSIC) }
                 )
 
                 StreamingServiceCard(
@@ -141,15 +162,17 @@ fun StreamingAddonsScreen(
                     subtitle = "Open in app",
                     icon = Icons.Rounded.MusicNote,
                     iconColor = Color(0xFFFA243C),
-                    initialState = "Open"
+                    buttonText = "Open",
+                    onClick = { playerViewModel.openStreamingApp(StreamingServiceType.APPLE_MUSIC) }
                 )
 
                 StreamingServiceCard(
                     name = "Amazon Music",
                     subtitle = "Open in app",
-                    icon = Icons.Rounded.Cloud, // Placeholder icon
+                    icon = Icons.Rounded.Cloud,
                     iconColor = Color(0xFF00A8E1),
-                    initialState = "Open"
+                    buttonText = "Open",
+                    onClick = { playerViewModel.openStreamingApp(StreamingServiceType.AMAZON_MUSIC) }
                 )
                 
                 Spacer(Modifier.height(20.dp))
@@ -164,9 +187,9 @@ fun StreamingServiceCard(
     subtitle: String,
     icon: ImageVector,
     iconColor: Color,
-    initialState: String
+    buttonText: String,
+    onClick: () -> Unit
 ) {
-    var buttonText by remember { mutableStateOf(initialState) }
     val haptic = LocalHapticFeedback.current
 
     Surface(
@@ -233,11 +256,7 @@ fun StreamingServiceCard(
             Button(
                 onClick = {
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                    buttonText = if (name == "Spotify") {
-                        if (buttonText == "Connect") "Connected" else "Connect"
-                    } else {
-                        buttonText
-                    }
+                    onClick()
                 },
                 colors = ButtonDefaults.buttonColors(
                     containerColor = iconColor.copy(alpha = 0.15f),

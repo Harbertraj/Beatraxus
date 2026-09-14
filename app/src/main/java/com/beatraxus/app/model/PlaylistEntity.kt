@@ -30,7 +30,9 @@ data class VideoRecentlyPlayedEntity(
     val accountEmail: String? = null,
     val lastPositionMs: Long = 0L,
     val durationMs: Long = 0L,
-    val lastAspectRatio: String? = null
+    val lastAspectRatio: String? = null,
+    val lastAudioTrackIndex: Int = -1,
+    val lastSubtitleTrackIndex: Int = -1
 )
 
 @Entity(tableName = "songs")
