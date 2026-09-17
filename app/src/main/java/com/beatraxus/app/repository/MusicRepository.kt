@@ -1,5 +1,6 @@
 package com.beatraxus.app.repository
 
+import android.util.Log
 import android.content.ContentUris
 import android.content.Context
 import android.media.MediaExtractor
@@ -673,42 +674,43 @@ class MusicRepository(private val context: Context) {
     }
 
     suspend fun getMusicFolders(): List<String> = withContext(Dispatchers.IO) {
-        val folders = folderDao.getActiveFoldersList().map { it.path }
-        if (folders.isNotEmpty()) return@withContext folders
-
-        // Migration from SharedPreferences to Room
+        // First, check if there are legacy folders to migrate
         val prefs = context.getSharedPreferences("beatraxus", Context.MODE_PRIVATE)
-        val foldersJson = prefs.getString("music_folders", null) ?: return@withContext emptyList<String>()
-        try {
-            val array = org.json.JSONArray(foldersJson)
-            val legacyFolders = List(array.length()) { array.getString(it) }
-            legacyFolders.forEach { path ->
-                folderDao.insertFolder(FolderEntity(path))
+        val foldersJson = prefs.getString("music_folders", null)
+        if (foldersJson != null) {
+            try {
+                val array = org.json.JSONArray(foldersJson)
+                val legacyFolders = List(array.length()) { array.getString(it) }
+                legacyFolders.forEach { path ->
+                    folderDao.insertFolder(FolderEntity(path))
+                }
+                // Clear legacy prefs AFTER successful insertion
+                prefs.edit().remove("music_folders").apply()
+            } catch (e: Exception) {
+                Log.e("MusicRepository", "Migration failed", e)
             }
-            // Clear legacy prefs after migration
-            prefs.edit().remove("music_folders").apply()
-            legacyFolders
-        } catch (e: Exception) {
-            emptyList<String>()
         }
+
+        // Always return from Room
+        folderDao.getActiveFoldersList().map { it.path }
     }
 
-    fun addMusicFolder(uri: String) {
-        CoroutineScope(Dispatchers.IO).launch {
+    suspend fun addMusicFolder(uri: String) {
+        withContext(Dispatchers.IO) {
             folderDao.insertFolder(FolderEntity(uri))
         }
     }
 
-    fun addMusicFolders(uris: List<String>) {
-        CoroutineScope(Dispatchers.IO).launch {
+    suspend fun addMusicFolders(uris: List<String>) {
+        withContext(Dispatchers.IO) {
             uris.forEach { uri ->
                 folderDao.insertFolder(FolderEntity(uri))
             }
         }
     }
 
-    fun removeMusicFolder(uri: String) {
-        CoroutineScope(Dispatchers.IO).launch {
+    suspend fun removeMusicFolder(uri: String) {
+        withContext(Dispatchers.IO) {
             folderDao.deleteFolder(uri)
             addBlockedFolder(uri)
         }

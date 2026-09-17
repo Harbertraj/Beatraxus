@@ -18,6 +18,7 @@ import androidx.compose.material.icons.sharp.Pause
 import androidx.compose.material.icons.automirrored.outlined.QueueMusic
 import kotlinx.coroutines.delay
 import com.beatraxus.app.utils.ImageUtils
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
@@ -500,16 +501,21 @@ fun NowPlayingScreen(
                                     alpha = albumArtAlpha
                                     scaleX = albumArtScale
                                     scaleY = albumArtScale
-                                    // Use pointerInteropFilter or similar if we want to disable clicks when hidden
                                 }
                         ) {
                             Surface(
                                 modifier = Modifier
                                     .fillMaxSize()
-                                    .shadow(24.dp, RoundedCornerShape(28.dp)),
+                                    .shadow(
+                                        elevation = if (showLyrics) 0.dp else 24.dp,
+                                        shape = RoundedCornerShape(28.dp)
+                                    ),
                                 shape = RoundedCornerShape(28.dp),
-                                color = Color(0xFF12121A),
-                                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.14f))
+                                color = if (showLyrics) Color.Transparent else Color(0xFF12121A),
+                                border = BorderStroke(
+                                    1.dp, 
+                                    Color.White.copy(alpha = if (showLyrics) 0f else 0.14f)
+                                )
                             ) {
                                 Box(
                                     modifier = Modifier
@@ -1732,6 +1738,12 @@ fun QueueView(
 
     Column(modifier = Modifier.fillMaxSize()) {
         val lazyListState = rememberLazyListState()
+        
+        // Auto-scroll to Now Playing when queue is opened
+        LaunchedEffect(Unit) {
+            val nowPlayingIndex = if (previousSongs.isNotEmpty()) previousSongs.size + 1 else 0
+            lazyListState.scrollToItem(nowPlayingIndex)
+        }
 
         val nextUpHeaderIndex = (if (previousSongs.isNotEmpty()) previousSongs.size + 1 else 0) + 1 // +1 for Now Playing
         val firstNextUpIndex = nextUpHeaderIndex + 1
@@ -1769,7 +1781,7 @@ fun QueueView(
             }
 
             // Enhanced Now Playing Card in Queue
-            item {
+            item(key = "now_playing_item") {
                 Surface(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -2084,7 +2096,11 @@ private fun UtilityItem(
     Column(
         modifier = Modifier
             .clip(RoundedCornerShape(16.dp))
-            .clickable(onClick = onClick)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick
+            )
             .padding(horizontal = 12.dp, vertical = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center

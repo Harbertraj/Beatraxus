@@ -2,6 +2,7 @@ package com.beatraxus.app
 
 import android.app.Application
 import androidx.room.Room
+import com.beatraxus.app.addons.AddonManager
 import com.beatraxus.app.model.AppDatabase
 import com.beatraxus.app.telegram.TdLibManager
 
@@ -65,6 +66,9 @@ class BeatraxusApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+
+        // Initialize AddonManager first
+        AddonManager.init(this)
 
         // Clear temporary cloud cache on app start
         clearTemporaryCache()

@@ -609,19 +609,25 @@ fun BeatraxusApp(
                 enterTransition = {
                     slideIntoContainer(
                         towards = AnimatedContentTransitionScope.SlideDirection.Start,
-                        animationSpec = tween(450, easing = FastOutSlowInEasing)
+                        animationSpec = tween(400, easing = FastOutSlowInEasing)
                     ) + fadeIn(tween(400))
                 },
                 exitTransition = {
                     slideOutOfContainer(
-                        towards = AnimatedContentTransitionScope.SlideDirection.End,
-                        animationSpec = tween(450, easing = FastOutSlowInEasing)
+                        towards = AnimatedContentTransitionScope.SlideDirection.Start,
+                        animationSpec = tween(400, easing = FastOutSlowInEasing)
                     ) + fadeOut(tween(400))
+                },
+                popEnterTransition = {
+                    slideIntoContainer(
+                        towards = AnimatedContentTransitionScope.SlideDirection.End,
+                        animationSpec = tween(400, easing = FastOutSlowInEasing)
+                    ) + fadeIn(tween(400))
                 },
                 popExitTransition = {
                     slideOutOfContainer(
                         towards = AnimatedContentTransitionScope.SlideDirection.End,
-                        animationSpec = tween(450, easing = FastOutSlowInEasing)
+                        animationSpec = tween(400, easing = FastOutSlowInEasing)
                     ) + fadeOut(tween(400))
                 }
             ) {
@@ -652,6 +658,18 @@ fun BeatraxusApp(
                 },
                 exitTransition = {
                     slideOutOfContainer(
+                        towards = AnimatedContentTransitionScope.SlideDirection.Start,
+                        animationSpec = tween(400, easing = FastOutSlowInEasing)
+                    ) + fadeOut(tween(400))
+                },
+                popEnterTransition = {
+                    slideIntoContainer(
+                        towards = AnimatedContentTransitionScope.SlideDirection.End,
+                        animationSpec = tween(400, easing = FastOutSlowInEasing)
+                    ) + fadeIn(tween(400))
+                },
+                popExitTransition = {
+                    slideOutOfContainer(
                         towards = AnimatedContentTransitionScope.SlideDirection.End,
                         animationSpec = tween(400, easing = FastOutSlowInEasing)
                     ) + fadeOut(tween(400))
@@ -669,19 +687,25 @@ fun BeatraxusApp(
                 enterTransition = {
                     slideIntoContainer(
                         towards = AnimatedContentTransitionScope.SlideDirection.Start,
-                        animationSpec = tween(450, easing = FastOutSlowInEasing)
+                        animationSpec = tween(400, easing = FastOutSlowInEasing)
                     ) + fadeIn(tween(400))
                 },
                 exitTransition = {
                     slideOutOfContainer(
-                        towards = AnimatedContentTransitionScope.SlideDirection.End,
-                        animationSpec = tween(450, easing = FastOutSlowInEasing)
+                        towards = AnimatedContentTransitionScope.SlideDirection.Start,
+                        animationSpec = tween(400, easing = FastOutSlowInEasing)
                     ) + fadeOut(tween(400))
+                },
+                popEnterTransition = {
+                    slideIntoContainer(
+                        towards = AnimatedContentTransitionScope.SlideDirection.End,
+                        animationSpec = tween(400, easing = FastOutSlowInEasing)
+                    ) + fadeIn(tween(400))
                 },
                 popExitTransition = {
                     slideOutOfContainer(
                         towards = AnimatedContentTransitionScope.SlideDirection.End,
-                        animationSpec = tween(450, easing = FastOutSlowInEasing)
+                        animationSpec = tween(400, easing = FastOutSlowInEasing)
                     ) + fadeOut(tween(400))
                 }
             ) {
@@ -700,6 +724,18 @@ fun BeatraxusApp(
                     ) + fadeIn(tween(400))
                 },
                 exitTransition = {
+                    slideOutOfContainer(
+                        towards = AnimatedContentTransitionScope.SlideDirection.Start,
+                        animationSpec = tween(400, easing = FastOutSlowInEasing)
+                    ) + fadeOut(tween(400))
+                },
+                popEnterTransition = {
+                    slideIntoContainer(
+                        towards = AnimatedContentTransitionScope.SlideDirection.End,
+                        animationSpec = tween(400, easing = FastOutSlowInEasing)
+                    ) + fadeIn(tween(400))
+                },
+                popExitTransition = {
                     slideOutOfContainer(
                         towards = AnimatedContentTransitionScope.SlideDirection.End,
                         animationSpec = tween(400, easing = FastOutSlowInEasing)
