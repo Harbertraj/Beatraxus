@@ -125,125 +125,127 @@ fun MainBackground(
 ) {
     val isHome = currentView == LibraryView.HOME
     val isVideoMode = playbackMode == com.beatraxus.app.model.PlaybackMode.VIDEO
+    val showVideoBg = isVideoMode && isHome
 
-    if (isVideoMode && isHome) {
-        // Unique Cinematic Background for Video Mode
-        Box(Modifier.fillMaxSize()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(
-                        Brush.verticalGradient(
-                            listOf(Color(0xFF000814), Color(0xFF001D3D), Color(0xFF000814))
+    Crossfade(
+        targetState = showVideoBg,
+        animationSpec = tween(300),
+        label = "mainBackgroundCrossfade"
+    ) { inVideoBg ->
+        if (inVideoBg) {
+            // Unique Cinematic Background for Video Mode
+            Box(Modifier.fillMaxSize()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(Color(0xFF000814), Color(0xFF001D3D), Color(0xFF000814))
+                            )
+                        )
+                )
+                // Add some subtle animated or static cinematic elements
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    val width = size.width
+                    val height = size.height
+                    
+                    // Subtle top/bottom anamorphic shadows
+                    drawRect(
+                        brush = Brush.verticalGradient(
+                            0f to Color.Black.copy(0.6f),
+                            0.2f to Color.Transparent,
+                            0.8f to Color.Transparent,
+                            1f to Color.Black.copy(0.6f)
                         )
                     )
-            )
-            // Add some subtle animated or static cinematic elements
-            Canvas(modifier = Modifier.fillMaxSize()) {
-                val width = size.width
-                val height = size.height
-                
-                // Subtle top/bottom anamorphic shadows
-                drawRect(
-                    brush = Brush.verticalGradient(
-                        0f to Color.Black.copy(0.6f),
-                        0.2f to Color.Transparent,
-                        0.8f to Color.Transparent,
-                        1f to Color.Black.copy(0.6f)
-                    )
-                )
-                
-                // Dynamic accent glow
-                drawCircle(
-                    brush = Brush.radialGradient(
-                        colors = listOf(Color(0xFF00E5FF).copy(0.08f), Color.Transparent),
-                        center = Offset(width * 0.8f, height * 0.2f),
+                    
+                    // Dynamic accent glow
+                    drawCircle(
+                        brush = Brush.radialGradient(
+                            colors = listOf(Color(0xFF00E5FF).copy(0.08f), Color.Transparent),
+                            center = Offset(width * 0.8f, height * 0.2f),
+                            radius = width * 0.6f
+                        ),
                         radius = width * 0.6f
-                    ),
-                    radius = width * 0.6f
-                )
+                    )
+                }
             }
-        }
-        return
-    }
+        } else {
+            val mode = if (isHome) appearance.homeBackgroundMode else appearance.mainBackgroundMode
+            val solidIntensity = if (isHome) appearance.homeSolidColorIntensity else appearance.mainSolidColorIntensity
+            val solidDarkness = if (isHome) appearance.homeSolidColorDarkness else appearance.mainSolidColorDarkness
+            val blurIntensityValue = if (isHome) appearance.homeBlurIntensity else appearance.mainBlurIntensity
+            val blurDarknessValue = if (isHome) appearance.homeBlurDarkness else appearance.mainBlurDarkness
 
-    val mode = if (isHome) appearance.homeBackgroundMode else appearance.mainBackgroundMode
-    val solidIntensity = if (isHome) appearance.homeSolidColorIntensity else appearance.mainSolidColorIntensity
-    val solidDarkness = if (isHome) appearance.homeSolidColorDarkness else appearance.mainSolidColorDarkness
-    val blurIntensityValue = if (isHome) appearance.homeBlurIntensity else appearance.mainBlurIntensity
-    val blurDarknessValue = if (isHome) appearance.homeBlurDarkness else appearance.mainBlurDarkness
+            val effectiveBlurEffect = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                remember(blurIntensityValue) {
+                    RenderEffectHelper.createBlurEffect(blurIntensityValue, blurIntensityValue)
+                }
+            } else null
 
-    // Re-calculate blur effect if intensity differs from the cached one in MainScreen
-    // For simplicity, we'll use the one passed from MainScreen if it matches, 
-    // but ideally we should handle different intensities.
-    // In MainScreen, cachedBackgroundBlurEffect is 120f.
-    val effectiveBlurEffect = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-        remember(blurIntensityValue) {
-            RenderEffectHelper.createBlurEffect(blurIntensityValue, blurIntensityValue)
-        }
-    } else null
-
-    Box(Modifier.fillMaxSize()) {
-        when (mode) {
-            NowPlayingBackgroundMode.BLACK -> {
-                Box(Modifier.fillMaxSize().background(Color.Black))
-            }
-            NowPlayingBackgroundMode.SOLID -> {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(dominantColor.copy(alpha = solidIntensity))
-                )
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color.Black.copy(alpha = solidDarkness))
-                )
-            }
-            NowPlayingBackgroundMode.BLUR -> {
-                AnimatedContent(
-                    targetState = albumArtUri,
-                    transitionSpec = {
-                        fadeIn(tween(800)) togetherWith fadeOut(tween(800))
-                    },
-                    label = "mainBackgroundArt"
-                ) { artUri ->
-                    if (artUri != null) {
-                        Box(Modifier.fillMaxSize()) {
-                            AsyncImage(
-                                model = ImageRequest.Builder(LocalContext.current)
-                                    .data(artUri)
-                                    .diskCachePolicy(CachePolicy.ENABLED)
-                                    .memoryCachePolicy(CachePolicy.ENABLED)
-                                    .apply {
-                                        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
-                                            transformations(FastBlurTransformation(blurIntensityValue))
-                                        }
-                                    }
-                                    .build(),
-                                contentDescription = null,
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .graphicsLayer {
-                                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                                            renderEffect = effectiveBlurEffect
-                                        }
-                                        alpha = 0.45f
-                                    },
-                                contentScale = ContentScale.Crop,
-                            )
-                            Box(
-                                Modifier
-                                    .fillMaxSize()
-                                    .background(Color.Black.copy(alpha = blurDarknessValue))
-                            )
-                        }
-                    } else {
+            Box(Modifier.fillMaxSize()) {
+                when (mode) {
+                    NowPlayingBackgroundMode.BLACK -> {
+                        Box(Modifier.fillMaxSize().background(Color.Black))
+                    }
+                    NowPlayingBackgroundMode.SOLID -> {
                         Box(
-                            Modifier
+                            modifier = Modifier
                                 .fillMaxSize()
-                                .background(BgDeep)
+                                .background(dominantColor.copy(alpha = solidIntensity))
                         )
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(Color.Black.copy(alpha = solidDarkness))
+                        )
+                    }
+                    NowPlayingBackgroundMode.BLUR -> {
+                        AnimatedContent(
+                            targetState = albumArtUri,
+                            transitionSpec = {
+                                fadeIn(tween(800)) togetherWith fadeOut(tween(800))
+                            },
+                            label = "mainBackgroundArt"
+                        ) { artUri ->
+                            if (artUri != null) {
+                                Box(Modifier.fillMaxSize()) {
+                                    AsyncImage(
+                                        model = ImageRequest.Builder(LocalContext.current)
+                                            .data(artUri)
+                                            .diskCachePolicy(CachePolicy.ENABLED)
+                                            .memoryCachePolicy(CachePolicy.ENABLED)
+                                            .apply {
+                                                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+                                                    transformations(FastBlurTransformation(blurIntensityValue))
+                                                }
+                                            }
+                                            .build(),
+                                        contentDescription = null,
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .graphicsLayer {
+                                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                                                    renderEffect = effectiveBlurEffect
+                                                }
+                                                alpha = 0.45f
+                                            },
+                                        contentScale = ContentScale.Crop,
+                                    )
+                                    Box(
+                                        Modifier
+                                            .fillMaxSize()
+                                            .background(Color.Black.copy(alpha = blurDarknessValue))
+                                    )
+                                }
+                            } else {
+                                Box(
+                                    Modifier
+                                        .fillMaxSize()
+                                        .background(BgDeep)
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -628,17 +630,13 @@ fun MainScreen(
                     },
                     onSetLibraryMode = { mode ->
                         showDrawer = false // Auto close when library mode changes
-                        // Delay the mode change slightly to allow the drawer animation to start
-                        // and avoid simultaneous heavy recomposition of both drawer and main content
-                        scope.launch {
-                            delay(150)
+                        if (uiState.libraryMode != mode) {
                             viewModel.setLibraryMode(mode)
                         }
                     },
                     onSetPlaybackMode = { mode ->
                         showDrawer = false
-                        scope.launch {
-                            delay(150)
+                        if (uiState.playbackMode != mode) {
                             if (mode == com.beatraxus.app.model.PlaybackMode.VIDEO) {
                                 onRequestPermissions {
                                     viewModel.setPlaybackMode(mode)
@@ -1490,8 +1488,8 @@ fun MainScreen(
                                         androidx.compose.animation.AnimatedContent(
                                             targetState = uiState.currentView to uiState.playbackMode,
                                             transitionSpec = {
-                                                (fadeIn(animationSpec = tween(220, delayMillis = 80)) + scaleIn(initialScale = 0.98f, animationSpec = tween(220, delayMillis = 80)))
-                                                    .togetherWith(fadeOut(animationSpec = tween(120)))
+                                                (fadeIn(animationSpec = tween(200)) + scaleIn(initialScale = 0.98f, animationSpec = tween(200)))
+                                                    .togetherWith(fadeOut(animationSpec = tween(150)))
                                             },
                                             label = "viewTransition"
                                         ) { (targetView, _) ->
@@ -1680,8 +1678,8 @@ fun MainScreen(
                                                     AnimatedContent(
                                                         targetState = isListView,
                                                         transitionSpec = {
-                                                            (fadeIn(tween(220, delayMillis = 80)) + scaleIn(initialScale = 0.98f, animationSpec = tween(220, delayMillis = 80)))
-                                                                .togetherWith(fadeOut(tween(120)))
+                                                            (fadeIn(tween(200)) + scaleIn(initialScale = 0.98f, animationSpec = tween(200)))
+                                                                .togetherWith(fadeOut(tween(150)))
                                                         },
                                                         label = "albumDetailTransition"
                                                     ) { targetIsListView ->
@@ -1823,8 +1821,8 @@ fun MainScreen(
                                                     AnimatedContent(
                                                         targetState = isListView,
                                                         transitionSpec = {
-                                                            (fadeIn(tween(220, delayMillis = 80)) + scaleIn(initialScale = 0.98f, animationSpec = tween(220, delayMillis = 80)))
-                                                                .togetherWith(fadeOut(tween(120)))
+                                                            (fadeIn(tween(200)) + scaleIn(initialScale = 0.98f, animationSpec = tween(200)))
+                                                                .togetherWith(fadeOut(tween(150)))
                                                         },
                                                         label = "artistDetailTransition"
                                                     ) { targetIsListView ->
@@ -1964,8 +1962,8 @@ fun MainScreen(
                                                     AnimatedContent(
                                                         targetState = isListView,
                                                         transitionSpec = {
-                                                            (fadeIn(tween(220, delayMillis = 80)) + scaleIn(initialScale = 0.98f, animationSpec = tween(220, delayMillis = 80)))
-                                                                .togetherWith(fadeOut(tween(120)))
+                                                            (fadeIn(tween(200)) + scaleIn(initialScale = 0.98f, animationSpec = tween(200)))
+                                                                .togetherWith(fadeOut(tween(150)))
                                                         },
                                                         label = "folderDetailTransition"
                                                     ) { targetIsListView ->
@@ -2104,8 +2102,8 @@ fun MainScreen(
                                                     AnimatedContent(
                                                         targetState = isListView,
                                                         transitionSpec = {
-                                                            (fadeIn(tween(220, delayMillis = 80)) + scaleIn(initialScale = 0.98f, animationSpec = tween(220, delayMillis = 80)))
-                                                                .togetherWith(fadeOut(tween(120)))
+                                                            (fadeIn(tween(200)) + scaleIn(initialScale = 0.98f, animationSpec = tween(200)))
+                                                                .togetherWith(fadeOut(tween(150)))
                                                         },
                                                         label = "yearDetailTransition"
                                                     ) { targetIsListView ->
@@ -2243,8 +2241,8 @@ fun MainScreen(
                                                     AnimatedContent(
                                                         targetState = isListView,
                                                         transitionSpec = {
-                                                            (fadeIn(tween(220, delayMillis = 80)) + scaleIn(initialScale = 0.98f, animationSpec = tween(220, delayMillis = 80)))
-                                                                .togetherWith(fadeOut(tween(120)))
+                                                            (fadeIn(tween(200)) + scaleIn(initialScale = 0.98f, animationSpec = tween(200)))
+                                                                .togetherWith(fadeOut(tween(150)))
                                                         },
                                                         label = "genreDetailTransition"
                                                     ) { targetIsListView ->
@@ -2407,8 +2405,8 @@ fun MainScreen(
                                                     AnimatedContent(
                                                         targetState = isListView,
                                                         transitionSpec = {
-                                                            (fadeIn(tween(220, delayMillis = 80)) + scaleIn(initialScale = 0.98f, animationSpec = tween(220, delayMillis = 80)))
-                                                                .togetherWith(fadeOut(tween(120)))
+                                                            (fadeIn(tween(200)) + scaleIn(initialScale = 0.98f, animationSpec = tween(200)))
+                                                                .togetherWith(fadeOut(tween(150)))
                                                         },
                                                         label = "playlistDetailTransition"
                                                     ) { targetIsListView ->
@@ -2583,8 +2581,8 @@ fun MainScreen(
                                                     AnimatedContent(
                                                         targetState = isListView,
                                                         transitionSpec = {
-                                                            (fadeIn(tween(220, delayMillis = 80)) + scaleIn(initialScale = 0.98f, animationSpec = tween(220, delayMillis = 80)))
-                                                                .togetherWith(fadeOut(tween(120)))
+                                                            (fadeIn(tween(200)) + scaleIn(initialScale = 0.98f, animationSpec = tween(200)))
+                                                                .togetherWith(fadeOut(tween(150)))
                                                         },
                                                         label = "favoritesTransition"
                                                     ) { targetIsListView ->
@@ -2765,8 +2763,8 @@ fun MainScreen(
                                                     AnimatedContent(
                                                         targetState = isListView,
                                                         transitionSpec = {
-                                                            (fadeIn(tween(220, delayMillis = 80)) + scaleIn(initialScale = 0.98f, animationSpec = tween(220, delayMillis = 80)))
-                                                                .togetherWith(fadeOut(tween(120)))
+                                                            (fadeIn(tween(200)) + scaleIn(initialScale = 0.98f, animationSpec = tween(200)))
+                                                                .togetherWith(fadeOut(tween(150)))
                                                         },
                                                         label = "mainLibraryTransition"
                                                     ) { targetIsListView ->

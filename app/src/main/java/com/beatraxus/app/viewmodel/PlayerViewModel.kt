@@ -3298,6 +3298,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
 
     fun setLibraryMode(mode: LibraryMode) {
+        if (_uiState.value.libraryMode == mode) return
         prefs.edit().putString("library_mode", mode.name).apply()
         _uiState.update { it.copy(
             libraryMode = mode,
@@ -3314,6 +3315,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun setPlaybackMode(mode: com.beatraxus.app.model.PlaybackMode) {
+        if (_uiState.value.playbackMode == mode) return
         prefs.edit().putString("playback_mode", mode.name).apply()
         _uiState.update { it.copy(
             playbackMode = mode,
