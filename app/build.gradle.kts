@@ -66,6 +66,9 @@ configure<ApplicationExtension> {
         val googleWebClientId = localProperties.getProperty("GOOGLE_WEB_CLIENT_ID", "")
         buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", "\"$googleWebClientId\"")
 
+        val tmdbApiKey = localProperties.getProperty("TMDB_API_KEY", "")
+        buildConfigField("String", "TMDB_API_KEY", "\"$tmdbApiKey\"")
+
         manifestPlaceholders["redirectSchemeName"] = "beatraxus"
         manifestPlaceholders["redirectHostName"] = "auth"
     }
@@ -213,6 +216,7 @@ dependencies {
     implementation("org.jellyfin.media3:media3-ffmpeg-decoder:1.5.0+1")
 
     implementation("io.coil-kt:coil-compose:2.6.0")
+    implementation("io.coil-kt:coil-video:2.6.0")
     implementation("androidx.palette:palette-ktx:1.0.0")
 
     val retrofitVersion = "2.9.0"

@@ -72,8 +72,6 @@ import com.beatraxus.app.viewmodel.VideoPlayerViewModel
 import com.beatraxus.app.viewmodel.VideoTrackInfo
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import com.beatraxus.app.motionboost.MotionBoostMode
-import com.beatraxus.app.motionboost.MotionBoostQuality
 import java.util.*
 import kotlin.math.abs
 
@@ -82,7 +80,7 @@ enum class GestureType {
 }
 
 enum class PlayerSheetType {
-    NONE, AUDIO, SUBTITLE, SPEED, ALL, EQUALIZER, MOTION_BOOST, SLEEP_TIMER, COLOR
+    NONE, AUDIO, SUBTITLE, SPEED, ALL, EQUALIZER, SLEEP_TIMER, COLOR
 }
 
 @UnstableApi
@@ -320,17 +318,22 @@ fun VideoPlayerScreen(
                 val contentFrame = view.findViewById<AspectRatioFrameLayout>(androidx.media3.ui.R.id.exo_content_frame)
                 
                 view.resizeMode = when (uiState.aspectRatio) {
+                    VideoAspectRatio.ORIGINAL -> {
+                        contentFrame?.setAspectRatio(0f)
+                        player?.videoScalingMode = C.VIDEO_SCALING_MODE_SCALE_TO_FIT
+                        AspectRatioFrameLayout.RESIZE_MODE_FIT
+                    }
                     VideoAspectRatio.FIT -> {
                         contentFrame?.setAspectRatio(0f)
                         player?.videoScalingMode = C.VIDEO_SCALING_MODE_SCALE_TO_FIT
                         AspectRatioFrameLayout.RESIZE_MODE_FIT
                     }
-                    VideoAspectRatio.FILL -> {
+                    VideoAspectRatio.FILL, VideoAspectRatio.STRETCH -> {
                         contentFrame?.setAspectRatio(0f)
                         player?.videoScalingMode = C.VIDEO_SCALING_MODE_SCALE_TO_FIT
                         AspectRatioFrameLayout.RESIZE_MODE_FILL
                     }
-                    VideoAspectRatio.ZOOM -> {
+                    VideoAspectRatio.ZOOM, VideoAspectRatio.CROP -> {
                         contentFrame?.setAspectRatio(0f)
                         player?.videoScalingMode = C.VIDEO_SCALING_MODE_SCALE_TO_FIT_WITH_CROPPING
                         AspectRatioFrameLayout.RESIZE_MODE_ZOOM
@@ -346,6 +349,7 @@ fun VideoPlayerScreen(
                         AspectRatioFrameLayout.RESIZE_MODE_FIT
                     }
                 }
+
                 
                 // Update Subtitle Styles
                 val captionStyle = CaptionStyleCompat(
@@ -372,27 +376,6 @@ fun VideoPlayerScreen(
                 )
         )
 
-        // Motion Boost Overlay
-        if (uiState.motionBoostMode != MotionBoostMode.ORIGINAL) {
-            AndroidView(
-                factory = { ctx ->
-                    TextureView(ctx).apply {
-                        surfaceTextureListener = object : TextureView.SurfaceTextureListener {
-                            override fun onSurfaceTextureAvailable(st: SurfaceTexture, w: Int, h: Int) {
-                                viewModel.setPresentationSurface(Surface(st))
-                            }
-                            override fun onSurfaceTextureSizeChanged(st: SurfaceTexture, w: Int, h: Int) {}
-                            override fun onSurfaceTextureDestroyed(st: SurfaceTexture): Boolean {
-                                viewModel.setPresentationSurface(null)
-                                return true
-                            }
-                            override fun onSurfaceTextureUpdated(st: SurfaceTexture) {}
-                        }
-                    }
-                },
-                modifier = Modifier.fillMaxSize()
-            )
-        }
 
         // Ripple Animation Layer
         doubleTapRipplePos?.let { pos ->
@@ -498,7 +481,6 @@ fun VideoPlayerScreen(
                         onToggleBoost = { viewModel.toggleVolumeBoost() },
                         onHeadphonesClick = { viewModel.toggleBackgroundPlay() },
                         onRotationClick = { activity?.let { viewModel.toggleOrientation(it) } },
-                        onMotionBoostClick = { sheetType = PlayerSheetType.MOTION_BOOST },
                         onColorClick = { sheetType = PlayerSheetType.COLOR },
                         onAbRepeatClick = { viewModel.toggleAbRepeat() },
                         onSleepTimerClick = { sheetType = PlayerSheetType.SLEEP_TIMER },
@@ -519,14 +501,18 @@ fun VideoPlayerScreen(
                         onTimeClick = { viewModel.toggleTimeDisplay() },
                         onAspectRatioClick = { 
                             val nextRatio = when (uiState.aspectRatio) {
+                                VideoAspectRatio.ORIGINAL -> VideoAspectRatio.FIT
                                 VideoAspectRatio.FIT -> VideoAspectRatio.FILL
                                 VideoAspectRatio.FILL -> VideoAspectRatio.ZOOM
-                                VideoAspectRatio.ZOOM -> VideoAspectRatio.FOUR_THREE
+                                VideoAspectRatio.ZOOM -> VideoAspectRatio.STRETCH
+                                VideoAspectRatio.STRETCH -> VideoAspectRatio.CROP
+                                VideoAspectRatio.CROP -> VideoAspectRatio.FOUR_THREE
                                 VideoAspectRatio.FOUR_THREE -> VideoAspectRatio.SIXTEEN_NINE
-                                VideoAspectRatio.SIXTEEN_NINE -> VideoAspectRatio.FIT
+                                VideoAspectRatio.SIXTEEN_NINE -> VideoAspectRatio.ORIGINAL
                             }
                             viewModel.setAspectRatio(nextRatio)
                         },
+
                         onScrubbing = { viewModel.updateScrubbingPreview(it) },
                         onLongPress = { showChapterStrip = true },
                         modifier = Modifier.align(Alignment.BottomCenter)
@@ -618,7 +604,6 @@ fun FloatingControls(
     onToggleBoost: () -> Unit,
     onHeadphonesClick: () -> Unit,
     onRotationClick: () -> Unit,
-    onMotionBoostClick: () -> Unit,
     onColorClick: () -> Unit,
     onAbRepeatClick: () -> Unit,
     onSleepTimerClick: () -> Unit,
@@ -631,6 +616,11 @@ fun FloatingControls(
             .padding(horizontal = 24.dp)
             .clip(RoundedCornerShape(24.dp))
             .background(Color.Black.copy(0.4f))
+            .pointerInput(Unit) {
+                // Consume all touches/gestures to prevent them from triggering 
+                // underlying player navigation gestures (seek, brightness, etc.)
+                detectTapGestures { }
+            }
             .horizontalScroll(scrollState)
     ) {
         Row(
@@ -674,13 +664,6 @@ fun FloatingControls(
             }
             IconButton(onClick = onRotationClick) {
                 Icon(Icons.Rounded.ScreenRotation, null, tint = Color.White)
-            }
-            IconButton(onClick = onMotionBoostClick) {
-                Icon(
-                    Icons.Rounded.SlowMotionVideo,
-                    null,
-                    tint = if (uiState.motionBoostMode != MotionBoostMode.ORIGINAL) Color(0xFFFF8F00) else Color.White
-                )
             }
             IconButton(onClick = onColorClick) {
                  Icon(
@@ -1123,7 +1106,6 @@ fun VideoSettingsSheetContent(
             PlayerSheetType.SUBTITLE -> "Subtitles"
             PlayerSheetType.SPEED -> "Playback Speed"
             PlayerSheetType.EQUALIZER -> "Premium Equalizer"
-            PlayerSheetType.MOTION_BOOST -> "Motion Boost"
             PlayerSheetType.SLEEP_TIMER -> "Sleep Timer"
             PlayerSheetType.COLOR -> "Color Grading"
             else -> "Settings"
@@ -1366,10 +1348,6 @@ fun VideoSettingsSheetContent(
             }
         }
 
-        // Motion Boost
-        if (sheetType == PlayerSheetType.MOTION_BOOST) {
-            MotionBoostSheetContent(uiState, viewModel)
-        }
 
         // Sleep Timer
         if (sheetType == PlayerSheetType.SLEEP_TIMER) {
@@ -1431,132 +1409,6 @@ fun VideoSettingsSheetContent(
     }
 }
 
-@androidx.media3.common.util.UnstableApi
-@Composable
-fun MotionBoostSheetContent(
-    uiState: VideoPlayerUiState,
-    viewModel: VideoPlayerViewModel
-) {
-    val mxOrange = Color(0xFFFF8F00)
-    
-    Column(modifier = Modifier.fillMaxWidth()) {
-        SettingSectionHeader("Target Frame Rate")
-        
-        val modes = listOf(
-            MotionBoostMode.ORIGINAL,
-            MotionBoostMode.FPS_45,
-            MotionBoostMode.FPS_60,
-            MotionBoostMode.FPS_90,
-            MotionBoostMode.FPS_120
-        )
-        
-        modes.forEach { mode ->
-            val isSupported = when (mode) {
-                MotionBoostMode.ORIGINAL -> true
-                MotionBoostMode.FPS_45 -> uiState.motionBoostCapabilities?.supports45 ?: false
-                MotionBoostMode.FPS_60 -> uiState.motionBoostCapabilities?.supports60 ?: false
-                MotionBoostMode.FPS_90 -> uiState.motionBoostCapabilities?.supports90 ?: false
-                MotionBoostMode.FPS_120 -> uiState.motionBoostCapabilities?.supports120 ?: false
-            }
-            
-            val isSelected = uiState.motionBoostMode == mode
-            
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable(enabled = isSupported) { viewModel.setMotionBoostMode(mode) }
-                    .padding(vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                RadioButton(
-                    selected = isSelected,
-                    onClick = { if (isSupported) viewModel.setMotionBoostMode(mode) },
-                    colors = RadioButtonDefaults.colors(selectedColor = mxOrange, unselectedColor = if (isSupported) Color.White else Color.Gray),
-                    enabled = isSupported
-                )
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = mode.label,
-                        color = if (isSupported) Color.White else Color.Gray,
-                        fontSize = 16.sp,
-                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
-                    )
-                    if (!isSupported) {
-                        Text(
-                            text = "Display does not support ${mode.targetFps}Hz",
-                            color = Color.Red.copy(0.7f),
-                            fontSize = 12.sp
-                        )
-                    }
-                }
-            }
-        }
-        
-        Spacer(Modifier.height(16.dp))
-        SettingSectionHeader("Processing Quality")
-        
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            MotionBoostQuality.entries.forEach { quality ->
-                val isSelected = uiState.motionBoostQuality == quality
-                FilterChip(
-                    selected = isSelected,
-                    onClick = { viewModel.setMotionBoostQuality(quality) },
-                    label = { 
-                        @OptIn(ExperimentalStdlibApi::class)
-                        val labelText = quality.name.replace("_", " ").lowercase().replaceFirstChar { it.uppercase() }
-                        Text(
-                            labelText,
-                            color = if (isSelected) Color.Black else Color.White
-                        ) 
-                    },
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = mxOrange,
-                        selectedLabelColor = Color.Black
-                    )
-                )
-            }
-        }
-        
-        Spacer(Modifier.height(24.dp))
-        
-        // Info Block
-        Surface(
-            color = Color.White.copy(0.05f),
-            shape = RoundedCornerShape(12.dp),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Text("Diagnostics", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                Spacer(Modifier.height(8.dp))
-                
-                InfoRow("Source", "${uiState.sourceFrameRateInfo?.sourceFrameRate ?: "Unknown"} FPS")
-                InfoRow("Display", "${uiState.motionBoostCapabilities?.displayRefreshRate ?: "Unknown"} Hz")
-                InfoRow("Output Target", if (uiState.motionBoostMode == MotionBoostMode.ORIGINAL) "Native" else "${uiState.motionBoostMode.targetFps} FPS")
-                if (uiState.motionBoostMode != MotionBoostMode.ORIGINAL) {
-                    InfoRow("Live Output", "${uiState.motionBoostLiveFps} FPS")
-                }
-                
-                Spacer(Modifier.height(12.dp))
-                
-                val statusText = if (uiState.motionBoostMode == MotionBoostMode.ORIGINAL) {
-                    "Status: Original playback — real-time interpolation not yet enabled"
-                } else {
-                    "Status: Motion Boost Active"
-                }
-                
-                Text(
-                    text = statusText,
-                    color = mxOrange,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium
-                )
-            }
-        }
-    }
-}
 
 @androidx.media3.common.util.UnstableApi
 @Composable

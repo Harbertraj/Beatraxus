@@ -647,7 +647,7 @@ class MusicRepository(private val context: Context) {
         }
     }
 
-    private fun resolveUriToPath(uriString: String): String? {
+    fun resolveUriToPath(uriString: String): String? {
         val uri = Uri.parse(uriString)
         if ("com.android.externalstorage.documents" == uri.authority) {
             val docId = try {
@@ -657,13 +657,19 @@ class MusicRepository(private val context: Context) {
                 return null
             }
             val split = docId.split(":")
+            if (split.isEmpty()) return null
             val type = split[0]
-            if ("primary".equals(type, ignoreCase = true)) {
-                return "/storage/emulated/0/" + if (split.size > 1) split[1] else ""
+            val path = if (split.size > 1) split[1] else ""
+            
+            return if ("primary".equals(type, ignoreCase = true)) {
+                "/storage/emulated/0/$path"
             } else {
                 // Non-primary storage (SD cards)
-                return "/storage/$type/" + if (split.size > 1) split[1] else ""
+                "/storage/$type/$path"
             }
+        } else if ("com.android.providers.downloads.documents" == uri.authority) {
+            // Handle Downloads provider if possible, or fallback
+            return null
         }
         return null
     }
@@ -711,8 +717,10 @@ class MusicRepository(private val context: Context) {
 
     suspend fun removeMusicFolder(uri: String) {
         withContext(Dispatchers.IO) {
+            val normalized = normalizePath(uri)
             folderDao.deleteFolder(uri)
-            addBlockedFolder(uri)
+            folderDao.deleteFolder(normalized)
+            addBlockedFolder(normalized)
         }
     }
 
@@ -735,15 +743,18 @@ class MusicRepository(private val context: Context) {
     }
 
     fun addBlockedFolder(uri: String) {
+        val normalized = normalizePath(uri)
         val current = getBlockedFolders().toMutableSet()
-        if (current.add(uri)) {
+        if (current.add(normalized)) {
             saveBlockedFolders(current.toList())
         }
     }
 
     fun removeBlockedFolder(uri: String) {
+        val normalized = normalizePath(uri)
         val current = getBlockedFolders().toMutableList()
-        if (current.remove(uri)) {
+        val removed = current.removeAll { it == normalized || it == uri }
+        if (removed) {
             saveBlockedFolders(current)
         }
     }

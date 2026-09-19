@@ -5,8 +5,19 @@ import androidx.room.Room
 import com.beatraxus.app.addons.AddonManager
 import com.beatraxus.app.model.AppDatabase
 import com.beatraxus.app.telegram.TdLibManager
+import coil.ImageLoader
+import coil.ImageLoaderFactory
+import coil.decode.VideoFrameDecoder
 
-class BeatraxusApplication : Application() {
+class BeatraxusApplication : Application(), ImageLoaderFactory {
+    override fun newImageLoader(): ImageLoader {
+        return ImageLoader.Builder(this)
+            .components {
+                add(VideoFrameDecoder.Factory())
+            }
+            .crossfade(true)
+            .build()
+    }
     val database: AppDatabase by lazy {
         Room.databaseBuilder(
             this,

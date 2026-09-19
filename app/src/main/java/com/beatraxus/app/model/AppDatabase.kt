@@ -101,11 +101,11 @@ interface VideoRecentlyPlayedDao {
 @Database(
     entities = [
         PlaylistEntity::class, FavoriteEntity::class, SongEntity::class, RecentlyPlayedEntity::class,
-        LyricsEntity::class, FolderEntity::class, AiAnalysisEntity::class, ArtistArtEntity::class,
+        LyricsEntity::class, FolderEntity::class, VideoFolderEntity::class, AiAnalysisEntity::class, ArtistArtEntity::class,
         SongQualityEntity::class, BookmarkEntity::class, ChapterEntity::class, HighlightEntity::class,
         LoudnessEntity::class, VideoRecentlyPlayedEntity::class, IntroOutroRange::class, VideoChapterEntity::class
     ],
-    version = 28,
+    version = 29,
     exportSchema = false
 )
 @TypeConverters(Converters::class)
@@ -115,6 +115,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun songDao(): SongDao
     abstract fun lyricsDao(): LyricsDao
     abstract fun folderDao(): FolderDao
+    abstract fun videoFolderDao(): VideoFolderDao
     abstract fun recentlyPlayedDao(): RecentlyPlayedDao
     abstract fun videoRecentlyPlayedDao(): VideoRecentlyPlayedDao
     abstract fun aiAnalysisDao(): AiAnalysisDao

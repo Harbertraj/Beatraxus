@@ -10,11 +10,11 @@ import androidx.media3.effect.GlShaderProgram
  */
 @UnstableApi
 class ColorGradeEffect(
-    private val brightness: Float,
-    private val contrast: Float,
-    private val saturation: Float
+    var brightness: Float,
+    var contrast: Float,
+    var saturation: Float
 ) : GlEffect {
     override fun toGlShaderProgram(context: Context, useHdr: Boolean): GlShaderProgram {
-        return ColorGradeShaderProgram(useHdr, brightness, contrast, saturation)
+        return ColorGradeShaderProgram(useHdr, this)
     }
 }

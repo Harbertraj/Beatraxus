@@ -143,6 +143,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private val playlistDao = database.playlistDao()
     private val favoriteDao = database.favoriteDao()
     private val songDao = database.songDao()
+    private val folderDao = database.folderDao()
+    private val videoFolderDao = database.videoFolderDao()
     private val aiAnalysisDao = database.aiAnalysisDao()
     private val artistArtDao = database.artistArtDao()
     private val songQualityDao = database.songQualityDao()
@@ -152,6 +154,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private val cloudAccountManager = com.beatraxus.app.repository.CloudAccountManager(application, database)
     private val libraryScanner = com.beatraxus.app.repository.LibraryScanner(application, musicRepository, songDao, viewModelScope)
     private val videoScanner = com.beatraxus.app.repository.VideoLibraryScanner(application)
+    private val videoMetadataRepository = com.beatraxus.app.repository.VideoMetadataRepository()
 
     private val decoderFactory = DecoderFactory(
         context = application,
@@ -191,6 +194,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 val enabled = p.getBoolean(key, true)
                 _uiState.update { it.copy(scrobblingEnabled = enabled) }
             }
+            "alternate_thumbnail_enabled" -> {
+                val enabled = p.getBoolean(key, true)
+                _uiState.update { it.copy(alternateThumbnailEnabled = enabled) }
+            }
             "playback_mode" -> {
                 val modeStr = p.getString(key, com.beatraxus.app.model.PlaybackMode.AUDIO.name)
                 val mode = com.beatraxus.app.model.PlaybackMode.valueOf(modeStr ?: com.beatraxus.app.model.PlaybackMode.AUDIO.name)
@@ -216,6 +223,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         syncQuality = SyncQuality.valueOf(prefs.getString("sync_quality", SyncQuality.MEDIUM.name) ?: SyncQuality.MEDIUM.name),
         backgroundSyncEnabled = prefs.getBoolean("background_sync_enabled", true),
         scrobblingEnabled = prefs.getBoolean("scrobbling_enabled", true),
+        alternateThumbnailEnabled = prefs.getBoolean("alternate_thumbnail_enabled", true),
         gdriveAllowedFormats = prefs.getStringSet("gdrive_allowed_formats", emptySet()) ?: emptySet(),
         telegramAllowedFormats = prefs.getStringSet("telegram_allowed_formats", emptySet()) ?: emptySet(),
         shuffleMode = prefs.getBoolean("last_shuffle_mode", false),
@@ -298,7 +306,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         // Currently videos are only local, so CLOUD mode will be empty
         val modeFiltered = when (libMode) {
             LibraryMode.LOCAL, LibraryMode.COMBINED -> all
-            LibraryMode.CLOUD -> emptyList()
+            LibraryMode.CLOUD, LibraryMode.ADDONS -> emptyList()
         }
 
         var filtered = when (view) {
@@ -330,16 +338,32 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     val videos: StateFlow<List<com.beatraxus.app.model.Video>> = filteredVideos
 
-    val videoFolders: StateFlow<List<com.beatraxus.app.model.VideoFolder>> = allVideos.map { all ->
-        all.groupBy { it.folderPath }
-            .map { (path, list) ->
-                com.beatraxus.app.model.VideoFolder(
-                    name = path.substringAfterLast("/"),
-                    path = path,
-                    videoCount = list.size,
-                    previewThumbnails = list.take(4).mapNotNull { it.thumbnailUri }
-                )
-            }.sortedBy { it.name.lowercase() }
+    val videoFolders: StateFlow<List<com.beatraxus.app.model.VideoFolder>> = combine(
+        allVideos,
+        videoFolderDao.getActiveFolders(),
+        _uiState.map { it.blockedFolders }.distinctUntilChanged(),
+        _uiState.map { it.libraryMode }.distinctUntilChanged()
+    ) { all, managed, blocked, libMode ->
+        // Currently videos are only local, so CLOUD mode will be empty
+        val modeFiltered = when (libMode) {
+            LibraryMode.LOCAL, LibraryMode.COMBINED -> all
+            LibraryMode.CLOUD, LibraryMode.ADDONS -> emptyList()
+        }
+
+        val managedPaths = managed.map { it.path }
+        val discoveredPaths = modeFiltered.map { it.folderPath }.distinct()
+        val allPaths = (managedPaths + discoveredPaths).distinct()
+            .filter { path -> !blocked.any { path.startsWith(it) } }
+
+        allPaths.map { path ->
+            val folderVideos = modeFiltered.filter { it.folderPath.startsWith(path) }
+            com.beatraxus.app.model.VideoFolder(
+                name = path.substringAfterLast("/"),
+                path = path,
+                videoCount = folderVideos.size,
+                previewThumbnails = folderVideos.take(4).map { it.thumbnailUri ?: it.uri }
+            )
+        }.filter { it.videoCount > 0 }.sortedBy { it.name.lowercase() }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     private val allSongsWithFavorites: StateFlow<List<Song>> = combine(
@@ -389,6 +413,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             LibraryMode.LOCAL -> all.filter { it.source == SongSource.LOCAL }
             LibraryMode.CLOUD -> all.filter { it.source != SongSource.LOCAL }
             LibraryMode.COMBINED -> all
+            LibraryMode.ADDONS -> emptyList()
         }
     }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
@@ -549,6 +574,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             LibraryMode.LOCAL -> allSongsList.filter { it.source == SongSource.LOCAL }
             LibraryMode.CLOUD -> allSongsList.filter { it.source != SongSource.LOCAL }
             LibraryMode.COMBINED -> allSongsList
+            LibraryMode.ADDONS -> emptyList()
         }
 
         var filtered = when (state.currentView) {
@@ -650,6 +676,36 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             musicRepository.getMusicFoldersFlow().collect { folders ->
                 _uiState.update { it.copy(musicFolders = folders) }
+            }
+        }
+
+        viewModelScope.launch {
+            videoFolderDao.getActiveFolders().collect { folders ->
+                val paths = folders.map { it.path }
+                // Trigger video scan when folders change
+                loadVideos(paths)
+            }
+        }
+
+        // Reactive Music Folder Stats
+        viewModelScope.launch {
+            combine(allSongs, _uiState.map { it.musicFolders }.distinctUntilChanged()) { songs, folders ->
+                folders.associateWith { folder ->
+                    songs.count { it.source == SongSource.LOCAL && it.folder.startsWith(folder) }
+                }
+            }.collect { stats ->
+                _uiState.update { it.copy(musicFolderStats = stats) }
+            }
+        }
+
+        // Reactive Video Folder Stats
+        viewModelScope.launch {
+            combine(allVideos, videoFolderDao.getActiveFolders()) { vids, folders ->
+                folders.associate { folder ->
+                    folder.path to vids.count { it.folderPath.startsWith(folder.path) }
+                }
+            }.collect { stats ->
+                _uiState.update { it.copy(videoFolderStats = stats) }
             }
         }
 
@@ -1376,13 +1432,13 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     }
 
                     if (cacheWiped) {
-                        if (_uiState.value.musicFolders.isNotEmpty()) startAddedFoldersScan()
+                        if (_uiState.value.musicFolders.isNotEmpty()) quickScan()
                         return@launch
                     }
 
                     // After loading from DB, we trigger an incremental scan to check for new songs in added folders
                     _uiState.update { it.copy(isLoadingLibrary = false) }
-                    if (_uiState.value.musicFolders.isNotEmpty()) startAddedFoldersScan()
+                    if (_uiState.value.musicFolders.isNotEmpty()) quickScan()
                     return@launch
                 }
             } catch (e: Exception) {
@@ -1390,17 +1446,25 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             }
 
             // Perform an incremental scan ONLY if DB was empty
-            if (_uiState.value.musicFolders.isNotEmpty()) startAddedFoldersScan()
+            if (_uiState.value.musicFolders.isNotEmpty()) quickScan()
         }
     }
 
 
 
-    fun loadVideos() {
+    fun loadVideos(targetFolders: List<String>? = null) {
         viewModelScope.launch {
             _uiState.update { it.copy(isLoadingVideos = true) }
             try {
-                val scannedVideos = videoScanner.scanVideos()
+                val blocked = musicRepository.getBlockedFolders()
+                val folders = targetFolders ?: videoFolderDao.getActiveFoldersList().map { it.path }
+                if (folders.isEmpty() && targetFolders != null) {
+                    _videos.value = emptyList()
+                    _uiState.update { it.copy(isLoadingVideos = false) }
+                    return@launch
+                }
+
+                val scannedVideos = videoScanner.scanVideos(folders, blocked)
                 _videos.value = scannedVideos
                 _uiState.update { it.copy(isLoadingVideos = false) }
 
@@ -1417,11 +1481,22 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                             }
 
                             val result = com.beatraxus.app.utils.VideoThumbnailHelper.enrichVideo(context, video.uri, video.id)
-                            if (result.thumbnailUri != null || result.isHdr) {
+                            
+                            var finalThumbnailUri = result.thumbnailUri
+                            
+                            // Online metadata enrichment if enabled
+                            if (_uiState.value.alternateThumbnailEnabled && finalThumbnailUri != null) {
+                                val onlineUrl = videoMetadataRepository.fetchPosterUrl(video.title)
+                                if (onlineUrl != null) {
+                                    finalThumbnailUri = Uri.parse(onlineUrl)
+                                }
+                            }
+
+                            if (finalThumbnailUri != null || result.isHdr) {
                                 _videos.update { current ->
                                     current.map {
                                         if (it.id == video.id) it.copy(
-                                            thumbnailUri = result.thumbnailUri,
+                                            thumbnailUri = finalThumbnailUri,
                                             isHdr = result.isHdr
                                         ) else it
                                     }
@@ -3125,33 +3200,81 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         _uiState.update { it.copy(triggerFolderPicker = true) }
     }
 
+    fun openVideoFolderPicker() {
+        _uiState.update { it.copy(triggerVideoFolderPicker = true) }
+    }
+
     fun consumeFolderPickerTrigger() {
         _uiState.update { it.copy(triggerFolderPicker = false) }
     }
 
+    fun consumeVideoFolderPickerTrigger() {
+        _uiState.update { it.copy(triggerVideoFolderPicker = false) }
+    }
+
     fun addMusicFolder(uri: String) {
         viewModelScope.launch {
-            musicRepository.addMusicFolder(uri)
+            val resolved = musicRepository.resolveUriToPath(uri) ?: uri
+            musicRepository.removeBlockedFolder(resolved)
+            musicRepository.addMusicFolder(resolved)
             val folders = musicRepository.getMusicFolders()
-            _uiState.update { it.copy(triggerFolderPicker = false, musicFolders = folders) }
+            _uiState.update { it.copy(
+                triggerFolderPicker = false, 
+                musicFolders = folders,
+                blockedFolders = musicRepository.getBlockedFolders()
+            ) }
             if (!_uiState.value.isFirstRun) {
                 quickScan()
             }
         }
     }
 
+    fun addVideoFolder(uri: String) {
+        viewModelScope.launch {
+            val resolved = musicRepository.resolveUriToPath(uri) ?: uri
+            musicRepository.removeBlockedFolder(resolved)
+            videoFolderDao.insertFolder(com.beatraxus.app.model.VideoFolderEntity(resolved))
+            _uiState.update { it.copy(
+                triggerVideoFolderPicker = false,
+                blockedFolders = musicRepository.getBlockedFolders()
+            ) }
+            loadVideos()
+        }
+    }
+
     fun removeMusicFolder(path: String) {
         viewModelScope.launch {
             musicRepository.removeMusicFolder(path)
+            // Instant removal of songs from DB
+            songDao.deleteSongsInFolder(path)
+            
             val folders = musicRepository.getMusicFolders()
             val isFirstRun = _uiState.value.isFirstRun
             _uiState.update { it.copy(
                 musicFolders = folders,
                 blockedFolders = musicRepository.getBlockedFolders()
             ) }
+            
+            // Trigger a quick scan to sync UI if needed, but songs are already gone from DB
             if (!isFirstRun) {
                 quickScan()
             }
+        }
+    }
+
+    fun removeVideoFolder(path: String) {
+        viewModelScope.launch {
+            videoFolderDao.deleteFolder(path)
+            musicRepository.addBlockedFolder(path)
+            
+            // Instant removal from UI state
+            _videos.update { vids -> vids.filterNot { it.folderPath.startsWith(path) } }
+            
+            _uiState.update { it.copy(
+                blockedFolders = musicRepository.getBlockedFolders()
+            ) }
+            
+            // Optionally we could also call loadVideos() but _videos.update is faster
         }
     }
 
@@ -3164,6 +3287,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 blockedFolders = musicRepository.getBlockedFolders()
             ) }
             quickScan()
+            loadVideos()
         }
     }
 
@@ -3175,7 +3299,18 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun setLibraryMode(mode: LibraryMode) {
         prefs.edit().putString("library_mode", mode.name).apply()
-        _uiState.update { it.copy(libraryMode = mode) }
+        _uiState.update { it.copy(
+            libraryMode = mode,
+            currentView = if (mode == LibraryMode.ADDONS) LibraryView.ADDONS else it.currentView
+        ) }
+    }
+
+
+
+    fun setAlternateThumbnailEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean("alternate_thumbnail_enabled", enabled).apply()
+        _uiState.update { it.copy(alternateThumbnailEnabled = enabled) }
+        loadVideos()
     }
 
     fun setPlaybackMode(mode: com.beatraxus.app.model.PlaybackMode) {
@@ -3914,6 +4049,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             LibraryMode.LOCAL -> allSongsList.filter { it.source == com.beatraxus.app.model.SongSource.LOCAL }
             LibraryMode.CLOUD -> allSongsList.filter { it.source != com.beatraxus.app.model.SongSource.LOCAL }
             LibraryMode.COMBINED -> allSongsList
+            LibraryMode.ADDONS -> emptyList()
         }
 
         val songsToShuffle = when (state.currentView) {

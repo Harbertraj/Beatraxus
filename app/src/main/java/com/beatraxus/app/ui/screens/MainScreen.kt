@@ -321,6 +321,7 @@ fun MainScreen(
         LibraryView.RADIO -> Color(0xFF00B8D4)
         LibraryView.SMB_NAS -> Color(0xFF546E7A)
         LibraryView.FTP_SFTP -> Color(0xFF8D6E63)
+        LibraryView.ADDONS -> Color(0xFFFFA000)
         LibraryView.VIDEO_ALL, LibraryView.VIDEO_FOLDER_DETAIL -> Color(0xFF00E5FF)
         LibraryView.VIDEO_FOLDERS -> Color(0xFFFFAB40)
         LibraryView.VIDEO_RECENTLY_ADDED -> Color(0xFF00E676)
@@ -497,6 +498,16 @@ fun MainScreen(
 
     var titleWidth by remember { mutableFloatStateOf(0f) }
     var settingsLeft by remember { mutableFloatStateOf(Float.MAX_VALUE) }
+    
+    var showVideoFab by remember { mutableStateOf(false) }
+
+    LaunchedEffect(uiState.playbackMode) {
+        showVideoFab = false
+        if (uiState.playbackMode == com.beatraxus.app.model.PlaybackMode.VIDEO) {
+            kotlinx.coroutines.delay(2000)
+            showVideoFab = true
+        }
+    }
     val configuration = androidx.compose.ui.platform.LocalConfiguration.current
     val density = LocalDensity.current
     val screenWidthPx = remember(configuration, density) {
@@ -575,8 +586,8 @@ fun MainScreen(
         label = "drawerProgress"
     )
 
-    val contentScale = 1f - (0.03f * drawerProgress)
-    val contentRotation = -2f * drawerProgress
+    val contentScale = 1f - (0.18f * drawerProgress)
+    val contentRotation = 0f // Removed rotation for uniform spacing
     val contentCornerRadius = (32f * drawerProgress).dp
 
     Box(Modifier.fillMaxSize()) {
@@ -598,7 +609,7 @@ fun MainScreen(
                     .width(180.dp)
                     .fillMaxHeight(1.0f)
                     .align(Alignment.TopStart)
-                    .zIndex(1f)
+                    .zIndex(10f)
                     .graphicsLayer {
                         translationX = -with(density) { 60.dp.toPx() } * (1f - drawerProgress)
                         alpha = (drawerProgress * 1.5f).coerceIn(0f, 1f)
@@ -650,10 +661,10 @@ fun MainScreen(
                 .fillMaxSize()
                 .zIndex(2f) // Main content is on top
                 .graphicsLayer {
-                    translationX = drawerProgress * with(density) { 180.dp.toPx() }
+                    translationX = drawerProgress * with(density) { 200.dp.toPx() }
                     scaleX = contentScale
-                    scaleY = 1f - (0.08f * drawerProgress)
-                    rotationY = contentRotation
+                    scaleY = contentScale
+                    rotationZ = contentRotation
                     cameraDistance = 12f * density.density
                     transformOrigin = TransformOrigin(0f, 0.5f)
                     shape = RoundedCornerShape(contentCornerRadius.coerceAtLeast(0.dp))
@@ -709,8 +720,8 @@ fun MainScreen(
                     topBar = {},
                     contentWindowInsets = WindowInsets.systemBars
                 ) { paddingValues ->
-                    // FIX 3: Wrap Column + mini player in Box so mini player can float at bottom
                     Box(Modifier.fillMaxSize()) {
+                    // Removed full-screen mode transition to align with library navigation style
                         Column(
                             Modifier
                                 .fillMaxSize()
@@ -756,6 +767,7 @@ fun MainScreen(
                                     LibraryView.RADIO -> "RADIO"
                                     LibraryView.SMB_NAS -> "SMB/NAS"
                                     LibraryView.FTP_SFTP -> "FTP/SFTP"
+                                    LibraryView.ADDONS -> "ADD-ONS"
                                     LibraryView.VIDEO_ALL -> "ALL VIDEOS"
                                     LibraryView.VIDEO_FOLDERS -> "VIDEO FOLDERS"
                                     LibraryView.VIDEO_FOLDER_DETAIL -> uiState.selectedItemName ?: "VIDEO FOLDER"
@@ -784,6 +796,7 @@ fun MainScreen(
                                     LibraryView.RADIO -> Icons.Rounded.Radio
                                     LibraryView.SMB_NAS -> Icons.Rounded.Storage
                                     LibraryView.FTP_SFTP -> Icons.Rounded.NetworkCheck
+                                    LibraryView.ADDONS -> Icons.Rounded.Extension
                                     LibraryView.VIDEO_ALL -> Icons.Rounded.Movie
                                     LibraryView.VIDEO_FOLDERS -> Icons.Rounded.FolderOpen
                                     LibraryView.VIDEO_FOLDER_DETAIL -> Icons.Rounded.Folder
@@ -1475,13 +1488,13 @@ fun MainScreen(
                                         } else {
                                             // Normal Content
                                         androidx.compose.animation.AnimatedContent(
-                                            targetState = uiState.currentView,
+                                            targetState = uiState.currentView to uiState.playbackMode,
                                             transitionSpec = {
                                                 (fadeIn(animationSpec = tween(220, delayMillis = 80)) + scaleIn(initialScale = 0.98f, animationSpec = tween(220, delayMillis = 80)))
                                                     .togetherWith(fadeOut(animationSpec = tween(120)))
                                             },
                                             label = "viewTransition"
-                                        ) { targetView ->
+                                        ) { (targetView, _) ->
                                             when (targetView) {
                                                 LibraryView.HOME -> {
                                                     HomeScreen(viewModel, uiState, homeListState)
@@ -2872,6 +2885,7 @@ fun MainScreen(
                                         }
                                     }
                                 } // end Column
+                            } // end mode AnimatedContent
 
                                 // Unified Now Playing Bar (Adaptive for Audio & Video)
                                 Box(
@@ -3323,7 +3337,7 @@ fun MainScreen(
                             }
                         }
                     }
-                }
+            }
             }
 
             // Dimming overlay when side menu is open
@@ -3332,6 +3346,10 @@ fun MainScreen(
                     Modifier
                         .fillMaxSize()
                         .background(Color.Black.copy(alpha = (drawerProgress * 0.35f).coerceIn(0f, 0.35f)))
+                        .clickable(
+                            interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                            indication = null
+                        ) { showDrawer = false }
                 )
             }
         }
@@ -3490,47 +3508,44 @@ fun MainScreen(
             }
         }
 
-        // Floating Video Quick Play Button
         val isVideoView = uiState.currentView in listOf(
-            LibraryView.VIDEO_ALL, LibraryView.VIDEO_FOLDERS, LibraryView.VIDEO_FOLDER_DETAIL,
+            LibraryView.HOME, LibraryView.VIDEO_ALL, LibraryView.VIDEO_FOLDERS, LibraryView.VIDEO_FOLDER_DETAIL,
             LibraryView.VIDEO_RECENTLY_ADDED, LibraryView.VIDEO_RECENTLY_PLAYED
         )
-        if (uiState.playbackMode == com.beatraxus.app.model.PlaybackMode.VIDEO && isVideoView && drawerProgress == 0f && !showFullPlayer) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(bottom = 16.dp, end = 16.dp),
-                contentAlignment = Alignment.BottomEnd
+        val isMiniPlayerVisible = uiState.currentSong != null
+        val videoFabBottomPadding by animateDpAsState(
+            targetValue = if (isMiniPlayerVisible) 84.dp else 16.dp,
+            label = "video_fab_bottom_padding"
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(bottom = videoFabBottomPadding, end = 16.dp),
+            contentAlignment = Alignment.BottomEnd
+        ) {
+            androidx.compose.animation.AnimatedVisibility(
+                visible = showVideoFab && isVideoView && drawerProgress == 0f && !showFullPlayer,
+                enter = scaleIn(animationSpec = tween(400)) + fadeIn(animationSpec = tween(400)),
+                exit = scaleOut(animationSpec = tween(300)) + fadeOut(animationSpec = tween(300))
             ) {
-                Surface(
-                    onClick = { viewModel.playLastPlayedVideo() },
-                    shape = RoundedCornerShape(28.dp),
-                    color = AccentBlue,
-                    tonalElevation = 8.dp,
+                Box(
                     modifier = Modifier
                         .size(64.dp)
-                        .border(2.dp, Color.White.copy(0.2f), RoundedCornerShape(28.dp))
+                        .shadow(elevation = 12.dp, shape = CircleShape)
+                        .background(color = AccentBlue, shape = CircleShape)
+                        .clickable { viewModel.playLastPlayedVideo() },
+                    contentAlignment = Alignment.Center
                 ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(Icons.Rounded.PlayArrow, null, tint = Color.Black, modifier = Modifier.size(36.dp))
-                    }
+                    Icon(
+                        imageVector = Icons.Rounded.PlayArrow,
+                        contentDescription = null,
+                        tint = Color.Black,
+                        modifier = Modifier.size(40.dp)
+                    )
                 }
             }
         }
 
-        if (showDrawer || drawerProgress > 0f) {
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .background(Color.Transparent) // Removed dark shade
-                    .clickable(
-                        enabled = drawerProgress > 0f,
-                        interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
-                        indication = null
-                    ) { showDrawer = false }
-                    .zIndex(8f)
-            )
-        }
 
         AnimatedVisibility(
             visible = showFullPlayer && uiState.currentSong != null,
@@ -3628,7 +3643,6 @@ fun MainScreen(
             }
         }
     }
-}
 }
 
 @Composable
@@ -5738,7 +5752,8 @@ fun SlideDrawerMenu(
                 DrawerMenuItem("All Videos", LibraryView.VIDEO_ALL, Icons.Rounded.Movie, Color(0xFF00E5FF)),
                 DrawerMenuItem("Folders", LibraryView.VIDEO_FOLDERS, Icons.Rounded.FolderOpen, Color(0xFFFFAB40)),
                 DrawerMenuItem("Recently Added", LibraryView.VIDEO_RECENTLY_ADDED, Icons.Rounded.VideoLibrary, Color(0xFF00E676)),
-                DrawerMenuItem("Recently Played", LibraryView.VIDEO_RECENTLY_PLAYED, Icons.Rounded.History, Color(0xFF40C4FF))
+                DrawerMenuItem("Recently Played", LibraryView.VIDEO_RECENTLY_PLAYED, Icons.Rounded.History, Color(0xFF40C4FF)),
+                DrawerMenuItem("Streaming Add-ons", LibraryView.ADDONS, Icons.Rounded.Extension, Color(0xFF00C2A8))
             )
         } else {
             listOf(
@@ -5755,7 +5770,8 @@ fun SlideDrawerMenu(
                 DrawerMenuItem("Recently Played", LibraryView.RECENTLY_PLAYED, Icons.Rounded.History, Color(0xFF40C4FF)),
                 DrawerMenuItem("Radio", LibraryView.RADIO, Icons.Rounded.Radio, Color(0xFF00B8D4)),
                 DrawerMenuItem("SMB / NAS", LibraryView.SMB_NAS, Icons.Rounded.Storage, Color(0xFF546E7A)),
-                DrawerMenuItem("FTP / SFTP", LibraryView.FTP_SFTP, Icons.Rounded.Dns, Color(0xFF8D6E63))
+                DrawerMenuItem("FTP / SFTP", LibraryView.FTP_SFTP, Icons.Rounded.Dns, Color(0xFF8D6E63)),
+                DrawerMenuItem("Streaming Add-ons", LibraryView.ADDONS, Icons.Rounded.Extension, Color(0xFF00C2A8))
             ).filter { item ->
                 !(item.view == LibraryView.FOLDERS && libraryMode == LibraryMode.CLOUD)
             }

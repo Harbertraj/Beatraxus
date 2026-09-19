@@ -12,7 +12,10 @@ import kotlinx.coroutines.withContext
 
 class VideoLibraryScanner(private val context: Context) {
 
-    suspend fun scanVideos(): List<Video> = withContext(Dispatchers.IO) {
+    suspend fun scanVideos(
+        targetFolders: List<String> = emptyList(),
+        excludedPaths: List<String> = emptyList()
+    ): List<Video> = withContext(Dispatchers.IO) {
         val videos = mutableListOf<Video>()
         val collection = MediaStore.Video.Media.EXTERNAL_CONTENT_URI
 
@@ -29,6 +32,7 @@ class VideoLibraryScanner(private val context: Context) {
             MediaStore.Video.Media.DATA
         )
 
+        // Filter by folders if provided (handled in-memory below for better compatibility)
         val sortOrder = "${MediaStore.Video.Media.DATE_ADDED} DESC"
 
         context.contentResolver.query(
@@ -50,6 +54,19 @@ class VideoLibraryScanner(private val context: Context) {
             val dataColumn = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DATA)
 
             while (cursor.moveToNext()) {
+                val data = cursor.getString(dataColumn) ?: ""
+                val folderPath = data.substringBeforeLast("/", "Unknown")
+
+                // Filter by excluded paths
+                if (excludedPaths.isNotEmpty() && excludedPaths.any { data.startsWith(it) }) {
+                    continue
+                }
+
+                // Filter by targetFolders if not empty
+                if (targetFolders.isNotEmpty() && !targetFolders.any { data.startsWith(it) }) {
+                    continue
+                }
+
                 val id = cursor.getLong(idColumn)
                 val displayName = cursor.getString(displayNameColumn) ?: "Unknown"
                 val title = cursor.getString(titleColumn) ?: displayName
@@ -59,10 +76,8 @@ class VideoLibraryScanner(private val context: Context) {
                 val height = cursor.getInt(heightColumn)
                 val mimeType = cursor.getString(mimeTypeColumn) ?: "video/*"
                 val dateAdded = cursor.getLong(dateAddedColumn)
-                val data = cursor.getString(dataColumn) ?: ""
                 
                 val contentUri = ContentUris.withAppendedId(collection, id)
-                val folderPath = data.substringBeforeLast("/", "Unknown")
 
                 videos.add(
                     Video(

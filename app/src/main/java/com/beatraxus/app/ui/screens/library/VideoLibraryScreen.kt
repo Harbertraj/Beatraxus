@@ -421,100 +421,159 @@ fun VideoListItem(
                 onLongClick = onLongClick
             )
             .padding(vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically
+        verticalAlignment = Alignment.Top
     ) {
-        // Thumbnail
-        Box(
-            modifier = Modifier
-                .width(140.dp)
-                .aspectRatio(16f / 9f)
-                .clip(RoundedCornerShape(8.dp))
-                .background(Color.White.copy(alpha = 0.05f))
+        Column(
+            modifier = Modifier.width(140.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            AsyncImage(
-                model = thumbnailUri ?: video.uri,
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize()
-            )
-
-            // Duration
-            Surface(
-                color = Color.Black.copy(alpha = 0.7f),
-                shape = RoundedCornerShape(4.dp),
+            // Thumbnail
+            Box(
                 modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(4.dp)
+                    .fillMaxWidth()
+                    .aspectRatio(16f / 9f)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Color.White.copy(alpha = 0.05f))
             ) {
-                Text(
-                    text = formatDuration(video.durationMs),
-                    color = Color.White,
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                AsyncImage(
+                    model = thumbnailUri ?: video.uri,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
                 )
-            }
 
-            // NEW badge top-left
-            if (isNew) {
-                Box(
+                // Duration
+                Surface(
+                    color = Color.Black.copy(alpha = 0.7f),
+                    shape = RoundedCornerShape(4.dp),
                     modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .clip(RoundedCornerShape(bottomEnd = 8.dp))
-                        .background(Color(0xFFFF3B30))
-                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                        .align(Alignment.BottomEnd)
+                        .padding(4.dp)
                 ) {
                     Text(
-                        text = "NEW",
+                        text = formatDuration(video.durationMs),
                         color = Color.White,
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.Black,
-                        letterSpacing = 0.5.sp
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
                     )
                 }
-            }
 
-            // HDR badge top-right (golden tag)
-            if (video.isHdr) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .clip(RoundedCornerShape(bottomStart = 8.dp))
-                        .background(Color(0xFFFFD54F))
-                        .padding(horizontal = 6.dp, vertical = 2.dp)
-                ) {
-                    Text(
-                        "HDR",
-                        color = Color.Black,
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.Black,
-                        letterSpacing = 0.5.sp
-                    )
-                }
-            }
-
-            // Selection Checkmark
-            if (isMultiSelectMode) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(if (isSelected) Color.Black.copy(alpha = 0.4f) else Color.Transparent),
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (isSelected) {
-                        Icon(
-                            imageVector = Icons.Rounded.CheckCircle,
-                            contentDescription = null,
-                            tint = Color(0xFF00E5FF),
-                            modifier = Modifier.size(28.dp)
-                        )
-                    } else {
-                        Box(
-                            modifier = Modifier
-                                .size(20.dp)
-                                .border(1.5.dp, Color.White.copy(alpha = 0.5f), CircleShape)
+                // NEW badge top-left
+                if (isNew) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .clip(RoundedCornerShape(bottomEnd = 8.dp))
+                            .background(Color(0xFFFF3B30))
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            text = "NEW",
+                            color = Color.White,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Black,
+                            letterSpacing = 0.5.sp
                         )
                     }
+                }
+
+                // HDR badge top-right (golden tag)
+                if (video.isHdr) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .clip(RoundedCornerShape(bottomStart = 8.dp))
+                            .background(Color(0xFFFFD54F))
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            "HDR",
+                            color = Color.Black,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Black,
+                            letterSpacing = 0.5.sp
+                        )
+                    }
+                }
+
+                // Selection Checkmark
+                if (isMultiSelectMode) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(if (isSelected) Color.Black.copy(alpha = 0.4f) else Color.Transparent),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (isSelected) {
+                            Icon(
+                                imageVector = Icons.Rounded.CheckCircle,
+                                contentDescription = null,
+                                tint = Color(0xFF00E5FF),
+                                modifier = Modifier.size(28.dp)
+                            )
+                        } else {
+                            Box(
+                                modifier = Modifier
+                                    .size(20.dp)
+                                    .border(1.5.dp, Color.White.copy(alpha = 0.5f), CircleShape)
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(8.dp))
+
+            // Tags row below thumbnail
+            @OptIn(ExperimentalLayoutApi::class)
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                // Resolution
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(Color(0xFF34495E))
+                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                ) {
+                    Text(
+                        text = "${video.resolutionHeight}p",
+                        color = Color.White.copy(alpha = 0.9f),
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                // File size
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(Color(0xFF34495E))
+                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                ) {
+                    Text(
+                        text = formatFileSize(video.sizeBytes),
+                        color = Color.White.copy(alpha = 0.9f),
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                // Date added string
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(Color(0xFF34495E))
+                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                ) {
+                    Text(
+                        text = formatDateShort(video.dateAdded * 1000),
+                        color = Color.White.copy(alpha = 0.9f),
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold
+                    )
                 }
             }
         }
@@ -547,60 +606,6 @@ fun VideoListItem(
                 color = Color.White.copy(alpha = 0.5f),
                 fontSize = 13.sp
             )
-
-            Spacer(Modifier.height(8.dp))
-
-            // Tags row
-            @OptIn(ExperimentalLayoutApi::class)
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                // Resolution
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(4.dp))
-                        .background(Color(0xFF34495E))
-                        .padding(horizontal = 6.dp, vertical = 2.dp)
-                ) {
-                    Text(
-                        text = "${video.resolutionHeight}p",
-                        color = Color.White.copy(alpha = 0.9f),
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-
-                // File size
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(4.dp))
-                        .background(Color(0xFF34495E))
-                        .padding(horizontal = 6.dp, vertical = 2.dp)
-                ) {
-                    Text(
-                        text = formatFileSize(video.sizeBytes),
-                        color = Color.White.copy(alpha = 0.9f),
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-
-                // Date added string
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(4.dp))
-                        .background(Color(0xFF34495E))
-                        .padding(horizontal = 6.dp, vertical = 2.dp)
-                ) {
-                    Text(
-                        text = formatDateShort(video.dateAdded * 1000),
-                        color = Color.White.copy(alpha = 0.9f),
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-            }
         }
     }
 }

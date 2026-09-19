@@ -10,6 +10,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AllInclusive
 import androidx.compose.material.icons.rounded.Cloud
+import androidx.compose.material.icons.rounded.Extension
 import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.*
@@ -30,7 +31,7 @@ fun LibraryModeSelector(
     modifier: Modifier = Modifier
 ) {
     val modes = listOf(LibraryMode.LOCAL, LibraryMode.CLOUD, LibraryMode.COMBINED)
-    val selectedIndex = modes.indexOf(currentMode)
+    val selectedIndex = modes.indexOf(currentMode).coerceAtLeast(0)
     
     // Unique color for this component: Sunset Amber / Gold
     val componentColor = Color(0xFFFFB300) 
@@ -121,6 +122,7 @@ fun LibraryModeSelector(
                             LibraryMode.LOCAL -> Icons.Rounded.Storage
                             LibraryMode.COMBINED -> Icons.Rounded.AllInclusive
                             LibraryMode.CLOUD -> Icons.Rounded.Cloud
+                            else -> Icons.Rounded.Extension
                         },
                         contentDescription = mode.name,
                         tint = iconColor,

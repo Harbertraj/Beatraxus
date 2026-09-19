@@ -59,6 +59,8 @@ import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.*
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.snapshots.SnapshotStateList
@@ -415,18 +417,11 @@ fun SettingsScreen(
                 ) {
                     if (section == null) {
                         SettingMenuItem(
-                            title = "Audio Engine",
-                            subtitle = "Configure output, sample rates, Resampler, Dither...",
+                            title = "Audio",
+                            subtitle = "Output, Sample rates, USB Direct, Bit-Perfect, DVC, Limiter",
                             icon = Icons.Rounded.GraphicEq,
                             iconColor = Color(0xFF4CAF50),
-                            onClick = { sectionStack.add("Audio Engine") }
-                        )
-                        SettingMenuItem(
-                            title = "DSP Enhancements",
-                            subtitle = "USB Direct, Bit-Perfect, DVC, Limiter",
-                            icon = Icons.Rounded.Tune,
-                            iconColor = Color(0xFFFF9800),
-                            onClick = { sectionStack.add("DSP Enhancements") }
+                            onClick = { sectionStack.add("Audio") }
                         )
                         SettingMenuItem(
                             title = "Appearance",
@@ -448,6 +443,13 @@ fun SettingsScreen(
                             icon = Icons.Rounded.AudioFile,
                             iconColor = Color(0xFFE91E63),
                             onClick = { sectionStack.add("Library") }
+                        )
+                        SettingMenuItem(
+                            title = "Video Settings",
+                            subtitle = "Subtitles, Online Thumbnails, Player preferences",
+                            icon = Icons.Rounded.Movie,
+                            iconColor = Color(0xFFFF9800),
+                            onClick = { sectionStack.add("Video Settings") }
                         )
                         SettingMenuItem(
                             title = "Cloud Account",
@@ -487,8 +489,7 @@ fun SettingsScreen(
                         )
                     } else {
                         when (section) {
-                            "Audio Engine" -> AudioEngineContent(uiState, playerViewModel, onEditValue = { editingValue = it })
-                            "DSP Enhancements" -> DspEnhancementsContent(uiState, playerViewModel, onEditValue = { editingValue = it })
+                            "Audio" -> AudioContent(uiState, playerViewModel, onEditValue = { editingValue = it })
                             "Appearance" -> AppearanceContent(sectionStack)
                             "Appearance: Main Screen" -> MainScreenAppearanceContent(uiState, playerViewModel)
                             "Appearance: Now Playing" -> NowPlayingAppearanceContent(uiState, playerViewModel, sectionStack)
@@ -498,6 +499,7 @@ fun SettingsScreen(
                             "Appearance: Settings Screen" -> SettingsScreenAppearanceContent(uiState, playerViewModel)
                             "Replay Gain" -> ReplayGainContent(uiState, playerViewModel, onEditValue = { editingValue = it })
                             "Library" -> LibraryContent(uiState, playerViewModel, onShowInfo = { showInfoPopup = true })
+                            "Video Settings" -> VideoSettingsContent(uiState, playerViewModel)
                             "Cloud" -> CloudContent(
                                 uiState,
                                 playerViewModel,
@@ -1608,6 +1610,24 @@ fun SettingMenuItem(
                 )
             }
         }
+    }
+}
+
+@Composable
+fun AudioContent(
+    uiState: PlayerUiState,
+    viewModel: PlayerViewModel,
+    onEditValue: (EditingValue) -> Unit
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(24.dp)
+    ) {
+        AudioEngineContent(uiState, viewModel, onEditValue)
+        
+        HorizontalDivider(color = Color.White.copy(0.06f))
+        
+        DspEnhancementsContent(uiState, viewModel, onEditValue)
     }
 }
 
@@ -3209,6 +3229,111 @@ fun ReplayGainContent(
 
 
 @Composable
+fun FolderManagedItem(
+    path: String,
+    title: String,
+    subtitle: String,
+    icon: ImageVector,
+    iconColor: Color,
+    count: Int? = null,
+    onRemove: () -> Unit
+) {
+    var showMenu by remember { mutableStateOf(false) }
+
+    Surface(
+        shape = RoundedCornerShape(14.dp),
+        color = Color.White.copy(0.04f),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(0.07f)),
+        modifier = Modifier
+            .fillMaxWidth()
+            .pointerInput(Unit) {
+                detectTapGestures(
+                    onLongPress = { showMenu = true }
+                )
+            }
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(iconColor.copy(0.1f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    icon,
+                    null,
+                    tint = iconColor,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        title,
+                        color = Color.White,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                    if (count != null) {
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            "($count)",
+                            color = iconColor.copy(alpha = 0.7f),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+                Text(
+                    subtitle,
+                    color = Color.White.copy(0.35f),
+                    fontSize = 10.sp,
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                )
+            }
+
+            Box {
+                IconButton(
+                    onClick = { showMenu = true },
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Icon(
+                        Icons.Rounded.MoreVert,
+                        null,
+                        tint = Color.White.copy(0.4f),
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+                
+                DropdownMenu(
+                    expanded = showMenu,
+                    onDismissRequest = { showMenu = false },
+                    modifier = Modifier.background(Color(0xFF1E1E1E))
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("Remove Folder", color = Color.Red) },
+                        leadingIcon = { Icon(Icons.Rounded.Delete, null, tint = Color.Red) },
+                        onClick = {
+                            showMenu = false
+                            onRemove()
+                        }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun LibraryStatItem(
     modifier: Modifier = Modifier,
     icon: ImageVector,
@@ -3491,63 +3616,17 @@ fun LibraryContent(uiState: PlayerUiState, viewModel: PlayerViewModel, onShowInf
                 }
             }
         } else {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 uiState.musicFolders.forEachIndexed { index, folder ->
-                    Surface(
-                        shape = RoundedCornerShape(14.dp),
-                        color = Color.White.copy(0.04f),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(0.07f)),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(36.dp)
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .background(PremiumAccent.copy(0.1f)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    Icons.Rounded.Folder,
-                                    null,
-                                    tint = PremiumAccent,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-                            Spacer(Modifier.width(12.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    folder.substringAfterLast("/"),
-                                    color = Color.White,
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    maxLines = 1,
-                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                                )
-                                Text(
-                                    folder,
-                                    color = Color.White.copy(0.35f),
-                                    fontSize = 10.sp,
-                                    maxLines = 1,
-                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                                )
-                            }
-                            IconButton(
-                                onClick = { viewModel.removeMusicFolder(folder) },
-                                modifier = Modifier.size(32.dp)
-                            ) {
-                                Icon(
-                                    Icons.Rounded.RemoveCircleOutline,
-                                    null,
-                                    tint = Color.Red.copy(0.5f),
-                                    modifier = Modifier.size(16.dp)
-                                )
-                            }
-                        }
-                    }
+                    FolderManagedItem(
+                        path = folder,
+                        title = folder.substringAfterLast("/"),
+                        subtitle = folder,
+                        icon = Icons.Rounded.Folder,
+                        iconColor = PremiumAccent,
+                        count = uiState.musicFolderStats[folder],
+                        onRemove = { viewModel.removeMusicFolder(folder) }
+                    )
                 }
             }
         }
@@ -3636,13 +3715,17 @@ fun LibraryContent(uiState: PlayerUiState, viewModel: PlayerViewModel, onShowInf
             }
         }
 
-        // New Video Folders Section
+        // Video Folders Section
         val videoFolders by viewModel.videoFolders.collectAsStateWithLifecycle()
-        if (videoFolders.isNotEmpty()) {
-            Spacer(Modifier.height(24.dp))
-            HorizontalDivider(color = Color.White.copy(0.06f))
-            Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(24.dp))
+        HorizontalDivider(color = Color.White.copy(0.06f))
+        Spacer(Modifier.height(16.dp))
 
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             Column {
                 Text(
                     "Video Folders",
@@ -3656,62 +3739,68 @@ fun LibraryContent(uiState: PlayerUiState, viewModel: PlayerViewModel, onShowInf
                     fontSize = 11.sp
                 )
             }
+            Surface(
+                onClick = { viewModel.openVideoFolderPicker() },
+                shape = RoundedCornerShape(12.dp),
+                color = Color(0xFF00E5FF).copy(0.12f),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF00E5FF).copy(0.3f))
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Icon(
+                        Icons.Rounded.VideoCall,
+                        null,
+                        tint = Color(0xFF00E5FF),
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Text("Add Folder", color = Color(0xFF00E5FF), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
 
-            Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(12.dp))
 
+        if (videoFolders.isEmpty()) {
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = Color.White.copy(0.03f),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(0.06f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier.padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Icon(
+                        Icons.Rounded.MovieFilter,
+                        null,
+                        tint = Color.White.copy(0.25f),
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Text(
+                        "No video folders added. Tap 'Add Folder' to select your video location.",
+                        color = Color.White.copy(0.35f),
+                        fontSize = 12.sp,
+                        lineHeight = 17.sp
+                    )
+                }
+            }
+        } else {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 videoFolders.forEach { folder ->
-                    Surface(
-                        shape = RoundedCornerShape(14.dp),
-                        color = Color.White.copy(0.04f),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(0.07f)),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(36.dp)
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .background(Color(0xFF00E5FF).copy(0.1f)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    Icons.Rounded.Movie,
-                                    null,
-                                    tint = Color(0xFF00E5FF),
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-                            Spacer(Modifier.width(12.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    folder.name,
-                                    color = Color.White,
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    maxLines = 1,
-                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                                )
-                                Text(
-                                    folder.path,
-                                    color = Color.White.copy(0.35f),
-                                    fontSize = 10.sp,
-                                    maxLines = 1,
-                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                                )
-                            }
-                            Text(
-                                text = "${folder.videoCount}",
-                                color = Color.White.copy(0.4f),
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.padding(horizontal = 8.dp)
-                            )
-                        }
-                    }
+                    FolderManagedItem(
+                        path = folder.path,
+                        title = folder.name,
+                        subtitle = folder.path,
+                        icon = Icons.Rounded.Movie,
+                        iconColor = Color(0xFF00E5FF),
+                        count = folder.videoCount,
+                        onRemove = { viewModel.removeVideoFolder(folder.path) }
+                    )
                 }
             }
         }
@@ -5998,6 +6087,28 @@ fun android.content.Context.findActivity(): android.app.Activity? = when (this) 
     is android.app.Activity -> this
     is android.content.ContextWrapper -> baseContext.findActivity()
     else -> null
+}
+
+@Composable
+fun VideoSettingsContent(uiState: PlayerUiState, playerViewModel: PlayerViewModel) {
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        AppearanceToggleRow(
+            title = "Alternate Thumbnails",
+            subtitle = "Fetch movie/series thumbnails from online sources (uses video title)",
+            checked = uiState.alternateThumbnailEnabled,
+            onCheckedChange = { playerViewModel.setAlternateThumbnailEnabled(it) }
+        )
+        
+        Spacer(Modifier.height(16.dp))
+        
+        Text(
+            "When 'Alternate Thumbnails' is on, the app searches for official posters for your movies and TV shows to show in the library.",
+            color = Color.White.copy(alpha = 0.5f),
+            fontSize = 12.sp,
+            lineHeight = 18.sp,
+            modifier = Modifier.padding(horizontal = 8.dp)
+        )
+    }
 }
 
 @Composable

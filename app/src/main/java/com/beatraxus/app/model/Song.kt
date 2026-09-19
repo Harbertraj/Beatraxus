@@ -206,7 +206,7 @@ data class AppearanceConfig(
 
     // Home Screen Layout
     val homeScreenSectionsOrder: List<String> = listOf(
-        "GREETING", "ACTION_CHIPS", "CLOUD_LIBRARY", "MOODS",
+        "GREETING", "ACTION_CHIPS", "CLOUD_LIBRARY", "STREAMING_ADDONS", "MOODS",
         "MADE_FOR_YOU", "LISTEN_AGAIN", "RECENTLY_ADDED",
         "YOUR_FAVORITES", "FEATURED_ALBUMS", "ARTISTS_YOU_LOVE", "YOUR_PLAYLISTS"
     )
@@ -224,7 +224,8 @@ enum class LibraryView {
     HOME, ALL_SONGS, ALBUMS, ARTISTS, FOLDERS, YEARS, GENRES, FAVORITES, RECENTLY_PLAYED, RECENTLY_ADDED,
     ALBUM_DETAIL, ARTIST_DETAIL, FOLDER_DETAIL, YEAR_DETAIL, GENRE_DETAIL, PLAYLISTS, PLAYLIST_DETAIL,
     CLOUD, RADIO, SMB_NAS, FTP_SFTP,
-    VIDEO_ALL, VIDEO_FOLDERS, VIDEO_RECENTLY_ADDED, VIDEO_RECENTLY_PLAYED, VIDEO_FOLDER_DETAIL
+    VIDEO_ALL, VIDEO_FOLDERS, VIDEO_RECENTLY_ADDED, VIDEO_RECENTLY_PLAYED, VIDEO_FOLDER_DETAIL,
+    ADDONS
 }
 
 data class RadioStation(
@@ -258,7 +259,7 @@ enum class ViewMode {
 }
 
 enum class LibraryMode {
-    LOCAL, CLOUD, COMBINED
+    LOCAL, CLOUD, COMBINED, ADDONS
 }
 
 enum class PlaybackMode {
@@ -347,6 +348,9 @@ data class PlayerUiState(
     val resamplingEnabled: Boolean = true,
     val currentFolderPath: String? = null,
     val isFirstRun: Boolean = true,
+    val musicFolderStats: Map<String, Int> = emptyMap(),
+    val videoFolderStats: Map<String, Int> = emptyMap(),
+    val triggerVideoFolderPicker: Boolean = false,
     val previousView: LibraryView? = null,
     val wasSearchingBeforeDetail: Boolean = false,
     val useOriginalQualityArt: Boolean = false,
@@ -437,6 +441,9 @@ data class PlayerUiState(
 
     // Continue Watching
     val continueWatching: List<Pair<com.beatraxus.app.model.Video, VideoRecentlyPlayedEntity>> = emptyList(),
+
+    // Video Settings
+    val alternateThumbnailEnabled: Boolean = true,
 
     // Streaming Add-ons
     val spotifyConnectionState: com.beatraxus.app.repository.SpotifyConnectionState = com.beatraxus.app.repository.SpotifyConnectionState.Disconnected
