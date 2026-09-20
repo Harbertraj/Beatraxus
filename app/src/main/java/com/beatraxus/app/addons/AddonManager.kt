@@ -76,6 +76,7 @@ object AddonManager {
             "subsonic" -> SubsonicAddon(id, displayName, authType)
             "plex" -> PlexAddon(id, displayName, authType)
             "emby" -> EmbyAddon(id, displayName, authType)
+            "archive_org" -> ArchiveOrgAddon(id, displayName, authType)
             else -> null
         }
     }

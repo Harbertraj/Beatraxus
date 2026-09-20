@@ -35,6 +35,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.beatraxus.app.addons.AddonManager
+import com.beatraxus.app.addons.MediaServerAddon
+import com.beatraxus.app.addons.AddonConnectionState
 import com.beatraxus.app.addons.MusicServiceAddon
 import com.beatraxus.app.ui.components.glassIconBackground
 import com.beatraxus.app.viewmodel.PlayerViewModel
@@ -57,6 +59,7 @@ fun StreamingAddonsScreen(
     
     var showAddSheet by remember { mutableStateOf(false) }
     var addonToRemove by remember { mutableStateOf<MusicServiceAddon?>(null) }
+    var addonToSignIn by remember { mutableStateOf<MediaServerAddon?>(null) }
     
     val zipLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
@@ -173,7 +176,18 @@ fun StreamingAddonsScreen(
                     StreamingServiceCard(
                         addon = addon,
                         isAvailable = false,
-                        onClick = { addon.play(context) },
+                        onClick = {
+                            if (addon is MediaServerAddon) {
+                                if (addon.connectionState.value == AddonConnectionState.CONNECTED) {
+                                    // TODO: Navigate to addon browse
+                                    Toast.makeText(context, "Browsing not implemented yet", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    addonToSignIn = addon
+                                }
+                            } else {
+                                addon.play(context)
+                            }
+                        },
                         onLongClick = { addonToRemove = addon }
                     )
                 }
@@ -290,6 +304,17 @@ fun StreamingAddonsScreen(
                     TextButton(onClick = { addonToRemove = null }) {
                         Text("CANCEL", color = TextWhite)
                     }
+                }
+            )
+        }
+        
+        addonToSignIn?.let { addon ->
+            AddonSignInScreen(
+                addon = addon,
+                onDismiss = { addonToSignIn = null },
+                onSuccess = {
+                    addonToSignIn = null
+                    Toast.makeText(context, "Signed in successfully!", Toast.LENGTH_SHORT).show()
                 }
             )
         }

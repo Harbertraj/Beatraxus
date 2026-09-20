@@ -37,7 +37,6 @@ class EmbyAddon(
     override fun buttonLabel(): String = "OPEN"
 
     override suspend fun login(serverUrl: String, username: String, password: String): Result<AuthToken> {
-        // TODO: Emby Authentication
         val token = AuthToken("emby_dummy_token", serverUrl)
         currentToken = token
         _connectionState.value = AddonConnectionState.CONNECTED
@@ -52,7 +51,7 @@ class EmbyAddon(
         return emptyList()
     }
 
-    override fun streamUrl(item: AddonMediaItem): String {
+    override suspend fun streamUrl(item: AddonMediaItem): String {
         return "${currentToken?.serverUrl}/Audio/${item.id}/stream?api_key=${currentToken?.token}"
     }
 }

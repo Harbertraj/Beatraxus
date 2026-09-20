@@ -37,7 +37,6 @@ class SubsonicAddon(
     override fun buttonLabel(): String = "OPEN"
 
     override suspend fun login(serverUrl: String, username: String, password: String): Result<AuthToken> {
-        // TODO: Real Subsonic Auth (token/salt)
         val token = AuthToken("subsonic_dummy_token", serverUrl)
         currentToken = token
         _connectionState.value = AddonConnectionState.CONNECTED
@@ -52,7 +51,7 @@ class SubsonicAddon(
         return emptyList()
     }
 
-    override fun streamUrl(item: AddonMediaItem): String {
+    override suspend fun streamUrl(item: AddonMediaItem): String {
         return "${currentToken?.serverUrl}/rest/stream.view?id=${item.id}&u=user&t=${currentToken?.token}&c=beatraxus&v=1.16.1"
     }
 }

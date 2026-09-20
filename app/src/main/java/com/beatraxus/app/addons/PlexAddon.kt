@@ -37,7 +37,6 @@ class PlexAddon(
     override fun buttonLabel(): String = "OPEN"
 
     override suspend fun login(serverUrl: String, username: String, password: String): Result<AuthToken> {
-        // TODO: Plex PIN/OAuth authentication flow
         val token = AuthToken("plex_dummy_token", serverUrl)
         currentToken = token
         _connectionState.value = AddonConnectionState.CONNECTED
@@ -52,7 +51,7 @@ class PlexAddon(
         return emptyList()
     }
 
-    override fun streamUrl(item: AddonMediaItem): String {
+    override suspend fun streamUrl(item: AddonMediaItem): String {
         return "${currentToken?.serverUrl}/library/parts/${item.id}?X-Plex-Token=${currentToken?.token}"
     }
 }

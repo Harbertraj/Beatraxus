@@ -92,6 +92,8 @@ import com.beatraxus.app.model.Video
 import com.beatraxus.app.repository.AppearancePreferences
 import com.beatraxus.app.repository.LyricsCandidate
 import com.beatraxus.app.repository.LyricsProviderConfig
+import com.beatraxus.app.repository.DspPreferences
+import com.beatraxus.app.repository.DriveAccount
 import kotlinx.coroutines.suspendCancellableCoroutine
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.resume

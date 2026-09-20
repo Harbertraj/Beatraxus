@@ -2,7 +2,7 @@ package com.beatraxus.app.addons
 
 import android.content.Context
 
-data class AuthToken(val token: String, val serverUrl: String)
+data class AuthToken(val token: String, val serverUrl: String, val userId: String? = null)
 
 data class AddonMediaItem(
     val id: String,
@@ -19,5 +19,5 @@ interface MediaServerAddon : MusicServiceAddon {
     suspend fun login(serverUrl: String, username: String, password: String): Result<AuthToken>
     suspend fun browse(path: String?): List<AddonMediaItem>
     suspend fun search(query: String): List<AddonMediaItem>
-    fun streamUrl(item: AddonMediaItem): String
+    suspend fun streamUrl(item: AddonMediaItem): String
 }
