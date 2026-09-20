@@ -6,7 +6,7 @@ import java.util.regex.Pattern
 object LrcParser {
     // Fixed regex: support optional hours and 1-3 digit minutes
     private val TIME_PATTERN = Pattern.compile("\\[(?:(\\d+):)?(\\d{1,3}):(\\d{2})(?:[.:](\\d{1,3}))?\\]")
-    private val WORD_TIME_PATTERN = Pattern.compile("<(?:(\\d+):)?(\\d{1,3}):(\\d{2})(?:[.:](\\d{1,3}))?>")
+    val WORD_TIME_PATTERN = Pattern.compile("<(?:(\\d+):)?(\\d{1,3}):(\\d{2})(?:[.:](\\d{1,3}))?>")
 
     fun parse(lrcContent: String?): List<LrcLine> {
         if (lrcContent.isNullOrBlank()) return emptyList()

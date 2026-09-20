@@ -51,7 +51,6 @@ import com.beatraxus.app.service.AudioPlaybackService
 import com.beatraxus.app.ui.screens.MainScreen
 import com.beatraxus.app.ui.screens.SettingsScreen
 import com.beatraxus.app.ui.screens.WelcomeScreen
-import com.beatraxus.app.ui.screens.LoadingScreen
 import com.beatraxus.app.ui.screens.VideoPlayerScreen
 import com.beatraxus.app.viewmodel.VideoPlayerViewModel
 import com.beatraxus.app.viewmodel.VideoPlayerViewModelFactory
@@ -191,51 +190,9 @@ class MainActivity : FragmentActivity() {
             viewModel.uiState.value.isLoadingLibrary
         }
 
-        // Audiophile-grade splash exit animation
+        // Remove splash screen exit animation so app opens immediately without logo scale/fade animation
         splashScreen.setOnExitAnimationListener { splashProvider ->
-            val splashView = splashProvider.view
-            val iconView = splashProvider.iconView
-
-            // Create a sophisticated scale + fade + blur exit
-            val alpha = android.view.animation.AlphaAnimation(1f, 0f).apply {
-                duration = 800
-                interpolator = android.view.animation.AccelerateDecelerateInterpolator()
-            }
-            
-            val scale = android.view.animation.ScaleAnimation(
-                1f, 1.2f, 1f, 1.2f,
-                android.view.animation.Animation.RELATIVE_TO_SELF, 0.5f,
-                android.view.animation.Animation.RELATIVE_TO_SELF, 0.5f
-            ).apply {
-                duration = 800
-                interpolator = android.view.animation.AnticipateInterpolator()
-            }
-
-            val animationSet = android.view.animation.AnimationSet(true).apply {
-                addAnimation(alpha)
-                addAnimation(scale)
-                setAnimationListener(object : android.view.animation.Animation.AnimationListener {
-                    override fun onAnimationStart(animation: android.view.animation.Animation?) {}
-                    override fun onAnimationEnd(animation: android.view.animation.Animation?) {
-                        splashProvider.remove()
-                    }
-                    override fun onAnimationRepeat(animation: android.view.animation.Animation?) {}
-                })
-            }
-
-            // Enthusiast grade: add a slight delay before removing to let the app content settle
-            splashView.startAnimation(animationSet)
-            
-            // On Android 12+, we can also animate the icon view specifically
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-                iconView.animate()
-                    .scaleX(1.5f)
-                    .scaleY(1.5f)
-                    .alpha(0f)
-                    .setDuration(600)
-                    .setInterpolator(android.view.animation.AccelerateInterpolator())
-                    .start()
-            }
+            splashProvider.remove()
         }
 
         // Enable edge-to-edge

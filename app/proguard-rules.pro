@@ -198,12 +198,21 @@
 # ══════════════════════════════════════════════════════════════════════════════
 # ONLINE LYRICS MODELS — MUST SURVIVE REFLECTION
 # ══════════════════════════════════════════════════════════════════════════════
+-keep class com.beatraxus.app.repository.lyrics.** { *; }
+-keep interface com.beatraxus.app.repository.lyrics.** { *; }
 -keep class com.beatraxus.app.repository.LrcLibResponse { *; }
 -keep interface com.beatraxus.app.repository.LrcLibService { *; }
 -keep class com.beatraxus.app.repository.LyricsResult { *; }
 -keep class com.beatraxus.app.repository.LyricsType { *; }
 -keepclassmembers enum com.beatraxus.app.repository.LyricsType { *; }
 -keep class com.beatraxus.app.model.LrcLine { *; }
+
+# ══════════════════════════════════════════════════════════════════════════════
+# OPENSUBTITLES MODELS & API — MUST SURVIVE REFLECTION
+# ══════════════════════════════════════════════════════════════════════════════
+-keep class com.beatraxus.app.subtitles.** { *; }
+-keep interface com.beatraxus.app.subtitles.** { *; }
+-keepclassmembers class com.beatraxus.app.subtitles.** { *; }
 
 # TDLIB (Telegram Library)
 -keep class org.drinkless.tdlib.** { *; }

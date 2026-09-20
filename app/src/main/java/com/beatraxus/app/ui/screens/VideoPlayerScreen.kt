@@ -5,11 +5,24 @@ import android.app.PictureInPictureParams
 import android.content.Context
 import android.content.pm.ActivityInfo
 import android.graphics.SurfaceTexture
+import android.graphics.Typeface
 import android.os.Build
 import android.util.TypedValue
 import android.view.Surface
 import android.view.TextureView
 import android.view.WindowManager
+import android.app.Application
+import android.widget.Toast
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.beatraxus.app.subtitles.api.SubtitleApiClientFactory
+import com.beatraxus.app.subtitles.data.SubtitleAuthManager
+import com.beatraxus.app.subtitles.data.SubtitleCredentialsStore
+import com.beatraxus.app.subtitles.data.SubtitleRepositoryImpl
+import com.beatraxus.app.subtitles.ui.OpenSubtitlesAuthDialog
+import com.beatraxus.app.subtitles.ui.SubtitlePlayerSheetSection
+import com.beatraxus.app.subtitles.viewmodel.SubtitleUiEvent
+import com.beatraxus.app.subtitles.viewmodel.SubtitleViewModel
+import com.beatraxus.app.subtitles.viewmodel.SubtitleViewModelFactory
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
@@ -30,6 +43,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.ui.zIndex
+import com.beatraxus.app.ui.utils.RenderEffectHelper
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
@@ -37,6 +52,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -103,8 +119,9 @@ fun VideoPlayerScreen(
     DisposableEffect(lifecycleOwner, uiState.isBackgroundPlayEnabled, isInPiP) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_PAUSE) {
-                // Don't pause if in PiP or if Background Play is enabled
-                if (uiState.isPlaying && !uiState.isBackgroundPlayEnabled && !isInPiP) {
+                // Don't pause if reconfiguring (e.g. orientation change), in PiP, or if Background Play is enabled
+                val isReconfiguring = activity?.isChangingConfigurations == true
+                if (uiState.isPlaying && !uiState.isBackgroundPlayEnabled && !isInPiP && !isReconfiguring) {
                     viewModel.togglePlayPause()
                 }
             }
@@ -117,6 +134,64 @@ fun VideoPlayerScreen(
 
     var controlsVisible by remember { mutableStateOf(true) }
     var sheetType by remember { mutableStateOf(PlayerSheetType.NONE) }
+
+    val appContext = context.applicationContext as Application
+    val api = remember { SubtitleApiClientFactory.createApi() }
+    val credStore = remember { SubtitleCredentialsStore(appContext) }
+    val authManager = remember { SubtitleAuthManager(api, credStore) }
+    val repo = remember { SubtitleRepositoryImpl(appContext, api, authManager) }
+
+    val subtitleViewModel: SubtitleViewModel = viewModel(
+        factory = SubtitleViewModelFactory(
+            application = appContext,
+            repository = repo,
+            authManager = authManager,
+            subtitleController = viewModel.subtitleController,
+            credentialsStore = credStore
+        )
+    )
+
+    LaunchedEffect(uiState.currentVideo) {
+        uiState.currentVideo?.let { v ->
+            subtitleViewModel.onVideoChanged(v)
+        }
+    }
+
+    var showAuthDialogInPlayer by remember { mutableStateOf(false) }
+    var authDialogNote by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(subtitleViewModel) {
+        subtitleViewModel.events.collect { event ->
+            when (event) {
+                is SubtitleUiEvent.NeedSignIn -> {
+                    authDialogNote = "Please sign in to OpenSubtitles to download subtitles."
+                    showAuthDialogInPlayer = true
+                }
+                is SubtitleUiEvent.SignInForHigherLimit -> {
+                    val resetMsg = event.resetTime?.let { " (resets in $it)" } ?: ""
+                    authDialogNote = "Daily free download limit reached$resetMsg. Sign in for a higher limit."
+                    showAuthDialogInPlayer = true
+                }
+                is SubtitleUiEvent.ShowToast -> {
+                    Toast.makeText(context, event.message, Toast.LENGTH_SHORT).show()
+                }
+                is SubtitleUiEvent.DownloadSuccess -> {
+                    Toast.makeText(context, "Subtitle loaded: ${event.subtitleName}", Toast.LENGTH_SHORT).show()
+                }
+                is SubtitleUiEvent.Error -> {
+                    Toast.makeText(context, event.message, Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    if (showAuthDialogInPlayer) {
+        OpenSubtitlesAuthDialog(
+            initialNote = authDialogNote,
+            onDismiss = { showAuthDialogInPlayer = false },
+            onSignIn = { user, pass -> subtitleViewModel.signIn(user, pass) }
+        )
+    }
 
     // Gesture States
     var gestureType by remember { mutableStateOf(GestureType.NONE) }
@@ -352,27 +427,47 @@ fun VideoPlayerScreen(
 
                 
                 // Update Subtitle Styles
+                val bgColorWithOpacity = if (uiState.subtitleBackgroundOpacity > 0f) {
+                    val alphaByte = (uiState.subtitleBackgroundOpacity * 255).toInt().coerceIn(0, 255)
+                    val baseColor = if (uiState.subtitleBackgroundColor == android.graphics.Color.TRANSPARENT) android.graphics.Color.BLACK else uiState.subtitleBackgroundColor
+                    android.graphics.Color.argb(alphaByte, android.graphics.Color.red(baseColor), android.graphics.Color.green(baseColor), android.graphics.Color.blue(baseColor))
+                } else {
+                    uiState.subtitleBackgroundColor
+                }
+
+                val typeface = if (uiState.subtitleBold) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+
                 val captionStyle = CaptionStyleCompat(
                     uiState.subtitleTextColor,
-                    uiState.subtitleBackgroundColor,
-                    android.graphics.Color.TRANSPARENT, // windowColor
-                    CaptionStyleCompat.EDGE_TYPE_OUTLINE,
+                    bgColorWithOpacity,
+                    uiState.subtitleWindowColor,
+                    uiState.subtitleEdgeType,
                     uiState.subtitleOutlineColor,
-                    null // typeface
+                    typeface
                 )
                 view.subtitleView?.setApplyEmbeddedStyles(false)
                 view.subtitleView?.setFixedTextSize(TypedValue.COMPLEX_UNIT_SP, uiState.subtitleSize)
                 view.subtitleView?.setStyle(captionStyle)
                 view.subtitleView?.alpha = uiState.subtitleAlpha
                 
-                // Vertical offset for subtitles
-                view.subtitleView?.translationY = uiState.subtitleOffset
+                // Vertical offset + position preset for subtitles
+                val basePresetOffset = uiState.subtitlePositionPreset.offsetDp
+                view.subtitleView?.translationY = basePresetOffset + uiState.subtitleOffset
             },
             modifier = Modifier
                 .fillMaxSize()
                 .graphicsLayer(
                     scaleX = zoomScale,
                     scaleY = zoomScale
+                )
+                .then(
+                    if (sheetType != PlayerSheetType.NONE && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        Modifier.graphicsLayer {
+                            renderEffect = RenderEffectHelper.createBlurAndSaturationEffect(20f, 1.1f)
+                        }
+                    } else {
+                        Modifier
+                    }
                 )
         )
 
@@ -574,22 +669,87 @@ fun VideoPlayerScreen(
         }
     }
 
-    if (sheetType != PlayerSheetType.NONE) {
-        ModalBottomSheet(
-            onDismissRequest = { sheetType = PlayerSheetType.NONE },
-            containerColor = Color(0xFF1A1A1A),
-            scrimColor = Color.Black.copy(alpha = 0.6f),
-            shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
+    AnimatedVisibility(
+        visible = sheetType != PlayerSheetType.NONE,
+        enter = fadeIn(animationSpec = tween(250)),
+        exit = fadeOut(animationSpec = tween(200))
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .zIndex(100f)
         ) {
-            VideoSettingsSheetContent(
-                uiState = uiState,
-                sheetType = sheetType,
-                onSpeedSelect = { viewModel.setPlaybackSpeed(it); sheetType = PlayerSheetType.NONE },
-                onAspectRatioSelect = { viewModel.setAspectRatio(it); sheetType = PlayerSheetType.NONE },
-                onAudioTrackSelect = { viewModel.selectAudioTrack(it); sheetType = PlayerSheetType.NONE },
-                onSubtitleTrackSelect = { viewModel.selectSubtitleTrack(it); sheetType = PlayerSheetType.NONE },
-                viewModel = viewModel
+            // Full-screen dimming scrim background
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.55f))
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) {
+                        sheetType = PlayerSheetType.NONE
+                    }
             )
+
+            // Right-side glass panel
+            AnimatedVisibility(
+                visible = sheetType != PlayerSheetType.NONE,
+                enter = slideInHorizontally(
+                    initialOffsetX = { fullWidth -> fullWidth },
+                    animationSpec = tween(300, easing = FastOutSlowInEasing)
+                ) + fadeIn(animationSpec = tween(300)),
+                exit = slideOutHorizontally(
+                    targetOffsetX = { fullWidth -> fullWidth },
+                    animationSpec = tween(250, easing = FastOutSlowInEasing)
+                ) + fadeOut(animationSpec = tween(250)),
+                modifier = Modifier.align(Alignment.CenterEnd)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .widthIn(min = 320.dp, max = 380.dp)
+                        .clip(RoundedCornerShape(topStart = 24.dp, bottomStart = 24.dp))
+                        .shadow(
+                            elevation = 24.dp,
+                            shape = RoundedCornerShape(topStart = 24.dp, bottomStart = 24.dp),
+                            clip = false
+                        )
+                        .background(
+                            brush = Brush.horizontalGradient(
+                                colors = listOf(
+                                    Color(0xE6141419),
+                                    Color(0xF21C1C22)
+                                )
+                            )
+                        )
+                        .border(
+                            width = 1.dp,
+                            brush = Brush.linearGradient(
+                                colors = listOf(
+                                    Color.White.copy(alpha = 0.25f),
+                                    Color.White.copy(alpha = 0.05f)
+                                )
+                            ),
+                            shape = RoundedCornerShape(topStart = 24.dp, bottomStart = 24.dp)
+                        )
+                        .systemBarsPadding()
+                        .clickable(enabled = false) {}
+                ) {
+                    VideoSettingsSheetContent(
+                        uiState = uiState,
+                        sheetType = sheetType,
+                        onSpeedSelect = { viewModel.setPlaybackSpeed(it); sheetType = PlayerSheetType.NONE },
+                        onAspectRatioSelect = { viewModel.setAspectRatio(it); sheetType = PlayerSheetType.NONE },
+                        onAudioTrackSelect = { viewModel.selectAudioTrack(it); sheetType = PlayerSheetType.NONE },
+                        onSubtitleTrackSelect = { viewModel.selectSubtitleTrack(it); sheetType = PlayerSheetType.NONE },
+                        viewModel = viewModel,
+                        subtitleViewModel = subtitleViewModel,
+                        onCategoryChange = { newType -> sheetType = newType },
+                        onClose = { sheetType = PlayerSheetType.NONE }
+                    )
+                }
+            }
         }
     }
 }
@@ -1090,12 +1250,15 @@ fun VideoSettingsSheetContent(
     onAspectRatioSelect: (VideoAspectRatio) -> Unit,
     onAudioTrackSelect: (VideoTrackInfo) -> Unit,
     onSubtitleTrackSelect: (VideoTrackInfo?) -> Unit,
-    viewModel: VideoPlayerViewModel
+    viewModel: VideoPlayerViewModel,
+    subtitleViewModel: SubtitleViewModel,
+    onCategoryChange: (PlayerSheetType) -> Unit = {},
+    onClose: () -> Unit = {}
 ) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(24.dp)
+            .padding(horizontal = 20.dp, vertical = 20.dp)
             .verticalScroll(rememberScrollState())
             .navigationBarsPadding()
     ) {
@@ -1116,24 +1279,88 @@ fun VideoSettingsSheetContent(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(title, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-            
-            if (sheetType == PlayerSheetType.EQUALIZER) {
-                Switch(
-                    checked = uiState.isEqEnabled,
-                    onCheckedChange = { viewModel.toggleEqEnabled() },
-                    colors = SwitchDefaults.colors(checkedThumbColor = mxOrange, checkedTrackColor = mxOrange.copy(0.4f))
-                )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                IconButton(
+                    onClick = onClose,
+                    modifier = Modifier
+                        .size(34.dp)
+                        .background(Color.White.copy(alpha = 0.12f), CircleShape)
+                        .border(1.dp, Color.White.copy(alpha = 0.15f), CircleShape)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Close,
+                        contentDescription = "Close",
+                        tint = Color.White,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+                Text(title, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
             }
+            
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (sheetType == PlayerSheetType.EQUALIZER) {
+                    Switch(
+                        checked = uiState.isEqEnabled,
+                        onCheckedChange = { viewModel.toggleEqEnabled() },
+                        colors = SwitchDefaults.colors(checkedThumbColor = mxOrange, checkedTrackColor = mxOrange.copy(0.4f))
+                    )
+                }
 
-            if (sheetType == PlayerSheetType.COLOR) {
-                IconButton(onClick = { viewModel.resetColorGrading() }) {
-                    Icon(Icons.Rounded.RestartAlt, "Reset", tint = Color.White)
+                if (sheetType == PlayerSheetType.COLOR) {
+                    IconButton(onClick = { viewModel.resetColorGrading() }) {
+                        Icon(Icons.Rounded.RestartAlt, "Reset", tint = Color.White)
+                    }
                 }
             }
         }
         
-        Spacer(Modifier.height(20.dp))
+        Spacer(Modifier.height(14.dp))
+
+        // Quick Category Switcher Pills
+        val categories = listOf(
+            PlayerSheetType.AUDIO to "Audio",
+            PlayerSheetType.SUBTITLE to "Subtitles",
+            PlayerSheetType.SPEED to "Speed",
+            PlayerSheetType.EQUALIZER to "Equalizer",
+            PlayerSheetType.SLEEP_TIMER to "Sleep",
+            PlayerSheetType.COLOR to "Color"
+        )
+
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            items(categories) { (catType, catLabel) ->
+                val isSelected = sheetType == catType
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(
+                            if (isSelected) mxOrange
+                            else Color.White.copy(alpha = 0.08f)
+                        )
+                        .border(
+                            width = 1.dp,
+                            color = if (isSelected) mxOrange else Color.White.copy(alpha = 0.12f),
+                            shape = RoundedCornerShape(20.dp)
+                        )
+                        .clickable { onCategoryChange(catType) }
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                ) {
+                    Text(
+                        text = catLabel,
+                        color = if (isSelected) Color.Black else Color.White.copy(alpha = 0.85f),
+                        fontSize = 12.sp,
+                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                    )
+                }
+            }
+        }
+
+        Spacer(Modifier.height(18.dp))
 
         // Equalizer Section
         if (sheetType == PlayerSheetType.EQUALIZER) {
@@ -1251,160 +1478,102 @@ fun VideoSettingsSheetContent(
         // Audio Tracks
         if (sheetType == PlayerSheetType.AUDIO || sheetType == PlayerSheetType.ALL) {
             if (uiState.availableAudioTracks.isEmpty()) {
-                Text("No audio tracks found", color = Color.Gray, fontSize = 14.sp)
-            } else {
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color.White.copy(0.05f))
+                        .padding(16.dp)
                 ) {
+                    Text("No audio tracks found", color = Color.Gray, fontSize = 14.sp)
+                }
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     uiState.availableAudioTracks.forEach { track ->
                         val isDolby = track.format == MimeTypes.AUDIO_E_AC3 || track.format == MimeTypes.AUDIO_AC3
-                        FilterChip(
-                            selected = track.isSelected,
-                            onClick = { onAudioTrackSelect(track) },
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = mxOrange,
-                                selectedLabelColor = Color.Black
-                            ),
-                            label = {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(
+                                    if (track.isSelected) mxOrange.copy(alpha = 0.2f)
+                                    else Color.White.copy(alpha = 0.06f)
+                                )
+                                .border(
+                                    width = 1.dp,
+                                    color = if (track.isSelected) mxOrange.copy(alpha = 0.8f) else Color.White.copy(alpha = 0.08f),
+                                    shape = RoundedCornerShape(12.dp)
+                                )
+                                .clickable { onAudioTrackSelect(track) }
+                                .padding(horizontal = 14.dp, vertical = 12.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.AudioFile,
+                                    contentDescription = null,
+                                    tint = if (track.isSelected) mxOrange else Color.White.copy(0.7f),
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(Modifier.width(10.dp))
+                                Column {
                                     Text(
-                                        text = track.name + (track.language?.let { " ($it)" } ?: ""),
-                                        color = if (track.isSelected) Color.Black else Color.White
+                                        text = track.name,
+                                        color = Color.White,
+                                        fontSize = 14.sp,
+                                        fontWeight = if (track.isSelected) FontWeight.Bold else FontWeight.Medium
                                     )
-                                    if (isDolby) {
-                                        Spacer(Modifier.width(6.dp))
-                                        Box(
-                                            modifier = Modifier
-                                                .clip(RoundedCornerShape(4.dp))
-                                                .background(Color(0xFFFFD54F))
-                                                .padding(horizontal = 4.dp, vertical = 1.dp)
-                                        ) {
-                                            Text(
-                                                "DOLBY",
-                                                color = Color.Black,
-                                                fontSize = 8.sp,
-                                                fontWeight = FontWeight.Black
-                                            )
-                                        }
+                                    track.language?.let { lang ->
+                                        Text(
+                                            text = lang.uppercase(),
+                                            color = Color.White.copy(0.5f),
+                                            fontSize = 11.sp
+                                        )
+                                    }
+                                }
+                                if (isDolby) {
+                                    Spacer(Modifier.width(8.dp))
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(4.dp))
+                                            .background(Color(0xFFFFD54F))
+                                            .padding(horizontal = 4.dp, vertical = 1.dp)
+                                    ) {
+                                        Text(
+                                            "DOLBY",
+                                            color = Color.Black,
+                                            fontSize = 8.sp,
+                                            fontWeight = FontWeight.Black
+                                        )
                                     }
                                 }
                             }
-                        )
+                            if (track.isSelected) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Check,
+                                    contentDescription = "Selected",
+                                    tint = mxOrange,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
                     }
                 }
             }
         }
 
-        // Subtitle Tracks
-        if (sheetType == PlayerSheetType.SUBTITLE || sheetType == PlayerSheetType.ALL) {
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                val isNoneSelected = uiState.availableSubtitleTracks.none { it.isSelected }
-                FilterChip(
-                    selected = isNoneSelected,
-                    onClick = { onSubtitleTrackSelect(null) },
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = mxOrange,
-                        selectedLabelColor = Color.Black
-                    ),
-                    label = { Text("None", color = if (isNoneSelected) Color.Black else Color.White) }
-                )
-                uiState.availableSubtitleTracks.forEach { track ->
-                    FilterChip(
-                        selected = track.isSelected,
-                        onClick = { onSubtitleTrackSelect(track) },
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = mxOrange,
-                            selectedLabelColor = Color.Black
-                        ),
-                        label = { Text(track.name + (track.language?.let { " ($it)" } ?: ""), color = if (track.isSelected) Color.Black else Color.White) }
-                    )
-                }
-            }
-        }
-
-        // Playback Speed
-        if (sheetType == PlayerSheetType.SPEED || sheetType == PlayerSheetType.ALL) {
-            val speeds = listOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 2.0f)
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                speeds.forEach { speed ->
-                    val isSelected = uiState.playbackSpeed == speed
-                    FilterChip(
-                        selected = isSelected,
-                        onClick = { onSpeedSelect(speed) },
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = mxOrange,
-                            selectedLabelColor = Color.Black
-                        ),
-                        label = { Text("${speed}x", color = if (isSelected) Color.Black else Color.White) }
-                    )
-                }
-            }
-        }
-
-
-        // Sleep Timer
-        if (sheetType == PlayerSheetType.SLEEP_TIMER) {
-            SleepTimerSheetContent(uiState, viewModel)
-        }
-
-        // Subtitle Style
-        if (sheetType == PlayerSheetType.SUBTITLE || sheetType == PlayerSheetType.ALL) {
-            SettingSectionHeader("Subtitle Appearance")
-            
-            // Size
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Size", color = Color.White.copy(0.7f), fontSize = 14.sp, modifier = Modifier.width(60.dp))
-                Slider(
-                    value = uiState.subtitleSize,
-                    onValueChange = { viewModel.setSubtitleSize(it) },
-                    valueRange = 10f..40f,
-                    modifier = Modifier.weight(1f),
-                    colors = SliderDefaults.colors(thumbColor = mxOrange, activeTrackColor = mxOrange)
-                )
-                Text("${uiState.subtitleSize.toInt()}sp", color = Color.White, fontSize = 14.sp, modifier = Modifier.width(40.dp), textAlign = TextAlign.End)
-            }
-            
-            Spacer(Modifier.height(8.dp))
-            
-            SubtitleColorRow("Text", uiState.subtitleTextColor, onColorChange = { viewModel.setSubtitleTextColor(it) }, mxOrange)
-            Spacer(Modifier.height(12.dp))
-            
-            // Subtitle Intensity (Alpha)
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Intensity", color = Color.White.copy(0.7f), fontSize = 14.sp, modifier = Modifier.width(60.dp))
-                Slider(
-                    value = uiState.subtitleAlpha,
-                    onValueChange = { viewModel.setSubtitleAlpha(it) },
-                    valueRange = 0.1f..1f,
-                    modifier = Modifier.weight(1f),
-                    colors = SliderDefaults.colors(thumbColor = mxOrange, activeTrackColor = mxOrange)
-                )
-                Text("${(uiState.subtitleAlpha * 100).toInt()}%", color = Color.White, fontSize = 14.sp, modifier = Modifier.width(40.dp), textAlign = TextAlign.End)
-            }
-
-            Spacer(Modifier.height(12.dp))
-            SubtitleColorRow("Background", uiState.subtitleBackgroundColor, onColorChange = { viewModel.setSubtitleBackgroundColor(it) }, mxOrange)
-            Spacer(Modifier.height(8.dp))
-            SubtitleColorRow("Outline", uiState.subtitleOutlineColor, onColorChange = { viewModel.setSubtitleOutlineColor(it) }, mxOrange)
-            
-            Spacer(Modifier.height(16.dp))
-            
-            Button(
-                onClick = { viewModel.resetSubtitleStyle() },
-                modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(0.1f))
-            ) {
-                Icon(Icons.Rounded.RestartAlt, null, tint = Color.White, modifier = Modifier.size(20.dp))
-                Spacer(Modifier.width(8.dp))
-                Text("Reset to Defaults", color = Color.White)
-            }
+        // Subtitle Section
+        if (sheetType == PlayerSheetType.SUBTITLE) {
+            SubtitlePlayerSheetSection(
+                videoUiState = uiState,
+                videoViewModel = viewModel,
+                subtitleViewModel = subtitleViewModel,
+                onOpenAuthDialog = { }
+            )
         }
     }
 }

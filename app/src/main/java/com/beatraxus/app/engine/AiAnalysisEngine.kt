@@ -3,6 +3,7 @@ package com.beatraxus.app.engine
 import android.content.Context
 import android.net.Uri
 import android.util.Log
+import androidx.annotation.Keep
 import com.beatraxus.app.model.AiAnalysisEntity
 import com.beatraxus.app.model.Song
 import com.beatraxus.app.model.SongSource
@@ -267,6 +268,7 @@ class AiAnalysisEngine(private val context: Context) {
     }
 }
 
+@Keep
 data class AudioFeatures(
     val lufs: Float,
     val rms: Float,

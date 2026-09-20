@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.ActivityInfo
+import android.graphics.Color
 import android.media.AudioManager
 import android.net.Uri
 import android.util.Log
@@ -13,20 +14,28 @@ import android.view.Surface
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
+import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.Effect
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.CaptionStyleCompat
 import com.beatraxus.app.BeatraxusApplication
 import com.beatraxus.app.engine.VideoRenderersFactory
 import com.beatraxus.app.model.Video
 import com.beatraxus.app.model.SavedEqPreset
 import com.beatraxus.app.model.VideoRecentlyPlayedEntity
 import com.beatraxus.app.motionboost.ColorGradeEffect
+import com.beatraxus.app.subtitles.data.SubtitleCache
+import com.beatraxus.app.subtitles.domain.MediaKey
+import com.beatraxus.app.subtitles.domain.SubtitlePositionPreset
+import com.beatraxus.app.subtitles.player.Media3SubtitlePlayerController
+import com.beatraxus.app.subtitles.player.SubtitlePlayerController
 import com.beatraxus.app.util.PlaybackGlobalState
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -34,6 +43,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.first
+import java.io.File
 
 data class VideoPlayerUiState(
     val currentVideo: Video? = null,
@@ -69,6 +79,14 @@ data class VideoPlayerUiState(
     val subtitleOutlineColor: Int = android.graphics.Color.BLACK,
     val subtitleWindowColor: Int = android.graphics.Color.TRANSPARENT,
     val subtitleAlpha: Float = 1.0f,
+    val subtitleBold: Boolean = false,
+    val subtitleEdgeType: Int = 1, // CaptionStyleCompat.EDGE_TYPE_OUTLINE
+    val subtitleBackgroundOpacity: Float = 0.0f,
+    val subtitlePositionPreset: SubtitlePositionPreset = SubtitlePositionPreset.BOTTOM,
+    val subtitleSizePercent: Int = 100,
+    val activeExternalSubtitleName: String? = null,
+    val isSubtitleDelaySupported: Boolean = false,
+    val currentSubtitleDelayMs: Long = 0L,
     val isBackgroundPlayEnabled: Boolean = false,
     val abRepeatPointA: Long? = null,
     val abRepeatPointB: Long? = null,
@@ -163,9 +181,26 @@ class VideoPlayerViewModel(
         aspectRatio = VideoAspectRatio.entries.find { 
             it.name == application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE).getString("video_aspect_ratio", VideoAspectRatio.FIT.name) 
         } ?: VideoAspectRatio.FIT,
-        showTotalTime = application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE).getBoolean("video_show_remaining_time", false)
+        showTotalTime = application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE).getBoolean("video_show_remaining_time", false),
+        subtitleSize = application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE).getFloat("video_subtitle_size", 18f),
+        subtitleTextColor = application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE).getInt("video_subtitle_text_color", Color.WHITE),
+        subtitleBackgroundColor = application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE).getInt("video_subtitle_bg_color", Color.TRANSPARENT),
+        subtitleOutlineColor = application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE).getInt("video_subtitle_outline_color", Color.BLACK),
+        subtitleWindowColor = application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE).getInt("video_subtitle_window_color", Color.TRANSPARENT),
+        subtitleAlpha = application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE).getFloat("video_subtitle_alpha", 1.0f),
+        subtitleOffset = application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE).getFloat("video_subtitle_offset", 0f),
+        subtitleBold = application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE).getBoolean("video_subtitle_bold", false),
+        subtitleEdgeType = application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE).getInt("video_subtitle_edge_type", 1),
+        subtitleBackgroundOpacity = application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE).getFloat("video_subtitle_bg_opacity", 0.0f),
+        subtitlePositionPreset = SubtitlePositionPreset.entries.find {
+            it.name == application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE).getString("video_subtitle_pos_preset", SubtitlePositionPreset.BOTTOM.name)
+        } ?: SubtitlePositionPreset.BOTTOM,
+        subtitleSizePercent = application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE).getInt("video_subtitle_size_percent", 100)
     ))
     val uiState: StateFlow<VideoPlayerUiState> = _uiState.asStateFlow()
+
+    val subtitleController: SubtitlePlayerController = Media3SubtitlePlayerController { exoPlayer }
+    private val subtitleCache = SubtitleCache(application)
 
     private var progressJob: Job? = null
     private val viewModelScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
@@ -246,12 +281,19 @@ class VideoPlayerViewModel(
         val video = videoQueue[startIndex]
         val context = getApplication<Application>()
         
+        val audioAttributes = AudioAttributes.Builder()
+            .setUsage(C.USAGE_MEDIA)
+            .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+            .build()
+
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(15000, 50000, 2500, 5000)
             .setPrioritizeTimeOverSizeThresholds(true)
             .build()
 
         val player = ExoPlayer.Builder(context, VideoRenderersFactory(context))
+            .setAudioAttributes(audioAttributes, true)
+            .setHandleAudioBecomingNoisy(true)
             .setLoadControl(loadControl)
             .build()
             .apply {
@@ -276,6 +318,7 @@ class VideoPlayerViewModel(
                         pendingSubtitleTrackIndex = lastSubtitle
                         isInitialTrackRestorationDone = false
                         
+                        updateVideoEffects() // Apply initial effects before prepare
                         seekTo(startIndex, lastPos)
                         prepare()
                         playWhenReady = true
@@ -286,7 +329,8 @@ class VideoPlayerViewModel(
         player.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 _uiState.update { it.copy(isPlaying = isPlaying) }
-                PlaybackGlobalState.setPlaybackActive(isPlaying)
+                // Use handleAudioFocus to let ExoPlayer manage MediaRouter internally
+                // PlaybackGlobalState.setPlaybackActive(isPlaying) // Do not pause music engine explicitly if ExoPlayer does it via AudioFocus
                 if (isPlaying) startProgressUpdate() else {
                     stopProgressUpdate()
                     _uiState.value.currentVideo?.let { recordVideoPlayed(it) }
@@ -299,7 +343,6 @@ class VideoPlayerViewModel(
                     _uiState.update { it.copy(duration = player.duration) }
                     updateTracks()
                     setupLoudnessEnhancer(player.audioSessionId)
-                    updateVideoEffects() // Apply color grading when ready
                 } else if (playbackState == Player.STATE_ENDED) {
                     if (_uiState.value.sleepTimerMode == SleepTimerMode.END_OF_VIDEO) {
                         player.pause()
@@ -372,6 +415,28 @@ class VideoPlayerViewModel(
         _uiState.update { it.copy(currentVideo = video, isHdr = video?.isHdr ?: false) }
         
         video?.let { v ->
+            viewModelScope.launch {
+                val mediaKey = MediaKey.of(v)
+                val cachedSubs = subtitleCache.getCachedSubtitles(mediaKey)
+                val activeCached = cachedSubs.firstOrNull()
+                if (activeCached != null) {
+                    val file = File(activeCached.localPath)
+                    if (file.exists()) {
+                        subtitleController.attachExternalSubtitle(
+                            videoId = v.id,
+                            file = file,
+                            language = activeCached.language,
+                            label = activeCached.releaseName ?: "External Subtitle",
+                            mimeType = MimeTypes.APPLICATION_SUBRIP,
+                            subtitleId = activeCached.subtitleId
+                        )
+                        pendingSubtitleTrackIndex = -1
+                    }
+                } else {
+                    subtitleController.removeExternalSubtitle(v.id)
+                }
+            }
+
             viewModelScope.launch {
                 delay(2000)
                 if (isActive && _uiState.value.currentVideo?.id == v.id) {
@@ -759,13 +824,109 @@ class VideoPlayerViewModel(
         applyEqGains()
     }
 
-    fun setSubtitleSize(s: Float) = _uiState.update { it.copy(subtitleSize = s) }
-    fun setSubtitleTextColor(c: Int) = _uiState.update { it.copy(subtitleTextColor = c) }
-    fun setSubtitleBackgroundColor(c: Int) = _uiState.update { it.copy(subtitleBackgroundColor = c) }
-    fun setSubtitleOutlineColor(c: Int) = _uiState.update { it.copy(subtitleOutlineColor = c) }
-    fun setSubtitleAlpha(a: Float) = _uiState.update { it.copy(subtitleAlpha = a) }
-    fun setSubtitleOffset(o: Float) = _uiState.update { it.copy(subtitleOffset = o) }
-    fun resetSubtitleStyle() = _uiState.update { it.copy(subtitleSize = 18f, subtitleTextColor = -1, subtitleBackgroundColor = 0, subtitleAlpha = 1f, subtitleOffset = 0f) }
+    fun setSubtitleSize(s: Float) {
+        prefs.edit().putFloat("video_subtitle_size", s).apply()
+        _uiState.update { it.copy(subtitleSize = s) }
+    }
+
+    fun setSubtitleTextColor(c: Int) {
+        prefs.edit().putInt("video_subtitle_text_color", c).apply()
+        _uiState.update { it.copy(subtitleTextColor = c) }
+    }
+
+    fun setSubtitleBackgroundColor(c: Int) {
+        prefs.edit().putInt("video_subtitle_bg_color", c).apply()
+        _uiState.update { it.copy(subtitleBackgroundColor = c) }
+    }
+
+    fun setSubtitleOutlineColor(c: Int) {
+        prefs.edit().putInt("video_subtitle_outline_color", c).apply()
+        _uiState.update { it.copy(subtitleOutlineColor = c) }
+    }
+
+    fun setSubtitleAlpha(a: Float) {
+        prefs.edit().putFloat("video_subtitle_alpha", a).apply()
+        _uiState.update { it.copy(subtitleAlpha = a) }
+    }
+
+    fun setSubtitleOffset(o: Float) {
+        prefs.edit().putFloat("video_subtitle_offset", o).apply()
+        _uiState.update { it.copy(subtitleOffset = o) }
+    }
+
+    fun setSubtitleBold(b: Boolean) {
+        prefs.edit().putBoolean("video_subtitle_bold", b).apply()
+        _uiState.update { it.copy(subtitleBold = b) }
+    }
+
+    fun setSubtitleEdgeType(edge: Int) {
+        prefs.edit().putInt("video_subtitle_edge_type", edge).apply()
+        _uiState.update { it.copy(subtitleEdgeType = edge) }
+    }
+
+    fun setSubtitleBackgroundOpacity(opacity: Float) {
+        prefs.edit().putFloat("video_subtitle_bg_opacity", opacity).apply()
+        _uiState.update { it.copy(subtitleBackgroundOpacity = opacity) }
+    }
+
+    fun setSubtitlePositionPreset(preset: SubtitlePositionPreset) {
+        prefs.edit().putString("video_subtitle_pos_preset", preset.name).apply()
+        _uiState.update { it.copy(subtitlePositionPreset = preset) }
+    }
+
+    fun setSubtitleSizePercent(percent: Int) {
+        val newSp = (18f * (percent / 100f)).coerceAtLeast(12f)
+        prefs.edit().putInt("video_subtitle_size_percent", percent)
+            .putFloat("video_subtitle_size", newSp).apply()
+        _uiState.update { it.copy(subtitleSizePercent = percent, subtitleSize = newSp) }
+    }
+
+    fun resetSubtitleStyle() {
+        val defaultSp = 18f
+        val defaultTextColor = Color.WHITE
+        val defaultBgColor = Color.TRANSPARENT
+        val defaultOutlineColor = Color.BLACK
+        val defaultWindowColor = Color.TRANSPARENT
+        val defaultAlpha = 1.0f
+        val defaultOffset = 0f
+        val defaultBold = false
+        val defaultEdgeType = 1
+        val defaultBgOpacity = 0.0f
+        val defaultPosPreset = SubtitlePositionPreset.BOTTOM
+        val defaultSizePercent = 100
+
+        prefs.edit()
+            .putFloat("video_subtitle_size", defaultSp)
+            .putInt("video_subtitle_text_color", defaultTextColor)
+            .putInt("video_subtitle_bg_color", defaultBgColor)
+            .putInt("video_subtitle_outline_color", defaultOutlineColor)
+            .putInt("video_subtitle_window_color", defaultWindowColor)
+            .putFloat("video_subtitle_alpha", defaultAlpha)
+            .putFloat("video_subtitle_offset", defaultOffset)
+            .putBoolean("video_subtitle_bold", defaultBold)
+            .putInt("video_subtitle_edge_type", defaultEdgeType)
+            .putFloat("video_subtitle_bg_opacity", defaultBgOpacity)
+            .putString("video_subtitle_pos_preset", defaultPosPreset.name)
+            .putInt("video_subtitle_size_percent", defaultSizePercent)
+            .apply()
+
+        _uiState.update {
+            it.copy(
+                subtitleSize = defaultSp,
+                subtitleTextColor = defaultTextColor,
+                subtitleBackgroundColor = defaultBgColor,
+                subtitleOutlineColor = defaultOutlineColor,
+                subtitleWindowColor = defaultWindowColor,
+                subtitleAlpha = defaultAlpha,
+                subtitleOffset = defaultOffset,
+                subtitleBold = defaultBold,
+                subtitleEdgeType = defaultEdgeType,
+                subtitleBackgroundOpacity = defaultBgOpacity,
+                subtitlePositionPreset = defaultPosPreset,
+                subtitleSizePercent = defaultSizePercent
+            )
+        }
+    }
 
     fun toggleOrientation(a: android.app.Activity) {
         val next = if (a.requestedOrientation == ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE) {
@@ -888,7 +1049,6 @@ class VideoPlayerViewModel(
         super.onCleared()
         getApplication<Application>().unregisterReceiver(volumeReceiver)
         _uiState.value.currentVideo?.let { recordVideoPlayed(it) }
-        PlaybackGlobalState.setPlaybackActive(false)
         loudnessEnhancer?.release()
         equalizer?.release()
         exoPlayer?.release()

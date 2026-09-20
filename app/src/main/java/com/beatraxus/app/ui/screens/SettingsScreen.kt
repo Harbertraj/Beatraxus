@@ -1,5 +1,6 @@
 package com.beatraxus.app.ui.screens
 
+import android.app.Application
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
 import java.util.Locale
@@ -130,6 +131,15 @@ import com.beatraxus.app.model.SoxrQuality as SoxrQualityEnum
 import com.beatraxus.app.telegram.AuthState
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import com.beatraxus.app.repository.DriveAccount
+import com.beatraxus.app.repository.lyrics.LyricsProviderRegistry
+import com.beatraxus.app.subtitles.api.SubtitleApiClientFactory
+import com.beatraxus.app.subtitles.data.SubtitleAuthManager
+import com.beatraxus.app.subtitles.data.SubtitleCredentialsStore
+import com.beatraxus.app.subtitles.data.SubtitleRepositoryImpl
+import com.beatraxus.app.subtitles.player.Media3SubtitlePlayerController
+import com.beatraxus.app.subtitles.ui.SubtitleSettingsSection
+import com.beatraxus.app.subtitles.viewmodel.SubtitleViewModel
+import com.beatraxus.app.subtitles.viewmodel.SubtitleViewModelFactory
 import com.beatraxus.app.ui.theme.BgDeep
 import com.beatraxus.app.viewmodel.PlayerViewModel
 
@@ -411,7 +421,7 @@ fun SettingsScreen(
                     modifier = Modifier
                         .fillMaxSize()
                         .imePadding()
-                        .then(if (section != "Appearance: Home Screen Layout") Modifier.verticalScroll(scrollState) else Modifier)
+                        .then(if (section != "Appearance: Home Screen Layout" && section != "Appearance: Lyrics Database") Modifier.verticalScroll(scrollState) else Modifier)
                         .padding(horizontal = 16.dp, vertical = 10.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
@@ -497,6 +507,7 @@ fun SettingsScreen(
                             "Appearance: Home Screen" -> HomeScreenAppearanceContent(uiState, playerViewModel, sectionStack)
                             "Appearance: Home Screen Layout" -> HomeScreenLayoutContent(uiState, playerViewModel)
                             "Appearance: Settings Screen" -> SettingsScreenAppearanceContent(uiState, playerViewModel)
+                            "Appearance: Lyrics Database" -> LyricsDatabaseContent(uiState, playerViewModel)
                             "Replay Gain" -> ReplayGainContent(uiState, playerViewModel, onEditValue = { editingValue = it })
                             "Library" -> LibraryContent(uiState, playerViewModel, onShowInfo = { showInfoPopup = true })
                             "Video Settings" -> VideoSettingsContent(uiState, playerViewModel)
@@ -976,6 +987,16 @@ fun NowPlayingAppearanceContent(uiState: PlayerUiState, playerViewModel: PlayerV
             onBlurIntensityChange = { playerViewModel.setNowPlayingBlurIntensity(it) },
             onBlurDarknessChange = { playerViewModel.setNowPlayingBlurDarkness(it) },
             onReset = { playerViewModel.resetNowPlayingBackground() }
+        )
+
+        HorizontalDivider(color = Color.White.copy(0.05f))
+
+        SettingMenuItem(
+            title = "Lyrics Database",
+            subtitle = "Choose lyrics sources and change priority order",
+            icon = Icons.Rounded.Lyrics,
+            iconColor = PrimaryCyan,
+            onClick = { sectionStack.add("Appearance: Lyrics Database") }
         )
 
         HorizontalDivider(color = Color.White.copy(0.05f))
@@ -6108,6 +6129,28 @@ fun VideoSettingsContent(uiState: PlayerUiState, playerViewModel: PlayerViewMode
             lineHeight = 18.sp,
             modifier = Modifier.padding(horizontal = 8.dp)
         )
+
+        Spacer(Modifier.height(16.dp))
+
+        val context = LocalContext.current
+        val appContext = context.applicationContext as Application
+        val api = remember { SubtitleApiClientFactory.createApi() }
+        val credStore = remember { SubtitleCredentialsStore(appContext) }
+        val authManager = remember { SubtitleAuthManager(api, credStore) }
+        val repository = remember { SubtitleRepositoryImpl(appContext, api, authManager) }
+        val controller = remember { Media3SubtitlePlayerController { null } }
+
+        val subtitleViewModel: SubtitleViewModel = viewModel(
+            factory = SubtitleViewModelFactory(
+                application = appContext,
+                repository = repository,
+                authManager = authManager,
+                subtitleController = controller,
+                credentialsStore = credStore
+            )
+        )
+
+        SubtitleSettingsSection(subtitleViewModel = subtitleViewModel)
     }
 }
 
@@ -6227,6 +6270,167 @@ fun TelegramCloudContent(
 
                 TelegramLoginCard(uiState, viewModel)
             }
+        }
+    }
+}
+
+@Composable
+fun LyricsDatabaseContent(uiState: PlayerUiState, playerViewModel: PlayerViewModel) {
+    val appearance = uiState.appearance
+    var providerOrder by remember(appearance.lyricsProviderOrder) {
+        mutableStateOf(appearance.lyricsProviderOrder)
+    }
+    val lazyListState = rememberLazyListState()
+    val reorderableLazyListState = rememberReorderableLazyListState(lazyListState) { from, to ->
+        providerOrder = providerOrder.toMutableList().apply {
+            add(to.index, removeAt(from.index))
+        }
+    }
+
+    Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        Text(
+            text = "Drag ≡ to change priority. The source at the top is tried first. Tick the sources you want to use.",
+            color = Color.White.copy(0.5f),
+            fontSize = 12.sp,
+            lineHeight = 18.sp,
+            modifier = Modifier.padding(horizontal = 4.dp)
+        )
+
+        AppearanceToggleRow(
+            title = "Show all lyrics",
+            subtitle = "Let me pick from every enabled source in the lyrics view",
+            checked = appearance.lyricsShowAll,
+            onCheckedChange = { playerViewModel.setLyricsShowAll(it) }
+        )
+
+        LazyColumn(
+            state = lazyListState,
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+            contentPadding = PaddingValues(bottom = 24.dp)
+        ) {
+            items(items = providerOrder, key = { it }) { providerId ->
+                val provider = LyricsProviderRegistry.providers.find { it.id == providerId }
+                if (provider != null) {
+                    ReorderableItem(reorderableLazyListState, key = providerId) { isDragging ->
+                        val elevation by animateDpAsState(if (isDragging) 12.dp else 0.dp, label = "elevation")
+                        val isEnabled = appearance.lyricsEnabledProviders.contains(providerId)
+                        val haptic = LocalHapticFeedback.current
+
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .shadow(elevation, RoundedCornerShape(16.dp))
+                                .clickable {
+                                    if (isEnabled && appearance.lyricsEnabledProviders.size == 1) {
+                                        // Ignore tap, can't untick last enabled
+                                    } else {
+                                        playerViewModel.setLyricsProviderEnabled(providerId, !isEnabled)
+                                    }
+                                },
+                            color = if (isDragging) Color.White.copy(0.15f) else CardSurface.copy(alpha = 0.6f),
+                            shape = RoundedCornerShape(16.dp),
+                            border = BorderStroke(1.dp, if (isDragging) PremiumAccent.copy(0.5f) else Color.White.copy(0.08f))
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(16.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(40.dp)
+                                        .clip(CircleShape)
+                                        .background(Color.White.copy(alpha = 0.05f))
+                                        .draggableHandle(
+                                            onDragStarted = {
+                                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                            },
+                                            onDragStopped = {
+                                                playerViewModel.setLyricsProviderOrder(providerOrder)
+                                            }
+                                        ),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        Icons.Rounded.DragHandle,
+                                        null,
+                                        tint = if (isDragging) PremiumAccent else Color.White.copy(0.4f),
+                                        modifier = Modifier.size(22.dp)
+                                    )
+                                }
+                                Spacer(Modifier.width(16.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            text = provider.displayName,
+                                            color = Color.White,
+                                            fontSize = 17.sp,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                        if (provider.experimental) {
+                                            Spacer(Modifier.width(6.dp))
+                                            Text(
+                                                text = "EXPERIMENTAL",
+                                                color = Color(0xFFFF8800).copy(0.9f),
+                                                fontSize = 9.sp,
+                                                fontWeight = FontWeight.Black,
+                                                letterSpacing = 0.5.sp,
+                                                modifier = Modifier
+                                                    .border(0.5.dp, Color(0xFFFF8800).copy(0.3f), RoundedCornerShape(4.dp))
+                                                    .padding(horizontal = 4.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                        if (provider.requiresVideoId) {
+                                            Spacer(Modifier.width(6.dp))
+                                            Text(
+                                                text = "VIDEO ID",
+                                                color = PrimaryCyan.copy(0.9f),
+                                                fontSize = 9.sp,
+                                                fontWeight = FontWeight.Black,
+                                                letterSpacing = 0.5.sp,
+                                                modifier = Modifier
+                                                    .border(0.5.dp, PrimaryCyan.copy(0.3f), RoundedCornerShape(4.dp))
+                                                    .padding(horizontal = 4.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                    }
+                                    Spacer(Modifier.height(2.dp))
+                                    Text(
+                                        text = provider.description,
+                                        color = Color.White.copy(0.55f),
+                                        fontSize = 13.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                Spacer(Modifier.width(16.dp))
+                                if (isEnabled) {
+                                    Icon(
+                                        Icons.Rounded.Check,
+                                        contentDescription = null,
+                                        tint = PremiumAccent,
+                                        modifier = Modifier.size(24.dp)
+                                    )
+                                } else {
+                                    Spacer(Modifier.size(24.dp))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        TextButton(
+            onClick = { playerViewModel.resetLyricsProviderOrder() },
+            modifier = Modifier.align(Alignment.CenterHorizontally),
+            colors = ButtonDefaults.textButtonColors(contentColor = PremiumAccent)
+        ) {
+            Text("Reset order", fontWeight = FontWeight.Bold)
         }
     }
 }

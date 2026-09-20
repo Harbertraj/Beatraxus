@@ -3595,6 +3595,8 @@ fun MainScreen(
                 onAdjustOffset = { viewModel.adjustLyricsOffset(it) },
                 onSetLyricsOffset = { viewModel.setLyricsOffset(it) },
                 onSearchLyricsOnline = { viewModel.forceSearchLyricsOnline() },
+                onLoadLyricsCandidates = { viewModel.loadLyricsCandidates() },
+                onApplyLyricsCandidate = { viewModel.applyLyricsCandidate(it) },
                 showPipelineOverlay = showPipelineOverlay,
                 onTogglePipeline = { showPipelineOverlay = it },
                 onSetSleepTimer = { seconds, finishTrack, playCount ->
@@ -5747,6 +5749,7 @@ fun SlideDrawerMenu(
     val menuItems = remember(libraryMode, playbackMode) {
         if (playbackMode == com.beatraxus.app.model.PlaybackMode.VIDEO) {
             listOf(
+                DrawerMenuItem("Home", LibraryView.HOME, Icons.Rounded.Home, Color(0xFF00E676)),
                 DrawerMenuItem("All Videos", LibraryView.VIDEO_ALL, Icons.Rounded.Movie, Color(0xFF00E5FF)),
                 DrawerMenuItem("Folders", LibraryView.VIDEO_FOLDERS, Icons.Rounded.FolderOpen, Color(0xFFFFAB40)),
                 DrawerMenuItem("Recently Added", LibraryView.VIDEO_RECENTLY_ADDED, Icons.Rounded.VideoLibrary, Color(0xFF00E676)),
@@ -5949,7 +5952,8 @@ fun SlideDrawerMenu(
                             (item.view == LibraryView.FOLDERS && currentView == LibraryView.FOLDER_DETAIL) ||
                             (item.view == LibraryView.YEARS && currentView == LibraryView.YEAR_DETAIL) ||
                             (item.view == LibraryView.GENRES && currentView == LibraryView.GENRE_DETAIL) ||
-                            (item.view == LibraryView.PLAYLISTS && currentView == LibraryView.PLAYLIST_DETAIL)
+                            (item.view == LibraryView.PLAYLISTS && currentView == LibraryView.PLAYLIST_DETAIL) ||
+                            (item.view == LibraryView.VIDEO_FOLDERS && currentView == LibraryView.VIDEO_FOLDER_DETAIL)
 
                     val itemBg = if (isSelected) item.color.copy(0.3f) else Color.White.copy(0.1f)
 

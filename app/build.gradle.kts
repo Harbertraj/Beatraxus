@@ -69,6 +69,9 @@ configure<ApplicationExtension> {
         val tmdbApiKey = localProperties.getProperty("TMDB_API_KEY", "")
         buildConfigField("String", "TMDB_API_KEY", "\"$tmdbApiKey\"")
 
+        val openSubtitlesApiKey = localProperties.getProperty("OPENSUBTITLES_API_KEY", "")
+        buildConfigField("String", "OPENSUBTITLES_API_KEY", "\"$openSubtitlesApiKey\"")
+
         manifestPlaceholders["redirectSchemeName"] = "beatraxus"
         manifestPlaceholders["redirectHostName"] = "auth"
     }

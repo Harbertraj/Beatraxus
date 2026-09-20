@@ -10,6 +10,7 @@ import com.beatraxus.app.model.AlbumArtTransform
 import com.beatraxus.app.model.QualityBadgeStyle
 import com.beatraxus.app.model.NowPlayingIconStyle
 import com.beatraxus.app.model.SeekbarStyle
+import com.beatraxus.app.repository.lyrics.LyricsProviderRegistry
 import com.beatraxus.app.utils.DeviceUtils
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -96,7 +97,34 @@ class AppearancePreferences(context: Context) {
                 "GREETING", "ACTION_CHIPS", "CLOUD_LIBRARY", "MOODS",
                 "MADE_FOR_YOU", "LISTEN_AGAIN", "RECENTLY_ADDED",
                 "YOUR_FAVORITES", "FEATURED_ALBUMS", "ARTISTS_YOU_LOVE", "YOUR_PLAYLISTS"
-            )
+            ),
+            
+            lyricsProviderOrder = run {
+                val storedOrder = preferences[LYRICS_PROVIDER_ORDER]?.split(",")?.filter { it.isNotBlank() }
+                if (storedOrder != null) {
+                    val knownIds = LyricsProviderRegistry.providers.map { it.id }.toSet()
+                    val order = storedOrder.filter { it in knownIds }.toMutableList()
+                    val missing = LyricsProviderRegistry.defaultOrder.filter { it !in order && it in knownIds }
+                    missing.forEach { m -> 
+                        val defIdx = LyricsProviderRegistry.defaultOrder.indexOf(m)
+                        if (defIdx in 0..order.size) order.add(defIdx, m) else order.add(m)
+                    }
+                    order
+                } else {
+                    LyricsProviderRegistry.defaultOrder
+                }
+            },
+            
+            lyricsEnabledProviders = run {
+                val storedEnabled = preferences[LYRICS_PROVIDERS_ENABLED]?.split(",")?.filter { it.isNotBlank() }?.toSet()
+                var finalEnabled = storedEnabled ?: LyricsProviderRegistry.defaultEnabled
+                if (finalEnabled.isEmpty()) {
+                    finalEnabled = setOf("lrclib")
+                }
+                finalEnabled
+            },
+            
+            lyricsShowAll = preferences[LYRICS_SHOW_ALL] ?: false
         )
     }
 
@@ -261,6 +289,35 @@ class AppearancePreferences(context: Context) {
         dataStore.edit { it[HOME_SCREEN_SECTIONS_ORDER] = order.joinToString(",") }
     }
 
+    suspend fun setLyricsProviderOrder(order: List<String>) {
+        dataStore.edit { it[LYRICS_PROVIDER_ORDER] = order.joinToString(",") }
+    }
+
+    suspend fun setLyricsProviderEnabled(id: String, enabled: Boolean) {
+        dataStore.edit { preferences ->
+            val storedEnabled = preferences[LYRICS_PROVIDERS_ENABLED]?.split(",")?.filter { it.isNotBlank() }?.toSet()
+            val currentEnabled = storedEnabled ?: LyricsProviderRegistry.defaultEnabled
+            
+            val newEnabled = if (enabled) currentEnabled + id else currentEnabled - id
+            
+            if (newEnabled.isEmpty()) {
+                preferences[LYRICS_PROVIDERS_ENABLED] = "lrclib"
+            } else {
+                preferences[LYRICS_PROVIDERS_ENABLED] = newEnabled.joinToString(",")
+            }
+        }
+    }
+
+    suspend fun setLyricsShowAll(showAll: Boolean) {
+        dataStore.edit { it[LYRICS_SHOW_ALL] = showAll }
+    }
+
+    suspend fun resetLyricsProviderOrder() {
+        dataStore.edit { preferences ->
+            preferences.remove(LYRICS_PROVIDER_ORDER)
+        }
+    }
+
     suspend fun resetNowPlayingBackground() {
         dataStore.edit {
             it[SOLID_COLOR_INTENSITY] = 0.6f
@@ -357,5 +414,9 @@ class AppearancePreferences(context: Context) {
         private val MINI_PLAYER_BLUR_DARKNESS = floatPreferencesKey("mini_player_blur_darkness")
 
         private val HOME_SCREEN_SECTIONS_ORDER = stringPreferencesKey("home_screen_sections_order")
+        
+        private val LYRICS_PROVIDER_ORDER = stringPreferencesKey("lyrics_provider_order")
+        private val LYRICS_PROVIDERS_ENABLED = stringPreferencesKey("lyrics_providers_enabled")
+        private val LYRICS_SHOW_ALL = booleanPreferencesKey("lyrics_show_all")
     }
 }

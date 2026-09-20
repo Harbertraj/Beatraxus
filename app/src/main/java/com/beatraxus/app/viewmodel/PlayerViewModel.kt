@@ -94,6 +94,9 @@ import com.beatraxus.app.service.AudioPlaybackService
 import com.beatraxus.app.cast.CastManager
 import com.arthenica.ffmpegkit.FFmpegKitConfig
 import com.arthenica.ffmpegkit.Level
+import com.beatraxus.app.repository.AppearancePreferences
+import com.beatraxus.app.repository.LyricsCandidate
+import com.beatraxus.app.repository.LyricsProviderConfig
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 
@@ -103,9 +106,14 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private val musicRepository = MusicRepository(application)
     private val autoEqRepository = AutoEqRepository(application)
     private val autoEqApiService = com.beatraxus.app.repository.AutoEqApiService(application)
-    private val lyricsRepository = LyricsRepository(application, (application as BeatraxusApplication).database)
     private val dspPreferences = DspPreferences(application)
-    private val appearancePreferences = com.beatraxus.app.repository.AppearancePreferences(application)
+    private val appearancePreferences = AppearancePreferences(application)
+    private val lyricsRepository = LyricsRepository(application, (application as BeatraxusApplication).database) {
+        LyricsProviderConfig(
+            order = _uiState.value.appearance.lyricsProviderOrder,
+            enabled = _uiState.value.appearance.lyricsEnabledProviders
+        )
+    }
     private val app = application as BeatraxusApplication
     private val driveAccountRepository = app.driveAccountRepository
 
@@ -2529,6 +2537,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun playVideo(video: com.beatraxus.app.model.Video) {
+        if (_uiState.value.isPlaying) {
+            service?.togglePlayPause()
+        }
+
         val list = _uiState.value.videos
         var index = list.indexOfFirst { it.id == video.id }
         
@@ -4147,14 +4159,16 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                             lyricsCurrentIndex = -1,
                             isLoadingLyrics = false,
                             lyricsSource = result.source,
-                            lyricsErrorMessage = null
+                            lyricsErrorMessage = null,
+                            lyricsProviderId = result.providerId
                         )
                     }
                 } else {
                     _uiState.update {
                         it.copy(
                             isLoadingLyrics = false,
-                            lyricsErrorMessage = "No lyrics found online for this song"
+                            lyricsErrorMessage = "No lyrics found online for this song",
+                            lyricsProviderId = null
                         )
                     }
                 }
@@ -4163,10 +4177,46 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 _uiState.update {
                     it.copy(
                         isLoadingLyrics = false,
-                        lyricsErrorMessage = "Couldn't reach the lyrics service — check your connection and try again"
+                        lyricsErrorMessage = "Couldn't reach the lyrics service — check your connection and try again",
+                        lyricsProviderId = null
                     )
                 }
             }
+        }
+    }
+
+    fun loadLyricsCandidates() {
+        val song = _uiState.value.currentSong ?: return
+        
+        _uiState.update { it.copy(isLoadingLyricsCandidates = true) }
+        
+        viewModelScope.launch {
+            val candidates = lyricsRepository.fetchAllCandidates(song)
+            _uiState.update { 
+                it.copy(
+                    lyricsCandidates = candidates,
+                    isLoadingLyricsCandidates = false
+                ) 
+            }
+        }
+    }
+
+    fun applyLyricsCandidate(candidate: LyricsCandidate) {
+        val song = _uiState.value.currentSong ?: return
+        val lines = LrcParser.parse(candidate.content)
+        
+        _uiState.update {
+            it.copy(
+                lyrics = lines,
+                lyricsCurrentIndex = -1,
+                lyricsSource = LyricsSource.ONLINE,
+                lyricsProviderId = candidate.providerId
+            )
+        }
+        
+        viewModelScope.launch {
+            lyricsRepository.saveLyrics(song.id, candidate.content, 0L)
+            app.database.songDao().updateLyrics(song.id, candidate.content)
         }
     }
 
@@ -4216,7 +4266,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                                 lyrics = state.result.lines,
                                 lyricsCurrentIndex = -1,
                                 isLoadingLyrics = false,
-                                lyricsSource = state.result.source
+                                lyricsSource = state.result.source,
+                                lyricsProviderId = state.result.providerId
                             )
                         }
                     }
@@ -4226,6 +4277,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                                 isLoadingLyrics = false,
                                 lyrics = emptyList(),
                                 lyricsSource = null,
+                                lyricsProviderId = null,
                                 // Only the .catch{}-driven crash path sets a message here (an
                                 // unexpected exception); the routine "no lyrics found anywhere"
                                 // case is not itself an error worth alarming the user about, and
@@ -5054,6 +5106,30 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun setHomeScreenSectionsOrder(order: List<String>) {
         viewModelScope.launch {
             appearancePreferences.setHomeScreenSectionsOrder(order)
+        }
+    }
+
+    fun setLyricsProviderOrder(order: List<String>) {
+        viewModelScope.launch {
+            appearancePreferences.setLyricsProviderOrder(order)
+        }
+    }
+
+    fun setLyricsProviderEnabled(id: String, enabled: Boolean) {
+        viewModelScope.launch {
+            appearancePreferences.setLyricsProviderEnabled(id, enabled)
+        }
+    }
+
+    fun setLyricsShowAll(showAll: Boolean) {
+        viewModelScope.launch {
+            appearancePreferences.setLyricsShowAll(showAll)
+        }
+    }
+
+    fun resetLyricsProviderOrder() {
+        viewModelScope.launch {
+            appearancePreferences.resetLyricsProviderOrder()
         }
     }
 

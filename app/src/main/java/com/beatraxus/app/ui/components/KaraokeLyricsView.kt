@@ -101,7 +101,9 @@ fun KaraokeLyricsView(
     onSearchOnline: (() -> Unit)? = null,
     lyricsErrorMessage: String? = null,
     lyricsOffsetMs: Long = 0L, // Keep this for sync controls
-    progressMs: () -> Long = { 0L } // Live playback position, drives the word-fill sweep
+    progressMs: () -> Long = { 0L }, // Live playback position, drives the word-fill sweep
+    providerLabel: String? = null,
+    onShowAllLyrics: (() -> Unit)? = null
 ) {
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -237,6 +239,21 @@ fun KaraokeLyricsView(
                         }
                     )
                 }
+
+                if (providerLabel != null) {
+                    item {
+                        Text(
+                            text = "Source: $providerLabel",
+                            color = Color.White.copy(alpha = 0.2f),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 32.dp)
+                        )
+                    }
+                }
             }
 
             AnimatedVisibility(
@@ -247,52 +264,77 @@ fun KaraokeLyricsView(
                     .align(Alignment.TopCenter)
                     .padding(top = 24.dp)
             ) {
-                Surface(
-                    color = Color.White.copy(alpha = 0.12f),
-                    shape = RoundedCornerShape(24.dp),
-                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.1f)),
-                    modifier = Modifier.clip(RoundedCornerShape(24.dp))
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Surface(
+                        color = Color.White.copy(alpha = 0.12f),
+                        shape = RoundedCornerShape(24.dp),
+                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.1f)),
+                        modifier = Modifier.clip(RoundedCornerShape(24.dp))
                     ) {
-                        IconButton(onClick = {
-                            onAdjustOffset(-100)
-                            lastInteractionTime = System.currentTimeMillis()
-                        }) {
-                            Icon(Icons.Rounded.Remove, "Earlier", tint = Color.White)
-                        }
-
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier
-                                .padding(horizontal = 16.dp)
-                                .clickable {
-                                    tempOffsetStr = lyricsOffsetMs.toString()
-                                    isLongPressing = true
-                                }
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
                         ) {
-                            Text(
-                                text = "${if (lyricsOffsetMs >= 0) "+" else ""}${lyricsOffsetMs}ms",
-                                color = Color.White,
-                                style = MaterialTheme.typography.labelLarge,
-                                fontWeight = FontWeight.Black
-                            )
-                            Text(
-                                text = "SYNC OFFSET",
-                                color = Color.White.copy(alpha = 0.5f),
-                                style = MaterialTheme.typography.labelSmall,
-                                fontSize = 9.sp,
-                                letterSpacing = 1.sp
-                            )
-                        }
+                            IconButton(onClick = {
+                                onAdjustOffset(-100)
+                                lastInteractionTime = System.currentTimeMillis()
+                            }) {
+                                Icon(Icons.Rounded.Remove, "Earlier", tint = Color.White)
+                            }
 
-                        IconButton(onClick = {
-                            onAdjustOffset(100)
-                            lastInteractionTime = System.currentTimeMillis()
-                        }) {
-                            Icon(Icons.Rounded.Add, "Later", tint = Color.White)
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier
+                                    .padding(horizontal = 16.dp)
+                                    .clickable {
+                                        tempOffsetStr = lyricsOffsetMs.toString()
+                                        isLongPressing = true
+                                    }
+                            ) {
+                                Text(
+                                    text = "${if (lyricsOffsetMs >= 0) "+" else ""}${lyricsOffsetMs}ms",
+                                    color = Color.White,
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.Black
+                                )
+                                Text(
+                                    text = "SYNC OFFSET",
+                                    color = Color.White.copy(alpha = 0.5f),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontSize = 9.sp,
+                                    letterSpacing = 1.sp
+                                )
+                            }
+
+                            IconButton(onClick = {
+                                onAdjustOffset(100)
+                                lastInteractionTime = System.currentTimeMillis()
+                            }) {
+                                Icon(Icons.Rounded.Add, "Later", tint = Color.White)
+                            }
+                        }
+                    }
+
+                    if (onShowAllLyrics != null) {
+                        Surface(
+                            color = Color.White.copy(alpha = 0.12f),
+                            shape = RoundedCornerShape(24.dp),
+                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.1f)),
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(24.dp))
+                                .clickable { onShowAllLyrics.invoke() }
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp).height(48.dp) // match icon button height
+                            ) {
+                                Text(
+                                    text = "SOURCES",
+                                    color = Color.White,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
                         }
                     }
                 }

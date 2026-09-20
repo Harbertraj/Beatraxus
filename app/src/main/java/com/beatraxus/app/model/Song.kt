@@ -2,6 +2,7 @@ package com.beatraxus.app.model
 
 import android.net.Uri
 import com.beatraxus.app.model.OutputMode
+import com.beatraxus.app.repository.LyricsCandidate
 import com.beatraxus.app.repository.LyricsSource
 import com.beatraxus.app.telegram.AuthState
 import com.beatraxus.app.utils.DeviceUtils
@@ -209,7 +210,12 @@ data class AppearanceConfig(
         "GREETING", "ACTION_CHIPS", "CLOUD_LIBRARY", "STREAMING_ADDONS", "MOODS",
         "MADE_FOR_YOU", "LISTEN_AGAIN", "RECENTLY_ADDED",
         "YOUR_FAVORITES", "FEATURED_ALBUMS", "ARTISTS_YOU_LOVE", "YOUR_PLAYLISTS"
-    )
+    ),
+
+    // Lyrics Providers
+    val lyricsProviderOrder: List<String> = emptyList(),
+    val lyricsEnabledProviders: Set<String> = emptySet(),
+    val lyricsShowAll: Boolean = false
 )
 
 enum class AudioOutputDevice(val displayName: String) {
@@ -333,6 +339,9 @@ data class PlayerUiState(
     val viewMode: ViewMode = ViewMode.LIST,
     val isSearchActive: Boolean = false,
     val bitDepth: Int = 16,
+    val lyricsProviderId: String? = null,
+    val lyricsCandidates: List<LyricsCandidate> = emptyList(),
+    val isLoadingLyricsCandidates: Boolean = false,
     val bitrate: Int = 0,
     val format: String = "",
     val pipelineOutputPath: String = "AudioTrack",
@@ -452,6 +461,9 @@ data class PlayerUiState(
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
         if (other !is PlayerUiState) return false
+        if (lyricsProviderId != other.lyricsProviderId) return false
+        if (lyricsCandidates != other.lyricsCandidates) return false
+        if (isLoadingLyricsCandidates != other.isLoadingLyricsCandidates) return false
         return currentSong == other.currentSong &&
                 isPlaying == other.isPlaying &&
                 progressMs == other.progressMs &&
@@ -596,6 +608,9 @@ data class PlayerUiState(
 
     override fun hashCode(): Int {
         var result = currentSong?.hashCode() ?: 0
+        result = 31 * result + (lyricsProviderId?.hashCode() ?: 0)
+        result = 31 * result + lyricsCandidates.hashCode()
+        result = 31 * result + isLoadingLyricsCandidates.hashCode()
         result = 31 * result + isPlaying.hashCode()
         result = 31 * result + progressMs.hashCode()
         result = 31 * result + isBuffering.hashCode()
