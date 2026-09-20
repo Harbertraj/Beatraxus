@@ -171,7 +171,7 @@ class GenreApiService {
             "female vocalists", "male vocalists", "under 2000 listeners",
             "american", "british", "singer-songwriter", "classic",
             "80s", "90s", "00s", "70s", "60s", "2000s", "2010s", "2020s",
-            "scrobble", "last.fm", "spotify", "apple music"
+            "scrobble", "last.fm"
         )
         return !blacklist.any { tag.lowercase().contains(it) }
     }

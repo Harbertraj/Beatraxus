@@ -449,10 +449,7 @@ data class PlayerUiState(
     val bgVideoPos: Long = 0L,
 
     // Continue Watching
-    val continueWatching: List<Pair<com.beatraxus.app.model.Video, VideoRecentlyPlayedEntity>> = emptyList(),
-
-    // Streaming Add-ons
-    val spotifyConnectionState: com.beatraxus.app.repository.SpotifyConnectionState = com.beatraxus.app.repository.SpotifyConnectionState.Disconnected
+    val continueWatching: List<Pair<Video, VideoRecentlyPlayedEntity>> = emptyList()
 )
 {
     override fun equals(other: Any?): Boolean {
@@ -599,8 +596,7 @@ data class PlayerUiState(
                 videoFolders == other.videoFolders &&
                 isLoadingVideos == other.isLoadingVideos &&
                 activeVideoQueue == other.activeVideoQueue &&
-                navigateToVideoPlayer == other.navigateToVideoPlayer &&
-                spotifyConnectionState == other.spotifyConnectionState
+                navigateToVideoPlayer == other.navigateToVideoPlayer
     }
 
     override fun hashCode(): Int {
@@ -833,7 +829,6 @@ data class PlayerUiState(
         result = 31 * result + videos.hashCode()
         result = 31 * result + videoFolders.hashCode()
         result = 31 * result + isLoadingVideos.hashCode()
-        result = 31 * result + spotifyConnectionState.hashCode()
         return result
     }
 }

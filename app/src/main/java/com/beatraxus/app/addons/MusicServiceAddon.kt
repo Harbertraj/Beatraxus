@@ -13,13 +13,13 @@ enum class AddonConnectionState {
     CONNECTING,
     CONNECTED,
     NOT_INSTALLED,   // the official app for this service isn't on the device
-    NOT_ELIGIBLE,    // e.g. Spotify Free (no Premium)
+    NOT_ELIGIBLE,    // e.g. Free account (no Premium)
     ERROR
 }
 
 /**
  * What an addon can actually do once installed.
- * CONTROL  -> Beatraxus can drive playback in that service (needs an SDK/remote, e.g. Spotify App Remote)
+ * CONTROL  -> Beatraxus can drive playback in that service (needs an SDK/remote)
  * LAUNCH   -> Beatraxus can only hand off to the official app (deep link / package launch)
  */
 enum class AddonCapability { CONTROL, LAUNCH }
@@ -27,14 +27,13 @@ enum class AddonCapability { CONTROL, LAUNCH }
 /**
  * Contract every streaming add-on file must implement.
  *
- * This file never references Spotify/YouTube Music/Apple Music/Amazon Music by name —
+ * This file never references specific streaming services by name —
  * it is the generic plug the individual addon files snap into. Each concrete addon
- * (SpotifyAddon.kt, YoutubeMusicAddon.kt, ...) lives in its own file and is only wired
- * into the app when a user taps "Add" for it in AddonManager — nothing here hardcodes
- * a specific brand into the core app.
+ * lives in its own file and is only wired into the app when a user taps "Add" for it
+ * in AddonManager — nothing here hardcodes a specific brand into the core app.
  */
 interface MusicServiceAddon {
-    /** Stable id used for persistence, e.g. "spotify" */
+    /** Stable id used for persistence */
     val id: String
     val displayName: String
     val description: String

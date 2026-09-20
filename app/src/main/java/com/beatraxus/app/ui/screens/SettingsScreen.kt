@@ -478,7 +478,7 @@ fun SettingsScreen(
                         )
                         SettingMenuItem(
                             title = "Streaming Add-ons",
-                            subtitle = "Spotify, YouTube Music, Apple Music, Amazon Music",
+                            subtitle = "Manage your streaming plugins",
                             icon = Icons.Rounded.AddLink,
                             iconColor = Color(0xFF00C2A8),
                             onClick = onNavigateToStreamingAddons

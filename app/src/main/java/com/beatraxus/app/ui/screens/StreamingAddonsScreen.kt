@@ -1,5 +1,9 @@
 package com.beatraxus.app.ui.screens
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import android.widget.Toast
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -46,12 +50,33 @@ fun StreamingAddonsScreen(
 ) {
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
+    val coroutineScope = rememberCoroutineScope()
     
     val addedAddons by AddonManager.addedAddons.collectAsStateWithLifecycle()
     val availableAddons by AddonManager.availableAddons.collectAsStateWithLifecycle()
     
     var showAddSheet by remember { mutableStateOf(false) }
     var addonToRemove by remember { mutableStateOf<MusicServiceAddon?>(null) }
+    
+    val zipLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        uri?.let {
+            coroutineScope.launch {
+                val result = AddonManager.installAddon(it)
+                if (result.isSuccess) {
+                    val pkg = result.getOrNull()!!
+                    val newAddon = AddonManager.findById(pkg.manifest.id)
+                    if (newAddon != null) {
+                        AddonManager.addAddon(context, newAddon)
+                    }
+                    Toast.makeText(context, "Installed ${pkg.manifest.displayName}", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(context, "Failed to install addon", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
 
     Scaffold(
         containerColor = Color.Transparent,
@@ -157,7 +182,7 @@ fun StreamingAddonsScreen(
                 Surface(
                     onClick = { 
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        showAddSheet = true 
+                        zipLauncher.launch(arrayOf("application/zip")) 
                     },
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(20.dp),
@@ -254,7 +279,8 @@ fun StreamingAddonsScreen(
                 },
                 confirmButton = {
                     TextButton(onClick = {
-                        AddonManager.removeAddon(addon)
+                        // Fully uninstall the addon from disk
+                        AddonManager.uninstallAddon(addon.id)
                         addonToRemove = null
                     }) {
                         Text("REMOVE", color = Color.Red.copy(alpha = 0.8f))

@@ -15,7 +15,6 @@ object LyricsProviderRegistry {
         MegalobizProvider(),
         BinilyricsProvider(),
         BetterlyricsPortatoProvider(),
-        PaxsenixSpotifyProvider(),
         YoutubeCaptionsProvider()
     )
 

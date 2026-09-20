@@ -44,7 +44,7 @@ class MoodApiService {
         private val BLACKLIST = listOf(
             "seen live", "favorites", "favourite", "awesome", "cool", "beautiful",
             "amazing", "love this song", "best", "female vocalists", "male vocalists",
-            "80s", "90s", "00s", "70s", "60s", "2000s", "2010s", "2020s", "spotify", "apple music"
+            "80s", "90s", "00s", "70s", "60s", "2000s", "2010s", "2020s"
         )
     }
 

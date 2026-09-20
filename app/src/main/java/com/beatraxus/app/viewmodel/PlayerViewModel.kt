@@ -78,12 +78,6 @@ import com.beatraxus.app.repository.LyricsRepository
 import com.beatraxus.app.repository.LrcParser
 import com.beatraxus.app.repository.LyricsSource
 import com.beatraxus.app.repository.LyricsState
-import com.beatraxus.app.repository.LyricsType
-import com.beatraxus.app.repository.DspPreferences
-import com.beatraxus.app.repository.DriveAccount
-import com.beatraxus.app.repository.SpotifyRemoteRepository
-import com.beatraxus.app.repository.StreamingLinkResolver
-import com.beatraxus.app.repository.StreamingServiceType
 import com.beatraxus.app.repository.TelegramChannelRepository
 import com.beatraxus.app.util.ArtistNameUtils
 import com.beatraxus.app.util.PlaybackGlobalState
@@ -136,8 +130,6 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private val cloudCacheManager = app.cloudCacheManager
     private val metadataExtractor = com.beatraxus.app.repository.MetadataExtractor(application)
     private val tdLibManager = (application as BeatraxusApplication).tdLibManager
-    private val spotifyRemoteRepository = SpotifyRemoteRepository()
-    private val streamingLinkResolver = StreamingLinkResolver()
     private val lastFmRepository = com.beatraxus.app.repository.lastfm.LastFmRepository(application)
     private val pendingLastFmAuth = AtomicBoolean(false)
     private val networkObserver = com.beatraxus.app.util.NetworkObserver(application)
@@ -1089,13 +1081,6 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
 
-        // Observe Spotify connection state
-        viewModelScope.launch {
-            spotifyRemoteRepository.connectionState.collect { state ->
-                _uiState.update { it.copy(spotifyConnectionState = state) }
-            }
-        }
-
         checkBatteryOptimizations()
 
         // Observe Library Scanner state
@@ -1202,14 +1187,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         // Refresh state after a delay as the user might have accepted
         viewModelScope.launch {
             delay(2000)
-            // Observe Spotify connection state
-        viewModelScope.launch {
-            spotifyRemoteRepository.connectionState.collect { state ->
-                _uiState.update { it.copy(spotifyConnectionState = state) }
-            }
-        }
-
-        checkBatteryOptimizations()
+            checkBatteryOptimizations()
         }
     }
 
@@ -4521,19 +4499,6 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             sleepTimerPlayCount = 0,
             sleepTimerRemainingPlayCount = 0
         ) }
-    }
-
-    // Spotify & Streaming Add-ons
-    fun connectSpotify() {
-        spotifyRemoteRepository.connect(getApplication())
-    }
-
-    fun disconnectSpotify() {
-        spotifyRemoteRepository.disconnect()
-    }
-
-    fun openStreamingApp(service: StreamingServiceType) {
-        streamingLinkResolver.openInExternalApp(getApplication(), service)
     }
 
     fun showTelegramLoginForm() {
