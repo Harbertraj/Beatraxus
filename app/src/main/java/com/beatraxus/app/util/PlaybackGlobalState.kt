@@ -13,7 +13,14 @@ object PlaybackGlobalState {
     private val _isAnyPlaybackActive = MutableStateFlow(false)
     val isAnyPlaybackActive: StateFlow<Boolean> = _isAnyPlaybackActive.asStateFlow()
 
+    private val _isVideoPlayerOnScreen = MutableStateFlow(false)
+    val isVideoPlayerOnScreen: StateFlow<Boolean> = _isVideoPlayerOnScreen.asStateFlow()
+
     fun setPlaybackActive(active: Boolean) {
         _isAnyPlaybackActive.value = active
+    }
+
+    fun setVideoPlayerOnScreen(onScreen: Boolean) {
+        _isVideoPlayerOnScreen.value = onScreen
     }
 }

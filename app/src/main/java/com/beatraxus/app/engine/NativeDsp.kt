@@ -1,5 +1,6 @@
 package com.beatraxus.app.engine
 
+import android.util.Log
 import java.util.concurrent.locks.ReentrantReadWriteLock
 import kotlin.concurrent.withLock
 
@@ -283,12 +284,40 @@ class NativeDsp : AutoCloseable {
         try {
             val fd = pfd.fd
             // Wrap native call in try-catch to prevent SIGSEGV or other native exceptions from killing the app
-            try {
+            val rawArr = try {
                 nExtractFeatures(fd, seconds)
             } catch (t: Throwable) {
-                android.util.Log.e("NativeDsp", "Native crash prevented in nExtractFeatures: ${t.message}")
+                Log.e("NativeDsp", "Native crash prevented in nExtractFeatures: ${t.message}")
                 null
-            }
+            } ?: return@withContext null
+            
+            if (rawArr.size < 15) return@withContext null
+            
+            val spectralLen = rawArr[13].toInt()
+            val noveltyLen = rawArr[14].toInt()
+            
+            if (rawArr.size < 15 + spectralLen + noveltyLen) return@withContext null
+            
+            val spectralData = rawArr.copyOfRange(15, 15 + spectralLen)
+            val noveltyVector = if (noveltyLen > 0) rawArr.copyOfRange(15 + spectralLen, 15 + spectralLen + noveltyLen) else null
+            
+            return@withContext AudioFeatures(
+                lufs = rawArr[0],
+                rms = rawArr[1],
+                peak = rawArr[2],
+                dynamicRange = rawArr[3],
+                bassScore = rawArr[4],
+                midScore = rawArr[5],
+                trebleScore = rawArr[6],
+                stereoWidth = rawArr[7],
+                tempoBpm = rawArr[8],
+                spectralData = spectralData,
+                noveltyVector = noveltyVector,
+                truePeakDb = rawArr[9],
+                clippedSamplePct = rawArr[10],
+                freqRangeLowHz = rawArr[11],
+                freqRangeHighHz = rawArr[12]
+            )
         } finally {
             try { pfd.close() } catch (e: Exception) {}
         }
@@ -317,7 +346,7 @@ class NativeDsp : AutoCloseable {
         }
     }
 
-    private external fun nExtractFeatures(fd: Int, seconds: Int): AudioFeatures?
+    private external fun nExtractFeatures(fd: Int, seconds: Int): FloatArray?
 
     fun release() {
         lock.writeLock().withLock {

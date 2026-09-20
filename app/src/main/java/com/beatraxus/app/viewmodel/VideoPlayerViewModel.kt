@@ -44,12 +44,12 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.first
 import java.io.File
+import kotlin.math.abs
 
 data class VideoPlayerUiState(
     val currentVideo: Video? = null,
     val isPlaying: Boolean = false,
     val playbackState: Int = Player.STATE_IDLE,
-    val currentPosition: Long = 0L,
     val duration: Long = 0L,
     val bufferedPercentage: Int = 0,
     val videoSize: VideoSize = VideoSize.UNKNOWN,
@@ -162,6 +162,10 @@ class VideoPlayerViewModel(
     private var spriteLoadingJob: Job? = null
     private var chapterDetectionJob: Job? = null
     private var chapterObservationJob: Job? = null
+    private var backgroundTasksTimerJob: Job? = null
+    private val processedBackgroundVideos = mutableSetOf<String>()
+    private val chapterDetectionStartedForVideoIds = mutableSetOf<String>()
+    private var isEffectActive = false
 
     private val volumeReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -201,8 +205,11 @@ class VideoPlayerViewModel(
 
     val subtitleController: SubtitlePlayerController = Media3SubtitlePlayerController { exoPlayer }
     private val subtitleCache = SubtitleCache(application)
+    
+    val positionFlow = MutableStateFlow(0L)
 
     private var progressJob: Job? = null
+    private var abRepeatJob: Job? = null
     private val viewModelScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var loudnessEnhancer: android.media.audiofx.LoudnessEnhancer? = null
     private var equalizer: android.media.audiofx.Equalizer? = null
@@ -213,6 +220,7 @@ class VideoPlayerViewModel(
     private var pendingAudioTrackIndex = -1
     private var pendingSubtitleTrackIndex = -1
     private var isInitialTrackRestorationDone = false
+    private var lastHandledVideoId: String? = null
 
     init {
         application.registerReceiver(volumeReceiver, IntentFilter("android.media.VOLUME_CHANGED_ACTION"))
@@ -318,7 +326,13 @@ class VideoPlayerViewModel(
                         pendingSubtitleTrackIndex = lastSubtitle
                         isInitialTrackRestorationDone = false
                         
-                        updateVideoEffects() // Apply initial effects before prepare
+                        val isIdentity = abs(_uiState.value.colorBrightness) < 0.001f &&
+                                         abs(_uiState.value.colorContrast - 1f) < 0.001f &&
+                                         abs(_uiState.value.colorSaturation - 1f) < 0.001f
+                        if (!isIdentity) {
+                            updateVideoEffects() // Apply initial effects before prepare
+                        }
+                        
                         seekTo(startIndex, lastPos)
                         prepare()
                         playWhenReady = true
@@ -330,11 +344,16 @@ class VideoPlayerViewModel(
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 _uiState.update { it.copy(isPlaying = isPlaying) }
                 // Use handleAudioFocus to let ExoPlayer manage MediaRouter internally
-                // PlaybackGlobalState.setPlaybackActive(isPlaying) // Do not pause music engine explicitly if ExoPlayer does it via AudioFocus
-                if (isPlaying) startProgressUpdate() else {
+                PlaybackGlobalState.setPlaybackActive(isPlaying) // Do not pause music engine explicitly if ExoPlayer does it via AudioFocus
+                if (isPlaying) {
+                    startProgressUpdate()
+                    startAbRepeatWatcher()
+                } else {
                     stopProgressUpdate()
+                    stopAbRepeatWatcher()
                     _uiState.value.currentVideo?.let { recordVideoPlayed(it) }
                 }
+                checkBackgroundTasks()
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
@@ -349,10 +368,13 @@ class VideoPlayerViewModel(
                         cancelSleepTimer()
                     }
                 }
+                checkBackgroundTasks()
             }
 
             override fun onPositionDiscontinuity(old: Player.PositionInfo, new: Player.PositionInfo, reason: Int) {
-                updateCurrentVideo()
+                if (reason == Player.DISCONTINUITY_REASON_AUTO_TRANSITION) {
+                    updateCurrentVideo()
+                }
             }
 
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
@@ -414,36 +436,60 @@ class VideoPlayerViewModel(
         _uiState.value.currentVideo?.let { recordVideoPlayed(it) }
         _uiState.update { it.copy(currentVideo = video, isHdr = video?.isHdr ?: false) }
         
-        video?.let { v ->
-            viewModelScope.launch {
-                val mediaKey = MediaKey.of(v)
-                val cachedSubs = subtitleCache.getCachedSubtitles(mediaKey)
-                val activeCached = cachedSubs.firstOrNull()
-                if (activeCached != null) {
-                    val file = File(activeCached.localPath)
-                    if (file.exists()) {
-                        subtitleController.attachExternalSubtitle(
-                            videoId = v.id,
-                            file = file,
-                            language = activeCached.language,
-                            label = activeCached.releaseName ?: "External Subtitle",
-                            mimeType = MimeTypes.APPLICATION_SUBRIP,
-                            subtitleId = activeCached.subtitleId
-                        )
-                        pendingSubtitleTrackIndex = -1
+        if (video?.id != lastHandledVideoId) {
+            lastHandledVideoId = video?.id
+            video?.let { v ->
+                viewModelScope.launch {
+                    val mediaKey = MediaKey.of(v)
+                    val cachedSubs = subtitleCache.getCachedSubtitles(mediaKey)
+                    val activeCached = cachedSubs.firstOrNull()
+                    if (activeCached != null) {
+                        val file = File(activeCached.localPath)
+                        if (file.exists()) {
+                            subtitleController.attachExternalSubtitle(
+                                videoId = v.id,
+                                file = file,
+                                language = activeCached.language,
+                                label = activeCached.releaseName ?: "External Subtitle",
+                                mimeType = MimeTypes.APPLICATION_SUBRIP,
+                                subtitleId = activeCached.subtitleId
+                            )
+                            pendingSubtitleTrackIndex = -1
+                        }
+                    } else {
+                        subtitleController.removeExternalSubtitle(v.id)
                     }
-                } else {
-                    subtitleController.removeExternalSubtitle(v.id)
                 }
+                
+                backgroundTasksTimerJob?.cancel()
+                spriteLoadingJob?.cancel()
+                chapterDetectionJob?.cancel()
+                chapterObservationJob?.cancel()
+                checkBackgroundTasks()
             }
+        }
+    }
 
-            viewModelScope.launch {
-                delay(2000)
-                if (isActive && _uiState.value.currentVideo?.id == v.id) {
-                    generateScrubPreviews(v)
-                    observeAndDetectChapters(v)
+    private fun checkBackgroundTasks() {
+        val player = exoPlayer ?: return
+        val currentVideo = _uiState.value.currentVideo ?: return
+        val videoId = currentVideo.id
+        
+        if (processedBackgroundVideos.contains(videoId)) return
+        
+        if (player.playbackState == Player.STATE_READY && player.isPlaying) {
+            if (backgroundTasksTimerJob?.isActive != true) {
+                backgroundTasksTimerJob = viewModelScope.launch {
+                    delay(10000)
+                    if (isActive) {
+                        processedBackgroundVideos.add(videoId)
+                        generateScrubPreviews(currentVideo)
+                        observeAndDetectChapters(currentVideo)
+                    }
                 }
             }
+        } else {
+            backgroundTasksTimerJob?.cancel()
         }
     }
 
@@ -452,7 +498,8 @@ class VideoPlayerViewModel(
         chapterObservationJob = viewModelScope.launch {
             videoChapterDao.getChaptersForVideo(video.id).collect { list ->
                 _uiState.update { it.copy(chapters = list) }
-                if (list.isEmpty()) {
+                if (list.isEmpty() && !chapterDetectionStartedForVideoIds.contains(video.id)) {
+                    chapterDetectionStartedForVideoIds.add(video.id)
                     triggerChapterDetection(video)
                 }
             }
@@ -564,13 +611,11 @@ class VideoPlayerViewModel(
             while (isActive) {
                 exoPlayer?.let { player ->
                     val pos = player.currentPosition
+                    if (positionFlow.value != pos) {
+                        positionFlow.value = pos
+                    }
 
                     val state = _uiState.value
-                    if (state.isAbRepeatActive && state.abRepeatPointA != null && state.abRepeatPointB != null) {
-                        if (pos >= state.abRepeatPointB) {
-                            player.seekTo(state.abRepeatPointA)
-                        }
-                    }
 
                     val intro = cachedIntroRange
                     val showSkip = intro != null && pos in intro.startMs until intro.endMs - 1000
@@ -578,7 +623,9 @@ class VideoPlayerViewModel(
                         _uiState.update { it.copy(showSkipIntroButton = showSkip) }
                     }
 
-                    _uiState.update { it.copy(currentPosition = pos, bufferedPercentage = player.bufferedPercentage) }
+                    if (state.bufferedPercentage != player.bufferedPercentage) {
+                        _uiState.update { it.copy(bufferedPercentage = player.bufferedPercentage) }
+                    }
 
                     val now = System.currentTimeMillis()
                     if (now - lastDbSaveTime > 5000) {
@@ -586,12 +633,30 @@ class VideoPlayerViewModel(
                         lastDbSaveTime = now
                     }
                 }
-                delay(16)
+                delay(250)
             }
         }
     }
 
     private fun stopProgressUpdate() = progressJob?.cancel()
+
+    private fun startAbRepeatWatcher() {
+        abRepeatJob?.cancel()
+        abRepeatJob = viewModelScope.launch {
+            while (isActive) {
+                val state = _uiState.value
+                if (state.isAbRepeatActive && state.abRepeatPointA != null && state.abRepeatPointB != null) {
+                    val pos = exoPlayer?.currentPosition ?: 0L
+                    if (pos >= state.abRepeatPointB) {
+                        exoPlayer?.seekTo(state.abRepeatPointA)
+                    }
+                }
+                delay(50)
+            }
+        }
+    }
+
+    private fun stopAbRepeatWatcher() = abRepeatJob?.cancel()
 
     private fun updateTracks() {
         val player = exoPlayer ?: return
@@ -627,7 +692,7 @@ class VideoPlayerViewModel(
 
     fun seekTo(position: Long) {
         exoPlayer?.seekTo(position)
-        _uiState.update { it.copy(currentPosition = position) }
+        positionFlow.value = position
     }
 
     fun stepFrame(forward: Boolean) {
@@ -644,7 +709,7 @@ class VideoPlayerViewModel(
 
         player.seekTo(newPos)
         player.playWhenReady = false
-        _uiState.update { it.copy(currentPosition = newPos) }
+        positionFlow.value = newPos
     }
 
     fun setPlaybackSpeed(speed: Float) {
@@ -1028,14 +1093,26 @@ class VideoPlayerViewModel(
     private fun updateVideoEffects() {
         val player = exoPlayer ?: return
         val state = _uiState.value
-        val effects = mutableListOf<Effect>()
-
+        
         colorGradeEffect.brightness = state.colorBrightness
         colorGradeEffect.contrast = state.colorContrast
         colorGradeEffect.saturation = state.colorSaturation
-        effects.add(colorGradeEffect)
+        
+        val isIdentity = abs(state.colorBrightness) < 0.001f &&
+                         abs(state.colorContrast - 1f) < 0.001f &&
+                         abs(state.colorSaturation - 1f) < 0.001f
 
-        player.setVideoEffects(effects)
+        if (isIdentity) {
+            if (isEffectActive) {
+                player.setVideoEffects(emptyList())
+                isEffectActive = false
+            }
+        } else {
+            if (!isEffectActive) {
+                player.setVideoEffects(listOf(colorGradeEffect))
+                isEffectActive = true
+            }
+        }
     }
 
 
@@ -1053,6 +1130,11 @@ class VideoPlayerViewModel(
         equalizer?.release()
         exoPlayer?.release()
         spriteSheet?.recycle()
+        backgroundTasksTimerJob?.cancel()
+        spriteLoadingJob?.cancel()
+        chapterDetectionJob?.cancel()
+        chapterObservationJob?.cancel()
+        abRepeatJob?.cancel()
         viewModelScope.cancel()
     }
 }

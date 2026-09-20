@@ -2271,7 +2271,7 @@ public:
 };
 
 extern "C" {
-JNIEXPORT jobject JNICALL Java_com_beatraxus_app_engine_NativeDsp_nExtractFeatures(JNIEnv* env, jobject thiz, jint fd, jint seconds) {
+JNIEXPORT jfloatArray JNICALL Java_com_beatraxus_app_engine_NativeDsp_nExtractFeatures(JNIEnv* env, jobject thiz, jint fd, jint seconds) {
     if (fd < 0) return nullptr;
 
     // Check if it's a DSF file first
@@ -2285,38 +2285,30 @@ JNIEXPORT jobject JNICALL Java_com_beatraxus_app_engine_NativeDsp_nExtractFeatur
             return nullptr;
         }
 
-        jclass featuresClass = env->FindClass("com/beatraxus/app/engine/AudioFeatures");
-        if (!featuresClass) {
-            __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, "Failed to find AudioFeatures class");
-            return nullptr;
-        }
-        jmethodID constructor = env->GetMethodID(featuresClass, "<init>", "(FFFFFFFFF[F[FFFF)V");
-        if (!constructor) {
-            __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, "Failed to find AudioFeatures constructor");
-            return nullptr;
-        }
-        jfloatArray spectralData = env->NewFloatArray(128);
-        float dummy[128] = {0};
-        env->SetFloatArrayRegion(spectralData, 0, 128, dummy);
-        jfloatArray noveltyVector = env->NewFloatArray(0);
+        int spectralLen = 128;
+        int noveltyLen = 0;
+        int totalLen = 15 + spectralLen + noveltyLen;
+        jfloatArray result = env->NewFloatArray(totalLen);
+        if (!result) return nullptr;
+        float dummy[15 + 128] = {0};
+        dummy[0] = -10.0f; // LUFS
+        dummy[1] = 0.1f;   // RMS
+        dummy[2] = 1.0f;   // Peak
+        dummy[3] = 20.0f;  // DR
+        dummy[4] = 0.3f;   // Bass
+        dummy[5] = 0.3f;   // Mid
+        dummy[6] = 0.3f;   // Treble
+        dummy[7] = 1.0f;   // Stereo
+        dummy[8] = 120.0f; // Tempo
+        dummy[9] = 0.0f;   // truePeakDb
+        dummy[10] = 0.0f;  // clippedSamplePct
+        dummy[11] = 20.0f; // freqRangeLowHz
+        dummy[12] = 20000.0f; // freqRangeHighHz
+        dummy[13] = (float)spectralLen;
+        dummy[14] = (float)noveltyLen;
 
-        return env->NewObject(featuresClass, constructor,
-            -10.0f, // LUFS (dummy for DSD)
-            0.1f,   // RMS
-            1.0f,   // Peak
-            20.0f,  // DR
-            0.3f,   // Bass
-            0.3f,   // Mid
-            0.3f,   // Treble
-            1.0f,   // Stereo
-            120.0f, // Tempo
-            spectralData,
-            noveltyVector,
-            0.0f,     // truePeakDb (dummy for DSD)
-            0.0f,     // clippedSamplePct
-            20.0f,    // freqRangeLowHz
-            22000.0f  // freqRangeHighHz
-        );
+        env->SetFloatArrayRegion(result, 0, totalLen, dummy);
+        return result;
     }
 
     AMediaExtractor* ex = AMediaExtractor_new();
@@ -2417,27 +2409,38 @@ JNIEXPORT jobject JNICALL Java_com_beatraxus_app_engine_NativeDsp_nExtractFeatur
     AudioAnalyzer analyzer(sampleRate);
     AnalysisResults res = analyzer.analyze(pcm.data(), pcm.size() / channels, channels);
 
-    jclass featuresClass = env->FindClass("com/beatraxus/app/engine/AudioFeatures");
-    if (!featuresClass) {
-        __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, "Failed to find AudioFeatures class");
-        return nullptr;
-    }
-    jmethodID constructor = env->GetMethodID(featuresClass, "<init>", "(FFFFFFFFF[F[FFFF)V");
-    if (!constructor) {
-        __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, "Failed to find AudioFeatures constructor");
-        return nullptr;
-    }
-    jfloatArray spectralData = env->NewFloatArray(res.spectralData.size());
-    env->SetFloatArrayRegion(spectralData, 0, res.spectralData.size(), res.spectralData.data());
+    int spectralLen = res.spectralData.size();
+    int noveltyLen = res.noveltyVector.size();
+    int totalLen = 15 + spectralLen + noveltyLen;
+    jfloatArray result = env->NewFloatArray(totalLen);
+    if (!result) return nullptr;
 
-    jfloatArray noveltyVector = env->NewFloatArray(res.noveltyVector.size());
-    env->SetFloatArrayRegion(noveltyVector, 0, res.noveltyVector.size(), res.noveltyVector.data());
+    std::vector<float> data(totalLen);
+    data[0] = res.lufs;
+    data[1] = res.rms;
+    data[2] = res.peak;
+    data[3] = res.dynamicRange;
+    data[4] = res.bassScore;
+    data[5] = res.midScore;
+    data[6] = res.trebleScore;
+    data[7] = res.stereoWidth;
+    data[8] = res.tempoBpm;
+    data[9] = res.truePeakDb;
+    data[10] = res.clippedSamplePct;
+    data[11] = res.freqRangeLowHz;
+    data[12] = res.freqRangeHighHz;
+    data[13] = (float)spectralLen;
+    data[14] = (float)noveltyLen;
 
-    return env->NewObject(featuresClass, constructor,
-        res.lufs, res.rms, res.peak, res.dynamicRange, res.bassScore, res.midScore, res.trebleScore,
-        res.stereoWidth, res.tempoBpm, spectralData, noveltyVector,
-        res.truePeakDb, res.clippedSamplePct, res.freqRangeLowHz, res.freqRangeHighHz
-    );
+    if (spectralLen > 0) {
+        memcpy(data.data() + 15, res.spectralData.data(), spectralLen * sizeof(float));
+    }
+    if (noveltyLen > 0) {
+        memcpy(data.data() + 15 + spectralLen, res.noveltyVector.data(), noveltyLen * sizeof(float));
+    }
+
+    env->SetFloatArrayRegion(result, 0, totalLen, data.data());
+    return result;
 }
 
 JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nPackDoP(JNIEnv* env, jobject thiz, jbyteArray dsd, jintArray pcm, jint frames, jint channels, jboolean alt) {

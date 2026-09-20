@@ -6,11 +6,15 @@ import android.graphics.Canvas
 import android.graphics.Rect
 import android.media.MediaMetadataRetriever
 import android.net.Uri
+import android.os.Build
+import android.os.Process
 import android.util.Log
 import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.withLock
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
+import kotlin.math.max
 
 object ThumbnailSpriteGenerator {
     private const val TAG = "ThumbnailSpriteGen"
@@ -18,7 +22,6 @@ object ThumbnailSpriteGenerator {
     private const val THUMB_WIDTH = 160
     private const val THUMB_HEIGHT = 90
     private const val COLUMNS = 10
-    private const val INTERVAL_MS = 10000L // 10 seconds
     private const val MAX_CACHED_VIDEOS = 50
 
     data class SpriteMetadata(
@@ -44,14 +47,17 @@ object ThumbnailSpriteGenerator {
 
         cleanupCache(cacheDir)
 
-        val retriever = MediaMetadataRetriever()
-        try {
-            retriever.setDataSource(context, videoUri)
-            val durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLong() ?: 0L
-            if (durationMs <= 0) return@withContext null
-
-            val frameCount = (durationMs / INTERVAL_MS).toInt().coerceAtLeast(1)
-            val rows = (frameCount + COLUMNS - 1) / COLUMNS
+        VideoBackgroundWork.mutex.withLock {
+            Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND)
+            val retriever = MediaMetadataRetriever()
+            try {
+                retriever.setDataSource(context, videoUri)
+                val durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLong() ?: 0L
+                if (durationMs <= 0) return@withContext null
+    
+                val intervalMs = max(10_000L, durationMs / 60)
+                val frameCount = (durationMs / intervalMs).toInt().coerceAtLeast(1)
+                val rows = (frameCount + COLUMNS - 1) / COLUMNS
             
             val spriteSheet = Bitmap.createBitmap(
                 COLUMNS * THUMB_WIDTH,
@@ -66,15 +72,26 @@ object ThumbnailSpriteGenerator {
                     return@withContext null
                 }
 
-                val timeUs = i * INTERVAL_MS * 1000L
-                val frame = retriever.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
-                if (frame != null) {
-                    val scaledFrame = Bitmap.createScaledBitmap(frame, THUMB_WIDTH, THUMB_HEIGHT, true)
+                val timeUs = i * intervalMs * 1000L
+                var scaledFrame: Bitmap? = null
+                if (Build.VERSION.SDK_INT >= 27) {
+                    try {
+                        scaledFrame = retriever.getScaledFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, THUMB_WIDTH, THUMB_HEIGHT)
+                    } catch (e: Exception) { }
+                }
+                if (scaledFrame == null) {
+                    val frame = retriever.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                    if (frame != null) {
+                        scaledFrame = Bitmap.createScaledBitmap(frame, THUMB_WIDTH, THUMB_HEIGHT, true)
+                        frame.recycle()
+                    }
+                }
+                
+                if (scaledFrame != null) {
                     val x = (i % COLUMNS) * THUMB_WIDTH
                     val y = (i / COLUMNS) * THUMB_HEIGHT
                     canvas.drawBitmap(scaledFrame, x.toFloat(), y.toFloat(), null)
                     scaledFrame.recycle()
-                    frame.recycle()
                 }
             }
 
@@ -83,7 +100,7 @@ object ThumbnailSpriteGenerator {
             }
             spriteSheet.recycle()
 
-            val metadata = SpriteMetadata(INTERVAL_MS, frameCount, THUMB_WIDTH, THUMB_HEIGHT, COLUMNS)
+            val metadata = SpriteMetadata(intervalMs, frameCount, THUMB_WIDTH, THUMB_HEIGHT, COLUMNS)
             saveMetadata(metaFile, metadata)
             
             metadata
@@ -92,6 +109,7 @@ object ThumbnailSpriteGenerator {
             null
         } finally {
             try { retriever.release() } catch (e: Exception) {}
+        }
         }
     }
 

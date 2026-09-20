@@ -82,11 +82,13 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
+import com.beatraxus.app.util.PlaybackGlobalState
 import com.beatraxus.app.viewmodel.VideoAspectRatio
 import com.beatraxus.app.viewmodel.VideoPlayerUiState
 import com.beatraxus.app.viewmodel.VideoPlayerViewModel
 import com.beatraxus.app.viewmodel.VideoTrackInfo
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import java.util.*
 import kotlin.math.abs
@@ -231,6 +233,7 @@ fun VideoPlayerScreen(
 
     // Orientation and Fullscreen management
     DisposableEffect(Unit) {
+        PlaybackGlobalState.setVideoPlayerOnScreen(true)
         val originalOrientation = activity?.requestedOrientation ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         
@@ -243,6 +246,7 @@ fun VideoPlayerScreen(
         }
         
         onDispose {
+            PlaybackGlobalState.setVideoPlayerOnScreen(false)
             activity?.requestedOrientation = originalOrientation
             if (window != null) {
                 val controller = WindowCompat.getInsetsController(window, window.decorView)
@@ -285,7 +289,7 @@ fun VideoPlayerScreen(
                             gestureType = GestureType.NONE
                             
                             if (initialDragIntent == GestureType.SEEK) {
-                                viewModel.seekTo(uiState.currentPosition + gestureValue.toLong() * 1000)
+                                viewModel.seekTo(viewModel.positionFlow.value + gestureValue.toLong() * 1000)
                             }
                             break
                         }
@@ -365,7 +369,7 @@ fun VideoPlayerScreen(
                         } else {
                             val isLeft = offset.x < size.width / 2
                             val delta = if (isLeft) -10000L else 10000L
-                            viewModel.seekTo(uiState.currentPosition + delta)
+                            viewModel.seekTo(viewModel.positionFlow.value + delta)
                             doubleTapRipplePos = offset
                             doubleTapRippleText = if (isLeft) "-10s" else "+10s"
                         }
@@ -587,6 +591,7 @@ fun VideoPlayerScreen(
                     // Bottom Bar
                     PlayerBottomBar(
                         uiState = uiState,
+                        positionFlow = viewModel.positionFlow,
                         onTogglePlayPause = { viewModel.togglePlayPause() },
                         onPlayNext = { viewModel.playNext() },
                         onPlayPrevious = { viewModel.playPrevious() },
@@ -1002,6 +1007,7 @@ fun PlayerTopBar(
 @Composable
 fun PlayerBottomBar(
     uiState: VideoPlayerUiState,
+    positionFlow: StateFlow<Long>,
     onTogglePlayPause: () -> Unit,
     onPlayNext: () -> Unit,
     onPlayPrevious: () -> Unit,
@@ -1082,9 +1088,10 @@ fun PlayerBottomBar(
             }
 
             // Seek bar
+            val currentPosition by positionFlow.collectAsState()
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    text = formatTime(uiState.currentPosition),
+                    text = formatTime(currentPosition),
                     color = Color.White,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Medium
@@ -1150,7 +1157,7 @@ fun PlayerBottomBar(
                     }
 
                     Slider(
-                        value = (uiState.scrubbingTimeMs ?: uiState.currentPosition).toFloat(),
+                        value = (uiState.scrubbingTimeMs ?: currentPosition).toFloat(),
                         onValueChange = { 
                             onScrubbing(it.toLong())
                         },
@@ -1169,7 +1176,7 @@ fun PlayerBottomBar(
                 }
                 Text(
                     text = if (uiState.showTotalTime) {
-                        "-${formatTime(uiState.duration - uiState.currentPosition)}"
+                        "-${formatTime(uiState.duration - currentPosition)}"
                     } else {
                         formatTime(uiState.duration)
                     },

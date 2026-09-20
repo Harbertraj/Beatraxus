@@ -62,6 +62,15 @@ class Media3SubtitlePlayerController(
                 if (currentItem.mediaId != videoId) return@withContext
 
                 val trackId = "bx_ext_$subtitleId"
+                
+                if (currentItem.localConfiguration?.subtitleConfigurations?.any { it.id == trackId } == true) {
+                    _activeExternalTrackId.value = trackId
+                    _activeExternalSubtitleName.value = label
+                    _isDelaySupported.value = true
+                    enableAndSelectSideloadedTrack(player, trackId)
+                    return@withContext
+                }
+
                 val subConfig = MediaItem.SubtitleConfiguration.Builder(Uri.fromFile(file))
                     .setMimeType(mimeType)
                     .setLanguage(language)
@@ -118,6 +127,14 @@ class Media3SubtitlePlayerController(
                 val currentItem = player.getMediaItemAt(index)
 
                 if (currentItem.mediaId != videoId) return@withContext
+
+                if (currentItem.localConfiguration?.subtitleConfigurations.isNullOrEmpty()) {
+                    _activeExternalTrackId.value = null
+                    _activeExternalSubtitleName.value = null
+                    _isDelaySupported.value = false
+                    _currentDelayMs.value = 0L
+                    return@withContext
+                }
 
                 val currentPos = player.currentPosition
                 val isPlaying = player.playWhenReady

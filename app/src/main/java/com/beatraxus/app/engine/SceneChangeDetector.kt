@@ -5,79 +5,99 @@ import android.graphics.Bitmap
 import android.graphics.Color
 import android.media.MediaMetadataRetriever
 import android.net.Uri
+import android.os.Build
+import android.os.Process
 import android.util.Log
 import com.beatraxus.app.model.VideoChapterEntity
+import com.beatraxus.app.utils.VideoBackgroundWork
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.withLock
 import java.io.File
 import java.io.FileOutputStream
 import kotlin.math.abs
+import kotlin.math.max
 
 class SceneChangeDetector(private val context: Context) {
     private val TAG = "SceneChangeDetector"
-    private val SAMPLE_INTERVAL_MS = 1000L // 1 FPS
     private val MIN_CHAPTER_GAP_MS = 20000L // 20 seconds
-    private val THUMB_SIZE = 16
     private val CHANGE_THRESHOLD = 15.0 // Percent change threshold
 
     suspend fun detectScenes(
         videoUri: Uri,
         videoId: String,
         durationMs: Long
-    ): List<VideoChapterEntity> = withContext(Dispatchers.Default) {
+    ): List<VideoChapterEntity> = withContext(Dispatchers.IO) {
         val chapters = mutableListOf<VideoChapterEntity>()
-        val retriever = MediaMetadataRetriever()
-        
-        try {
-            retriever.setDataSource(context, videoUri)
+        VideoBackgroundWork.mutex.withLock {
+            Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND)
+            val retriever = MediaMetadataRetriever()
             
-            var lastThumb: IntArray? = null
-            var lastChapterTime = -MIN_CHAPTER_GAP_MS
-
-            // Always add the first frame as a chapter
-            val firstChapter = createChapter(retriever, videoId, 0L, chapters.size + 1)
-            if (firstChapter != null) {
-                chapters.add(firstChapter)
-                lastChapterTime = 0L
-            }
-
-            for (timeMs in SAMPLE_INTERVAL_MS until durationMs step SAMPLE_INTERVAL_MS) {
-                if (!isActive) break
-
-                val bitmap = retriever.getFrameAtTime(
-                    timeMs * 1000L,
-                    MediaMetadataRetriever.OPTION_CLOSEST_SYNC
-                ) ?: continue
-
-                val currentThumb = getGrayscaleThumb(bitmap)
-                bitmap.recycle()
-
-                if (lastThumb != null) {
-                    val diff = computeDifference(lastThumb, currentThumb)
-                    if (diff > CHANGE_THRESHOLD && (timeMs - lastChapterTime) >= MIN_CHAPTER_GAP_MS) {
-                        val chapter = createChapter(retriever, videoId, timeMs, chapters.size + 1)
-                        if (chapter != null) {
-                            chapters.add(chapter)
-                            lastChapterTime = timeMs
+            try {
+                retriever.setDataSource(context, videoUri)
+                
+                var lastThumb: IntArray? = null
+                var lastChapterTime = -MIN_CHAPTER_GAP_MS
+                val sampleIntervalMs = max(1000L, durationMs / 150)
+    
+                // Always add the first frame as a chapter
+                val firstChapter = createChapter(retriever, videoId, 0L, chapters.size + 1)
+                if (firstChapter != null) {
+                    chapters.add(firstChapter)
+                    lastChapterTime = 0L
+                }
+    
+                for (timeMs in sampleIntervalMs until durationMs step sampleIntervalMs) {
+                    if (!isActive) break
+    
+                    val timeUs = timeMs * 1000L
+                    var bitmap: Bitmap? = null
+                    if (Build.VERSION.SDK_INT >= 27) {
+                        try {
+                            bitmap = retriever.getScaledFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, 64, 36)
+                        } catch (e: Exception) { }
+                    }
+                    if (bitmap == null) {
+                        val orig = retriever.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                        if (orig != null) {
+                            bitmap = Bitmap.createScaledBitmap(orig, 64, 36, true)
+                            orig.recycle()
                         }
                     }
+                    
+                    if (bitmap == null) continue
+    
+                    val currentThumb = getGrayscaleThumb(bitmap)
+                    bitmap.recycle()
+    
+                    if (lastThumb != null) {
+                        val diff = computeDifference(lastThumb, currentThumb)
+                        if (diff > CHANGE_THRESHOLD && (timeMs - lastChapterTime) >= MIN_CHAPTER_GAP_MS) {
+                            val chapter = createChapter(retriever, videoId, timeMs, chapters.size + 1)
+                            if (chapter != null) {
+                                chapters.add(chapter)
+                                lastChapterTime = timeMs
+                            }
+                        }
+                    }
+                    lastThumb = currentThumb
                 }
-                lastThumb = currentThumb
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to detect scenes for $videoId", e)
+            } finally {
+                try { retriever.release() } catch (e: Exception) {}
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to detect scenes for $videoId", e)
-        } finally {
-            try { retriever.release() } catch (e: Exception) {}
         }
         
         chapters
     }
 
-    private fun getGrayscaleThumb(bitmap: Bitmap): IntArray {
-        val scaled = Bitmap.createScaledBitmap(bitmap, THUMB_SIZE, THUMB_SIZE, true)
-        val pixels = IntArray(THUMB_SIZE * THUMB_SIZE)
-        scaled.getPixels(pixels, 0, THUMB_SIZE, 0, 0, THUMB_SIZE, THUMB_SIZE)
+    private fun getGrayscaleThumb(scaled: Bitmap): IntArray {
+        val width = 64
+        val height = 36
+        val pixels = IntArray(width * height)
+        scaled.getPixels(pixels, 0, width, 0, 0, width, height)
         
         val grayscale = IntArray(pixels.size)
         for (i in pixels.indices) {
@@ -87,7 +107,6 @@ class SceneChangeDetector(private val context: Context) {
             val b = Color.blue(p)
             grayscale[i] = (r * 0.299 + g * 0.587 + b * 0.114).toInt()
         }
-        scaled.recycle()
         return grayscale
     }
 
@@ -106,22 +125,31 @@ class SceneChangeDetector(private val context: Context) {
         timeMs: Long,
         index: Int
     ): VideoChapterEntity? {
-        val bitmap = retriever.getFrameAtTime(
-            timeMs * 1000L,
-            MediaMetadataRetriever.OPTION_CLOSEST_SYNC
-        ) ?: return null
+        val timeUs = timeMs * 1000L
+        var scaled: Bitmap? = null
+        if (Build.VERSION.SDK_INT >= 27) {
+            try {
+                scaled = retriever.getScaledFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, 320, 180)
+            } catch (e: Exception) {}
+        }
+        if (scaled == null) {
+            val orig = retriever.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+            if (orig != null) {
+                scaled = Bitmap.createScaledBitmap(orig, 320, 180, true)
+                orig.recycle()
+            }
+        }
+        if (scaled == null) return null
 
         val thumbFile = File(context.cacheDir, "chapters/${videoId}_$timeMs.jpg").apply {
             parentFile?.mkdirs()
         }
         
         try {
-            val scaled = Bitmap.createScaledBitmap(bitmap, 320, 180, true)
             FileOutputStream(thumbFile).use { out ->
                 scaled.compress(Bitmap.CompressFormat.JPEG, 70, out)
             }
             scaled.recycle()
-            bitmap.recycle()
             
             return VideoChapterEntity(
                 videoId = videoId,
@@ -130,7 +158,7 @@ class SceneChangeDetector(private val context: Context) {
                 thumbnailPath = thumbFile.absolutePath
             )
         } catch (e: Exception) {
-            bitmap.recycle()
+            scaled.recycle()
             return null
         }
     }
