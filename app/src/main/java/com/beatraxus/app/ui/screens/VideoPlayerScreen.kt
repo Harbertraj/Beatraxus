@@ -688,7 +688,7 @@ fun VideoPlayerScreen(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.55f))
+                    .background(Color.Black.copy(alpha = 0.20f))
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null
@@ -723,8 +723,8 @@ fun VideoPlayerScreen(
                         .background(
                             brush = Brush.horizontalGradient(
                                 colors = listOf(
-                                    Color(0xE6141419),
-                                    Color(0xF21C1C22)
+                                    Color(0x80141419),
+                                    Color(0x991C1C22)
                                 )
                             )
                         )
@@ -749,9 +749,7 @@ fun VideoPlayerScreen(
                         onAudioTrackSelect = { viewModel.selectAudioTrack(it); sheetType = PlayerSheetType.NONE },
                         onSubtitleTrackSelect = { viewModel.selectSubtitleTrack(it); sheetType = PlayerSheetType.NONE },
                         viewModel = viewModel,
-                        subtitleViewModel = subtitleViewModel,
-                        onCategoryChange = { newType -> sheetType = newType },
-                        onClose = { sheetType = PlayerSheetType.NONE }
+                        subtitleViewModel = subtitleViewModel
                     )
                 }
             }
@@ -1258,9 +1256,7 @@ fun VideoSettingsSheetContent(
     onAudioTrackSelect: (VideoTrackInfo) -> Unit,
     onSubtitleTrackSelect: (VideoTrackInfo?) -> Unit,
     viewModel: VideoPlayerViewModel,
-    subtitleViewModel: SubtitleViewModel,
-    onCategoryChange: (PlayerSheetType) -> Unit = {},
-    onClose: () -> Unit = {}
+    subtitleViewModel: SubtitleViewModel
 ) {
     Column(
         modifier = Modifier
@@ -1270,8 +1266,14 @@ fun VideoSettingsSheetContent(
             .navigationBarsPadding()
     ) {
         val mxOrange = Color(0xFFFF8F00)
+
+        val lastActiveSheetTypeState = remember { mutableStateOf(if (sheetType != PlayerSheetType.NONE) sheetType else PlayerSheetType.AUDIO) }
+        if (sheetType != PlayerSheetType.NONE) {
+            lastActiveSheetTypeState.value = sheetType
+        }
+        val activeSheetType = lastActiveSheetTypeState.value
         
-        val title = when (sheetType) {
+        val title = when (activeSheetType) {
             PlayerSheetType.AUDIO -> "Audio Tracks"
             PlayerSheetType.SUBTITLE -> "Subtitles"
             PlayerSheetType.SPEED -> "Playback Speed"
@@ -1290,25 +1292,11 @@ fun VideoSettingsSheetContent(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                IconButton(
-                    onClick = onClose,
-                    modifier = Modifier
-                        .size(34.dp)
-                        .background(Color.White.copy(alpha = 0.12f), CircleShape)
-                        .border(1.dp, Color.White.copy(alpha = 0.15f), CircleShape)
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.Close,
-                        contentDescription = "Close",
-                        tint = Color.White,
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
                 Text(title, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
             }
             
             Row(verticalAlignment = Alignment.CenterVertically) {
-                if (sheetType == PlayerSheetType.EQUALIZER) {
+                if (activeSheetType == PlayerSheetType.EQUALIZER) {
                     Switch(
                         checked = uiState.isEqEnabled,
                         onCheckedChange = { viewModel.toggleEqEnabled() },
@@ -1316,7 +1304,7 @@ fun VideoSettingsSheetContent(
                     )
                 }
 
-                if (sheetType == PlayerSheetType.COLOR) {
+                if (activeSheetType == PlayerSheetType.COLOR) {
                     IconButton(onClick = { viewModel.resetColorGrading() }) {
                         Icon(Icons.Rounded.RestartAlt, "Reset", tint = Color.White)
                     }
@@ -1326,51 +1314,8 @@ fun VideoSettingsSheetContent(
         
         Spacer(Modifier.height(14.dp))
 
-        // Quick Category Switcher Pills
-        val categories = listOf(
-            PlayerSheetType.AUDIO to "Audio",
-            PlayerSheetType.SUBTITLE to "Subtitles",
-            PlayerSheetType.SPEED to "Speed",
-            PlayerSheetType.EQUALIZER to "Equalizer",
-            PlayerSheetType.SLEEP_TIMER to "Sleep",
-            PlayerSheetType.COLOR to "Color"
-        )
-
-        LazyRow(
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            items(categories) { (catType, catLabel) ->
-                val isSelected = sheetType == catType
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(20.dp))
-                        .background(
-                            if (isSelected) mxOrange
-                            else Color.White.copy(alpha = 0.08f)
-                        )
-                        .border(
-                            width = 1.dp,
-                            color = if (isSelected) mxOrange else Color.White.copy(alpha = 0.12f),
-                            shape = RoundedCornerShape(20.dp)
-                        )
-                        .clickable { onCategoryChange(catType) }
-                        .padding(horizontal = 12.dp, vertical = 6.dp)
-                ) {
-                    Text(
-                        text = catLabel,
-                        color = if (isSelected) Color.Black else Color.White.copy(alpha = 0.85f),
-                        fontSize = 12.sp,
-                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
-                    )
-                }
-            }
-        }
-
-        Spacer(Modifier.height(18.dp))
-
         // Equalizer Section
-        if (sheetType == PlayerSheetType.EQUALIZER) {
+        if (activeSheetType == PlayerSheetType.EQUALIZER) {
             LazyRow(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 modifier = Modifier.fillMaxWidth()
@@ -1453,12 +1398,12 @@ fun VideoSettingsSheetContent(
         }
 
         // Color Grading Section
-        if (sheetType == PlayerSheetType.COLOR) {
+        if (activeSheetType == PlayerSheetType.COLOR) {
             ColorGradingSection(uiState, viewModel)
         }
 
         // HDR Tone Mapping Toggle
-        if (uiState.isHdr && (sheetType == PlayerSheetType.COLOR || sheetType == PlayerSheetType.ALL)) {
+        if (uiState.isHdr && (activeSheetType == PlayerSheetType.COLOR || activeSheetType == PlayerSheetType.ALL)) {
             Spacer(Modifier.height(16.dp))
             Row(
                 modifier = Modifier
@@ -1483,7 +1428,7 @@ fun VideoSettingsSheetContent(
         }
 
         // Audio Tracks
-        if (sheetType == PlayerSheetType.AUDIO || sheetType == PlayerSheetType.ALL) {
+        if (activeSheetType == PlayerSheetType.AUDIO || activeSheetType == PlayerSheetType.ALL) {
             if (uiState.availableAudioTracks.isEmpty()) {
                 Box(
                     modifier = Modifier
@@ -1574,7 +1519,7 @@ fun VideoSettingsSheetContent(
         }
 
         // Subtitle Section
-        if (sheetType == PlayerSheetType.SUBTITLE) {
+        if (activeSheetType == PlayerSheetType.SUBTITLE) {
             SubtitlePlayerSheetSection(
                 videoUiState = uiState,
                 videoViewModel = viewModel,

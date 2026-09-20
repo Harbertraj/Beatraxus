@@ -4,36 +4,45 @@ import com.beatraxus.app.repository.lyrics.providers.*
 
 object LyricsProviderRegistry {
     val providers: List<LyricsProvider> = listOf(
-        BinilyricsProvider(),
-        BetterlyricsProvider(),
-        BetterlyricsPortatoProvider(),
         PaxsenixProvider(),
-        PaxsenixSpotifyProvider(),
+        BetterlyricsProvider(),
         LyricsplusProvider(),
-        SimpmusicProvider(),
         UnisonProvider(),
-        YoutubeCaptionsProvider(),
+        SimpmusicProvider(),
         YoutubeMusicProvider(),
-        MegalobizProvider(),
+        LrclibProvider(),
         KugouProvider(),
-        LrclibProvider()
+        MegalobizProvider(),
+        BinilyricsProvider(),
+        BetterlyricsPortatoProvider(),
+        PaxsenixSpotifyProvider(),
+        YoutubeCaptionsProvider()
     )
 
     val defaultOrder: List<String> = listOf(
-        "binilyrics",
-        "betterlyrics",
-        "betterlyrics_portato",
         "paxsenix",
-        "paxsenix_spotify",
+        "betterlyrics",
         "lyricsplus",
-        "simpmusic",
         "unison",
-        "youtube_captions",
+        "simpmusic",
         "youtube_music",
-        "megalobiz",
+        "lrclib",
         "kugou",
-        "lrclib"
+        "megalobiz",
+        "binilyrics",
+        "betterlyrics_portato",
+        "paxsenix_spotify",
+        "youtube_captions"
     )
 
-    val defaultEnabled: Set<String> = setOf("lrclib")
+    val defaultEnabled: Set<String> = setOf(
+        "paxsenix",
+        "betterlyrics",
+        "lyricsplus",
+        "unison",
+        "simpmusic",
+        "youtube_music",
+        "lrclib",
+        "kugou"
+    )
 }

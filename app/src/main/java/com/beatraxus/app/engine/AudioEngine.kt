@@ -538,6 +538,7 @@ class AudioEngine(
     private suspend fun renderLoop() {
         val localBuffer = FloatArray(RENDER_BATCH_SAMPLES)
         val localBufferNext = FloatArray(RENDER_BATCH_SAMPLES)
+        var downmixBuffer = FloatArray(RENDER_BATCH_SAMPLES)
 
         while (engineScope.isActive) {
             val session = activeSession
@@ -628,20 +629,48 @@ class AudioEngine(
                     targetSession.dspPipeline.process(localBuffer, sampleCount, format.channels, format.sampleRate)
                 }
 
-                val frames = processed.sampleCount / format.channels
+                val srcChannels = format.channels
+                val targetChannels = output.actualChannels
+                val frames = processed.sampleCount / srcChannels
+
+                val outputData: FloatArray
+                val outputIntData: IntArray?
+                val strideChannels: Int
+
+                if (srcChannels != targetChannels && !processed.isDoP) {
+                    val downmixCount = frames * targetChannels
+                    if (downmixBuffer.size < downmixCount) {
+                        downmixBuffer = FloatArray(downmixCount)
+                    }
+                    AudioDownmixer.downmixFloat(
+                        input = processed.data,
+                        inputSampleCount = processed.sampleCount,
+                        srcChannels = srcChannels,
+                        targetChannels = targetChannels,
+                        outputBuffer = downmixBuffer
+                    )
+                    outputData = downmixBuffer
+                    outputIntData = null
+                    strideChannels = targetChannels
+                } else {
+                    outputData = processed.data
+                    outputIntData = processed.intData
+                    strideChannels = srcChannels
+                }
+
                 var writtenFramesTotal = 0
 
                 while (writtenFramesTotal < frames && engineScope.isActive && activeSession?.sessionId == targetSessionId && _playbackStateFlow.value.isPlaying) {
-                    val written = if (processed.isDoP && processed.intData != null) {
+                    val written = if (processed.isDoP && outputIntData != null) {
                         output.writeInt(
-                            data = processed.intData,
-                            offsetInSamples = writtenFramesTotal * format.channels,
+                            data = outputIntData,
+                            offsetInSamples = writtenFramesTotal * strideChannels,
                             frameCount = frames - writtenFramesTotal
                         )
                     } else {
                         output.write(
-                            data = processed.data,
-                            offsetInSamples = writtenFramesTotal * format.channels,
+                            data = outputData,
+                            offsetInSamples = writtenFramesTotal * strideChannels,
                             frameCount = frames - writtenFramesTotal
                         )
                     }

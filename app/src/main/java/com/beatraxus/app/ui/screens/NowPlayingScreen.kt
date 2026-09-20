@@ -708,7 +708,12 @@ fun NowPlayingScreen(
                                     lyricsErrorMessage = uiState.lyricsErrorMessage,
                                     progressMs = progressMs,
                                     providerLabel = uiState.lyricsProviderId?.let { id ->
-                                        LyricsProviderRegistry.providers.find { it.id == id }?.displayName ?: id
+                                        val name = LyricsProviderRegistry.providers.find { it.id == id }?.displayName ?: id
+                                        if (id == "unison") {
+                                            "$name — Lyrics from Unison (https://unison.boidu.dev)"
+                                        } else {
+                                            name
+                                        }
                                     },
                                     onShowAllLyrics = if (uiState.appearance.lyricsShowAll) {
                                         {

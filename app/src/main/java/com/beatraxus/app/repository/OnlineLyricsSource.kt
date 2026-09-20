@@ -1,26 +1,29 @@
 package com.beatraxus.app.repository
 
 import androidx.annotation.Keep
+import com.beatraxus.app.repository.lyrics.LyricsQuery
+import com.beatraxus.app.repository.lyrics.providers.LrclibProvider
 import com.google.gson.annotations.SerializedName
+import retrofit2.Response
 import retrofit2.http.GET
 import retrofit2.http.Query
-import com.beatraxus.app.repository.lyrics.providers.LrclibProvider
-import com.beatraxus.app.repository.lyrics.LyricsQuery
 
 @Keep
 interface LrcLibService {
     @GET("api/get")
     suspend fun getLyrics(
-        @Query("artist_name") artist: String,
-        @Query("track_name") title: String,
+        @Query("artist_name") artist: String?,
+        @Query("track_name") title: String?,
         @Query("album_name") album: String?,
         @Query("duration") duration: Int?
-    ): LrcLibResponse
+    ): Response<LrcLibResponse>
 
     @GET("api/search")
     suspend fun searchLyrics(
-        @Query("q") query: String
-    ): List<LrcLibResponse>
+        @Query("track_name") trackName: String? = null,
+        @Query("artist_name") artistName: String? = null,
+        @Query("q") query: String? = null
+    ): Response<List<LrcLibResponse>>
 }
 
 @Keep

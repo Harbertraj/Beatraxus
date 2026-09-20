@@ -65,25 +65,27 @@ object FilenameParser {
         // Check anime dash episode pattern if series has brackets or hyphen
         val animeMatch = ANIME_EP_REGEX.find(nameWithoutExt)
         if (animeMatch != null && (nameWithoutExt.startsWith("[") || nameWithoutExt.contains(" - "))) {
-            val seriesGroup = animeMatch.groups["series"]?.value ?: ""
             val epNum = animeMatch.groupValues[2].toIntOrNull() ?: 1
-            val cleanSeries = cleanTitleString(seriesGroup)
-            val year = extractYear(nameWithoutExt)
+            if (epNum !in 1900..2099) {
+                val seriesGroup = animeMatch.groups["series"]?.value ?: ""
+                val cleanSeries = cleanTitleString(seriesGroup)
+                val year = extractYear(nameWithoutExt)
 
-            val epInfo = MediaEpisodeInfo(
-                seriesName = cleanSeries,
-                season = 1,
-                episode = epNum,
-                year = year
-            )
+                val epInfo = MediaEpisodeInfo(
+                    seriesName = cleanSeries,
+                    season = 1,
+                    episode = epNum,
+                    year = year
+                )
 
-            return ParsedMedia(
-                rawTitle = displayName,
-                cleanTitle = cleanSeries,
-                year = year,
-                episodeInfo = epInfo,
-                releaseTokens = tokens
-            )
+                return ParsedMedia(
+                    rawTitle = displayName,
+                    cleanTitle = cleanSeries,
+                    year = year,
+                    episodeInfo = epInfo,
+                    releaseTokens = tokens
+                )
+            }
         }
 
         // Movie parsing
@@ -132,7 +134,19 @@ object FilenameParser {
     }
 
     private fun cleanTitleString(text: String): String {
-        var clean = text.replace(Regex("\\[.*?\\]"), " ")
+        var work = text
+
+        if (work.startsWith("[")) {
+            val endBracket = work.indexOf("]")
+            if (endBracket in 1 until work.length - 1) {
+                val after = work.substring(endBracket + 1).trim()
+                if (after.isNotBlank()) {
+                    work = after
+                }
+            }
+        }
+
+        var clean = work.replace(Regex("\\[.*?\\]"), " ")
             .replace(Regex("\\(.*?\\)"), " ")
             .replace(Regex("[._\\-]+"), " ")
             .trim()
@@ -145,21 +159,55 @@ object FilenameParser {
     }
 
     private fun cleanMovieTitleString(text: String, releaseYear: Int?): String {
-        var clean = text.replace(Regex("\\[.*?\\]"), " ")
+        var work = text
 
-        if (releaseYear != null) {
-            clean = clean.replace("($releaseYear)", " ")
-                .replace("[$releaseYear]", " ")
+        // Remove leading release group e.g. [YTS.MX] or [ReleaseGroup]
+        if (work.startsWith("[")) {
+            val endBracket = work.indexOf("]")
+            if (endBracket in 1 until work.length - 1) {
+                val afterBracket = work.substring(endBracket + 1).trim()
+                if (afterBracket.isNotBlank()) {
+                    work = afterBracket
+                }
+            }
         }
 
-        clean = clean.replace(Regex("[._\\-]+"), " ")
+        if (releaseYear != null) {
+            // Find releaseYear pattern: (2019), [2019], .2019., _2019_, -2019-, or standalone 2019
+            val yearPattern = Regex("(?i)[\\._\\-\\s\\[(]${releaseYear}[\\._\\-\\s\\])]")
+            val match = yearPattern.find(work)
+            if (match != null && match.range.first > 0) {
+                work = work.substring(0, match.range.first)
+            } else {
+                val idx = work.indexOf(releaseYear.toString())
+                if (idx > 0) {
+                    work = work.substring(0, idx)
+                }
+            }
+        } else {
+            // No year: strip from first known tag
+            var earliestTagIdx = -1
+            KNOWN_TAGS.forEach { tag ->
+                val tagMatch = Regex("(?i)[\\._\\-\\s\\[\\(]${Regex.escape(tag)}[\\._\\-\\s\\]\\)]|(?i)[\\._\\-\\s]${Regex.escape(tag)}$").find(work)
+                if (tagMatch != null && tagMatch.range.first > 0) {
+                    if (earliestTagIdx == -1 || tagMatch.range.first < earliestTagIdx) {
+                        earliestTagIdx = tagMatch.range.first
+                    }
+                }
+            }
+            if (earliestTagIdx > 0) {
+                work = work.substring(0, earliestTagIdx)
+            }
+        }
+
+        // Clean up remaining brackets, dots, underscores, dashes
+        var clean = work.replace(Regex("\\[.*?\\]"), " ")
+            .replace(Regex("\\(.*?\\)"), " ")
+            .replace(Regex("[._\\-]+"), " ")
+            .trim()
 
         KNOWN_TAGS.forEach { tag ->
             clean = clean.replace(Regex("(?i)\\b${Regex.escape(tag)}\\b"), "")
-        }
-
-        if (releaseYear != null && clean.endsWith(releaseYear.toString())) {
-            clean = clean.substringBeforeLast(releaseYear.toString())
         }
 
         clean = clean.replace(Regex("\\s+"), " ").trim()

@@ -6113,25 +6113,6 @@ fun android.content.Context.findActivity(): android.app.Activity? = when (this) 
 @Composable
 fun VideoSettingsContent(uiState: PlayerUiState, playerViewModel: PlayerViewModel) {
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        AppearanceToggleRow(
-            title = "Alternate Thumbnails",
-            subtitle = "Fetch movie/series thumbnails from online sources (uses video title)",
-            checked = uiState.alternateThumbnailEnabled,
-            onCheckedChange = { playerViewModel.setAlternateThumbnailEnabled(it) }
-        )
-        
-        Spacer(Modifier.height(16.dp))
-        
-        Text(
-            "When 'Alternate Thumbnails' is on, the app searches for official posters for your movies and TV shows to show in the library.",
-            color = Color.White.copy(alpha = 0.5f),
-            fontSize = 12.sp,
-            lineHeight = 18.sp,
-            modifier = Modifier.padding(horizontal = 8.dp)
-        )
-
-        Spacer(Modifier.height(16.dp))
-
         val context = LocalContext.current
         val appContext = context.applicationContext as Application
         val api = remember { SubtitleApiClientFactory.createApi() }
@@ -6316,21 +6297,25 @@ fun LyricsDatabaseContent(uiState: PlayerUiState, playerViewModel: PlayerViewMod
                 if (provider != null) {
                     ReorderableItem(reorderableLazyListState, key = providerId) { isDragging ->
                         val elevation by animateDpAsState(if (isDragging) 12.dp else 0.dp, label = "elevation")
-                        val isEnabled = appearance.lyricsEnabledProviders.contains(providerId)
+                        val isConfigured = provider.isConfigured
+                        val isEnabled = isConfigured && appearance.lyricsEnabledProviders.contains(providerId)
                         val haptic = LocalHapticFeedback.current
 
                         Surface(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .shadow(elevation, RoundedCornerShape(16.dp))
-                                .clickable {
-                                    if (isEnabled && appearance.lyricsEnabledProviders.size == 1) {
+                                .clickable(enabled = isConfigured) {
+                                    val enabledConfiguredCount = appearance.lyricsEnabledProviders.count { id ->
+                                        LyricsProviderRegistry.providers.find { it.id == id }?.isConfigured == true
+                                    }
+                                    if (isEnabled && enabledConfiguredCount == 1) {
                                         // Ignore tap, can't untick last enabled
                                     } else {
                                         playerViewModel.setLyricsProviderEnabled(providerId, !isEnabled)
                                     }
                                 },
-                            color = if (isDragging) Color.White.copy(0.15f) else CardSurface.copy(alpha = 0.6f),
+                            color = if (isDragging) Color.White.copy(0.15f) else CardSurface.copy(alpha = if (isConfigured) 0.6f else 0.3f),
                             shape = RoundedCornerShape(16.dp),
                             border = BorderStroke(1.dp, if (isDragging) PremiumAccent.copy(0.5f) else Color.White.copy(0.08f))
                         ) {
@@ -6367,7 +6352,7 @@ fun LyricsDatabaseContent(uiState: PlayerUiState, playerViewModel: PlayerViewMod
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         Text(
                                             text = provider.displayName,
-                                            color = Color.White,
+                                            color = if (isConfigured) Color.White else Color.White.copy(0.5f),
                                             fontSize = 17.sp,
                                             fontWeight = FontWeight.SemiBold
                                         )
@@ -6400,15 +6385,15 @@ fun LyricsDatabaseContent(uiState: PlayerUiState, playerViewModel: PlayerViewMod
                                     }
                                     Spacer(Modifier.height(2.dp))
                                     Text(
-                                        text = provider.description,
-                                        color = Color.White.copy(0.55f),
+                                        text = if (isConfigured) provider.description else "Not available yet",
+                                        color = if (isConfigured) Color.White.copy(0.55f) else Color.White.copy(0.35f),
                                         fontSize = 13.sp,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
                                 }
                                 Spacer(Modifier.width(16.dp))
-                                if (isEnabled) {
+                                if (isConfigured && isEnabled) {
                                     Icon(
                                         Icons.Rounded.Check,
                                         contentDescription = null,

@@ -227,6 +227,7 @@ dependencies {
     implementation("com.squareup.retrofit2:converter-gson:$retrofitVersion")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
+    implementation("com.squareup.okhttp3:okhttp-dnsoverhttps:4.12.0")
 
     implementation("com.airbnb.android:lottie-compose:6.3.0")
     implementation("sh.calvin.reorderable:reorderable:2.3.2")

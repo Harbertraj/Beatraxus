@@ -40,6 +40,7 @@ class FakeOpenSubtitlesApi : OpenSubtitlesApi {
 
     override suspend fun searchSubtitles(
         query: String?, imdbId: Long?, tmdbId: Long?, movieHash: String?,
+        seasonNumber: Int?, episodeNumber: Int?, year: Int?,
         languages: String?, type: String?, orderBy: String?, orderDirection: String?, page: Int?
     ): Response<SubtitlesResponse> {
         return Response.success(SubtitlesResponse())

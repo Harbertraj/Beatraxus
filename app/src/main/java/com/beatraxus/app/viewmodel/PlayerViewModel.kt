@@ -94,10 +94,12 @@ import com.beatraxus.app.service.AudioPlaybackService
 import com.beatraxus.app.cast.CastManager
 import com.arthenica.ffmpegkit.FFmpegKitConfig
 import com.arthenica.ffmpegkit.Level
+import com.beatraxus.app.model.Video
 import com.beatraxus.app.repository.AppearancePreferences
 import com.beatraxus.app.repository.LyricsCandidate
 import com.beatraxus.app.repository.LyricsProviderConfig
 import kotlinx.coroutines.suspendCancellableCoroutine
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.resume
 
 class PlayerViewModel(application: Application) : AndroidViewModel(application) {
@@ -162,7 +164,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private val cloudAccountManager = com.beatraxus.app.repository.CloudAccountManager(application, database)
     private val libraryScanner = com.beatraxus.app.repository.LibraryScanner(application, musicRepository, songDao, viewModelScope)
     private val videoScanner = com.beatraxus.app.repository.VideoLibraryScanner(application)
-    private val videoMetadataRepository = com.beatraxus.app.repository.VideoMetadataRepository()
+    
+    private var enrichmentJob: Job? = null
 
     private val decoderFactory = DecoderFactory(
         context = application,
@@ -202,10 +205,6 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 val enabled = p.getBoolean(key, true)
                 _uiState.update { it.copy(scrobblingEnabled = enabled) }
             }
-            "alternate_thumbnail_enabled" -> {
-                val enabled = p.getBoolean(key, true)
-                _uiState.update { it.copy(alternateThumbnailEnabled = enabled) }
-            }
             "playback_mode" -> {
                 val modeStr = p.getString(key, com.beatraxus.app.model.PlaybackMode.AUDIO.name)
                 val mode = com.beatraxus.app.model.PlaybackMode.valueOf(modeStr ?: com.beatraxus.app.model.PlaybackMode.AUDIO.name)
@@ -231,7 +230,6 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         syncQuality = SyncQuality.valueOf(prefs.getString("sync_quality", SyncQuality.MEDIUM.name) ?: SyncQuality.MEDIUM.name),
         backgroundSyncEnabled = prefs.getBoolean("background_sync_enabled", true),
         scrobblingEnabled = prefs.getBoolean("scrobbling_enabled", true),
-        alternateThumbnailEnabled = prefs.getBoolean("alternate_thumbnail_enabled", true),
         gdriveAllowedFormats = prefs.getStringSet("gdrive_allowed_formats", emptySet()) ?: emptySet(),
         telegramAllowedFormats = prefs.getStringSet("telegram_allowed_formats", emptySet()) ?: emptySet(),
         shuffleMode = prefs.getBoolean("last_shuffle_mode", false),
@@ -287,7 +285,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     private val _videos = MutableStateFlow<List<com.beatraxus.app.model.Video>>(emptyList())
-    val allVideos: StateFlow<List<com.beatraxus.app.model.Video>> = _videos.asStateFlow()
+    val allVideos: StateFlow<List<Video>> = _videos.asStateFlow()
 
     private val _recentlyPlayed = MutableStateFlow<List<String>>(emptyList())
     private val _recentlyPlayedVideos = MutableStateFlow<List<String>>(emptyList())
@@ -1461,7 +1459,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
 
     fun loadVideos(targetFolders: List<String>? = null) {
-        viewModelScope.launch {
+        enrichmentJob?.cancel()
+
+        enrichmentJob = viewModelScope.launch {
             _uiState.update { it.copy(isLoadingVideos = true) }
             try {
                 val blocked = musicRepository.getBlockedFolders()
@@ -1473,12 +1473,13 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 }
 
                 val scannedVideos = videoScanner.scanVideos(folders, blocked)
+
                 _videos.value = scannedVideos
                 _uiState.update { it.copy(isLoadingVideos = false) }
 
-                // Background enrichment (Thumbnails + HDR)
-                val context = getApplication<android.app.Application>()
-                val semaphore = kotlinx.coroutines.sync.Semaphore(3) // Process 3 at a time
+                // Background enrichment (Local Thumbnails + HDR)
+                val context = getApplication<Application>()
+                val semaphore = Semaphore(3) // Process 3 at a time
 
                 scannedVideos.forEach { video ->
                     launch(Dispatchers.Default) {
@@ -1489,22 +1490,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                             }
 
                             val result = com.beatraxus.app.utils.VideoThumbnailHelper.enrichVideo(context, video.uri, video.id)
-                            
-                            var finalThumbnailUri = result.thumbnailUri
-                            
-                            // Online metadata enrichment if enabled
-                            if (_uiState.value.alternateThumbnailEnabled && finalThumbnailUri != null) {
-                                val onlineUrl = videoMetadataRepository.fetchPosterUrl(video.title)
-                                if (onlineUrl != null) {
-                                    finalThumbnailUri = Uri.parse(onlineUrl)
-                                }
-                            }
 
-                            if (finalThumbnailUri != null || result.isHdr) {
+                            if (result.thumbnailUri != null || result.isHdr) {
                                 _videos.update { current ->
                                     current.map {
                                         if (it.id == video.id) it.copy(
-                                            thumbnailUri = finalThumbnailUri,
+                                            thumbnailUri = result.thumbnailUri ?: it.thumbnailUri,
                                             isHdr = result.isHdr
                                         ) else it
                                     }
@@ -3320,11 +3311,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
 
 
-    fun setAlternateThumbnailEnabled(enabled: Boolean) {
-        prefs.edit().putBoolean("alternate_thumbnail_enabled", enabled).apply()
-        _uiState.update { it.copy(alternateThumbnailEnabled = enabled) }
-        loadVideos()
-    }
+
 
     fun setPlaybackMode(mode: com.beatraxus.app.model.PlaybackMode) {
         if (_uiState.value.playbackMode == mode) return
@@ -5215,6 +5202,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     override fun onCleared() {
         super.onCleared()
+        enrichmentJob?.cancel()
         prefs.unregisterOnSharedPreferenceChangeListener(prefListener)
         aiAnalysisDispatcher.close()
     }

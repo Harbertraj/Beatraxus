@@ -22,6 +22,7 @@ interface AudioOutput {
     fun totalFramesWritten(): Long
     fun outputSampleRate(): Int
     fun outputBitDepth(): Int
+    val actualChannels: Int
     fun outputPathLabel(): String
     fun outputDeviceLabel(): String
     fun estimatedLatencyMs(): Int

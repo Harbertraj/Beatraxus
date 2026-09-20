@@ -15,5 +15,6 @@ data class Video(
     val mimeType: String,
     val dateAdded: Long,
     val thumbnailUri: Uri? = null,
+    val posterUri: Uri? = null,
     val isHdr: Boolean = false
 )

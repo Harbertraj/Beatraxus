@@ -96,6 +96,9 @@ class SubtitleRepositoryImpl(
                 imdbId = query.imdbId,
                 tmdbId = query.tmdbId,
                 movieHash = query.movieHash,
+                seasonNumber = query.seasonNumber,
+                episodeNumber = query.episodeNumber,
+                year = query.year,
                 languages = query.languages.takeIf { it.isNotEmpty() }?.joinToString(","),
                 type = query.type,
                 page = query.page

@@ -451,9 +451,6 @@ data class PlayerUiState(
     // Continue Watching
     val continueWatching: List<Pair<com.beatraxus.app.model.Video, VideoRecentlyPlayedEntity>> = emptyList(),
 
-    // Video Settings
-    val alternateThumbnailEnabled: Boolean = true,
-
     // Streaming Add-ons
     val spotifyConnectionState: com.beatraxus.app.repository.SpotifyConnectionState = com.beatraxus.app.repository.SpotifyConnectionState.Disconnected
 )

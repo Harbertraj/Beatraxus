@@ -409,15 +409,15 @@ fun SubtitlePlayerSheetSection(
                 label = { Text("None", color = if (isNoneSelected) Color.Black else Color.White) }
             )
 
-            videoUiState.availableSubtitleTracks.forEachIndexed { idx, track ->
+            videoUiState.availableSubtitleTracks.forEach { track ->
                 FilterChip(
                     selected = track.isSelected && subUiState.enabled,
                     onClick = {
                         subtitleViewModel.enableSubtitles()
-                        subtitleViewModel.selectEmbeddedTrack(idx)
+                        subtitleViewModel.selectEmbeddedTrack(track.index)
                     },
                     colors = FilterChipDefaults.filterChipColors(selectedContainerColor = mxOrange, selectedLabelColor = Color.Black),
-                    label = { Text(track.name + (track.language?.let { " ($it)" } ?: "")) }
+                    label = { Text(track.name + (track.language?.let { " ($it)" } ?: ""), color = if (track.isSelected && subUiState.enabled) Color.Black else Color.White) }
                 )
             }
         }

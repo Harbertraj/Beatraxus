@@ -414,24 +414,6 @@ class SubtitleViewModel(
     fun enableSubtitles() {
         prefs.edit().putBoolean("video_subtitle_enabled", true).apply()
         _uiState.update { it.copy(enabled = true) }
-        val video = currentVideo
-        if (video != null) {
-            val activeCached = _uiState.value.cachedSubtitles.firstOrNull()
-            if (activeCached != null) {
-                val file = File(activeCached.localPath)
-                if (file.exists()) {
-                    viewModelScope.launch {
-                        subtitleController.attachExternalSubtitle(
-                            videoId = video.id,
-                            file = file,
-                            language = activeCached.language,
-                            label = activeCached.releaseName ?: "External Subtitle",
-                            subtitleId = activeCached.subtitleId
-                        )
-                    }
-                }
-            }
-        }
     }
 
     fun setSubtitleDelay(delayMs: Long) {

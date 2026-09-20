@@ -4217,10 +4217,9 @@ fun HomeScreen(
                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         items(videoFolders.take(8)) { folder ->
-                            HomeGridItem(
+                            HomeVideoFolderItem(
                                 title = folder.name,
                                 subtitle = "${folder.videoCount} videos",
-                                artUri = null, // Video folders don't have arts yet
                                 onClick = { viewModel.navigateToVideoFolder(folder.path, folder.name) }
                             )
                         }
@@ -5161,6 +5160,45 @@ fun HomeGridItem(title: String, subtitle: String, artUri: android.net.Uri?, onCl
                 contentDescription = null,
                 contentScale = ContentScale.Crop
             )
+        }
+        Spacer(Modifier.height(8.dp))
+        Text(title, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+        Text(subtitle, color = Color.White.copy(0.6f), fontSize = 12.sp, maxLines = 1)
+    }
+}
+
+@Composable
+private fun HomeVideoFolderItem(title: String, subtitle: String, onClick: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .width(150.dp)
+            .clickable { onClick() }
+    ) {
+        Surface(
+            modifier = Modifier.size(150.dp),
+            shape = RoundedCornerShape(16.dp),
+            color = Color.Transparent
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        brush = Brush.verticalGradient(
+                            colors = listOf(
+                                Color(0xFFFFAB40).copy(alpha = 0.18f),
+                                Color.White.copy(alpha = 0.05f)
+                            )
+                        )
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Folder,
+                    contentDescription = null,
+                    modifier = Modifier.size(72.dp),
+                    tint = Color(0xFFFFAB40)
+                )
+            }
         }
         Spacer(Modifier.height(8.dp))
         Text(title, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1)

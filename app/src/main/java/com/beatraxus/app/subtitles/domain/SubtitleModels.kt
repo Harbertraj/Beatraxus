@@ -5,6 +5,9 @@ data class SubtitleSearchQuery(
     val imdbId: Long? = null,
     val tmdbId: Long? = null,
     val movieHash: String? = null,
+    val seasonNumber: Int? = null,
+    val episodeNumber: Int? = null,
+    val year: Int? = null,
     val languages: List<String> = emptyList(),
     val type: String? = null,
     val page: Int = 1

@@ -191,6 +191,7 @@ class MusicRepository(private val context: Context) {
                     var composer: String? = null
                     var lyrics: String? = null
                     var extractedYear = raw.year
+                    var bitrate = if (raw.bitrate > 0) raw.bitrate else 0
 
                     if (shouldReadRetriever && !isAlacDetected) {
                         val retriever = MediaMetadataRetriever()
@@ -219,6 +220,7 @@ class MusicRepository(private val context: Context) {
                             val br = if (raw.bitrate > 0) raw.bitrate else {
                                 retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_BITRATE)?.toIntOrNull() ?: 0
                             }
+                            if (br > 0) bitrate = br
 
                             if (fullScan || isLosslessCandidate) {
                                 val artBytes = runCatching { retriever.embeddedPicture }.getOrNull()
@@ -296,6 +298,9 @@ class MusicRepository(private val context: Context) {
                                                            (!isActuallyLossyM4A && (mbPerMin >= 2.1 || br >= 400000) && (extension == "m4a" || extension == "alac"))
 
                                         formatName = when {
+                                            extractorMime.contains("eac3") || extension == "eac3" || extension == "ec3" -> "EAC3"
+                                            extractorMime.contains("ac3") || extension == "ac3" -> "AC3"
+                                            extractorMime.contains("dts") || extension == "dts" -> "DTS"
                                             extractorMime.contains("flac") || extension == "flac" -> "FLAC"
                                             extractorMime.contains("wav") || extractorMime.contains("x-raw") || extension == "wav" -> "WAV"
                                             extractorMime.contains("alac") || extension == "alac" || extension == "caf" -> "ALAC"
@@ -307,9 +312,6 @@ class MusicRepository(private val context: Context) {
                                             extractorMime.contains("mpeg") || extension == "mp3" -> "MP3"
                                             extractorMime.contains("ogg") || extension == "ogg" -> "OGG"
                                             extractorMime.contains("opus") || extension == "opus" -> "OPUS"
-                                            extractorMime.contains("eac3") || extension == "eac3" || extension == "ec3" -> "EAC3"
-                                            extractorMime.contains("ac3") || extension == "ac3" -> "AC3"
-                                            extractorMime.contains("dts") || extension == "dts" -> "DTS"
                                             else -> "MP3"
                                         }
                                         
@@ -331,6 +333,15 @@ class MusicRepository(private val context: Context) {
                         } finally {
                             try { retriever.release() } catch (e: Exception) {}
                         }
+                    } else if (isAlacDetected) {
+                        val ffmpegArt = extractEmbeddedArtWithFfmpeg(raw.id, uri, fullScan)
+                        if (ffmpegArt != null) albumArtUri = ffmpegArt
+
+                        val ffprobeData = extractReplayGain(uri)
+                        replayGain = ffprobeData
+                        if (ffprobeData.sampleRate > 0) sampleRate = ffprobeData.sampleRate
+                        if (ffprobeData.bitDepth > 0) bitDepth = ffprobeData.bitDepth
+                        if (ffprobeData.bitrate > 0) bitrate = ffprobeData.bitrate
                     }
 
                     if (bitDepth <= 16 && raw.bitrate > 2116000 && bitDepth > 0) bitDepth = 24
@@ -345,7 +356,7 @@ class MusicRepository(private val context: Context) {
                         format = formatName,
                         sampleRateHz = sampleRate,
                         bitDepth = bitDepth,
-                        bitrate = if (raw.bitrate > 0) raw.bitrate else 0,
+                        bitrate = if (bitrate > 0) bitrate else 0,
                         fileSizeBytes = raw.size,
                         albumArtUri = albumArtUri,
                         year = extractedYear,
@@ -485,6 +496,9 @@ class MusicRepository(private val context: Context) {
         val ext = path.substringAfterLast(".", "").lowercase()
         val m = mime.lowercase()
         return when {
+            m.contains("eac3") || ext == "eac3" || ext == "ec3" -> "EAC3"
+            m.contains("ac3") || ext == "ac3" -> "AC3"
+            m.contains("dts") || ext == "dts" -> "DTS"
             ext == "flac" || m.contains("flac") -> "FLAC"
             ext == "wav" || m.contains("wav") || m.contains("wave") -> "WAV"
             ext == "alac" || ext == "caf" || m.contains("alac") -> "ALAC"
@@ -495,16 +509,16 @@ class MusicRepository(private val context: Context) {
             }
             ext == "ogg" || m.contains("ogg") -> "OGG"
             ext == "opus" || m.contains("opus") -> "OPUS"
-            ext == "eac3" || ext == "ec3" || m.contains("eac3") -> "EAC3"
-            ext == "ac3" || m.contains("ac3") -> "AC3"
-            ext == "dts" || m.contains("dts") -> "DTS"
             ext == "mp3" || m.contains("mpeg") -> "MP3"
             else -> "MP3"
         }
     }
 
-    private fun extractEmbeddedArtWithFfmpeg(mediaStoreId: Long, uri: Uri): Uri? {
+    private fun extractEmbeddedArtWithFfmpeg(mediaStoreId: Long, uri: Uri, fullScan: Boolean = false): Uri? {
         val outputFile = File(File(context.filesDir, "embedded_album_art").apply { mkdirs() }, "$mediaStoreId-ffmpeg.jpg")
+        if (fullScan && outputFile.exists()) {
+            outputFile.delete()
+        }
         val inputSource = FFmpegKitConfig.getSafParameterForRead(context, uri)
         val session = FFmpegKit.executeWithArguments(
             arrayOf(
@@ -577,11 +591,33 @@ class MusicRepository(private val context: Context) {
                     }
             }
 
+            val formatObj = json.optJSONObject("format")
+            val audioStream = (0 until (streams?.length() ?: 0))
+                .mapNotNull { streams?.optJSONObject(it) }
+                .firstOrNull { it.optString("codec_type") == "audio" }
+
+            val ffSampleRate = audioStream?.optString("sample_rate")?.toIntOrNull() ?: 0
+            val bitsPerRaw = audioStream?.optString("bits_per_raw_sample")?.toIntOrNull()
+            val sampleFmt = audioStream?.optString("sample_fmt")?.lowercase()
+            val ffBitDepth = when {
+                bitsPerRaw != null && bitsPerRaw > 0 -> bitsPerRaw
+                sampleFmt?.contains("s32") == true || sampleFmt?.contains("flt") == true -> 32
+                sampleFmt?.contains("s24") == true -> 24
+                sampleFmt?.contains("s16") == true -> 16
+                else -> audioStream?.optString("bits_per_sample")?.toIntOrNull() ?: 0
+            }
+            val ffBitrate = formatObj?.optString("bit_rate")?.toIntOrNull()
+                ?: audioStream?.optString("bit_rate")?.toIntOrNull()
+                ?: 0
+
             ReplayGainMetadata(
                 trackGainDb = parseReplayGainDb(tagValue("REPLAYGAIN_TRACK_GAIN")),
                 albumGainDb = parseReplayGainDb(tagValue("REPLAYGAIN_ALBUM_GAIN")),
                 trackPeak = parsePeak(tagValue("REPLAYGAIN_TRACK_PEAK")),
-                albumPeak = parsePeak(tagValue("REPLAYGAIN_ALBUM_PEAK"))
+                albumPeak = parsePeak(tagValue("REPLAYGAIN_ALBUM_PEAK")),
+                sampleRate = ffSampleRate,
+                bitDepth = ffBitDepth,
+                bitrate = ffBitrate
             )
         }.getOrDefault(ReplayGainMetadata())
     }
@@ -600,7 +636,10 @@ class MusicRepository(private val context: Context) {
         val trackGainDb: Float? = null,
         val albumGainDb: Float? = null,
         val trackPeak: Float? = null,
-        val albumPeak: Float? = null
+        val albumPeak: Float? = null,
+        val sampleRate: Int = 0,
+        val bitDepth: Int = 0,
+        val bitrate: Int = 0
     )
 
     private data class RawSongData(
