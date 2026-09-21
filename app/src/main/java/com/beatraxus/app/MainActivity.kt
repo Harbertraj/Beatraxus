@@ -66,6 +66,8 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.beatraxus.app.addons.AddonManager
+import com.beatraxus.app.addons.MediaServerAddon
 import com.beatraxus.app.perf.FrameJankMonitor
 import com.beatraxus.app.ui.theme.BeatraxusTheme
 import com.beatraxus.app.viewmodel.PlayerViewModel
@@ -734,8 +736,52 @@ fun BeatraxusApp(
             ) {
                 com.beatraxus.app.ui.screens.StreamingAddonsScreen(
                     playerViewModel = viewModel,
-                    onBack = { navController.popBackStack() }
+                    onBack = { navController.popBackStack() },
+                    onNavigateToBrowse = { addonId -> navController.navigate("addon_browse/$addonId") }
                 )
+            }
+            composable(
+                "addon_browse/{addonId}",
+                arguments = listOf(navArgument("addonId") { type = NavType.StringType }),
+                enterTransition = {
+                    slideIntoContainer(
+                        towards = AnimatedContentTransitionScope.SlideDirection.Start,
+                        animationSpec = tween(400, easing = FastOutSlowInEasing)
+                    ) + fadeIn(tween(400))
+                },
+                exitTransition = {
+                    slideOutOfContainer(
+                        towards = AnimatedContentTransitionScope.SlideDirection.Start,
+                        animationSpec = tween(400, easing = FastOutSlowInEasing)
+                    ) + fadeOut(tween(400))
+                },
+                popEnterTransition = {
+                    slideIntoContainer(
+                        towards = AnimatedContentTransitionScope.SlideDirection.End,
+                        animationSpec = tween(400, easing = FastOutSlowInEasing)
+                    ) + fadeIn(tween(400))
+                },
+                popExitTransition = {
+                    slideOutOfContainer(
+                        towards = AnimatedContentTransitionScope.SlideDirection.End,
+                        animationSpec = tween(400, easing = FastOutSlowInEasing)
+                    ) + fadeOut(tween(400))
+                }
+            ) { backStackEntry ->
+                val addonId = backStackEntry.arguments?.getString("addonId") ?: return@composable
+                val addon = AddonManager.addedAddons.value.find { it.id == addonId } as? MediaServerAddon
+                if (addon != null) {
+                    com.beatraxus.app.ui.screens.AddonBrowseScreen(
+                        addon = addon,
+                        playerViewModel = viewModel,
+                        onBack = { navController.popBackStack() },
+                        onNavigateToVideoPlayer = { videoId ->
+                            navController.navigate("video_player/$videoId")
+                        }
+                    )
+                } else {
+                    navController.popBackStack()
+                }
             }
             composable(
                 "inspector/{songId}",

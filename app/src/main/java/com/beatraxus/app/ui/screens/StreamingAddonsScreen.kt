@@ -48,7 +48,8 @@ private val TextWhite = Color(0xFFF4F6F8)
 @Composable
 fun StreamingAddonsScreen(
     playerViewModel: PlayerViewModel,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onNavigateToBrowse: (String) -> Unit
 ) {
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
@@ -179,8 +180,7 @@ fun StreamingAddonsScreen(
                         onClick = {
                             if (addon is MediaServerAddon) {
                                 if (addon.connectionState.value == AddonConnectionState.CONNECTED) {
-                                    // TODO: Navigate to addon browse
-                                    Toast.makeText(context, "Browsing not implemented yet", Toast.LENGTH_SHORT).show()
+                                    onNavigateToBrowse(addon.id)
                                 } else {
                                     addonToSignIn = addon
                                 }
