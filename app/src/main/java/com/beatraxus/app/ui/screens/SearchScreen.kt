@@ -228,8 +228,7 @@ fun SearchScreen(
                                             AddonPlaybackHelper.resolveAndPlay(
                                                 addon = addon,
                                                 item = item,
-                                                playerViewModel = viewModel,
-                                                onNavigateToVideoPlayer = onNavigateToVideoPlayer
+                                                playerViewModel = viewModel
                                             )
                                         } finally {
                                             isLoading = false

@@ -44,8 +44,7 @@ sealed class BrowseState {
 fun AddonBrowseScreen(
     addon: MediaServerAddon,
     playerViewModel: PlayerViewModel,
-    onBack: () -> Unit,
-    onNavigateToVideoPlayer: (String) -> Unit
+    onBack: () -> Unit
 ) {
     var state by remember { mutableStateOf<BrowseState>(BrowseState.Loading) }
     var searchQuery by remember { mutableStateOf("") }
@@ -179,8 +178,7 @@ fun AddonBrowseScreen(
                                                 AddonPlaybackHelper.resolveAndPlay(
                                                     addon = addon,
                                                     item = item,
-                                                    playerViewModel = playerViewModel,
-                                                    onNavigateToVideoPlayer = onNavigateToVideoPlayer
+                                                    playerViewModel = playerViewModel
                                                 )
                                             } catch (e: Exception) {
                                                 streamError = e.message ?: "Playback failed"

@@ -356,11 +356,13 @@ class AudioTrackOutput(
                 builder.build()
             } catch (e: Exception) {
                 Log.e(TAG, "AudioTrack.Builder.build() failed: ${e.message}")
+                if (channels > 2) return init(sampleRate, 2, bitDepth, isDoP)
                 return false
             }
 
             if (newTrack.state != AudioTrack.STATE_INITIALIZED) {
                 newTrack.release()
+                if (channels > 2) return init(sampleRate, 2, bitDepth, isDoP)
                 return false
             }
 
@@ -733,7 +735,6 @@ class AudioTrackOutput(
 
     override fun outputSampleRate(): Int = lifecycleLock.readLock().withLock { sampleRate }
     override fun outputBitDepth(): Int = lifecycleLock.readLock().withLock { currentBytesPerSample * 8 }
-    override val actualChannels: Int get() = lifecycleLock.readLock().withLock { channels }
 
     override fun outputPathLabel(): String = lifecycleLock.readLock().withLock {
         if (usingMmap) return@withLock "MMAP Exclusive"

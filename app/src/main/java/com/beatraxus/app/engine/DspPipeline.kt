@@ -448,7 +448,7 @@ private class NativeDspProcessor(
         val appliedEqMasterGain = eqMasterGain
         val dvcCompensationDb = if (config.dvcEnabled && config.compensateDvcVolumeEnabled && !isBP) {
             val dvcAttenuationDb = if (config.dvcLevel > 0f) -20f * log10(config.dvcLevel) else 0f
-            val makeupGainDb = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) 4f else 0f
+            val makeupGainDb = if (dvcAttenuationDb > 0f && Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) 4f else 0f
             (dvcAttenuationDb + makeupGainDb).coerceIn(0f, 12f)
         } else 0f
 

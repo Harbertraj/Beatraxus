@@ -127,21 +127,18 @@ class ArchiveOrgAddon(
                 val file = files.getJSONObject(i)
                 val name = file.optString("name", "")
                 val size = file.optLong("size", 0L)
-                val format = file.optString("format", "").lowercase()
+                val lowerName = name.lowercase()
                 
-                if (item.mediaType == "video") {
-                    if (format.contains("mp4") || format.contains("m4v")) {
-                        if (size > maxSize) {
-                            maxSize = size
-                            chosenFile = name
-                        }
-                    }
+                val isMatch = if (item.mediaType == "video") {
+                    lowerName.endsWith(".mp4") || lowerName.endsWith(".m4v")
                 } else {
-                    if (format.contains("mp3") || format.contains("flac")) {
-                        if (size > maxSize) {
-                            maxSize = size
-                            chosenFile = name
-                        }
+                    lowerName.endsWith(".mp3") || lowerName.endsWith(".flac")
+                }
+
+                if (isMatch) {
+                    if (size > maxSize) {
+                        maxSize = size
+                        chosenFile = name
                     }
                 }
             }

@@ -774,10 +774,7 @@ fun BeatraxusApp(
                     com.beatraxus.app.ui.screens.AddonBrowseScreen(
                         addon = addon,
                         playerViewModel = viewModel,
-                        onBack = { navController.popBackStack() },
-                        onNavigateToVideoPlayer = { videoId ->
-                            navController.navigate("video_player/$videoId")
-                        }
+                        onBack = { navController.popBackStack() }
                     )
                 } else {
                     navController.popBackStack()

@@ -11,8 +11,7 @@ object AddonPlaybackHelper {
     suspend fun resolveAndPlay(
         addon: MediaServerAddon,
         item: AddonMediaItem,
-        playerViewModel: PlayerViewModel,
-        onNavigateToVideoPlayer: (String) -> Unit
+        playerViewModel: PlayerViewModel
     ) {
         val streamUrl = addon.streamUrl(item)
         val uri = Uri.parse(streamUrl)
@@ -31,7 +30,6 @@ object AddonPlaybackHelper {
                 dateAdded = System.currentTimeMillis()
             )
             playerViewModel.playVideo(video)
-            onNavigateToVideoPlayer(video.id)
         } else {
             val song = Song(
                 id = "${addon.id}_${item.id}",

@@ -234,7 +234,7 @@ data class DspConfig(
     val rmsLevelerEnabled: Boolean = false,
     val dvcMode: DvcMode = DvcMode.DAC,
     val dvcLevel: Float = 1f,
-    val compensateDvcVolumeEnabled: Boolean = true,
+    val compensateDvcVolumeEnabled: Boolean = false,
     val dvcCompensationDb: Float = 3.5f,
 
     // USB
