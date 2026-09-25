@@ -175,8 +175,11 @@ fun ContinueWatchingItem(
     var thumbnailUri by remember(video.id) { mutableStateOf(video.thumbnailUri) }
 
     LaunchedEffect(video.id, video.thumbnailUri) {
-        if (video.thumbnailUri == null) {
+        val cachedUri = video.thumbnailUri
+        if (cachedUri == null || !VideoThumbnailHelper.thumbnailExists(context, video.id)) {
             thumbnailUri = VideoThumbnailHelper.getThumbnail(context, video.uri, video.id)
+        } else {
+            thumbnailUri = cachedUri
         }
     }
 
@@ -197,7 +200,8 @@ fun ContinueWatchingItem(
                 model = thumbnailUri ?: video.uri,
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize()
+                modifier = Modifier.fillMaxSize(),
+                onError = { thumbnailUri = null }
             )
 
             // Progress Bar at the bottom
@@ -243,8 +247,11 @@ fun VideoItem(
     var thumbnailUri by remember(video.id) { mutableStateOf(video.thumbnailUri) }
 
     LaunchedEffect(video.id, video.thumbnailUri) {
-        if (video.thumbnailUri == null) {
+        val cachedUri = video.thumbnailUri
+        if (cachedUri == null || !VideoThumbnailHelper.thumbnailExists(context, video.id)) {
             thumbnailUri = VideoThumbnailHelper.getThumbnail(context, video.uri, video.id)
+        } else {
+            thumbnailUri = cachedUri
         }
     }
 
@@ -274,7 +281,8 @@ fun VideoItem(
                 model = thumbnailUri ?: video.uri,
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize()
+                modifier = Modifier.fillMaxSize(),
+                onError = { thumbnailUri = null }
             )
 
             // Duration badge bottom-right (mm:ss / h:mm:ss)
@@ -402,8 +410,11 @@ fun VideoListItem(
     var thumbnailUri by remember(video.id) { mutableStateOf(video.thumbnailUri) }
 
     LaunchedEffect(video.id, video.thumbnailUri) {
-        if (video.thumbnailUri == null) {
+        val cachedUri = video.thumbnailUri
+        if (cachedUri == null || !VideoThumbnailHelper.thumbnailExists(context, video.id)) {
             thumbnailUri = VideoThumbnailHelper.getThumbnail(context, video.uri, video.id)
+        } else {
+            thumbnailUri = cachedUri
         }
     }
 
@@ -439,7 +450,8 @@ fun VideoListItem(
                     model = thumbnailUri ?: video.uri,
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize()
+                    modifier = Modifier.fillMaxSize(),
+                    onError = { thumbnailUri = null }
                 )
 
                 // Duration

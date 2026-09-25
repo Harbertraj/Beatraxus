@@ -113,6 +113,29 @@ import coil.imageLoader
 import coil.request.SuccessResult
 import android.graphics.drawable.BitmapDrawable
 import coil.size.Precision
+import java.util.Calendar
+
+@Composable
+fun DefaultAlbumArt(modifier: Modifier = Modifier) {
+    val hour = remember { Calendar.getInstance().get(Calendar.HOUR_OF_DAY) }
+    val colors = when (hour) {
+        in 5..11 -> listOf(Color(0xFF00F2FF).copy(0.15f), Color(0xFF0066FF).copy(0.05f))
+        in 12..16 -> listOf(Color(0xFFFFD60A).copy(0.15f), Color(0xFFFF9F0A).copy(0.05f))
+        in 17..20 -> listOf(Color(0xFFFF5E62).copy(0.15f), Color(0xFFB91D73).copy(0.05f))
+        else -> listOf(Color(0xFF5E5CE6).copy(0.18f), Color(0xFF131B2A).copy(0.08f))
+    }
+    Box(
+        modifier = modifier.background(Brush.linearGradient(colors)),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            imageVector = Icons.Rounded.MusicNote,
+            contentDescription = null,
+            tint = Color.White.copy(alpha = 0.85f),
+            modifier = Modifier.size(36.dp)
+        )
+    }
+}
 
 @Composable
 fun MainBackground(
@@ -4671,12 +4694,17 @@ fun HomeScreen(
                                             .clickable { viewModel.playSong(song) }
                                             .border(1.dp, Color.White.copy(0.1f), RoundedCornerShape(24.dp))
                                     ) {
-                                        AsyncImage(
-                                            model = song.albumArtUri,
-                                            contentDescription = null,
-                                            modifier = Modifier.fillMaxSize(),
-                                            contentScale = ContentScale.Crop
-                                        )
+                                        if (song.albumArtUri != null) {
+                                            AsyncImage(
+                                                model = song.albumArtUri,
+                                                contentDescription = null,
+                                                modifier = Modifier.fillMaxSize(),
+                                                contentScale = ContentScale.Crop,
+                                                onError = { }
+                                            )
+                                        } else {
+                                            DefaultAlbumArt(modifier = Modifier.fillMaxSize())
+                                        }
                                         Box(
                                             modifier = Modifier
                                                 .fillMaxSize()
@@ -5057,27 +5085,32 @@ fun HomeSectionHeader(
 
 @Composable
 fun HomeSongCard(song: com.beatraxus.app.model.Song, onClick: () -> Unit) {
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(72.dp)
-            .clickable { onClick() },
-        color = Color.White.copy(0.06f),
-        shape = RoundedCornerShape(16.dp),
-        border = BorderStroke(0.5.dp, Color.White.copy(0.06f))
-    ) {
-        Row(
-            modifier = Modifier.padding(8.dp),
-            verticalAlignment = Alignment.CenterVertically
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(72.dp)
+                .clickable { onClick() },
+            color = Color.White.copy(0.06f),
+            shape = RoundedCornerShape(16.dp),
+            border = BorderStroke(0.5.dp, Color.White.copy(0.06f))
         ) {
-            AsyncImage(
-                model = song.albumArtUri,
-                contentDescription = null,
-                modifier = Modifier
-                    .size(56.dp)
-                    .clip(RoundedCornerShape(10.dp)),
-                contentScale = ContentScale.Crop
-            )
+            Row(
+                modifier = Modifier.padding(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (song.albumArtUri != null) {
+                    AsyncImage(
+                        model = song.albumArtUri,
+                        contentDescription = null,
+                        modifier = Modifier
+                            .size(56.dp)
+                            .clip(RoundedCornerShape(10.dp)),
+                        contentScale = ContentScale.Crop,
+                        onError = { }
+                    )
+                } else {
+                    DefaultAlbumArt(modifier = Modifier.size(56.dp).clip(RoundedCornerShape(10.dp)))
+                }
 
             Column(
                 modifier = Modifier
@@ -5118,11 +5151,17 @@ fun HomeSongItem(song: com.beatraxus.app.model.Song, onClick: () -> Unit) {
             shape = RoundedCornerShape(12.dp),
             color = Color.White.copy(0.05f)
         ) {
-            AsyncImage(
-                model = song.albumArtUri,
-                contentDescription = null,
-                contentScale = ContentScale.Crop
-            )
+            if (song.albumArtUri != null) {
+                AsyncImage(
+                    model = song.albumArtUri,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                    onError = { /* falls through to default art below on next recomposition if needed */ }
+                )
+            } else {
+                DefaultAlbumArt(modifier = Modifier.fillMaxSize())
+            }
         }
         Spacer(Modifier.height(8.dp))
         Text(
@@ -5155,11 +5194,17 @@ fun HomeGridItem(title: String, subtitle: String, artUri: android.net.Uri?, onCl
             shape = RoundedCornerShape(16.dp),
             color = Color.White.copy(0.1f)
         ) {
-            AsyncImage(
-                model = artUri,
-                contentDescription = null,
-                contentScale = ContentScale.Crop
-            )
+            if (artUri != null) {
+                AsyncImage(
+                    model = artUri,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                    onError = { /* fallback */ }
+                )
+            } else {
+                DefaultAlbumArt(modifier = Modifier.fillMaxSize())
+            }
         }
         Spacer(Modifier.height(8.dp))
         Text(title, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1)

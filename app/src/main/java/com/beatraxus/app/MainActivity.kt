@@ -129,6 +129,8 @@ class MainActivity : FragmentActivity() {
         frameJankMonitor.start()
         startAudioService()
         bindAudioService()
+        
+        viewModel.reloadVideosIfEmpty()
     }
 
     override fun onResume() {

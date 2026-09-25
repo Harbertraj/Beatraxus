@@ -20,7 +20,7 @@ object VideoThumbnailHelper {
     )
 
     suspend fun enrichVideo(context: Context, videoUri: Uri, videoId: String): VideoEnrichmentResult = withContext(Dispatchers.IO) {
-        val cacheDir = File(context.cacheDir, THUMBNAIL_DIR).apply { mkdirs() }
+        val cacheDir = File(context.filesDir, THUMBNAIL_DIR).apply { mkdirs() }
         val thumbnailFile = File(cacheDir, "$videoId.jpg")
 
         var thumbnailUri: Uri? = if (thumbnailFile.exists() && thumbnailFile.length() > 0) {
@@ -62,5 +62,9 @@ object VideoThumbnailHelper {
 
     suspend fun getThumbnail(context: Context, videoUri: Uri, videoId: String): Uri? {
         return enrichVideo(context, videoUri, videoId).thumbnailUri
+    }
+
+    suspend fun thumbnailExists(context: Context, videoId: String): Boolean = withContext(Dispatchers.IO) {
+        File(File(context.filesDir, THUMBNAIL_DIR), "$videoId.jpg").exists()
     }
 }

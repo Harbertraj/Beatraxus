@@ -88,6 +88,7 @@ import com.beatraxus.app.service.AudioPlaybackService
 import com.beatraxus.app.cast.CastManager
 import com.arthenica.ffmpegkit.FFmpegKitConfig
 import com.arthenica.ffmpegkit.Level
+import com.beatraxus.app.model.PlaybackMode
 import com.beatraxus.app.model.Video
 import com.beatraxus.app.repository.AppearancePreferences
 import com.beatraxus.app.repository.LyricsCandidate
@@ -160,6 +161,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private val videoScanner = com.beatraxus.app.repository.VideoLibraryScanner(application)
     
     private var enrichmentJob: Job? = null
+    private var folderWatchJob: Job? = null
 
     private val decoderFactory = DecoderFactory(
         context = application,
@@ -679,7 +681,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
 
-        viewModelScope.launch {
+        folderWatchJob = viewModelScope.launch {
             videoFolderDao.getActiveFolders().collect { folders ->
                 val paths = folders.map { it.path }
                 // Trigger video scan when folders change
@@ -1446,11 +1448,6 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             try {
                 val blocked = musicRepository.getBlockedFolders()
                 val folders = targetFolders ?: videoFolderDao.getActiveFoldersList().map { it.path }
-                if (folders.isEmpty() && targetFolders != null) {
-                    _videos.value = emptyList()
-                    _uiState.update { it.copy(isLoadingVideos = false) }
-                    return@launch
-                }
 
                 val scannedVideos = videoScanner.scanVideos(folders, blocked)
 
@@ -1484,10 +1481,18 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         }
                     }
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to load videos", e)
                 _uiState.update { it.copy(isLoadingVideos = false) }
             }
+        }
+    }
+
+    fun reloadVideosIfEmpty() {
+        if (_uiState.value.playbackMode == PlaybackMode.VIDEO && _videos.value.isEmpty()) {
+            loadVideos()
         }
     }
 
