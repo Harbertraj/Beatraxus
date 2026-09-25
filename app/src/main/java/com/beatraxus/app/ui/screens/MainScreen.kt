@@ -3545,24 +3545,26 @@ fun MainScreen(
             contentAlignment = Alignment.BottomEnd
         ) {
             androidx.compose.animation.AnimatedVisibility(
-                visible = showVideoFab && isVideoView && drawerProgress == 0f && !showFullPlayer,
+                visible = showVideoFab && isVideoView && drawerProgress < 0.01f && !showFullPlayer,
                 enter = scaleIn(animationSpec = tween(400)) + fadeIn(animationSpec = tween(400)),
                 exit = scaleOut(animationSpec = tween(300)) + fadeOut(animationSpec = tween(300))
             ) {
-                Box(
+                Surface(
                     modifier = Modifier
                         .size(64.dp)
-                        .shadow(elevation = 12.dp, shape = CircleShape)
-                        .background(color = AccentBlue, shape = CircleShape)
                         .clickable { viewModel.playLastPlayedVideo() },
-                    contentAlignment = Alignment.Center
+                    shape = CircleShape,
+                    color = AccentBlue,
+                    shadowElevation = 12.dp
                 ) {
-                    Icon(
-                        imageVector = Icons.Rounded.PlayArrow,
-                        contentDescription = null,
-                        tint = Color.Black,
-                        modifier = Modifier.size(40.dp)
-                    )
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Rounded.PlayArrow,
+                            contentDescription = null,
+                            tint = Color.Black,
+                            modifier = Modifier.size(40.dp)
+                        )
+                    }
                 }
             }
         }

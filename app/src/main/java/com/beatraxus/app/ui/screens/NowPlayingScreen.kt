@@ -1632,14 +1632,131 @@ fun AudioPipelineOverlay(
                     color = Color.White
                 )
                 HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), color = Color.White.copy(0.05f))
-                PipelineInfoRow("Codec", overlayState.codec)
-                PipelineInfoRow("Bitrate", overlayState.bitrateLabel)
-                PipelineInfoRow("Sample Rate", overlayState.sampleRateLabel)
-                PipelineInfoRow("Bit Depth", overlayState.bitDepthLabel)
+                
+                PipelineFlowDiagram(
+                    summary = overlayState.summary,
+                    sampleRateLabel = overlayState.sampleRateLabel,
+                    bitDepthLabel = overlayState.bitDepthLabel
+                )
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (overlayState.codec.isNotEmpty()) SpecBadge(Icons.Rounded.AudioFile, overlayState.codec)
+                    if (overlayState.bitrateLabel.isNotEmpty()) SpecBadge(Icons.Rounded.HighQuality, overlayState.bitrateLabel)
+                    if (overlayState.sampleRateLabel.isNotEmpty()) SpecBadge(Icons.Rounded.GraphicEq, overlayState.sampleRateLabel)
+                    if (overlayState.bitDepthLabel.isNotEmpty()) SpecBadge(Icons.Rounded.Memory, overlayState.bitDepthLabel)
+                }
+
+                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), color = Color.White.copy(0.05f))
+
                 PipelineInfoRow("Output Path", overlayState.outputPath)
-                PipelineInfoRow("Pipeline", overlayState.summary)
-                PipelineInfoRow("Effects", overlayState.effectsLabel)
+                if (overlayState.effectsLabel.isNotEmpty()) {
+                    PipelineInfoRow("Effects", overlayState.effectsLabel)
+                }
             }
+        }
+    }
+}
+
+@Composable
+private fun PipelineFlowDiagram(
+    summary: String,
+    sampleRateLabel: String,
+    bitDepthLabel: String
+) {
+    val stages = remember(summary) { summary.split(" -> ", "→").map { it.trim() }.filter { it.isNotEmpty() } }
+    val hasSampleRateConversion = remember(sampleRateLabel) {
+        val parts = sampleRateLabel.split("->", "→")
+        parts.size > 1 && parts[0].trim() != parts[1].trim()
+    }
+    val hasBitDepthConversion = remember(bitDepthLabel) {
+        val parts = bitDepthLabel.split("->", "→")
+        parts.size > 1 && parts[0].trim() != parts[1].trim()
+    }
+
+    val green = Color(0xFF30D158)
+    val amber = Color(0xFFFFD60A)
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        stages.forEachIndexed { index, stage ->
+            val isConversion = when {
+                stage.contains("DSP", ignoreCase = true) -> true
+                stage.contains("Resampler", ignoreCase = true) -> true
+                stage.contains("Equalizer", ignoreCase = true) -> true
+                stage.contains("Mixer", ignoreCase = true) -> true
+                stage.contains("Hz", ignoreCase = true) && hasSampleRateConversion -> true
+                stage.contains("bit", ignoreCase = true) && hasBitDepthConversion -> true
+                else -> false
+            }
+            val color = if (isConversion) amber else green
+            val icon = when {
+                index == 0 -> Icons.Rounded.AudioFile
+                index == stages.lastIndex -> Icons.Rounded.SpeakerGroup
+                stage.contains("DSP", ignoreCase = true) || stage.contains("Equalizer", ignoreCase = true) -> Icons.Rounded.Tune
+                stage.contains("Resampler", ignoreCase = true) -> Icons.Rounded.GraphicEq
+                stage.contains("Native", ignoreCase = true) || stage.contains("HiFi", ignoreCase = true) -> Icons.Rounded.Memory
+                else -> Icons.Rounded.DeveloperBoard
+            }
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .border(1.5.dp, color.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
+                    .padding(horizontal = 10.dp, vertical = 6.dp)
+            ) {
+                Icon(imageVector = icon, contentDescription = null, tint = color, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = stage,
+                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold, fontSize = 11.sp),
+                    color = Color.White
+                )
+            }
+
+            if (index < stages.lastIndex) {
+                Icon(
+                    imageVector = Icons.Rounded.ArrowForward,
+                    contentDescription = "to",
+                    tint = Color.White.copy(alpha = 0.3f),
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SpecBadge(icon: ImageVector, text: String) {
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = Color.White.copy(alpha = 0.12f),
+        border = BorderStroke(1.dp, Brush.verticalGradient(listOf(Color.White.copy(0.2f), Color.Transparent)))
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Icon(imageVector = icon, contentDescription = null, tint = Color.White.copy(alpha = 0.7f), modifier = Modifier.size(14.dp))
+            Text(
+                text = text.uppercase(Locale.US),
+                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontSize = 10.sp, letterSpacing = 0.5.sp),
+                color = Color.White,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
         }
     }
 }

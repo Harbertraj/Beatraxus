@@ -268,6 +268,13 @@ class MainActivity : FragmentActivity() {
                         uri.toString().endsWith(".wav", true) ||
                         uri.toString().endsWith(".m4a", true)) {
                         viewModel.playExternalUri(uri)
+                    } else if (type?.startsWith("video/") == true ||
+                        uri.toString().endsWith(".mp4", true) ||
+                        uri.toString().endsWith(".mkv", true) ||
+                        uri.toString().endsWith(".avi", true) ||
+                        uri.toString().endsWith(".mov", true) ||
+                        uri.toString().endsWith(".webm", true)) {
+                        viewModel.playExternalVideoUri(uri, type)
                     } else if (type == "application/json" || uri.toString().endsWith(".json", true)) {
                         try {
                             contentResolver.openInputStream(uri)?.use { input ->

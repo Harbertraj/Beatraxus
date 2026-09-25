@@ -5,6 +5,7 @@ import java.io.File
 import android.app.Application
 import android.util.Log
 import android.media.AudioManager
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.PowerManager
 import android.provider.Settings
@@ -96,6 +97,7 @@ import com.beatraxus.app.repository.LyricsProviderConfig
 import com.beatraxus.app.repository.DspPreferences
 import com.beatraxus.app.repository.DriveAccount
 import kotlinx.coroutines.suspendCancellableCoroutine
+import java.io.FileOutputStream
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.resume
 
@@ -2401,17 +2403,51 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             if (existing != null) {
                 playSong(existing)
             } else {
+                val context = getApplication<Application>()
+                var tempTitle = uri.lastPathSegment ?: "External Song"
+                var tempArtist = "External Source"
+                var tempAlbum = "External"
+                var tempDurationMs = 0L
+                var tempAlbumArtUri: Uri? = null
+
+                withContext(Dispatchers.IO) {
+                    val retriever = MediaMetadataRetriever()
+                    try {
+                        retriever.setDataSource(context, uri)
+                        retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)?.takeIf { it.isNotBlank() }?.let { tempTitle = it }
+                        retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)?.takeIf { it.isNotBlank() }?.let { tempArtist = it }
+                        retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM)?.takeIf { it.isNotBlank() }?.let { tempAlbum = it }
+                        retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()?.let { tempDurationMs = it }
+
+                        retriever.embeddedPicture?.let { picture ->
+                            val hash = uri.toString().hashCode()
+                            val cacheFile = File(context.cacheDir, "ext_art_$hash.jpg")
+                            if (!cacheFile.exists()) {
+                                FileOutputStream(cacheFile).use { fos ->
+                                    fos.write(picture)
+                                }
+                            }
+                            tempAlbumArtUri = Uri.fromFile(cacheFile)
+                        }
+                    } catch (e: Exception) {
+                        Log.e("PlayerViewModel", "Failed to read external metadata", e)
+                    } finally {
+                        try { retriever.release() } catch (e: Exception) {}
+                    }
+                }
+
                 // Not in DB, create a temporary song object
                 val tempSong = Song(
                     id = "external_${System.currentTimeMillis()}",
                     uri = uri,
-                    title = uri.lastPathSegment ?: "External Song",
-                    artist = "External Source",
-                    album = "External",
-                    durationMs = 0,
+                    title = tempTitle,
+                    artist = tempArtist,
+                    album = tempAlbum,
+                    durationMs = tempDurationMs,
                     format = uri.toString().substringAfterLast('.', "mp3"),
                     sampleRateHz = 44100,
-                    source = SongSource.LOCAL
+                    source = SongSource.LOCAL,
+                    albumArtUri = tempAlbumArtUri
                 )
 
                 // Wait for service
@@ -2420,6 +2456,44 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 service?.playSong(tempSong)
                 setShowFullPlayer(true)
             }
+        }
+    }
+
+    fun playExternalVideoUri(uri: Uri, type: String?) {
+        viewModelScope.launch {
+            val context = getApplication<Application>()
+            var durationMs = 0L
+            var width = 0
+            var height = 0
+            
+            withContext(Dispatchers.IO) {
+                val retriever = MediaMetadataRetriever()
+                try {
+                    retriever.setDataSource(context, uri)
+                    retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()?.let { durationMs = it }
+                    retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull()?.let { width = it }
+                    retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull()?.let { height = it }
+                } catch (e: Exception) {
+                    Log.e("PlayerViewModel", "Failed to read video metadata", e)
+                } finally {
+                    try { retriever.release() } catch (e: Exception) {}
+                }
+            }
+
+            val video = Video(
+                id = "ext_video_${System.currentTimeMillis()}",
+                uri = uri,
+                title = uri.lastPathSegment ?: "External Video",
+                displayName = uri.lastPathSegment ?: "External Video",
+                folderPath = "External",
+                durationMs = durationMs,
+                sizeBytes = 0L,
+                resolutionWidth = width,
+                resolutionHeight = height,
+                mimeType = type ?: "video/mp4",
+                dateAdded = System.currentTimeMillis()
+            )
+            playVideo(video)
         }
     }
 
