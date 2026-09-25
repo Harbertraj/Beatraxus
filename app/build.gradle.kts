@@ -47,6 +47,9 @@ configure<ApplicationExtension> {
         val telegramApiHash = localProperties.getProperty("TELEGRAM_API_HASH", "")
         buildConfigField("String", "TELEGRAM_API_ID", "\"$telegramApiId\"")
         buildConfigField("String", "TELEGRAM_API_HASH", "\"$telegramApiHash\"")
+        
+        val paxsenixApiKey = localProperties.getProperty("PAXSENIX_API_KEY", "")
+        buildConfigField("String", "PAXSENIX_API_KEY", "\"$paxsenixApiKey\"")
 
         val dropboxAppKey = localProperties.getProperty("DROPBOX_APP_KEY", "")
         buildConfigField("String", "DROPBOX_APP_KEY", "\"$dropboxAppKey\"")

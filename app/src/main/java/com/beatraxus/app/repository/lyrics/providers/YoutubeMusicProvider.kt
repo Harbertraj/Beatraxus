@@ -13,11 +13,14 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 class YoutubeMusicProvider : LyricsProvider {
     override val id = "youtube_music"
     override val displayName = "YouTube Music"
-    override val description = "Synced lyrics from YouTube"
+    override val description = "Synced lyrics from YouTube (Disabled)"
     override val granularity = LyricsGranularity.LINE
     override val requiresVideoId = true
     override val experimental = false
-    override val isConfigured = true
+    
+    // Paxsenix removed their YouTube endpoints, disabling for now.
+    // InnerTube lyrics support would require `next` and `browse` calls.
+    override val isConfigured = false
 
     override suspend fun fetch(query: LyricsQuery): LyricsResult? = withContext(Dispatchers.IO) {
         val videoId = query.videoId

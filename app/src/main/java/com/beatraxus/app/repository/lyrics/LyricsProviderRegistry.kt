@@ -40,7 +40,6 @@ object LyricsProviderRegistry {
         "lyricsplus",
         "unison",
         "simpmusic",
-        "youtube_music",
         "lrclib",
         "kugou"
     )

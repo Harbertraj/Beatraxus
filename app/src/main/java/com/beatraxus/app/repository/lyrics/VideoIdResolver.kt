@@ -1,8 +1,12 @@
 package com.beatraxus.app.repository.lyrics
 
 import android.util.Log
+import com.google.gson.JsonElement
+import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.MediaType
+import okhttp3.RequestBody
 import kotlin.math.abs
 
 object VideoIdResolver {
@@ -44,27 +48,41 @@ object VideoIdResolver {
             val primaryArtist = query.primaryArtist
             val searchQuery = "$cleanTitle $primaryArtist".trim()
 
-            val url = "https://lyrics.paxsenix.org/youtube/search".toHttpUrlOrNull()
-                ?.newBuilder()
-                ?.addQueryParameter("q", searchQuery)
-                ?.build() ?: return null
+            val url = "https://music.youtube.com/youtubei/v1/search".toHttpUrlOrNull() ?: return null
+            val jsonBody = """
+                {
+                  "context": {
+                    "client": {
+                      "clientName": "WEB_REMIX",
+                      "clientVersion": "1.20240101.01.00"
+                    }
+                  },
+                  "query": "$searchQuery",
+                  "params": "EgWKAQIIAWoMEAMQBBAJEA4QChAF"
+                }
+            """.trimIndent()
+            val mediaType = MediaType.parse("application/json")
+            val requestBody = RequestBody.create(mediaType, jsonBody.toByteArray())
 
-            val res = LyricsHttp.get(url, timeoutMs = 5000L)
+            val res = LyricsHttp.post(url, requestBody, timeoutMs = 5000L)
             val body = res.body ?: run {
                 putInCache(key, null)
                 return null
             }
 
-            val array = JsonParser.parseString(body).asJsonArray
+            val root = JsonParser.parseString(body).asJsonObject
+            val items = findMusicItems(root)
+
             var bestVideoId: String? = null
             var bestScore = 0.0
 
-            for (i in 0 until array.size()) {
-                val item = array[i].asJsonObject
-                val vId = item.get("videoId")?.asString ?: item.get("video_id")?.asString ?: continue
-                val candTitle = item.get("title")?.asString ?: ""
-                val author = item.get("author")?.asString ?: ""
-                val durationStr = item.get("duration")?.asString
+            for (item in items) {
+                val vId = extractVideoId(item) ?: continue
+                val candTitle = extractText(item, 0)
+                val candArtistDuration = extractText(item, 1) // e.g. "Artist • Album • 3:45"
+                
+                val author = candArtistDuration.split(" • ").firstOrNull() ?: ""
+                val durationStr = candArtistDuration.split(" • ").lastOrNull()
 
                 val candDurationSec = parseDurationSec(durationStr) ?: continue
                 val durationDiffSec = abs(candDurationSec - query.durationSec)
@@ -101,6 +119,43 @@ object VideoIdResolver {
         } catch (e: Throwable) {
             Log.w(TAG, "Failed to resolve videoId: ${e.message}")
             return null
+        }
+    }
+
+    private fun findMusicItems(root: JsonElement): List<JsonObject> {
+        val list = mutableListOf<JsonObject>()
+        fun recurse(el: JsonElement) {
+            if (el.isJsonObject) {
+                val obj = el.asJsonObject
+                if (obj.has("musicResponsiveListItemRenderer")) {
+                    list.add(obj.getAsJsonObject("musicResponsiveListItemRenderer"))
+                }
+                obj.entrySet().forEach { recurse(it.value) }
+            } else if (el.isJsonArray) {
+                el.asJsonArray.forEach { recurse(it) }
+            }
+        }
+        recurse(root)
+        return list
+    }
+
+    private fun extractVideoId(item: JsonObject): String? {
+        return try {
+            item.getAsJsonObject("playlistItemData")?.get("videoId")?.asString
+        } catch (_: Exception) { null }
+    }
+
+    private fun extractText(item: JsonObject, columnIndex: Int): String {
+        return try {
+            val columns = item.getAsJsonArray("flexColumns") ?: return ""
+            if (columnIndex >= columns.size()) return ""
+            val runs = columns[columnIndex].asJsonObject
+                .getAsJsonObject("musicResponsiveListItemFlexColumnRenderer")
+                ?.getAsJsonObject("text")
+                ?.getAsJsonArray("runs") ?: return ""
+            runs.map { it.asJsonObject.get("text")?.asString ?: "" }.joinToString("")
+        } catch (_: Exception) {
+            ""
         }
     }
 
