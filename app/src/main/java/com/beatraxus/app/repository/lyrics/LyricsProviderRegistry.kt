@@ -19,13 +19,13 @@ object LyricsProviderRegistry {
     )
 
     val defaultOrder: List<String> = listOf(
+        "lrclib",
         "paxsenix",
         "betterlyrics",
         "lyricsplus",
         "unison",
         "simpmusic",
         "youtube_music",
-        "lrclib",
         "kugou",
         "megalobiz",
         "binilyrics",

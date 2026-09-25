@@ -124,7 +124,7 @@ class AppearancePreferences(context: Context) {
                 finalEnabled
             },
             
-            lyricsShowAll = preferences[LYRICS_SHOW_ALL] ?: false
+            lyricsShowAll = preferences[LYRICS_SHOW_ALL] ?: true
         )
     }
 

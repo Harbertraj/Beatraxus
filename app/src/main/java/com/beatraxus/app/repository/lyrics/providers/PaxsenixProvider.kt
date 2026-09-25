@@ -20,7 +20,7 @@ import kotlin.math.abs
 
 class PaxsenixProvider : LyricsProvider {
     override val id = "paxsenix"
-    override val displayName = "PaxSenix (Apple Music)"
+    override val displayName = "PaxSenix"
     override val description = "Apple Music word timings proxy"
     override val granularity = LyricsGranularity.WORD
     override val requiresVideoId = false
