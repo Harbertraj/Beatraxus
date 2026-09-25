@@ -17,8 +17,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -124,11 +122,11 @@ fun SubtitleSettingsSection(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 AutoSearchMode.entries.forEach { mode ->
                     val isSelected = subUiState.autoSearchMode == mode
-                    FilterChip(
+                    MxFilterChip(
                         selected = isSelected,
                         onClick = { subtitleViewModel.setAutoSearchMode(mode) },
-                        colors = FilterChipDefaults.filterChipColors(selectedContainerColor = mxOrange, selectedLabelColor = Color.Black),
-                        label = { Text(mode.displayName, fontSize = 12.sp) }
+                        label = mode.displayName,
+                        fontSize = 12.sp
                     )
                 }
             }

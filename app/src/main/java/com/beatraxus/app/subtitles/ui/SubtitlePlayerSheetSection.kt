@@ -384,14 +384,10 @@ fun SubtitlePlayerSheetSection(
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 subUiState.selectedLanguages.forEach { langCode ->
-                    FilterChip(
+                    MxFilterChip(
                         selected = true,
                         onClick = { showLanguagePicker = true },
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = mxOrange,
-                            selectedLabelColor = Color.Black
-                        ),
-                        label = { Text(langCode.uppercase()) }
+                        label = langCode.uppercase()
                     )
                 }
             }
@@ -488,11 +484,10 @@ fun SubtitlePlayerSheetSection(
             ) {
                 val sizePercents = listOf(75, 90, 100, 110, 125, 150)
                 sizePercents.forEach { pct ->
-                    FilterChip(
+                    MxFilterChip(
                         selected = videoUiState.subtitleSizePercent == pct,
                         onClick = { videoViewModel.setSubtitleSizePercent(pct) },
-                        colors = FilterChipDefaults.filterChipColors(selectedContainerColor = mxOrange, selectedLabelColor = Color.Black),
-                        label = { Text("$pct%") }
+                        label = "$pct%"
                     )
                 }
             }
@@ -509,11 +504,10 @@ fun SubtitlePlayerSheetSection(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 val edges = listOf(0 to "None", 1 to "Outline", 2 to "Shadow")
                 edges.forEach { (edgeVal, edgeLabel) ->
-                    FilterChip(
+                    MxFilterChip(
                         selected = videoUiState.subtitleEdgeType == edgeVal,
                         onClick = { videoViewModel.setSubtitleEdgeType(edgeVal) },
-                        colors = FilterChipDefaults.filterChipColors(selectedContainerColor = mxOrange, selectedLabelColor = Color.Black),
-                        label = { Text(edgeLabel) }
+                        label = edgeLabel
                     )
                 }
             }
@@ -524,11 +518,10 @@ fun SubtitlePlayerSheetSection(
             Text("Position Preset", color = Color.White.copy(0.7f), fontSize = 12.sp)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 SubtitlePositionPreset.entries.forEach { preset ->
-                    FilterChip(
+                    MxFilterChip(
                         selected = videoUiState.subtitlePositionPreset == preset,
                         onClick = { videoViewModel.setSubtitlePositionPreset(preset) },
-                        colors = FilterChipDefaults.filterChipColors(selectedContainerColor = mxOrange, selectedLabelColor = Color.Black),
-                        label = { Text(preset.displayName) }
+                        label = preset.displayName
                     )
                 }
             }

@@ -49,6 +49,7 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import com.beatraxus.app.subtitles.ui.MxFilterChip
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -82,6 +83,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
+import com.beatraxus.app.model.SavedEqPreset
 import com.beatraxus.app.util.PlaybackGlobalState
 import com.beatraxus.app.viewmodel.VideoAspectRatio
 import com.beatraxus.app.viewmodel.VideoPlayerUiState
@@ -120,11 +122,19 @@ fun VideoPlayerScreen(
     // Auto-pause on background
     DisposableEffect(lifecycleOwner, uiState.isBackgroundPlayEnabled, isInPiP) {
         val observer = LifecycleEventObserver { _, event ->
+            val isReconfiguring = activity?.isChangingConfigurations == true
             if (event == Lifecycle.Event.ON_PAUSE) {
                 // Don't pause if reconfiguring (e.g. orientation change), in PiP, or if Background Play is enabled
-                val isReconfiguring = activity?.isChangingConfigurations == true
                 if (uiState.isPlaying && !uiState.isBackgroundPlayEnabled && !isInPiP && !isReconfiguring) {
                     viewModel.togglePlayPause()
+                }
+            } else if (event == Lifecycle.Event.ON_STOP) {
+                if (!isReconfiguring && !isInPiP) {
+                    activity?.window?.let { window ->
+                        val layoutParams = window.attributes
+                        layoutParams.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+                        window.attributes = layoutParams
+                    }
                 }
             }
         }
@@ -238,6 +248,7 @@ fun VideoPlayerScreen(
         activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         
         val window = activity?.window
+        val originalBrightness = window?.attributes?.screenBrightness
         if (window != null) {
             val controller = WindowCompat.getInsetsController(window, window.decorView)
             controller.hide(WindowInsetsCompat.Type.systemBars())
@@ -253,6 +264,10 @@ fun VideoPlayerScreen(
                 controller.show(WindowInsetsCompat.Type.systemBars())
                 controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_DEFAULT
                 window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                
+                val layoutParams = window.attributes
+                layoutParams.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+                window.attributes = layoutParams
             }
         }
     }
@@ -1324,16 +1339,15 @@ fun VideoSettingsSheetContent(
                     FilterChip(
                         selected = uiState.selectedPreset == "Manual",
                         onClick = { viewModel.setEqPreset(com.beatraxus.app.model.SavedEqPreset("Manual", List(10) { com.beatraxus.app.model.ParametricEqBand(it, true, 1000f, 0f) })) },
-                        label = { Text("Manual") },
+                        label = { Text("Manual", color = if (uiState.selectedPreset == "Manual") Color.White else Color.Unspecified) },
                         colors = FilterChipDefaults.filterChipColors(selectedContainerColor = Color.White.copy(0.2f), selectedLabelColor = Color.White)
                     )
                 }
-                items(uiState.availablePresets) { preset: com.beatraxus.app.model.SavedEqPreset ->
-                    FilterChip(
+                items(uiState.availablePresets) { preset: SavedEqPreset ->
+                    MxFilterChip(
                         selected = uiState.selectedPreset == preset.name,
                         onClick = { viewModel.setEqPreset(preset) },
-                        label = { Text(preset.name) },
-                        colors = FilterChipDefaults.filterChipColors(selectedContainerColor = mxOrange, selectedLabelColor = Color.Black)
+                        label = preset.name
                     )
                 }
             }

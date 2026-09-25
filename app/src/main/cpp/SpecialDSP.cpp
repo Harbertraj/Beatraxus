@@ -508,7 +508,6 @@ class EqEngine {
     std::atomic<bool> recomputeRequested{false};
     std::atomic<double> autoHeadroomGain{1.0};
     std::atomic<double> autoHeadroomMeterDb{0.0};
-    std::atomic<bool> headroomLegacyModeEnabled{false};
     static constexpr double kHeadroomCompensationFactor = 0.35;
     static constexpr double kMaxHeadroomReductionDb = 4.0;
 
@@ -525,19 +524,10 @@ class EqEngine {
             // 2.7: Compute headroom
             double peakDb = computePeakGainDb(lastSr.load());
             autoHeadroomMeterDb.store(peakDb > 0.0 ? peakDb : 0.0, std::memory_order_release);
-            if (headroomLegacyModeEnabled.load(std::memory_order_acquire)) {
-                // OLD algorithm: partial, capped compensation — never fully cancels
-                // the theoretical peak, so a single EQ boost doesn't feel like a
-                // blanket volume cut. The LookaheadLimiter still catches genuine
-                // transient overs dynamically.
-                double autoHeadroomDb = (peakDb > 0.0)
-                    ? -std::min(peakDb * kHeadroomCompensationFactor, kMaxHeadroomReductionDb)
-                    : 0.0;
-                autoHeadroomGain.store(std::pow(10.0, autoHeadroomDb / 20.0), std::memory_order_release);
-            } else {
-                // NEW algorithm: informational only, no audio gain change.
-                autoHeadroomGain.store(1.0, std::memory_order_release);
-            }
+            double autoHeadroomDb = (peakDb > 0.0)
+                ? -std::min(peakDb * kHeadroomCompensationFactor, kMaxHeadroomReductionDb)
+                : 0.0;
+            autoHeadroomGain.store(std::pow(10.0, autoHeadroomDb / 20.0), std::memory_order_release);
         }
     }
 
@@ -589,9 +579,6 @@ public:
     }
 
     void setEnabled(bool e) { enabled = e; }
-    void setHeadroomLegacyMode(bool enabled) {
-        headroomLegacyModeEnabled.store(enabled, std::memory_order_release);
-    }
     void setPhaseMode(bool lp) {
         if (linearPhase != lp) {
             linearPhase = lp;
@@ -1953,11 +1940,6 @@ public:
     void setEqPhaseMode(bool linearPhase) { eq.setPhaseMode(linearPhase); }
     void setHeadroomManagement(bool enabled) { headroomManagementEnabled = enabled; }
     void setNoHeadroomGain(bool enabled) { noHeadroomGainEnabled = enabled; }
-    void setHeadroomLegacyMode(bool enabled) {
-        eq.setHeadroomLegacyMode(enabled);
-        aiEq.setHeadroomLegacyMode(enabled);
-        simEq.setHeadroomLegacyMode(enabled);
-    }
     float getAutoHeadroomDb() {
         if (!headroomManagementEnabled) return 0.0f;
         double d = eq.getAutoHeadroomMeterDb();
@@ -2475,7 +2457,6 @@ JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetEqEnabled(JNI
 JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetEqPhaseMode(JNIEnv* env, jobject thiz, jlong handle, jboolean linearPhase) { if (handle) ((DSP*)handle)->setEqPhaseMode(linearPhase); }
 JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetHeadroomManagement(JNIEnv* env, jobject thiz, jlong handle, jboolean enabled) { if (handle) ((DSP*)handle)->setHeadroomManagement(enabled); }
 JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetNoHeadroomGain(JNIEnv* env, jobject thiz, jlong handle, jboolean enabled) { if (handle) ((DSP*)handle)->setNoHeadroomGain(enabled); }
-JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetHeadroomLegacyMode(JNIEnv* env, jobject thiz, jlong handle, jboolean enabled) { if (handle) ((DSP*)handle)->setHeadroomLegacyMode(enabled); }
 JNIEXPORT jfloat JNICALL Java_com_beatraxus_app_engine_NativeDsp_nGetHeadroomDb(JNIEnv* env, jobject thiz, jlong handle) { return handle ? ((DSP*)handle)->getAutoHeadroomDb() : 0.0f; }
 JNIEXPORT jint JNICALL Java_com_beatraxus_app_engine_NativeDsp_nGetEqLatencyFrames(JNIEnv* env, jobject thiz, jlong handle) { return handle ? ((DSP*)handle)->getEqLatencyFrames() : 0; }
 

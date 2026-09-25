@@ -8,6 +8,7 @@ import android.content.IntentFilter
 import android.content.pm.ActivityInfo
 import android.graphics.Color
 import android.media.AudioManager
+import android.media.audiofx.AudioEffect
 import android.net.Uri
 import android.util.Log
 import android.view.Surface
@@ -173,6 +174,7 @@ class VideoPlayerViewModel(
                 val newVol = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
                 if (!_uiState.value.isVolumeBoost || newVol < _uiState.value.volume) {
                     _uiState.update { it.copy(volume = newVol) }
+                    updateLoudness()
                 }
             }
         }
@@ -369,6 +371,10 @@ class VideoPlayerViewModel(
                     }
                 }
                 checkBackgroundTasks()
+            }
+
+            override fun onAudioSessionIdChanged(audioSessionId: Int) {
+                setupLoudnessEnhancer(audioSessionId)
             }
 
             override fun onPositionDiscontinuity(old: Player.PositionInfo, new: Player.PositionInfo, reason: Int) {
@@ -765,7 +771,7 @@ class VideoPlayerViewModel(
     private var lastAudioSessionId: Int = -1
 
     private fun setupLoudnessEnhancer(audioSessionId: Int) {
-        if (audioSessionId == android.media.audiofx.AudioEffect.ERROR_BAD_VALUE) return
+        if (audioSessionId <= 0 || audioSessionId == AudioEffect.ERROR_BAD_VALUE) return
         if (audioSessionId == lastAudioSessionId && loudnessEnhancer != null && equalizer != null) return
         
         try {
@@ -773,7 +779,7 @@ class VideoPlayerViewModel(
             
             loudnessEnhancer?.release()
             loudnessEnhancer = android.media.audiofx.LoudnessEnhancer(audioSessionId).apply {
-                enabled = true
+                // Enabled state will be managed by updateLoudness
             }
             updateLoudness()
 
@@ -822,17 +828,24 @@ class VideoPlayerViewModel(
         val state = _uiState.value
         val systemMax = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
         
-        if (!state.isVolumeBoost) {
+        if (!state.isVolumeBoost || state.volume <= systemMax) {
+            loudnessEnhancer?.enabled = false
             loudnessEnhancer?.setTargetGain(0)
             return
         }
         
-        if (state.volume > systemMax) {
-            val gain = (state.volume - systemMax) * 200 
-            loudnessEnhancer?.setTargetGain(gain)
-        } else {
-            loudnessEnhancer?.setTargetGain(500) 
+        val MAX_BOOST_MB = 800
+        var gainMb = ((state.volume - systemMax).toFloat() / systemMax * MAX_BOOST_MB).toInt()
+        
+        if (state.isEqEnabled && equalizer != null) {
+            val maxBandGainMb = state.eqGains.maxOrNull()?.let { (it * 100).toInt() } ?: 0
+            if (maxBandGainMb > 0) {
+                gainMb = (gainMb - maxBandGainMb).coerceAtLeast(0)
+            }
         }
+        
+        loudnessEnhancer?.enabled = gainMb > 0
+        loudnessEnhancer?.setTargetGain(gainMb)
     }
 
     fun setVolume(volume: Int) {
