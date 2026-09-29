@@ -412,22 +412,17 @@ fun VideoPlayerScreen(
                 val contentFrame = view.findViewById<AspectRatioFrameLayout>(androidx.media3.ui.R.id.exo_content_frame)
                 
                 view.resizeMode = when (uiState.aspectRatio) {
-                    VideoAspectRatio.ORIGINAL -> {
-                        contentFrame?.setAspectRatio(0f)
-                        player?.videoScalingMode = C.VIDEO_SCALING_MODE_SCALE_TO_FIT
-                        AspectRatioFrameLayout.RESIZE_MODE_FIT
-                    }
                     VideoAspectRatio.FIT -> {
                         contentFrame?.setAspectRatio(0f)
                         player?.videoScalingMode = C.VIDEO_SCALING_MODE_SCALE_TO_FIT
                         AspectRatioFrameLayout.RESIZE_MODE_FIT
                     }
-                    VideoAspectRatio.FILL, VideoAspectRatio.STRETCH -> {
+                    VideoAspectRatio.FILL -> {
                         contentFrame?.setAspectRatio(0f)
                         player?.videoScalingMode = C.VIDEO_SCALING_MODE_SCALE_TO_FIT
                         AspectRatioFrameLayout.RESIZE_MODE_FILL
                     }
-                    VideoAspectRatio.ZOOM, VideoAspectRatio.CROP -> {
+                    VideoAspectRatio.ZOOM -> {
                         contentFrame?.setAspectRatio(0f)
                         player?.videoScalingMode = C.VIDEO_SCALING_MODE_SCALE_TO_FIT_WITH_CROPPING
                         AspectRatioFrameLayout.RESIZE_MODE_ZOOM
@@ -616,14 +611,11 @@ fun VideoPlayerScreen(
                         onTimeClick = { viewModel.toggleTimeDisplay() },
                         onAspectRatioClick = { 
                             val nextRatio = when (uiState.aspectRatio) {
-                                VideoAspectRatio.ORIGINAL -> VideoAspectRatio.FIT
                                 VideoAspectRatio.FIT -> VideoAspectRatio.FILL
                                 VideoAspectRatio.FILL -> VideoAspectRatio.ZOOM
-                                VideoAspectRatio.ZOOM -> VideoAspectRatio.STRETCH
-                                VideoAspectRatio.STRETCH -> VideoAspectRatio.CROP
-                                VideoAspectRatio.CROP -> VideoAspectRatio.FOUR_THREE
+                                VideoAspectRatio.ZOOM -> VideoAspectRatio.FOUR_THREE
                                 VideoAspectRatio.FOUR_THREE -> VideoAspectRatio.SIXTEEN_NINE
-                                VideoAspectRatio.SIXTEEN_NINE -> VideoAspectRatio.ORIGINAL
+                                VideoAspectRatio.SIXTEEN_NINE -> VideoAspectRatio.FIT
                             }
                             viewModel.setAspectRatio(nextRatio)
                         },
@@ -1539,6 +1531,57 @@ fun VideoSettingsSheetContent(
                 videoViewModel = viewModel,
                 subtitleViewModel = subtitleViewModel,
                 onOpenAuthDialog = { }
+            )
+        }
+
+        // Playback Speed Section
+        if (activeSheetType == PlayerSheetType.SPEED) {
+            val speeds = listOf(0.25f, 0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f, 3.0f)
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                speeds.forEach { speed ->
+                    val isSelected = uiState.playbackSpeed == speed
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(
+                                if (isSelected) mxOrange.copy(alpha = 0.2f)
+                                else Color.White.copy(alpha = 0.06f)
+                            )
+                            .border(
+                                width = 1.dp,
+                                color = if (isSelected) mxOrange.copy(alpha = 0.8f) else Color.White.copy(alpha = 0.08f),
+                                shape = RoundedCornerShape(12.dp)
+                            )
+                            .clickable { onSpeedSelect(speed) }
+                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "${speed}x",
+                            color = Color.White,
+                            fontSize = 16.sp,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                        )
+                        if (isSelected) {
+                            Icon(
+                                imageVector = Icons.Rounded.Check,
+                                contentDescription = "Selected",
+                                tint = mxOrange,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // Sleep Timer Section
+        if (activeSheetType == PlayerSheetType.SLEEP_TIMER) {
+            SleepTimerSheetContent(
+                uiState = uiState,
+                viewModel = viewModel
             )
         }
     }

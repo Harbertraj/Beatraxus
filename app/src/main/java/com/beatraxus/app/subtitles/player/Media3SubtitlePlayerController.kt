@@ -62,8 +62,10 @@ class Media3SubtitlePlayerController(
                 if (currentItem.mediaId != videoId) return@withContext
 
                 val trackId = "bx_ext_$subtitleId"
+                val expectedUri = Uri.fromFile(file)
                 
-                if (currentItem.localConfiguration?.subtitleConfigurations?.any { it.id == trackId } == true) {
+                val existingConfig = currentItem.localConfiguration?.subtitleConfigurations?.find { it.id == trackId }
+                if (existingConfig != null && existingConfig.uri == expectedUri) {
                     _activeExternalTrackId.value = trackId
                     _activeExternalSubtitleName.value = label
                     _isDelaySupported.value = true

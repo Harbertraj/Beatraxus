@@ -109,7 +109,12 @@ fun OpenSubtitlesAuthDialog(
                     }
                 },
                 enabled = username.isNotBlank() && password.isNotBlank(),
-                colors = ButtonDefaults.buttonColors(containerColor = mxOrange, contentColor = Color.Black)
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = mxOrange,
+                    contentColor = Color.Black,
+                    disabledContainerColor = mxOrange.copy(alpha = 0.5f),
+                    disabledContentColor = Color.Black
+                )
             ) {
                 Text("Sign In", fontWeight = FontWeight.Bold)
             }

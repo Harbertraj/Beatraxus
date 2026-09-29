@@ -187,7 +187,12 @@ fun SubtitleSettingsSection(
                 Button(
                     onClick = { showAuthDialog = true },
                     enabled = BuildConfig.OPENSUBTITLES_API_KEY.isNotBlank(),
-                    colors = ButtonDefaults.buttonColors(containerColor = mxOrange, contentColor = Color.Black)
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = mxOrange,
+                        contentColor = Color.Black,
+                        disabledContainerColor = mxOrange.copy(alpha = 0.5f),
+                        disabledContentColor = Color.Black
+                    )
                 ) {
                     Text("Sign In", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 }

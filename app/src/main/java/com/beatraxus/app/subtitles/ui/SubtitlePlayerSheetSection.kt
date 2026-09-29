@@ -337,7 +337,12 @@ fun SubtitlePlayerSheetSection(
                 },
                 enabled = BuildConfig.OPENSUBTITLES_API_KEY.isNotBlank(),
                 modifier = Modifier.weight(1f),
-                colors = ButtonDefaults.buttonColors(containerColor = mxOrange, contentColor = Color.Black)
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = mxOrange,
+                    contentColor = Color.Black,
+                    disabledContainerColor = mxOrange.copy(alpha = 0.5f),
+                    disabledContentColor = Color.Black
+                )
             ) {
                 Icon(Icons.Rounded.Search, null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(6.dp))
@@ -476,20 +481,22 @@ fun SubtitlePlayerSheetSection(
 
             Spacer(Modifier.height(10.dp))
 
-            // Size Presets
-            Text("Size Presets", color = Color.White.copy(0.7f), fontSize = 12.sp)
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                val sizePercents = listOf(75, 90, 100, 110, 125, 150)
-                sizePercents.forEach { pct ->
-                    MxFilterChip(
-                        selected = videoUiState.subtitleSizePercent == pct,
-                        onClick = { videoViewModel.setSubtitleSizePercent(pct) },
-                        label = "$pct%"
-                    )
-                }
+            // Subtitle Size
+            Text("Size", color = Color.White.copy(0.7f), fontSize = 12.sp)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("${videoUiState.subtitleSizePercent}%", color = Color.White, fontSize = 13.sp, modifier = Modifier.width(48.dp))
+                Slider(
+                    value = videoUiState.subtitleSizePercent.toFloat(),
+                    onValueChange = { videoViewModel.setSubtitleSizePercent(it.toInt()) },
+                    valueRange = 50f..200f,
+                    steps = 14,
+                    colors = SliderDefaults.colors(
+                        thumbColor = mxOrange,
+                        activeTrackColor = mxOrange,
+                        inactiveTrackColor = Color.White.copy(0.2f)
+                    ),
+                    modifier = Modifier.weight(1f)
+                )
             }
 
             Spacer(Modifier.height(10.dp))

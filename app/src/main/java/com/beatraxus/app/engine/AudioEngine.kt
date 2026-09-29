@@ -723,6 +723,8 @@ class AudioEngine(
         private var startFrameOffset = output.playbackPositionFrames()
         private var lastOutputRate = 0
         private var lastOutputBitDepth = 0
+        @Volatile
+        private var hasOutputStarted = false
         val dspLock = ReentrantReadWriteLock()
 
         @Volatile
@@ -866,9 +868,13 @@ class AudioEngine(
                 val targetBitDepth = if (dspConfig.outputMode == OutputMode.HI_RES) 32 else dspConfig.sampleFormat.bitDepth
 
                 val outputConfigChanged = targetRate != lastOutputRate || targetBitDepth != lastOutputBitDepth
+                val hardwareConfigChanged = targetRate != output.outputSampleRate() || targetBitDepth != output.outputBitDepth()
 
-                if (formatChanged || outputConfigChanged) {
+                if (hasOutputStarted && (formatChanged || outputConfigChanged)) {
                     ringBuffer.clear()
+                }
+                
+                if ((hasOutputStarted && outputConfigChanged) || (!hasOutputStarted && hardwareConfigChanged)) {
                     output.flush()
                 }
 
@@ -904,6 +910,7 @@ class AudioEngine(
                     output.start()
                 }
 
+                hasOutputStarted = true
                 publishDspState(format)
             } else if (nextSession?.sessionId == this.sessionId) {
                 pcmFormat = format

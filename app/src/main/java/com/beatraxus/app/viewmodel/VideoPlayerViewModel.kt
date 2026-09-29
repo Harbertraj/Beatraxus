@@ -127,12 +127,9 @@ data class VideoTrackInfo(
 )
 
 enum class VideoAspectRatio(val displayName: String) {
-    ORIGINAL("Original"),
     FIT("Fit to screen"),
     FILL("Fill screen"),
     ZOOM("Zoom"),
-    STRETCH("Stretch"),
-    CROP("Crop"),
     FOUR_THREE("4:3"),
     SIXTEEN_NINE("16:9")
 }
@@ -184,8 +181,14 @@ class VideoPlayerViewModel(
         volume = (application.getSystemService(Context.AUDIO_SERVICE) as AudioManager).getStreamVolume(AudioManager.STREAM_MUSIC),
         maxVolume = (application.getSystemService(Context.AUDIO_SERVICE) as AudioManager).getStreamMaxVolume(AudioManager.STREAM_MUSIC),
         isEqEnabled = application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE).getBoolean("video_eq_enabled", true),
-        aspectRatio = VideoAspectRatio.entries.find { 
-            it.name == application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE).getString("video_aspect_ratio", VideoAspectRatio.FIT.name) 
+        aspectRatio = application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE).getString("video_aspect_ratio", VideoAspectRatio.FIT.name)?.let { name ->
+            val mappedName = when (name) {
+                "ORIGINAL" -> "FIT"
+                "STRETCH" -> "FILL"
+                "CROP" -> "ZOOM"
+                else -> name
+            }
+            VideoAspectRatio.entries.find { it.name == mappedName }
         } ?: VideoAspectRatio.FIT,
         showTotalTime = application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE).getBoolean("video_show_remaining_time", false),
         subtitleSize = application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE).getFloat("video_subtitle_size", 18f),
@@ -315,7 +318,13 @@ class VideoPlayerViewModel(
                     val recentlyPlayed = videoRecentlyPlayedDao.getRecentlyPlayedByVideoId(video.id)
                     val lastPos = recentlyPlayed?.lastPositionMs ?: 0L
                     val lastRatio = recentlyPlayed?.lastAspectRatio?.let { ratioName ->
-                        VideoAspectRatio.entries.find { it.name == ratioName }
+                        val mappedName = when (ratioName) {
+                            "ORIGINAL" -> "FIT"
+                            "STRETCH" -> "FILL"
+                            "CROP" -> "ZOOM"
+                            else -> ratioName
+                        }
+                        VideoAspectRatio.entries.find { it.name == mappedName }
                     } ?: VideoAspectRatio.FIT
                     
                     val lastAudio = recentlyPlayed?.lastAudioTrackIndex ?: -1

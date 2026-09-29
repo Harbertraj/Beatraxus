@@ -5,8 +5,8 @@ import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
-import okhttp3.MediaType
-import okhttp3.RequestBody
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 import kotlin.math.abs
 
 object VideoIdResolver {
@@ -61,8 +61,8 @@ object VideoIdResolver {
                   "params": "EgWKAQIIAWoMEAMQBBAJEA4QChAF"
                 }
             """.trimIndent()
-            val mediaType = MediaType.parse("application/json")
-            val requestBody = RequestBody.create(mediaType, jsonBody.toByteArray())
+            val mediaType = "application/json".toMediaType()
+            val requestBody = jsonBody.toRequestBody(mediaType)
 
             val res = LyricsHttp.post(url, requestBody, timeoutMs = 5000L)
             val body = res.body ?: run {
