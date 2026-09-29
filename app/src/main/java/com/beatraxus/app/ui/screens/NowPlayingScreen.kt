@@ -100,6 +100,7 @@ import com.beatraxus.app.model.PlayerUiState
 import com.beatraxus.app.repository.LyricsCandidate
 import com.beatraxus.app.repository.LyricsType
 import com.beatraxus.app.repository.lyrics.LyricsProviderRegistry
+import com.beatraxus.app.ui.components.PipelineSignalPathSheet
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
 import java.util.Locale
@@ -1579,16 +1580,6 @@ private fun QualityBadgeNeonPulse(
     }
 }
 
-data class PipelineOverlayState(
-    val codec: String,
-    val bitrateLabel: String,
-    val sampleRateLabel: String,
-    val bitDepthLabel: String,
-    val outputPath: String,
-    val summary: String,
-    val effectsLabel: String
-)
-
 @Composable
 fun AudioPipelineOverlay(
     song: Song,
@@ -1596,197 +1587,12 @@ fun AudioPipelineOverlay(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val overlayState = remember(song, uiState) {
-        buildPipelineOverlayState(song, uiState)
-    }
-
-    Box(
+    PipelineSignalPathSheet(
+        song = song,
+        uiState = uiState,
+        onDismiss = onDismiss,
         modifier = modifier
-            .clickable(onClick = onDismiss),
-        contentAlignment = Alignment.TopCenter
-    ) {
-        Surface(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 24.dp, vertical = 112.dp)
-                .clickable(onClick = {}),
-            shape = RoundedCornerShape(26.dp),
-            color = Color(0xEE121218),
-            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.12f)),
-            tonalElevation = 12.dp,
-            shadowElevation = 24.dp
-        ) {
-            Column(
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 18.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
-            ) {
-                Text(
-                    text = "AUDIO PIPELINE",
-                    modifier = Modifier.fillMaxWidth(),
-                    textAlign = TextAlign.Center,
-                    style = MaterialTheme.typography.titleMedium.copy(
-                        fontWeight = FontWeight.ExtraBold,
-                        fontSize = 16.sp,
-                        letterSpacing = 1.5.sp
-                    ),
-                    color = Color.White
-                )
-                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), color = Color.White.copy(0.05f))
-                
-                PipelineFlowDiagram(
-                    summary = overlayState.summary,
-                    sampleRateLabel = overlayState.sampleRateLabel,
-                    bitDepthLabel = overlayState.bitDepthLabel
-                )
-
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    if (overlayState.codec.isNotEmpty()) SpecBadge(Icons.Rounded.AudioFile, overlayState.codec)
-                    if (overlayState.bitrateLabel.isNotEmpty()) SpecBadge(Icons.Rounded.HighQuality, overlayState.bitrateLabel)
-                    if (overlayState.sampleRateLabel.isNotEmpty()) SpecBadge(Icons.Rounded.GraphicEq, overlayState.sampleRateLabel)
-                    if (overlayState.bitDepthLabel.isNotEmpty()) SpecBadge(Icons.Rounded.Memory, overlayState.bitDepthLabel)
-                }
-
-                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), color = Color.White.copy(0.05f))
-
-                PipelineInfoRow("Output Path", overlayState.outputPath)
-                if (overlayState.effectsLabel.isNotEmpty()) {
-                    PipelineInfoRow("Effects", overlayState.effectsLabel)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun PipelineFlowDiagram(
-    summary: String,
-    sampleRateLabel: String,
-    bitDepthLabel: String
-) {
-    val stages = remember(summary) { summary.split(" -> ", "→").map { it.trim() }.filter { it.isNotEmpty() } }
-    val hasSampleRateConversion = remember(sampleRateLabel) {
-        val parts = sampleRateLabel.split("->", "→")
-        parts.size > 1 && parts[0].trim() != parts[1].trim()
-    }
-    val hasBitDepthConversion = remember(bitDepthLabel) {
-        val parts = bitDepthLabel.split("->", "→")
-        parts.size > 1 && parts[0].trim() != parts[1].trim()
-    }
-
-    val green = Color(0xFF30D158)
-    val amber = Color(0xFFFFD60A)
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .horizontalScroll(rememberScrollState())
-            .padding(vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        stages.forEachIndexed { index, stage ->
-            val isConversion = when {
-                stage.contains("DSP", ignoreCase = true) -> true
-                stage.contains("Resampler", ignoreCase = true) -> true
-                stage.contains("Equalizer", ignoreCase = true) -> true
-                stage.contains("Mixer", ignoreCase = true) -> true
-                stage.contains("Hz", ignoreCase = true) && hasSampleRateConversion -> true
-                stage.contains("bit", ignoreCase = true) && hasBitDepthConversion -> true
-                else -> false
-            }
-            val color = if (isConversion) amber else green
-            val icon = when {
-                index == 0 -> Icons.Rounded.AudioFile
-                index == stages.lastIndex -> Icons.Rounded.SpeakerGroup
-                stage.contains("DSP", ignoreCase = true) || stage.contains("Equalizer", ignoreCase = true) -> Icons.Rounded.Tune
-                stage.contains("Resampler", ignoreCase = true) -> Icons.Rounded.GraphicEq
-                stage.contains("Native", ignoreCase = true) || stage.contains("HiFi", ignoreCase = true) -> Icons.Rounded.Memory
-                else -> Icons.Rounded.DeveloperBoard
-            }
-
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .border(1.5.dp, color.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
-                    .padding(horizontal = 10.dp, vertical = 6.dp)
-            ) {
-                Icon(imageVector = icon, contentDescription = null, tint = color, modifier = Modifier.size(16.dp))
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(
-                    text = stage,
-                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold, fontSize = 11.sp),
-                    color = Color.White
-                )
-            }
-
-            if (index < stages.lastIndex) {
-                Icon(
-                    imageVector = Icons.Rounded.ArrowForward,
-                    contentDescription = "to",
-                    tint = Color.White.copy(alpha = 0.3f),
-                    modifier = Modifier.size(16.dp)
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun SpecBadge(icon: ImageVector, text: String) {
-    Surface(
-        shape = RoundedCornerShape(16.dp),
-        color = Color.White.copy(alpha = 0.12f),
-        border = BorderStroke(1.dp, Brush.verticalGradient(listOf(Color.White.copy(0.2f), Color.Transparent)))
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            Icon(imageVector = icon, contentDescription = null, tint = Color.White.copy(alpha = 0.7f), modifier = Modifier.size(14.dp))
-            Text(
-                text = text.uppercase(Locale.US),
-                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontSize = 10.sp, letterSpacing = 0.5.sp),
-                color = Color.White,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
-    }
-}
-
-@Composable
-private fun PipelineInfoRow(label: String, value: String) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelMedium.copy(
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 12.sp
-            ),
-            color = Color.White.copy(alpha = 0.62f)
-        )
-        Spacer(Modifier.width(16.dp))
-        Text(
-            text = value,
-            style = MaterialTheme.typography.bodyMedium.copy(
-                fontWeight = FontWeight.Bold,
-                fontSize = 14.sp
-            ),
-            color = Color.White,
-            textAlign = TextAlign.End
-        )
-    }
+    )
 }
 
 @Composable
@@ -2383,62 +2189,7 @@ private fun fmtSleepTime(seconds: Int): String {
     return if (m > 0) "%d:%02d".format(m, s) else "%ds".format(s)
 }
 
-fun buildPipelineOverlayState(
-    song: Song,
-    uiState: com.beatraxus.app.model.PlayerUiState
-): PipelineOverlayState {
-    val codec = uiState.format.ifBlank { song.format }.ifBlank { "Unknown" }.uppercase(Locale.US)
-    val bitrate = if (uiState.bitrate > 0) uiState.bitrate else song.bitrate
-    val inputSampleRate = if (uiState.inputSampleRate > 0) uiState.inputSampleRate else song.sampleRateHz
-    val outputSampleRate = if (uiState.outputSampleRate > 0) uiState.outputSampleRate else inputSampleRate
-
-    val isMtkHiFi = uiState.outputMode == "HI_RES"
-    val outputPathLabel = if (isMtkHiFi) "MTK HI-FI" else "AAudio"
-
-    val effects = buildList {
-        addAll(uiState.pipelineActiveEffects.filter { !it.contains("MTK", ignoreCase = true) })
-        add("DVC ${if (uiState.pipelineDvcEnabled) "On" else "Off"}")
-        add(if (uiState.pipelineResamplerEnabled) uiState.pipelineResamplerType else "Bypass")
-        uiState.autoEqProfileName?.let { add("Profile $it") }
-    }.filter { it.isNotBlank() }.ifEmpty { listOf("None") }.joinToString(" | ")
-
-    val bitDepthLabel = buildString {
-        if (song.bitDepth > 0) append("${song.bitDepth}-bit")
-        else if (uiState.bitDepth > 0) append("${uiState.bitDepth}-bit")
-
-        if (uiState.outputBitDepth > 0 && uiState.outputBitDepth != song.bitDepth && uiState.outputBitDepth != uiState.bitDepth) {
-            append(" -> ${uiState.outputBitDepth}-bit")
-        }
-    }.ifBlank { "Unknown" }
-
-    val pipelineSummary = uiState.pipelineSummary.ifBlank {
-        "$codec -> PCM -> DSP -> ${if (uiState.pipelineResamplerEnabled) uiState.pipelineResamplerType else "Bypass"} -> $outputPathLabel"
-    }
-
-    return PipelineOverlayState(
-        codec = codec,
-        bitrateLabel = formatPipelineBitrate(bitrate),
-        sampleRateLabel = "${formatPipelineSampleRate(inputSampleRate)} -> ${formatPipelineSampleRate(outputSampleRate)}",
-        bitDepthLabel = bitDepthLabel,
-        outputPath = outputPathLabel,
-        summary = pipelineSummary,
-        effectsLabel = effects
-    )
-}
-
-private fun formatPipelineBitrate(bitrate: Int): String {
-    if (bitrate <= 0) return "Unknown"
-    return "${bitrate / 1000} kbps"
-}
-
-private fun formatPipelineSampleRate(sampleRate: Int): String {
-    if (sampleRate <= 0) return "Unknown"
-    return if (sampleRate % 1000 == 0) {
-        "${sampleRate / 1000} kHz"
-    } else {
-        String.format(Locale.US, "%.1f kHz", sampleRate / 1000f)
-    }
-}
+// Removed old string-based Pipeline overlay builders
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
