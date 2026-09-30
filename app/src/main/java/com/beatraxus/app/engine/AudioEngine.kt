@@ -5,6 +5,7 @@ import android.os.Process
 import android.util.Log
 import android.media.AudioManager
 import android.media.AudioTrack
+import android.net.Uri
 import com.beatraxus.app.model.DspConfig
 import com.beatraxus.app.model.OutputMode
 import com.beatraxus.app.model.ResamplerMode
@@ -39,6 +40,16 @@ internal fun computeCrossfadeProgress(remainingMs: Long, crossfadeDurationS: Int
     if (crossfadeMs <= 0f) return 0f
     return (remainingMs / crossfadeMs).coerceIn(0f, 1f)
 }
+
+data class VideoRouteState(
+    val isActive: Boolean = false,
+    val uri: Uri? = null,
+    val audioTrackIndex: Int = 0,
+    val title: String = "",
+    val isPlaying: Boolean = false,
+    val positionMs: Long = 0L,
+    val error: String? = null
+)
 
 class AudioEngine(
     context: Context,
@@ -79,6 +90,157 @@ class AudioEngine(
 
     private val _playbackStateFlow = MutableStateFlow(PlaybackState())
     val playbackStateFlow = _playbackStateFlow.asStateFlow()
+
+    private val _videoRouteStateFlow = MutableStateFlow(VideoRouteState())
+    val videoRouteStateFlow = _videoRouteStateFlow.asStateFlow()
+
+    @Volatile
+    private var videoSession: PlaybackSession? = null
+
+    private fun isSessionPlaying(session: PlaybackSession): Boolean {
+        if (videoSession?.sessionId == session.sessionId) {
+            return _videoRouteStateFlow.value.isPlaying
+        }
+        return _playbackStateFlow.value.isPlaying
+    }
+
+    fun isVideoAudioActive(): Boolean = _videoRouteStateFlow.value.isActive
+
+    fun videoAudioPositionMs(): Long {
+        return videoSession?.currentRenderedPositionMs() ?: _videoRouteStateFlow.value.positionMs
+    }
+
+    fun videoAudioLatencyFrames(): Int {
+        return videoSession?.dspPipeline?.getLatencyFrames() ?: 0
+    }
+
+    fun playVideoAudio(
+        uri: Uri,
+        audioTrackIndex: Int,
+        startPositionMs: Long,
+        startPlaying: Boolean,
+        title: String
+    ) {
+        engineScope.launch {
+            controlMutex.withLock {
+                if (_playbackStateFlow.value.isPlaying) {
+                    userIntentPlaying.set(false)
+                    output.pause()
+                    _playbackStateFlow.update { it.copy(isPlaying = false) }
+                }
+
+                stopVideoAudioInternal()
+
+                val videoSong = Song(
+                    id = "video_route:${uri.hashCode()}_${audioTrackIndex}",
+                    uri = uri,
+                    title = title,
+                    artist = "Video Player",
+                    album = "Video Audio",
+                    durationMs = 0L,
+                    format = "video",
+                    sampleRateHz = 48000
+                )
+
+                val sessionId = currentSessionId.incrementAndGet()
+                val session = PlaybackSession(
+                    sessionId = sessionId,
+                    song = videoSong,
+                    initialStartPositionMs = startPositionMs,
+                    preferredAudioTrackIndex = audioTrackIndex
+                )
+
+                videoSession = session
+                activeSession = session
+
+                _videoRouteStateFlow.update {
+                    VideoRouteState(
+                        isActive = true,
+                        uri = uri,
+                        audioTrackIndex = audioTrackIndex,
+                        title = title,
+                        isPlaying = startPlaying,
+                        positionMs = startPositionMs,
+                        error = null
+                    )
+                }
+
+                if (startPlaying) {
+                    output.start()
+                }
+
+                engineScope.launch(Dispatchers.IO) {
+                    try {
+                        session.run()
+                    } catch (t: Throwable) {
+                        if (t !is CancellationException) {
+                            Log.e(TAG, "Video audio session $sessionId failed", t)
+                            controlMutex.withLock {
+                                _videoRouteStateFlow.update {
+                                    it.copy(isActive = false, isPlaying = false, error = t.message ?: "Session failed")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fun stopVideoAudio() {
+        engineScope.launch {
+            controlMutex.withLock {
+                stopVideoAudioInternal()
+                output.stop()
+            }
+        }
+    }
+
+    private fun stopVideoAudioInternal() {
+        val vSession = videoSession
+        if (vSession != null) {
+            vSession.stop()
+            if (activeSession?.sessionId == vSession.sessionId) {
+                activeSession = null
+            }
+            videoSession = null
+        }
+        _videoRouteStateFlow.update { VideoRouteState(isActive = false) }
+    }
+
+    fun pauseVideoAudio() {
+        engineScope.launch {
+            controlMutex.withLock {
+                if (_videoRouteStateFlow.value.isActive) {
+                    output.pause()
+                    _videoRouteStateFlow.update { it.copy(isPlaying = false) }
+                }
+            }
+        }
+    }
+
+    fun resumeVideoAudio() {
+        engineScope.launch {
+            controlMutex.withLock {
+                if (_videoRouteStateFlow.value.isActive) {
+                    _videoRouteStateFlow.update { it.copy(isPlaying = true) }
+                    output.start()
+                }
+            }
+        }
+    }
+
+    fun seekVideoAudio(positionMs: Long) {
+        engineScope.launch {
+            controlMutex.withLock {
+                val vSession = videoSession
+                if (vSession != null && _videoRouteStateFlow.value.isActive) {
+                    vSession.requestSeek(positionMs)
+                    _videoRouteStateFlow.update { it.copy(positionMs = positionMs) }
+                }
+            }
+        }
+    }
 
     private val _onCompletion = MutableSharedFlow<Unit>()
     val onCompletion = _onCompletion.asSharedFlow()
@@ -552,7 +714,7 @@ class AudioEngine(
                 continue
             }
 
-            if (!_playbackStateFlow.value.isPlaying) {
+            if (!isSessionPlaying(session)) {
                 delay(10)
                 continue
             }
@@ -569,12 +731,6 @@ class AudioEngine(
                         val newSessionId = activeSession?.sessionId ?: 0L
                         nextSession = null
                         currentSong = activeSession?.song
-                        // Without this, currentRenderedPositionMs() on the promoted session
-                        // computes elapsed frames against startFrameOffset captured back when
-                        // it was preloaded (seconds/minutes ago), producing a huge garbage
-                        // position (e.g. showing "3245:14" instead of the real elapsed time).
-                        // FIX: Use totalFramesWritten() (the write cursor) to anchor the new track
-                        // in the continuous stream, matching the point where its samples are inserted.
                         val currentHwPos = output.totalFramesWritten()
                         activeSession?.setStartFrameOffset(currentHwPos)
                         updateAudioStateForSong(currentSong!!)
@@ -607,7 +763,6 @@ class AudioEngine(
                             val remainingMs = outSession.song.durationMs - outSession.currentRenderedPositionMs()
                             val t = computeCrossfadeProgress(remainingMs, crossfadeDurationS)
 
-                            // Equal-power crossfade curves: sqrt(t) and sqrt(1-t)
                             for (i in 0 until outSampleCount step format.channels) {
                                 val gainOut = kotlin.math.sqrt(t)
                                 val gainIn = kotlin.math.sqrt(1f - t)
@@ -631,7 +786,7 @@ class AudioEngine(
                 val frames = processed.sampleCount / format.channels
                 var writtenFramesTotal = 0
 
-                while (writtenFramesTotal < frames && engineScope.isActive && activeSession?.sessionId == targetSessionId && _playbackStateFlow.value.isPlaying) {
+                while (writtenFramesTotal < frames && engineScope.isActive && activeSession?.sessionId == targetSessionId && isSessionPlaying(targetSession)) {
                     val written = if (processed.isDoP && processed.intData != null) {
                         output.writeInt(
                             data = processed.intData,
@@ -656,17 +811,18 @@ class AudioEngine(
             }
 
             // Still update position even if no samples were read (e.g. throttled).
-            if (engineScope.isActive && !isSeeking.get() && _playbackStateFlow.value.isPlaying) {
+            if (engineScope.isActive && !isSeeking.get() && isSessionPlaying(targetSession)) {
                 this@AudioEngine.positionMs = targetSession.currentRenderedPositionMs()
             }
 
-            if (session.decoderCompleted && session.ringBuffer.isEmpty() && _playbackStateFlow.value.isPlaying) {
-                // TRACK COMPLETED - Transition to next if available
+            if (session.decoderCompleted && session.ringBuffer.isEmpty() && isSessionPlaying(session)) {
+                // TRACK COMPLETED
                 controlMutex.withLock {
-                    if (activeSession?.sessionId == session.sessionId) {
+                    if (videoSession?.sessionId == session.sessionId) {
+                        stopVideoAudioInternal()
+                    } else if (activeSession?.sessionId == session.sessionId) {
                         val next = nextSession
                         if (next != null) {
-                            // Gapless transition (no crossfade active)
                             val oldFormat = session.pcmFormat
                             val newFormat = next.pcmFormat
 
@@ -679,8 +835,6 @@ class AudioEngine(
                             if (newFormat != null && oldFormat != newFormat) {
                                 next.configure(newFormat)
                             }
-                            // FIX: Use totalFramesWritten() (the write cursor) to anchor the next track
-                            // in the continuous stream, matching the point where its samples are inserted.
                             val framesAtTransition = output.totalFramesWritten()
                             next.setStartFrameOffset(framesAtTransition)
 
@@ -689,7 +843,6 @@ class AudioEngine(
                             _playbackStateFlow.update { it.copy(currentSong = currentSong, sessionId = newSessionId) }
                             _onCompletion.emit(Unit)
                         } else {
-                            // No next track ready
                             activeSession = null
                             userIntentPlaying.set(false)
                             _playbackStateFlow.update { it.copy(isPlaying = false) }
@@ -706,7 +859,8 @@ class AudioEngine(
     private inner class PlaybackSession(
         val sessionId: Long,
         val song: Song,
-        private val initialStartPositionMs: Long
+        private val initialStartPositionMs: Long,
+        val preferredAudioTrackIndex: Int? = null
     ) : DecoderSink, DecoderControl {
 
         val ringBuffer = FloatRingBuffer(RING_BUFFER_SAMPLES)
@@ -754,7 +908,11 @@ class AudioEngine(
                 while (isActive()) {
                     decoderCompleted = false
                     val result = decoder.decode(
-                        request = PlaybackRequest(song = song, startPositionMs = decodeStartMs),
+                        request = PlaybackRequest(
+                            song = song,
+                            startPositionMs = decodeStartMs,
+                            preferredAudioTrackIndex = preferredAudioTrackIndex
+                        ),
                         sink = this,
                         control = this
                     )
@@ -800,7 +958,13 @@ class AudioEngine(
                             logWarn("Decoder failed permanently: ${result.reason ?: "unknown"}")
                             ringBuffer.close()
                             controlMutex.withLock {
-                                if (activeSession?.sessionId == sessionId) {
+                                if (videoSession?.sessionId == sessionId) {
+                                    videoSession = null
+                                    if (activeSession?.sessionId == sessionId) {
+                                        activeSession = null
+                                    }
+                                    _videoRouteStateFlow.update { it.copy(isActive = false, isPlaying = false, error = result.reason ?: "Decoder failed") }
+                                } else if (activeSession?.sessionId == sessionId) {
                                     activeSession = null
                                     _playbackStateFlow.update { it.copy(isPlaying = false) }
                                 } else if (nextSession?.sessionId == sessionId) {
@@ -906,7 +1070,7 @@ class AudioEngine(
                 refreshDspPipeline(format)
 
                 // FIX: Only start output if we are actually in playing state
-                if (_playbackStateFlow.value.isPlaying) {
+                if (isSessionPlaying(this)) {
                     output.start()
                 }
 

@@ -1,0 +1,188 @@
+name: Release Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: 'Build Type'
+        required: true
+        default: 'release'
+        type: choice
+        options:
+          - release
+      enable_r8_timing:
+        description: 'Enable R8 timing breakdown (-Dcom.android.tools.r8.printtimes=1)'
+        required: false
+        default: false
+        type: boolean
+      enable_profile:
+        description: 'Enable Gradle build profile (--profile)'
+        required: false
+        default: false
+        type: boolean
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-release:
+    name: Build Signed Release APKs
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+
+    steps:
+      - name: Verify Required GitHub Secrets
+        env:
+          LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
+          LASTFM_SECRET: ${{ secrets.LASTFM_SECRET }}
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        run: |
+          MISSING=0
+          check_secret() {
+            if [ -z "$2" ]; then
+              echo "::error::Required GitHub secret '$1' is missing or empty."
+              MISSING=1
+            fi
+          }
+          check_secret "LASTFM_API_KEY" "$LASTFM_API_KEY"
+          check_secret "LASTFM_SECRET" "$LASTFM_SECRET"
+          check_secret "KEYSTORE_BASE64" "$KEYSTORE_BASE64"
+          check_secret "RELEASE_STORE_PASSWORD" "$RELEASE_STORE_PASSWORD"
+          check_secret "RELEASE_KEY_ALIAS" "$RELEASE_KEY_ALIAS"
+          check_secret "RELEASE_KEY_PASSWORD" "$RELEASE_KEY_PASSWORD"
+
+          if [ $MISSING -eq 1 ]; then
+            echo "::error::Missing required secrets. Configure them in Repository Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+          echo "All required secrets are present."
+
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17 (JetBrains JDK)
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'jetbrains'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Install Android SDK, NDK, and CMake
+        run: |
+          echo "Accepting Android SDK licenses..."
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null 2>&1 || true
+
+          echo "Installing required SDK components..."
+          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "ndk;29.0.14206865" \
+            "cmake;3.31.0"
+
+      - name: Create local.properties and Keystore File
+        env:
+          LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
+          LASTFM_SECRET: ${{ secrets.LASTFM_SECRET }}
+          RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PATH: ${{ runner.temp }}/release.keystore
+          TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
+          TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
+          PAXSENIX_API_KEY: ${{ secrets.PAXSENIX_API_KEY }}
+          DROPBOX_APP_KEY: ${{ secrets.DROPBOX_APP_KEY }}
+          ONEDRIVE_CLIENT_ID: ${{ secrets.ONEDRIVE_CLIENT_ID }}
+          BOX_CLIENT_ID: ${{ secrets.BOX_CLIENT_ID }}
+          BOX_CLIENT_SECRET: ${{ secrets.BOX_CLIENT_SECRET }}
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_WEB_CLIENT_ID: ${{ secrets.GOOGLE_WEB_CLIENT_ID }}
+          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+          OPENSUBTITLES_API_KEY: ${{ secrets.OPENSUBTITLES_API_KEY }}
+        run: |
+          # Decode keystore outside repo directory to avoid accidental git tracking or artifact capture
+          echo "$KEYSTORE_BASE64" | base64 -d > "$KEYSTORE_PATH"
+
+          # Write local.properties using printf without printing values to logs
+          printf "LASTFM_API_KEY=%s\n" "$LASTFM_API_KEY" > local.properties
+          printf "LASTFM_SECRET=%s\n" "$LASTFM_SECRET" >> local.properties
+          printf "RELEASE_STORE_FILE=%s\n" "$KEYSTORE_PATH" >> local.properties
+          printf "RELEASE_STORE_PASSWORD=%s\n" "$RELEASE_STORE_PASSWORD" >> local.properties
+          printf "RELEASE_KEY_ALIAS=%s\n" "$RELEASE_KEY_ALIAS" >> local.properties
+          printf "RELEASE_KEY_PASSWORD=%s\n" "$RELEASE_KEY_PASSWORD" >> local.properties
+          printf "TELEGRAM_API_ID=%s\n" "${TELEGRAM_API_ID:-0}" >> local.properties
+          printf "TELEGRAM_API_HASH=%s\n" "$TELEGRAM_API_HASH" >> local.properties
+          printf "PAXSENIX_API_KEY=%s\n" "$PAXSENIX_API_KEY" >> local.properties
+          printf "DROPBOX_APP_KEY=%s\n" "$DROPBOX_APP_KEY" >> local.properties
+          printf "ONEDRIVE_CLIENT_ID=%s\n" "$ONEDRIVE_CLIENT_ID" >> local.properties
+          printf "BOX_CLIENT_ID=%s\n" "$BOX_CLIENT_ID" >> local.properties
+          printf "BOX_CLIENT_SECRET=%s\n" "$BOX_CLIENT_SECRET" >> local.properties
+          printf "GOOGLE_CLIENT_ID=%s\n" "$GOOGLE_CLIENT_ID" >> local.properties
+          printf "GOOGLE_WEB_CLIENT_ID=%s\n" "$GOOGLE_WEB_CLIENT_ID" >> local.properties
+          printf "TMDB_API_KEY=%s\n" "$TMDB_API_KEY" >> local.properties
+          printf "OPENSUBTITLES_API_KEY=%s\n" "$OPENSUBTITLES_API_KEY" >> local.properties
+
+      - name: Build Signed Release APKs
+        env:
+          GRADLE_OPTS: "-Dorg.gradle.jvmargs=\"-Xmx10g -XX:+UseG1GC -XX:MaxMetaspaceSize=1024m -Dfile.encoding=UTF-8\""
+        run: |
+          EXTRA_ARGS="--no-daemon --stacktrace"
+
+          if [ "${{ inputs.enable_r8_timing }}" = "true" ]; then
+            EXTRA_ARGS="$EXTRA_ARGS -Dcom.android.tools.r8.printtimes=1"
+          fi
+
+          if [ "${{ inputs.enable_profile }}" = "true" ]; then
+            EXTRA_ARGS="$EXTRA_ARGS --profile"
+          fi
+
+          ./gradlew assembleRelease $EXTRA_ARGS
+
+      - name: Generate Job Summary
+        if: always()
+        run: |
+          echo "### 🚀 Beatraxus Build Summary" >> $GITHUB_STEP_SUMMARY
+
+          if [ -d "app/build/outputs/apk/release" ]; then
+            echo "#### 📦 Generated APK Artifacts" >> $GITHUB_STEP_SUMMARY
+            echo "| File Name | Size |" >> $GITHUB_STEP_SUMMARY
+            echo "| --- | --- |" >> $GITHUB_STEP_SUMMARY
+            for apk in app/build/outputs/apk/release/*.apk; do
+              if [ -f "$apk" ]; then
+                fname=$(basename "$apk")
+                fsize=$(du -h "$apk" | cut -f1)
+                echo "| \`$fname\` | $fsize |" >> $GITHUB_STEP_SUMMARY
+              fi
+            done
+          fi
+
+          MAPPING_FILE="app/build/outputs/mapping/release/mapping.txt"
+          if [ -f "$MAPPING_FILE" ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "#### 🛠 R8 Compiler Version" >> $GITHUB_STEP_SUMMARY
+            R8_INFO=$(grep -E "^# compiler" "$MAPPING_FILE" | head -n 1 || echo "# compiler: R8")
+            echo "\`$R8_INFO\`" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Upload Release APKs and Mapping
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: beatraxus-release-apks
+          retention-days: 14
+          path: |
+            app/build/outputs/apk/release/*.apk
+            app/build/outputs/mapping/release/*
+            build/reports/profile/*
+
+      - name: Clean up Secrets & Keystore File
+        if: always()
+        run: |
+          rm -f local.properties
+          rm -f "${{ runner.temp }}/release.keystore"
+          echo "Cleanup executed successfully."

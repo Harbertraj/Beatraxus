@@ -73,7 +73,7 @@ internal class MediaCodecAudioDecoder(
             }
 
             // 2. Select Track with retry
-            var track = selectBestAudioTrack(extractor)
+            var track = selectBestAudioTrack(extractor, request.preferredAudioTrackIndex)
             if (track == null && request.song.source != SongSource.LOCAL) {
                 control.logWarn("Initial extraction failed, retrying with fresh extractor and direct URL...")
                 extractor.release()
@@ -81,7 +81,7 @@ internal class MediaCodecAudioDecoder(
                 val (source, headers) = resolveSource(request.song)
                 if (source.isNotBlank()) {
                     extractor.setDataSource(source, headers)
-                    track = selectBestAudioTrack(extractor)
+                    track = selectBestAudioTrack(extractor, request.preferredAudioTrackIndex)
                 } else {
                     control.logWarn("Fallback source resolve failed (blank)")
                 }
@@ -273,7 +273,7 @@ internal class MediaCodecAudioDecoder(
         return url to headers
     }
 
-    private fun selectBestAudioTrack(extractor: MediaExtractor): TrackSelection? {
+    private fun selectBestAudioTrack(extractor: MediaExtractor, preferredIndex: Int? = null): TrackSelection? {
         val candidates = mutableListOf<TrackSelection>()
         for (index in 0 until extractor.trackCount) {
             try {
@@ -292,6 +292,10 @@ internal class MediaCodecAudioDecoder(
             } catch (e: Exception) {
                 // Ignore tracks that fail to probe
             }
+        }
+        if (candidates.isEmpty()) return null
+        if (preferredIndex != null && preferredIndex in candidates.indices) {
+            return candidates[preferredIndex]
         }
         return candidates.maxByOrNull { it.priority }
     }

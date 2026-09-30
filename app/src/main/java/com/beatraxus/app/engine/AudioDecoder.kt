@@ -29,7 +29,8 @@ internal interface DecoderControl {
 
 internal data class PlaybackRequest(
     val song: com.beatraxus.app.model.Song,
-    val startPositionMs: Long
+    val startPositionMs: Long,
+    val preferredAudioTrackIndex: Int? = null
 )
 
 internal data class PcmAudioFormat(

@@ -451,6 +451,7 @@ fun VideoPlayerScreen(
 
                 val typeface = if (uiState.subtitleBold) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
 
+                @Suppress("WrongConstant")
                 val captionStyle = CaptionStyleCompat(
                     uiState.subtitleTextColor,
                     bgColorWithOpacity,
@@ -1303,6 +1304,21 @@ fun VideoSettingsSheetContent(
             }
             
             Row(verticalAlignment = Alignment.CenterVertically) {
+                if (activeSheetType == PlayerSheetType.AUDIO) {
+                    val canRoute = uiState.availableAudioTracks.isNotEmpty() && uiState.playbackSpeed == 1.0f
+                    Switch(
+                        checked = uiState.routeAudioToEngine,
+                        enabled = canRoute,
+                        onCheckedChange = { viewModel.setRouteAudioToEngine(it) },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = mxOrange,
+                            checkedTrackColor = mxOrange.copy(0.4f),
+                            disabledCheckedThumbColor = mxOrange.copy(0.4f),
+                            disabledUncheckedThumbColor = Color.Gray.copy(0.4f)
+                        )
+                    )
+                }
+
                 if (activeSheetType == PlayerSheetType.EQUALIZER) {
                     Switch(
                         checked = uiState.isEqEnabled,
@@ -1316,6 +1332,34 @@ fun VideoSettingsSheetContent(
                         Icon(Icons.Rounded.RestartAlt, "Reset", tint = Color.White)
                     }
                 }
+            }
+        }
+
+        if (activeSheetType == PlayerSheetType.AUDIO) {
+            if (uiState.routeAudioToEngine) {
+                Text(
+                    text = "Audio is playing through the Audio Engine (DSP / Hi-Res)",
+                    color = mxOrange,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            } else if (uiState.playbackSpeed != 1.0f) {
+                Text(
+                    text = "Audio Engine routing requires 1.0x playback speed",
+                    color = Color.Gray,
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
+            uiState.engineRouteError?.let { err ->
+                Text(
+                    text = err,
+                    color = Color(0xFFFF5252),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
             }
         }
         
@@ -1503,6 +1547,22 @@ fun VideoSettingsSheetContent(
                                     ) {
                                         Text(
                                             "DOLBY",
+                                            color = Color.Black,
+                                            fontSize = 8.sp,
+                                            fontWeight = FontWeight.Black
+                                        )
+                                    }
+                                }
+                                if (track.isSelected && uiState.routeAudioToEngine) {
+                                    Spacer(Modifier.width(8.dp))
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(4.dp))
+                                            .background(mxOrange)
+                                            .padding(horizontal = 4.dp, vertical = 1.dp)
+                                    ) {
+                                        Text(
+                                            "ENGINE",
                                             color = Color.Black,
                                             fontSize = 8.sp,
                                             fontWeight = FontWeight.Black

@@ -141,9 +141,10 @@ internal class FfmpegAlacDecoder(
             }
             
             addAll(listOf("-i", inputSource))
+            val audioMap = "0:a:${request.preferredAudioTrackIndex ?: 0}"
             addAll(
                 listOf(
-                    "-map", "0:a:0",
+                    "-map", audioMap,
                     "-vn",
                     "-sn",
                     "-dn",

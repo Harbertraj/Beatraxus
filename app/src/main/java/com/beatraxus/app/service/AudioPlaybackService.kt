@@ -44,10 +44,13 @@ import com.beatraxus.app.engine.RepeatMode
 import com.beatraxus.app.model.DspConfig
 import com.beatraxus.app.model.Song
 import com.beatraxus.app.model.toEntity
+import com.beatraxus.app.model.toSong
 import com.beatraxus.app.widget.MusicWidgetKeys
 import com.beatraxus.app.widget.MusicWidgetLarge
 import com.beatraxus.app.widget.MusicWidgetMedium
 import com.beatraxus.app.widget.MusicWidgetSmall
+import com.beatraxus.app.widget.WidgetState
+import com.beatraxus.app.widget.WidgetStateStore
 import com.beatraxus.app.repository.DspPreferences
 import coil.imageLoader
 import coil.size.Precision
@@ -173,6 +176,7 @@ class AudioPlaybackService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        instance = this
 
         // 1. Immediate Notification/MediaSession setup for Foreground state
         createNotificationChannel()
@@ -356,8 +360,29 @@ class AudioPlaybackService : Service() {
                         lastProgressUpdateTime = 0
                     }
 
-                    serviceScope.launch { updateAllWidgets(state) }
                     updateNotification()
+                }
+        }
+
+        serviceScope.launch {
+            engine.playbackStateFlow
+                .map { buildWidgetState(it) }
+                .distinctUntilChanged { old, new ->
+                    old.title == new.title &&
+                    old.artist == new.artist &&
+                    old.isPlaying == new.isPlaying &&
+                    old.albumArtUri == new.albumArtUri &&
+                    old.shuffleOn == new.shuffleOn &&
+                    old.repeatMode == new.repeatMode &&
+                    kotlin.math.abs(old.progressRatio - new.progressRatio) < 0.05f
+                }
+                .debounce(250L)
+                .collect { widgetState ->
+                    try {
+                        WidgetStateStore.saveAndSyncState(this@AudioPlaybackService, widgetState)
+                    } catch (e: Exception) {
+                        Log.e("Beatraxus", "Widget state collector update failed", e)
+                    }
                 }
         }
     }
@@ -469,46 +494,26 @@ class AudioPlaybackService : Service() {
         return START_STICKY
     }
 
-    private suspend fun updateAllWidgets(state: PlaybackState) = withContext(Dispatchers.Default) {
+    private fun buildWidgetState(state: PlaybackState = engine.playbackStateFlow.value): WidgetState {
         val song = state.currentSong
-        val title = song?.title ?: "Not Playing"
-        val artist = song?.artist ?: "Beatraxus"
-        val isPlaying = state.isPlaying
-        val albumArtUri = song?.albumArtUri?.toString() ?: ""
-        val shuffleOn = state.shuffleMode
-        val repeatMode = state.repeatMode.name
+        val pos = engine.currentPositionMs()
+        val dur = song?.durationMs ?: 0L
+        val progress = if (dur > 0) (pos.toFloat() / dur.toFloat()).coerceIn(0f, 1f) else 0f
+        return WidgetState(
+            title = song?.title ?: "Not Playing",
+            artist = song?.artist ?: "Beatraxus",
+            isPlaying = state.isPlaying,
+            albumArtUri = song?.albumArtUri?.toString() ?: "",
+            shuffleOn = state.shuffleMode,
+            repeatMode = state.repeatMode.name,
+            progressRatio = progress
+        )
+    }
 
+    private suspend fun updateAllWidgets(state: PlaybackState) = withContext(Dispatchers.Default) {
+        val widgetState = buildWidgetState(state)
         try {
-            val context = this@AudioPlaybackService
-            val manager = GlanceAppWidgetManager(context)
-
-            val widgetClasses = listOf(
-                MusicWidgetSmall::class.java to MusicWidgetSmall(),
-                MusicWidgetMedium::class.java to MusicWidgetMedium(),
-                MusicWidgetLarge::class.java to MusicWidgetLarge()
-            )
-
-            widgetClasses.forEach { (clazz, widget) ->
-                val ids = manager.getGlanceIds(clazz)
-                for (id in ids) {
-                    try {
-                        updateAppWidgetState(context, PreferencesGlanceStateDefinition, id) { prefs ->
-                            prefs.toMutablePreferences().apply {
-                                set(MusicWidgetKeys.TITLE, title)
-                                set(MusicWidgetKeys.ARTIST, artist)
-                                set(MusicWidgetKeys.IS_PLAYING, isPlaying)
-                                set(MusicWidgetKeys.ALBUM_ART_URI, albumArtUri)
-                                set(MusicWidgetKeys.SHUFFLE_ON, shuffleOn)
-                                set(MusicWidgetKeys.REPEAT_MODE, repeatMode)
-                            }.toPreferences()
-                        }
-                        Log.d("Beatraxus", "Updating widget ${clazz.simpleName} (id: $id) isPlaying=$isPlaying title=$title")
-                        widget.update(context, id)
-                    } catch (e: Exception) {
-                        Log.e("Beatraxus", "Failed to update widget ${clazz.simpleName} (id: $id)", e)
-                    }
-                }
-            }
+            WidgetStateStore.saveAndSyncState(this@AudioPlaybackService, widgetState)
         } catch (e: Exception) {
             Log.e("Beatraxus", "updateAllWidgets failed", e)
         }
@@ -634,6 +639,37 @@ class AudioPlaybackService : Service() {
         }
     }
 
+    private fun restoreQueueFromStorage() {
+        if (playlist.isNotEmpty()) return
+        try {
+            val prefs = getSharedPreferences("beatraxus", Context.MODE_PRIVATE)
+            val lastQueueIds = prefs.getString("last_queue_ids", null)?.split(",")?.filter { it.isNotBlank() }
+            val lastOriginalQueueIds = prefs.getString("last_original_queue_ids", null)?.split(",")?.filter { it.isNotBlank() }
+            val lastIndex = prefs.getInt("last_queue_index", 0)
+            val lastPos = prefs.getLong("last_song_pos", 0L)
+
+            if (!lastQueueIds.isNullOrEmpty()) {
+                val dbSongEntities = runBlocking(Dispatchers.IO) { songDao.getAllSongs() }
+                val dbSongs = dbSongEntities.map { it.toSong() }
+                val songMap = dbSongs.associateBy { it.id }
+                val restoredPlaylist = lastQueueIds.mapNotNull { id -> songMap[id] }
+                val restoredOriginalPlaylist = lastOriginalQueueIds?.mapNotNull { id -> songMap[id] } ?: restoredPlaylist
+
+                if (restoredPlaylist.isNotEmpty()) {
+                    val safeIndex = lastIndex.coerceIn(0, restoredPlaylist.size - 1)
+                    playlist = restoredPlaylist
+                    originalPlaylist = restoredOriginalPlaylist
+                    currentIndex = safeIndex
+                    val song = playlist[safeIndex]
+                    engine.prepare(song, lastPos)
+                    hasRestoredFromDisk = true
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("AudioPlaybackService", "Error restoring queue from storage: ${e.message}", e)
+        }
+    }
+
     fun togglePlayPause() {
         playbackJob?.cancel()
 
@@ -657,13 +693,16 @@ class AudioPlaybackService : Service() {
             releaseWakeLocks()
             saveState()
         } else {
+            if (playlist.isEmpty()) {
+                restoreQueueFromStorage()
+            }
             if (requestAudioFocus()) {
                 val song = engine.playbackStateFlow.value.currentSong
                 if (song != null) {
                     acquireWakeLocks(song)
                     engine.resume()
                 } else if (playlist.isNotEmpty()) {
-                    currentIndex = 0
+                    currentIndex = currentIndex.coerceIn(0, playlist.size - 1)
                     val firstSong = playlist[currentIndex]
                     acquireWakeLocks(firstSong)
                     engine.play(firstSong)
@@ -681,6 +720,9 @@ class AudioPlaybackService : Service() {
     }
 
     private fun performTrackChange(delta: Int, isAutoAdvance: Boolean = false) {
+        if (playlist.isEmpty()) {
+            restoreQueueFromStorage()
+        }
         if (playlist.isEmpty()) return
 
         playbackJob?.cancel()
@@ -2159,6 +2201,10 @@ class AudioPlaybackService : Service() {
     }
 
     companion object {
+        @Volatile
+        var instance: AudioPlaybackService? = null
+            private set
+
         private const val CHANNEL_ID = "playback_channel"
         private const val NOTIFICATION_ID = 1
         private const val SCAN_NOTIFICATION_ID = 101
@@ -2216,6 +2262,8 @@ class AudioPlaybackService : Service() {
         // Save only the minimal state synchronously (fast, non-blocking on main thread
         // since SharedPreferences.commit() on a small payload is cheap).
         saveState(sync = true)
+        val stoppedState = buildWidgetState().copy(isPlaying = false)
+        WidgetStateStore.saveState(this, stoppedState)
 
         // Reset internal state for potential service reuse/restart
         hasRestoredFromDisk = false
@@ -2242,6 +2290,7 @@ class AudioPlaybackService : Service() {
     }
 
     override fun onDestroy() {
+        if (instance == this) instance = null
         // Safety reset in case onTaskRemoved was skipped
         // (engine.release() below is now idempotent — see AudioEngine.release())
         hasRestoredFromDisk = false
@@ -2252,8 +2301,11 @@ class AudioPlaybackService : Service() {
         val prefs = getSharedPreferences("beatraxus", Context.MODE_PRIVATE)
         prefs.unregisterOnSharedPreferenceChangeListener(prefListener)
 
-        val finalState = engine.playbackStateFlow.value.copy(isPlaying = false)
-        runBlocking { updateAllWidgets(finalState) }
+        val finalWidgetState = buildWidgetState().copy(isPlaying = false)
+        WidgetStateStore.saveState(this, finalWidgetState)
+        serviceScope.launch(NonCancellable) {
+            WidgetStateStore.saveAndSyncState(applicationContext, finalWidgetState)
+        }
 
         // Ensure cloud cache is cleared on destroy if we are not just restarting
         val isPlayingLocal = engine.playbackStateFlow.value.isPlaying

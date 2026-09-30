@@ -20,7 +20,9 @@ import androidx.media3.common.C
 import androidx.media3.common.Effect
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
+import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
+import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultLoadControl
@@ -28,6 +30,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.CaptionStyleCompat
 import com.beatraxus.app.BeatraxusApplication
 import com.beatraxus.app.engine.VideoRenderersFactory
+import com.beatraxus.app.service.VideoAudioBridge
 import com.beatraxus.app.model.Video
 import com.beatraxus.app.model.SavedEqPreset
 import com.beatraxus.app.model.VideoRecentlyPlayedEntity
@@ -101,7 +104,9 @@ data class VideoPlayerUiState(
     val colorBrightness: Float = 0f,
     val colorContrast: Float = 1f,
     val colorSaturation: Float = 1f,
-    val forceSdrToneMapping: Boolean = false
+    val forceSdrToneMapping: Boolean = false,
+    val routeAudioToEngine: Boolean = false,
+    val engineRouteError: String? = null
 )
 
 
@@ -226,6 +231,13 @@ class VideoPlayerViewModel(
     private var pendingSubtitleTrackIndex = -1
     private var isInitialTrackRestorationDone = false
     private var lastHandledVideoId: String? = null
+
+    // Audio Engine routing
+    private val RESET_ROUTE_AUDIO_ON_VIDEO_CHANGE = true
+    private var videoAudioSyncJob: Job? = null
+    private var videoAudioStateObservationJob: Job? = null
+    private var savedAudioTrackOverride: TrackSelectionOverride? = null
+    private var savedAudioTrackIndex: Int = -1
 
     init {
         application.registerReceiver(volumeReceiver, IntentFilter("android.media.VOLUME_CHANGED_ACTION"))
@@ -354,8 +366,11 @@ class VideoPlayerViewModel(
         player.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 _uiState.update { it.copy(isPlaying = isPlaying) }
-                // Use handleAudioFocus to let ExoPlayer manage MediaRouter internally
-                PlaybackGlobalState.setPlaybackActive(isPlaying) // Do not pause music engine explicitly if ExoPlayer does it via AudioFocus
+                PlaybackGlobalState.setPlaybackActive(isPlaying)
+                if (_uiState.value.routeAudioToEngine) {
+                    val engine = VideoAudioBridge.getAudioEngine()
+                    if (isPlaying) engine?.resumeVideoAudio() else engine?.pauseVideoAudio()
+                }
                 if (isPlaying) {
                     startProgressUpdate()
                     startAbRepeatWatcher()
@@ -369,6 +384,16 @@ class VideoPlayerViewModel(
 
             override fun onPlaybackStateChanged(playbackState: Int) {
                 _uiState.update { it.copy(playbackState = playbackState) }
+                if (_uiState.value.routeAudioToEngine) {
+                    val engine = VideoAudioBridge.getAudioEngine()
+                    if (playbackState == Player.STATE_BUFFERING) {
+                        engine?.pauseVideoAudio()
+                    } else if (playbackState == Player.STATE_READY && exoPlayer?.isPlaying == true) {
+                        engine?.resumeVideoAudio()
+                    } else if (playbackState == Player.STATE_ENDED) {
+                        setRouteAudioToEngine(false)
+                    }
+                }
                 if (playbackState == Player.STATE_READY) {
                     _uiState.update { it.copy(duration = player.duration) }
                     updateTracks()
@@ -703,11 +728,28 @@ class VideoPlayerViewModel(
         ) }
     }
 
-    fun togglePlayPause() = exoPlayer?.let { if (it.isPlaying) it.pause() else it.play() }
+    fun togglePlayPause() = exoPlayer?.let { p ->
+        val nextPlaying = !p.isPlaying
+        if (_uiState.value.routeAudioToEngine) {
+            val engine = VideoAudioBridge.getAudioEngine()
+            if (nextPlaying) {
+                engine?.resumeVideoAudio()
+                p.play()
+            } else {
+                p.pause()
+                engine?.pauseVideoAudio()
+            }
+        } else {
+            if (p.isPlaying) p.pause() else p.play()
+        }
+    }
 
     fun seekTo(position: Long) {
         exoPlayer?.seekTo(position)
         positionFlow.value = position
+        if (_uiState.value.routeAudioToEngine) {
+            VideoAudioBridge.getAudioEngine()?.seekVideoAudio(position)
+        }
     }
 
     fun stepFrame(forward: Boolean) {
@@ -728,6 +770,9 @@ class VideoPlayerViewModel(
     }
 
     fun setPlaybackSpeed(speed: Float) {
+        if (speed != 1.0f && _uiState.value.routeAudioToEngine) {
+            setRouteAudioToEngine(false)
+        }
         exoPlayer?.setPlaybackSpeed(speed)
         _uiState.update { it.copy(playbackSpeed = speed) }
     }
@@ -739,9 +784,176 @@ class VideoPlayerViewModel(
 
     fun selectAudioTrack(track: VideoTrackInfo) {
         exoPlayer?.let { p ->
-            p.trackSelectionParameters = p.trackSelectionParameters.buildUpon()
-                .setOverrideForType(androidx.media3.common.TrackSelectionOverride(p.currentTracks.groups[track.index].mediaTrackGroup, 0))
-                .build()
+            val trackGroup = p.currentTracks.groups.getOrNull(track.index)
+            if (trackGroup != null) {
+                val override = TrackSelectionOverride(trackGroup.mediaTrackGroup, 0)
+                savedAudioTrackOverride = override
+                savedAudioTrackIndex = track.index
+
+                if (_uiState.value.routeAudioToEngine) {
+                    val video = _uiState.value.currentVideo
+                    val engine = VideoAudioBridge.getAudioEngine()
+                    if (video != null && engine != null) {
+                        engine.playVideoAudio(
+                            uri = video.uri,
+                            audioTrackIndex = track.index,
+                            startPositionMs = p.currentPosition,
+                            startPlaying = p.isPlaying,
+                            title = video.title
+                        )
+                    }
+                } else {
+                    p.trackSelectionParameters = p.trackSelectionParameters.buildUpon()
+                        .setOverrideForType(override)
+                        .build()
+                }
+            }
+        }
+    }
+
+    fun setRouteAudioToEngine(enabled: Boolean) {
+        if (enabled == _uiState.value.routeAudioToEngine) return
+
+        if (enabled) {
+            if (_uiState.value.availableAudioTracks.isEmpty()) {
+                _uiState.update { it.copy(engineRouteError = "No audio tracks available to route") }
+                return
+            }
+            if (_uiState.value.playbackSpeed != 1.0f) {
+                _uiState.update { it.copy(engineRouteError = "Audio Engine routing requires 1.0x playback speed") }
+                return
+            }
+
+            val engine = VideoAudioBridge.getAudioEngine()
+            if (engine == null) {
+                _uiState.update { it.copy(engineRouteError = "Audio Engine is not running") }
+                return
+            }
+
+            _uiState.update { it.copy(routeAudioToEngine = true, engineRouteError = null) }
+            startEngineRouting()
+        } else {
+            _uiState.update { it.copy(routeAudioToEngine = false, engineRouteError = null) }
+            stopEngineRouting(restoreExoAudio = true)
+        }
+    }
+
+    private fun startEngineRouting() {
+        val player = exoPlayer ?: return
+        val video = _uiState.value.currentVideo ?: return
+        val engine = VideoAudioBridge.getAudioEngine() ?: run {
+            _uiState.update { it.copy(routeAudioToEngine = false, engineRouteError = "Audio Engine unavailable") }
+            return
+        }
+
+        try {
+            equalizer?.enabled = false
+            loudnessEnhancer?.enabled = false
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to disable local EQ during engine routing", e)
+        }
+
+        val currentTracks = player.currentTracks
+        var currentOverride: TrackSelectionOverride? = null
+        var selectedTrackIdx = _uiState.value.selectedAudioTrackIndex
+        if (selectedTrackIdx < 0) selectedTrackIdx = 0
+
+        currentTracks.groups.forEachIndexed { groupIndex, group ->
+            if (group.type == C.TRACK_TYPE_AUDIO && group.isSelected) {
+                currentOverride = TrackSelectionOverride(group.mediaTrackGroup, 0)
+            }
+        }
+        savedAudioTrackOverride = currentOverride
+        savedAudioTrackIndex = selectedTrackIdx
+
+        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+            .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, true)
+            .build()
+
+        val currentPosMs = player.currentPosition
+        val isPlaying = player.isPlaying
+        engine.playVideoAudio(
+            uri = video.uri,
+            audioTrackIndex = selectedTrackIdx,
+            startPositionMs = currentPosMs,
+            startPlaying = isPlaying,
+            title = video.title
+        )
+
+        videoAudioStateObservationJob?.cancel()
+        videoAudioStateObservationJob = viewModelScope.launch {
+            engine.videoRouteStateFlow.collect { routeState ->
+                if (routeState.error != null) {
+                    _uiState.update { it.copy(engineRouteError = "Engine routing failed: ${routeState.error}") }
+                    setRouteAudioToEngine(false)
+                } else if (!routeState.isActive && _uiState.value.routeAudioToEngine) {
+                    setRouteAudioToEngine(false)
+                }
+            }
+        }
+
+        startVideoAudioSyncLoop()
+    }
+
+    private fun stopEngineRouting(restoreExoAudio: Boolean = true) {
+        videoAudioSyncJob?.cancel()
+        videoAudioSyncJob = null
+        videoAudioStateObservationJob?.cancel()
+        videoAudioStateObservationJob = null
+
+        val engine = VideoAudioBridge.getAudioEngine()
+        engine?.stopVideoAudio()
+
+        val player = exoPlayer
+        if (restoreExoAudio && player != null) {
+            var builder = player.trackSelectionParameters.buildUpon()
+                .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, false)
+
+            val override = savedAudioTrackOverride
+            if (override != null) {
+                builder = builder.setOverrideForType(override)
+            }
+            player.trackSelectionParameters = builder.build()
+
+            applyEqGains()
+            updateLoudness()
+        }
+    }
+
+    private fun startVideoAudioSyncLoop() {
+        videoAudioSyncJob?.cancel()
+        videoAudioSyncJob = viewModelScope.launch {
+            while (isActive && _uiState.value.routeAudioToEngine) {
+                delay(250)
+                val player = exoPlayer ?: break
+                val engine = VideoAudioBridge.getAudioEngine() ?: break
+
+                if (!engine.isVideoAudioActive()) break
+
+                if (player.isPlaying && player.playbackState == Player.STATE_READY) {
+                    val exoPos = player.currentPosition
+                    val audioPos = engine.videoAudioPositionMs()
+
+                    val latencyFrames = engine.videoAudioLatencyFrames()
+                    val sampleRate = engine.audioStateFlow.value.outputSampleRate.takeIf { it > 0 } ?: 48000
+                    val latencyMs = (latencyFrames * 1000L) / sampleRate
+
+                    val trueAudibleAudioPos = (audioPos - latencyMs).coerceAtLeast(0L)
+                    val driftMs = exoPos - trueAudibleAudioPos
+
+                    if (abs(driftMs) > 250) {
+                        player.seekTo(trueAudibleAudioPos)
+                        player.playbackParameters = PlaybackParameters(1.0f)
+                    } else if (abs(driftMs) > 40) {
+                        val nudge = if (driftMs > 0) 0.97f else 1.03f
+                        player.playbackParameters = PlaybackParameters(nudge)
+                    } else {
+                        if (player.playbackParameters.speed != 1.0f) {
+                            player.playbackParameters = PlaybackParameters(1.0f)
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -1145,6 +1357,9 @@ class VideoPlayerViewModel(
     fun getPlayer(): Player? = exoPlayer
 
     override fun onCleared() {
+        if (_uiState.value.routeAudioToEngine) {
+            stopEngineRouting(restoreExoAudio = false)
+        }
         super.onCleared()
         getApplication<Application>().unregisterReceiver(volumeReceiver)
         _uiState.value.currentVideo?.let { recordVideoPlayed(it) }
