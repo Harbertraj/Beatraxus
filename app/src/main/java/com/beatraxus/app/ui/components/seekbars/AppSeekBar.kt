@@ -226,5 +226,15 @@ fun AppSeekBar(
             inactiveColor = inactiveColor,
             seed = seed
         )
+        SeekbarStyle.SPECTRUM_GLOW -> SpectrumGlowSeekBar(
+            progress = progress,
+            onProgressChange = onProgressChange,
+            modifier = modifier,
+            onProgressFinished = onProgressFinished,
+            activeColor = activeColor,
+            inactiveColor = inactiveColor,
+            seed = seed,
+            spectrumData = spectrumData
+        )
     }
 }

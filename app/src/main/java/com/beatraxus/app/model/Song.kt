@@ -200,7 +200,8 @@ enum class SeekbarStyle {
     ROPE,
     SOUND_PARTICLES,
     CRYSTAL_PRISM,
-    MAGNETIC_FLOATING
+    MAGNETIC_FLOATING,
+    SPECTRUM_GLOW
 }
 
 data class AppearanceConfig(

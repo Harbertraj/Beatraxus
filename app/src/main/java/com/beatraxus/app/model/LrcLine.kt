@@ -13,9 +13,11 @@ data class LrcLine(
     val text: String,
     val wordTimings: List<WordTiming>? = null,
     val duration: Long = 0L,
-    val speaker: LyricSpeaker = LyricSpeaker.NONE
+    val speaker: LyricSpeaker = LyricSpeaker.NONE,
+    val isTimed: Boolean = true
 ) {
     val time: Long get() = startTime
+    val endTime: Long get() = startTime + duration
     val words: List<Word> get() = wordTimings?.map { Word(it.startTime, it.text, it.duration) } ?: emptyList()
 }
 

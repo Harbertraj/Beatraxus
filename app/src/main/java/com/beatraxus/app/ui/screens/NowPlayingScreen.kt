@@ -146,6 +146,7 @@ fun NowPlayingScreen(
     onSearchLyricsOnline: () -> Unit = {},
     onLoadLyricsCandidates: () -> Unit = {},
     onApplyLyricsCandidate: (LyricsCandidate) -> Unit = {},
+    onClearSavedLyrics: (Boolean) -> Unit = {},
     showPipelineOverlay: Boolean = false,
     onTogglePipeline: (Boolean) -> Unit = {},
     onSetSleepTimer: (Int, Boolean, Int) -> Unit = { _, _, _ -> },
@@ -1186,13 +1187,63 @@ fun NowPlayingScreen(
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp, vertical = 8.dp)
                 ) {
-                    Text(
-                        "Lyrics sources",
-                        color = Color.White,
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(bottom = 16.dp)
-                    )
+                    var showClearConfirmDialog by remember { mutableStateOf(false) }
+
+                    if (showClearConfirmDialog) {
+                        AlertDialog(
+                            onDismissRequest = { showClearConfirmDialog = false },
+                            title = { Text("Clear Saved Lyrics?", color = Color.White) },
+                            text = { Text("Do you want to clear saved lyrics from the database, or also remove the embedded tag from the file?", color = Color.White.copy(0.8f)) },
+                            confirmButton = {
+                                TextButton(onClick = {
+                                    onClearSavedLyrics(true)
+                                    showClearConfirmDialog = false
+                                    showLyricsSourcesSheet = false
+                                }) {
+                                    Text("Clear DB & File Tag", color = Color(0xFFFF5252))
+                                }
+                            },
+                            dismissButton = {
+                                Row {
+                                    TextButton(onClick = {
+                                        onClearSavedLyrics(false)
+                                        showClearConfirmDialog = false
+                                        showLyricsSourcesSheet = false
+                                    }) {
+                                        Text("Clear DB Only", color = MaterialTheme.colorScheme.primary)
+                                    }
+                                    Spacer(Modifier.width(8.dp))
+                                    TextButton(onClick = { showClearConfirmDialog = false }) {
+                                        Text("Cancel", color = Color.White.copy(0.7f))
+                                    }
+                                }
+                            },
+                            containerColor = Color(0xFF1E1E26)
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "Lyrics sources",
+                            color = Color.White,
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        OutlinedButton(
+                            onClick = { showClearConfirmDialog = true },
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFFF5252)),
+                            border = BorderStroke(1.dp, Color(0xFFFF5252).copy(0.5f)),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                        ) {
+                            Icon(Icons.Rounded.Delete, null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("Re-fetch / Clear", fontSize = 12.sp)
+                        }
+                    }
 
                     if (uiState.lyricsCandidates.isEmpty()) {
                         if (uiState.isLoadingLyricsCandidates) {
@@ -1289,6 +1340,21 @@ fun NowPlayingScreen(
                                                 maxLines = 1,
                                                 overflow = TextOverflow.Ellipsis
                                             )
+                                            if (!candidate.warning.isNullOrBlank()) {
+                                                Spacer(Modifier.height(4.dp))
+                                                Surface(
+                                                    color = Color(0xFFFF9800).copy(alpha = 0.15f),
+                                                    shape = RoundedCornerShape(4.dp),
+                                                    border = BorderStroke(1.dp, Color(0xFFFF9800).copy(alpha = 0.4f))
+                                                ) {
+                                                    Text(
+                                                        text = candidate.warning,
+                                                        color = Color(0xFFFF9800),
+                                                        fontSize = 11.sp,
+                                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                    )
+                                                }
+                                            }
                                         }
                                         if (isApplied) {
                                             Icon(Icons.Rounded.Check, null, tint = MaterialTheme.colorScheme.primary)

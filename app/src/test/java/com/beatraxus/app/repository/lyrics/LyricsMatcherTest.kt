@@ -16,20 +16,41 @@ class LyricsMatcherTest {
     }
 
     @Test
-    fun testIsMatch() {
-        assertTrue(LyricsMatcher.isMatch("Hello", "Adele", 200000L, "Hello", "Adele", 201000L))
+    fun testDurationHardGateInMatching() {
+        // Duration mismatch > 8s -> fails confidence gate
+        val queryTitle = "Hello"
+        val queryArtist = "Adele"
+        val queryDur = 200000L
 
-        // duration mismatch > 3s
-        assertFalse(LyricsMatcher.isMatch("Hello", "Adele", 200000L, "Hello", "Adele", 205000L))
+        // 10s difference -> rejected by duration hard gate (> 8s)
+        val candDur10sOff = 210000L
+        assertFalse(LyricsMatcher.isConfidentMatch(queryTitle, queryArtist, queryDur, queryTitle, queryArtist, candDur10sOff))
+        val score10sOff = LyricsMatcher.score(queryTitle, queryArtist, queryDur, queryTitle, queryArtist, candDur10sOff)
+        assertTrue("Score for 10s off should be < 0.5, was $score10sOff", score10sOff < 0.5)
 
-        // spelling difference but within similarity
-        assertTrue(LyricsMatcher.isMatch("Helloo", "Adele", 200000L, "Hello", "Adele", 200000L))
+        // 2s difference -> accepted
+        val candDur2sOff = 202000L
+        assertTrue(LyricsMatcher.isConfidentMatch(queryTitle, queryArtist, queryDur, queryTitle, queryArtist, candDur2sOff))
+    }
 
-        // one side duration unknown
-        assertTrue(LyricsMatcher.isMatch("Hello", "Adele", 200000L, "Hello", "Adele", null))
+    @Test
+    fun testVersionKeywords() {
+        // Live vs studio -> rejected
+        assertFalse(LyricsMatcher.isConfidentMatch("Hotel California (Live)", "Eagles", 300000L, "Hotel California", "Eagles", 300000L))
 
-        // total mismatch
-        assertFalse(LyricsMatcher.isMatch("Rolling in the Deep", "Adele", 200000L, "Hello", "Adele", 200000L))
+        // Remastered vs original -> accepted (remastered is ignored)
+        assertTrue(LyricsMatcher.isConfidentMatch("Hotel California (Remastered 2013)", "Eagles", 300000L, "Hotel California", "Eagles", 300000L))
+
+        // Acoustic vs Studio -> rejected
+        assertFalse(LyricsMatcher.isConfidentMatch("Shape of You (Acoustic)", "Ed Sheeran", 200000L, "Shape of You", "Ed Sheeran", 200000L))
+    }
+
+    @Test
+    fun testMissingDurationIsNeutral() {
+        // Missing duration -> neutral (0.5 duration score), still passes confident match if title/artist match
+        assertTrue(LyricsMatcher.isConfidentMatch("Hello", "Adele", 200000L, "Hello", "Adele", null))
+        val scoreMissing = LyricsMatcher.score("Hello", "Adele", 200000L, "Hello", "Adele", null)
+        assertTrue("Score with missing duration should be >= 0.8, was $scoreMissing", scoreMissing >= 0.8)
     }
 
     @Test
@@ -54,7 +75,6 @@ class LyricsMatcherTest {
 
     @Test
     fun testDifferentTamilTitlesScore() {
-        // Two different Tamil titles
         val title1 = "மருதநாயகம்"
         val title2 = "பொன்னியின் செல்வன்"
         val score = LyricsMatcher.score(title1, "Artist", 200000L, title2, "Artist", 200000L)

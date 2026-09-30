@@ -11,6 +11,8 @@ import com.beatraxus.app.repository.lyrics.LyricsProvider
 import com.beatraxus.app.repository.lyrics.LyricsProviderRegistry
 import com.beatraxus.app.repository.lyrics.LyricsQuery
 import com.beatraxus.app.repository.lyrics.LyricsTransientException
+import com.beatraxus.app.repository.lyrics.LyricsValidator
+import com.beatraxus.app.repository.lyrics.ValidationResult
 import com.beatraxus.app.repository.lyrics.VideoIdResolver
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -36,7 +38,8 @@ data class LyricsCandidate(
     val type: LyricsType,
     val lineCount: Int,
     val preview: String,
-    val content: String
+    val content: String,
+    val warning: String? = null
 )
 
 data class LyricsProviderConfig(val order: List<String>, val enabled: Set<String>)
@@ -65,11 +68,20 @@ private data class ProviderFetchResult(
     val exception: Throwable? = null
 )
 
+private data class CandidateEval(
+    val provider: LyricsProvider,
+    val result: LyricsResult,
+    val validation: ValidationResult,
+    val effectiveScore: Double,
+    val providerOrder: Int
+)
+
 private data class RunProvidersResult(
     val bestResult: LyricsResult?,
     val providerId: String?,
     val allResults: List<ProviderFetchResult>,
-    val hasTransientError: Boolean
+    val hasTransientError: Boolean,
+    val bestValidation: ValidationResult? = null
 )
 
 class LyricsRepository(
@@ -84,6 +96,7 @@ class LyricsRepository(
 
     private val cache = ConcurrentHashMap<String, LyricsLoadResult>()
     private val notFoundCache = ConcurrentHashMap<String, Long>() // songId -> timestamp
+    private val candidatesCache = ConcurrentHashMap<String, List<LyricsCandidate>>()
     private val NOT_FOUND_TTL_MS = 24 * 60 * 60 * 1000L // don't retry for 24h
 
     private var lastConfigHash = 0
@@ -95,20 +108,52 @@ class LyricsRepository(
             lastConfigHash = currentHash
             cache.clear()
             notFoundCache.clear()
+            candidatesCache.clear()
         }
     }
 
+    fun getCandidatesCacheKey(song: Song): String {
+        val config = providerConfig()
+        return "${song.id}_${song.durationMs}_${config.hashCode()}"
+    }
+
     suspend fun saveLyrics(songId: String, lyricsText: String, offset: Long = 0L) {
-        lyricsDao.insertLyrics(LyricsEntity(songId, lyricsText, syncOffset = offset))
-        // Update memory cache
         val lines = LrcParser.parse(lyricsText)
+        val type = determineType(lyricsText)
+        val validation = LyricsValidator.validate(lyricsText, 0L, type)
+
+        lyricsDao.insertLyrics(
+            LyricsEntity(
+                songId = songId,
+                lyrics = lyricsText,
+                syncOffset = offset,
+                timestamp = System.currentTimeMillis(),
+                providerId = "user_saved",
+                fetchedAt = System.currentTimeMillis(),
+                isValidated = validation.isValid,
+                durationMs = null
+            )
+        )
+
         cache[songId] = LyricsLoadResult(
             lines = lines,
             source = LyricsSource.CACHE,
-            type = determineType(lyricsText),
+            type = type,
             rawContent = lyricsText,
             syncOffset = offset
         )
+    }
+
+    suspend fun clearSavedLyrics(song: Song, clearEmbeddedFileTag: Boolean = false) = withContext(Dispatchers.IO) {
+        lyricsDao.deleteLyricsBySongIds(listOf(song.id))
+        cache.remove(song.id)
+        notFoundCache.remove(song.id)
+        candidatesCache.remove(getCandidatesCacheKey(song))
+
+        if (clearEmbeddedFileTag) {
+            embeddedSource.saveLyrics(song.uri, "")
+            songDao.updateLyrics(song.id, "")
+        }
     }
 
     suspend fun updateSyncOffset(songId: String, offset: Long) {
@@ -121,14 +166,6 @@ class LyricsRepository(
         }
     }
 
-    /**
-     * Priority Pipeline:
-     * 1. Check Memory Cache
-     * 2. Check Database Cache
-     * 3. Check Embedded (If Synced -> Return, If Plain -> Fallback)
-     * 4. Check Online (If Synced -> Return)
-     * 5. Return best available
-     */
     fun getLyrics(song: Song): Flow<LyricsState> = flow {
         checkConfigChange()
         emit(LyricsState.Loading)
@@ -139,7 +176,7 @@ class LyricsRepository(
         if (!song.lyrics.isNullOrBlank()) {
             val type = determineType(song.lyrics)
             val res = LyricsLoadResult(
-                lines = LrcParser.parse(song.lyrics),
+                lines = LrcParser.parse(song.lyrics, song.durationMs),
                 source = LyricsSource.EMBEDDED,
                 type = type,
                 rawContent = song.lyrics
@@ -159,7 +196,7 @@ class LyricsRepository(
         }
         if (cached != null) bestResult = cached
 
-        // ── 2. Embedded tag (always check — user may have tagged file since cache) ─
+        // ── 2. Embedded tag ───────────────────────────────────────────────────────
         val embedded = fetchEmbedded(song)
         if (embedded != null) {
             if (embedded.type == LyricsType.WORD_BY_WORD || embedded.type == LyricsType.SYNCED) {
@@ -171,7 +208,7 @@ class LyricsRepository(
             }
         }
 
-        // ── 3. Online (only if we still don't have better synced lyrics) ─────────
+        // ── 3. Online ─────────────────────────────────────────────────────────────
         Log.d(TAG, "Searching online for ${song.title}...")
         val online = fetchOnline(song)
         if (online != null) {
@@ -202,7 +239,7 @@ class LyricsRepository(
         return lyricsDao.getLyrics(song.id)?.let { entity ->
             val type = determineType(entity.lyrics)
             LyricsLoadResult(
-                lines = LrcParser.parse(entity.lyrics),
+                lines = LrcParser.parse(entity.lyrics, song.durationMs),
                 source = LyricsSource.CACHE,
                 type = type,
                 rawContent = entity.lyrics,
@@ -218,7 +255,7 @@ class LyricsRepository(
 
         return result?.let {
             LyricsLoadResult(
-                lines = LrcParser.parse(it.content),
+                lines = LrcParser.parse(it.content, song.durationMs),
                 source = LyricsSource.EMBEDDED,
                 type = it.type,
                 rawContent = it.content,
@@ -252,6 +289,7 @@ class LyricsRepository(
 
         val finalQuery = query
         val semaphore = Semaphore(4)
+        val config = providerConfig()
 
         val deferredList = providers.map { provider ->
             async(Dispatchers.IO) {
@@ -306,12 +344,7 @@ class LyricsRepository(
             }
         }
 
-        var bestSyncedResult: LyricsResult? = null
-        var bestSyncedProviderId: String? = null
-
-        var bestPlainResult: LyricsResult? = null
-        var bestPlainProviderId: String? = null
-
+        val candidateEvals = mutableListOf<CandidateEval>()
         var hasTransientError = false
 
         for (fetchRes in fetchResults) {
@@ -321,23 +354,39 @@ class LyricsRepository(
             }
 
             val res = fetchRes.result ?: continue
-            if (res.type == LyricsType.WORD_BY_WORD || res.type == LyricsType.SYNCED) {
-                if (bestSyncedResult == null) {
-                    bestSyncedResult = res
-                    bestSyncedProviderId = fetchRes.provider.id
-                }
-            } else if (res.type == LyricsType.PLAIN) {
-                if (bestPlainResult == null) {
-                    bestPlainResult = res
-                    bestPlainProviderId = fetchRes.provider.id
-                }
-            }
+            val validation = LyricsValidator.validate(res.content, song.durationMs, res.type)
+            val effectiveScore = maxOf(0.0, res.score - validation.penalty)
+            val providerOrder = config.order.indexOf(fetchRes.provider.id).let { if (it == -1) Int.MAX_VALUE else it }
+
+            candidateEvals.add(
+                CandidateEval(
+                    provider = fetchRes.provider,
+                    result = res,
+                    validation = validation,
+                    effectiveScore = effectiveScore,
+                    providerOrder = providerOrder
+                )
+            )
         }
 
-        val selectedResult = bestSyncedResult ?: bestPlainResult
-        val selectedProviderId = bestSyncedProviderId ?: bestPlainProviderId
+        val bestEval = candidateEvals
+            .filter { it.validation.isValid }
+            .maxWithOrNull(
+                compareBy<CandidateEval> {
+                    when (it.result.type) {
+                        LyricsType.WORD_BY_WORD -> 2
+                        LyricsType.SYNCED -> 1
+                        LyricsType.PLAIN -> 0
+                    }
+                }.thenBy { it.effectiveScore }
+                    .thenByDescending { -it.providerOrder }
+            ) ?: candidateEvals.maxWithOrNull(compareBy { it.effectiveScore })
 
-        RunProvidersResult(selectedResult, selectedProviderId, fetchResults, hasTransientError)
+        val selectedResult = bestEval?.result
+        val selectedProviderId = bestEval?.provider?.id
+        val bestValidation = bestEval?.validation
+
+        RunProvidersResult(selectedResult, selectedProviderId, fetchResults, hasTransientError, bestValidation)
     }
 
     suspend fun fetchOnline(song: Song, persist: Boolean = true, forceRefresh: Boolean = false): LyricsLoadResult? {
@@ -373,7 +422,7 @@ class LyricsRepository(
         val existingOffset = lyricsDao.getLyrics(song.id)?.syncOffset ?: 0L
 
         val res = LyricsLoadResult(
-            lines = LrcParser.parse(finalRes.content),
+            lines = LrcParser.parse(finalRes.content, song.durationMs),
             source = LyricsSource.ONLINE,
             type = finalRes.type,
             rawContent = finalRes.content,
@@ -385,12 +434,14 @@ class LyricsRepository(
         cache[song.id] = res
 
         if (persist) {
-            saveToDbIfBetter(song.id, res)
+            val validation = runResult.bestValidation ?: LyricsValidator.validate(finalRes.content, song.durationMs, finalRes.type)
+            saveToDbIfBetter(song.id, res, finalProviderId, validation)
 
             val provider = registryProviders.find { it.id == finalProviderId }
             val isExperimental = provider?.experimental == true
 
-            if (!isExperimental && finalRes.score >= 0.85 && song.lyrics.isNullOrBlank()) {
+            // Only auto-embed when validator says OK (isValid && penalty == 0.0) AND score >= 0.85
+            if (!isExperimental && validation.isValid && validation.penalty == 0.0 && finalRes.score >= 0.85 && song.lyrics.isNullOrBlank()) {
                 embeddedSource.saveLyrics(song.uri, finalRes.content)
                 songDao.updateLyrics(song.id, finalRes.content)
             }
@@ -400,16 +451,32 @@ class LyricsRepository(
     }
 
     suspend fun fetchEmbeddedCandidate(song: Song): LyricsCandidate? = withContext(Dispatchers.IO) {
-        val result = song.uri.path?.let { embeddedSource.getLyrics(it) }
+        val actualFileResult = song.uri.path?.let { embeddedSource.getLyrics(it) }
             ?: embeddedSource.getLyrics(song.uri)
-            ?: song.lyrics?.takeIf { it.isNotBlank() }?.let {
-                LyricsResult(type = determineType(it), content = it.trim())
-            }
 
-        val res = result ?: return@withContext null
+        val dbEntity = lyricsDao.getLyrics(song.id)
+
+        val res = actualFileResult ?: dbEntity?.let {
+            LyricsResult(type = determineType(it.lyrics), content = it.lyrics.trim())
+        } ?: song.lyrics?.takeIf { it.isNotBlank() }?.let {
+            LyricsResult(type = determineType(it), content = it.trim())
+        } ?: return@withContext null
+
         if (res.content.isBlank()) return@withContext null
 
-        val lines = LrcParser.parse(res.content)
+        val isTrueFileTag = actualFileResult != null
+        val providerName = when {
+            isTrueFileTag -> "Embedded (file tag)"
+            dbEntity?.providerId != null -> "Saved (from ${dbEntity.providerId})"
+            else -> "Saved lyrics"
+        }
+        val providerId = when {
+            isTrueFileTag -> "embedded"
+            dbEntity?.providerId != null -> "saved_${dbEntity.providerId}"
+            else -> "saved"
+        }
+
+        val lines = LrcParser.parse(res.content, song.durationMs)
         val previewLine = lines.firstOrNull { it.text.isNotBlank() }?.text ?: "No preview available"
         val granularity = when (res.type) {
             LyricsType.WORD_BY_WORD -> LyricsGranularity.WORD
@@ -417,21 +484,23 @@ class LyricsRepository(
             LyricsType.PLAIN -> LyricsGranularity.PLAIN
         }
 
+        val validation = LyricsValidator.validate(res.content, song.durationMs, res.type)
+
         LyricsCandidate(
-            providerId = "embedded",
-            providerName = "Embedded (file tag)",
+            providerId = providerId,
+            providerName = providerName,
             granularity = granularity,
             type = res.type,
             lineCount = lines.size,
             preview = previewLine,
-            content = res.content
+            content = res.content,
+            warning = validation.reason
         )
     }
 
-    private val candidatesCache = ConcurrentHashMap<String, List<LyricsCandidate>>()
-
     suspend fun fetchAllCandidates(song: Song): List<LyricsCandidate> = withContext(Dispatchers.IO) {
-        candidatesCache[song.id]?.let { return@withContext it }
+        val cacheKey = getCandidatesCacheKey(song)
+        candidatesCache[cacheKey]?.let { return@withContext it }
 
         val config = providerConfig()
         val registryProviders = LyricsProviderRegistry.providers
@@ -445,8 +514,9 @@ class LyricsRepository(
 
         val candidates = runResult.allResults.mapNotNull { fetchRes ->
             val res = fetchRes.result ?: return@mapNotNull null
-            val lines = LrcParser.parse(res.content)
+            val lines = LrcParser.parse(res.content, song.durationMs)
             val previewLine = lines.firstOrNull { it.text.isNotBlank() }?.text ?: "No preview available"
+            val validation = LyricsValidator.validate(res.content, song.durationMs, res.type)
 
             LyricsCandidate(
                 providerId = fetchRes.provider.id,
@@ -455,11 +525,12 @@ class LyricsRepository(
                 type = res.type,
                 lineCount = lines.size,
                 preview = previewLine,
-                content = res.content
+                content = res.content,
+                warning = validation.reason
             )
         }
 
-        candidatesCache[song.id] = candidates
+        candidatesCache[cacheKey] = candidates
         candidates
     }
 
@@ -498,8 +569,10 @@ class LyricsRepository(
                     if (runResult.bestResult != null) {
                         val finalRes = runResult.bestResult
                         val providerId = runResult.providerId
+                        val validation = runResult.bestValidation ?: LyricsValidator.validate(finalRes.content, song.durationMs, finalRes.type)
+
                         val res = LyricsLoadResult(
-                            lines = LrcParser.parse(finalRes.content),
+                            lines = LrcParser.parse(finalRes.content, song.durationMs),
                             source = LyricsSource.ONLINE,
                             type = finalRes.type,
                             rawContent = finalRes.content,
@@ -508,12 +581,12 @@ class LyricsRepository(
                             providerId = providerId
                         )
                         cache[song.id] = res
-                        saveToDbIfBetter(song.id, res)
+                        saveToDbIfBetter(song.id, res, providerId, validation)
 
                         val provider = registryProviders.find { it.id == providerId }
                         val isExperimental = provider?.experimental == true
 
-                        if (!isExperimental && finalRes.score >= 0.85 && song.lyrics.isNullOrBlank()) {
+                        if (!isExperimental && validation.isValid && validation.penalty == 0.0 && finalRes.score >= 0.85 && song.lyrics.isNullOrBlank()) {
                             embeddedSource.saveLyrics(song.uri, finalRes.content)
                             songDao.updateLyrics(song.id, finalRes.content)
                         }
@@ -527,7 +600,12 @@ class LyricsRepository(
         }.forEach { it.await() }
     }
 
-    private suspend fun saveToDbIfBetter(songId: String, newResult: LyricsLoadResult) {
+    private suspend fun saveToDbIfBetter(
+        songId: String,
+        newResult: LyricsLoadResult,
+        providerId: String? = null,
+        validation: ValidationResult? = null
+    ) {
         val existing = lyricsDao.getLyrics(songId)
         val existingType = existing?.let { determineType(it.lyrics) } ?: LyricsType.PLAIN
 
@@ -537,7 +615,18 @@ class LyricsRepository(
 
         if (shouldUpdate) {
             newResult.rawContent?.let {
-                lyricsDao.insertLyrics(LyricsEntity(songId, it, syncOffset = newResult.syncOffset))
+                lyricsDao.insertLyrics(
+                    LyricsEntity(
+                        songId = songId,
+                        lyrics = it,
+                        syncOffset = newResult.syncOffset,
+                        timestamp = System.currentTimeMillis(),
+                        providerId = providerId ?: newResult.providerId,
+                        fetchedAt = System.currentTimeMillis(),
+                        isValidated = (validation?.isValid == true && validation.penalty == 0.0),
+                        durationMs = null
+                    )
+                )
             }
         }
     }

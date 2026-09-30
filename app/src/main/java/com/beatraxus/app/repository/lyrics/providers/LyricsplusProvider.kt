@@ -66,6 +66,8 @@ class LyricsplusProvider : LyricsProvider {
 
                 if (lyricsArray.size() == 0) continue
 
+                val candDurationMs = root.get("duration")?.asLong?.let { it * 1000L }
+
                 val sb = StringBuilder()
                 var hasWordTimings = false
                 var hasLineTimings = false
@@ -101,8 +103,8 @@ class LyricsplusProvider : LyricsProvider {
                     else -> LyricsType.PLAIN
                 }
 
-                val matchScore = LyricsMatcher.score(query.title, query.artist, query.durationMs, title, artist, query.durationMs)
-                return LyricsResult(type, resultText, matchScore.coerceAtLeast(0.7))
+                val matchScore = LyricsMatcher.score(query.title, query.artist, query.durationMs, title, artist, candDurationMs)
+                return LyricsResult(type, resultText, matchScore)
             } catch (_: Exception) {
                 Log.w("LyricsProvider", "$id parse failed: ${body.take(300)}")
                 return null

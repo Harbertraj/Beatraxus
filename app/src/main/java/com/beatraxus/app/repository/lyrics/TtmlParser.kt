@@ -35,28 +35,39 @@ object TtmlParser {
                 }
             }
 
+            // Sort agents by numeric id (v1, v2, v3, v1000 ...) instead of order of appearance
+            agentsInUse.sortBy { extractNumericId(it) }
+
             val agentMarkerMap = mutableMapOf<String, String>()
             if (agentsInUse.size >= 2) {
-                var personIndex = 0
+                var neutralSingerIndex = 1
                 for (agent in agentsInUse) {
-                    val isGroup = agent.contains("group", ignoreCase = true) ||
-                            agent.contains("v1000", ignoreCase = true) ||
-                            agent.contains("both", ignoreCase = true) ||
-                            agent.contains("chorus", ignoreCase = true)
+                    val normalizedAgent = agent.lowercase()
+                    val isGroup = normalizedAgent.contains("group") ||
+                            normalizedAgent.contains("v1000") ||
+                            normalizedAgent.contains("both") ||
+                            normalizedAgent.contains("chorus")
+
+                    val hasMaleExplicit = normalizedAgent.contains("male") || normalizedAgent.contains("boy") || normalizedAgent.contains("he")
+                    val hasFemaleExplicit = normalizedAgent.contains("female") || normalizedAgent.contains("girl") || normalizedAgent.contains("she")
+
                     if (isGroup) {
                         agentMarkerMap[agent] = "[Both]"
+                    } else if (hasMaleExplicit) {
+                        agentMarkerMap[agent] = "[Male]"
+                    } else if (hasFemaleExplicit) {
+                        agentMarkerMap[agent] = "[Female]"
                     } else {
-                        if (personIndex == 0) {
-                            agentMarkerMap[agent] = "[Male]"
-                            personIndex++
-                        } else if (personIndex == 1) {
-                            agentMarkerMap[agent] = "[Female]"
-                            personIndex++
-                        } else {
-                            agentMarkerMap[agent] = "[Chorus]"
-                        }
+                        // Use neutral tags [Singer1], [Singer2], etc.
+                        agentMarkerMap[agent] = "[Singer$neutralSingerIndex]"
+                        neutralSingerIndex++
                     }
                 }
+            } else if (agentsInUse.size == 1) {
+                val agent = agentsInUse[0]
+                val normalizedAgent = agent.lowercase()
+                if (normalizedAgent.contains("male")) agentMarkerMap[agent] = "[Male]"
+                else if (normalizedAgent.contains("female")) agentMarkerMap[agent] = "[Female]"
             }
 
             val sb = StringBuilder()
@@ -140,6 +151,11 @@ object TtmlParser {
         } catch (_: Exception) {
             return null
         }
+    }
+
+    private fun extractNumericId(agent: String): Int {
+        val digits = agent.filter { it.isDigit() }
+        return digits.toIntOrNull() ?: Int.MAX_VALUE
     }
 
     private fun getAgent(element: Element): String {

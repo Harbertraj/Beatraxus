@@ -4275,6 +4275,14 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun clearSavedLyrics(clearFileTag: Boolean = false) {
+        val song = _uiState.value.currentSong ?: return
+        viewModelScope.launch {
+            lyricsRepository.clearSavedLyrics(song, clearFileTag)
+            loadLyrics(song)
+        }
+    }
+
     private fun loadLyrics(song: Song?) {
         lyricsJob?.cancel()
 
@@ -4405,11 +4413,25 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         val state = _uiState.value
         if (state.lyrics.isEmpty()) return
 
+        if (state.lyrics.none { it.isTimed }) {
+            if (state.lyricsCurrentIndex != -1) {
+                _uiState.update { it.copy(lyricsCurrentIndex = -1) }
+            }
+            return
+        }
+
         val adjustedMs = currentMs + state.lyricsOffsetMs
         val index = state.lyrics.indexOfLast { it.startTime <= adjustedMs }
 
-        if (index != state.lyricsCurrentIndex) {
-            _uiState.update { it.copy(lyricsCurrentIndex = index) }
+        val activeIndex = if (index in state.lyrics.indices) {
+            val line = state.lyrics[index]
+            if (adjustedMs >= line.endTime) -1 else index
+        } else {
+            -1
+        }
+
+        if (activeIndex != state.lyricsCurrentIndex) {
+            _uiState.update { it.copy(lyricsCurrentIndex = activeIndex) }
         }
     }
 

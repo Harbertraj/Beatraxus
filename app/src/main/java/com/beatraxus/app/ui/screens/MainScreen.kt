@@ -3622,6 +3622,7 @@ fun MainScreen(
                 onSearchLyricsOnline = { viewModel.forceSearchLyricsOnline() },
                 onLoadLyricsCandidates = { viewModel.loadLyricsCandidates() },
                 onApplyLyricsCandidate = { viewModel.applyLyricsCandidate(it) },
+                onClearSavedLyrics = { clearFileTag -> viewModel.clearSavedLyrics(clearFileTag) },
                 showPipelineOverlay = showPipelineOverlay,
                 onTogglePipeline = { showPipelineOverlay = it },
                 onSetSleepTimer = { seconds, finishTrack, playCount ->

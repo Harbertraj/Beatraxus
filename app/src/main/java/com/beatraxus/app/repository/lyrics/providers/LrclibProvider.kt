@@ -21,6 +21,7 @@ import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import java.io.IOException
 import java.util.Locale
+import kotlin.math.abs
 
 class LrclibProvider : LyricsProvider {
     override val id = "lrclib"
@@ -46,8 +47,8 @@ class LrclibProvider : LyricsProvider {
         val getRes1 = executeApi {
             lrcLibService.getLyrics(primaryArtist, cleanTitle, query.album, durationSec)
         }
-        if (getRes1 != null && isValidResponse(getRes1)) {
-            return@withContext createResultFromResponse(getRes1, 1.0)
+        if (getRes1 != null && isValidResponse(getRes1) && isDurationAcceptable(query, getRes1)) {
+            return@withContext createResultFromResponse(query, getRes1)
         }
 
         // (2) api/get with album=null
@@ -55,8 +56,8 @@ class LrclibProvider : LyricsProvider {
             val getRes2 = executeApi {
                 lrcLibService.getLyrics(primaryArtist, cleanTitle, null, durationSec)
             }
-            if (getRes2 != null && isValidResponse(getRes2)) {
-                return@withContext createResultFromResponse(getRes2, 1.0)
+            if (getRes2 != null && isValidResponse(getRes2) && isDurationAcceptable(query, getRes2)) {
+                return@withContext createResultFromResponse(query, getRes2)
             }
         }
 
@@ -78,6 +79,12 @@ class LrclibProvider : LyricsProvider {
         }
 
         null
+    }
+
+    private fun isDurationAcceptable(query: LyricsQuery, res: LrcLibResponse): Boolean {
+        if (query.durationSec <= 0) return true
+        val itemDuration = res.duration ?: return true
+        return abs(itemDuration - query.durationSec) <= 8
     }
 
     private suspend fun <T> executeApi(call: suspend () -> Response<T>): T? {
@@ -112,6 +119,8 @@ class LrclibProvider : LyricsProvider {
 
         for (item in results) {
             if (!isValidResponse(item)) continue
+            if (!isDurationAcceptable(query, item)) continue
+
             val candTrack = item.trackName ?: item.name ?: ""
             val candArtist = item.artistName ?: ""
             val candDurationMs = item.duration?.let { (it * 1000).toLong() }
@@ -125,14 +134,14 @@ class LrclibProvider : LyricsProvider {
             }
         }
 
-        return bestRes?.let { createResultFromResponse(it, bestScore) }
+        return bestRes?.let { createResultFromResponse(query, it) }
     }
 
     private fun isValidResponse(res: LrcLibResponse): Boolean {
         return !res.instrumental && (!res.syncedLyrics.isNullOrBlank() || !res.plainLyrics.isNullOrBlank())
     }
 
-    private fun createResultFromResponse(res: LrcLibResponse, score: Double): LyricsResult {
+    private fun createResultFromResponse(query: LyricsQuery, res: LrcLibResponse): LyricsResult {
         val synced = res.syncedLyrics
         val plain = res.plainLyrics ?: ""
 
@@ -140,6 +149,12 @@ class LrclibProvider : LyricsProvider {
             !synced.isNullOrBlank() -> LyricsType.SYNCED
             else -> LyricsType.PLAIN
         }
+
+        val candTrack = res.trackName ?: res.name ?: query.title
+        val candArtist = res.artistName ?: query.artist
+        val candDurationMs = res.duration?.let { (it * 1000).toLong() }
+
+        val score = LyricsMatcher.score(query.title, query.artist, query.durationMs, candTrack, candArtist, candDurationMs)
 
         return LyricsResult(type, synced ?: plain, score)
     }

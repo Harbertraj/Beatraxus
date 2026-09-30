@@ -133,6 +133,28 @@ object LyricsMatcher {
         return t.replace(Regex("\\s+"), " ").trim()
     }
 
+    fun extractVersionKeywords(text: String?): Set<String> {
+        if (text.isNullOrBlank()) return emptySet()
+        val lower = text.lowercase(Locale.ROOT)
+        val found = mutableSetOf<String>()
+
+        val keywords = listOf(
+            "live", "remix", "acoustic", "unplugged", "sped up", "speed up", "spedup",
+            "slowed", "reverb", "instrumental", "karaoke", "radio edit", "extended", "demo", "cover"
+        )
+        for (kw in keywords) {
+            val canonical = when (kw) {
+                "speed up", "spedup" -> "sped up"
+                else -> kw
+            }
+            val pattern = Regex("\\b" + Regex.escape(kw) + "\\b")
+            if (pattern.containsMatchIn(lower)) {
+                found.add(canonical)
+            }
+        }
+        return found
+    }
+
     fun score(
         queryTitle: String,
         queryArtist: String,
@@ -141,21 +163,35 @@ object LyricsMatcher {
         candArtist: String,
         candDurationMs: Long? = null
     ): Double {
+        val queryVersions = extractVersionKeywords(queryTitle)
+        val candVersions = extractVersionKeywords(candTitle)
+        val versionMismatch = queryVersions != candVersions
+
         val titleSim = similarity(cleanTitle(queryTitle), cleanTitle(candTitle))
         val artistSim = artistSimilarity(queryArtist, candArtist)
 
+        var isDurationGatedOut = false
         val durationScore = if (queryDurationMs <= 0 || candDurationMs == null || candDurationMs <= 0) {
             0.5
         } else {
             val diffSec = abs(queryDurationMs - candDurationMs) / 1000.0
             when {
                 diffSec <= 3.0 -> 1.0
-                diffSec >= 12.0 -> 0.0
-                else -> 1.0 - (diffSec - 3.0) / 9.0
+                diffSec > 8.0 -> {
+                    isDurationGatedOut = true
+                    0.0
+                }
+                else -> 1.0 - (diffSec - 3.0) / 5.0
             }
         }
 
-        return (0.5 * titleSim + 0.3 * artistSim + 0.2 * durationScore).coerceIn(0.0, 1.0)
+        val rawScore = 0.5 * titleSim + 0.3 * artistSim + 0.2 * durationScore
+
+        if (isDurationGatedOut || versionMismatch) {
+            return minOf(rawScore, 0.49).coerceIn(0.0, 1.0)
+        }
+
+        return rawScore.coerceIn(0.0, 1.0)
     }
 
     fun isConfidentMatch(
@@ -166,6 +202,15 @@ object LyricsMatcher {
         candArtist: String,
         candDurationMs: Long? = null
     ): Boolean {
+        val queryVersions = extractVersionKeywords(queryTitle)
+        val candVersions = extractVersionKeywords(candTitle)
+        if (queryVersions != candVersions) return false
+
+        if (queryDurationMs > 0 && candDurationMs != null && candDurationMs > 0) {
+            val diffSec = abs(queryDurationMs - candDurationMs) / 1000.0
+            if (diffSec > 8.0) return false
+        }
+
         val titleSim = similarity(cleanTitle(queryTitle), cleanTitle(candTitle))
         val totalScore = score(queryTitle, queryArtist, queryDurationMs, candTitle, candArtist, candDurationMs)
         return totalScore >= 0.8 && titleSim >= 0.75
@@ -179,13 +224,17 @@ object LyricsMatcher {
         candidateArtist: String,
         candidateDurationMs: Long? = null
     ): Boolean {
-        val titleSim = similarity(queryTitle, candidateTitle)
+        val queryVersions = extractVersionKeywords(queryTitle)
+        val candVersions = extractVersionKeywords(candidateTitle)
+        if (queryVersions != candVersions) return false
+
+        val titleSim = similarity(cleanTitle(queryTitle), cleanTitle(candidateTitle))
         val artistSim = similarity(queryArtist, candidateArtist)
 
         if (titleSim < 0.75 || artistSim < 0.75) return false
 
         if (queryDurationMs > 0 && candidateDurationMs != null && candidateDurationMs > 0) {
-            if (abs(queryDurationMs - candidateDurationMs) > 3000L) {
+            if (abs(queryDurationMs - candidateDurationMs) > 8000L) {
                 return false
             }
         }

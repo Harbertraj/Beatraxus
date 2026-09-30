@@ -6,6 +6,7 @@ import com.beatraxus.app.repository.LyricsResult
 import com.beatraxus.app.repository.LyricsType
 import com.beatraxus.app.repository.lyrics.LyricsGranularity
 import com.beatraxus.app.repository.lyrics.LyricsHttp
+import com.beatraxus.app.repository.lyrics.LyricsMatcher
 import com.beatraxus.app.repository.lyrics.LyricsProvider
 import com.beatraxus.app.repository.lyrics.LyricsQuery
 import com.beatraxus.app.repository.lyrics.TtmlParser
@@ -54,14 +55,20 @@ class BetterlyricsProvider : LyricsProvider {
         try {
             val root = JsonParser.parseString(body).asJsonObject
             val ttml = root.get("ttml")?.asString ?: return null
-            val rawScore = root.get("score")?.asDouble ?: 100.0
-            val score = (rawScore / 100.0).coerceIn(0.0, 1.0)
+
+            val candDurationMs = root.get("duration")?.asLong?.let { it * 1000L }
+            val candTrack = root.get("trackName")?.asString ?: title
+            val candArtist = root.get("artistName")?.asString ?: artist
+
+            val computedScore = LyricsMatcher.score(query.title, query.artist, query.durationMs, candTrack, candArtist, candDurationMs)
+            val rawScore = root.get("score")?.asDouble
+            val finalScore = if (rawScore != null) (rawScore / 100.0).coerceIn(0.0, 1.0) else computedScore
 
             val lrc = TtmlParser.parseToEnhancedLrc(ttml) ?: return null
             val hasWordTags = LrcParser.WORD_TIME_PATTERN.matcher(lrc).find() || ttml.contains(Regex("<\\d{1,3}:\\d{2}"))
             val type = if (hasWordTags) LyricsType.WORD_BY_WORD else LyricsType.SYNCED
 
-            return LyricsResult(type, lrc, score)
+            return LyricsResult(type, lrc, finalScore)
         } catch (_: Exception) {
             Log.w("LyricsProvider", "$id parse failed: ${body.take(300)}")
             return null

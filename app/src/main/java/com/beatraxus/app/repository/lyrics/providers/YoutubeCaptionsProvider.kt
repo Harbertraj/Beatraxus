@@ -8,7 +8,9 @@ import com.beatraxus.app.repository.lyrics.LyricsHttp
 import com.beatraxus.app.repository.lyrics.LyricsProvider
 import com.beatraxus.app.repository.lyrics.LyricsQuery
 import com.beatraxus.app.repository.lyrics.LyricsTransientException
+import com.beatraxus.app.repository.lyrics.LyricsValidator
 import com.beatraxus.app.repository.lyrics.VideoIdResolver
+import com.beatraxus.app.repository.lyrics.durationSec
 import com.google.gson.JsonParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -16,6 +18,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.util.Locale
+import kotlin.math.abs
 
 class YoutubeCaptionsProvider : LyricsProvider {
     override val id = "youtube_captions"
@@ -26,111 +29,184 @@ class YoutubeCaptionsProvider : LyricsProvider {
     override val experimental = false
     override val isConfigured = true
 
+    private data class ClientConfig(val name: String, val version: String)
+
+    private val CLIENTS = listOf(
+        ClientConfig("WEB_REMIX", "1.20240101.01.00"),
+        ClientConfig("ANDROID_MUSIC", "6.20.51"),
+        ClientConfig("IOS", "19.09.3"),
+        ClientConfig("ANDROID", "19.09.37")
+    )
+
+    private data class ParsedEvent(val startTimeMs: Long, val text: String)
+
     override suspend fun fetch(query: LyricsQuery): LyricsResult? = withContext(Dispatchers.IO) {
         val videoId = query.videoId ?: VideoIdResolver.resolve(query)
         if (videoId.isNullOrBlank()) return@withContext null
 
-        try {
-            val playerUrl = "https://www.youtube.com/youtubei/v1/player".toHttpUrlOrNull() ?: return@withContext null
-            val jsonBody = """
-                {
-                  "context": {
-                    "client": {
-                      "clientName": "WEB_REMIX",
-                      "clientVersion": "1.20240101.01.00"
+        for (client in CLIENTS) {
+            try {
+                val playerUrl = "https://www.youtube.com/youtubei/v1/player".toHttpUrlOrNull() ?: continue
+                val jsonBody = """
+                    {
+                      "context": {
+                        "client": {
+                          "clientName": "${client.name}",
+                          "clientVersion": "${client.version}"
+                        }
+                      },
+                      "videoId": "$videoId"
                     }
-                  },
-                  "videoId": "$videoId"
+                """.trimIndent()
+
+                val mediaType = "application/json".toMediaType()
+                val requestBody = jsonBody.toRequestBody(mediaType)
+
+                val res = LyricsHttp.post(playerUrl, requestBody, timeoutMs = 8000L)
+                if (res.code == 403) continue // try next client or clean miss
+                val body = res.body ?: continue
+
+                val root = JsonParser.parseString(body).asJsonObject
+
+                // Duration check: require <= 3s duration difference
+                val videoDetails = root.getAsJsonObject("videoDetails")
+                val videoLengthSec = videoDetails?.get("lengthSeconds")?.asLong ?: 0L
+                if (query.durationSec > 0 && videoLengthSec > 0) {
+                    val diff = abs(videoLengthSec - query.durationSec)
+                    if (diff > 3L) {
+                        Log.d("YoutubeCaptionsProvider", "Video duration mismatch: $videoLengthSec vs song ${query.durationSec}")
+                        continue
+                    }
                 }
-            """.trimIndent()
 
-            val mediaType = "application/json".toMediaType()
-            val requestBody = jsonBody.toRequestBody(mediaType)
+                val captionTracks = root.getAsJsonObject("captions")
+                    ?.getAsJsonObject("playerCaptionsTracklistRenderer")
+                    ?.getAsJsonArray("captionTracks") ?: continue
 
-            val res = LyricsHttp.post(playerUrl, requestBody, timeoutMs = 8000L)
-            val body = res.body ?: return@withContext null
+                if (captionTracks.size() == 0) continue
 
-            val root = JsonParser.parseString(body).asJsonObject
-            val captionTracks = root.getAsJsonObject("captions")
-                ?.getAsJsonObject("playerCaptionsTracklistRenderer")
-                ?.getAsJsonArray("captionTracks") ?: return@withContext null
+                var selectedTrackUrl: String? = null
+                var isManual = false
 
-            if (captionTracks.size() == 0) return@withContext null
-
-            var selectedTrackUrl: String? = null
-            var isManual = false
-
-            // First pass: find manual caption track (kind != "asr")
-            for (trackElement in captionTracks) {
-                if (!trackElement.isJsonObject) continue
-                val track = trackElement.asJsonObject
-                val url = track.get("baseUrl")?.asString ?: continue
-                val kind = track.get("kind")?.asString ?: ""
-
-                if (kind != "asr") {
-                    selectedTrackUrl = url
-                    isManual = true
-                    break
-                }
-            }
-
-            // Fallback pass: take first ASR track if no manual track found
-            if (selectedTrackUrl == null) {
+                // Prefer manual track matching song language, non-auto-translated
                 for (trackElement in captionTracks) {
                     if (!trackElement.isJsonObject) continue
                     val track = trackElement.asJsonObject
                     val url = track.get("baseUrl")?.asString ?: continue
-                    selectedTrackUrl = url
-                    isManual = false
-                    break
-                }
-            }
+                    val kind = track.get("kind")?.asString ?: ""
+                    val vssId = track.get("vssId")?.asString ?: ""
 
-            val baseUrl = selectedTrackUrl ?: return@withContext null
-            val json3Url = baseUrl.toHttpUrlOrNull()
-                ?.newBuilder()
-                ?.addQueryParameter("fmt", "json3")
-                ?.build() ?: return@withContext null
+                    // Ignore translated or auto-translated tracks
+                    if (vssId.startsWith("a.") || vssId.contains(".en") && !vssId.startsWith("a.")) {
+                        if (kind == "asr") continue
+                    }
 
-            val json3Res = LyricsHttp.get(json3Url, timeoutMs = 8000L)
-            val json3Body = json3Res.body ?: return@withContext null
-
-            val events = JsonParser.parseString(json3Body).asJsonObject.getAsJsonArray("events") ?: return@withContext null
-            val lrcLines = mutableListOf<String>()
-
-            for (eventElement in events) {
-                if (!eventElement.isJsonObject) continue
-                val event = eventElement.asJsonObject
-                val tStartMs = event.get("tStartMs")?.asLong ?: 0L
-                val segs = event.getAsJsonArray("segs") ?: continue
-
-                val sb = StringBuilder()
-                for (segElement in segs) {
-                    if (!segElement.isJsonObject) continue
-                    val seg = segElement.asJsonObject
-                    val utf8 = seg.get("utf8")?.asString ?: ""
-                    sb.append(utf8)
+                    if (kind != "asr") {
+                        selectedTrackUrl = url
+                        isManual = true
+                        break
+                    }
                 }
 
-                val cleanText = cleanCaptionText(sb.toString())
-                if (cleanText.isBlank()) continue
+                // Fallback pass: take first non-translated ASR track if no manual track found
+                if (selectedTrackUrl == null) {
+                    for (trackElement in captionTracks) {
+                        if (!trackElement.isJsonObject) continue
+                        val track = trackElement.asJsonObject
+                        val url = track.get("baseUrl")?.asString ?: continue
+                        selectedTrackUrl = url
+                        isManual = false
+                        break
+                    }
+                }
 
-                val timestamp = formatLrcTime(tStartMs)
-                lrcLines.add("$timestamp $cleanText")
+                val baseUrl = selectedTrackUrl ?: continue
+                val json3Url = baseUrl.toHttpUrlOrNull()
+                    ?.newBuilder()
+                    ?.addQueryParameter("fmt", "json3")
+                    ?.build() ?: continue
+
+                val json3Res = LyricsHttp.get(json3Url, timeoutMs = 8000L)
+                val json3Body = json3Res.body ?: continue
+
+                val events = JsonParser.parseString(json3Body).asJsonObject.getAsJsonArray("events") ?: continue
+                val rawEvents = mutableListOf<ParsedEvent>()
+
+                for (eventElement in events) {
+                    if (!eventElement.isJsonObject) continue
+                    val event = eventElement.asJsonObject
+                    val tStartMs = event.get("tStartMs")?.asLong ?: 0L
+                    val segs = event.getAsJsonArray("segs") ?: continue
+
+                    val sb = StringBuilder()
+                    for (segElement in segs) {
+                        if (!segElement.isJsonObject) continue
+                        val seg = segElement.asJsonObject
+                        val utf8 = seg.get("utf8")?.asString ?: ""
+                        sb.append(utf8)
+                    }
+
+                    val cleanText = cleanCaptionText(sb.toString())
+                    if (cleanText.isBlank()) continue
+                    rawEvents.add(ParsedEvent(tStartMs, cleanText))
+                }
+
+                val deduplicated = deduplicateEvents(rawEvents)
+                if (deduplicated.size < 4) continue
+
+                val lrcLines = deduplicated.map { "${formatLrcTime(it.startTimeMs)} ${it.text}" }
+                val lrcContent = lrcLines.joinToString("\n")
+
+                val validation = LyricsValidator.validate(lrcContent, query.durationMs, LyricsType.SYNCED)
+                if (!validation.isValid) continue
+
+                val baseScore = if (isManual) 0.80 else 0.50
+                val finalScore = maxOf(0.0, baseScore - validation.penalty)
+
+                return@withContext LyricsResult(LyricsType.SYNCED, lrcContent, finalScore)
+            } catch (e: LyricsTransientException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w("YoutubeCaptionsProvider", "Failed client ${client.name} for $videoId: ${e.message}")
             }
-
-            if (lrcLines.size < 4) return@withContext null
-
-            val lrcContent = lrcLines.joinToString("\n")
-            val score = if (isManual) 0.80 else 0.50
-
-            return@withContext LyricsResult(LyricsType.SYNCED, lrcContent, score)
-        } catch (e: LyricsTransientException) {
-            throw e
-        } catch (e: Exception) {
-            Log.w("YoutubeCaptionsProvider", "Failed to fetch captions for $videoId: ${e.message}")
-            return@withContext null
         }
+
+        null
+    }
+
+    private fun deduplicateEvents(events: List<ParsedEvent>): List<ParsedEvent> {
+        if (events.isEmpty()) return emptyList()
+
+        val result = mutableListOf<ParsedEvent>()
+        for (event in events) {
+            if (result.isEmpty()) {
+                result.add(event)
+                continue
+            }
+
+            val lastIdx = result.size - 1
+            val last = result[lastIdx]
+
+            when {
+                event.text == last.text -> {
+                    // Exact duplicate, skip
+                    continue
+                }
+                event.text.startsWith(last.text) -> {
+                    // Event expands last line (ASR rolling caption), replace last
+                    result[lastIdx] = event
+                }
+                last.text.startsWith(event.text) -> {
+                    // Prefix duplicate, skip
+                    continue
+                }
+                else -> {
+                    result.add(event)
+                }
+            }
+        }
+
+        return result
     }
 
     private fun cleanCaptionText(rawText: String): String {

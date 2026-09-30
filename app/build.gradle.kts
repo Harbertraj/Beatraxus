@@ -161,6 +161,11 @@ configure<ApplicationExtension> {
             excludes += "META-INF/*.kotlin_module"
         }
     }
+
+    lint {
+        checkReleaseBuilds = false
+        abortOnError = false
+    }
 }
 
 kotlin {

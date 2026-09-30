@@ -6,6 +6,7 @@ import com.beatraxus.app.repository.LyricsResult
 import com.beatraxus.app.repository.LyricsType
 import com.beatraxus.app.repository.lyrics.LyricsGranularity
 import com.beatraxus.app.repository.lyrics.LyricsHttp
+import com.beatraxus.app.repository.lyrics.LyricsMatcher
 import com.beatraxus.app.repository.lyrics.LyricsProvider
 import com.beatraxus.app.repository.lyrics.LyricsQuery
 import com.beatraxus.app.repository.lyrics.LyricsTransientException
@@ -63,17 +64,34 @@ class BinilyricsProvider : LyricsProvider {
             val results = root.getAsJsonArray("results") ?: return null
             if (results.size() == 0) return null
 
-            val lyricsUrlStr = results.get(0).asJsonObject.get("lyricsUrl")?.asString ?: return null
-            val lyricsUrl = lyricsUrlStr.toHttpUrlOrNull() ?: return null
+            var bestResult: LyricsResult? = null
+            var bestScore = -1.0
 
-            val ttmlRes = LyricsHttp.get(lyricsUrl)
-            val ttml = ttmlRes.body ?: return null
+            for (i in 0 until results.size()) {
+                val item = results.get(i).asJsonObject
+                val lyricsUrlStr = item.get("lyricsUrl")?.asString ?: continue
+                val lyricsUrl = lyricsUrlStr.toHttpUrlOrNull() ?: continue
 
-            val lrc = TtmlParser.parseToEnhancedLrc(ttml) ?: return null
-            val hasWordTags = LrcParser.WORD_TIME_PATTERN.matcher(lrc).find() || ttml.contains(Regex("<\\d{1,3}:\\d{2}"))
-            val type = if (hasWordTags) LyricsType.WORD_BY_WORD else LyricsType.SYNCED
+                val candTrack = item.get("track")?.asString ?: item.get("title")?.asString ?: title
+                val candArtist = item.get("artist")?.asString ?: artist
+                val candDurationMs = item.get("duration")?.asLong?.let { it * 1000L }
 
-            return LyricsResult(type, lrc, 0.90)
+                val ttmlRes = LyricsHttp.get(lyricsUrl)
+                val ttml = ttmlRes.body ?: continue
+
+                val lrc = TtmlParser.parseToEnhancedLrc(ttml) ?: continue
+                val hasWordTags = LrcParser.WORD_TIME_PATTERN.matcher(lrc).find() || ttml.contains(Regex("<\\d{1,3}:\\d{2}"))
+                val type = if (hasWordTags) LyricsType.WORD_BY_WORD else LyricsType.SYNCED
+
+                val score = LyricsMatcher.score(query.title, query.artist, query.durationMs, candTrack, candArtist, candDurationMs)
+
+                if (score > bestScore) {
+                    bestScore = score
+                    bestResult = LyricsResult(type, lrc, score)
+                }
+            }
+
+            return bestResult
         } catch (e: LyricsTransientException) {
             throw e
         } catch (e: Exception) {

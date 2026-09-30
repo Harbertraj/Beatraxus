@@ -106,7 +106,7 @@ interface VideoRecentlyPlayedDao {
         LoudnessEntity::class, VideoRecentlyPlayedEntity::class, IntroOutroRange::class, VideoChapterEntity::class,
         AiEqCorrectionEntity::class
     ],
-    version = 30,
+    version = 31,
     exportSchema = false
 )
 @TypeConverters(Converters::class)
@@ -131,6 +131,14 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun videoChapterDao(): VideoChapterDao
 
     companion object {
+        val MIGRATION_30_31 = object : Migration(30, 31) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE lyrics ADD COLUMN providerId TEXT")
+                db.execSQL("ALTER TABLE lyrics ADD COLUMN fetchedAt INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE lyrics ADD COLUMN isValidated INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE lyrics ADD COLUMN durationMs INTEGER")
+            }
+        }
         val MIGRATION_28_29 = object : Migration(28, 29) {
             override fun migrate(db: SupportSQLiteDatabase) {}
         }

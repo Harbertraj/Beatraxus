@@ -4,6 +4,7 @@ import com.beatraxus.app.model.LyricSpeaker
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import com.beatraxus.app.repository.LrcParser
 
@@ -105,13 +106,13 @@ class TtmlParserTest {
     }
 
     @Test
-    fun testTtmlParserAgentMapping() {
+    fun testTtmlParserNeutralSingerMappingAndSorting() {
         val ttml = """
             <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata">
                 <body>
                     <div>
-                        <p begin="00:00:10.000" ttm:agent="v1">Singer 1 line</p>
                         <p begin="00:00:15.000" ttm:agent="v2">Singer 2 line</p>
+                        <p begin="00:00:10.000" ttm:agent="v1">Singer 1 line</p>
                     </div>
                 </body>
             </tt>
@@ -119,13 +120,34 @@ class TtmlParserTest {
 
         val lrc = TtmlParser.parseToEnhancedLrc(ttml)
         assertNotNull(lrc)
+        assertTrue(lrc!!.contains("[Singer1]"))
+        assertTrue(lrc.contains("[Singer2]"))
 
-        val lines = LrcParser.parse(lrc!!)
+        val lines = LrcParser.parse(lrc)
         assertEquals(2, lines.size)
-        assertEquals(LyricSpeaker.MALE, lines[0].speaker)
+        assertEquals(LyricSpeaker.MALE, lines[0].speaker) // Singer 1 -> start aligned slot (MALE)
         assertEquals("Singer 1 line", lines[0].text)
 
-        assertEquals(LyricSpeaker.FEMALE, lines[1].speaker)
+        assertEquals(LyricSpeaker.FEMALE, lines[1].speaker) // Singer 2 -> end aligned slot (FEMALE)
         assertEquals("Singer 2 line", lines[1].text)
+    }
+
+    @Test
+    fun testTtmlParserExplicitGenderMetadata() {
+        val ttml = """
+            <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata">
+                <body>
+                    <div>
+                        <p begin="00:00:10.000" ttm:agent="male_v1">Male line</p>
+                        <p begin="00:00:15.000" ttm:agent="female_v2">Female line</p>
+                    </div>
+                </body>
+            </tt>
+        """.trimIndent()
+
+        val lrc = TtmlParser.parseToEnhancedLrc(ttml)
+        assertNotNull(lrc)
+        assertTrue(lrc!!.contains("[Male]"))
+        assertTrue(lrc.contains("[Female]"))
     }
 }
