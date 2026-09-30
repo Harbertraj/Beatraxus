@@ -830,13 +830,17 @@ fun MainScreen(
                                     onClick = {
                                         showDrawer = !showDrawer
                                     },
-                                    modifier = Modifier.align(Alignment.CenterStart).size(42.dp)
+                                    modifier = Modifier
+                                        .align(Alignment.CenterStart)
+                                        .size(42.dp)
+                                        .background(Color.White.copy(0.08f), CircleShape)
+                                        .border(1.dp, Color.White.copy(0.1f), CircleShape)
                                 ) {
                                     Icon(
                                         imageVector = if (showDrawer) Icons.AutoMirrored.Rounded.ArrowBack else Icons.Rounded.Menu,
                                         contentDescription = null,
-                                        tint = Color.White.copy(0.8f),
-                                        modifier = Modifier.size(26.dp)
+                                        tint = Color.White.copy(0.9f),
+                                        modifier = Modifier.size(24.dp)
                                     )
                                 }
 
@@ -3549,22 +3553,21 @@ fun MainScreen(
                 enter = scaleIn(animationSpec = tween(400)) + fadeIn(animationSpec = tween(400)),
                 exit = scaleOut(animationSpec = tween(300)) + fadeOut(animationSpec = tween(300))
             ) {
-                Surface(
+                Box(
                     modifier = Modifier
                         .size(64.dp)
+                        .shadow(8.dp, CircleShape, clip = false)
+                        .clip(CircleShape)
+                        .background(AccentBlue)
                         .clickable { viewModel.playLastPlayedVideo() },
-                    shape = CircleShape,
-                    color = AccentBlue,
-                    shadowElevation = 12.dp
+                    contentAlignment = Alignment.Center
                 ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            imageVector = Icons.Rounded.PlayArrow,
-                            contentDescription = null,
-                            tint = Color.Black,
-                            modifier = Modifier.size(40.dp)
-                        )
-                    }
+                    Icon(
+                        imageVector = Icons.Rounded.PlayArrow,
+                        contentDescription = null,
+                        tint = Color.Black,
+                        modifier = Modifier.size(40.dp)
+                    )
                 }
             }
         }
@@ -4751,11 +4754,10 @@ fun HomeScreen(
                                                 .align(Alignment.BottomEnd)
                                                 .padding(16.dp)
                                                 .size(44.dp)
-                                                .background(Color.White.copy(0.15f), CircleShape)
-                                                .border(1.dp, Color.White.copy(0.2f), CircleShape),
+                                                .background(AccentBlue, CircleShape),
                                             contentAlignment = Alignment.Center
                                         ) {
-                                            Icon(Icons.Rounded.PlayArrow, null, tint = Color.White, modifier = Modifier.size(28.dp))
+                                            Icon(Icons.Rounded.PlayArrow, null, tint = Color.Black, modifier = Modifier.size(28.dp))
                                         }
                                     }
                                 }

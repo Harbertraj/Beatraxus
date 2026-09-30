@@ -501,12 +501,12 @@ fun SettingsScreen(
                         when (section) {
                             "Audio" -> AudioContent(uiState, playerViewModel, onEditValue = { editingValue = it })
                             "Appearance" -> AppearanceContent(sectionStack)
-                            "Appearance: Main Screen" -> MainScreenAppearanceContent(uiState, playerViewModel)
-                            "Appearance: Now Playing" -> NowPlayingAppearanceContent(uiState, playerViewModel, sectionStack)
+                            "Appearance: Main Interface" -> MainScreenAppearanceContent(uiState, playerViewModel)
+                            "Appearance: Now Playing Interface" -> NowPlayingAppearanceContent(uiState, playerViewModel, sectionStack)
                             "Appearance: Seekbar Settings" -> SeekbarSettingsContent(uiState, playerViewModel)
-                            "Appearance: Home Screen" -> HomeScreenAppearanceContent(uiState, playerViewModel, sectionStack)
+                            "Appearance: Home Interface" -> HomeScreenAppearanceContent(uiState, playerViewModel, sectionStack)
                             "Appearance: Home Screen Layout" -> HomeScreenLayoutContent(uiState, playerViewModel)
-                            "Appearance: Settings Screen" -> SettingsScreenAppearanceContent(uiState, playerViewModel)
+                            "Appearance: Settings Interface" -> SettingsScreenAppearanceContent(uiState, playerViewModel)
                             "Appearance: Lyrics Database" -> LyricsDatabaseContent(uiState, playerViewModel)
                             "Replay Gain" -> ReplayGainContent(uiState, playerViewModel, onEditValue = { editingValue = it })
                             "Library" -> LibraryContent(uiState, playerViewModel, onShowInfo = { showInfoPopup = true })
@@ -722,32 +722,32 @@ private fun ValueEditDialog(
 fun AppearanceContent(sectionStack: SnapshotStateList<String>) {
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         SettingMenuItem(
-            title = "Main Screen",
+            title = "Main Interface",
             subtitle = "Settings for the main app container",
             icon = Icons.Rounded.Smartphone,
             iconColor = PrimaryCyan,
-            onClick = { sectionStack.add("Appearance: Main Screen") }
+            onClick = { sectionStack.add("Appearance: Main Interface") }
         )
         SettingMenuItem(
-            title = "Now Playing Screen",
+            title = "Now Playing Interface",
             subtitle = "Customize the player interface and shortcuts",
             icon = Icons.Rounded.PlayCircle,
             iconColor = PrimaryCyan,
-            onClick = { sectionStack.add("Appearance: Now Playing") }
+            onClick = { sectionStack.add("Appearance: Now Playing Interface") }
         )
         SettingMenuItem(
-            title = "Home Screen",
-            subtitle = "Customize visible categories on the home screen",
+            title = "Home Interface",
+            subtitle = "Customize visible categories on the home interface",
             icon = Icons.Rounded.Dashboard,
             iconColor = PrimaryCyan,
-            onClick = { sectionStack.add("Appearance: Home Screen") }
+            onClick = { sectionStack.add("Appearance: Home Interface") }
         )
         SettingMenuItem(
-            title = "Settings Screen",
+            title = "Settings Interface",
             subtitle = "Customize background for the settings interface",
             icon = Icons.Rounded.Palette,
             iconColor = PrimaryCyan,
-            onClick = { sectionStack.add("Appearance: Settings Screen") }
+            onClick = { sectionStack.add("Appearance: Settings Interface") }
         )
     }
 }

@@ -926,12 +926,15 @@ class VideoPlayerViewModel(
         val currentPosMs = player.currentPosition
         val isPlaying = player.isPlaying
 
+        val selectedTrackInfo = _uiState.value.availableAudioTracks.find { it.audioOrdinal == selectedTrackIdx }
+
         engine.playVideoAudio(
             uri = video.uri,
             audioTrackIndex = selectedTrackIdx,
             startPositionMs = currentPosMs,
             startPlaying = isPlaying,
-            title = video.title
+            title = video.title,
+            codecMime = selectedTrackInfo?.format
         )
 
         videoAudioStateObservationJob?.cancel()
@@ -966,7 +969,6 @@ class VideoPlayerViewModel(
                         if (hasBeenActive) {
                             timeoutJob.cancel()
                             _uiState.update { it.copy(isConnectingEngineRoute = false) }
-                            setRouteAudioToEngine(false)
                         }
                     }
                 }

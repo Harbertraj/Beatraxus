@@ -25,10 +25,11 @@ internal class FfmpegAlacDecoder(
 ) : AudioDecoder {
 
     override suspend fun canDecode(song: Song): Boolean {
+        val isVideoRoute = song.id.startsWith("video_route:")
         val ext = song.uri.lastPathSegment?.substringAfterLast('.', "")?.lowercase(Locale.US).orEmpty()
-        if (song.format.equals("ALAC", ignoreCase = true) || song.format.equals("FLAC", ignoreCase = true) || song.format.equals("AC3", true) || song.format.equals("EAC3", true) || song.format.equals("DTS", true) || song.format.equals("DSD", true)) return true
+        if (song.format.equals("ALAC", ignoreCase = true) || song.format.equals("FLAC", ignoreCase = true) || song.format.equals("AC3", true) || song.format.equals("EAC3", true) || song.format.equals("DTS", true) || song.format.equals("DSD", true) || song.format.equals("TRUEHD", true)) return true
         if (song.format.equals("WAV", ignoreCase = true)) return true
-        if (ext in setOf("alac", "flac", "m4a", "mp4", "caf", "wav", "bwf", "ac3", "eac3", "ec3", "dts", "dsf", "dff")) return true
+        if (ext in setOf("alac", "flac", "m4a", "mp4", "caf", "wav", "bwf", "ac3", "eac3", "ec3", "dts", "dsf", "dff", "mkv", "mka", "ts", "m2ts", "webm") || isVideoRoute) return true
         return false
     }
 
@@ -38,7 +39,7 @@ internal class FfmpegAlacDecoder(
         control: DecoderControl
     ): DecodeResult = withContext(Dispatchers.IO) {
         val headers = resolveHeaders(request.song)
-        val format = probeFormat(request.song, headers) ?: return@withContext DecodeResult.Failed("Format probe failed (ALAC/WAV)")
+        val format = probeFormat(request, headers) ?: return@withContext DecodeResult.Failed("Format probe failed (ALAC/WAV)")
         val ext = request.song.uri.lastPathSegment?.substringAfterLast('.', "")?.lowercase(Locale.US).orEmpty()
         
         val outputFormat = PcmAudioFormat(
@@ -301,12 +302,13 @@ internal class FfmpegAlacDecoder(
         }
     }
 
-    private suspend fun probeFormat(song: Song, headers: Map<String, String>): ProbedAlacFormat? = withContext(Dispatchers.IO) {
+    private suspend fun probeFormat(request: PlaybackRequest, headers: Map<String, String>): ProbedAlacFormat? = withContext(Dispatchers.IO) {
+        val song = request.song
         // 1. Try MediaExtractor first (local or cached)
         // MediaExtractor is significantly faster than FFprobe as it can use our StreamingCacheDataSource
         // SKIP for Telegram to avoid slow/blocking network reads during probe.
         if (song.source != SongSource.TELEGRAM) {
-            val extracted = probeFormatWithExtractor(song, headers)
+            val extracted = probeFormatWithExtractor(request, headers)
             if (extracted != null) return@withContext extracted
         }
 
@@ -315,7 +317,7 @@ internal class FfmpegAlacDecoder(
             return@withContext ProbedAlacFormat(
                 codecName = if (song.format.isNotBlank()) song.format else "ALAC",
                 sampleRate = song.sampleRateHz,
-                channels = 2, // Assumption, but safe for 99% of music
+                channels = if (song.format.equals("eac3", true) || song.format.equals("ac3", true) || song.format.equals("dts", true)) 6 else 2,
                 bitDepth = if (song.bitDepth > 0) song.bitDepth else 16
             )
         }
@@ -326,10 +328,10 @@ internal class FfmpegAlacDecoder(
             Log.w(TAG, "Cannot probe format: resolveInputSource returned blank for ${song.title}")
             return@withContext null
         }
-        probeFormatWithFfprobe(inputSource, headers)
+        probeFormatWithFfprobe(inputSource, headers, request.preferredAudioTrackIndex ?: 0)
     }
 
-    private fun probeFormatWithFfprobe(path: String, headers: Map<String, String>): ProbedAlacFormat? {
+    private fun probeFormatWithFfprobe(path: String, headers: Map<String, String>, trackIndex: Int): ProbedAlacFormat? {
         if (path.isBlank()) return null
         return try {
             val mediaInfo = if (headers.isEmpty()) {
@@ -358,8 +360,11 @@ internal class FfmpegAlacDecoder(
                 return null
             }
 
-            val audioStream = mediaInfo.streams
-                ?.firstOrNull { it.type.equals("audio", ignoreCase = true) }
+            val audioStreams = mediaInfo.streams
+                ?.filter { it.type.equals("audio", ignoreCase = true) }
+                ?: return null
+                
+            val audioStream = if (audioStreams.size > trackIndex) audioStreams[trackIndex] else audioStreams.firstOrNull()
                 ?: return null
 
             val sampleRate = audioStream.sampleRate?.toIntOrNull() ?: 44_100
@@ -383,7 +388,8 @@ internal class FfmpegAlacDecoder(
         }
     }
 
-    private suspend fun probeFormatWithExtractor(song: Song, headers: Map<String, String>): ProbedAlacFormat? {
+    private suspend fun probeFormatWithExtractor(request: PlaybackRequest, headers: Map<String, String>): ProbedAlacFormat? {
+        val song = request.song
         val extractor = MediaExtractor()
         return try {
             if (song.source != SongSource.LOCAL) {
@@ -409,19 +415,19 @@ internal class FfmpegAlacDecoder(
             }
 
             var best: MediaFormat? = null
-            var bestPriority = Int.MIN_VALUE
+            var audioTrackCount = 0
+            val targetIdx = request.preferredAudioTrackIndex ?: 0
+            
             for (index in 0 until extractor.trackCount) {
                 val format = extractor.getTrackFormat(index)
                 val mime = format.getString(MediaFormat.KEY_MIME) ?: continue
                 if (!mime.startsWith("audio/")) continue
-                val priority = when {
-                    mime.contains("alac", true) -> 100
-                    else -> 10
-                }
-                if (priority > bestPriority) {
-                    bestPriority = priority
+                
+                if (audioTrackCount == targetIdx) {
                     best = format
+                    break
                 }
+                audioTrackCount++
             }
 
             val audioFormat = best ?: return null

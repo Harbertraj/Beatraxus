@@ -6,6 +6,9 @@ import android.util.Log
 import android.media.AudioManager
 import android.media.AudioTrack
 import android.net.Uri
+import androidx.annotation.OptIn
+import androidx.media3.common.MimeTypes
+import androidx.media3.common.util.UnstableApi
 import com.beatraxus.app.model.DspConfig
 import com.beatraxus.app.model.OutputMode
 import com.beatraxus.app.model.ResamplerMode
@@ -123,12 +126,14 @@ class AudioEngine(
         return videoSession?.dspPipeline?.getLatencyFrames() ?: 0
     }
 
+    @OptIn(UnstableApi::class)
     fun playVideoAudio(
         uri: Uri,
         audioTrackIndex: Int,
         startPositionMs: Long,
         startPlaying: Boolean,
-        title: String
+        title: String,
+        codecMime: String? = null
     ) {
         Log.d("VideoAudioRouting", "playVideoAudio requested: uri=$uri, audioTrackIndex=$audioTrackIndex, title=$title")
         _videoRouteStateFlow.update {
@@ -153,16 +158,24 @@ class AudioEngine(
 
                 stopVideoAudioInternal(emitIdle = false)
 
-                val videoSong = Song(
-                    id = "video_route:${uri.hashCode()}_${audioTrackIndex}",
-                    uri = uri,
-                    title = title,
-                    artist = "Video Player",
-                    album = "Video Audio",
-                    durationMs = 0L,
-                    format = "video",
-                    sampleRateHz = 48000
-                )
+            val mappedFormat = when (codecMime) {
+                MimeTypes.AUDIO_AC3 -> "ac3"
+                MimeTypes.AUDIO_E_AC3, MimeTypes.AUDIO_E_AC3_JOC -> "eac3"
+                MimeTypes.AUDIO_DTS, MimeTypes.AUDIO_DTS_HD, MimeTypes.AUDIO_DTS_EXPRESS, MimeTypes.AUDIO_DTS_X -> "dts"
+                MimeTypes.AUDIO_TRUEHD -> "truehd"
+                else -> "video"
+            }
+
+            val videoSong = Song(
+                id = "video_route:${uri.hashCode()}_${audioTrackIndex}",
+                uri = uri,
+                title = title,
+                artist = "Video Player",
+                album = "Video Audio",
+                durationMs = 0L,
+                format = mappedFormat,
+                sampleRateHz = 48000
+            )
 
                 val sessionId = currentSessionId.incrementAndGet()
                 val session = PlaybackSession(

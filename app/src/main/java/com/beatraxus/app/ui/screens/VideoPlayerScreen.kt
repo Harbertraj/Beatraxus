@@ -58,6 +58,10 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.basicMarquee
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.*
@@ -1310,6 +1314,13 @@ fun VideoSettingsSheetContent(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
+                        Text(
+                            text = "Connect to audio mode",
+                            color = Color.White,
+                            fontSize = 14.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
                         if (uiState.isConnectingEngineRoute) {
                             CircularProgressIndicator(
                                 modifier = Modifier.size(18.dp),
@@ -1516,7 +1527,7 @@ fun VideoSettingsSheetContent(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clip(RoundedCornerShape(12.dp))
+                                .clip(RoundedCornerShape(10.dp))
                                 .background(
                                     if (track.isSelected) mxOrange.copy(alpha = 0.2f)
                                     else Color.White.copy(alpha = 0.06f)
@@ -1524,10 +1535,11 @@ fun VideoSettingsSheetContent(
                                 .border(
                                     width = 1.dp,
                                     color = if (track.isSelected) mxOrange.copy(alpha = 0.8f) else Color.White.copy(alpha = 0.08f),
-                                    shape = RoundedCornerShape(12.dp)
+                                    shape = RoundedCornerShape(10.dp)
                                 )
                                 .clickable { onAudioTrackSelect(track) }
-                                .padding(horizontal = 14.dp, vertical = 12.dp),
+                                .heightIn(min = 48.dp, max = 52.dp)
+                                .padding(horizontal = 14.dp, vertical = 8.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
@@ -1542,18 +1554,27 @@ fun VideoSettingsSheetContent(
                                     modifier = Modifier.size(20.dp)
                                 )
                                 Spacer(Modifier.width(10.dp))
-                                Column {
+                                @OptIn(ExperimentalFoundationApi::class)
+                                Column(
+                                    modifier = Modifier.weight(1f).clipToBounds()
+                                ) {
                                     Text(
                                         text = track.name,
                                         color = Color.White,
                                         fontSize = 14.sp,
-                                        fontWeight = if (track.isSelected) FontWeight.Bold else FontWeight.Medium
+                                        fontWeight = if (track.isSelected) FontWeight.Bold else FontWeight.Medium,
+                                        maxLines = 1,
+                                        softWrap = false,
+                                        modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE)
                                     )
                                     track.language?.let { lang ->
                                         Text(
                                             text = lang.uppercase(),
                                             color = Color.White.copy(0.5f),
-                                            fontSize = 11.sp
+                                            fontSize = 11.sp,
+                                            maxLines = 1,
+                                            softWrap = false,
+                                            overflow = TextOverflow.Ellipsis
                                         )
                                     }
                                 }
@@ -1591,6 +1612,7 @@ fun VideoSettingsSheetContent(
                                 }
                             }
                             if (track.isSelected) {
+                                Spacer(Modifier.width(8.dp))
                                 Icon(
                                     imageVector = Icons.Rounded.Check,
                                     contentDescription = "Selected",

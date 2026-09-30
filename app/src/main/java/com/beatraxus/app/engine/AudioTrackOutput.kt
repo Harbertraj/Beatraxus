@@ -14,6 +14,7 @@ import com.beatraxus.app.model.OutputMode
 import com.beatraxus.app.model.SampleFormat
 import java.util.concurrent.locks.ReentrantReadWriteLock
 import kotlin.concurrent.withLock
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 class AudioTrackOutput(
@@ -144,7 +145,7 @@ class AudioTrackOutput(
         val device = resolvePreferredOutputDevice()
         preferredDevice = device
         outputDeviceName = deviceTypeLabel(device)
-        supportedDirectRates = detectDirectRates()
+        supportedDirectRates = detectDirectRates(2)
         val maxDirectRate = supportedDirectRates.maxOrNull() ?: 48_000
         val hiResSupported = supportedDirectRates.any { it > 48_000 }
 
@@ -250,7 +251,7 @@ class AudioTrackOutput(
                 device = usbDev
             )
             resolvedActiveMode == OutputMode.AAUDIO -> getHardwareSampleRate()
-            else -> resolveSupportedSampleRate(if (targetSampleRate > 0) targetSampleRate else sampleRate)
+            else -> resolveSupportedSampleRate(if (targetSampleRate > 0) targetSampleRate else sampleRate, channels)
         }
 
         val resolvedEncoding = when {
@@ -840,12 +841,12 @@ class AudioTrackOutput(
         return if (dvcEnabled || bitDepth > 16) AudioFormat.ENCODING_PCM_FLOAT else AudioFormat.ENCODING_PCM_16BIT
     }
 
-    private fun resolveSupportedSampleRate(requestedRate: Int): Int {
+    private fun resolveSupportedSampleRate(requestedRate: Int, channels: Int): Int {
         val device = preferredDevice ?: resolvePreferredOutputDevice()
         val isBluetooth = device?.type in BLUETOOTH_TYPES
-        if (isBluetooth) return BLUETOOTH_RATE_CANDIDATES.minByOrNull { kotlin.math.abs(it - requestedRate) } ?: 48_000
+        if (isBluetooth) return BLUETOOTH_RATE_CANDIDATES.minByOrNull { abs(it - requestedRate) } ?: 48_000
         if (selectedMode == OutputMode.HI_RES) {
-            val directRates = detectDirectRates().sortedDescending()
+            val directRates = detectDirectRates(channels).sortedDescending()
             if (directRates.isNotEmpty()) {
                 if (directRates.contains(requestedRate)) return requestedRate
                 if (bitPerfectEnabled) return requestedRate
@@ -855,8 +856,15 @@ class AudioTrackOutput(
         return requestedRate
     }
 
-    private fun detectDirectRates(): List<Int> {
-        val channelMask = AudioFormat.CHANNEL_OUT_STEREO
+    private fun detectDirectRates(channels: Int): List<Int> {
+        val channelMask = when (channels) {
+            1 -> AudioFormat.CHANNEL_OUT_MONO
+            2 -> AudioFormat.CHANNEL_OUT_STEREO
+            4 -> AudioFormat.CHANNEL_OUT_QUAD
+            6 -> AudioFormat.CHANNEL_OUT_5POINT1
+            8 -> AudioFormat.CHANNEL_OUT_7POINT1
+            else -> if (channels > 2) AudioFormat.CHANNEL_OUT_5POINT1 else AudioFormat.CHANNEL_OUT_STEREO
+        }
         val encodings = mutableListOf(AudioFormat.ENCODING_PCM_16BIT, AudioFormat.ENCODING_PCM_FLOAT)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) encodings.add(AudioFormat.ENCODING_PCM_24BIT_PACKED)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) encodings.add(AudioFormat.ENCODING_PCM_32BIT)

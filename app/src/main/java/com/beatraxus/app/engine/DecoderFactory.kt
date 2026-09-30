@@ -41,8 +41,13 @@ internal class DecoderFactory(
             }
         }
 
-        val isDolbyOrDts = format in setOf("ac3", "eac3", "dts") || format.contains("ac3") || format.contains("dts")
+        val isDolbyOrDts = format in setOf("ac3", "eac3", "dts", "truehd") || format.contains("ac3") || format.contains("dts") || format.contains("truehd")
         val isDsd = format == "dsd" || format == "dsf" || format == "dff" || format.contains("dsd")
+        
+        val isVideoRoute = song.id.startsWith("video_route:")
+        if (isVideoRoute && isDolbyOrDts) {
+            return ffmpegAlacDecoder
+        }
 
         val durationMin = song.durationMs / 60000.0
         val sizeMb = song.fileSizeBytes / (1024.0 * 1024.0)
