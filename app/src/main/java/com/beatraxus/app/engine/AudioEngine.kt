@@ -41,15 +41,24 @@ internal fun computeCrossfadeProgress(remainingMs: Long, crossfadeDurationS: Int
     return (remainingMs / crossfadeMs).coerceIn(0f, 1f)
 }
 
+enum class VideoRoutePhase {
+    IDLE,
+    STARTING,
+    ACTIVE,
+    ERROR
+}
+
 data class VideoRouteState(
-    val isActive: Boolean = false,
+    val phase: VideoRoutePhase = VideoRoutePhase.IDLE,
     val uri: Uri? = null,
     val audioTrackIndex: Int = 0,
     val title: String = "",
     val isPlaying: Boolean = false,
     val positionMs: Long = 0L,
     val error: String? = null
-)
+) {
+    val isActive: Boolean get() = phase == VideoRoutePhase.ACTIVE || phase == VideoRoutePhase.STARTING
+}
 
 class AudioEngine(
     context: Context,
@@ -121,6 +130,19 @@ class AudioEngine(
         startPlaying: Boolean,
         title: String
     ) {
+        Log.d("VideoAudioRouting", "playVideoAudio requested: uri=$uri, audioTrackIndex=$audioTrackIndex, title=$title")
+        _videoRouteStateFlow.update {
+            VideoRouteState(
+                phase = VideoRoutePhase.STARTING,
+                uri = uri,
+                audioTrackIndex = audioTrackIndex,
+                title = title,
+                isPlaying = startPlaying,
+                positionMs = startPositionMs,
+                error = null
+            )
+        }
+
         engineScope.launch {
             controlMutex.withLock {
                 if (_playbackStateFlow.value.isPlaying) {
@@ -129,7 +151,7 @@ class AudioEngine(
                     _playbackStateFlow.update { it.copy(isPlaying = false) }
                 }
 
-                stopVideoAudioInternal()
+                stopVideoAudioInternal(emitIdle = false)
 
                 val videoSong = Song(
                     id = "video_route:${uri.hashCode()}_${audioTrackIndex}",
@@ -154,8 +176,8 @@ class AudioEngine(
                 activeSession = session
 
                 _videoRouteStateFlow.update {
-                    VideoRouteState(
-                        isActive = true,
+                    it.copy(
+                        phase = VideoRoutePhase.ACTIVE,
                         uri = uri,
                         audioTrackIndex = audioTrackIndex,
                         title = title,
@@ -164,6 +186,7 @@ class AudioEngine(
                         error = null
                     )
                 }
+                Log.d("VideoAudioRouting", "Video route state -> ACTIVE")
 
                 if (startPlaying) {
                     output.start()
@@ -177,8 +200,9 @@ class AudioEngine(
                             Log.e(TAG, "Video audio session $sessionId failed", t)
                             controlMutex.withLock {
                                 _videoRouteStateFlow.update {
-                                    it.copy(isActive = false, isPlaying = false, error = t.message ?: "Session failed")
+                                    it.copy(phase = VideoRoutePhase.ERROR, isPlaying = false, error = t.message ?: "Session failed")
                                 }
+                                Log.w("VideoAudioRouting", "Video route state -> ERROR (${t.message})")
                             }
                         }
                     }
@@ -190,13 +214,13 @@ class AudioEngine(
     fun stopVideoAudio() {
         engineScope.launch {
             controlMutex.withLock {
-                stopVideoAudioInternal()
+                stopVideoAudioInternal(emitIdle = true)
                 output.stop()
             }
         }
     }
 
-    private fun stopVideoAudioInternal() {
+    private fun stopVideoAudioInternal(emitIdle: Boolean = true) {
         val vSession = videoSession
         if (vSession != null) {
             vSession.stop()
@@ -205,7 +229,10 @@ class AudioEngine(
             }
             videoSession = null
         }
-        _videoRouteStateFlow.update { VideoRouteState(isActive = false) }
+        if (emitIdle) {
+            _videoRouteStateFlow.update { VideoRouteState(phase = VideoRoutePhase.IDLE) }
+            Log.d("VideoAudioRouting", "Video route state -> IDLE")
+        }
     }
 
     fun pauseVideoAudio() {
@@ -963,7 +990,7 @@ class AudioEngine(
                                     if (activeSession?.sessionId == sessionId) {
                                         activeSession = null
                                     }
-                                    _videoRouteStateFlow.update { it.copy(isActive = false, isPlaying = false, error = result.reason ?: "Decoder failed") }
+                                    _videoRouteStateFlow.update { it.copy(phase = VideoRoutePhase.ERROR, isPlaying = false, error = result.reason ?: "Decoder failed") }
                                 } else if (activeSession?.sessionId == sessionId) {
                                     activeSession = null
                                     _playbackStateFlow.update { it.copy(isPlaying = false) }

@@ -264,7 +264,8 @@ data class AppearanceConfig(
     // Lyrics Providers
     val lyricsProviderOrder: List<String> = emptyList(),
     val lyricsEnabledProviders: Set<String> = emptySet(),
-    val lyricsShowAll: Boolean = false
+    val lyricsShowAll: Boolean = false,
+    val alignLyricsBySinger: Boolean = true
 )
 
 enum class AudioOutputDevice(val displayName: String) {
@@ -401,6 +402,7 @@ data class PlayerUiState(
     val isOnline: Boolean = true,
     val pipelineSummary: String = "",
     val autoEqProfileName: String? = null,
+    val underrunCount: Int = 0,
     val dsp: DspUiState = DspUiState(),
     val appearance: AppearanceConfig = AppearanceConfig(),
     val resamplingEnabled: Boolean = true,

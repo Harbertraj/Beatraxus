@@ -1530,6 +1530,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                             pipelineActiveEffects = audioState.activeEffects,
                             pipelineSummary = audioState.pipelineSummary,
                             autoEqProfileName = audioState.autoEqProfileName,
+                            underrunCount = audioState.underrunCount,
                             dsp = it.dsp.copy(
                                 currentHeadroomDb = audioState.headroomDb,
                                 currentLatencyFrames = audioState.latencyFrames,
@@ -4230,13 +4231,22 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun loadLyricsCandidates() {
         val song = _uiState.value.currentSong ?: return
         
-        _uiState.update { it.copy(isLoadingLyricsCandidates = true) }
+        _uiState.update { it.copy(isLoadingLyricsCandidates = true, lyricsCandidates = emptyList()) }
         
         viewModelScope.launch {
-            val candidates = lyricsRepository.fetchAllCandidates(song)
+            val embeddedCandidate = lyricsRepository.fetchEmbeddedCandidate(song)
+            if (embeddedCandidate != null) {
+                _uiState.update { 
+                    it.copy(lyricsCandidates = listOf(embeddedCandidate))
+                }
+            }
+
+            val onlineCandidates = lyricsRepository.fetchAllCandidates(song)
+            val allCandidates = listOfNotNull(embeddedCandidate) + onlineCandidates.filter { it.providerId != "embedded" }
+
             _uiState.update { 
                 it.copy(
-                    lyricsCandidates = candidates,
+                    lyricsCandidates = allCandidates,
                     isLoadingLyricsCandidates = false
                 ) 
             }
@@ -4247,11 +4257,14 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         val song = _uiState.value.currentSong ?: return
         val lines = LrcParser.parse(candidate.content)
         
+        val isEmbedded = candidate.providerId == "embedded"
+        val source = if (isEmbedded) LyricsSource.EMBEDDED else LyricsSource.ONLINE
+
         _uiState.update {
             it.copy(
                 lyrics = lines,
                 lyricsCurrentIndex = -1,
-                lyricsSource = LyricsSource.ONLINE,
+                lyricsSource = source,
                 lyricsProviderId = candidate.providerId
             )
         }

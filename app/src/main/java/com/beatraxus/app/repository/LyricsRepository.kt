@@ -399,6 +399,35 @@ class LyricsRepository(
         return res
     }
 
+    suspend fun fetchEmbeddedCandidate(song: Song): LyricsCandidate? = withContext(Dispatchers.IO) {
+        val result = song.uri.path?.let { embeddedSource.getLyrics(it) }
+            ?: embeddedSource.getLyrics(song.uri)
+            ?: song.lyrics?.takeIf { it.isNotBlank() }?.let {
+                LyricsResult(type = determineType(it), content = it.trim())
+            }
+
+        val res = result ?: return@withContext null
+        if (res.content.isBlank()) return@withContext null
+
+        val lines = LrcParser.parse(res.content)
+        val previewLine = lines.firstOrNull { it.text.isNotBlank() }?.text ?: "No preview available"
+        val granularity = when (res.type) {
+            LyricsType.WORD_BY_WORD -> LyricsGranularity.WORD
+            LyricsType.SYNCED -> LyricsGranularity.LINE
+            LyricsType.PLAIN -> LyricsGranularity.PLAIN
+        }
+
+        LyricsCandidate(
+            providerId = "embedded",
+            providerName = "Embedded (file tag)",
+            granularity = granularity,
+            type = res.type,
+            lineCount = lines.size,
+            preview = previewLine,
+            content = res.content
+        )
+    }
+
     private val candidatesCache = ConcurrentHashMap<String, List<LyricsCandidate>>()
 
     suspend fun fetchAllCandidates(song: Song): List<LyricsCandidate> = withContext(Dispatchers.IO) {

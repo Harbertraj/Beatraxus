@@ -75,6 +75,15 @@ configure<ApplicationExtension> {
         val openSubtitlesApiKey = localProperties.getProperty("OPENSUBTITLES_API_KEY", "")
         buildConfigField("String", "OPENSUBTITLES_API_KEY", "\"$openSubtitlesApiKey\"")
 
+        val llmApiKey = localProperties.getProperty("LLM_API_KEY", "")
+        val llmEndpoint = localProperties.getProperty("LLM_ENDPOINT", "https://api.openai.com/v1/chat/completions")
+        val llmProvider = localProperties.getProperty("LLM_PROVIDER", "openai")
+        val llmModel = localProperties.getProperty("LLM_MODEL", "gemini-2.0-flash")
+        buildConfigField("String", "LLM_API_KEY", "\"$llmApiKey\"")
+        buildConfigField("String", "LLM_ENDPOINT", "\"$llmEndpoint\"")
+        buildConfigField("String", "LLM_PROVIDER", "\"$llmProvider\"")
+        buildConfigField("String", "LLM_MODEL", "\"$llmModel\"")
+
         manifestPlaceholders["redirectSchemeName"] = "beatraxus"
         manifestPlaceholders["redirectHostName"] = "auth"
     }

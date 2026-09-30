@@ -1,5 +1,6 @@
 package com.beatraxus.app.repository.lyrics
 
+import com.beatraxus.app.model.LyricSpeaker
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -101,5 +102,30 @@ class TtmlParserTest {
         assertEquals(2, wordTimings!!.size)
         assertEquals("மரண", wordTimings[0].text)
         assertEquals("மாஸ்", wordTimings[1].text)
+    }
+
+    @Test
+    fun testTtmlParserAgentMapping() {
+        val ttml = """
+            <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata">
+                <body>
+                    <div>
+                        <p begin="00:00:10.000" ttm:agent="v1">Singer 1 line</p>
+                        <p begin="00:00:15.000" ttm:agent="v2">Singer 2 line</p>
+                    </div>
+                </body>
+            </tt>
+        """.trimIndent()
+
+        val lrc = TtmlParser.parseToEnhancedLrc(ttml)
+        assertNotNull(lrc)
+
+        val lines = LrcParser.parse(lrc!!)
+        assertEquals(2, lines.size)
+        assertEquals(LyricSpeaker.MALE, lines[0].speaker)
+        assertEquals("Singer 1 line", lines[0].text)
+
+        assertEquals(LyricSpeaker.FEMALE, lines[1].speaker)
+        assertEquals("Singer 2 line", lines[1].text)
     }
 }

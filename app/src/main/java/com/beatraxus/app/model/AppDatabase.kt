@@ -103,9 +103,10 @@ interface VideoRecentlyPlayedDao {
         PlaylistEntity::class, FavoriteEntity::class, SongEntity::class, RecentlyPlayedEntity::class,
         LyricsEntity::class, FolderEntity::class, VideoFolderEntity::class, AiAnalysisEntity::class, ArtistArtEntity::class,
         SongQualityEntity::class, BookmarkEntity::class, ChapterEntity::class, HighlightEntity::class,
-        LoudnessEntity::class, VideoRecentlyPlayedEntity::class, IntroOutroRange::class, VideoChapterEntity::class
+        LoudnessEntity::class, VideoRecentlyPlayedEntity::class, IntroOutroRange::class, VideoChapterEntity::class,
+        AiEqCorrectionEntity::class
     ],
-    version = 29,
+    version = 30,
     exportSchema = false
 )
 @TypeConverters(Converters::class)
@@ -119,6 +120,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun recentlyPlayedDao(): RecentlyPlayedDao
     abstract fun videoRecentlyPlayedDao(): VideoRecentlyPlayedDao
     abstract fun aiAnalysisDao(): AiAnalysisDao
+    abstract fun aiEqCorrectionDao(): AiEqCorrectionDao
     abstract fun artistArtDao(): ArtistArtDao
     abstract fun songQualityDao(): SongQualityDao
     abstract fun bookmarkDao(): BookmarkDao
@@ -129,6 +131,32 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun videoChapterDao(): VideoChapterDao
 
     companion object {
+        val MIGRATION_28_29 = object : Migration(28, 29) {
+            override fun migrate(db: SupportSQLiteDatabase) {}
+        }
+        val MIGRATION_29_30 = object : Migration(29, 30) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS ai_eq_corrections (
+                        id TEXT NOT NULL PRIMARY KEY,
+                        genre TEXT NOT NULL,
+                        mood TEXT NOT NULL,
+                        delta31 REAL NOT NULL DEFAULT 0.0,
+                        delta62 REAL NOT NULL DEFAULT 0.0,
+                        delta125 REAL NOT NULL DEFAULT 0.0,
+                        delta250 REAL NOT NULL DEFAULT 0.0,
+                        delta500 REAL NOT NULL DEFAULT 0.0,
+                        delta1k REAL NOT NULL DEFAULT 0.0,
+                        delta2k REAL NOT NULL DEFAULT 0.0,
+                        delta4k REAL NOT NULL DEFAULT 0.0,
+                        delta8k REAL NOT NULL DEFAULT 0.0,
+                        delta16k REAL NOT NULL DEFAULT 0.0,
+                        updateCount INTEGER NOT NULL DEFAULT 0,
+                        lastUpdated INTEGER NOT NULL)
+                """.trimIndent())
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_ai_eq_corrections_genre_mood ON ai_eq_corrections(genre, mood)")
+            }
+        }
         val MIGRATION_27_28 = object : Migration(27, 28) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE recently_played_videos ADD COLUMN lastAudioTrackIndex INTEGER NOT NULL DEFAULT -1")

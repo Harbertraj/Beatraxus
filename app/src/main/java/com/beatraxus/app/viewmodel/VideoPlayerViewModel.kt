@@ -29,7 +29,9 @@ import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.CaptionStyleCompat
 import com.beatraxus.app.BeatraxusApplication
+import com.beatraxus.app.engine.AudioEngine
 import com.beatraxus.app.engine.VideoRenderersFactory
+import com.beatraxus.app.engine.VideoRoutePhase
 import com.beatraxus.app.service.VideoAudioBridge
 import com.beatraxus.app.model.Video
 import com.beatraxus.app.model.SavedEqPreset
@@ -106,10 +108,9 @@ data class VideoPlayerUiState(
     val colorSaturation: Float = 1f,
     val forceSdrToneMapping: Boolean = false,
     val routeAudioToEngine: Boolean = false,
+    val isConnectingEngineRoute: Boolean = false,
     val engineRouteError: String? = null
 )
-
-
 
 enum class SleepTimerMode(val label: String) {
     OFF("Off"),
@@ -128,7 +129,8 @@ data class VideoTrackInfo(
     val name: String,
     val language: String?,
     val format: String?,
-    val isSelected: Boolean
+    val isSelected: Boolean,
+    val audioOrdinal: Int = 0
 )
 
 enum class VideoAspectRatio(val displayName: String) {
@@ -705,25 +707,58 @@ class VideoPlayerViewModel(
         var selectedAudio = -1
         var selectedSubtitle = -1
 
+        var currentAudioOrdinal = 0
         player.currentTracks.groups.forEachIndexed { index, group ->
             for (i in 0 until group.length) {
                 val format = group.getTrackFormat(i)
                 val isSelected = group.isTrackSelected(i)
-                val info = VideoTrackInfo(index, format.label ?: "Track ${i+1}", format.language, format.sampleMimeType, isSelected)
                 
                 if (group.type == C.TRACK_TYPE_AUDIO) {
+                    val ordinal = currentAudioOrdinal++
+                    val info = VideoTrackInfo(
+                        index = index,
+                        name = format.label ?: "Track ${ordinal + 1}",
+                        language = format.language,
+                        format = format.sampleMimeType,
+                        isSelected = isSelected,
+                        audioOrdinal = ordinal
+                    )
                     audioTracks.add(info)
-                    if (isSelected) selectedAudio = audioTracks.size - 1
+                    if (isSelected) selectedAudio = ordinal
                 } else if (group.type == C.TRACK_TYPE_TEXT) {
+                    val info = VideoTrackInfo(
+                        index = index,
+                        name = format.label ?: "Track ${subtitleTracks.size + 1}",
+                        language = format.language,
+                        format = format.sampleMimeType,
+                        isSelected = isSelected,
+                        audioOrdinal = -1
+                    )
                     subtitleTracks.add(info)
                     if (isSelected) selectedSubtitle = subtitleTracks.size - 1
                 }
             }
         }
+
+        val isRouted = _uiState.value.routeAudioToEngine
+        val effectiveSelectedAudio = if (isRouted) {
+            savedAudioTrackIndex.takeIf { it in audioTracks.indices } ?: _uiState.value.selectedAudioTrackIndex
+        } else {
+            selectedAudio
+        }
+
+        val updatedAudioTracks = if (isRouted && effectiveSelectedAudio >= 0) {
+            audioTracks.map { track ->
+                track.copy(isSelected = (track.audioOrdinal == effectiveSelectedAudio))
+            }
+        } else {
+            audioTracks
+        }
+
         _uiState.update { it.copy(
-            availableAudioTracks = audioTracks, 
+            availableAudioTracks = updatedAudioTracks, 
             availableSubtitleTracks = subtitleTracks,
-            selectedAudioTrackIndex = selectedAudio,
+            selectedAudioTrackIndex = effectiveSelectedAudio,
             selectedSubtitleTrackIndex = selectedSubtitle
         ) }
     }
@@ -788,7 +823,16 @@ class VideoPlayerViewModel(
             if (trackGroup != null) {
                 val override = TrackSelectionOverride(trackGroup.mediaTrackGroup, 0)
                 savedAudioTrackOverride = override
-                savedAudioTrackIndex = track.index
+                savedAudioTrackIndex = track.audioOrdinal
+
+                _uiState.update { state ->
+                    state.copy(
+                        selectedAudioTrackIndex = track.audioOrdinal,
+                        availableAudioTracks = state.availableAudioTracks.map { t ->
+                            t.copy(isSelected = (t.audioOrdinal == track.audioOrdinal))
+                        }
+                    )
+                }
 
                 if (_uiState.value.routeAudioToEngine) {
                     val video = _uiState.value.currentVideo
@@ -796,7 +840,7 @@ class VideoPlayerViewModel(
                     if (video != null && engine != null) {
                         engine.playVideoAudio(
                             uri = video.uri,
-                            audioTrackIndex = track.index,
+                            audioTrackIndex = track.audioOrdinal,
                             startPositionMs = p.currentPosition,
                             startPlaying = p.isPlaying,
                             title = video.title
@@ -812,37 +856,44 @@ class VideoPlayerViewModel(
     }
 
     fun setRouteAudioToEngine(enabled: Boolean) {
-        if (enabled == _uiState.value.routeAudioToEngine) return
+        if (enabled == _uiState.value.routeAudioToEngine && !_uiState.value.isConnectingEngineRoute) return
 
         if (enabled) {
             if (_uiState.value.availableAudioTracks.isEmpty()) {
-                _uiState.update { it.copy(engineRouteError = "No audio tracks available to route") }
+                _uiState.update { it.copy(engineRouteError = "No audio tracks available to route", isConnectingEngineRoute = false) }
                 return
             }
             if (_uiState.value.playbackSpeed != 1.0f) {
-                _uiState.update { it.copy(engineRouteError = "Audio Engine routing requires 1.0x playback speed") }
+                _uiState.update { it.copy(engineRouteError = "Audio Engine routing requires 1.0x playback speed", isConnectingEngineRoute = false) }
                 return
             }
 
-            val engine = VideoAudioBridge.getAudioEngine()
-            if (engine == null) {
-                _uiState.update { it.copy(engineRouteError = "Audio Engine is not running") }
-                return
-            }
+            _uiState.update { it.copy(isConnectingEngineRoute = true, engineRouteError = null) }
 
-            _uiState.update { it.copy(routeAudioToEngine = true, engineRouteError = null) }
-            startEngineRouting()
+            viewModelScope.launch {
+                val context = getApplication<Application>()
+                val engine = VideoAudioBridge.awaitAudioEngine(context, timeoutMs = 3000L)
+                if (engine == null) {
+                    _uiState.update { it.copy(routeAudioToEngine = false, isConnectingEngineRoute = false, engineRouteError = "Audio Engine is not running") }
+                    return@launch
+                }
+
+                _uiState.update { it.copy(routeAudioToEngine = true, engineRouteError = null) }
+                startEngineRouting(engine)
+            }
         } else {
-            _uiState.update { it.copy(routeAudioToEngine = false, engineRouteError = null) }
+            _uiState.update { it.copy(routeAudioToEngine = false, isConnectingEngineRoute = false, engineRouteError = null) }
             stopEngineRouting(restoreExoAudio = true)
         }
     }
 
-    private fun startEngineRouting() {
-        val player = exoPlayer ?: return
-        val video = _uiState.value.currentVideo ?: return
-        val engine = VideoAudioBridge.getAudioEngine() ?: run {
-            _uiState.update { it.copy(routeAudioToEngine = false, engineRouteError = "Audio Engine unavailable") }
+    private fun startEngineRouting(engine: AudioEngine) {
+        val player = exoPlayer ?: run {
+            _uiState.update { it.copy(routeAudioToEngine = false, isConnectingEngineRoute = false) }
+            return
+        }
+        val video = _uiState.value.currentVideo ?: run {
+            _uiState.update { it.copy(routeAudioToEngine = false, isConnectingEngineRoute = false) }
             return
         }
 
@@ -863,7 +914,9 @@ class VideoPlayerViewModel(
                 currentOverride = TrackSelectionOverride(group.mediaTrackGroup, 0)
             }
         }
-        savedAudioTrackOverride = currentOverride
+        if (currentOverride != null) {
+            savedAudioTrackOverride = currentOverride
+        }
         savedAudioTrackIndex = selectedTrackIdx
 
         player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
@@ -872,6 +925,7 @@ class VideoPlayerViewModel(
 
         val currentPosMs = player.currentPosition
         val isPlaying = player.isPlaying
+
         engine.playVideoAudio(
             uri = video.uri,
             audioTrackIndex = selectedTrackIdx,
@@ -882,12 +936,39 @@ class VideoPlayerViewModel(
 
         videoAudioStateObservationJob?.cancel()
         videoAudioStateObservationJob = viewModelScope.launch {
+            var hasBeenActive = false
+            val timeoutJob = launch {
+                delay(5000)
+                if (!hasBeenActive && isActive) {
+                    Log.w(TAG, "Video audio routing start timed out after 5s")
+                    _uiState.update { it.copy(isConnectingEngineRoute = false, engineRouteError = "Audio Engine connection timed out") }
+                    setRouteAudioToEngine(false)
+                }
+            }
+
             engine.videoRouteStateFlow.collect { routeState ->
-                if (routeState.error != null) {
-                    _uiState.update { it.copy(engineRouteError = "Engine routing failed: ${routeState.error}") }
-                    setRouteAudioToEngine(false)
-                } else if (!routeState.isActive && _uiState.value.routeAudioToEngine) {
-                    setRouteAudioToEngine(false)
+                Log.d(TAG, "Observed VideoRouteState: phase=${routeState.phase}, error=${routeState.error}")
+                when (routeState.phase) {
+                    VideoRoutePhase.STARTING -> {
+                        // Ignore STARTING
+                    }
+                    VideoRoutePhase.ACTIVE -> {
+                        hasBeenActive = true
+                        timeoutJob.cancel()
+                        _uiState.update { it.copy(isConnectingEngineRoute = false, engineRouteError = null) }
+                    }
+                    VideoRoutePhase.ERROR -> {
+                        timeoutJob.cancel()
+                        _uiState.update { it.copy(isConnectingEngineRoute = false, engineRouteError = routeState.error ?: "Engine routing failed") }
+                        setRouteAudioToEngine(false)
+                    }
+                    VideoRoutePhase.IDLE -> {
+                        if (hasBeenActive) {
+                            timeoutJob.cancel()
+                            _uiState.update { it.copy(isConnectingEngineRoute = false) }
+                            setRouteAudioToEngine(false)
+                        }
+                    }
                 }
             }
         }

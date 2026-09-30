@@ -41,6 +41,7 @@ object LyricsProviderRegistry {
         "unison",
         "simpmusic",
         "lrclib",
-        "kugou"
+        "kugou",
+        "binilyrics"
     )
 }

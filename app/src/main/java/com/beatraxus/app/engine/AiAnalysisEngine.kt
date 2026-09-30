@@ -1,40 +1,34 @@
 package com.beatraxus.app.engine
 
 import android.content.Context
-import android.net.Uri
 import android.util.Log
 import androidx.annotation.Keep
 import com.beatraxus.app.model.AiAnalysisEntity
 import com.beatraxus.app.model.Song
 import com.beatraxus.app.model.SongSource
 import com.beatraxus.app.repository.GenreApiService
+import com.beatraxus.app.repository.MoodApiService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.tensorflow.lite.Interpreter
 import org.tensorflow.lite.support.common.FileUtil
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
 
 class AiAnalysisEngine(private val context: Context) {
     private val TAG = "AiAnalysisEngine"
-    
+
     // Model interpreters
     private var genreInterpreter: Interpreter? = null
     private var languageInterpreter: Interpreter? = null
     private var moodInterpreter: Interpreter? = null
     private val onlineAiService = GenreApiService()
-    private val moodApiService = com.beatraxus.app.repository.MoodApiService() // NEW
-    
+    private val moodApiService = MoodApiService()
+    private val melSpectrogram = LogMelSpectrogram(numMelBins = 64)
+
     init {
-        try {
-            // Assuming models are in assets. In a real production app, 
-            // these would be downloaded or bundled.
-            genreInterpreter = loadModel("models/genre_model.tflite")
-            languageInterpreter = loadModel("models/language_model.tflite")
-            moodInterpreter = loadModel("models/mood_model.tflite")
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to load TFLite models", e)
-        }
+        // Attempt loading primary audio model (e.g., YAMNet or dedicated TFLite classifiers)
+        genreInterpreter = loadModel("models/yamnet.tflite") ?: loadModel("models/genre_model.tflite")
+        languageInterpreter = loadModel("models/language_model.tflite")
+        moodInterpreter = loadModel("models/mood_model.tflite")
     }
 
     private fun loadModel(path: String): Interpreter? {
@@ -44,49 +38,65 @@ class AiAnalysisEngine(private val context: Context) {
                 setNumThreads(4)
             })
         } catch (e: Exception) {
+            Log.w(TAG, "Model file 'assets/$path' not found or failed to load; falling back to heuristic classification rules.")
             null
         }
     }
 
     suspend fun analyzeSong(song: Song): SongAnalysisResult = withContext(Dispatchers.Default) {
         // Skip cloud/telegram songs for AI analysis to avoid native crashes on web URIs.
-        // The quality-analysis pass (Phase 3) mirrors this same guard.
         if (song.source != SongSource.LOCAL) return@withContext SongAnalysisResult(null, null)
 
         try {
-            // 1. Extract audio features using native C++ engine
-            // We analyze the first 60 seconds as requested
+            // 1. Extract audio features using native C++ engine (analyzes up to 60s)
             val features = NativeDsp().use { dsp ->
                 dsp.extractFeatures(context, song.uri, 60)
             } ?: return@withContext SongAnalysisResult(null, null)
-            
-            // 2. Run AI Inference for Genre (Local + Online)
+
+            // 2. Genre Classification (TFLite or Heuristic Fallback)
             val genreResult = runInference(genreInterpreter, features.spectralData)
-            var primaryGenre = GENRES[genreResult.primaryIndex]
-            
-            // Online AI Enhancement for Accuracy
-            val onlineGenre = onlineAiService.fetchAccurateGenre(song.artist, song.title)
-            if (onlineGenre != null) {
-                primaryGenre = onlineGenre
-                Log.d(TAG, "Online AI refined genre: $onlineGenre")
+            var primaryGenre = if (genreResult.isModelInference && genreResult.primaryIndex in GENRES.indices) {
+                GENRES[genreResult.primaryIndex]
+            } else {
+                heuristicGenre(features)
             }
 
-            val secondaryGenre = if (genreResult.secondaryConfidence > 0.5f) GENRES[genreResult.secondaryIndex] else null
-            
-            // 3. Run AI Inference for Language
+            // Online AI Enhancement for Accuracy (optional refinement)
+            try {
+                val onlineGenre = onlineAiService.fetchAccurateGenre(song.artist, song.title)
+                if (!onlineGenre.isNullOrEmpty()) {
+                    primaryGenre = onlineGenre
+                    Log.d(TAG, "Online AI refined genre: $onlineGenre")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Online genre service unavailable: ${e.message}")
+            }
+
+            val secondaryGenre = if (genreResult.isModelInference && genreResult.secondaryConfidence > 0.35f && genreResult.secondaryIndex in GENRES.indices) {
+                GENRES[genreResult.secondaryIndex]
+            } else null
+
+            // 3. Language Classification
             val langResult = runInference(languageInterpreter, features.spectralData)
-            val language = LANGUAGES[langResult.primaryIndex]
-            
-            // 4. Run AI Inference for Mood (TFLite)
+            val language = if (langResult.isModelInference && langResult.primaryIndex in LANGUAGES.indices) {
+                LANGUAGES[langResult.primaryIndex]
+            } else {
+                heuristicLanguage(song)
+            }
+
+            // 4. Mood Classification
             val moodResult = runInference(moodInterpreter, features.spectralData)
-            val primaryMoodRaw = MOODS[moodResult.primaryIndex]
+            val primaryMoodRaw = if (moodResult.isModelInference && moodResult.primaryIndex in MOODS.indices) {
+                MOODS[moodResult.primaryIndex]
+            } else {
+                heuristicMood(features)
+            }
             val mood = mapToUiMood(primaryMoodRaw)
 
-            // 4b. Combine local model + beat/BPM rules + Last.fm community tags
-            // into a multi-label mood set, so one song can belong to several moods.
+            // 4b. Multi-label mood set (Local model + beat/BPM rules + Last.fm community tags)
             val finalMoods = linkedSetOf<String>()
             finalMoods.add(mood)
-            if (moodResult.secondaryConfidence > 0.35f) {
+            if (moodResult.isModelInference && moodResult.secondaryConfidence > 0.35f && moodResult.secondaryIndex in MOODS.indices) {
                 finalMoods.add(mapToUiMood(MOODS[moodResult.secondaryIndex]))
             }
             finalMoods.addAll(bpmMoods(features.tempoBpm))
@@ -96,24 +106,30 @@ class AiAnalysisEngine(private val context: Context) {
                 Log.e(TAG, "Last.fm mood lookup failed for ${song.title}", e)
             }
             val moodTags = finalMoods.joinToString(",")
-            
-            // 5. Generate AI EQ Profile
-            val aiEq = generateAiEq(
-                primaryGenre, language, mood, 
-                features.lufs, features.dynamicRange, 
-                features.bassScore, features.midScore, features.trebleScore
+
+            // 5. Generate Adaptive AI EQ Profile
+            val aiEqResult = AiEqCalculator.calculateAiEq(
+                genre = primaryGenre,
+                mood = mood,
+                spectral128 = features.spectralData,
+                lufs = features.lufs,
+                dr = features.dynamicRange,
+                bassScore = features.bassScore,
+                midScore = features.midScore,
+                trebleScore = features.trebleScore
             )
-            
+            val aiEq = aiEqResult.bandGains
+
             val entity = AiAnalysisEntity(
                 songId = song.id,
                 genre = primaryGenre,
-                genreConfidence = genreResult.primaryConfidence,
+                genreConfidence = if (genreResult.isModelInference) genreResult.primaryConfidence else 0.0f,
                 secondaryGenre = secondaryGenre,
-                secondaryGenreConfidence = if (secondaryGenre != null) genreResult.secondaryConfidence else null,
+                secondaryGenreConfidence = if (genreResult.isModelInference && secondaryGenre != null) genreResult.secondaryConfidence else null,
                 language = language,
-                languageConfidence = langResult.primaryConfidence,
+                languageConfidence = if (langResult.isModelInference) langResult.primaryConfidence else 0.0f,
                 mood = mood,
-                moodConfidence = moodResult.primaryConfidence,
+                moodConfidence = if (moodResult.isModelInference) moodResult.primaryConfidence else 0.0f,
                 moodTags = moodTags,
                 lufs = features.lufs,
                 rms = features.rms,
@@ -134,7 +150,7 @@ class AiAnalysisEngine(private val context: Context) {
                 eq4k = aiEq[7],
                 eq8k = aiEq[8],
                 eq16k = aiEq[9],
-                analysisVersion = 1,
+                analysisVersion = 2,
                 lastAnalyzed = System.currentTimeMillis()
             )
             SongAnalysisResult(entity, features)
@@ -147,89 +163,95 @@ class AiAnalysisEngine(private val context: Context) {
         }
     }
 
-    private fun runInference(interpreter: Interpreter?, inputData: FloatArray): InferenceResult {
-        if (interpreter == null) return InferenceResult(0, 0f, 0, 0f)
-        
-        // This is a placeholder for actual TFLite inference logic
-        // YAMNet or custom models would take mel-spectrogram as input
-        val output = Array(1) { FloatArray(interpreter.getOutputTensor(0).shape()[1]) }
-        interpreter.run(inputData, output)
-        
-        val results = output[0]
-        var maxIdx = 0
-        var maxVal = 0f
-        var secIdx = 0
-        var secVal = 0f
-        
-        for (i in results.indices) {
-            if (results[i] > maxVal) {
-                secVal = maxVal
-                secIdx = maxIdx
-                maxVal = results[i]
-                maxIdx = i
-            } else if (results[i] > secVal) {
-                secVal = results[i]
-                secIdx = i
-            }
+    private fun runInference(interpreter: Interpreter?, spectralData: FloatArray): InferenceResult {
+        if (interpreter == null) {
+            return InferenceResult(0, 0.0f, 0, 0.0f, isModelInference = false)
         }
-        
-        return InferenceResult(maxIdx, maxVal, secIdx, secVal)
+
+        return try {
+            val inputTensor = interpreter.getInputTensor(0)
+            val outputTensor = interpreter.getOutputTensor(0)
+
+            val inputShape = inputTensor.shape()
+            val outputShape = outputTensor.shape()
+            val numClasses = if (outputShape.size > 1) outputShape[1] else outputShape[0]
+
+            val logMel = melSpectrogram.computeFrom128BinSpectrum(spectralData)
+
+            // Format input tensor based on model shape
+            val inputObject: Any = when {
+                inputShape.size == 2 && inputShape[1] == 128 -> arrayOf(spectralData)
+                inputShape.size == 2 && inputShape[1] == 64 -> arrayOf(logMel)
+                inputShape.size == 3 -> Array(1) { Array(inputShape[1]) { logMel } }
+                else -> arrayOf(spectralData)
+            }
+
+            val output = Array(1) { FloatArray(numClasses) }
+            interpreter.run(inputObject, output)
+
+            val probabilities = output[0]
+            var maxIdx = 0
+            var maxVal = 0.0f
+            var secIdx = 0
+            var secVal = 0.0f
+
+            for (i in probabilities.indices) {
+                val p = probabilities[i]
+                if (p > maxVal) {
+                    secVal = maxVal
+                    secIdx = maxIdx
+                    maxVal = p
+                    maxIdx = i
+                } else if (p > secVal) {
+                    secVal = p
+                    secIdx = i
+                }
+            }
+
+            InferenceResult(maxIdx, maxVal, secIdx, secVal, isModelInference = true)
+        } catch (e: Exception) {
+            Log.e(TAG, "TFLite inference failed; using heuristic fallback", e)
+            InferenceResult(0, 0.0f, 0, 0.0f, isModelInference = false)
+        }
     }
 
-    private fun generateAiEq(
-        genre: String, lang: String, mood: String,
-        lufs: Float, dr: Float, bass: Float, mid: Float, treble: Float
-    ): FloatArray {
-        val eq = FloatArray(10) { 0f }
-        
-        // Base profile based on genre
-        when (genre) {
-            "Tamil Melody", "Hindi Melody" -> {
-                eq[0] = 0.8f; eq[1] = 1.0f; eq[2] = 0.7f; eq[3] = 0.2f
-                eq[5] = 0.3f; eq[6] = 0.5f; eq[7] = 0.8f; eq[8] = 1.0f; eq[9] = 0.6f
-            }
-            "EDM", "Electronic", "Dance" -> {
-                eq[0] = 1.5f; eq[1] = 2.0f; eq[2] = 1.2f; eq[3] = 0.4f
-                eq[5] = -0.3f; eq[6] = 0.2f; eq[7] = 0.5f; eq[8] = 0.8f; eq[9] = 0.5f
-            }
-            "Classical" -> {
-                eq[6] = 0.3f; eq[7] = 0.5f; eq[8] = 0.5f; eq[9] = 0.3f
-            }
-            "Rock", "Metal" -> {
-                eq[0] = 1.0f; eq[1] = 1.2f; eq[4] = -0.5f; eq[7] = 0.8f; eq[8] = 1.0f
-            }
-            "Hip-Hop", "Rap" -> {
-                eq[0] = 2.0f; eq[1] = 1.5f; eq[2] = 0.8f; eq[8] = 0.5f
-            }
+    private fun heuristicGenre(features: AudioFeatures): String {
+        return when {
+            features.bassScore > 0.45f && features.tempoBpm > 115f -> "EDM"
+            features.bassScore > 0.40f -> "Hip-Hop"
+            features.trebleScore > 0.40f -> "Rock"
+            features.midScore > 0.50f && features.dynamicRange > 14f -> "Classical"
+            else -> "Pop"
         }
-        
-        // Adjust based on Mood
-        when (mood) {
-            "Energetic", "Aggressive", "Workout" -> {
-                eq[0] += 0.5f; eq[1] += 0.5f; eq[7] += 0.3f; eq[8] += 0.3f
-            }
-            "Calm", "Relaxing", "Sleep" -> {
-                eq[0] -= 0.5f; eq[1] -= 0.5f; eq[7] -= 0.5f; eq[8] -= 0.5f
-            }
+    }
+
+    private fun heuristicLanguage(song: Song): String {
+        val text = "${song.title} ${song.artist}".lowercase()
+        return when {
+            text.contains("tamil") || text.contains("kaatru") || text.contains("kanmani") -> "Tamil"
+            text.contains("hindi") || text.contains("pyaar") || text.contains("dil") -> "Hindi"
+            text.contains("telugu") -> "Telugu"
+            text.contains("malayalam") -> "Malayalam"
+            else -> "English"
         }
-        
-        // Compensate for spectral imbalance
-        if (bass < 0.3f) { eq[0] += 0.5f; eq[1] += 0.5f }
-        if (treble < 0.3f) { eq[7] += 0.5f; eq[8] += 0.5f }
-        
-        // Clamp to ±3dB as per requirements
-        for (i in eq.indices) {
-            eq[i] = eq[i].coerceIn(-3f, 3f)
+    }
+
+    private fun heuristicMood(features: AudioFeatures): String {
+        return when {
+            features.tempoBpm >= 130f || features.bassScore > 0.45f -> "Energetic"
+            features.tempoBpm in 95f..120f -> "Happy"
+            features.tempoBpm < 85f && features.dynamicRange < 12f -> "Relaxing"
+            features.tempoBpm < 75f -> "Calm"
+            else -> "Calm"
         }
-        
-        return eq
     }
 
     private data class InferenceResult(
         val primaryIndex: Int,
         val primaryConfidence: Float,
         val secondaryIndex: Int,
-        val secondaryConfidence: Float
+        val secondaryConfidence: Float,
+        val isModelInference: Boolean = false
     )
 
     companion object {
@@ -239,23 +261,21 @@ class AiAnalysisEngine(private val context: Context) {
             "English Pop", "English Rock", "English Alternative", "English Indie", "English Electronic", "English Dance", "English Hip-Hop", "English R&B",
             "Pop", "Rock", "Metal", "Alternative", "Indie", "Jazz", "Blues", "Country", "Classical", "Electronic", "EDM", "House", "Techno", "Trance", "Hip-Hop", "Rap", "R&B", "Soul", "Reggae", "Lo-Fi", "Ambient", "Soundtrack", "Instrumental", "Podcast", "Audiobook"
         )
-        
+
         private val LANGUAGES = listOf(
             "Tamil", "English", "Hindi", "Malayalam", "Telugu", "Kannada", "Punjabi", "Bengali", "Marathi", "Gujarati", "Urdu", "Sanskrit", "French", "Spanish", "German", "Japanese", "Korean", "Chinese", "Mixed", "Unknown", "Instrumental"
         )
-        
+
         private val MOODS = listOf(
             "Calm", "Relaxing", "Happy", "Energetic", "Aggressive", "Romantic", "Sad", "Motivational", "Party", "Workout", "Focus", "Sleep", "Meditation", "Emotional", "Epic", "Dark", "Uplifting"
         )
 
-        // Merge near-duplicate raw classes into the 15 moods shown in the UI
         private val MOOD_UI_MAP = mapOf(
             "Relaxing" to "Calm",
             "Uplifting" to "Happy"
         )
         fun mapToUiMood(raw: String): String = MOOD_UI_MAP[raw] ?: raw
 
-        // Beat/BPM-based mood rules — this is the "beat analysis" part
         fun bpmMoods(bpm: Float): List<String> = buildList {
             when {
                 bpm in 1f..70f    -> { add("Sleep"); add("Calm"); add("Meditation") }

@@ -23,6 +23,42 @@ object TtmlParser {
             val doc = builder.parse(InputSource(StringReader(ttml)))
 
             val pElements = doc.getElementsByTagName("p")
+            if (pElements.length == 0) return null
+
+            // Collect TTML agents
+            val agentsInUse = mutableListOf<String>()
+            for (i in 0 until pElements.length) {
+                val p = pElements.item(i) as Element
+                val agent = getAgent(p)
+                if (agent.isNotEmpty() && !agentsInUse.contains(agent)) {
+                    agentsInUse.add(agent)
+                }
+            }
+
+            val agentMarkerMap = mutableMapOf<String, String>()
+            if (agentsInUse.size >= 2) {
+                var personIndex = 0
+                for (agent in agentsInUse) {
+                    val isGroup = agent.contains("group", ignoreCase = true) ||
+                            agent.contains("v1000", ignoreCase = true) ||
+                            agent.contains("both", ignoreCase = true) ||
+                            agent.contains("chorus", ignoreCase = true)
+                    if (isGroup) {
+                        agentMarkerMap[agent] = "[Both]"
+                    } else {
+                        if (personIndex == 0) {
+                            agentMarkerMap[agent] = "[Male]"
+                            personIndex++
+                        } else if (personIndex == 1) {
+                            agentMarkerMap[agent] = "[Female]"
+                            personIndex++
+                        } else {
+                            agentMarkerMap[agent] = "[Chorus]"
+                        }
+                    }
+                }
+            }
+
             val sb = StringBuilder()
 
             for (i in 0 until pElements.length) {
@@ -34,6 +70,8 @@ object TtmlParser {
 
                 val pBeginStr = p.getAttribute("begin") ?: ""
                 val pBeginMs = parseTime(pBeginStr)
+                val pAgent = getAgent(p)
+                val speakerPrefix = agentMarkerMap[pAgent] ?: ""
 
                 val mainSpans = mutableListOf<RawSpan>()
                 val bgSpans = mutableListOf<RawSpan>()
@@ -68,7 +106,20 @@ object TtmlParser {
 
                 val mainWords = groupSyllablesToWords(mainSpans)
                 if (mainWords.isNotEmpty()) {
-                    sb.append(EnhancedLrc.line(mainWords)).append("\n")
+                    val rawLine = EnhancedLrc.line(mainWords)
+                    val lineWithSpeaker = if (speakerPrefix.isNotEmpty()) {
+                        val headerEnd = rawLine.indexOf("]")
+                        if (headerEnd != -1) {
+                            val header = rawLine.substring(0, headerEnd + 1)
+                            val textPart = rawLine.substring(headerEnd + 1)
+                            "$header$speakerPrefix$textPart"
+                        } else {
+                            "$speakerPrefix$rawLine"
+                        }
+                    } else {
+                        rawLine
+                    }
+                    sb.append(lineWithSpeaker).append("\n")
                 }
 
                 val bgWords = groupSyllablesToWords(bgSpans)
@@ -81,7 +132,7 @@ object TtmlParser {
                     } else {
                         lineText
                     }
-                    sb.append("$formattedTimeHeader($textPart)\n")
+                    sb.append("$formattedTimeHeader$speakerPrefix($textPart)\n")
                 }
             }
 
@@ -89,6 +140,12 @@ object TtmlParser {
         } catch (_: Exception) {
             return null
         }
+    }
+
+    private fun getAgent(element: Element): String {
+        val ttmAgent = element.getAttribute("ttm:agent")
+        if (!ttmAgent.isNullOrEmpty()) return ttmAgent
+        return element.getAttribute("agent") ?: ""
     }
 
     private fun getRole(element: Element): String {

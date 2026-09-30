@@ -1305,18 +1305,30 @@ fun VideoSettingsSheetContent(
             
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (activeSheetType == PlayerSheetType.AUDIO) {
-                    val canRoute = uiState.availableAudioTracks.isNotEmpty() && uiState.playbackSpeed == 1.0f
-                    Switch(
-                        checked = uiState.routeAudioToEngine,
-                        enabled = canRoute,
-                        onCheckedChange = { viewModel.setRouteAudioToEngine(it) },
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = mxOrange,
-                            checkedTrackColor = mxOrange.copy(0.4f),
-                            disabledCheckedThumbColor = mxOrange.copy(0.4f),
-                            disabledUncheckedThumbColor = Color.Gray.copy(0.4f)
+                    val canRoute = uiState.availableAudioTracks.isNotEmpty() && uiState.playbackSpeed == 1.0f && !uiState.isConnectingEngineRoute
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        if (uiState.isConnectingEngineRoute) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                color = mxOrange,
+                                strokeWidth = 2.dp
+                            )
+                        }
+                        Switch(
+                            checked = uiState.routeAudioToEngine || uiState.isConnectingEngineRoute,
+                            enabled = canRoute,
+                            onCheckedChange = { viewModel.setRouteAudioToEngine(it) },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = mxOrange,
+                                checkedTrackColor = mxOrange.copy(0.4f),
+                                disabledCheckedThumbColor = mxOrange.copy(0.4f),
+                                disabledUncheckedThumbColor = Color.Gray.copy(0.4f)
+                            )
                         )
-                    )
+                    }
                 }
 
                 if (activeSheetType == PlayerSheetType.EQUALIZER) {
@@ -1336,7 +1348,15 @@ fun VideoSettingsSheetContent(
         }
 
         if (activeSheetType == PlayerSheetType.AUDIO) {
-            if (uiState.routeAudioToEngine) {
+            if (uiState.isConnectingEngineRoute) {
+                Text(
+                    text = "Connecting to Audio Engine...",
+                    color = mxOrange,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            } else if (uiState.routeAudioToEngine) {
                 Text(
                     text = "Audio is playing through the Audio Engine (DSP / Hi-Res)",
                     color = mxOrange,

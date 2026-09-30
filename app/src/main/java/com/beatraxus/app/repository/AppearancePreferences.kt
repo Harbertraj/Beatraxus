@@ -124,7 +124,8 @@ class AppearancePreferences(context: Context) {
                 finalEnabled
             },
             
-            lyricsShowAll = preferences[LYRICS_SHOW_ALL] ?: true
+            lyricsShowAll = preferences[LYRICS_SHOW_ALL] ?: true,
+            alignLyricsBySinger = preferences[ALIGN_LYRICS_BY_SINGER] ?: true
         )
     }
 
@@ -312,6 +313,10 @@ class AppearancePreferences(context: Context) {
         dataStore.edit { it[LYRICS_SHOW_ALL] = showAll }
     }
 
+    suspend fun setAlignLyricsBySinger(align: Boolean) {
+        dataStore.edit { it[ALIGN_LYRICS_BY_SINGER] = align }
+    }
+
     suspend fun resetLyricsProviderOrder() {
         dataStore.edit { preferences ->
             preferences.remove(LYRICS_PROVIDER_ORDER)
@@ -418,5 +423,6 @@ class AppearancePreferences(context: Context) {
         private val LYRICS_PROVIDER_ORDER = stringPreferencesKey("lyrics_provider_order")
         private val LYRICS_PROVIDERS_ENABLED = stringPreferencesKey("lyrics_providers_enabled")
         private val LYRICS_SHOW_ALL = booleanPreferencesKey("lyrics_show_all")
+        private val ALIGN_LYRICS_BY_SINGER = booleanPreferencesKey("align_lyrics_by_singer")
     }
 }

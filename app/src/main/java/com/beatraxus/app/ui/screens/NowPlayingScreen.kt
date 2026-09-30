@@ -96,7 +96,10 @@ import android.graphics.Shader
 import android.os.Build
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.text.PlatformTextStyle
+import androidx.core.graphics.ColorUtils
 import com.beatraxus.app.model.PlayerUiState
+import com.beatraxus.app.model.QualityBadgeStyle
 import com.beatraxus.app.repository.LyricsCandidate
 import com.beatraxus.app.repository.LyricsType
 import com.beatraxus.app.repository.lyrics.LyricsProviderRegistry
@@ -180,8 +183,15 @@ fun NowPlayingScreen(
         label = "dominantColor"
     )
 
+    val lyricAccentColorsCache = remember { mutableStateMapOf<String, Color>() }
+    val lyricAccentColor by animateColorAsState(
+        targetValue = lyricAccentColorsCache[song.id] ?: Color(0xFFF2F2F2),
+        animationSpec = tween(600),
+        label = "lyricAccentColor"
+    )
+
     LaunchedEffect(song.id, song.albumArtUri) {
-        if (dominantColorsCache.containsKey(song.id)) return@LaunchedEffect
+        if (dominantColorsCache.containsKey(song.id) && lyricAccentColorsCache.containsKey(song.id)) return@LaunchedEffect
 
         val loader = context.imageLoader
         val request = ImageRequest.Builder(context)
@@ -200,6 +210,30 @@ fun NowPlayingScreen(
                 if (color != null) {
                     dominantColorsCache[song.id] = Color(color)
                 }
+
+                val swatch = palette?.lightVibrantSwatch
+                    ?: palette?.lightMutedSwatch
+                    ?: palette?.vibrantSwatch
+                    ?: palette?.dominantSwatch
+
+                if (swatch != null) {
+                    val hsl = FloatArray(3)
+                    ColorUtils.colorToHSL(swatch.rgb, hsl)
+                    if (hsl[1] < 0.08f) {
+                        hsl[1] = minOf(hsl[1], 0.04f)
+                        hsl[2] = 0.92f
+                    } else {
+                        hsl[1] = hsl[1].coerceIn(0.05f, 0.85f)
+                        hsl[2] = hsl[2].coerceAtLeast(0.72f)
+                    }
+                    lyricAccentColorsCache[song.id] = Color(ColorUtils.HSLToColor(hsl))
+                } else {
+                    lyricAccentColorsCache[song.id] = Color(0xFFF2F2F2)
+                }
+            }
+        } else {
+            if (!lyricAccentColorsCache.containsKey(song.id)) {
+                lyricAccentColorsCache[song.id] = Color(0xFFF2F2F2)
             }
         }
     }
@@ -384,21 +418,28 @@ fun NowPlayingScreen(
                         }
                     },
                     navigationIcon = {
-                        IconButton(
-                            modifier = Modifier.offset(y = (-8).dp),
-                            onClick = {
-                                if (showQueue) onToggleQueue()
-                                else {
-                                    onTogglePipeline(false)
-                                    onClose()
-                                }
-                            }
+                        Box(
+                            modifier = Modifier
+                                .padding(start = 12.dp)
+                                .offset(y = (-8).dp)
+                                .size(40.dp)
+                                .background(Color.White.copy(alpha = 0.08f), CircleShape)
+                                .border(1.dp, Color.White.copy(alpha = 0.15f), CircleShape)
+                                .clip(CircleShape)
+                                .clickable {
+                                    if (showQueue) onToggleQueue()
+                                    else {
+                                        onTogglePipeline(false)
+                                        onClose()
+                                    }
+                                },
+                            contentAlignment = Alignment.Center
                         ) {
                             Icon(
                                 Icons.Rounded.KeyboardArrowDown,
-                                null,
+                                contentDescription = "Close player",
                                 tint = Color.White,
-                                modifier = Modifier.size(32.dp)
+                                modifier = Modifier.size(28.dp)
                             )
                         }
                     },
@@ -417,15 +458,18 @@ fun NowPlayingScreen(
                             if (!queueVisible) {
                                 Box(
                                     modifier = Modifier
-                                        .clip(RoundedCornerShape(50))
-                                        .clickable(onClick = { showSongInfo = true })
-                                        .padding(horizontal = 8.dp, vertical = 6.dp)
+                                        .size(40.dp)
+                                        .background(Color.White.copy(alpha = 0.08f), CircleShape)
+                                        .border(1.dp, Color.White.copy(alpha = 0.15f), CircleShape)
+                                        .clip(CircleShape)
+                                        .clickable(onClick = { showSongInfo = true }),
+                                    contentAlignment = Alignment.Center
                                 ) {
                                     Icon(
                                         Icons.Rounded.Info,
                                         contentDescription = "Song info",
                                         tint = Color.White.copy(alpha = 0.8f),
-                                        modifier = Modifier.size(28.dp)
+                                        modifier = Modifier.size(26.dp)
                                     )
                                 }
                             } else {
@@ -708,14 +752,20 @@ fun NowPlayingScreen(
                                     onSearchOnline = onSearchLyricsOnline,
                                     lyricsErrorMessage = uiState.lyricsErrorMessage,
                                     progressMs = progressMs,
+                                    accentColor = lyricAccentColor,
                                     providerLabel = uiState.lyricsProviderId?.let { id ->
-                                        val name = LyricsProviderRegistry.providers.find { it.id == id }?.displayName ?: id
+                                        val name = if (id == "embedded") {
+                                            "Embedded (file tag)"
+                                        } else {
+                                            LyricsProviderRegistry.providers.find { it.id == id }?.displayName ?: id
+                                        }
                                         if (id == "unison") {
                                             "$name — Lyrics from Unison (https://unison.boidu.dev)"
                                         } else {
                                             name
                                         }
                                     },
+                                    alignBySinger = uiState.appearance.alignLyricsBySinger,
                                     onShowAllLyrics = if (uiState.appearance.lyricsShowAll) {
                                         {
                                             showLyricsSourcesSheet = true
@@ -781,22 +831,12 @@ fun NowPlayingScreen(
                                 modifier = Modifier.fillMaxWidth(),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                IconButton(onClick = onFavoriteClick) {
-                                    Icon(
-                                        if (isFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
-                                        null,
-                                        tint = if (isFavorite) Color(0xFFFF4081) else Color.White.copy(0.7f),
-                                        modifier = Modifier.size(28.dp)
-                                    )
-                                }
-
-
                                 // Dynamic Middle Content
                                 Box(
                                     modifier = Modifier
                                         .weight(1f)
-                                        .padding(horizontal = 8.dp),
-                                    contentAlignment = Alignment.Center
+                                        .padding(end = 8.dp),
+                                    contentAlignment = Alignment.CenterStart
                                 ) {
                                     androidx.compose.animation.AnimatedVisibility(
                                         visible = !showLyrics,
@@ -805,18 +845,18 @@ fun NowPlayingScreen(
                                     ) {
                                         Column(
                                             modifier = Modifier.fillMaxWidth(),
-                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                            horizontalAlignment = Alignment.Start,
                                             verticalArrangement = Arrangement.Center
                                         ) {
                                             Text(
                                                 text = song.title,
                                                 style = MaterialTheme.typography.headlineSmall.copy(
                                                     fontWeight = FontWeight.Bold,
-                                                    fontSize = 26.sp,
-                                                    platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false)
+                                                    fontSize = 24.sp,
+                                                    platformStyle = PlatformTextStyle(includeFontPadding = false)
                                                 ),
                                                 color = Color.White,
-                                                textAlign = TextAlign.Center,
+                                                textAlign = TextAlign.Start,
                                                 maxLines = 1,
                                                 overflow = TextOverflow.Ellipsis
                                             )
@@ -829,12 +869,12 @@ fun NowPlayingScreen(
                                             Text(
                                                 text = "${song.artist} • ${song.album}",
                                                 style = MaterialTheme.typography.titleMedium.copy(
-                                                    fontSize = 16.sp,
+                                                    fontSize = 15.sp,
                                                     color = Color.White.copy(alpha = 0.6f),
-                                                    lineHeight = 24.sp,
-                                                    platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false)
+                                                    lineHeight = 22.sp,
+                                                    platformStyle = PlatformTextStyle(includeFontPadding = false)
                                                 ),
-                                                textAlign = TextAlign.Center,
+                                                textAlign = TextAlign.Start,
                                                 maxLines = 1,
                                                 modifier = Modifier
                                                     .offset(y = (3).dp)
@@ -864,11 +904,21 @@ fun NowPlayingScreen(
                                     }
                                 }
 
-                                // Song Options Menu (replacing lyrics button)
+                                // Like Button (located between song name and three dot button)
+                                IconButton(onClick = onFavoriteClick) {
+                                    Icon(
+                                        if (isFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                                        contentDescription = if (isFavorite) "Remove from favorites" else "Add to favorites",
+                                        tint = if (isFavorite) Color(0xFFFF4081) else Color.White.copy(0.7f),
+                                        modifier = Modifier.size(28.dp)
+                                    )
+                                }
+
+                                // Song Options Menu (three dot button)
                                 IconButton(onClick = { showSongOptions = true }) {
                                     Icon(
                                         Icons.Rounded.MoreVert,
-                                        null,
+                                        contentDescription = "More options",
                                         tint = Color.White.copy(0.7f),
                                         modifier = Modifier.size(28.dp)
                                     )
@@ -1144,13 +1194,15 @@ fun NowPlayingScreen(
                         modifier = Modifier.padding(bottom = 16.dp)
                     )
 
-                    if (uiState.isLoadingLyricsCandidates) {
-                        Box(modifier = Modifier.fillMaxWidth().height(150.dp), contentAlignment = Alignment.Center) {
-                            CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
-                        }
-                    } else if (uiState.lyricsCandidates.isEmpty()) {
-                        Box(modifier = Modifier.fillMaxWidth().height(100.dp), contentAlignment = Alignment.Center) {
-                            Text("No lyrics found from enabled sources.", color = Color.White.copy(0.5f))
+                    if (uiState.lyricsCandidates.isEmpty()) {
+                        if (uiState.isLoadingLyricsCandidates) {
+                            Box(modifier = Modifier.fillMaxWidth().height(150.dp), contentAlignment = Alignment.Center) {
+                                CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+                            }
+                        } else {
+                            Box(modifier = Modifier.fillMaxWidth().height(100.dp), contentAlignment = Alignment.Center) {
+                                Text("No lyrics found from enabled sources.", color = Color.White.copy(0.5f))
+                            }
                         }
                     } else {
                         LazyColumn(
@@ -1159,6 +1211,7 @@ fun NowPlayingScreen(
                         ) {
                             items(uiState.lyricsCandidates) { candidate ->
                                 val isApplied = candidate.providerId == uiState.lyricsProviderId
+                                val isEmbedded = candidate.providerId == "embedded"
                                 Surface(
                                     modifier = Modifier.fillMaxWidth(),
                                     color = if (isApplied) MaterialTheme.colorScheme.primary.copy(alpha = 0.1f) else Color.White.copy(alpha = 0.05f),
@@ -1182,6 +1235,22 @@ fun NowPlayingScreen(
                                                     fontSize = 16.sp
                                                 )
                                                 Spacer(Modifier.width(8.dp))
+                                                if (isEmbedded) {
+                                                    Surface(
+                                                        color = Color(0xFFFF9800).copy(alpha = 0.15f),
+                                                        shape = RoundedCornerShape(4.dp),
+                                                        border = BorderStroke(1.dp, Color(0xFFFF9800).copy(alpha = 0.4f))
+                                                    ) {
+                                                        Text(
+                                                            text = "FILE",
+                                                            color = Color(0xFFFF9800),
+                                                            fontSize = 9.sp,
+                                                            fontWeight = FontWeight.Black,
+                                                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                                                        )
+                                                    }
+                                                    Spacer(Modifier.width(8.dp))
+                                                }
                                                 val badgeText = when (candidate.type) {
                                                     LyricsType.WORD_BY_WORD -> "Word"
                                                     LyricsType.SYNCED -> "Line"
@@ -1224,6 +1293,21 @@ fun NowPlayingScreen(
                                         if (isApplied) {
                                             Icon(Icons.Rounded.Check, null, tint = MaterialTheme.colorScheme.primary)
                                         }
+                                    }
+                                }
+                            }
+
+                            if (uiState.isLoadingLyricsCandidates) {
+                                item {
+                                    Box(
+                                        modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(24.dp),
+                                            color = MaterialTheme.colorScheme.primary,
+                                            strokeWidth = 2.dp
+                                        )
                                     }
                                 }
                             }
@@ -1300,21 +1384,21 @@ fun AudioQualityBadge(
 
     val icon = if (isHiRes) Icons.Rounded.Diamond else Icons.Rounded.HighQuality
 
-                        when (uiState.appearance.qualityBadgeStyle) {
-                            com.beatraxus.app.model.QualityBadgeStyle.NONE -> {}
-                            com.beatraxus.app.model.QualityBadgeStyle.MINIMAL_OUTLINE -> QualityBadgeMinimalOutline(
-                                primaryColor, label, icon, onClick, onLongPress
-                            )
-                            com.beatraxus.app.model.QualityBadgeStyle.GLASSMORPHIC -> QualityBadgeGlassmorphic(
-                                primaryColor, secondaryColor, label, icon, onClick, onLongPress
-                            )
-                            com.beatraxus.app.model.QualityBadgeStyle.NEON_PULSE -> QualityBadgeNeonPulse(
-                                primaryColor, secondaryColor, label, icon, onClick, onLongPress
-                            )
-                            com.beatraxus.app.model.QualityBadgeStyle.GOLDEN_SHIMMER -> QualityBadgeGoldenShimmer(
-                                primaryColor, secondaryColor, label, icon, onClick, onLongPress
-                            )
-                        }
+    when (uiState.appearance.qualityBadgeStyle) {
+        QualityBadgeStyle.NONE -> {}
+        QualityBadgeStyle.MINIMAL_OUTLINE -> QualityBadgeMinimalOutline(
+            primaryColor, label, icon, onClick, onLongPress
+        )
+        QualityBadgeStyle.GLASSMORPHIC -> QualityBadgeGlassmorphic(
+            primaryColor, secondaryColor, label, icon, onClick, onLongPress
+        )
+        QualityBadgeStyle.NEON_PULSE -> QualityBadgeNeonPulse(
+            primaryColor, secondaryColor, label, icon, onClick, onLongPress
+        )
+        QualityBadgeStyle.GOLDEN_SHIMMER -> QualityBadgeGoldenShimmer(
+            primaryColor, secondaryColor, label, icon, onClick, onLongPress
+        )
+    }
 }
 
 /** The original badge style: gradient border, shimmer sweep, animated glow shadow. */
