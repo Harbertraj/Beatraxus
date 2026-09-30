@@ -4242,7 +4242,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             }
 
             val onlineCandidates = lyricsRepository.fetchAllCandidates(song)
-            val allCandidates = listOfNotNull(embeddedCandidate) + onlineCandidates.filter { it.providerId != "embedded" }
+            val allCandidates = onlineCandidates.filter { it.providerId != "embedded" } + listOfNotNull(embeddedCandidate)
 
             _uiState.update { 
                 it.copy(

@@ -146,7 +146,6 @@ fun NowPlayingScreen(
     onSearchLyricsOnline: () -> Unit = {},
     onLoadLyricsCandidates: () -> Unit = {},
     onApplyLyricsCandidate: (LyricsCandidate) -> Unit = {},
-    onClearSavedLyrics: (Boolean) -> Unit = {},
     showPipelineOverlay: Boolean = false,
     onTogglePipeline: (Boolean) -> Unit = {},
     onSetSleepTimer: (Int, Boolean, Int) -> Unit = { _, _, _ -> },
@@ -424,8 +423,6 @@ fun NowPlayingScreen(
                                 .padding(start = 12.dp)
                                 .offset(y = (-8).dp)
                                 .size(40.dp)
-                                .background(Color.White.copy(alpha = 0.08f), CircleShape)
-                                .border(1.dp, Color.White.copy(alpha = 0.15f), CircleShape)
                                 .clip(CircleShape)
                                 .clickable {
                                     if (showQueue) onToggleQueue()
@@ -456,24 +453,7 @@ fun NowPlayingScreen(
                                 .padding(end = 12.dp)
                                 .offset(y = (-8).dp)
                         ) { queueVisible ->
-                            if (!queueVisible) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(40.dp)
-                                        .background(Color.White.copy(alpha = 0.08f), CircleShape)
-                                        .border(1.dp, Color.White.copy(alpha = 0.15f), CircleShape)
-                                        .clip(CircleShape)
-                                        .clickable(onClick = { showSongInfo = true }),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(
-                                        Icons.Rounded.Info,
-                                        contentDescription = "Song info",
-                                        tint = Color.White.copy(alpha = 0.8f),
-                                        modifier = Modifier.size(26.dp)
-                                    )
-                                }
-                            } else {
+                            if (queueVisible) {
                                 // Sleep Timer Button
                                 Surface(
                                     onClick = { showSleepTimerSheet = true },
@@ -753,7 +733,7 @@ fun NowPlayingScreen(
                                     onSearchOnline = onSearchLyricsOnline,
                                     lyricsErrorMessage = uiState.lyricsErrorMessage,
                                     progressMs = progressMs,
-                                    accentColor = lyricAccentColor,
+                                    accentColor = Color.White,
                                     providerLabel = uiState.lyricsProviderId?.let { id ->
                                         val name = if (id == "embedded") {
                                             "Embedded (file tag)"
@@ -1187,40 +1167,6 @@ fun NowPlayingScreen(
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp, vertical = 8.dp)
                 ) {
-                    var showClearConfirmDialog by remember { mutableStateOf(false) }
-
-                    if (showClearConfirmDialog) {
-                        AlertDialog(
-                            onDismissRequest = { showClearConfirmDialog = false },
-                            title = { Text("Clear Saved Lyrics?", color = Color.White) },
-                            text = { Text("Do you want to clear saved lyrics from the database, or also remove the embedded tag from the file?", color = Color.White.copy(0.8f)) },
-                            confirmButton = {
-                                TextButton(onClick = {
-                                    onClearSavedLyrics(true)
-                                    showClearConfirmDialog = false
-                                    showLyricsSourcesSheet = false
-                                }) {
-                                    Text("Clear DB & File Tag", color = Color(0xFFFF5252))
-                                }
-                            },
-                            dismissButton = {
-                                Row {
-                                    TextButton(onClick = {
-                                        onClearSavedLyrics(false)
-                                        showClearConfirmDialog = false
-                                        showLyricsSourcesSheet = false
-                                    }) {
-                                        Text("Clear DB Only", color = MaterialTheme.colorScheme.primary)
-                                    }
-                                    Spacer(Modifier.width(8.dp))
-                                    TextButton(onClick = { showClearConfirmDialog = false }) {
-                                        Text("Cancel", color = Color.White.copy(0.7f))
-                                    }
-                                }
-                            },
-                            containerColor = Color(0xFF1E1E26)
-                        )
-                    }
 
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
@@ -1233,16 +1179,6 @@ fun NowPlayingScreen(
                             fontSize = 18.sp,
                             fontWeight = FontWeight.Bold
                         )
-                        OutlinedButton(
-                            onClick = { showClearConfirmDialog = true },
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFFF5252)),
-                            border = BorderStroke(1.dp, Color(0xFFFF5252).copy(0.5f)),
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
-                        ) {
-                            Icon(Icons.Rounded.Delete, null, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("Re-fetch / Clear", fontSize = 12.sp)
-                        }
                     }
 
                     if (uiState.lyricsCandidates.isEmpty()) {

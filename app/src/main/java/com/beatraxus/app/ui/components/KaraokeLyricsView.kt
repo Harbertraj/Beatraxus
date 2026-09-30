@@ -123,23 +123,27 @@ fun KaraokeLyricsView(
     var lastInteractionTime by remember { mutableLongStateOf(0L) }
     var isLongPressing by remember { mutableStateOf(false) }
     var tempOffsetStr by remember { mutableStateOf("") }
+    
+    val isPlainLyrics = remember(lyrics) { lyrics.isNotEmpty() && lyrics.none { it.isTimed } }
 
-    LaunchedEffect(isDragged) {
-        if (isDragged) {
-            autoScrollEnabled = false
-            showSyncControls = true
-            lastInteractionTime = System.currentTimeMillis()
-        } else {
-            delay(3000)
-            if (System.currentTimeMillis() - lastInteractionTime >= 3000) {
-                autoScrollEnabled = true
-                showSyncControls = false
+    LaunchedEffect(isDragged, isPlainLyrics) {
+        if (!isPlainLyrics) {
+            if (isDragged) {
+                autoScrollEnabled = false
+                showSyncControls = true
+                lastInteractionTime = System.currentTimeMillis()
+            } else {
+                delay(3000)
+                if (System.currentTimeMillis() - lastInteractionTime >= 3000) {
+                    autoScrollEnabled = true
+                    showSyncControls = false
+                }
             }
         }
     }
 
-    LaunchedEffect(currentIndex, autoScrollEnabled, containerHeight) {
-        if (autoScrollEnabled && currentIndex in lyrics.indices && containerHeight > 0) {
+    LaunchedEffect(currentIndex, autoScrollEnabled, containerHeight, isPlainLyrics) {
+        if (!isPlainLyrics && autoScrollEnabled && currentIndex in lyrics.indices && containerHeight > 0) {
             scope.launch {
                 val offset = (containerHeight * 0.35f).toInt()
                 listState.bouncyScrollToItem(index = currentIndex, targetOffset = offset)
@@ -223,34 +227,41 @@ fun KaraokeLyricsView(
                 horizontalAlignment = Alignment.Start
             ) {
                 itemsIndexed(lyrics, key = { index, line -> "${line.startTime}_$index" }) { index, line ->
-                    val isCurrent = index == currentIndex
-                    val distance = abs(index - currentIndex)
-
-                    val lineAlpha = when {
-                        isCurrent -> 1.0f
-                        distance == 1 -> 0.45f
-                        distance == 2 -> 0.25f
-                        else -> 0.12f
-                    }
-
                     val speakerToUse = if (alignBySinger) line.speaker else LyricSpeaker.NONE
+                    
+                    if (isPlainLyrics) {
+                        PlainLyricLine(
+                            text = line.text,
+                            speaker = speakerToUse,
+                            onLongClick = { onSearchOnline?.invoke() }
+                        )
+                    } else {
+                        val isCurrent = index == currentIndex
+                        val distance = abs(index - currentIndex)
 
-                    SyncedLyricLine(
-                        line = line,
-                        isCurrent = isCurrent,
-                        distance = distance,
-                        targetAlpha = lineAlpha,
-                        progressMs = progressMs,
-                        onClick = {
-                            onLineClick(line.startTime)
-                            lastInteractionTime = System.currentTimeMillis()
-                        },
-                        onLongClick = {
-                            onSearchOnline?.invoke()
-                        },
-                        accentColor = accentColor,
-                        speaker = speakerToUse
-                    )
+                        val lineAlpha = when {
+                            isCurrent -> 1.0f
+                            distance == 1 -> 0.45f
+                            distance == 2 -> 0.25f
+                            else -> 0.12f
+                        }
+
+                        SyncedLyricLine(
+                            line = line,
+                            isCurrent = isCurrent,
+                            distance = distance,
+                            targetAlpha = lineAlpha,
+                            progressMs = progressMs,
+                            onClick = {
+                                onLineClick(line.startTime)
+                                lastInteractionTime = System.currentTimeMillis()
+                            },
+                            onLongClick = {
+                                onSearchOnline?.invoke()
+                            },
+                            speaker = speakerToUse
+                        )
+                    }
                 }
 
                 if (providerLabel != null) {
@@ -270,7 +281,7 @@ fun KaraokeLyricsView(
             }
 
             AnimatedVisibility(
-                visible = showSyncControls,
+                visible = showSyncControls && !isPlainLyrics,
                 enter = fadeIn() + slideInVertically { -it },
                 exit = fadeOut() + slideOutVertically { -it },
                 modifier = Modifier
@@ -396,6 +407,55 @@ fun KaraokeLyricsView(
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
+fun PlainLyricLine(
+    text: String,
+    speaker: LyricSpeaker,
+    onLongClick: () -> Unit
+) {
+    val lineTextAlign = when (speaker) {
+        LyricSpeaker.NONE, LyricSpeaker.MALE -> TextAlign.Start
+        LyricSpeaker.FEMALE -> TextAlign.End
+        LyricSpeaker.DUET_BOTH, LyricSpeaker.CHORUS -> TextAlign.Center
+    }
+
+    val linePadding = when (speaker) {
+        LyricSpeaker.NONE -> PaddingValues(0.dp)
+        LyricSpeaker.MALE -> PaddingValues(end = 32.dp)
+        LyricSpeaker.FEMALE -> PaddingValues(start = 32.dp)
+        LyricSpeaker.DUET_BOTH, LyricSpeaker.CHORUS -> PaddingValues(horizontal = 16.dp)
+    }
+
+    val isTamil = remember(text) { text.any { it in '\u0B80'..'\u0BFF' } }
+    val baseStyle = MaterialTheme.typography.headlineMedium.copy(
+        fontWeight = FontWeight.ExtraBold,
+        fontSize = if (isTamil) 22.sp else 24.sp,
+        lineHeight = if (isTamil) 28.sp else 30.sp,
+        textAlign = lineTextAlign,
+        letterSpacing = (-0.5).sp,
+        shadow = Shadow(
+            color = Color.White.copy(alpha = 0.35f),
+            blurRadius = with(LocalDensity.current) { 10.dp.toPx() }
+        )
+    )
+
+    Text(
+        text = text,
+        style = baseStyle,
+        color = Color.White,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(linePadding)
+            .combinedClickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = {},
+                onLongClick = onLongClick
+            )
+    )
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
 fun SyncedLyricLine(
     line: LrcLine,
     isCurrent: Boolean,
@@ -404,7 +464,6 @@ fun SyncedLyricLine(
     progressMs: () -> Long,
     onClick: () -> Unit,
     onLongClick: () -> Unit = {},
-    accentColor: Color = Color.White,
     speaker: LyricSpeaker = LyricSpeaker.NONE
 ) {
     val infiniteTransition = rememberInfiniteTransition(label = "ambient")
@@ -452,6 +511,12 @@ fun SyncedLyricLine(
         label = "upwardMovement"
     )
 
+    val filledAlpha by animateFloatAsState(
+        targetValue = if (isCurrent) 1f else 0f,
+        animationSpec = tween(durationMillis = 300),
+        label = "filledAlpha"
+    )
+
     val lineTextAlign = when (speaker) {
         LyricSpeaker.NONE, LyricSpeaker.MALE -> TextAlign.Start
         LyricSpeaker.FEMALE -> TextAlign.End
@@ -460,8 +525,8 @@ fun SyncedLyricLine(
 
     val lineTransformOrigin = when (speaker) {
         LyricSpeaker.NONE, LyricSpeaker.MALE -> TransformOrigin(0f, 0.5f)
-        LyricSpeaker.FEMALE -> androidx.compose.ui.graphics.TransformOrigin(1f, 0.5f)
-        LyricSpeaker.DUET_BOTH, LyricSpeaker.CHORUS -> androidx.compose.ui.graphics.TransformOrigin(0.5f, 0.5f)
+        LyricSpeaker.FEMALE -> TransformOrigin(1f, 0.5f)
+        LyricSpeaker.DUET_BOTH, LyricSpeaker.CHORUS -> TransformOrigin(0.5f, 0.5f)
     }
 
     val linePadding = when (speaker) {
@@ -485,6 +550,8 @@ fun SyncedLyricLine(
             .fillMaxWidth()
             .padding(linePadding)
             .graphicsLayer {
+                compositingStrategy = CompositingStrategy.ModulateAlpha
+                clip = false
                 alpha = animatedAlpha
                 scaleX = animatedScale
                 scaleY = animatedScale
@@ -503,21 +570,24 @@ fun SyncedLyricLine(
                 onLongClick = onLongClick
             )
     ) {
-        if (isCurrent) {
-            KaraokeText(
-                line = line,
-                progressMs = progressMs,
-                style = baseStyle,
-                accentColor = accentColor,
-                modifier = Modifier.fillMaxWidth()
-            )
-        } else {
+        Box(modifier = Modifier.fillMaxWidth()) {
             Text(
                 text = line.text,
                 style = baseStyle,
-                color = lerp(accentColor, Color.White, 0.35f).copy(alpha = 0.35f),
+                color = Color.White.copy(alpha = 0.35f),
                 modifier = Modifier.fillMaxWidth()
             )
+
+            if (filledAlpha > 0.01f) {
+                KaraokeText(
+                    line = line,
+                    isCurrent = isCurrent,
+                    progressMs = progressMs,
+                    style = baseStyle,
+                    filledAlpha = filledAlpha,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
         }
     }
 }
@@ -532,9 +602,10 @@ private class WordCharRange(
 @Composable
 fun KaraokeText(
     line: LrcLine,
+    isCurrent: Boolean,
     progressMs: () -> Long,
     style: TextStyle,
-    accentColor: Color = Color.White,
+    filledAlpha: Float,
     modifier: Modifier = Modifier
 ) {
     val textMeasurer = rememberTextMeasurer()
@@ -543,14 +614,12 @@ fun KaraokeText(
     val featherPx = remember(density) { with(density) { 32.dp.toPx() } }
     val glowRadiusPx = remember(density) { with(density) { 10.dp.toPx() } }
 
-    val unfilledColor = remember(accentColor) { accentColor.copy(alpha = 0.35f) }
-    val glowShadow = remember(accentColor, glowRadiusPx) {
+    val glowShadow = remember(glowRadiusPx, filledAlpha) {
         Shadow(
-            color = accentColor.copy(alpha = 0.35f),
+            color = Color.White.copy(alpha = 0.35f * filledAlpha),
             blurRadius = glowRadiusPx
         )
     }
-    val highlightColor = remember(accentColor) { lerp(accentColor, Color.White, 0.25f) }
 
     val wordRanges = remember(line.wordTimings, line.text) {
         val wordTimings = line.wordTimings
@@ -582,29 +651,39 @@ fun KaraokeText(
             )
         }
 
-        // Background (unfilled) text
-        Text(
-            text = line.text,
-            style = style,
-            color = unfilledColor,
-            modifier = Modifier.fillMaxWidth()
-        )
+        val miniLayouts = remember(textLayoutResult, line.text, style) {
+            val count = textLayoutResult.lineCount
+            List(count) { l ->
+                val start = textLayoutResult.getLineStart(l)
+                val end = textLayoutResult.getLineEnd(l)
+                val text = line.text.substring(start, end)
+                textMeasurer.measure(
+                    text = text,
+                    style = style,
+                    constraints = Constraints()
+                )
+            }
+        }
 
-        // Foreground (filled) text with soft feathered sweep & glow
         Canvas(modifier = Modifier.matchParentSize()) {
             val currentProgress = progressMs()
-            if (currentProgress < line.startTime) return@Canvas
+            val forceComplete = !isCurrent && currentProgress > line.startTime
+            if (!forceComplete && currentProgress < line.startTime) return@Canvas
 
             val lineCount = textLayoutResult.lineCount
             val textLength = line.text.length
             if (textLength == 0) return@Canvas
 
-            val (activeLine, activeX) = calculateActivePosition(
-                line = line,
-                progressMs = currentProgress,
-                textLayout = textLayoutResult,
-                wordRanges = wordRanges
-            )
+            val (activeLine, activeX) = if (forceComplete) {
+                Pair(lineCount - 1, textLayoutResult.getLineRight(lineCount - 1))
+            } else {
+                calculateActivePosition(
+                    line = line,
+                    progressMs = currentProgress,
+                    textLayout = textLayoutResult,
+                    wordRanges = wordRanges
+                )
+            }
 
             for (l in 0 until lineCount) {
                 val lStart = textLayoutResult.getLineStart(l)
@@ -616,35 +695,37 @@ fun KaraokeText(
                 val lLeft = textLayoutResult.getLineLeft(l)
                 val lRight = textLayoutResult.getLineRight(l)
 
+                val mini = miniLayouts[l]
                 val isRtl = textLayoutResult.getParagraphDirection(lStart) == ResolvedTextDirection.Rtl
 
                 if (l < activeLine) {
                     clipRect(
                         left = lLeft - featherPx,
-                        top = lTop,
+                        top = lTop - 3 * glowRadiusPx,
                         right = lRight + featherPx,
-                        bottom = lBottom
+                        bottom = lBottom + 3 * glowRadiusPx
                     ) {
                         drawText(
-                            textLayoutResult = textLayoutResult,
-                            color = accentColor,
+                            textLayoutResult = mini,
+                            color = Color.White.copy(alpha = filledAlpha),
+                            topLeft = Offset(lLeft, lTop),
                             shadow = glowShadow
                         )
                     }
                 } else if (l == activeLine) {
                     clipRect(
                         left = lLeft - featherPx,
-                        top = lTop,
+                        top = lTop - 3 * glowRadiusPx,
                         right = lRight + featherPx,
-                        bottom = lBottom
+                        bottom = lBottom + 3 * glowRadiusPx
                     ) {
                         val brush = if (!isRtl) {
                             val startX = activeX - featherPx
                             val endX = activeX
                             Brush.horizontalGradient(
-                                0.0f to accentColor,
-                                0.65f to highlightColor,
-                                1.0f to accentColor.copy(alpha = 0f),
+                                0.0f to Color.White.copy(alpha = filledAlpha),
+                                0.65f to Color.White.copy(alpha = filledAlpha),
+                                1.0f to Color.White.copy(alpha = 0f),
                                 startX = startX,
                                 endX = endX
                             )
@@ -652,17 +733,18 @@ fun KaraokeText(
                             val startX = activeX
                             val endX = activeX + featherPx
                             Brush.horizontalGradient(
-                                0.0f to accentColor.copy(alpha = 0f),
-                                0.35f to highlightColor,
-                                1.0f to accentColor,
+                                0.0f to Color.White.copy(alpha = 0f),
+                                0.35f to Color.White.copy(alpha = filledAlpha),
+                                1.0f to Color.White.copy(alpha = filledAlpha),
                                 startX = startX,
                                 endX = endX
                             )
                         }
 
                         drawText(
-                            textLayoutResult = textLayoutResult,
+                            textLayoutResult = mini,
                             brush = brush,
+                            topLeft = Offset(lLeft, lTop),
                             shadow = glowShadow
                         )
                     }
@@ -714,7 +796,13 @@ private fun calculateActivePosition(
                     val prev = wordRanges[i - 1]
                     val safeIdx = prev.endChar.coerceIn(0, textLength)
                     val prevLine = textLayout.getLineForOffset(safeIdx)
-                    val prevX = textLayout.getHorizontalPosition(safeIdx, true)
+                    
+                    val endVisible = textLayout.getLineEnd(prevLine, visibleEnd = true)
+                    val prevX = if (safeIdx >= endVisible) {
+                        textLayout.getLineRight(prevLine)
+                    } else {
+                        textLayout.getHorizontalPosition(safeIdx, true)
+                    }
                     return Pair(prevLine, prevX)
                 } else {
                     val x0 = textLayout.getLineLeft(0)
@@ -757,8 +845,15 @@ private fun interpolateCharPosition(
     val line = textLayout.getLineForOffset(safeIndex)
 
     val startX = textLayout.getHorizontalPosition(safeIndex, true)
+    
     val nextIdx = (safeIndex + 1).coerceAtMost(textLength)
-    val endX = textLayout.getHorizontalPosition(nextIdx, true)
+    val endVisible = textLayout.getLineEnd(line, visibleEnd = true)
+    
+    val endX = if (nextIdx >= endVisible) {
+        textLayout.getLineRight(line)
+    } else {
+        textLayout.getHorizontalPosition(nextIdx, true)
+    }
 
     val activeX = startX + (endX - startX) * charFrac
     return Pair(line, activeX)

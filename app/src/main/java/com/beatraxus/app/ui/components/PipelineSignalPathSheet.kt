@@ -41,6 +41,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.beatraxus.app.model.DspConfig
 import com.beatraxus.app.model.DspUiState
 import com.beatraxus.app.model.EqPhaseMode
@@ -452,212 +454,223 @@ fun PipelineSignalPathSheet(
         label = "pulseProgress"
     )
 
-    Box(
-        modifier = modifier
-            .fillMaxSize()
-            .clickable(onClick = onDismiss),
-        contentAlignment = Alignment.BottomCenter
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
-        Surface(
-            modifier = Modifier
-                .fillMaxWidth()
-                .fillMaxHeight(0.92f)
-                .clickable(onClick = {}), // consume clicks
-            shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
-            color = Color.Transparent
+        Box(
+            modifier = modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.60f)) // Dimmed background
+                .clickable(onClick = onDismiss), // Tap-outside-to-dismiss
+            contentAlignment = Alignment.Center // Centered floating card
         ) {
-            Box(
+            Surface(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .background(
-                        Brush.verticalGradient(
-                            colors = listOf(
-                                Color(0xFF1B1B22),
-                                Color(0xFF121218)
+                    .fillMaxWidth(0.92f) // width ~92%
+                    .heightIn(max = LocalConfiguration.current.screenHeightDp.dp * 0.85f) // height max 85%
+                    .clickable(onClick = {}), // consume clicks
+                shape = RoundedCornerShape(28.dp), // Rounded corners 28dp
+                color = Color.Transparent
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.verticalGradient(
+                                colors = listOf(
+                                    Color(0xFF14141B).copy(alpha = 0.96f),
+                                    Color(0xFF0F0F14).copy(alpha = 0.96f)
+                                )
                             )
                         )
-                    )
-                    .border(
-                        BorderStroke(1.dp, Color.White.copy(alpha = 0.10f)),
-                        RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
-                    )
-            ) {
-                Column(modifier = Modifier.fillMaxSize()) {
-                    // Drag Handle
-                    Box(
-                        modifier = Modifier
-                            .padding(top = 10.dp, bottom = 6.dp)
-                            .width(36.dp)
-                            .height(4.dp)
-                            .background(Color.White.copy(alpha = 0.25f), CircleShape)
-                            .align(Alignment.CenterHorizontally)
-                    )
+                        .border(
+                            BorderStroke(1.dp, Color.White.copy(alpha = 0.10f)),
+                            RoundedCornerShape(28.dp)
+                        )
+                ) {
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        // Header
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 20.dp, vertical = 12.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "SIGNAL PATH",
+                                    style = MaterialTheme.typography.titleSmall.copy(
+                                        fontWeight = FontWeight.ExtraBold,
+                                        letterSpacing = 2.sp,
+                                        fontSize = 11.sp
+                                    ),
+                                    color = Color.White.copy(alpha = 0.60f)
+                                )
+                                Spacer(Modifier.height(4.dp))
+                                Text(
+                                    text = verdict.summary,
+                                    style = MaterialTheme.typography.bodySmall.copy(
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 11.sp
+                                    ),
+                                    color = Color.White.copy(alpha = 0.85f),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
 
-                    // Header
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 20.dp, vertical = 6.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "SIGNAL PATH",
-                                style = MaterialTheme.typography.titleSmall.copy(
-                                    fontWeight = FontWeight.ExtraBold,
-                                    letterSpacing = 2.sp,
-                                    fontSize = 11.sp
-                                ),
-                                color = Color.White.copy(alpha = 0.60f)
-                            )
+                            // Verdict Pill
+                            val pillColor = Color(verdict.type.colorHex)
+                            Surface(
+                                shape = CircleShape,
+                                color = pillColor.copy(alpha = 0.15f),
+                                border = BorderStroke(1.dp, pillColor.copy(alpha = 0.5f)),
+                                modifier = Modifier.padding(start = 8.dp)
+                            ) {
+                                Text(
+                                    text = verdict.type.label,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontWeight = FontWeight.Bold,
+                                        letterSpacing = 0.8.sp,
+                                        fontSize = 10.sp
+                                    ),
+                                    color = pillColor
+                                )
+                            }
+                            
+                            Spacer(modifier = Modifier.width(8.dp))
+
+                            // Copy Button
+                            IconButton(
+                                onClick = {
+                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                    val clip = ClipData.newPlainText("Audio Pipeline", pipelineResult.plainTextSummary)
+                                    clipboard.setPrimaryClip(clip)
+                                    Toast.makeText(context, "Pipeline info copied to clipboard", Toast.LENGTH_SHORT).show()
+                                },
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(
+                                    Icons.Rounded.ContentCopy,
+                                    contentDescription = "Copy Pipeline Info",
+                                    tint = Color.White.copy(alpha = 0.7f),
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                            
+                            // Close Button
+                            IconButton(
+                                onClick = onDismiss,
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(
+                                    Icons.Rounded.Close,
+                                    contentDescription = "Close",
+                                    tint = Color.White.copy(alpha = 0.7f),
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+
+                        HorizontalDivider(color = Color.White.copy(0.08f))
+
+                        // Stages List
+                        LazyColumn(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f, fill = false),
+                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp)
+                        ) {
+                            itemsIndexed(stages) { index, stage ->
+                                val wireFormat = wireFormats.getOrNull(index)
+                                CompactStageRow(
+                                    stage = stage,
+                                    wireFormat = wireFormat,
+                                    isLast = index == stages.lastIndex,
+                                    isPlaying = isPlaying,
+                                    pulseProgress = pulseProgress,
+                                    index = index
+                                )
+                            }
+                        }
+
+                        // Bottom Summary Strip
+                        HorizontalDivider(color = Color.White.copy(0.08f))
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(Color.Black.copy(alpha = 0.35f))
+                                .padding(horizontal = 16.dp, vertical = 10.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                                    Column {
+                                        Text(
+                                            text = "LATENCY",
+                                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp, fontWeight = FontWeight.Bold),
+                                            color = Color.White.copy(alpha = 0.5f)
+                                        )
+                                        val latencyMs = if (uiState.outputSampleRate > 0) (uiState.dsp.currentLatencyFrames * 1000f / uiState.outputSampleRate) else 0f
+                                        Text(
+                                            text = "${String.format(Locale.US, "%.1f", latencyMs)} ms",
+                                            style = MaterialTheme.typography.bodySmall.copy(
+                                                fontWeight = FontWeight.SemiBold,
+                                                fontFamily = FontFamily.Monospace,
+                                                fontSize = 12.sp
+                                            ),
+                                            color = Color.White
+                                        )
+                                    }
+                                    Column {
+                                        Text(
+                                            text = "HEADROOM",
+                                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp, fontWeight = FontWeight.Bold),
+                                            color = Color.White.copy(alpha = 0.5f)
+                                        )
+                                        Text(
+                                            text = "${String.format(Locale.US, "%.1f", uiState.dsp.currentHeadroomDb)} dB",
+                                            style = MaterialTheme.typography.bodySmall.copy(
+                                                fontWeight = FontWeight.SemiBold,
+                                                fontFamily = FontFamily.Monospace,
+                                                fontSize = 12.sp
+                                            ),
+                                            color = Color.White
+                                        )
+                                    }
+                                    Column {
+                                        Text(
+                                            text = "UNDERRUNS",
+                                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp, fontWeight = FontWeight.Bold),
+                                            color = Color.White.copy(alpha = 0.5f)
+                                        )
+                                        Text(
+                                            text = "${uiState.underrunCount}",
+                                            style = MaterialTheme.typography.bodySmall.copy(
+                                                fontWeight = FontWeight.SemiBold,
+                                                fontFamily = FontFamily.Monospace,
+                                                fontSize = 12.sp
+                                            ),
+                                            color = if (uiState.underrunCount > 0) Color(0xFFFF5252) else Color.White
+                                        )
+                                    }
+                                }
+                            }
                             Spacer(Modifier.height(4.dp))
                             Text(
-                                text = verdict.summary,
-                                style = MaterialTheme.typography.bodySmall.copy(
-                                    fontFamily = FontFamily.Monospace,
-                                    fontSize = 11.sp
-                                ),
-                                color = Color.White.copy(alpha = 0.85f),
+                                text = verdict.oneLiner,
+                                style = MaterialTheme.typography.bodySmall.copy(fontSize = 10.sp),
+                                color = Color.White.copy(alpha = 0.6f),
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
                         }
-
-                        // Verdict Pill
-                        val pillColor = Color(verdict.type.colorHex)
-                        Surface(
-                            shape = CircleShape,
-                            color = pillColor.copy(alpha = 0.15f),
-                            border = BorderStroke(1.dp, pillColor.copy(alpha = 0.5f)),
-                            modifier = Modifier.padding(start = 8.dp)
-                        ) {
-                            Text(
-                                text = verdict.type.label,
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    fontWeight = FontWeight.Bold,
-                                    letterSpacing = 0.8.sp,
-                                    fontSize = 10.sp
-                                ),
-                                color = pillColor
-                            )
-                        }
-
-                        // Copy Button
-                        IconButton(
-                            onClick = {
-                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                val clip = ClipData.newPlainText("Audio Pipeline", pipelineResult.plainTextSummary)
-                                clipboard.setPrimaryClip(clip)
-                                Toast.makeText(context, "Pipeline info copied to clipboard", Toast.LENGTH_SHORT).show()
-                            },
-                            modifier = Modifier.size(36.dp)
-                        ) {
-                            Icon(
-                                Icons.Rounded.ContentCopy,
-                                contentDescription = "Copy Pipeline Info",
-                                tint = Color.White.copy(alpha = 0.7f),
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
-                    }
-
-                    HorizontalDivider(color = Color.White.copy(0.08f))
-
-                    // Stages List
-                    LazyColumn(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .weight(1f),
-                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp)
-                    ) {
-                        itemsIndexed(stages) { index, stage ->
-                            val wireFormat = wireFormats.getOrNull(index)
-                            CompactStageRow(
-                                stage = stage,
-                                wireFormat = wireFormat,
-                                isLast = index == stages.lastIndex,
-                                isPlaying = isPlaying,
-                                pulseProgress = pulseProgress,
-                                index = index
-                            )
-                        }
-                    }
-
-                    // Bottom Summary Strip
-                    HorizontalDivider(color = Color.White.copy(0.08f))
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(Color.Black.copy(alpha = 0.35f))
-                            .padding(horizontal = 16.dp, vertical = 10.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                                Column {
-                                    Text(
-                                        text = "LATENCY",
-                                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp, fontWeight = FontWeight.Bold),
-                                        color = Color.White.copy(alpha = 0.5f)
-                                    )
-                                    val latencyMs = if (uiState.outputSampleRate > 0) (uiState.dsp.currentLatencyFrames * 1000f / uiState.outputSampleRate) else 0f
-                                    Text(
-                                        text = "${String.format(Locale.US, "%.1f", latencyMs)} ms",
-                                        style = MaterialTheme.typography.bodySmall.copy(
-                                            fontWeight = FontWeight.SemiBold,
-                                            fontFamily = FontFamily.Monospace,
-                                            fontSize = 12.sp
-                                        ),
-                                        color = Color.White
-                                    )
-                                }
-                                Column {
-                                    Text(
-                                        text = "HEADROOM",
-                                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp, fontWeight = FontWeight.Bold),
-                                        color = Color.White.copy(alpha = 0.5f)
-                                    )
-                                    Text(
-                                        text = "${String.format(Locale.US, "%.1f", uiState.dsp.currentHeadroomDb)} dB",
-                                        style = MaterialTheme.typography.bodySmall.copy(
-                                            fontWeight = FontWeight.SemiBold,
-                                            fontFamily = FontFamily.Monospace,
-                                            fontSize = 12.sp
-                                        ),
-                                        color = Color.White
-                                    )
-                                }
-                                Column {
-                                    Text(
-                                        text = "UNDERRUNS",
-                                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp, fontWeight = FontWeight.Bold),
-                                        color = Color.White.copy(alpha = 0.5f)
-                                    )
-                                    Text(
-                                        text = "${uiState.underrunCount}",
-                                        style = MaterialTheme.typography.bodySmall.copy(
-                                            fontWeight = FontWeight.SemiBold,
-                                            fontFamily = FontFamily.Monospace,
-                                            fontSize = 12.sp
-                                        ),
-                                        color = if (uiState.underrunCount > 0) Color(0xFFFF5252) else Color.White
-                                    )
-                                }
-                            }
-                        }
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            text = verdict.oneLiner,
-                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 10.sp),
-                            color = Color.White.copy(alpha = 0.6f),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
                     }
                 }
             }
@@ -674,19 +687,23 @@ fun CompactStageRow(
     pulseProgress: Float,
     index: Int
 ) {
-    var isExpanded by remember { mutableStateOf(false) }
-
     val stateColor = when (stage.state) {
         StageState.UNTOUCHED -> Color(0xFF30D158)
         StageState.PROCESSED -> Color(0xFFFF9500)
         StageState.DEGRADED -> Color(0xFFFF453A)
         StageState.BYPASSED -> Color.White.copy(alpha = 0.35f)
     }
+    
+    val stateLabel = when (stage.state) {
+        StageState.UNTOUCHED -> "UNTOUCHED"
+        StageState.PROCESSED -> "PROCESSED"
+        StageState.DEGRADED -> "DEGRADED"
+        StageState.BYPASSED -> "BYPASSED"
+    }
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { isExpanded = !isExpanded }
             .semantics(mergeDescendants = true) {
                 contentDescription = "${stage.title}: ${stage.primary}, state ${stage.state.name}"
             }
@@ -747,6 +764,14 @@ fun CompactStageRow(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                    // Left Accent Bar for the block
+                    Box(
+                        modifier = Modifier
+                            .width(4.dp)
+                            .height(16.dp)
+                            .background(stateColor, RoundedCornerShape(2.dp))
+                    )
+                    Spacer(Modifier.width(6.dp))
                     Icon(
                         imageVector = stage.icon,
                         contentDescription = null,
@@ -765,18 +790,32 @@ fun CompactStageRow(
                     )
                 }
 
-                if (wireFormat?.changeBadge != null) {
-                    Surface(
-                        shape = RoundedCornerShape(4.dp),
-                        color = stateColor.copy(alpha = 0.15f),
-                        border = BorderStroke(1.dp, stateColor.copy(alpha = 0.4f))
-                    ) {
-                        Text(
-                            text = wireFormat.changeBadge,
-                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
-                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 8.sp, fontWeight = FontWeight.Bold),
-                            color = stateColor
-                        )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    // State tag
+                    Text(
+                        text = stateLabel,
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 8.sp,
+                            letterSpacing = 0.5.sp
+                        ),
+                        color = stateColor.copy(alpha = 0.7f)
+                    )
+                    
+                    if (stage.changeBadge != null) {
+                        Spacer(Modifier.width(6.dp))
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = stateColor.copy(alpha = 0.15f),
+                            border = BorderStroke(1.dp, stateColor.copy(alpha = 0.4f))
+                        ) {
+                            Text(
+                                text = stage.changeBadge,
+                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
+                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 8.sp, fontWeight = FontWeight.Bold),
+                                color = stateColor
+                            )
+                        }
                     }
                 }
             }
@@ -795,43 +834,75 @@ fun CompactStageRow(
                 overflow = TextOverflow.Ellipsis
             )
 
-            if (wireFormat != null) {
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    text = "Wire: ${wireFormat.formatText}",
-                    style = MaterialTheme.typography.labelSmall.copy(
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 9.sp
-                    ),
-                    color = Color.White.copy(alpha = 0.45f)
-                )
+            // Details are always visible
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                HorizontalDivider(color = Color.White.copy(0.06f))
+                stage.details.forEach { (label, value) ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = label,
+                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                            color = Color.White.copy(alpha = 0.5f)
+                        )
+                        Text(
+                            text = value,
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 10.sp
+                            ),
+                            color = Color.White.copy(alpha = 0.9f)
+                        )
+                    }
+                }
             }
-
-            AnimatedVisibility(visible = isExpanded) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    HorizontalDivider(color = Color.White.copy(0.06f))
-                    stage.details.forEach { (label, value) ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
+        }
+    }
+    
+    // Wire format text between blocks
+    if (wireFormat != null && !isLast) {
+        Row(
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Spacer(modifier = Modifier.width(28.dp)) // align with rail
+            Spacer(modifier = Modifier.width(10.dp))
+            
+            Box(
+                modifier = Modifier
+                    .padding(bottom = 10.dp, start = 12.dp)
+                    .background(Color.White.copy(alpha = 0.1f), RoundedCornerShape(12.dp))
+                    .border(1.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(12.dp))
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = wireFormat.formatText,
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 9.sp
+                        ),
+                        color = Color.White.copy(alpha = 0.65f)
+                    )
+                    
+                    if (wireFormat.changeBadge != null) {
+                        Spacer(Modifier.width(6.dp))
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = Color.White.copy(alpha = 0.15f),
+                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.4f))
                         ) {
                             Text(
-                                text = label,
-                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
-                                color = Color.White.copy(alpha = 0.5f)
-                            )
-                            Text(
-                                text = value,
-                                style = MaterialTheme.typography.bodySmall.copy(
-                                    fontFamily = FontFamily.Monospace,
-                                    fontSize = 10.sp
-                                ),
-                                color = Color.White.copy(alpha = 0.9f)
+                                text = wireFormat.changeBadge,
+                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
+                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 8.sp, fontWeight = FontWeight.Bold),
+                                color = Color.White
                             )
                         }
                     }
