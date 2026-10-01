@@ -850,7 +850,12 @@ class AudioPlaybackService : Service() {
                 if (!fullScan && foldersToScan.isEmpty()) {
                     onProgress(1.0f, 0, 0, 0)
                     val currentLocal = currentSongs.filter { it.source == SongSource.LOCAL }
-                    onComplete(currentLocal, emptyList(), emptyList(), "Library is up to date", false)
+                    try {
+                        onComplete(currentLocal, emptyList(), emptyList(), "Library is up to date", false)
+                    } catch (e: Exception) {
+                        if (e is CancellationException) throw e
+                        Log.e(TAG, "onComplete callback failed", e)
+                    }
                     updateScanningProgress(1.0f, currentLocal.size, true)
                     return@launch
                 }
@@ -964,14 +969,19 @@ class AudioPlaybackService : Service() {
                     else -> "No changes found"
                 }
 
-                onComplete(results, newSongs, removedLocalIds.toList(), message, hasChanges)
+                try {
+                    onComplete(results, newSongs, removedLocalIds.toList(), message, hasChanges)
+                } catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                    Log.e(TAG, "onComplete callback failed", e)
+                }
                 updateScanningProgress(1.0f, results.size, true)
             } catch (e: Exception) {
                 Log.e(TAG, "Scan error", e)
                 if (e is CancellationException) {
                     onError("Scan cancelled")
                 } else {
-                    onError(e.message ?: "Unknown error")
+                    onError(e.javaClass.simpleName + ": " + e.message)
                 }
                 updateScanningProgress(1.0f, 0, true)
             } finally {

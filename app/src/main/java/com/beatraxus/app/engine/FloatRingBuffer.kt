@@ -81,6 +81,30 @@ internal class FloatRingBuffer(capacitySamples: Int = DEFAULT_CAPACITY_SAMPLES) 
         }
     }
 
+    fun skip(sampleCount: Int): Int {
+        lock.lock()
+        try {
+            if (size == 0) return 0
+            val toSkip = minOf(sampleCount, size)
+            readIndex = (readIndex + toSkip) % buffer.size
+            size -= toSkip
+            notFull.signalAll()
+            return toSkip
+        } finally {
+            lock.unlock()
+        }
+    }
+
+    fun writeZeroes(sampleCount: Int) {
+        val zeroes = FloatArray(minOf(sampleCount, 8192))
+        var remaining = sampleCount
+        while (remaining > 0) {
+            val toWrite = minOf(remaining, zeroes.size)
+            write(zeroes, toWrite)
+            remaining -= toWrite
+        }
+    }
+
     fun close() {
         lock.lock()
         try {

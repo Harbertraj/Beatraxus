@@ -840,16 +840,9 @@ class VideoPlayerViewModel(
                 }
 
                 if (_uiState.value.routeAudioToEngine) {
-                    val video = _uiState.value.currentVideo
                     val engine = VideoAudioBridge.getAudioEngine()
-                    if (video != null && engine != null) {
-                        engine.playVideoAudio(
-                            uri = video.uri,
-                            audioTrackIndex = track.audioOrdinal,
-                            startPositionMs = p.currentPosition,
-                            startPlaying = p.isPlaying,
-                            title = video.title
-                        )
+                    if (engine != null) {
+                        startEngineRouting(engine)
                     }
                 } else {
                     p.trackSelectionParameters = p.trackSelectionParameters.buildUpon()
@@ -929,15 +922,20 @@ class VideoPlayerViewModel(
             .build()
 
         val currentPosMs = player.currentPosition
-        val isPlaying = player.isPlaying
+        val wasPlaying = player.isPlaying
+        if (wasPlaying) {
+            player.pause()
+        }
 
         val selectedTrackInfo = _uiState.value.availableAudioTracks.find { it.audioOrdinal == selectedTrackIdx }
+
+        _uiState.update { it.copy(isConnectingEngineRoute = true, engineRouteError = null) }
 
         engine.playVideoAudio(
             uri = video.uri,
             audioTrackIndex = selectedTrackIdx,
             startPositionMs = currentPosMs,
-            startPlaying = isPlaying,
+            startPlaying = wasPlaying,
             title = video.title,
             codecMime = selectedTrackInfo?.format
         )
@@ -945,25 +943,42 @@ class VideoPlayerViewModel(
         videoAudioStateObservationJob?.cancel()
         videoAudioStateObservationJob = viewModelScope.launch {
             var hasBeenActive = false
+            var exoResumed = false
             val timeoutJob = launch {
-                delay(5000)
+                delay(8000) // Increased to 8s
                 if (!hasBeenActive && isActive) {
-                    Log.w(TAG, "Video audio routing start timed out after 5s")
+                    Log.w(TAG, "Video audio routing start timed out after 8s")
                     _uiState.update { it.copy(isConnectingEngineRoute = false, engineRouteError = "Audio Engine connection timed out") }
                     setRouteAudioToEngine(false)
                 }
             }
 
             engine.videoRouteStateFlow.collect { routeState ->
-                Log.d(TAG, "Observed VideoRouteState: phase=${routeState.phase}, error=${routeState.error}")
+                Log.d(TAG, "Observed VideoRouteState: phase=${routeState.phase}, error=${routeState.error}, audioReady=${routeState.firstFrameRendered}")
+                
+                if (routeState.firstFrameRendered && !exoResumed && routeState.phase == VideoRoutePhase.ACTIVE) {
+                    exoResumed = true
+                    hasBeenActive = true
+                    timeoutJob.cancel()
+                    _uiState.update { it.copy(isConnectingEngineRoute = false, engineRouteError = null) }
+                    
+                    val engineStartPos = routeState.positionMs
+                    player.seekTo(engineStartPos)
+                    if (wasPlaying) {
+                        player.play()
+                    }
+                }
+
                 when (routeState.phase) {
                     VideoRoutePhase.STARTING -> {
                         // Ignore STARTING
                     }
                     VideoRoutePhase.ACTIVE -> {
-                        hasBeenActive = true
-                        timeoutJob.cancel()
-                        _uiState.update { it.copy(isConnectingEngineRoute = false, engineRouteError = null) }
+                        if (routeState.firstFrameRendered) {
+                            hasBeenActive = true
+                            timeoutJob.cancel()
+                            _uiState.update { it.copy(isConnectingEngineRoute = false, engineRouteError = null) }
+                        }
                     }
                     VideoRoutePhase.ERROR -> {
                         timeoutJob.cancel()
@@ -1012,12 +1027,22 @@ class VideoPlayerViewModel(
         videoAudioSyncJob?.cancel()
         videoAudioSyncJob = viewModelScope.launch {
             var lastLogMs = 0L
+            var consecutiveDriftCount = 0
+            var lastResyncTimeMs = 0L
+
             while (isActive && _uiState.value.routeAudioToEngine) {
                 delay(500)
                 val player = exoPlayer ?: break
                 val engine = VideoAudioBridge.getAudioEngine() ?: break
 
                 if (!engine.isVideoAudioActive()) break
+
+                if (_uiState.value.isConnectingEngineRoute) {
+                    consecutiveDriftCount = 0
+                    continue
+                }
+
+                val now = System.currentTimeMillis()
 
                 if (player.isPlaying && player.playbackState == Player.STATE_READY) {
                     val exoPos = player.currentPosition
@@ -1028,7 +1053,6 @@ class VideoPlayerViewModel(
                     val latencyMs = (latencyFrames * 1000L) / sampleRate
 
                     val driftMs = AudioFrameUtils.calculateDriftMs(exoPos, audioPos, latencyMs)
-                    val now = System.currentTimeMillis()
 
                     if (now - lastLogMs >= 1000L) {
                         lastLogMs = now
@@ -1041,14 +1065,40 @@ class VideoPlayerViewModel(
                         )
                     }
 
+                    if (!engine.isVideoAudioReady()) {
+                        consecutiveDriftCount = 0
+                        continue
+                    }
+
+                    val firstFrameMs = engine.videoRouteStateFlow.value.firstFrameTimestampMs
+                    val timeSinceFirstFrame = now - firstFrameMs
+                    if (timeSinceFirstFrame < 2000L) {
+                        consecutiveDriftCount = 0
+                        continue // Warm-up
+                    }
+
+                    if (now - lastResyncTimeMs < 3000L || timeSinceFirstFrame < 3000L) {
+                        consecutiveDriftCount = 0
+                        continue // Cooldown
+                    }
+
                     if (AudioFrameUtils.shouldResync(driftMs, 80L)) {
-                        Log.d("VideoAudioRouting", "Drift ${driftMs}ms > 80ms threshold. Resyncing engine audio to ${exoPos}ms with fade-in. NO DOWNMIX APPLIED.")
-                        engine.requestVideoAudioResync(exoPos)
+                        consecutiveDriftCount++
+                        if (consecutiveDriftCount >= 3) {
+                            Log.d("VideoAudioRouting", "Drift ${driftMs}ms > 80ms threshold for 3 samples. Resyncing engine audio to ${exoPos}ms with fade-in. NO DOWNMIX APPLIED.")
+                            engine.requestVideoAudioResync(exoPos, driftMs)
+                            lastResyncTimeMs = System.currentTimeMillis()
+                            consecutiveDriftCount = 0
+                        }
+                    } else {
+                        consecutiveDriftCount = 0
                     }
 
                     if (player.playbackParameters.speed != 1.0f) {
                         player.playbackParameters = PlaybackParameters(1.0f)
                     }
+                } else {
+                    consecutiveDriftCount = 0
                 }
             }
         }

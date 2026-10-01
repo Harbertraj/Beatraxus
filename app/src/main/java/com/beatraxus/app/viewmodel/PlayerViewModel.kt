@@ -2312,28 +2312,32 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         val svc = service ?: return
         triggerMetadataEnrichment()
         libraryScanner.startFullScan(svc, _songs.value) { results, message ->
-            val cloudSongs = _songs.value.filter { it.source != SongSource.LOCAL }
-            _songs.value = (results + cloudSongs).sortedBy { it.title }
+            try {
+                val cloudSongs = _songs.value.filter { it.source != SongSource.LOCAL }
+                _songs.value = (results + cloudSongs).sortedBy { it.title }
 
-            viewModelScope.launch(Dispatchers.Default) {
-                results.forEachIndexed { index, song ->
-                    if (index % 10 == 0) aiAnalysisChannel.send(song)
-                    if (song.year == 0) yearEnrichmentChannel.send(song)
+                viewModelScope.launch(Dispatchers.Default) {
+                    results.forEachIndexed { index, song ->
+                        if (index % 10 == 0) aiAnalysisChannel.send(song)
+                        if (song.year == 0) yearEnrichmentChannel.send(song)
+                    }
                 }
-            }
 
-            updateLibraryCounts(results)
-            viewModelScope.launch {
-                val folders = musicRepository.getMusicFolders()
-                _uiState.update {
-                    it.copy(
-                        musicFolders = folders,
-                        blockedFolders = musicRepository.getBlockedFolders()
-                    )
+                updateLibraryCounts(results)
+                viewModelScope.launch {
+                    val folders = musicRepository.getMusicFolders()
+                    _uiState.update {
+                        it.copy(
+                            musicFolders = folders,
+                            blockedFolders = musicRepository.getBlockedFolders()
+                        )
+                    }
                 }
-            }
 
-            if (_uiState.value.isFirstRun) setFirstRunComplete()
+                if (_uiState.value.isFirstRun) setFirstRunComplete()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error in startFullScan callback", e)
+            }
         }
     }
 

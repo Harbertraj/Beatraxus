@@ -9,6 +9,7 @@ import com.arthenica.ffmpegkit.FFmpegKitConfig
 import com.arthenica.ffmpegkit.FFprobeKit
 import com.arthenica.ffmpegkit.MediaInformationJsonParser
 import com.arthenica.ffmpegkit.ReturnCode
+import com.beatraxus.app.BuildConfig
 import com.beatraxus.app.model.Song
 import com.beatraxus.app.model.SongSource
 import com.beatraxus.app.repository.DriveAccountRepository
@@ -17,6 +18,7 @@ import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.File
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 
 internal class FfmpegAlacDecoder(
     private val context: Context,
@@ -32,6 +34,8 @@ internal class FfmpegAlacDecoder(
         if (ext in setOf("alac", "flac", "m4a", "mp4", "caf", "wav", "bwf", "ac3", "eac3", "ec3", "dts", "dsf", "dff", "mkv", "mka", "ts", "m2ts", "webm") || isVideoRoute) return true
         return false
     }
+
+    private val ffprobeCache = ConcurrentHashMap<Pair<String, Int>, ProbedAlacFormat>()
 
     override suspend fun decode(
         request: PlaybackRequest,
@@ -119,7 +123,7 @@ internal class FfmpegAlacDecoder(
         val args = buildList {
             add("-y")
             add("-nostdin")
-            addAll(listOf("-v", "info")) 
+            addAll(listOf("-v", "warning")) 
 
             if (headers.isNotEmpty() && inputSource.startsWith("http")) {
                 val headerStr = headers.map { "${it.key}: ${it.value}" }.joinToString("\r\n") + "\r\n"
@@ -170,7 +174,11 @@ internal class FfmpegAlacDecoder(
                 Log.d(TAG, "FFmpeg session finished with code: ${finished.returnCode}")
                 completion.complete(finished.returnCode?.value ?: -1)
             },
-            { log -> Log.v(TAG, "ffmpeg: ${log.message}") },
+            { log -> 
+                if (BuildConfig.DEBUG) {
+                    Log.v(TAG, "ffmpeg: ${log.message}") 
+                }
+            },
             null
         )
 
@@ -315,6 +323,11 @@ internal class FfmpegAlacDecoder(
                 ext in setOf("ac3", "eac3", "ec3", "dts")
 
         val trackIndex = request.preferredAudioTrackIndex ?: 0
+        val cacheKey = Pair(song.uri.toString(), trackIndex)
+
+        if (isVideoRoute) {
+            ffprobeCache[cacheKey]?.let { return@withContext it }
+        }
 
         // For video_route songs and for Dolby/DTS/TrueHD tracks, get format from FFprobe
         // (reads real channels and sample_rate of the selected audio stream)
@@ -323,6 +336,7 @@ internal class FfmpegAlacDecoder(
             if (inputSource.isNotBlank()) {
                 val ffprobed = probeFormatWithFfprobe(inputSource, headers, trackIndex)
                 if (ffprobed != null) {
+                    if (isVideoRoute) ffprobeCache[cacheKey] = ffprobed
                     return@withContext ffprobed
                 }
             }
@@ -333,17 +347,22 @@ internal class FfmpegAlacDecoder(
         // SKIP for Telegram to avoid slow/blocking network reads during probe.
         if (song.source != SongSource.TELEGRAM) {
             val extracted = probeFormatWithExtractor(request, headers)
-            if (extracted != null) return@withContext extracted
+            if (extracted != null) {
+                if (isVideoRoute) ffprobeCache[cacheKey] = extracted
+                return@withContext extracted
+            }
         }
 
         // 2. Trust Song metadata if we have it (to avoid slow FFprobe fallback)
         if (song.sampleRateHz > 8000 && (song.bitDepth > 0 || song.source == SongSource.TELEGRAM)) {
-            return@withContext ProbedAlacFormat(
+            val formatFromMeta = ProbedAlacFormat(
                 codecName = if (song.format.isNotBlank()) song.format else "ALAC",
                 sampleRate = song.sampleRateHz,
                 channels = if (song.format.equals("eac3", true) || song.format.equals("ac3", true) || song.format.equals("dts", true) || song.format.equals("truehd", true)) 6 else 2,
                 bitDepth = if (song.bitDepth > 0) song.bitDepth else 16
             )
+            if (isVideoRoute) ffprobeCache[cacheKey] = formatFromMeta
+            return@withContext formatFromMeta
         }
 
         // 3. Fallback to FFprobe for cloud/complex sources only if absolutely necessary
@@ -352,7 +371,11 @@ internal class FfmpegAlacDecoder(
             Log.w(TAG, "Cannot probe format: resolveInputSource returned blank for ${song.title}")
             return@withContext null
         }
-        probeFormatWithFfprobe(inputSource, headers, trackIndex)
+        val probed = probeFormatWithFfprobe(inputSource, headers, trackIndex)
+        if (probed != null && isVideoRoute) {
+            ffprobeCache[cacheKey] = probed
+        }
+        return@withContext probed
     }
 
     private fun probeFormatWithFfprobe(path: String, headers: Map<String, String>, trackIndex: Int): ProbedAlacFormat? {

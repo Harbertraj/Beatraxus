@@ -16,15 +16,17 @@ class VideoAudioRoutingTest {
         val initialState = VideoRouteState()
         assertEquals(VideoRoutePhase.IDLE, initialState.phase)
         assertFalse(initialState.isActive)
+        assertFalse(initialState.firstFrameRendered)
 
         val startingState = initialState.copy(phase = VideoRoutePhase.STARTING, audioTrackIndex = 1)
         assertEquals(VideoRoutePhase.STARTING, startingState.phase)
         assertTrue(startingState.isActive)
 
-        val activeState = startingState.copy(phase = VideoRoutePhase.ACTIVE, isPlaying = true)
+        val activeState = startingState.copy(phase = VideoRoutePhase.ACTIVE, isPlaying = true, firstFrameRendered = true)
         assertEquals(VideoRoutePhase.ACTIVE, activeState.phase)
         assertTrue(activeState.isActive)
         assertTrue(activeState.isPlaying)
+        assertTrue(activeState.firstFrameRendered)
 
         val errorState = activeState.copy(phase = VideoRoutePhase.ERROR, isPlaying = false, error = "Decoder failed")
         assertEquals(VideoRoutePhase.ERROR, errorState.phase)

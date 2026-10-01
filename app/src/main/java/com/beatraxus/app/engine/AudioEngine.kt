@@ -37,6 +37,7 @@ import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.Executors
 import java.util.concurrent.locks.ReentrantReadWriteLock
 import kotlin.concurrent.withLock
+import kotlin.math.abs
 
 internal fun computeCrossfadeProgress(remainingMs: Long, crossfadeDurationS: Int): Float {
     val crossfadeMs = crossfadeDurationS * 1000f
@@ -58,7 +59,9 @@ data class VideoRouteState(
     val title: String = "",
     val isPlaying: Boolean = false,
     val positionMs: Long = 0L,
-    val error: String? = null
+    val error: String? = null,
+    val firstFrameRendered: Boolean = false,
+    val firstFrameTimestampMs: Long = 0L
 ) {
     val isActive: Boolean get() = phase == VideoRoutePhase.ACTIVE || phase == VideoRoutePhase.STARTING
 }
@@ -117,6 +120,7 @@ class AudioEngine(
     }
 
     fun isVideoAudioActive(): Boolean = _videoRouteStateFlow.value.isActive
+    fun isVideoAudioReady(): Boolean = _videoRouteStateFlow.value.firstFrameRendered
 
     fun videoAudioPositionMs(): Long {
         return videoSession?.currentRenderedPositionMs() ?: _videoRouteStateFlow.value.positionMs
@@ -248,11 +252,31 @@ class AudioEngine(
         }
     }
 
-    fun requestVideoAudioResync(positionMs: Long) {
+    private var lastResyncTimeMs = 0L
+
+    fun requestVideoAudioResync(positionMs: Long, driftMs: Long) {
         val session = activeSession ?: videoSession ?: return
-        session.triggerFadeIn(30, session.pcmFormat?.sampleRate ?: 48000)
-        session.requestSeek(positionMs)
-        Log.d("VideoAudioRouting", "Resynced video audio engine to position $positionMs ms with 30ms fade-in. NO DOWNMIX APPLIED.")
+        
+        val now = System.currentTimeMillis()
+        if (session.isSeekPending() || !isVideoAudioReady() || now - lastResyncTimeMs < 3000L) {
+            return
+        }
+
+        lastResyncTimeMs = now
+
+        if (abs(driftMs) < 250L) {
+            // Soft correction: adjust base position without hard-seeking FFmpeg
+            session.dspLock.writeLock().withLock {
+                session.adjustBasePositionForDrift(driftMs)
+                session.triggerFadeIn(30, session.pcmFormat?.sampleRate ?: 48000)
+            }
+            Log.d("VideoAudioRouting", "Soft resynced video audio engine for drift ${driftMs}ms. NO DOWNMIX APPLIED.")
+        } else {
+            // Hard seek
+            session.triggerFadeIn(30, session.pcmFormat?.sampleRate ?: 48000)
+            session.requestSeek(positionMs)
+            Log.d("VideoAudioRouting", "Hard resynced video audio engine to position $positionMs ms (drift ${driftMs}ms) with 30ms fade-in. NO DOWNMIX APPLIED.")
+        }
     }
 
     fun pauseVideoAudio() {
@@ -874,6 +898,12 @@ class AudioEngine(
                         continue
                     }
                     writtenFramesTotal += written
+                    
+                    if (targetSession.song.id.startsWith("video_route:") && !_videoRouteStateFlow.value.firstFrameRendered) {
+                        _videoRouteStateFlow.update { 
+                            it.copy(firstFrameRendered = true, firstFrameTimestampMs = System.currentTimeMillis()) 
+                        }
+                    }
                 }
 
                 continue
@@ -986,6 +1016,26 @@ class AudioEngine(
             fadeInFramesRemaining = currentRem
         }
 
+        fun adjustBasePositionForDrift(driftMs: Long) {
+            val format = pcmFormat ?: return
+            val channels = format.channels.coerceAtLeast(1)
+            val sampleRate = format.sampleRate.coerceAtLeast(8000)
+            
+            if (driftMs > 0) {
+                // Audio is behind video. Skip audio samples.
+                val framesToSkip = ((driftMs * sampleRate) / 1000L).toInt()
+                val samplesToSkip = framesToSkip * channels
+                ringBuffer.skip(samplesToSkip)
+                basePositionMs += driftMs
+            } else if (driftMs < 0) {
+                // Audio is ahead of video. Insert silence.
+                val framesToAdd = ((-driftMs * sampleRate) / 1000L).toInt()
+                val samplesToAdd = framesToAdd * channels
+                ringBuffer.writeZeroes(samplesToAdd)
+                basePositionMs += driftMs
+            }
+        }
+
         fun setStartFrameOffset(offset: Long) {
             startFrameOffset = offset
         }
@@ -993,6 +1043,7 @@ class AudioEngine(
         fun requestSeek(positionMs: Long) {
             pendingSeekMs.set(positionMs)
             this@AudioEngine.positionMs = positionMs
+            _videoRouteStateFlow.update { it.copy(positionMs = positionMs, firstFrameRendered = false) }
             ringBuffer.clear() // Unblock decoder if it's waiting on a full buffer
             seekListener?.invoke()
         }
