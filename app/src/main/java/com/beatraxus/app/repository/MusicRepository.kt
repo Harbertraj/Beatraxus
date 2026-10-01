@@ -14,7 +14,9 @@ import com.arthenica.ffmpegkit.FFmpegKit
 import com.arthenica.ffmpegkit.FFmpegKitConfig
 import com.arthenica.ffmpegkit.FFprobeKit
 import com.arthenica.ffmpegkit.ReturnCode
+import com.beatraxus.app.BeatraxusApplication
 import com.beatraxus.app.model.Song
+import com.beatraxus.app.model.toSong
 import com.beatraxus.app.model.SongSource
 import com.beatraxus.app.model.FolderEntity
 import com.beatraxus.app.model.AppDatabase
@@ -241,7 +243,27 @@ class MusicRepository(private val context: Context) {
 
                                     // ONLY extract ReplayGain if it's a FULL scan. FFprobe is too slow for quick scan.
                                     if (fullScan) {
-                                        replayGain = extractReplayGain(uri)
+                                        replayGain = runCatching { extractReplayGain(uri) }.onFailure {
+                                            Log.w("MusicRepository", "Failed to extract ReplayGain for path: $uri", it)
+                                        }.getOrElse {
+                                            val existing = (context.applicationContext as BeatraxusApplication).database.songDao().getSongById(raw.id.toString())?.toSong()
+                                            if (existing != null) {
+                                                sampleRate = existing.sampleRateHz
+                                                bitDepth = existing.bitDepth
+                                                formatName = existing.format
+                                                ReplayGainMetadata(
+                                                    trackGainDb = existing.replayGainTrackDb,
+                                                    albumGainDb = existing.replayGainAlbumDb,
+                                                    trackPeak = existing.replayGainTrackPeak,
+                                                    albumPeak = existing.replayGainAlbumPeak,
+                                                    sampleRate = existing.sampleRateHz,
+                                                    bitDepth = existing.bitDepth,
+                                                    bitrate = existing.bitrate
+                                                )
+                                            } else {
+                                                ReplayGainMetadata()
+                                            }
+                                        }
                                     }
 
                                     val extractor = MediaExtractor()
@@ -340,7 +362,27 @@ class MusicRepository(private val context: Context) {
                             val ffmpegArt = runCatching { extractEmbeddedArtWithFfmpeg(raw.id, uri, fullScan) }.getOrNull()
                             if (ffmpegArt != null) albumArtUri = ffmpegArt
 
-                            val ffprobeData = runCatching { extractReplayGain(uri) }.getOrDefault(ReplayGainMetadata())
+                            val ffprobeData = runCatching { extractReplayGain(uri) }.onFailure {
+                                Log.w("MusicRepository", "Failed to extract ReplayGain for path: $uri", it)
+                            }.getOrElse {
+                                val existing = (context.applicationContext as BeatraxusApplication).database.songDao().getSongById(raw.id.toString())?.toSong()
+                                if (existing != null) {
+                                    sampleRate = existing.sampleRateHz
+                                    bitDepth = existing.bitDepth
+                                    formatName = existing.format
+                                    ReplayGainMetadata(
+                                        trackGainDb = existing.replayGainTrackDb,
+                                        albumGainDb = existing.replayGainAlbumDb,
+                                        trackPeak = existing.replayGainTrackPeak,
+                                        albumPeak = existing.replayGainAlbumPeak,
+                                        sampleRate = existing.sampleRateHz,
+                                        bitDepth = existing.bitDepth,
+                                        bitrate = existing.bitrate
+                                    )
+                                } else {
+                                    ReplayGainMetadata()
+                                }
+                            }
                             replayGain = ffprobeData
                             if (ffprobeData.sampleRate > 0) sampleRate = ffprobeData.sampleRate
                             if (ffprobeData.bitDepth > 0) bitDepth = ffprobeData.bitDepth
@@ -590,7 +632,7 @@ class MusicRepository(private val context: Context) {
                 arrayOf("-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", source)
             )
             if (!ReturnCode.isSuccess(session.returnCode)) {
-                return@runCatching ReplayGainMetadata()
+                throw RuntimeException("FFprobe failed with code ${session.returnCode}")
             }
 
             val json = JSONObject(session.output.orEmpty())
@@ -648,7 +690,7 @@ class MusicRepository(private val context: Context) {
                 bitDepth = ffBitDepth,
                 bitrate = ffBitrate
             )
-        }.getOrDefault(ReplayGainMetadata())
+        }.getOrThrow()
     }
 
     private fun parseReplayGainDb(value: String?): Float? {

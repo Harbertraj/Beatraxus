@@ -225,11 +225,6 @@ private class NativeDspProcessor(
         dsp.setFloat64(if (isBP) cfg.bitPerfectUnbypassFloat64 else cfg.float64Enabled)
         dsp.setCutoffRatio(if (resampleActive) cfg.resamplerCutoffRatio else 0.999f)
 
-        if (isVideoRoute) {
-            dsp.setSoftLimiter(true)
-            dsp.setLimiter(true)
-        }
-        
         // Tone knobs - smooth application is handled inside NativeDsp
         val targetBass = if (!isBP && cfg.bassEnabled) cfg.bassDb else 0f
         val targetTreble = if (!isBP && cfg.trebleEnabled) cfg.trebleDb else 0f

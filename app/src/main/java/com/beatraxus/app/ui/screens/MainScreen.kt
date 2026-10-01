@@ -97,6 +97,8 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import coil.compose.AsyncImage
 import com.beatraxus.app.ui.screens.library.VideoListItem
 import coil.request.CachePolicy
@@ -112,6 +114,7 @@ import androidx.palette.graphics.Palette
 import coil.imageLoader
 import coil.request.SuccessResult
 import android.graphics.drawable.BitmapDrawable
+import androidx.compose.ui.semantics.Role
 import coil.size.Precision
 import java.util.Calendar
 
@@ -3555,19 +3558,17 @@ fun MainScreen(
             ) {
                 Box(
                     modifier = Modifier
-                        .size(64.dp)
-                        .shadow(8.dp, CircleShape, clip = false)
-                        .clip(CircleShape)
-                        .background(AccentBlue)
-                        .clickable { viewModel.playLastPlayedVideo() },
+                        .size(48.dp)
+                        .clickable(
+                            onClick = { viewModel.playLastPlayedVideo() },
+                            role = Role.Button
+                        )
+                        .semantics {
+                            contentDescription = "Resume last video"
+                        },
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(
-                        imageVector = Icons.Rounded.PlayArrow,
-                        contentDescription = null,
-                        tint = Color.Black,
-                        modifier = Modifier.size(40.dp)
-                    )
+                    CornerPlayButton()
                 }
             }
         }
@@ -4749,16 +4750,11 @@ fun HomeScreen(
                                             )
                                         }
 
-                                        Box(
+                                        CornerPlayButton(
                                             modifier = Modifier
                                                 .align(Alignment.BottomEnd)
                                                 .padding(16.dp)
-                                                .size(44.dp)
-                                                .background(AccentBlue, CircleShape),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Icon(Icons.Rounded.PlayArrow, null, tint = Color.Black, modifier = Modifier.size(28.dp))
-                                        }
+                                        )
                                     }
                                 }
                             }
@@ -6478,6 +6474,29 @@ fun PropertyRow(label: String, value: String) {
     Column(modifier = Modifier.fillMaxWidth()) {
         Text(label, color = Color.White.copy(0.4f), fontSize = 11.sp, fontWeight = FontWeight.Bold)
         Text(value, color = Color.White, fontSize = 14.sp)
+    }
+}
+
+@Composable
+fun CornerPlayButton(
+    modifier: Modifier = Modifier,
+    onClick: (() -> Unit)? = null
+) {
+    Box(
+        modifier = modifier
+            .size(44.dp)
+            .background(AccentBlue, CircleShape)
+            .let { m ->
+                if (onClick != null) m.clickable(onClick = onClick) else m
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            imageVector = Icons.Rounded.PlayArrow,
+            contentDescription = null,
+            tint = Color.Black,
+            modifier = Modifier.size(28.dp)
+        )
     }
 }
 

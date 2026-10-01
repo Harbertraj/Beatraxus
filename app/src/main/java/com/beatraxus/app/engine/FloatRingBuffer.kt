@@ -95,15 +95,7 @@ internal class FloatRingBuffer(capacitySamples: Int = DEFAULT_CAPACITY_SAMPLES) 
         }
     }
 
-    fun writeZeroes(sampleCount: Int) {
-        val zeroes = FloatArray(minOf(sampleCount, 8192))
-        var remaining = sampleCount
-        while (remaining > 0) {
-            val toWrite = minOf(remaining, zeroes.size)
-            write(zeroes, toWrite)
-            remaining -= toWrite
-        }
-    }
+
 
     fun close() {
         lock.lock()
