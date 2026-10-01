@@ -1,6 +1,7 @@
 package com.beatraxus.app.engine
 
 import android.os.Build
+import android.util.Log
 import com.beatraxus.app.model.AiAnalysisEntity
 import com.beatraxus.app.model.DspConfig
 import com.beatraxus.app.model.ParametricEqBand
@@ -165,9 +166,10 @@ private class NativeDspProcessor(
     private val channels: Int,
     private val outputBitDepth: Int,
     private val song: Song?,
-    private val aiAnalysis: AiAnalysisEntity? = null
+    aiAnalysis: AiAnalysisEntity? = null
 ) : DspProcessor {
     private var currentConfig = config
+    private var currentAiAnalysis: AiAnalysisEntity? = aiAnalysis
 
     // Tone smoothing state removed as it is now handled in C++
     private var previousBassEnabled = config.bassEnabled
@@ -190,11 +192,16 @@ private class NativeDspProcessor(
 
     private fun updateNativeConfig(cfg: DspConfig, dsp: NativeDsp) {
         val isBP = cfg.bitPerfectEnabled
+        val isVideoRoute = song?.id?.startsWith("video_route:") == true
+
+        // For video routes, apply -3 dB headroom pre-gain to prevent decoder peak overload
+        val effectivePreamp = if (isVideoRoute) cfg.preampDb - 3.0f else cfg.preampDb
+        dsp.setPreamp(if (isBP) (if (isVideoRoute) -3.0f else 0f) else effectivePreamp)
 
         // DC Blocker is typically not unbypassed, but usually kept for safety. 
         // For strict bit-perfect, we should disable it unless specifically bypassed (though not in user's list)
         dsp.setDcBlocker(if (isBP) false else cfg.dcBlockerEnabled)
-        dsp.setMono(if (isBP) false else cfg.monoEnabled)
+        dsp.setMono(if (channels > 2 || isBP) false else cfg.monoEnabled)
 
         val rg = ReplayGainState.from(cfg, song)
         // Replay gain is not in the unbypass list, so we bypass it in Bit-Perfect mode
@@ -217,6 +224,11 @@ private class NativeDspProcessor(
         }
         dsp.setFloat64(if (isBP) cfg.bitPerfectUnbypassFloat64 else cfg.float64Enabled)
         dsp.setCutoffRatio(if (resampleActive) cfg.resamplerCutoffRatio else 0.999f)
+
+        if (isVideoRoute) {
+            dsp.setSoftLimiter(true)
+            dsp.setLimiter(true)
+        }
         
         // Tone knobs - smooth application is handled inside NativeDsp
         val targetBass = if (!isBP && cfg.bassEnabled) cfg.bassDb else 0f
@@ -251,77 +263,77 @@ private class NativeDspProcessor(
             if (!isBP && cfg.stereoExpansionEnabled) cfg.stereoWidth else 1f
         )
 
-        dsp.setCrossfeed(if (!isBP) cfg.crossfeedEnabled else false, cfg.crossfeedLevel)
-        val spatialUnbypassed = !isBP || cfg.bitPerfectUnbypass3DStage
-
-        dsp.setHrtfMode(cfg.hrtfMode.ordinal)
-        
-        if (cfg.spatialUiMode == com.beatraxus.app.model.SpatialUiMode.CLASSIC) {
-            dsp.setSpatialUiMode(1)
-            val audio3DActive = cfg.audio3DStageEnabled && spatialUnbypassed
-            dsp.setSpatialEnabled(audio3DActive)
-            dsp.setAudio3DStageParams(
-                cfg.audio3DWidth,
-                cfg.audio3DDepth,
-                cfg.audio3DHeight,
-                cfg.audio3DDistance,
-                cfg.audio3DCenterFocus,
-                cfg.audio3DRoomReflections
-            )
-            // Set Speaker Positions for Classic (using bands 0 and 1 as L/R speakers)
-            val speakerL = cfg.audio3DSpeakerPositions.find { it.id == "L" } ?: com.beatraxus.app.model.Audio3DSpeakerPosition("L", 270f, 0f, 2.0f)
-            val speakerR = cfg.audio3DSpeakerPositions.find { it.id == "R" } ?: com.beatraxus.app.model.Audio3DSpeakerPosition("R", 90f, 0f, 2.0f)
-            dsp.setSoundStageNodePosition(0, speakerL.azimuthDeg, speakerL.elevationDeg, speakerL.distance)
-            dsp.setSoundStageNodePosition(1, speakerR.azimuthDeg, speakerR.elevationDeg, speakerR.distance)
-            
-            // Map legacy "Intensity" to spatial intensity
-            dsp.setSpatialIntensity(cfg.audio3DRoomReflections)
+        if (channels > 2) {
+            Log.d("VideoAudioRouting", "Multichannel audio path ($channels ch). Bypassing stereo-only DSP features (Crossfeed, 3D Spatial). NO DOWNMIX APPLIED.")
+            dsp.setCrossfeed(false, 0f)
+            dsp.setSpatialEnabled(false)
         } else {
-            dsp.setSpatialUiMode(0)
-            val spatialActive = if (spatialUnbypassed) (cfg.spatialAudioEnabled || cfg.soundStageEnabled) else false
-            dsp.setSpatialEnabled(spatialActive)
-            
-            // Separation logic: 
-            // 1. The "Soundstage" knob (width) is now processed independently in the native engine.
-            // 2. Spatial Intensity ONLY controls the 3D positioning (ITD/ILD/Dist/Elev) blend.
-            val effectiveIntensity = if (cfg.spatialAudioEnabled) cfg.spatialAudioIntensity else 0.0f
-            dsp.setSpatialIntensity(effectiveIntensity)
-            
-            // 8-band Sound Stage mapping
-            fun getPos(node: String) = cfg.soundStageNodePositions[node] ?: SoundStageNodePosition()
+            dsp.setCrossfeed(if (!isBP) cfg.crossfeedEnabled else false, cfg.crossfeedLevel)
+            val spatialUnbypassed = !isBP || cfg.bitPerfectUnbypass3DStage
 
-            // Each of the 8 nodes owns exactly ONE dedicated band — no sharing.
-            // Sharing bands between nodes causes their azimuths to be averaged together,
-            // which is why moving one stem used to visibly drag others with it.
-            val nodesToBands = listOf(
-                listOf("Bass"),            // Band 0: < 120 Hz
-                listOf("Drums"),           // Band 1: 120 - 280 Hz
-                listOf("Backing Vocals"),  // Band 2: 280 - 550 Hz
-                listOf("Keys"),            // Band 3: 550 - 1.1 kHz
-                listOf("Vocals"),          // Band 4: 1.1 - 2.5 kHz  (vocal presence range)
-                listOf("Guitar"),          // Band 5: 2.5 - 5 kHz
-                listOf("Lead Guitar"),     // Band 6: 5 - 10 kHz
-                listOf("Ambience")         // Band 7: > 10 kHz
-            )
+            dsp.setHrtfMode(cfg.hrtfMode.ordinal)
+            
+            if (cfg.spatialUiMode == SpatialUiMode.CLASSIC) {
+                dsp.setSpatialUiMode(1)
+                val audio3DActive = cfg.audio3DStageEnabled && spatialUnbypassed
+                dsp.setSpatialEnabled(audio3DActive)
+                dsp.setAudio3DStageParams(
+                    cfg.audio3DWidth,
+                    cfg.audio3DDepth,
+                    cfg.audio3DHeight,
+                    cfg.audio3DDistance,
+                    cfg.audio3DCenterFocus,
+                    cfg.audio3DRoomReflections
+                )
+                // Set Speaker Positions for Classic (using bands 0 and 1 as L/R speakers)
+                val speakerL = cfg.audio3DSpeakerPositions.find { it.id == "L" } ?: Audio3DSpeakerPosition("L", 270f, 0f, 2.0f)
+                val speakerR = cfg.audio3DSpeakerPositions.find { it.id == "R" } ?: Audio3DSpeakerPosition("R", 90f, 0f, 2.0f)
+                dsp.setSoundStageNodePosition(0, speakerL.azimuthDeg, speakerL.elevationDeg, speakerL.distance)
+                dsp.setSoundStageNodePosition(1, speakerR.azimuthDeg, speakerR.elevationDeg, speakerR.distance)
+                
+                // Map legacy "Intensity" to spatial intensity
+                dsp.setSpatialIntensity(cfg.audio3DRoomReflections)
+            } else {
+                dsp.setSpatialUiMode(0)
+                val spatialActive = if (spatialUnbypassed) (cfg.spatialAudioEnabled || cfg.soundStageEnabled) else false
+                dsp.setSpatialEnabled(spatialActive)
+                
+                val effectiveIntensity = if (cfg.spatialAudioEnabled) cfg.spatialAudioIntensity else 0.0f
+                dsp.setSpatialIntensity(effectiveIntensity)
 
-            nodesToBands.forEachIndexed { bandIdx, nodes ->
-                if (nodes.isEmpty()) return@forEachIndexed
-                var avgAz = 0f
-                var avgEl = 0f
-                var avgDist = 0f
-                nodes.forEach { node ->
-                    val p = getPos(node)
-                    if (cfg.spatialAudioEnabled) {
-                        avgAz += p.azimuth
-                        avgEl += p.elevation
-                        avgDist += p.distance
-                    } else {
-                        avgAz += 0f
-                        avgEl += 0f
-                        avgDist += 2.0f
+                // 8-band Sound Stage mapping
+                fun getPos(node: String) = cfg.soundStageNodePositions[node] ?: SoundStageNodePosition()
+
+                val nodesToBands = listOf(
+                    listOf("Bass"),            // Band 0: < 120 Hz
+                    listOf("Drums"),           // Band 1: 120 - 280 Hz
+                    listOf("Backing Vocals"),  // Band 2: 280 - 550 Hz
+                    listOf("Keys"),            // Band 3: 550 - 1.1 kHz
+                    listOf("Vocals"),          // Band 4: 1.1 - 2.5 kHz  (vocal presence range)
+                    listOf("Guitar"),          // Band 5: 2.5 - 5 kHz
+                    listOf("Lead Guitar"),     // Band 6: 5 - 10 kHz
+                    listOf("Ambience")         // Band 7: > 10 kHz
+                )
+
+                nodesToBands.forEachIndexed { bandIdx, nodes ->
+                    if (nodes.isEmpty()) return@forEachIndexed
+                    var avgAz = 0f
+                    var avgEl = 0f
+                    var avgDist = 0f
+                    nodes.forEach { node ->
+                        val p = getPos(node)
+                        if (cfg.spatialAudioEnabled) {
+                            avgAz += p.azimuth
+                            avgEl += p.elevation
+                            avgDist += p.distance
+                        } else {
+                            avgAz += 0f
+                            avgEl += 0f
+                            avgDist += 2.0f
+                        }
                     }
+                    dsp.setSoundStageNodePosition(bandIdx, avgAz / nodes.size, avgEl / nodes.size, avgDist / nodes.size)
                 }
-                dsp.setSoundStageNodePosition(bandIdx, avgAz / nodes.size, avgEl / nodes.size, avgDist / nodes.size)
             }
         }
 
@@ -380,7 +392,7 @@ private class NativeDspProcessor(
         // Phase 3.4: Hardware Volume
         dsp.setHardwareVolume(cfg.hardwareVolumeEnabled)
 
-        applyEqBands(cfg, dsp, aiAnalysis)
+        applyEqBands(cfg, dsp, currentAiAnalysis)
     }
 
     private fun applyEqBands(config: DspConfig, dsp: NativeDsp, analysis: AiAnalysisEntity? = null) {
@@ -391,22 +403,31 @@ private class NativeDspProcessor(
         // Handle AI EQ
         val aiEnabled = config.aiEqEnabled && !isBP
         dsp.setAiEqEnabled(aiEnabled)
-        val targetAnalysis = analysis ?: aiAnalysis
-        if (aiEnabled && targetAnalysis != null) {
-            val bands = listOf(
-                31.25f to targetAnalysis.eq31,
-                62.5f to targetAnalysis.eq62,
-                125f to targetAnalysis.eq125,
-                250f to targetAnalysis.eq250,
-                500f to targetAnalysis.eq500,
-                1000f to targetAnalysis.eq1k,
-                2000f to targetAnalysis.eq2k,
-                4000f to targetAnalysis.eq4k,
-                8000f to targetAnalysis.eq8k,
-                16000f to targetAnalysis.eq16k
-            )
-            bands.forEachIndexed { index, (freq, gain) ->
-                dsp.setAiBand(index, freq, gain, 1.41f, 0)
+        val targetAnalysis = analysis ?: currentAiAnalysis
+        if (aiEnabled) {
+            if (targetAnalysis != null) {
+                val bands = listOf(
+                    31.25f to targetAnalysis.eq31,
+                    62.5f to targetAnalysis.eq62,
+                    125f to targetAnalysis.eq125,
+                    250f to targetAnalysis.eq250,
+                    500f to targetAnalysis.eq500,
+                    1000f to targetAnalysis.eq1k,
+                    2000f to targetAnalysis.eq2k,
+                    4000f to targetAnalysis.eq4k,
+                    8000f to targetAnalysis.eq8k,
+                    16000f to targetAnalysis.eq16k
+                )
+                bands.forEachIndexed { index, (freq, gain) ->
+                    dsp.setAiBand(index, freq, gain, 1.41f, 0)
+                }
+            } else {
+                val freqs = floatArrayOf(
+                    31.25f, 62.5f, 125f, 250f, 500f, 1000f, 2000f, 4000f, 8000f, 16000f
+                )
+                freqs.forEachIndexed { index, freq ->
+                    dsp.setAiBand(index, freq, 0f, 1.41f, 0)
+                }
             }
         }
 
@@ -499,7 +520,8 @@ private class NativeDspProcessor(
     }
 
     override fun updateAiAnalysis(aiAnalysis: AiAnalysisEntity?) {
-        applyEqBands(currentConfig, native, aiAnalysis)
+        currentAiAnalysis = aiAnalysis
+        applyEqBands(currentConfig, native, currentAiAnalysis)
     }
 
     override fun flush() {

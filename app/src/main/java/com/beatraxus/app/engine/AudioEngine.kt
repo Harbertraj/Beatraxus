@@ -248,6 +248,13 @@ class AudioEngine(
         }
     }
 
+    fun requestVideoAudioResync(positionMs: Long) {
+        val session = activeSession ?: videoSession ?: return
+        session.triggerFadeIn(30, session.pcmFormat?.sampleRate ?: 48000)
+        session.requestSeek(positionMs)
+        Log.d("VideoAudioRouting", "Resynced video audio engine to position $positionMs ms with 30ms fade-in. NO DOWNMIX APPLIED.")
+    }
+
     fun pauseVideoAudio() {
         engineScope.launch {
             controlMutex.withLock {
@@ -737,6 +744,8 @@ class AudioEngine(
         }
     }
 
+    private var lastDiagnosticsTimeMs = 0L
+
     private suspend fun renderLoop() {
         val localBuffer = FloatArray(RENDER_BATCH_SAMPLES)
         val localBufferNext = FloatArray(RENDER_BATCH_SAMPLES)
@@ -784,8 +793,26 @@ class AudioEngine(
             val targetSession = activeSession ?: session
             val targetSessionId = targetSession.sessionId
 
-            val sampleCount = targetSession.ringBuffer.read(localBuffer, localBuffer.size)
+            val channels = format.channels.coerceAtLeast(1)
+            val samplesToRead = AudioFrameUtils.calculateBatchSamplesToRead(localBuffer.size, channels)
+            val rawSampleCount = targetSession.ringBuffer.read(localBuffer, samplesToRead)
+            val sampleCount = AudioFrameUtils.calculateAlignedSampleCount(rawSampleCount, channels)
+
             if (sampleCount > 0) {
+                targetSession.applyFadeIn(localBuffer, sampleCount, channels)
+
+                val now = System.currentTimeMillis()
+                if (now - lastDiagnosticsTimeMs > 1000L) {
+                    lastDiagnosticsTimeMs = now
+                    if (targetSession.song.id.startsWith("video_route:")) {
+                        Log.d(
+                            "VideoAudioRouting",
+                            "VideoAudioRouting: channels=$channels, sampleRate=${format.sampleRate}, " +
+                            "codec=${format.codec}, underruns=${_audioStateFlow.value.underrunCount}. NO DOWNMIX APPLIED."
+                        )
+                    }
+                }
+
                 val currentRevision = dspRevision.get()
 
                 val processed = targetSession.dspLock.readLock().withLock {
@@ -798,7 +825,9 @@ class AudioEngine(
                     // and fading out the previous session
                     val outSession = fadingOutSession
                     if (outSession != null) {
-                        val outSampleCount = outSession.ringBuffer.read(localBufferNext, sampleCount)
+                        val outSamplesToRead = AudioFrameUtils.calculateBatchSamplesToRead(sampleCount, format.channels)
+                        val rawOut = outSession.ringBuffer.read(localBufferNext, outSamplesToRead)
+                        val outSampleCount = AudioFrameUtils.calculateAlignedSampleCount(rawOut, format.channels)
                         if (outSampleCount > 0) {
                             val remainingMs = outSession.song.durationMs - outSession.currentRenderedPositionMs()
                             val t = computeCrossfadeProgress(remainingMs, crossfadeDurationS)
@@ -923,6 +952,39 @@ class AudioEngine(
 
         @Volatile
         var dspPipeline = AudioDspPipeline.create(44_100, 44_100, 2, output.outputBitDepth(), this@AudioEngine.dspConfig, song)
+
+        @Volatile private var fadeInFramesRemaining = 0
+        @Volatile private var totalFadeInFrames = 0
+
+        init {
+            triggerFadeIn(30, song.sampleRateHz.takeIf { it > 0 } ?: 48000)
+        }
+
+        fun triggerFadeIn(durationMs: Int = 30, sampleRate: Int = 48000) {
+            val rate = sampleRate.coerceAtLeast(8000)
+            val total = (durationMs * rate) / 1000
+            totalFadeInFrames = total
+            fadeInFramesRemaining = total
+        }
+
+        fun applyFadeIn(data: FloatArray, sampleCount: Int, channels: Int) {
+            val rem = fadeInFramesRemaining
+            if (rem <= 0 || channels <= 0) return
+            val total = totalFadeInFrames.coerceAtLeast(1)
+            val framesInBatch = sampleCount / channels
+            var currentRem = rem
+            for (f in 0 until framesInBatch) {
+                if (currentRem > 0) {
+                    val gain = 1f - (currentRem.toFloat() / total)
+                    val offset = f * channels
+                    for (c in 0 until channels) {
+                        data[offset + c] *= gain
+                    }
+                    currentRem--
+                }
+            }
+            fadeInFramesRemaining = currentRem
+        }
 
         fun setStartFrameOffset(offset: Long) {
             startFrameOffset = offset
@@ -1156,6 +1218,7 @@ class AudioEngine(
 
         fun performSeek(positionMs: Long) {
             Log.d("AudioEngine", "performSeek: $positionMs ms")
+            triggerFadeIn(30, pcmFormat?.sampleRate ?: 48000)
             basePositionMs = positionMs
             decoderCompleted = false
             ringBuffer.clear()
@@ -1185,6 +1248,7 @@ class AudioEngine(
 
                     current.updateOutputBitDepth(currentBitDepth)
                     current.updateConfig(dspConfig)
+                    current.updateAiAnalysis(null)
                     appliedDspRevision = dspRevision.get()
                     null
                 } else {
@@ -1210,12 +1274,10 @@ class AudioEngine(
             engineScope.launch {
                 try {
                     val aiAnalysis = aiAnalysisDao.getAnalysisForSong(song.id)
-                    if (aiAnalysis != null) {
-                        dspLock.writeLock().withLock {
-                            // Verify session is still active and same song
-                            if (isActive() && dspPipeline.inputSampleRate == format.sampleRate) {
-                                dspPipeline.updateAiAnalysis(aiAnalysis)
-                            }
+                    dspLock.writeLock().withLock {
+                        // Verify session is still active and same song
+                        if (isActive() && dspPipeline.inputSampleRate == format.sampleRate) {
+                            dspPipeline.updateAiAnalysis(aiAnalysis)
                         }
                     }
                 } catch (e: Exception) {

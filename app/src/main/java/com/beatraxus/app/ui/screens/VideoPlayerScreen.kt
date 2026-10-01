@@ -725,18 +725,18 @@ fun VideoPlayerScreen(
                 Box(
                     modifier = Modifier
                         .fillMaxHeight()
-                        .widthIn(min = 320.dp, max = 380.dp)
-                        .clip(RoundedCornerShape(topStart = 24.dp, bottomStart = 24.dp))
+                        .widthIn(min = 340.dp, max = 440.dp)
+                        .clip(RoundedCornerShape(topStart = 28.dp, bottomStart = 28.dp))
                         .shadow(
                             elevation = 24.dp,
-                            shape = RoundedCornerShape(topStart = 24.dp, bottomStart = 24.dp),
+                            shape = RoundedCornerShape(topStart = 28.dp, bottomStart = 28.dp),
                             clip = false
                         )
                         .background(
                             brush = Brush.horizontalGradient(
                                 colors = listOf(
-                                    Color(0x80141419),
-                                    Color(0x991C1C22)
+                                    Color(0xCC141419),
+                                    Color(0xE61C1C22)
                                 )
                             )
                         )
@@ -748,7 +748,7 @@ fun VideoPlayerScreen(
                                     Color.White.copy(alpha = 0.05f)
                                 )
                             ),
-                            shape = RoundedCornerShape(topStart = 24.dp, bottomStart = 24.dp)
+                            shape = RoundedCornerShape(topStart = 28.dp, bottomStart = 28.dp)
                         )
                         .systemBarsPadding()
                         .clickable(enabled = false) {}
@@ -1521,13 +1521,14 @@ fun VideoSettingsSheetContent(
                     Text("No audio tracks found", color = Color.Gray, fontSize = 14.sp)
                 }
             } else {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     uiState.availableAudioTracks.forEach { track ->
                         val isDolby = track.format == MimeTypes.AUDIO_E_AC3 || track.format == MimeTypes.AUDIO_AC3
+                        val line2Text = formatAudioTrackSubtitleLine(track)
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clip(RoundedCornerShape(10.dp))
+                                .clip(RoundedCornerShape(16.dp))
                                 .background(
                                     if (track.isSelected) mxOrange.copy(alpha = 0.2f)
                                     else Color.White.copy(alpha = 0.06f)
@@ -1535,11 +1536,11 @@ fun VideoSettingsSheetContent(
                                 .border(
                                     width = 1.dp,
                                     color = if (track.isSelected) mxOrange.copy(alpha = 0.8f) else Color.White.copy(alpha = 0.08f),
-                                    shape = RoundedCornerShape(10.dp)
+                                    shape = RoundedCornerShape(16.dp)
                                 )
                                 .clickable { onAudioTrackSelect(track) }
-                                .heightIn(min = 48.dp, max = 52.dp)
-                                .padding(horizontal = 14.dp, vertical = 8.dp),
+                                .heightIn(min = 64.dp)
+                                .padding(horizontal = 16.dp, vertical = 12.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
@@ -1551,9 +1552,9 @@ fun VideoSettingsSheetContent(
                                     imageVector = Icons.Rounded.AudioFile,
                                     contentDescription = null,
                                     tint = if (track.isSelected) mxOrange else Color.White.copy(0.7f),
-                                    modifier = Modifier.size(20.dp)
+                                    modifier = Modifier.size(22.dp)
                                 )
-                                Spacer(Modifier.width(10.dp))
+                                Spacer(Modifier.width(12.dp))
                                 @OptIn(ExperimentalFoundationApi::class)
                                 Column(
                                     modifier = Modifier.weight(1f).clipToBounds()
@@ -1561,36 +1562,36 @@ fun VideoSettingsSheetContent(
                                     Text(
                                         text = track.name,
                                         color = Color.White,
-                                        fontSize = 14.sp,
+                                        fontSize = 15.sp,
                                         fontWeight = if (track.isSelected) FontWeight.Bold else FontWeight.Medium,
                                         maxLines = 1,
                                         softWrap = false,
                                         modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE)
                                     )
-                                    track.language?.let { lang ->
-                                        Text(
-                                            text = lang.uppercase(),
-                                            color = Color.White.copy(0.5f),
-                                            fontSize = 11.sp,
-                                            maxLines = 1,
-                                            softWrap = false,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                    }
+                                    Spacer(Modifier.height(2.dp))
+                                    Text(
+                                        text = line2Text,
+                                        color = Color.White.copy(0.6f),
+                                        fontSize = 12.sp,
+                                        maxLines = 1,
+                                        softWrap = false,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
                                 }
                                 if (isDolby) {
                                     Spacer(Modifier.width(8.dp))
                                     Box(
                                         modifier = Modifier
-                                            .clip(RoundedCornerShape(4.dp))
+                                            .align(Alignment.CenterVertically)
+                                            .clip(RoundedCornerShape(6.dp))
                                             .background(Color(0xFFFFD54F))
-                                            .padding(horizontal = 4.dp, vertical = 1.dp)
+                                            .padding(horizontal = 6.dp, vertical = 3.dp)
                                     ) {
                                         Text(
                                             "DOLBY",
                                             color = Color.Black,
-                                            fontSize = 8.sp,
-                                            fontWeight = FontWeight.Black
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.ExtraBold
                                         )
                                     }
                                 }
@@ -1598,15 +1599,16 @@ fun VideoSettingsSheetContent(
                                     Spacer(Modifier.width(8.dp))
                                     Box(
                                         modifier = Modifier
-                                            .clip(RoundedCornerShape(4.dp))
+                                            .align(Alignment.CenterVertically)
+                                            .clip(RoundedCornerShape(6.dp))
                                             .background(mxOrange)
-                                            .padding(horizontal = 4.dp, vertical = 1.dp)
+                                            .padding(horizontal = 6.dp, vertical = 3.dp)
                                     ) {
                                         Text(
                                             "ENGINE",
                                             color = Color.Black,
-                                            fontSize = 8.sp,
-                                            fontWeight = FontWeight.Black
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.ExtraBold
                                         )
                                     }
                                 }
@@ -1617,7 +1619,7 @@ fun VideoSettingsSheetContent(
                                     imageVector = Icons.Rounded.Check,
                                     contentDescription = "Selected",
                                     tint = mxOrange,
-                                    modifier = Modifier.size(20.dp)
+                                    modifier = Modifier.size(22.dp)
                                 )
                             }
                         }
@@ -1907,4 +1909,40 @@ fun ColorSliderRow(label: String, value: Float, valueRange: ClosedFloatingPointR
             colors = SliderDefaults.colors(thumbColor = mxOrange, activeTrackColor = mxOrange, inactiveTrackColor = Color.White.copy(0.1f))
         )
     }
+}
+
+private fun formatAudioTrackSubtitleLine(track: VideoTrackInfo): String {
+    val langStr = if (!track.language.isNullOrBlank()) {
+        val loc = try { Locale.forLanguageTag(track.language) } catch (_: Exception) { null }
+        val display = loc?.getDisplayLanguage(Locale.US)?.takeIf { it.isNotBlank() && !it.equals(track.language, ignoreCase = true) }
+        display ?: track.language.uppercase(Locale.US)
+    } else {
+        null
+    }
+
+    val codecStr = when {
+        track.format == MimeTypes.AUDIO_E_AC3 || track.format == MimeTypes.AUDIO_E_AC3_JOC -> "E-AC-3"
+        track.format == MimeTypes.AUDIO_AC3 -> "AC-3"
+        track.format == MimeTypes.AUDIO_DTS || track.format == MimeTypes.AUDIO_DTS_HD -> "DTS"
+        track.format == MimeTypes.AUDIO_TRUEHD -> "TrueHD"
+        track.format?.contains("flac", ignoreCase = true) == true -> "FLAC"
+        track.format?.contains("alac", ignoreCase = true) == true -> "ALAC"
+        track.format?.contains("mp4a", ignoreCase = true) == true || track.format?.contains("aac", ignoreCase = true) == true -> "AAC"
+        track.format?.contains("opus", ignoreCase = true) == true -> "Opus"
+        track.format?.contains("mpeg", ignoreCase = true) == true || track.format?.contains("mp3", ignoreCase = true) == true -> "MP3"
+        !track.format.isNullOrBlank() -> track.format.substringAfter("/").uppercase(Locale.US)
+        else -> null
+    }
+
+    val channelStr = when (track.channelCount) {
+        6 -> "5.1"
+        8 -> "7.1"
+        2 -> "Stereo"
+        1 -> "Mono"
+        in 3..5, 7, in 9..16 -> "${track.channelCount} ch"
+        else -> null
+    }
+
+    val parts = listOfNotNull(langStr, codecStr, channelStr)
+    return if (parts.isNotEmpty()) parts.joinToString(" - ") else "Audio Track"
 }

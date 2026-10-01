@@ -1,10 +1,6 @@
 package com.beatraxus.app.ui.components
 
-import android.content.ClipData
-import android.content.ClipboardManager
-import android.content.Context
 import android.net.Uri
-import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.*
 import androidx.compose.animation.fadeIn
@@ -31,7 +27,6 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
@@ -41,6 +36,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.os.Build
+import android.view.WindowManager
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.window.DialogWindowProvider
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.beatraxus.app.model.DspConfig
@@ -440,7 +439,6 @@ fun PipelineSignalPathSheet(
     val stages = pipelineResult.stages
     val wireFormats = pipelineResult.wireFormats
     val verdict = pipelineResult.verdict
-    val context = LocalContext.current
 
     val isPlaying = uiState.isPlaying
     val infiniteTransition = rememberInfiniteTransition(label = "pulse")
@@ -454,6 +452,16 @@ fun PipelineSignalPathSheet(
         label = "pulseProgress"
     )
 
+    val view = LocalView.current
+    DisposableEffect(Unit) {
+        val window = (view.parent as? DialogWindowProvider)?.window
+        window?.let { w ->
+            w.setDimAmount(0f)
+            w.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+        }
+        onDispose {}
+    }
+
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
@@ -461,21 +469,23 @@ fun PipelineSignalPathSheet(
         Box(
             modifier = modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.60f)) // Dimmed background
-                .clickable(onClick = onDismiss), // Tap-outside-to-dismiss
-            contentAlignment = Alignment.Center // Centered floating card
+                .background(Color.Black.copy(alpha = if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) 0.35f else 0.12f))
+                .clickable(onClick = onDismiss),
+            contentAlignment = Alignment.Center
         ) {
+            val screenHeight = LocalConfiguration.current.screenHeightDp.dp
             Surface(
                 modifier = Modifier
-                    .fillMaxWidth(0.92f) // width ~92%
-                    .heightIn(max = LocalConfiguration.current.screenHeightDp.dp * 0.85f) // height max 85%
-                    .clickable(onClick = {}), // consume clicks
-                shape = RoundedCornerShape(28.dp), // Rounded corners 28dp
+                    .fillMaxWidth(0.96f)
+                    .widthIn(max = 520.dp)
+                    .heightIn(min = screenHeight * 0.70f, max = screenHeight * 0.92f)
+                    .clickable(onClick = {}),
+                shape = RoundedCornerShape(28.dp),
                 color = Color.Transparent
             ) {
                 Box(
                     modifier = Modifier
-                        .fillMaxSize()
+                        .fillMaxWidth()
                         .background(
                             Brush.verticalGradient(
                                 colors = listOf(
@@ -488,13 +498,14 @@ fun PipelineSignalPathSheet(
                             BorderStroke(1.dp, Color.White.copy(alpha = 0.10f)),
                             RoundedCornerShape(28.dp)
                         )
+                        .padding(24.dp)
                 ) {
-                    Column(modifier = Modifier.fillMaxSize()) {
+                    Column(modifier = Modifier.fillMaxWidth()) {
                         // Header
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 20.dp, vertical = 12.dp),
+                                .padding(bottom = 12.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
@@ -504,19 +515,20 @@ fun PipelineSignalPathSheet(
                                     style = MaterialTheme.typography.titleSmall.copy(
                                         fontWeight = FontWeight.ExtraBold,
                                         letterSpacing = 2.sp,
-                                        fontSize = 11.sp
+                                        fontSize = 18.sp
                                     ),
-                                    color = Color.White.copy(alpha = 0.60f)
+                                    color = Color.White.copy(alpha = 0.70f)
                                 )
-                                Spacer(Modifier.height(4.dp))
+                                Spacer(Modifier.height(6.dp))
                                 Text(
                                     text = verdict.summary,
                                     style = MaterialTheme.typography.bodySmall.copy(
                                         fontFamily = FontFamily.Monospace,
-                                        fontSize = 11.sp
+                                        fontSize = 13.sp,
+                                        lineHeight = 18.sp
                                     ),
-                                    color = Color.White.copy(alpha = 0.85f),
-                                    maxLines = 1,
+                                    color = Color.White.copy(alpha = 0.90f),
+                                    maxLines = 2,
                                     overflow = TextOverflow.Ellipsis
                                 )
                             }
@@ -527,50 +539,17 @@ fun PipelineSignalPathSheet(
                                 shape = CircleShape,
                                 color = pillColor.copy(alpha = 0.15f),
                                 border = BorderStroke(1.dp, pillColor.copy(alpha = 0.5f)),
-                                modifier = Modifier.padding(start = 8.dp)
+                                modifier = Modifier.padding(start = 12.dp)
                             ) {
                                 Text(
                                     text = verdict.type.label,
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                                     style = MaterialTheme.typography.labelSmall.copy(
                                         fontWeight = FontWeight.Bold,
                                         letterSpacing = 0.8.sp,
-                                        fontSize = 10.sp
+                                        fontSize = 12.sp
                                     ),
                                     color = pillColor
-                                )
-                            }
-                            
-                            Spacer(modifier = Modifier.width(8.dp))
-
-                            // Copy Button
-                            IconButton(
-                                onClick = {
-                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                    val clip = ClipData.newPlainText("Audio Pipeline", pipelineResult.plainTextSummary)
-                                    clipboard.setPrimaryClip(clip)
-                                    Toast.makeText(context, "Pipeline info copied to clipboard", Toast.LENGTH_SHORT).show()
-                                },
-                                modifier = Modifier.size(32.dp)
-                            ) {
-                                Icon(
-                                    Icons.Rounded.ContentCopy,
-                                    contentDescription = "Copy Pipeline Info",
-                                    tint = Color.White.copy(alpha = 0.7f),
-                                    modifier = Modifier.size(16.dp)
-                                )
-                            }
-                            
-                            // Close Button
-                            IconButton(
-                                onClick = onDismiss,
-                                modifier = Modifier.size(32.dp)
-                            ) {
-                                Icon(
-                                    Icons.Rounded.Close,
-                                    contentDescription = "Close",
-                                    tint = Color.White.copy(alpha = 0.7f),
-                                    modifier = Modifier.size(18.dp)
                                 )
                             }
                         }
@@ -581,8 +560,9 @@ fun PipelineSignalPathSheet(
                         LazyColumn(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .weight(1f, fill = false),
-                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp)
+                                .weight(1f, fill = true),
+                            contentPadding = PaddingValues(vertical = 12.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
                             itemsIndexed(stages) { index, stage ->
                                 val wireFormat = wireFormats.getOrNull(index)
@@ -602,19 +582,19 @@ fun PipelineSignalPathSheet(
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .background(Color.Black.copy(alpha = 0.35f))
-                                .padding(horizontal = 16.dp, vertical = 10.dp)
+                                .background(Color.Black.copy(alpha = 0.35f), RoundedCornerShape(12.dp))
+                                .padding(horizontal = 16.dp, vertical = 12.dp)
                         ) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                                Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
                                     Column {
                                         Text(
                                             text = "LATENCY",
-                                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp, fontWeight = FontWeight.Bold),
+                                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 12.sp, fontWeight = FontWeight.Bold),
                                             color = Color.White.copy(alpha = 0.5f)
                                         )
                                         val latencyMs = if (uiState.outputSampleRate > 0) (uiState.dsp.currentLatencyFrames * 1000f / uiState.outputSampleRate) else 0f
@@ -623,7 +603,7 @@ fun PipelineSignalPathSheet(
                                             style = MaterialTheme.typography.bodySmall.copy(
                                                 fontWeight = FontWeight.SemiBold,
                                                 fontFamily = FontFamily.Monospace,
-                                                fontSize = 12.sp
+                                                fontSize = 15.sp
                                             ),
                                             color = Color.White
                                         )
@@ -631,7 +611,7 @@ fun PipelineSignalPathSheet(
                                     Column {
                                         Text(
                                             text = "HEADROOM",
-                                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp, fontWeight = FontWeight.Bold),
+                                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 12.sp, fontWeight = FontWeight.Bold),
                                             color = Color.White.copy(alpha = 0.5f)
                                         )
                                         Text(
@@ -639,7 +619,7 @@ fun PipelineSignalPathSheet(
                                             style = MaterialTheme.typography.bodySmall.copy(
                                                 fontWeight = FontWeight.SemiBold,
                                                 fontFamily = FontFamily.Monospace,
-                                                fontSize = 12.sp
+                                                fontSize = 15.sp
                                             ),
                                             color = Color.White
                                         )
@@ -647,7 +627,7 @@ fun PipelineSignalPathSheet(
                                     Column {
                                         Text(
                                             text = "UNDERRUNS",
-                                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp, fontWeight = FontWeight.Bold),
+                                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 12.sp, fontWeight = FontWeight.Bold),
                                             color = Color.White.copy(alpha = 0.5f)
                                         )
                                         Text(
@@ -655,19 +635,19 @@ fun PipelineSignalPathSheet(
                                             style = MaterialTheme.typography.bodySmall.copy(
                                                 fontWeight = FontWeight.SemiBold,
                                                 fontFamily = FontFamily.Monospace,
-                                                fontSize = 12.sp
+                                                fontSize = 15.sp
                                             ),
                                             color = if (uiState.underrunCount > 0) Color(0xFFFF5252) else Color.White
                                         )
                                     }
                                 }
                             }
-                            Spacer(Modifier.height(4.dp))
+                            Spacer(Modifier.height(6.dp))
                             Text(
                                 text = verdict.oneLiner,
-                                style = MaterialTheme.typography.bodySmall.copy(fontSize = 10.sp),
-                                color = Color.White.copy(alpha = 0.6f),
-                                maxLines = 1,
+                                style = MaterialTheme.typography.bodySmall.copy(fontSize = 13.sp),
+                                color = Color.White.copy(alpha = 0.65f),
+                                maxLines = 2,
                                 overflow = TextOverflow.Ellipsis
                             )
                         }
@@ -711,11 +691,11 @@ fun CompactStageRow(
         // Rail Column
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.width(28.dp)
+            modifier = Modifier.width(32.dp)
         ) {
             Box(
                 modifier = Modifier
-                    .size(12.dp)
+                    .size(14.dp)
                     .background(if (stage.state == StageState.BYPASSED) stateColor.copy(alpha = 0.4f) else stateColor, CircleShape)
                     .border(1.5.dp, Color(0xFF1B1B22), CircleShape)
             )
@@ -724,7 +704,7 @@ fun CompactStageRow(
                 Box(
                     modifier = Modifier
                         .weight(1f)
-                        .defaultMinSize(minHeight = 44.dp)
+                        .defaultMinSize(minHeight = 48.dp)
                         .width(2.dp)
                         .drawBehind {
                             val lineCol = Color.White.copy(alpha = 0.12f)
@@ -738,7 +718,7 @@ fun CompactStageRow(
                                 val pulseY = size.height * pulseProgress
                                 drawCircle(
                                     color = stateColor.copy(alpha = 0.7f),
-                                    radius = 2.5.dp.toPx(),
+                                    radius = 3.dp.toPx(),
                                     center = Offset(size.width / 2, pulseY)
                                 )
                             }
@@ -747,16 +727,16 @@ fun CompactStageRow(
             }
         }
 
-        Spacer(Modifier.width(10.dp))
+        Spacer(Modifier.width(12.dp))
 
         // Content Card
         Column(
             modifier = Modifier
                 .weight(1f)
-                .padding(bottom = 10.dp)
-                .background(Color.White.copy(alpha = 0.03f), RoundedCornerShape(12.dp))
-                .border(1.dp, Color.White.copy(alpha = 0.06f), RoundedCornerShape(12.dp))
-                .padding(horizontal = 12.dp, vertical = 10.dp)
+                .padding(bottom = 12.dp)
+                .background(Color.White.copy(alpha = 0.03f), RoundedCornerShape(14.dp))
+                .border(1.dp, Color.White.copy(alpha = 0.06f), RoundedCornerShape(14.dp))
+                .padding(horizontal = 14.dp, vertical = 12.dp)
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -764,42 +744,40 @@ fun CompactStageRow(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                    // Left Accent Bar for the block
                     Box(
                         modifier = Modifier
                             .width(4.dp)
-                            .height(16.dp)
+                            .height(18.dp)
                             .background(stateColor, RoundedCornerShape(2.dp))
                     )
-                    Spacer(Modifier.width(6.dp))
+                    Spacer(Modifier.width(8.dp))
                     Icon(
                         imageVector = stage.icon,
                         contentDescription = null,
                         tint = stateColor,
-                        modifier = Modifier.size(16.dp)
+                        modifier = Modifier.size(18.dp)
                     )
-                    Spacer(Modifier.width(6.dp))
+                    Spacer(Modifier.width(8.dp))
                     Text(
                         text = stage.title.uppercase(Locale.US),
                         style = MaterialTheme.typography.labelSmall.copy(
                             fontWeight = FontWeight.Bold,
                             letterSpacing = 1.sp,
-                            fontSize = 10.sp
+                            fontSize = 12.sp
                         ),
-                        color = Color.White.copy(alpha = 0.6f)
+                        color = Color.White.copy(alpha = 0.65f)
                     )
                 }
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    // State tag
                     Text(
                         text = stateLabel,
                         style = MaterialTheme.typography.labelSmall.copy(
                             fontWeight = FontWeight.Bold,
-                            fontSize = 8.sp,
+                            fontSize = 11.sp,
                             letterSpacing = 0.5.sp
                         ),
-                        color = stateColor.copy(alpha = 0.7f)
+                        color = stateColor.copy(alpha = 0.8f)
                     )
                     
                     if (stage.changeBadge != null) {
@@ -811,8 +789,8 @@ fun CompactStageRow(
                         ) {
                             Text(
                                 text = stage.changeBadge,
-                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
-                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 8.sp, fontWeight = FontWeight.Bold),
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, fontWeight = FontWeight.Bold),
                                 color = stateColor
                             )
                         }
@@ -820,14 +798,14 @@ fun CompactStageRow(
                 }
             }
 
-            Spacer(Modifier.height(4.dp))
+            Spacer(Modifier.height(6.dp))
 
             Text(
                 text = stage.primary,
                 style = MaterialTheme.typography.bodySmall.copy(
                     fontWeight = FontWeight.SemiBold,
                     fontFamily = FontFamily.Monospace,
-                    fontSize = 11.sp
+                    fontSize = 15.sp
                 ),
                 color = Color.White,
                 maxLines = 2,
@@ -838,8 +816,8 @@ fun CompactStageRow(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
+                    .padding(top = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 HorizontalDivider(color = Color.White.copy(0.06f))
                 stage.details.forEach { (label, value) ->
@@ -849,14 +827,14 @@ fun CompactStageRow(
                     ) {
                         Text(
                             text = label,
-                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
-                            color = Color.White.copy(alpha = 0.5f)
+                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 12.sp),
+                            color = Color.White.copy(alpha = 0.55f)
                         )
                         Text(
                             text = value,
                             style = MaterialTheme.typography.bodySmall.copy(
                                 fontFamily = FontFamily.Monospace,
-                                fontSize = 10.sp
+                                fontSize = 13.sp
                             ),
                             color = Color.White.copy(alpha = 0.9f)
                         )
@@ -871,24 +849,24 @@ fun CompactStageRow(
         Row(
             modifier = Modifier.fillMaxWidth()
         ) {
-            Spacer(modifier = Modifier.width(28.dp)) // align with rail
-            Spacer(modifier = Modifier.width(10.dp))
+            Spacer(modifier = Modifier.width(32.dp))
+            Spacer(modifier = Modifier.width(12.dp))
             
             Box(
                 modifier = Modifier
-                    .padding(bottom = 10.dp, start = 12.dp)
+                    .padding(bottom = 12.dp, start = 14.dp)
                     .background(Color.White.copy(alpha = 0.1f), RoundedCornerShape(12.dp))
                     .border(1.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(12.dp))
-                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                    .padding(horizontal = 10.dp, vertical = 5.dp)
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         text = wireFormat.formatText,
                         style = MaterialTheme.typography.labelSmall.copy(
                             fontFamily = FontFamily.Monospace,
-                            fontSize = 9.sp
+                            fontSize = 12.sp
                         ),
-                        color = Color.White.copy(alpha = 0.65f)
+                        color = Color.White.copy(alpha = 0.75f)
                     )
                     
                     if (wireFormat.changeBadge != null) {
@@ -900,8 +878,8 @@ fun CompactStageRow(
                         ) {
                             Text(
                                 text = wireFormat.changeBadge,
-                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
-                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 8.sp, fontWeight = FontWeight.Bold),
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, fontWeight = FontWeight.Bold),
                                 color = Color.White
                             )
                         }

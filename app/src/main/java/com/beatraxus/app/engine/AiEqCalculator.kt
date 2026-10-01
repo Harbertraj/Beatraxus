@@ -133,22 +133,75 @@ object AiEqCalculator {
         return relativeDb
     }
 
+    private fun resolveGenreKey(genre: String): String {
+        val normalized = genre.trim().lowercase()
+        return when {
+            normalized in listOf(
+                "tamil", "tamil film music", "tamil mass", "tamil folk",
+                "tamil classical", "tamil devotional", "telugu", "malayalam",
+                "kannada", "tamil melody"
+            ) -> "Tamil Melody"
+
+            normalized in listOf(
+                "hindi", "hindi film music", "hindi folk", "hindi classical", "hindi melody"
+            ) -> "Hindi Melody"
+
+            normalized in listOf(
+                "electronic", "dance", "edm", "house", "techno", "trance"
+            ) -> "EDM"
+
+            normalized in listOf(
+                "hip-hop", "rap", "trap", "english hip-hop"
+            ) -> "Hip-Hop"
+
+            normalized in listOf(
+                "pop", "english pop"
+            ) -> "Pop"
+
+            normalized in listOf(
+                "rock", "metal", "alternative", "indie", "english rock"
+            ) -> "Rock"
+
+            normalized in listOf(
+                "classical", "jazz", "blues", "acoustic", "soundtrack", "instrumental"
+            ) -> "Classical"
+
+            normalized in listOf(
+                "r&b", "rnb", "rhythm and blues"
+            ) -> "R&B"
+
+            normalized == "soul" -> "Soul"
+
+            normalized in listOf(
+                "lo-fi", "lofi"
+            ) -> "Lo-Fi"
+
+            normalized == "ambient" -> "Ambient"
+
+            normalized == "country" -> "Country"
+
+            normalized == "reggae" -> "Reggae"
+
+            else -> genre
+        }
+    }
+
     private fun getTargetCurve(genre: String, mood: String): FloatArray {
         val target = FloatArray(10) { 0.0f }
 
-        when (genre) {
-            "Pop", "English Pop" -> {
+        when (resolveGenreKey(genre)) {
+            "Pop" -> {
                 target[0] = 0.5f; target[1] = 0.5f; target[7] = 0.5f; target[8] = 0.8f; target[9] = 0.5f
             }
-            "EDM", "Electronic", "Dance", "House", "Techno", "Trance" -> {
+            "EDM" -> {
                 target[0] = 2.0f; target[1] = 2.0f; target[2] = 1.5f; target[3] = 0.5f
                 target[4] = -0.5f; target[7] = 0.8f; target[8] = 1.0f; target[9] = 0.5f
             }
-            "Hip-Hop", "Rap", "English Hip-Hop" -> {
+            "Hip-Hop" -> {
                 target[0] = 2.5f; target[1] = 2.0f; target[2] = 1.2f; target[3] = 0.5f
                 target[4] = -0.3f; target[7] = 0.5f; target[8] = 0.8f
             }
-            "Rock", "Metal", "English Rock", "Alternative" -> {
+            "Rock" -> {
                 target[0] = 1.0f; target[1] = 1.2f; target[2] = 0.8f; target[4] = -0.5f
                 target[6] = 0.5f; target[7] = 1.0f; target[8] = 1.2f; target[9] = 0.8f
             }
@@ -156,17 +209,45 @@ object AiEqCalculator {
                 target[0] = 0.8f; target[1] = 1.0f; target[2] = 0.7f; target[3] = 0.2f
                 target[5] = 0.3f; target[6] = 0.5f; target[7] = 0.8f; target[8] = 1.0f; target[9] = 0.6f
             }
-            "Classical", "Jazz", "Blues", "Acoustic" -> {
+            "Classical" -> {
                 target[6] = 0.3f; target[7] = 0.5f; target[8] = 0.5f; target[9] = 0.3f
+            }
+            "R&B" -> {
+                target[0] = 1.0f; target[1] = 1.2f; target[2] = 0.8f; target[5] = 0.4f; target[7] = 0.5f; target[8] = 0.8f
+            }
+            "Soul" -> {
+                target[1] = 0.8f; target[2] = 1.0f; target[3] = 0.5f; target[5] = 0.3f; target[8] = 0.5f
+            }
+            "Lo-Fi" -> {
+                target[0] = 0.8f; target[1] = 1.0f; target[2] = 0.6f; target[3] = 0.4f; target[8] = -0.5f; target[9] = -1.0f
+            }
+            "Ambient" -> {
+                target[0] = 0.5f; target[1] = 0.5f; target[4] = -0.3f; target[7] = 0.5f; target[8] = 0.8f; target[9] = 1.0f
+            }
+            "Country" -> {
+                target[1] = 0.5f; target[2] = 0.5f; target[5] = 0.5f; target[6] = 0.6f; target[7] = 0.8f; target[8] = 0.5f
+            }
+            "Reggae" -> {
+                target[0] = 1.5f; target[1] = 1.5f; target[2] = 1.0f; target[6] = 0.5f; target[7] = 0.8f
             }
         }
 
-        when (mood) {
-            "Energetic", "Aggressive", "Workout", "Party" -> {
+        val normalizedMood = mood.trim().lowercase()
+        when {
+            normalizedMood in listOf("energetic", "aggressive", "workout", "party") -> {
                 target[0] += 0.5f; target[1] += 0.5f; target[7] += 0.3f; target[8] += 0.3f
             }
-            "Calm", "Relaxing", "Sleep", "Meditation" -> {
+            normalizedMood in listOf("calm", "relaxing", "sleep", "meditation") -> {
                 target[0] -= 0.5f; target[1] -= 0.5f; target[7] -= 0.5f; target[8] -= 0.5f
+            }
+            normalizedMood in listOf("sad", "romantic", "emotional") -> {
+                target[2] += 0.3f; target[3] += 0.3f; target[8] -= 0.3f
+            }
+            normalizedMood in listOf("happy", "uplifting", "motivational", "epic") -> {
+                target[7] += 0.3f; target[8] += 0.3f; target[1] += 0.3f
+            }
+            normalizedMood == "dark" -> {
+                target[8] -= 0.4f; target[9] -= 0.4f
             }
         }
 

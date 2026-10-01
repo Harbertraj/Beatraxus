@@ -103,9 +103,12 @@ internal class FfmpegAlacDecoder(
         }
 
         // Determine demuxer to help FFmpeg with pipes or extension-less cache files
+        val isVideoRoute = request.song.id.startsWith("video_route:")
+        val containerExts = setOf("mkv", "mka", "mp4", "m4a", "mov", "ts", "m2ts", "webm")
         val demuxerHint = when {
-            format.codecName.contains("ac3", ignoreCase = true) || request.song.format.equals("AC3", ignoreCase = true) || request.song.format.equals("EAC3", ignoreCase = true) -> "ac3"
-            request.song.format.equals("DTS", ignoreCase = true) -> "dts"
+            isVideoRoute || ext in containerExts -> null
+            ext == "ac3" || ext == "eac3" || ext == "ec3" -> "ac3"
+            ext == "dts" -> "dts"
             ext == "dsf" || request.song.format.equals("DSD", ignoreCase = true) -> "dsf"
             ext == "dff" -> "dsdiff"
             format.codecName.contains("alac", ignoreCase = true) || request.song.format.equals("ALAC", ignoreCase = true) || request.song.format.equals("M4A", ignoreCase = true) -> "mov"
@@ -304,6 +307,27 @@ internal class FfmpegAlacDecoder(
 
     private suspend fun probeFormat(request: PlaybackRequest, headers: Map<String, String>): ProbedAlacFormat? = withContext(Dispatchers.IO) {
         val song = request.song
+        val ext = song.uri.lastPathSegment?.substringAfterLast('.', "")?.lowercase(Locale.US).orEmpty()
+        val isVideoRoute = song.id.startsWith("video_route:")
+        val isDolbyDtsTrueHd = song.format.contains("ac3", ignoreCase = true) ||
+                song.format.contains("dts", ignoreCase = true) ||
+                song.format.contains("truehd", ignoreCase = true) ||
+                ext in setOf("ac3", "eac3", "ec3", "dts")
+
+        val trackIndex = request.preferredAudioTrackIndex ?: 0
+
+        // For video_route songs and for Dolby/DTS/TrueHD tracks, get format from FFprobe
+        // (reads real channels and sample_rate of the selected audio stream)
+        if (isVideoRoute || isDolbyDtsTrueHd) {
+            val inputSource = resolveInputSource(song)
+            if (inputSource.isNotBlank()) {
+                val ffprobed = probeFormatWithFfprobe(inputSource, headers, trackIndex)
+                if (ffprobed != null) {
+                    return@withContext ffprobed
+                }
+            }
+        }
+
         // 1. Try MediaExtractor first (local or cached)
         // MediaExtractor is significantly faster than FFprobe as it can use our StreamingCacheDataSource
         // SKIP for Telegram to avoid slow/blocking network reads during probe.
@@ -317,7 +341,7 @@ internal class FfmpegAlacDecoder(
             return@withContext ProbedAlacFormat(
                 codecName = if (song.format.isNotBlank()) song.format else "ALAC",
                 sampleRate = song.sampleRateHz,
-                channels = if (song.format.equals("eac3", true) || song.format.equals("ac3", true) || song.format.equals("dts", true)) 6 else 2,
+                channels = if (song.format.equals("eac3", true) || song.format.equals("ac3", true) || song.format.equals("dts", true) || song.format.equals("truehd", true)) 6 else 2,
                 bitDepth = if (song.bitDepth > 0) song.bitDepth else 16
             )
         }
@@ -328,7 +352,7 @@ internal class FfmpegAlacDecoder(
             Log.w(TAG, "Cannot probe format: resolveInputSource returned blank for ${song.title}")
             return@withContext null
         }
-        probeFormatWithFfprobe(inputSource, headers, request.preferredAudioTrackIndex ?: 0)
+        probeFormatWithFfprobe(inputSource, headers, trackIndex)
     }
 
     private fun probeFormatWithFfprobe(path: String, headers: Map<String, String>, trackIndex: Int): ProbedAlacFormat? {

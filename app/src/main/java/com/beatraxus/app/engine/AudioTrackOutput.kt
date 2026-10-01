@@ -216,7 +216,7 @@ class AudioTrackOutput(
             2 -> AudioFormat.CHANNEL_OUT_STEREO
             4 -> AudioFormat.CHANNEL_OUT_QUAD
             6 -> AudioFormat.CHANNEL_OUT_5POINT1
-            8 -> AudioFormat.CHANNEL_OUT_7POINT1
+            8 -> AudioFormat.CHANNEL_OUT_7POINT1_SURROUND
             else -> if (channels > 2) AudioFormat.CHANNEL_OUT_5POINT1 else AudioFormat.CHANNEL_OUT_STEREO
         }
 
@@ -356,14 +356,13 @@ class AudioTrackOutput(
             val newTrack = try {
                 builder.build()
             } catch (e: Exception) {
-                Log.e(TAG, "AudioTrack.Builder.build() failed: ${e.message}")
-                if (channels > 2) return init(sampleRate, 2, bitDepth, isDoP)
+                Log.e(TAG, "AudioTrack.Builder.build() failed: ${e.message}", e)
                 return false
             }
 
             if (newTrack.state != AudioTrack.STATE_INITIALIZED) {
+                Log.e(TAG, "AudioTrack state is not STATE_INITIALIZED (channels=$channels, rate=$resolvedSampleRate)")
                 newTrack.release()
-                if (channels > 2) return init(sampleRate, 2, bitDepth, isDoP)
                 return false
             }
 
@@ -862,7 +861,7 @@ class AudioTrackOutput(
             2 -> AudioFormat.CHANNEL_OUT_STEREO
             4 -> AudioFormat.CHANNEL_OUT_QUAD
             6 -> AudioFormat.CHANNEL_OUT_5POINT1
-            8 -> AudioFormat.CHANNEL_OUT_7POINT1
+            8 -> AudioFormat.CHANNEL_OUT_7POINT1_SURROUND
             else -> if (channels > 2) AudioFormat.CHANNEL_OUT_5POINT1 else AudioFormat.CHANNEL_OUT_STEREO
         }
         val encodings = mutableListOf(AudioFormat.ENCODING_PCM_16BIT, AudioFormat.ENCODING_PCM_FLOAT)

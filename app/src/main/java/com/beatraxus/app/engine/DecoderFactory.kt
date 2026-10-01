@@ -45,7 +45,7 @@ internal class DecoderFactory(
         val isDsd = format == "dsd" || format == "dsf" || format == "dff" || format.contains("dsd")
         
         val isVideoRoute = song.id.startsWith("video_route:")
-        if (isVideoRoute && isDolbyOrDts) {
+        if (isVideoRoute) {
             return ffmpegAlacDecoder
         }
 

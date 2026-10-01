@@ -30,6 +30,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.CaptionStyleCompat
 import com.beatraxus.app.BeatraxusApplication
 import com.beatraxus.app.engine.AudioEngine
+import com.beatraxus.app.engine.AudioFrameUtils
 import com.beatraxus.app.engine.VideoRenderersFactory
 import com.beatraxus.app.engine.VideoRoutePhase
 import com.beatraxus.app.service.VideoAudioBridge
@@ -130,7 +131,9 @@ data class VideoTrackInfo(
     val language: String?,
     val format: String?,
     val isSelected: Boolean,
-    val audioOrdinal: Int = 0
+    val audioOrdinal: Int = 0,
+    val channelCount: Int = -1,
+    val sampleRate: Int = -1
 )
 
 enum class VideoAspectRatio(val displayName: String) {
@@ -721,7 +724,9 @@ class VideoPlayerViewModel(
                         language = format.language,
                         format = format.sampleMimeType,
                         isSelected = isSelected,
-                        audioOrdinal = ordinal
+                        audioOrdinal = ordinal,
+                        channelCount = format.channelCount,
+                        sampleRate = format.sampleRate
                     )
                     audioTracks.add(info)
                     if (isSelected) selectedAudio = ordinal
@@ -1006,8 +1011,9 @@ class VideoPlayerViewModel(
     private fun startVideoAudioSyncLoop() {
         videoAudioSyncJob?.cancel()
         videoAudioSyncJob = viewModelScope.launch {
+            var lastLogMs = 0L
             while (isActive && _uiState.value.routeAudioToEngine) {
-                delay(250)
+                delay(500)
                 val player = exoPlayer ?: break
                 val engine = VideoAudioBridge.getAudioEngine() ?: break
 
@@ -1021,19 +1027,27 @@ class VideoPlayerViewModel(
                     val sampleRate = engine.audioStateFlow.value.outputSampleRate.takeIf { it > 0 } ?: 48000
                     val latencyMs = (latencyFrames * 1000L) / sampleRate
 
-                    val trueAudibleAudioPos = (audioPos - latencyMs).coerceAtLeast(0L)
-                    val driftMs = exoPos - trueAudibleAudioPos
+                    val driftMs = AudioFrameUtils.calculateDriftMs(exoPos, audioPos, latencyMs)
+                    val now = System.currentTimeMillis()
 
-                    if (abs(driftMs) > 250) {
-                        player.seekTo(trueAudibleAudioPos)
+                    if (now - lastLogMs >= 1000L) {
+                        lastLogMs = now
+                        val codec = engine.audioStateFlow.value.codec
+                        val underruns = engine.audioStateFlow.value.underrunCount
+                        Log.d(
+                            "VideoAudioRouting",
+                            "VideoAudioRouting Sync: drift=${driftMs}ms, exoPos=${exoPos}ms, audioPos=${audioPos}ms, " +
+                            "latency=${latencyMs}ms, rate=${sampleRate}Hz, codec=$codec, underruns=$underruns. NO DOWNMIX APPLIED."
+                        )
+                    }
+
+                    if (AudioFrameUtils.shouldResync(driftMs, 80L)) {
+                        Log.d("VideoAudioRouting", "Drift ${driftMs}ms > 80ms threshold. Resyncing engine audio to ${exoPos}ms with fade-in. NO DOWNMIX APPLIED.")
+                        engine.requestVideoAudioResync(exoPos)
+                    }
+
+                    if (player.playbackParameters.speed != 1.0f) {
                         player.playbackParameters = PlaybackParameters(1.0f)
-                    } else if (abs(driftMs) > 40) {
-                        val nudge = if (driftMs > 0) 0.97f else 1.03f
-                        player.playbackParameters = PlaybackParameters(nudge)
-                    } else {
-                        if (player.playbackParameters.speed != 1.0f) {
-                            player.playbackParameters = PlaybackParameters(1.0f)
-                        }
                     }
                 }
             }

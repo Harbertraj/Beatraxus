@@ -1032,6 +1032,13 @@ private fun AiOptionsPopup(
     viewModel: PlayerViewModel,
     onDismiss: () -> Unit
 ) {
+    val aiAnalysisMap by viewModel.aiAnalysis.collectAsStateWithLifecycle()
+    val currentAnalysis = uiState.currentSong?.id?.let { aiAnalysisMap[it] }
+
+    val genreText = currentAnalysis?.genre?.takeIf { it.isNotBlank() } ?: "Not analysed yet"
+    val moodText = currentAnalysis?.mood?.takeIf { it.isNotBlank() } ?: "Not analysed yet"
+    val eqProfileText = currentAnalysis?.language?.takeIf { it.isNotBlank() } ?: "Not analysed yet"
+
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         containerColor = Color(0xFF121218),
@@ -1048,8 +1055,9 @@ private fun AiOptionsPopup(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(bottom = 32.dp)
-                .padding(horizontal = 16.dp),
+                .navigationBarsPadding()
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             Row(
@@ -1097,21 +1105,21 @@ private fun AiOptionsPopup(
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
                                 Text("Genre", color = Color.White.copy(0.4f), fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                Text("AI Verified", color = PremiumAccent, fontSize = 12.sp, fontWeight = FontWeight.Black)
+                                Text(genreText, color = PremiumAccent, fontSize = 12.sp, fontWeight = FontWeight.Black)
                             }
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
                                 Text("Mood", color = Color.White.copy(0.4f), fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                Text("AI Verified", color = PremiumAccent, fontSize = 12.sp, fontWeight = FontWeight.Black)
+                                Text(moodText, color = PremiumAccent, fontSize = 12.sp, fontWeight = FontWeight.Black)
                             }
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
                                 Text("EQ Profile", color = Color.White.copy(0.4f), fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                Text("Optimized", color = PremiumAccent, fontSize = 12.sp, fontWeight = FontWeight.Black)
+                                Text(eqProfileText, color = PremiumAccent, fontSize = 12.sp, fontWeight = FontWeight.Black)
                             }
                         }
                     }
@@ -1150,15 +1158,6 @@ private fun AiOptionsPopup(
                         }
                     }
                 }
-            }
-
-            Button(
-                onClick = onDismiss,
-                modifier = Modifier.fillMaxWidth().height(56.dp),
-                shape = RoundedCornerShape(16.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = PremiumAccent, contentColor = Color.Black)
-            ) {
-                Text("DONE", fontWeight = FontWeight.Bold)
             }
         }
     }
