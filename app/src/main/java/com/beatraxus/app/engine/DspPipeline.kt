@@ -192,11 +192,8 @@ private class NativeDspProcessor(
 
     private fun updateNativeConfig(cfg: DspConfig, dsp: NativeDsp) {
         val isBP = cfg.bitPerfectEnabled
-        val isVideoRoute = song?.id?.startsWith("video_route:") == true
 
-        // For video routes, apply -3 dB headroom pre-gain to prevent decoder peak overload
-        val effectivePreamp = if (isVideoRoute) cfg.preampDb - 3.0f else cfg.preampDb
-        dsp.setPreamp(if (isBP) (if (isVideoRoute) -3.0f else 0f) else effectivePreamp)
+        dsp.setPreamp(if (isBP) 0f else cfg.preampDb)
 
         // DC Blocker is typically not unbypassed, but usually kept for safety. 
         // For strict bit-perfect, we should disable it unless specifically bypassed (though not in user's list)
