@@ -10,6 +10,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -21,6 +22,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
@@ -48,6 +50,8 @@ import com.beatraxus.app.model.EqPhaseMode
 import com.beatraxus.app.model.PlayerUiState
 import com.beatraxus.app.model.Song
 import com.beatraxus.app.model.SongSource
+import com.beatraxus.app.ui.utils.DialogBlurBehind
+import com.beatraxus.app.ui.utils.rememberWindowBlurSupported
 import java.util.Locale
 import kotlin.math.abs
 
@@ -433,12 +437,19 @@ fun PipelineSignalPathSheet(
     song: Song,
     uiState: PlayerUiState,
     onDismiss: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    /**
+     * true  -> the OS blurs the screen behind the dialog window (library / mini-player use).
+     * false -> the caller already blurs its own content (NowPlayingScreen does), so we only
+     *          remove the dark dim and avoid a double blur.
+     */
+    windowBlur: Boolean = true
 ) {
     val pipelineResult = remember(song, uiState) { buildPipelineStages(song, uiState) }
     val stages = pipelineResult.stages
     val wireFormats = pipelineResult.wireFormats
     val verdict = pipelineResult.verdict
+    val verdictColor = Color(verdict.type.colorHex)
 
     val isPlaying = uiState.isPlaying
     val infiniteTransition = rememberInfiniteTransition(label = "pulse")
@@ -452,209 +463,239 @@ fun PipelineSignalPathSheet(
         label = "pulseProgress"
     )
 
-    val view = LocalView.current
-    DisposableEffect(Unit) {
-        val window = (view.parent as? DialogWindowProvider)?.window
-        window?.let { w ->
-            w.setDimAmount(0f)
-            w.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
-        }
-        onDispose {}
-    }
+    // Only when nothing can blur the background do we fall back to a light scrim,
+    // so the card stays readable on very old devices. Normal case = NO dark shade.
+    val blurWorks = if (windowBlur) rememberWindowBlurSupported()
+    else Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
 
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
+        DialogBlurBehind(radiusDp = if (windowBlur) 22 else 0)
+
         Box(
             modifier = modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) 0.35f else 0.12f))
-                .clickable(onClick = onDismiss),
+                .background(Color.Black.copy(alpha = if (blurWorks) 0f else 0.28f))
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = onDismiss
+                ),
             contentAlignment = Alignment.Center
         ) {
             val screenHeight = LocalConfiguration.current.screenHeightDp.dp
-            Surface(
+            val cardShape = RoundedCornerShape(26.dp)
+
+            // Compact "Poweramp-size" card: ~90% width (max 400dp), wraps its content,
+            // never taller than ~74% of the screen.
+            Column(
                 modifier = Modifier
-                    .fillMaxWidth(0.96f)
-                    .widthIn(max = 520.dp)
-                    .heightIn(min = screenHeight * 0.70f, max = screenHeight * 0.92f)
-                    .clickable(onClick = {}),
-                shape = RoundedCornerShape(28.dp),
-                color = Color.Transparent
+                    .fillMaxWidth(0.90f)
+                    .widthIn(max = 400.dp)
+                    .heightIn(max = screenHeight * 0.74f)
+                    .clip(cardShape)
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(
+                                Color(0xFF1B1C26).copy(alpha = 0.86f),
+                                Color(0xFF0E0F15).copy(alpha = 0.90f)
+                            )
+                        )
+                    )
+                    .border(
+                        BorderStroke(
+                            1.dp,
+                            Brush.verticalGradient(
+                                listOf(Color.White.copy(alpha = 0.26f), Color.White.copy(alpha = 0.05f))
+                            )
+                        ),
+                        cardShape
+                    )
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = {}
+                    )
             ) {
+                // Verdict-coloured glow line on top of the card
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .height(3.dp)
                         .background(
-                            Brush.verticalGradient(
-                                colors = listOf(
-                                    Color(0xFF14141B).copy(alpha = 0.96f),
-                                    Color(0xFF0F0F14).copy(alpha = 0.96f)
-                                )
+                            Brush.horizontalGradient(
+                                listOf(Color.Transparent, verdictColor.copy(alpha = 0.9f), Color.Transparent)
                             )
                         )
-                        .border(
-                            BorderStroke(1.dp, Color.White.copy(alpha = 0.10f)),
-                            RoundedCornerShape(28.dp)
-                        )
-                        .padding(24.dp)
+                )
+
+                // Header
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 16.dp, end = 14.dp, top = 12.dp, bottom = 10.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column(modifier = Modifier.fillMaxWidth()) {
-                        // Header
-                        Row(
+                    Row(
+                        modifier = Modifier.weight(1f),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
                             modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(bottom = 12.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                                .size(30.dp)
+                                .background(verdictColor.copy(alpha = 0.16f), CircleShape)
+                                .border(1.dp, verdictColor.copy(alpha = 0.35f), CircleShape),
+                            contentAlignment = Alignment.Center
                         ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "SIGNAL PATH",
-                                    style = MaterialTheme.typography.titleSmall.copy(
-                                        fontWeight = FontWeight.ExtraBold,
-                                        letterSpacing = 2.sp,
-                                        fontSize = 18.sp
-                                    ),
-                                    color = Color.White.copy(alpha = 0.70f)
-                                )
-                                Spacer(Modifier.height(6.dp))
-                                Text(
-                                    text = verdict.summary,
-                                    style = MaterialTheme.typography.bodySmall.copy(
-                                        fontFamily = FontFamily.Monospace,
-                                        fontSize = 13.sp,
-                                        lineHeight = 18.sp
-                                    ),
-                                    color = Color.White.copy(alpha = 0.90f),
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-
-                            // Verdict Pill
-                            val pillColor = Color(verdict.type.colorHex)
-                            Surface(
-                                shape = CircleShape,
-                                color = pillColor.copy(alpha = 0.15f),
-                                border = BorderStroke(1.dp, pillColor.copy(alpha = 0.5f)),
-                                modifier = Modifier.padding(start = 12.dp)
-                            ) {
-                                Text(
-                                    text = verdict.type.label,
-                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                                    style = MaterialTheme.typography.labelSmall.copy(
-                                        fontWeight = FontWeight.Bold,
-                                        letterSpacing = 0.8.sp,
-                                        fontSize = 12.sp
-                                    ),
-                                    color = pillColor
-                                )
-                            }
+                            Icon(
+                                imageVector = Icons.Rounded.GraphicEq,
+                                contentDescription = null,
+                                tint = verdictColor,
+                                modifier = Modifier.size(17.dp)
+                            )
                         }
-
-                        HorizontalDivider(color = Color.White.copy(0.08f))
-
-                        // Stages List
-                        LazyColumn(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .weight(1f, fill = true),
-                            contentPadding = PaddingValues(vertical = 12.dp),
-                            verticalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            itemsIndexed(stages) { index, stage ->
-                                val wireFormat = wireFormats.getOrNull(index)
-                                CompactStageRow(
-                                    stage = stage,
-                                    wireFormat = wireFormat,
-                                    isLast = index == stages.lastIndex,
-                                    isPlaying = isPlaying,
-                                    pulseProgress = pulseProgress,
-                                    index = index
-                                )
-                            }
-                        }
-
-                        // Bottom Summary Strip
-                        HorizontalDivider(color = Color.White.copy(0.08f))
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(Color.Black.copy(alpha = 0.35f), RoundedCornerShape(12.dp))
-                                .padding(horizontal = 16.dp, vertical = 12.dp)
-                        ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-                                    Column {
-                                        Text(
-                                            text = "LATENCY",
-                                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 12.sp, fontWeight = FontWeight.Bold),
-                                            color = Color.White.copy(alpha = 0.5f)
-                                        )
-                                        val latencyMs = if (uiState.outputSampleRate > 0) (uiState.dsp.currentLatencyFrames * 1000f / uiState.outputSampleRate) else 0f
-                                        Text(
-                                            text = "${String.format(Locale.US, "%.1f", latencyMs)} ms",
-                                            style = MaterialTheme.typography.bodySmall.copy(
-                                                fontWeight = FontWeight.SemiBold,
-                                                fontFamily = FontFamily.Monospace,
-                                                fontSize = 15.sp
-                                            ),
-                                            color = Color.White
-                                        )
-                                    }
-                                    Column {
-                                        Text(
-                                            text = "HEADROOM",
-                                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 12.sp, fontWeight = FontWeight.Bold),
-                                            color = Color.White.copy(alpha = 0.5f)
-                                        )
-                                        Text(
-                                            text = "${String.format(Locale.US, "%.1f", uiState.dsp.currentHeadroomDb)} dB",
-                                            style = MaterialTheme.typography.bodySmall.copy(
-                                                fontWeight = FontWeight.SemiBold,
-                                                fontFamily = FontFamily.Monospace,
-                                                fontSize = 15.sp
-                                            ),
-                                            color = Color.White
-                                        )
-                                    }
-                                    Column {
-                                        Text(
-                                            text = "UNDERRUNS",
-                                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 12.sp, fontWeight = FontWeight.Bold),
-                                            color = Color.White.copy(alpha = 0.5f)
-                                        )
-                                        Text(
-                                            text = "${uiState.underrunCount}",
-                                            style = MaterialTheme.typography.bodySmall.copy(
-                                                fontWeight = FontWeight.SemiBold,
-                                                fontFamily = FontFamily.Monospace,
-                                                fontSize = 15.sp
-                                            ),
-                                            color = if (uiState.underrunCount > 0) Color(0xFFFF5252) else Color.White
-                                        )
-                                    }
-                                }
-                            }
-                            Spacer(Modifier.height(6.dp))
+                        Spacer(Modifier.width(10.dp))
+                        Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = verdict.oneLiner,
-                                style = MaterialTheme.typography.bodySmall.copy(fontSize = 13.sp),
+                                text = "SIGNAL PATH",
+                                style = MaterialTheme.typography.titleSmall.copy(
+                                    fontWeight = FontWeight.ExtraBold,
+                                    letterSpacing = 1.8.sp,
+                                    fontSize = 13.sp
+                                ),
+                                color = Color.White.copy(alpha = 0.85f)
+                            )
+                            Spacer(Modifier.height(2.dp))
+                            Text(
+                                text = verdict.summary,
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 10.5.sp,
+                                    lineHeight = 14.sp
+                                ),
                                 color = Color.White.copy(alpha = 0.65f),
                                 maxLines = 2,
                                 overflow = TextOverflow.Ellipsis
                             )
                         }
                     }
+
+                    // Verdict pill
+                    Surface(
+                        shape = CircleShape,
+                        color = verdictColor.copy(alpha = 0.15f),
+                        border = BorderStroke(1.dp, verdictColor.copy(alpha = 0.5f)),
+                        modifier = Modifier.padding(start = 8.dp)
+                    ) {
+                        Text(
+                            text = verdict.type.label,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = 0.6.sp,
+                                fontSize = 10.sp
+                            ),
+                            color = verdictColor,
+                            maxLines = 1
+                        )
+                    }
+                }
+
+                HorizontalDivider(color = Color.White.copy(0.08f))
+
+                // Stages list (wraps content, scrolls only if the card hits its max height)
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f, fill = false),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp)
+                ) {
+                    itemsIndexed(stages) { index, stage ->
+                        val wireFormat = wireFormats.getOrNull(index)
+                        CompactStageRow(
+                            stage = stage,
+                            wireFormat = wireFormat,
+                            isLast = index == stages.lastIndex,
+                            isPlaying = isPlaying,
+                            pulseProgress = pulseProgress,
+                            index = index
+                        )
+                    }
+                }
+
+                // Bottom summary strip
+                HorizontalDivider(color = Color.White.copy(0.08f))
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(10.dp)
+                        .background(Color.White.copy(alpha = 0.05f), RoundedCornerShape(14.dp))
+                        .border(0.5.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(14.dp))
+                        .padding(horizontal = 14.dp, vertical = 10.dp)
+                ) {
+                    val latencyMs = if (uiState.outputSampleRate > 0) {
+                        uiState.dsp.currentLatencyFrames * 1000f / uiState.outputSampleRate
+                    } else 0f
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        SummaryStat(
+                            label = "LATENCY",
+                            value = "${String.format(Locale.US, "%.1f", latencyMs)} ms",
+                            valueColor = Color.White
+                        )
+                        SummaryStat(
+                            label = "HEADROOM",
+                            value = "${String.format(Locale.US, "%.1f", uiState.dsp.currentHeadroomDb)} dB",
+                            valueColor = Color.White
+                        )
+                        SummaryStat(
+                            label = "UNDERRUNS",
+                            value = "${uiState.underrunCount}",
+                            valueColor = if (uiState.underrunCount > 0) Color(0xFFFF5252) else Color.White
+                        )
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = verdict.oneLiner,
+                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp, lineHeight = 15.sp),
+                        color = Color.White.copy(alpha = 0.6f),
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun SummaryStat(label: String, value: String, valueColor: Color) {
+    Column {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall.copy(
+                fontSize = 9.5.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 0.6.sp
+            ),
+            color = Color.White.copy(alpha = 0.5f)
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodySmall.copy(
+                fontWeight = FontWeight.SemiBold,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 13.sp
+            ),
+            color = valueColor
+        )
     }
 }
 
@@ -673,7 +714,7 @@ fun CompactStageRow(
         StageState.DEGRADED -> Color(0xFFFF453A)
         StageState.BYPASSED -> Color.White.copy(alpha = 0.35f)
     }
-    
+
     val stateLabel = when (stage.state) {
         StageState.UNTOUCHED -> "UNTOUCHED"
         StageState.PROCESSED -> "PROCESSED"
@@ -681,45 +722,58 @@ fun CompactStageRow(
         StageState.BYPASSED -> "BYPASSED"
     }
 
+    val railWidth = 22.dp
+    val cardShape = RoundedCornerShape(14.dp)
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .height(IntrinsicSize.Min)
             .semantics(mergeDescendants = true) {
                 contentDescription = "${stage.title}: ${stage.primary}, state ${stage.state.name}"
             }
     ) {
-        // Rail Column
+        // Rail: glowing node + connector line that stretches to the card height
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.width(32.dp)
+            modifier = Modifier
+                .width(railWidth)
+                .fillMaxHeight()
         ) {
+            Spacer(Modifier.height(10.dp))
             Box(
                 modifier = Modifier
                     .size(14.dp)
-                    .background(if (stage.state == StageState.BYPASSED) stateColor.copy(alpha = 0.4f) else stateColor, CircleShape)
-                    .border(1.5.dp, Color(0xFF1B1B22), CircleShape)
-            )
+                    .background(stateColor.copy(alpha = 0.18f), CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .background(
+                            if (stage.state == StageState.BYPASSED) stateColor.copy(alpha = 0.5f) else stateColor,
+                            CircleShape
+                        )
+                )
+            }
 
             if (!isLast) {
                 Box(
                     modifier = Modifier
                         .weight(1f)
-                        .defaultMinSize(minHeight = 48.dp)
                         .width(2.dp)
                         .drawBehind {
-                            val lineCol = Color.White.copy(alpha = 0.12f)
                             drawLine(
-                                color = lineCol,
+                                color = Color.White.copy(alpha = 0.12f),
                                 start = Offset(size.width / 2, 0f),
                                 end = Offset(size.width / 2, size.height),
                                 strokeWidth = 2.dp.toPx()
                             )
                             if (isPlaying && stage.state != StageState.BYPASSED) {
-                                val pulseY = size.height * pulseProgress
                                 drawCircle(
-                                    color = stateColor.copy(alpha = 0.7f),
-                                    radius = 3.dp.toPx(),
-                                    center = Offset(size.width / 2, pulseY)
+                                    color = stateColor.copy(alpha = 0.8f),
+                                    radius = 2.5.dp.toPx(),
+                                    center = Offset(size.width / 2, size.height * pulseProgress)
                                 )
                             }
                         }
@@ -727,16 +781,16 @@ fun CompactStageRow(
             }
         }
 
-        Spacer(Modifier.width(12.dp))
+        Spacer(Modifier.width(8.dp))
 
-        // Content Card
+        // Content card
         Column(
             modifier = Modifier
                 .weight(1f)
-                .padding(bottom = 12.dp)
-                .background(Color.White.copy(alpha = 0.03f), RoundedCornerShape(14.dp))
-                .border(1.dp, Color.White.copy(alpha = 0.06f), RoundedCornerShape(14.dp))
-                .padding(horizontal = 14.dp, vertical = 12.dp)
+                .padding(bottom = 8.dp)
+                .background(Color.White.copy(alpha = 0.04f), cardShape)
+                .border(1.dp, Color.White.copy(alpha = 0.07f), cardShape)
+                .padding(horizontal = 12.dp, vertical = 10.dp)
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -744,28 +798,23 @@ fun CompactStageRow(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                    Box(
-                        modifier = Modifier
-                            .width(4.dp)
-                            .height(18.dp)
-                            .background(stateColor, RoundedCornerShape(2.dp))
-                    )
-                    Spacer(Modifier.width(8.dp))
                     Icon(
                         imageVector = stage.icon,
                         contentDescription = null,
                         tint = stateColor,
-                        modifier = Modifier.size(18.dp)
+                        modifier = Modifier.size(15.dp)
                     )
-                    Spacer(Modifier.width(8.dp))
+                    Spacer(Modifier.width(6.dp))
                     Text(
                         text = stage.title.uppercase(Locale.US),
                         style = MaterialTheme.typography.labelSmall.copy(
                             fontWeight = FontWeight.Bold,
-                            letterSpacing = 1.sp,
-                            fontSize = 12.sp
+                            letterSpacing = 0.8.sp,
+                            fontSize = 10.5.sp
                         ),
-                        color = Color.White.copy(alpha = 0.65f)
+                        color = Color.White.copy(alpha = 0.7f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
 
@@ -774,14 +823,14 @@ fun CompactStageRow(
                         text = stateLabel,
                         style = MaterialTheme.typography.labelSmall.copy(
                             fontWeight = FontWeight.Bold,
-                            fontSize = 11.sp,
-                            letterSpacing = 0.5.sp
+                            fontSize = 9.sp,
+                            letterSpacing = 0.4.sp
                         ),
-                        color = stateColor.copy(alpha = 0.8f)
+                        color = stateColor.copy(alpha = 0.85f)
                     )
-                    
+
                     if (stage.changeBadge != null) {
-                        Spacer(Modifier.width(6.dp))
+                        Spacer(Modifier.width(5.dp))
                         Surface(
                             shape = RoundedCornerShape(4.dp),
                             color = stateColor.copy(alpha = 0.15f),
@@ -789,8 +838,8 @@ fun CompactStageRow(
                         ) {
                             Text(
                                 text = stage.changeBadge,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, fontWeight = FontWeight.Bold),
+                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp),
+                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp, fontWeight = FontWeight.Bold),
                                 color = stateColor
                             )
                         }
@@ -798,79 +847,98 @@ fun CompactStageRow(
                 }
             }
 
-            Spacer(Modifier.height(6.dp))
+            Spacer(Modifier.height(4.dp))
 
             Text(
                 text = stage.primary,
                 style = MaterialTheme.typography.bodySmall.copy(
                     fontWeight = FontWeight.SemiBold,
                     fontFamily = FontFamily.Monospace,
-                    fontSize = 15.sp
+                    fontSize = 12.sp,
+                    lineHeight = 16.sp
                 ),
                 color = Color.White,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis
             )
 
-            // Details are always visible
+            // Details are always visible (nothing removed)
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 10.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
+                    .padding(top = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 HorizontalDivider(color = Color.White.copy(0.06f))
                 stage.details.forEach { (label, value) ->
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         Text(
                             text = label,
-                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 12.sp),
-                            color = Color.White.copy(alpha = 0.55f)
+                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.5.sp),
+                            color = Color.White.copy(alpha = 0.55f),
+                            modifier = Modifier.weight(1f)
                         )
                         Text(
                             text = value,
                             style = MaterialTheme.typography.bodySmall.copy(
                                 fontFamily = FontFamily.Monospace,
-                                fontSize = 13.sp
+                                fontSize = 11.sp,
+                                textAlign = TextAlign.End
                             ),
-                            color = Color.White.copy(alpha = 0.9f)
+                            color = Color.White.copy(alpha = 0.92f),
+                            modifier = Modifier.weight(1.2f)
                         )
                     }
                 }
             }
         }
     }
-    
-    // Wire format text between blocks
+
+    // Wire format chip between blocks (rail keeps running through it)
     if (wireFormat != null && !isLast) {
         Row(
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(IntrinsicSize.Min)
         ) {
-            Spacer(modifier = Modifier.width(32.dp))
-            Spacer(modifier = Modifier.width(12.dp))
-            
             Box(
                 modifier = Modifier
-                    .padding(bottom = 12.dp, start = 14.dp)
-                    .background(Color.White.copy(alpha = 0.1f), RoundedCornerShape(12.dp))
-                    .border(1.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(12.dp))
-                    .padding(horizontal = 10.dp, vertical = 5.dp)
+                    .width(railWidth)
+                    .fillMaxHeight(),
+                contentAlignment = Alignment.Center
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .width(2.dp)
+                        .background(Color.White.copy(alpha = 0.12f))
+                )
+            }
+
+            Spacer(Modifier.width(8.dp))
+
+            Box(
+                modifier = Modifier
+                    .padding(bottom = 8.dp)
+                    .background(Color.White.copy(alpha = 0.08f), RoundedCornerShape(10.dp))
+                    .border(1.dp, Color.White.copy(alpha = 0.13f), RoundedCornerShape(10.dp))
+                    .padding(horizontal = 9.dp, vertical = 4.dp)
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         text = wireFormat.formatText,
                         style = MaterialTheme.typography.labelSmall.copy(
                             fontFamily = FontFamily.Monospace,
-                            fontSize = 12.sp
+                            fontSize = 10.sp
                         ),
                         color = Color.White.copy(alpha = 0.75f)
                     )
-                    
+
                     if (wireFormat.changeBadge != null) {
-                        Spacer(Modifier.width(6.dp))
+                        Spacer(Modifier.width(5.dp))
                         Surface(
                             shape = RoundedCornerShape(4.dp),
                             color = Color.White.copy(alpha = 0.15f),
@@ -878,8 +946,8 @@ fun CompactStageRow(
                         ) {
                             Text(
                                 text = wireFormat.changeBadge,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, fontWeight = FontWeight.Bold),
+                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp),
+                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp, fontWeight = FontWeight.Bold),
                                 color = Color.White
                             )
                         }

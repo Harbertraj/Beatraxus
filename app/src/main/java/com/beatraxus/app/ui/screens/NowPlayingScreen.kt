@@ -269,13 +269,15 @@ fun NowPlayingScreen(
         )
     }
 
+    // Screen behind the pipeline sheet AND the song-info popup is blurred (no dark shade)
+    val overlayBlurActive = showPipelineOverlay || showSongInfo
     val pipelineBlurRadius by animateDpAsState(
-        targetValue = if (showPipelineOverlay) 24.dp else 0.dp,
+        targetValue = if (overlayBlurActive) 24.dp else 0.dp,
         animationSpec = tween(250),
         label = "pipelineBlur"
     )
     val pipelineScale by animateFloatAsState(
-        targetValue = if (showPipelineOverlay && Build.VERSION.SDK_INT < Build.VERSION_CODES.S) 0.97f else 1.0f,
+        targetValue = if (overlayBlurActive && Build.VERSION.SDK_INT < Build.VERSION_CODES.S) 0.97f else 1.0f,
         animationSpec = tween(250),
         label = "pipelineScale"
     )
@@ -294,7 +296,7 @@ fun NowPlayingScreen(
                             radius = pipelineBlurRadius,
                             edgeTreatment = BlurredEdgeTreatment.Unbounded
                         )
-                    } else if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S && showPipelineOverlay) {
+                    } else if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S && overlayBlurActive) {
                         Modifier.graphicsLayer {
                             scaleX = pipelineScale
                             scaleY = pipelineScale
@@ -1203,6 +1205,7 @@ fun NowPlayingScreen(
                 lastFmArtistInfo = uiState.lastFmArtistInfo,
                 lastFmAlbumInfo = uiState.lastFmAlbumInfo,
                 isLoadingInfo = uiState.isLoadingOnlineInfo,
+                windowBlur = false, // this screen already blurs itself
                 onDismiss = { showSongInfo = false },
                 onOpenInspector = {
                     onClearPendingInspectorReturn()
@@ -1438,7 +1441,8 @@ fun NowPlayingScreen(
                 song = song,
                 uiState = uiState,
                 onDismiss = { onTogglePipeline(false) },
-                modifier = Modifier.fillMaxSize()
+                modifier = Modifier.fillMaxSize(),
+                windowBlur = false // this screen already blurs itself
             )
         }
     }

@@ -1181,32 +1181,17 @@ fun MainScreen(
                                         .padding(horizontal = 8.dp)
                                 ) {
                                     if (uiState.isMultiSelectMode) {
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.SpaceEvenly
-                                        ) {
-                                            IconButton(onClick = { viewModel.selectAll() }) {
-                                                Icon(Icons.Rounded.SelectAll, null, tint = Color.White)
-                                            }
-                                            if (uiState.currentView != LibraryView.CLOUD) {
-                                                IconButton(onClick = { viewModel.deleteSelected() }) {
-                                                    Icon(Icons.Rounded.Delete, null, tint = Color.White)
-                                                }
-                                            }
-                                            IconButton(onClick = { viewModel.playNextSelected() }) {
-                                                Icon(Icons.AutoMirrored.Rounded.PlaylistPlay, null, tint = Color.White)
-                                            }
-                                            IconButton(onClick = {
+                                        MultiSelectActionBar(
+                                            showDelete = uiState.currentView != LibraryView.CLOUD,
+                                            onSelectAll = { viewModel.selectAll() },
+                                            onDelete = { viewModel.deleteSelected() },
+                                            onPlayNext = { viewModel.playNextSelected() },
+                                            onAddToPlaylist = {
                                                 playlistDialogSong = null
                                                 showPlaylistDialog = true
-                                            }) {
-                                                Icon(Icons.AutoMirrored.Rounded.PlaylistAdd, null, tint = Color.White)
-                                            }
-                                            IconButton(onClick = { viewModel.shareSelected() }) {
-                                                Icon(Icons.Rounded.Share, null, tint = Color.White)
-                                            }
-                                        }
+                                            },
+                                            onShare = { viewModel.shareSelected() }
+                                        )
                                     } else {
                                         val canShufflePlay = when (uiState.currentView) {
                                             LibraryView.ALBUMS, LibraryView.ARTISTS, LibraryView.FOLDERS,
@@ -1219,130 +1204,50 @@ fun MainScreen(
                                             modifier = Modifier.fillMaxWidth(),
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
-                                            // Shuffle All Button
+                                            // Shuffle All
                                             if (canShufflePlay && uiState.currentView != LibraryView.HOME) {
                                                 Box(
-                                                    modifier = Modifier
-                                                        .weight(3.5f),
+                                                    modifier = Modifier.weight(3.5f),
                                                     contentAlignment = Alignment.Center
                                                 ) {
-                                                    Surface(
-                                                        color = Color.White.copy(alpha = 0.15f),
-                                                        shape = RoundedCornerShape(28.dp),
-                                                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.5f)),
-                                                        modifier = Modifier
-                                                            .wrapContentSize()
-                                                            .clickable { viewModel.shuffleAndPlay() }
-                                                    ) {
-                                                        Row(
-                                                            verticalAlignment = Alignment.CenterVertically,
-                                                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
-                                                        ) {
-                                                            Box(
-                                                                modifier = Modifier.size(28.dp).glassIconBackground(shape = CircleShape),
-                                                                contentAlignment = Alignment.Center
-                                                            ) {
-                                                                Icon(Icons.Rounded.PlayArrow, null, tint = Color.White, modifier = Modifier.size(20.dp))
-                                                            }
-                                                            Spacer(Modifier.width(10.dp))
-                                                            Text(
-                                                                text = "Shuffle All",
-                                                                color = Color.White,
-                                                                fontSize = 15.sp,
-                                                                fontWeight = FontWeight.ExtraBold,
-                                                                maxLines = 1
-                                                            )
-                                                        }
-                                                    }
+                                                    ShuffleAllPill(onClick = { viewModel.shuffleAndPlay() })
                                                 }
                                             }
 
-                                            // Sort / Filter Icon
                                             if (uiState.currentView != LibraryView.HOME) {
-                                                val isSelected = activeMainSheet == MainSheetType.SORT
+                                                // Sort / Filter
                                                 val isCloud = uiState.currentView == LibraryView.CLOUD
-                                                Box(
-                                                    modifier = Modifier.weight(1f),
-                                                    contentAlignment = Alignment.Center
-                                                ) {
-                                                    val sortIconBgColor by animateColorAsState(
-                                                        targetValue = if (isSelected) Color.White.copy(0.2f) else Color.Transparent,
-                                                        animationSpec = tween(400),
-                                                        label = "sortIconBgColor"
-                                                    )
-                                                    IconButton(
-                                                        onClick = { activeMainSheet = MainSheetType.SORT },
-                                                        modifier = Modifier
-                                                            .size(46.dp)
-                                                            .glassIconBackground(
-                                                                backgroundColor = sortIconBgColor,
-                                                                shape = CircleShape,
-                                                                borderColor = if (isSelected) Color.White.copy(alpha = 0.2f) else Color.Transparent
-                                                            )
-                                                    ) {
-                                                        Icon(
-                                                            if (isCloud) Icons.Rounded.FilterList else Icons.AutoMirrored.Rounded.Sort,
-                                                            null,
-                                                            tint = if (isSelected) AccentBlue else Color.White.copy(0.85f),
-                                                            modifier = Modifier.size(23.dp)
-                                                        )
-                                                    }
-                                                }
-                                            }
-
-                                            // Cloud Icon
-                                            if (uiState.currentView != LibraryView.HOME) {
-                                                val isSelected = activeMainSheet == MainSheetType.CLOUD
                                                 Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                                                    val cloudIconBgColor by animateColorAsState(
-                                                        targetValue = if (isSelected) Color.White.copy(0.12f) else Color.Transparent,
-                                                        label = "cloudIconBg"
+                                                    GlassActionButton(
+                                                        icon = if (isCloud) Icons.Rounded.FilterList else Icons.AutoMirrored.Rounded.Sort,
+                                                        contentDescription = if (isCloud) "Filter" else "Sort",
+                                                        accent = Color(0xFF00F2FF),
+                                                        selected = activeMainSheet == MainSheetType.SORT,
+                                                        onClick = { activeMainSheet = MainSheetType.SORT }
                                                     )
-                                                    IconButton(
-                                                        onClick = { activeMainSheet = MainSheetType.CLOUD },
-                                                        modifier = Modifier
-                                                            .size(46.dp)
-                                                            .glassIconBackground(
-                                                                backgroundColor = cloudIconBgColor,
-                                                                shape = CircleShape,
-                                                                borderColor = if (isSelected) Color.White.copy(alpha = 0.2f) else Color.Transparent
-                                                            )
-                                                    ) {
-                                                        Icon(
-                                                            Icons.Rounded.Cloud,
-                                                            null,
-                                                            tint = if (isSelected) AccentBlue else Color.White.copy(0.85f),
-                                                            modifier = Modifier.size(23.dp)
-                                                        )
-                                                    }
                                                 }
-                                            }
 
-                                            // Layout Density Icon
-                                            if (uiState.currentView != LibraryView.HOME) {
-                                                val isSelected = activeMainSheet == MainSheetType.DENSITY
+                                                // Cloud
                                                 Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                                                    val sliderIconBgColor by animateColorAsState(
-                                                        targetValue = if (isSelected) Color.White.copy(0.12f) else Color.Transparent,
-                                                        label = "sliderIconBg"
+                                                    GlassActionButton(
+                                                        icon = Icons.Rounded.Cloud,
+                                                        contentDescription = "Cloud",
+                                                        accent = AccentBlue,
+                                                        selected = activeMainSheet == MainSheetType.CLOUD,
+                                                        onClick = { activeMainSheet = MainSheetType.CLOUD }
                                                     )
-                                                    IconButton(
-                                                        onClick = { activeMainSheet = MainSheetType.DENSITY },
-                                                        modifier = Modifier
-                                                            .size(46.dp)
-                                                            .glassIconBackground(
-                                                                backgroundColor = sliderIconBgColor,
-                                                                shape = CircleShape,
-                                                                borderColor = if (isSelected) Color.White.copy(alpha = 0.2f) else Color.Transparent
-                                                            )
-                                                    ) {
-                                                        Icon(
-                                                            Icons.Rounded.GridView,
-                                                            null,
-                                                            tint = if (isSelected) AccentBlue else Color.White.copy(0.85f),
-                                                            modifier = Modifier.size(22.dp)
-                                                        )
-                                                    }
+                                                }
+
+                                                // Layout density
+                                                Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                                                    GlassActionButton(
+                                                        icon = Icons.Rounded.GridView,
+                                                        contentDescription = "Layout density",
+                                                        accent = Color(0xFFBF5AF2),
+                                                        iconSize = 21.dp,
+                                                        selected = activeMainSheet == MainSheetType.DENSITY,
+                                                        onClick = { activeMainSheet = MainSheetType.DENSITY }
+                                                    )
                                                 }
                                             }
                                         }
@@ -3705,7 +3610,7 @@ fun MainScreen(
         }
 
         AnimatedVisibility(
-            visible = showPipelineOverlay && !uiState.showQueue,
+            visible = showPipelineOverlay && !uiState.showQueue && !showFullPlayer, // NowPlayingScreen shows its own sheet
             modifier = Modifier.fillMaxSize().zIndex(110f),
             enter = fadeIn(tween(220)),
             exit = fadeOut(tween(180))
@@ -4244,6 +4149,13 @@ fun HomeScreen(
 
     val deviceName = "Audiophile"
 
+    // Audio-mode home helpers (hero card + header stats)
+    val totalLibraryDurationMs = remember(allSongs) { allSongs.sumOf { it.durationMs } }
+    val heroSong = uiState.currentSong
+        ?: recentlyPlayed.firstOrNull()
+        ?: quickPicks.firstOrNull()
+        ?: allSongs.firstOrNull()
+
     LazyColumn(
         state = listState,
         modifier = Modifier.fillMaxSize(),
@@ -4264,156 +4176,48 @@ fun HomeScreen(
                 "GREETING" -> {
                     if (uiState.appearance.showGreetingHeader) {
                         item(key = "GREETING") {
-                            // Updated Premium Greeting Header
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 16.dp, vertical = 8.dp)
-                                    .clip(RoundedCornerShape(24.dp))
-                                    .background(
-                                        Brush.linearGradient(
-                                            listOf(Color(0xFF1A1A1A), Color(0xFF0D0D0D))
-                                        )
-                                    )
-                                    .border(
-                                        0.5.dp,
-                                        Brush.verticalGradient(
-                                            listOf(Color.White.copy(0.12f), Color.Transparent)
-                                        ),
-                                        RoundedCornerShape(24.dp)
-                                    )
-                            ) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 20.dp, vertical = 18.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        // Premium Icon with Glow
-                                        Box(
-                                            modifier = Modifier
-                                                .size(52.dp)
-                                                .clip(CircleShape)
-                                                .background(greetingColors[0].copy(alpha = 0.15f))
-                                                .border(1.dp, greetingColors[0].copy(alpha = 0.3f), CircleShape),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Icon(
-                                                imageVector = greetingIcon,
-                                                contentDescription = null,
-                                                tint = greetingColors[0].copy(alpha = 0.9f),
-                                                modifier = Modifier.size(26.dp)
-                                            )
-                                        }
-
-                                        Spacer(Modifier.width(16.dp))
-
-                                        Column(verticalArrangement = Arrangement.Center) {
-                                            Text(
-                                                text = "$greeting,",
-                                                fontSize = 13.sp,
-                                                color = Color.White.copy(0.5f),
-                                                fontWeight = FontWeight.Medium,
-                                                letterSpacing = 0.4.sp
-                                            )
-                                            Text(
-                                                text = deviceName,
-                                                fontSize = 22.sp,
-                                                color = Color.White,
-                                                fontWeight = FontWeight.Black,
-                                                letterSpacing = (-0.5).sp
-                                            )
-                                        }
+                            AudioGreetingHeader(
+                                greeting = greeting,
+                                greetingIcon = greetingIcon,
+                                accent = greetingColors[0].copy(alpha = 1f),
+                                name = deviceName,
+                                songCount = allSongs.size,
+                                favoriteCount = favorites.size,
+                                albumCount = albums.size,
+                                artistCount = artists.size,
+                                totalDurationMs = totalLibraryDurationMs
+                            )
+                        }
+                        if (heroSong != null) {
+                            item(key = "AUDIO_HERO") {
+                                AudioHeroCard(
+                                    song = heroSong,
+                                    isCurrent = uiState.currentSong?.id == heroSong.id,
+                                    isPlaying = uiState.isPlaying,
+                                    hasHistory = recentlyPlayed.isNotEmpty(),
+                                    onPlay = {
+                                        if (uiState.currentSong?.id == heroSong.id) viewModel.togglePlayPause()
+                                        else viewModel.playSong(heroSong)
                                     }
-
-                                    // Library Stats to use empty space
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .width(1.dp)
-                                                .height(32.dp)
-                                                .background(Color.White.copy(alpha = 0.08f))
-                                        )
-
-                                        Column(horizontalAlignment = Alignment.End) {
-                                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                                Text(
-                                                    text = "${allSongs.size}",
-                                                    fontSize = 16.sp,
-                                                    color = Color.White,
-                                                    fontWeight = FontWeight.Bold
-                                                )
-                                                Spacer(Modifier.width(4.dp))
-                                                Icon(
-                                                    Icons.Rounded.MusicNote,
-                                                    null,
-                                                    tint = Color.White.copy(0.3f),
-                                                    modifier = Modifier.size(12.dp)
-                                                )
-                                            }
-                                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                                Text(
-                                                    text = "${favorites.size}",
-                                                    fontSize = 14.sp,
-                                                    color = Color(0xFF00F2FF).copy(0.7f),
-                                                    fontWeight = FontWeight.Medium
-                                                )
-                                                Spacer(Modifier.width(4.dp))
-                                                Icon(
-                                                    Icons.Rounded.Favorite,
-                                                    null,
-                                                    tint = Color(0xFF00F2FF).copy(0.4f),
-                                                    modifier = Modifier.size(10.dp)
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
+                                )
+                                Spacer(Modifier.height(8.dp))
                             }
                         }
                     }
                 }
                 "ACTION_CHIPS" -> {
                     item(key = "ACTION_CHIPS") {
-                        LazyRow(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 16.dp, vertical = 8.dp),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            item {
-                                ActionChip(
-                                    label = "Shuffle All",
-                                    icon = Icons.Rounded.Shuffle,
-                                    onClick = { viewModel.shuffleAndPlay() }
-                                )
+                        AudioQuickActions(
+                            onShuffleAll = { viewModel.shuffleAndPlay() },
+                            onFavorites = {
+                                val favSongs = allSongs.filter { favorites.contains(it.id) }
+                                if (favSongs.isNotEmpty()) viewModel.playList(favSongs, 0)
+                            },
+                            onRecentlyAdded = {
+                                val recentSongs = allSongs.sortedByDescending { it.dateAdded }
+                                if (recentSongs.isNotEmpty()) viewModel.playList(recentSongs, 0)
                             }
-                            item {
-                                ActionChip(
-                                    label = "Favorites",
-                                    icon = Icons.Rounded.Favorite,
-                                    onClick = {
-                                        val favSongs = allSongs.filter { favorites.contains(it.id) }
-                                        if (favSongs.isNotEmpty()) viewModel.playList(favSongs, 0)
-                                    }
-                                )
-                            }
-                            item {
-                                ActionChip(
-                                    label = "Recently Added",
-                                    icon = Icons.Rounded.NewReleases,
-                                    onClick = {
-                                        val recentSongs = allSongs.sortedByDescending { it.dateAdded }
-                                        if (recentSongs.isNotEmpty()) viewModel.playList(recentSongs, 0)
-                                    }
-                                )
-                            }
-                        }
+                        )
                     }
                 }
                 "CLOUD_LIBRARY" -> {
@@ -4676,73 +4480,10 @@ fun HomeScreen(
                         item(key = "MADE_FOR_YOU_CONTENT") {
                             LazyRow(
                                 contentPadding = PaddingValues(horizontal = 16.dp),
-                                horizontalArrangement = Arrangement.spacedBy(16.dp)
+                                horizontalArrangement = Arrangement.spacedBy(14.dp)
                             ) {
-                                items(quickPicks.take(5), key = { "featured_${it.id}" }) { song ->
-                                    Box(
-                                        modifier = Modifier
-                                            .width(280.dp)
-                                            .height(160.dp)
-                                            .clip(RoundedCornerShape(24.dp))
-                                            .clickable { viewModel.playSong(song) }
-                                            .border(1.dp, Color.White.copy(0.1f), RoundedCornerShape(24.dp))
-                                    ) {
-                                        if (song.albumArtUri != null) {
-                                            AsyncImage(
-                                                model = song.albumArtUri,
-                                                contentDescription = null,
-                                                modifier = Modifier.fillMaxSize(),
-                                                contentScale = ContentScale.Crop,
-                                                onError = { }
-                                            )
-                                        } else {
-                                            DefaultAlbumArt(modifier = Modifier.fillMaxSize())
-                                        }
-                                        Box(
-                                            modifier = Modifier
-                                                .fillMaxSize()
-                                                .background(
-                                                    Brush.verticalGradient(
-                                                        colors = listOf(Color.Transparent, Color.Black.copy(0.85f)),
-                                                        startY = 100f
-                                                    )
-                                                )
-                                        )
-                                        Column(
-                                            modifier = Modifier
-                                                .align(Alignment.BottomStart)
-                                                .padding(20.dp)
-                                        ) {
-                                            Text(
-                                                text = "FEATURED",
-                                                color = Color(0xFF00F2FF),
-                                                fontSize = 10.sp,
-                                                fontWeight = FontWeight.Black,
-                                                style = androidx.compose.ui.text.TextStyle(letterSpacing = 2.sp)
-                                            )
-                                            Text(
-                                                text = song.title,
-                                                color = Color.White,
-                                                fontSize = 18.sp,
-                                                fontWeight = FontWeight.ExtraBold,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
-                                            Text(
-                                                text = song.artist,
-                                                color = Color.White.copy(0.7f),
-                                                fontSize = 14.sp,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
-                                        }
-
-                                        CornerPlayButton(
-                                            modifier = Modifier
-                                                .align(Alignment.BottomEnd)
-                                                .padding(16.dp)
-                                        )
-                                    }
+                                itemsIndexed(quickPicks.take(5), key = { _, s -> "featured_${s.id}" }) { index, song ->
+                                    AudioFeaturedCard(song = song, rank = index + 1) { viewModel.playSong(song) }
                                 }
                             }
                         }
@@ -4874,43 +4615,47 @@ private data class MoodData(
 @Composable
 private fun MoodTile(
     mood: MoodData,
-    modifier: Modifier = Modifier.size(width = 130.dp, height = 100.dp),
+    modifier: Modifier = Modifier.size(width = 138.dp, height = 96.dp),
     onClick: () -> Unit
 ) {
+    val shape = RoundedCornerShape(22.dp)
     Box(
         modifier = modifier
-            .clip(RoundedCornerShape(20.dp))
-            .background(
-                Brush.verticalGradient(
-                    listOf(mood.color.copy(0.2f), mood.color.copy(0.5f))
-                )
-            )
+            .clip(shape)
+            .background(Brush.linearGradient(listOf(mood.color.copy(0.62f), mood.color.copy(0.14f))))
             .border(
-                1.dp,
-                Brush.verticalGradient(
-                    listOf(Color.White.copy(0.15f), Color.Transparent)
-                ),
-                RoundedCornerShape(20.dp)
+                0.8.dp,
+                Brush.linearGradient(listOf(Color.White.copy(0.30f), mood.color.copy(0.25f))),
+                shape
             )
             .clickable { onClick() }
             .padding(14.dp)
     ) {
-        Text(
-            text = mood.label,
-            color = Color.White,
-            fontWeight = FontWeight.Bold,
-            fontSize = 15.sp,
-            modifier = Modifier.align(Alignment.TopStart)
-        )
-
         Icon(
             imageVector = mood.icon,
             contentDescription = null,
-            tint = Color.White.copy(0.3f),
+            tint = Color.White.copy(0.20f),
             modifier = Modifier
-                .size(54.dp)
+                .size(66.dp)
                 .align(Alignment.BottomEnd)
-                .offset(x = 10.dp, y = 10.dp)
+                .offset(x = 16.dp, y = 16.dp)
+        )
+        Box(
+            modifier = Modifier
+                .size(30.dp)
+                .align(Alignment.TopStart)
+                .background(Color.Black.copy(0.25f), CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(mood.icon, null, tint = Color.White, modifier = Modifier.size(17.dp))
+        }
+        Text(
+            text = mood.label,
+            color = Color.White,
+            fontWeight = FontWeight.Black,
+            fontSize = 15.sp,
+            maxLines = 1,
+            modifier = Modifier.align(Alignment.BottomStart)
         )
     }
 }
@@ -5033,27 +4778,50 @@ fun HomeSectionHeader(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = 16.dp, end = 16.dp, top = 20.dp, bottom = 8.dp),
+            .padding(start = 20.dp, end = 16.dp, top = 22.dp, bottom = 12.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(
-            text = title,
-            color = Color.White,
-            fontSize = 22.sp,
-            fontWeight = FontWeight.Bold
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier
+                    .width(4.dp)
+                    .height(20.dp)
+                    .background(
+                        Brush.verticalGradient(listOf(AudioPink, AudioViolet)),
+                        RoundedCornerShape(2.dp)
+                    )
+            )
+            Spacer(Modifier.width(10.dp))
+            Text(
+                text = title,
+                color = Color.White,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Black,
+                letterSpacing = (-0.3).sp
+            )
+        }
         if (actionText != null || actionIcon != null) {
             Row(
-                modifier = Modifier.clickable { onActionClick?.invoke() },
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .background(AudioCyan.copy(alpha = 0.10f))
+                    .border(0.5.dp, AudioCyan.copy(alpha = 0.35f), RoundedCornerShape(50))
+                    .clickable { onActionClick?.invoke() }
+                    .padding(
+                        start = 12.dp,
+                        end = if (actionIcon != null) 6.dp else 12.dp,
+                        top = 5.dp,
+                        bottom = 5.dp
+                    ),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                horizontalArrangement = Arrangement.spacedBy(2.dp)
             ) {
                 if (actionText != null) {
                     Text(
                         text = actionText,
-                        color = Color(0xFF00F2FF),
-                        fontSize = 13.sp,
+                        color = AudioCyan,
+                        fontSize = 12.sp,
                         fontWeight = FontWeight.Bold
                     )
                 }
@@ -5061,7 +4829,7 @@ fun HomeSectionHeader(
                     Icon(
                         imageVector = actionIcon,
                         contentDescription = null,
-                        tint = Color(0xFF00F2FF),
+                        tint = AudioCyan,
                         modifier = Modifier.size(16.dp)
                     )
                 }
@@ -5127,16 +4895,19 @@ fun HomeSongCard(song: com.beatraxus.app.model.Song, onClick: () -> Unit) {
 
 @Composable
 fun HomeSongItem(song: com.beatraxus.app.model.Song, onClick: () -> Unit) {
+    val artShape = RoundedCornerShape(20.dp)
     Column(
         modifier = Modifier
-            .width(140.dp)
+            .width(144.dp)
+            .clip(artShape)
             .clickable { onClick() }
     ) {
-        Surface(
+        Box(
             modifier = Modifier
-                .size(140.dp),
-            shape = RoundedCornerShape(12.dp),
-            color = Color.White.copy(0.05f)
+                .size(144.dp)
+                .clip(artShape)
+                .background(Color.White.copy(0.05f))
+                .border(0.5.dp, Color.White.copy(0.10f), artShape)
         ) {
             if (song.albumArtUri != null) {
                 AsyncImage(
@@ -5149,53 +4920,133 @@ fun HomeSongItem(song: com.beatraxus.app.model.Song, onClick: () -> Unit) {
             } else {
                 DefaultAlbumArt(modifier = Modifier.fillMaxSize())
             }
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.verticalGradient(0.55f to Color.Transparent, 1f to Color.Black.copy(0.55f))
+                    )
+            )
+            if (isHiResSong(song)) {
+                Text(
+                    "HI-RES",
+                    color = Color.Black,
+                    fontSize = 8.sp,
+                    fontWeight = FontWeight.Black,
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(8.dp)
+                        .background(AudioGold, RoundedCornerShape(5.dp))
+                        .padding(horizontal = 5.dp, vertical = 2.dp)
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(8.dp)
+                    .size(32.dp)
+                    .background(Color.Black.copy(0.55f), CircleShape)
+                    .border(1.dp, Color.White.copy(0.35f), CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Rounded.PlayArrow, null, tint = Color.White, modifier = Modifier.size(19.dp))
+            }
         }
         Spacer(Modifier.height(8.dp))
         Text(
             text = song.title,
             color = Color.White,
-            fontSize = 14.sp,
+            fontSize = 13.sp,
             fontWeight = FontWeight.Bold,
             maxLines = 1,
-            overflow = TextOverflow.Ellipsis
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(horizontal = 4.dp)
         )
         Text(
             text = song.artist,
             color = Color.White.copy(0.6f),
-            fontSize = 12.sp,
+            fontSize = 11.5.sp,
             maxLines = 1,
-            overflow = TextOverflow.Ellipsis
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(horizontal = 4.dp)
         )
     }
 }
 
 @Composable
 fun HomeGridItem(title: String, subtitle: String, artUri: android.net.Uri?, onClick: () -> Unit) {
+    val artShape = RoundedCornerShape(20.dp)
     Column(
         modifier = Modifier
             .width(150.dp)
             .clickable { onClick() }
     ) {
-        Surface(
-            modifier = Modifier.size(150.dp),
-            shape = RoundedCornerShape(16.dp),
-            color = Color.White.copy(0.1f)
-        ) {
-            if (artUri != null) {
-                AsyncImage(
-                    model = artUri,
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize(),
-                    onError = { /* fallback */ }
+        // "Record sleeve" stack: two faded cards peeking out behind the cover
+        Box(Modifier.size(width = 150.dp, height = 158.dp)) {
+            Box(
+                Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(horizontal = 22.dp)
+                    .fillMaxWidth()
+                    .height(150.dp)
+                    .clip(artShape)
+                    .background(Color.White.copy(0.07f))
+            )
+            Box(
+                Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 4.dp, start = 11.dp, end = 11.dp)
+                    .fillMaxWidth()
+                    .height(150.dp)
+                    .clip(artShape)
+                    .background(Color.White.copy(0.12f))
+            )
+            Box(
+                Modifier
+                    .align(Alignment.BottomCenter)
+                    .size(150.dp)
+                    .clip(artShape)
+                    .background(Color.White.copy(0.10f))
+                    .border(0.5.dp, Color.White.copy(0.14f), artShape)
+            ) {
+                if (artUri != null) {
+                    AsyncImage(
+                        model = artUri,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize(),
+                        onError = { /* fallback */ }
+                    )
+                } else {
+                    DefaultAlbumArt(modifier = Modifier.fillMaxSize())
+                }
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.verticalGradient(0.6f to Color.Transparent, 1f to Color.Black.copy(0.45f))
+                        )
                 )
-            } else {
-                DefaultAlbumArt(modifier = Modifier.fillMaxSize())
             }
         }
         Spacer(Modifier.height(8.dp))
-        Text(title, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1)
-        Text(subtitle, color = Color.White.copy(0.6f), fontSize = 12.sp, maxLines = 1)
+        Text(
+            title,
+            color = Color.White,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(horizontal = 4.dp)
+        )
+        Text(
+            subtitle,
+            color = Color.White.copy(0.6f),
+            fontSize = 11.5.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(horizontal = 4.dp)
+        )
     }
 }
 
@@ -5243,22 +5094,56 @@ fun HomeArtistItem(name: String, artUri: android.net.Uri?, onClick: () -> Unit) 
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
-            .width(110.dp)
+            .width(112.dp)
             .clickable { onClick() }
     ) {
-        Surface(
-            modifier = Modifier.size(110.dp),
-            shape = CircleShape,
-            color = Color.White.copy(0.1f)
+        // gradient ring around the artist photo
+        Box(
+            modifier = Modifier
+                .size(112.dp)
+                .border(
+                    2.dp,
+                    Brush.sweepGradient(listOf(AudioPink, AudioViolet, AudioCyan, AudioPink)),
+                    CircleShape
+                )
+                .padding(5.dp)
+                .clip(CircleShape)
+                .background(Color.White.copy(0.10f)),
+            contentAlignment = Alignment.Center
         ) {
-            AsyncImage(
-                model = artUri,
-                contentDescription = null,
-                contentScale = ContentScale.Crop
-            )
+            if (artUri != null) {
+                AsyncImage(
+                    model = artUri,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+            } else {
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .background(Brush.linearGradient(listOf(AudioViolet.copy(0.6f), AudioPink.copy(0.4f)))),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = name.firstOrNull()?.uppercaseChar()?.toString() ?: "?",
+                        color = Color.White,
+                        fontSize = 34.sp,
+                        fontWeight = FontWeight.Black
+                    )
+                }
+            }
         }
         Spacer(Modifier.height(8.dp))
-        Text(name, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 1, textAlign = TextAlign.Center)
+        Text(
+            name,
+            color = Color.White,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center
+        )
     }
 }
 
