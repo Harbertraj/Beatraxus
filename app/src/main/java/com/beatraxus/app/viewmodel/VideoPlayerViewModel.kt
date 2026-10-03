@@ -190,7 +190,7 @@ class VideoPlayerViewModel(
     private val _uiState = MutableStateFlow(VideoPlayerUiState(
         volume = (application.getSystemService(Context.AUDIO_SERVICE) as AudioManager).getStreamVolume(AudioManager.STREAM_MUSIC),
         maxVolume = (application.getSystemService(Context.AUDIO_SERVICE) as AudioManager).getStreamMaxVolume(AudioManager.STREAM_MUSIC),
-        isEqEnabled = application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE).getBoolean("video_eq_enabled", true),
+        isEqEnabled = application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE).getBoolean("video_eq_enabled", false),
         aspectRatio = application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE).getString("video_aspect_ratio", VideoAspectRatio.FIT.name)?.let { name ->
             val mappedName = when (name) {
                 "ORIGINAL" -> "FIT"
@@ -1164,6 +1164,12 @@ class VideoPlayerViewModel(
     private fun applyEqGains() {
         val eq = equalizer ?: return
         val state = _uiState.value
+
+        // While audio is routed to the Audio Engine (DSP Studio), the local EQ must stay off.
+        if (state.routeAudioToEngine || state.isConnectingEngineRoute) {
+            try { if (eq.enabled) eq.enabled = false } catch (_: Exception) {}
+            return
+        }
         
         try {
             if (eq.enabled != state.isEqEnabled) {
@@ -1251,7 +1257,10 @@ class VideoPlayerViewModel(
     }
 
     fun toggleEqEnabled() {
-        _uiState.update { it.copy(isEqEnabled = !it.isEqEnabled) }
+        if (_uiState.value.routeAudioToEngine || _uiState.value.isConnectingEngineRoute) return
+        val next = !_uiState.value.isEqEnabled
+        prefs.edit().putBoolean("video_eq_enabled", next).apply()
+        _uiState.update { it.copy(isEqEnabled = next) }
         applyEqGains()
     }
 
@@ -1266,6 +1275,8 @@ class VideoPlayerViewModel(
     fun setEqPreset(preset: SavedEqPreset) {
         val standardFreqs = listOf(31.25f, 62.5f, 125f, 250f, 500f, 1000f, 2000f, 4000f, 8000f, 16000f)
         val newGains = standardFreqs.map { f -> preset.bands.minByOrNull { Math.abs(it.frequencyHz - f) }?.gainDb ?: 0f }
+        if (_uiState.value.routeAudioToEngine || _uiState.value.isConnectingEngineRoute) return
+        prefs.edit().putBoolean("video_eq_enabled", true).apply()
         _uiState.update { it.copy(eqGains = newGains, selectedPreset = preset.name, isEqEnabled = true) }
         applyEqGains()
     }

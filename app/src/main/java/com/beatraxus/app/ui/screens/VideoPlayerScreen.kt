@@ -52,6 +52,7 @@ import androidx.compose.runtime.*
 import com.beatraxus.app.subtitles.ui.MxFilterChip
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
@@ -83,6 +84,8 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.media3.common.C
 import androidx.media3.common.MimeTypes
+import androidx.media3.common.Player
+import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.CaptionStyleCompat
@@ -397,52 +400,55 @@ fun VideoPlayerScreen(
             }
             .pointerInput(uiState.isLocked) {
                 if (uiState.isLocked) return@pointerInput
-                detectTransformGestures { _, _, zoom, _ ->
-                    zoomScale = (zoomScale * zoom).coerceIn(1f, 4f)
+                // Custom pinch handler: reacts on the very first pixel of movement
+                // (detectTransformGestures waits for touch-slop, which felt laggy).
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false)
+                    do {
+                        val event = awaitPointerEvent()
+                        if (event.changes.count { it.pressed } >= 2) {
+                            val zoom = event.calculateZoom()
+                            if (zoom != 1f) {
+                                zoomScale = (zoomScale * zoom).coerceIn(1f, 4f)
+                                event.changes.forEach { if (it.positionChanged()) it.consume() }
+                            }
+                        }
+                    } while (event.changes.any { it.pressed })
                 }
             }
     ) {
         // Player View
+        var playerViewRef by remember { mutableStateOf<PlayerView?>(null) }
+        val latestAspect by rememberUpdatedState(uiState.aspectRatio)
+
+        // PlayerView resets its own frame ratio on every video-size change (new video,
+        // rotation, format change). Re-apply ours right after it, on the same callback.
+        DisposableEffect(playerViewRef) {
+            val pv = playerViewRef
+            val exo = viewModel.getPlayer()
+            val listener = object : Player.Listener {
+                override fun onVideoSizeChanged(videoSize: VideoSize) {
+                    pv?.let { applyVideoAspect(it, latestAspect, videoSize) }
+                }
+            }
+            if (pv != null) exo?.addListener(listener)
+            onDispose { exo?.removeListener(listener) }
+        }
+
         AndroidView(
             factory = { ctx ->
                 PlayerView(ctx).apply {
                     player = viewModel.getPlayer()
                     useController = false
                     setBackgroundColor(android.graphics.Color.BLACK)
+                    playerViewRef = this
                 }
             },
             update = { view ->
-                val player = viewModel.getPlayer() as? androidx.media3.exoplayer.ExoPlayer
-                val contentFrame = view.findViewById<AspectRatioFrameLayout>(androidx.media3.ui.R.id.exo_content_frame)
-                
-                view.resizeMode = when (uiState.aspectRatio) {
-                    VideoAspectRatio.FIT -> {
-                        contentFrame?.setAspectRatio(0f)
-                        player?.videoScalingMode = C.VIDEO_SCALING_MODE_SCALE_TO_FIT
-                        AspectRatioFrameLayout.RESIZE_MODE_FIT
-                    }
-                    VideoAspectRatio.FILL -> {
-                        contentFrame?.setAspectRatio(0f)
-                        player?.videoScalingMode = C.VIDEO_SCALING_MODE_SCALE_TO_FIT
-                        AspectRatioFrameLayout.RESIZE_MODE_FILL
-                    }
-                    VideoAspectRatio.ZOOM -> {
-                        contentFrame?.setAspectRatio(0f)
-                        player?.videoScalingMode = C.VIDEO_SCALING_MODE_SCALE_TO_FIT_WITH_CROPPING
-                        AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-                    }
-                    VideoAspectRatio.FOUR_THREE -> {
-                        contentFrame?.setAspectRatio(4f/3f)
-                        player?.videoScalingMode = C.VIDEO_SCALING_MODE_SCALE_TO_FIT
-                        AspectRatioFrameLayout.RESIZE_MODE_FIT
-                    }
-                    VideoAspectRatio.SIXTEEN_NINE -> {
-                        contentFrame?.setAspectRatio(16f/9f)
-                        player?.videoScalingMode = C.VIDEO_SCALING_MODE_SCALE_TO_FIT
-                        AspectRatioFrameLayout.RESIZE_MODE_FIT
-                    }
-                }
-
+                // NOTE: no player.videoScalingMode changes here. Codec scaling only applies to
+                // the NEXT rendered frame, so while paused the new mode appeared "late".
+                // The frame layout (resizeMode + aspect ratio) is applied instantly instead.
+                applyVideoAspect(view, uiState.aspectRatio, uiState.videoSize)
                 
                 // Update Subtitle Styles
                 val bgColorWithOpacity = if (uiState.subtitleBackgroundOpacity > 0f) {
@@ -475,10 +481,10 @@ fun VideoPlayerScreen(
             },
             modifier = Modifier
                 .fillMaxSize()
-                .graphicsLayer(
-                    scaleX = zoomScale,
+                .graphicsLayer {
+                    scaleX = zoomScale
                     scaleY = zoomScale
-                )
+                }
                 .then(
                     if (sheetType != PlayerSheetType.NONE && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                         Modifier.graphicsLayer {
@@ -1284,6 +1290,8 @@ fun VideoSettingsSheetContent(
             lastActiveSheetTypeState.value = sheetType
         }
         val activeSheetType = lastActiveSheetTypeState.value
+        // EQ is handled by DSP Studio while video audio is routed to the Audio Engine
+        val eqLockedByEngine = uiState.routeAudioToEngine || uiState.isConnectingEngineRoute
         
         val title = when (activeSheetType) {
             PlayerSheetType.AUDIO -> "Audio Tracks"
@@ -1344,7 +1352,8 @@ fun VideoSettingsSheetContent(
 
                 if (activeSheetType == PlayerSheetType.EQUALIZER) {
                     Switch(
-                        checked = uiState.isEqEnabled,
+                        checked = uiState.isEqEnabled && !eqLockedByEngine,
+                        enabled = !eqLockedByEngine,
                         onCheckedChange = { viewModel.toggleEqEnabled() },
                         colors = SwitchDefaults.colors(checkedThumbColor = mxOrange, checkedTrackColor = mxOrange.copy(0.4f))
                     )
@@ -1398,80 +1407,114 @@ fun VideoSettingsSheetContent(
 
         // Equalizer Section
         if (activeSheetType == PlayerSheetType.EQUALIZER) {
-            LazyRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                item {
-                    FilterChip(
-                        selected = uiState.selectedPreset == "Manual",
-                        onClick = { viewModel.setEqPreset(com.beatraxus.app.model.SavedEqPreset("Manual", List(10) { com.beatraxus.app.model.ParametricEqBand(it, true, 1000f, 0f) })) },
-                        label = { Text("Manual", color = if (uiState.selectedPreset == "Manual") Color.White else Color.Unspecified) },
-                        colors = FilterChipDefaults.filterChipColors(selectedContainerColor = Color.White.copy(0.2f), selectedLabelColor = Color.White)
-                    )
-                }
-                items(uiState.availablePresets) { preset: SavedEqPreset ->
-                    MxFilterChip(
-                        selected = uiState.selectedPreset == preset.name,
-                        onClick = { viewModel.setEqPreset(preset) },
-                        label = preset.name
-                    )
-                }
-            }
-
-            Spacer(Modifier.height(20.dp))
-
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(260.dp)
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(14.dp)
-            ) {
-                val bands = listOf("31", "62", "125", "250", "500", "1k", "2k", "4k", "8k", "16k")
-                uiState.eqGains.forEachIndexed { index, gain ->
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.width(44.dp)
-                    ) {
-                        Text(
-                            "${gain.toInt()}",
-                            color = if (uiState.isEqEnabled) mxOrange else Color.Gray,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Black
+            Box(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .then(if (eqLockedByEngine) Modifier.blur(10.dp) else Modifier)
+                ) {
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    item {
+                        FilterChip(
+                            selected = uiState.selectedPreset == "Manual",
+                            onClick = { viewModel.setEqPreset(com.beatraxus.app.model.SavedEqPreset("Manual", List(10) { com.beatraxus.app.model.ParametricEqBand(it, true, 1000f, 0f) })) },
+                            label = { Text("Manual", color = if (uiState.selectedPreset == "Manual") Color.White else Color.Unspecified) },
+                            colors = FilterChipDefaults.filterChipColors(selectedContainerColor = Color.White.copy(0.2f), selectedLabelColor = Color.White)
                         )
-                        Spacer(Modifier.height(8.dp))
-                        BoxWithConstraints(
-                            modifier = Modifier
-                                .weight(1f)
-                                .fillMaxWidth(),
-                            contentAlignment = Alignment.Center
+                    }
+                    items(uiState.availablePresets) { preset: SavedEqPreset ->
+                        MxFilterChip(
+                            selected = uiState.selectedPreset == preset.name,
+                            onClick = { viewModel.setEqPreset(preset) },
+                            label = preset.name
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(20.dp))
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(260.dp)
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    val bands = listOf("31", "62", "125", "250", "500", "1k", "2k", "4k", "8k", "16k")
+                    uiState.eqGains.forEachIndexed { index, gain ->
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.width(44.dp)
                         ) {
-                            Slider(
-                                value = gain,
-                                enabled = uiState.isEqEnabled,
-                                onValueChange = { viewModel.setEqGain(index, it) },
-                                valueRange = -12f..12f,
+                            Text(
+                                "${gain.toInt()}",
+                                color = if (uiState.isEqEnabled) mxOrange else Color.Gray,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Black
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            BoxWithConstraints(
                                 modifier = Modifier
-                                    .requiredWidth(this.maxHeight)
-                                    .requiredHeight(this.maxWidth)
-                                    .graphicsLayer {
-                                        rotationZ = -90f
-                                        transformOrigin = TransformOrigin(0.5f, 0.5f)
-                                    },
-                                colors = SliderDefaults.colors(
-                                    thumbColor = mxOrange,
-                                    activeTrackColor = mxOrange,
-                                    inactiveTrackColor = Color.White.copy(0.1f)
+                                    .weight(1f)
+                                    .fillMaxWidth(),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Slider(
+                                    value = gain,
+                                    enabled = uiState.isEqEnabled,
+                                    onValueChange = { viewModel.setEqGain(index, it) },
+                                    valueRange = -12f..12f,
+                                    modifier = Modifier
+                                        .requiredWidth(this.maxHeight)
+                                        .requiredHeight(this.maxWidth)
+                                        .graphicsLayer {
+                                            rotationZ = -90f
+                                            transformOrigin = TransformOrigin(0.5f, 0.5f)
+                                        },
+                                    colors = SliderDefaults.colors(
+                                        thumbColor = mxOrange,
+                                        activeTrackColor = mxOrange,
+                                        inactiveTrackColor = Color.White.copy(0.1f)
+                                    )
                                 )
+                            }
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                bands[index],
+                                color = Color.White.copy(0.4f),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
                             )
                         }
-                        Spacer(Modifier.height(8.dp))
+                    }
+                }
+                }
+
+                if (eqLockedByEngine) {
+                    Box(
+                        modifier = Modifier
+                            .matchParentSize()
+                            .background(Color.Black.copy(alpha = 0.35f))
+                            .pointerInput(Unit) {
+                                // swallow every touch so the blurred EQ can't be used
+                                awaitPointerEventScope {
+                                    while (true) {
+                                        awaitPointerEvent().changes.forEach { it.consume() }
+                                    }
+                                }
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
                         Text(
-                            bands[index],
-                            color = Color.White.copy(0.4f),
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold
+                            text = "Audio track connected with DSP Studio (Audio mode)",
+                            color = Color.White,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.padding(horizontal = 32.dp)
                         )
                     }
                 }
@@ -1945,4 +1988,44 @@ private fun formatAudioTrackSubtitleLine(track: VideoTrackInfo): String {
 
     val parts = listOfNotNull(langStr, codecStr, channelStr)
     return if (parts.isNotEmpty()) parts.joinToString(" - ") else "Audio Track"
+}
+
+/**
+ * Applies the chosen aspect-ratio mode directly to PlayerView's content frame.
+ * FIT / FILL / ZOOM use the video's real ratio; 4:3 and 16:9 force the frame ratio.
+ */
+@UnstableApi
+private fun applyVideoAspect(view: PlayerView, mode: VideoAspectRatio, size: VideoSize) {
+    val frame = view.findViewById<AspectRatioFrameLayout>(androidx.media3.ui.R.id.exo_content_frame)
+        ?: return
+
+    var natural = if (size.width > 0 && size.height > 0) {
+        size.width * size.pixelWidthHeightRatio / size.height
+    } else 0f
+    if (natural > 0f && (size.unappliedRotationDegrees == 90 || size.unappliedRotationDegrees == 270)) {
+        natural = 1f / natural
+    }
+
+    when (mode) {
+        VideoAspectRatio.FIT -> {
+            view.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+            if (natural > 0f) frame.setAspectRatio(natural)
+        }
+        VideoAspectRatio.FILL -> {
+            view.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FILL
+            if (natural > 0f) frame.setAspectRatio(natural)
+        }
+        VideoAspectRatio.ZOOM -> {
+            view.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+            if (natural > 0f) frame.setAspectRatio(natural)
+        }
+        VideoAspectRatio.FOUR_THREE -> {
+            view.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+            frame.setAspectRatio(4f / 3f)
+        }
+        VideoAspectRatio.SIXTEEN_NINE -> {
+            view.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+            frame.setAspectRatio(16f / 9f)
+        }
+    }
 }

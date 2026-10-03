@@ -1494,8 +1494,16 @@ fun MainScreen(
                                                                     Box(modifier = Modifier.padding(horizontal = 8.dp).animateItem()) {
                                                                         com.beatraxus.app.ui.screens.library.VideoListItem(
                                                                             video = item,
-                                                                            onClick = { viewModel.playVideo(item) },
-                                                                            onLongClick = { selectedVideoForOptions = item }
+                                                                            isSelected = uiState.selectedIds.contains(item.id),
+                                                                            isMultiSelectMode = uiState.isMultiSelectMode,
+                                                                            onClick = {
+                                                                                if (uiState.isMultiSelectMode) viewModel.toggleItemSelection(item.id)
+                                                                                else viewModel.playVideo(item)
+                                                                            },
+                                                                            onLongClick = {
+                                                                                if (uiState.isMultiSelectMode) viewModel.toggleItemSelection(item.id)
+                                                                                else selectedVideoForOptions = item
+                                                                            }
                                                                         )
                                                                     }
                                                                 }
@@ -2542,11 +2550,21 @@ fun MainScreen(
                                                         isRefreshing = uiState.isLoadingVideos,
                                                         columns = videoLayoutDensity.coerceIn(1, 4),
                                                         onRefresh = { viewModel.loadVideos() },
+                                                        selectedIds = uiState.selectedIds,
+                                                        isMultiSelectMode = uiState.isMultiSelectMode,
                                                         onVideoClick = { video ->
-                                                            viewModel.playVideo(video)
+                                                            if (uiState.isMultiSelectMode) {
+                                                                viewModel.toggleItemSelection(video.id)
+                                                            } else {
+                                                                viewModel.playVideo(video)
+                                                            }
                                                         },
                                                         onVideoLongClick = { video ->
-                                                            selectedVideoForOptions = video
+                                                            if (uiState.isMultiSelectMode) {
+                                                                viewModel.toggleItemSelection(video.id)
+                                                            } else {
+                                                                selectedVideoForOptions = video
+                                                            }
                                                         }
                                                     )
                                                 }
@@ -2567,11 +2585,21 @@ fun MainScreen(
                                                         isRefreshing = uiState.isLoadingVideos,
                                                         columns = videoLayoutDensity.coerceIn(1, 4),
                                                         onRefresh = { viewModel.loadVideos() },
+                                                        selectedIds = uiState.selectedIds,
+                                                        isMultiSelectMode = uiState.isMultiSelectMode,
                                                         onVideoClick = { video ->
-                                                            viewModel.playVideo(video)
+                                                            if (uiState.isMultiSelectMode) {
+                                                                viewModel.toggleItemSelection(video.id)
+                                                            } else {
+                                                                viewModel.playVideo(video)
+                                                            }
                                                         },
                                                         onVideoLongClick = { video ->
-                                                            selectedVideoForOptions = video
+                                                            if (uiState.isMultiSelectMode) {
+                                                                viewModel.toggleItemSelection(video.id)
+                                                            } else {
+                                                                selectedVideoForOptions = video
+                                                            }
                                                         }
                                                     )
                                                 }
@@ -2582,11 +2610,21 @@ fun MainScreen(
                                                         isRefreshing = uiState.isLoadingVideos,
                                                         columns = videoLayoutDensity.coerceIn(1, 4),
                                                         onRefresh = { viewModel.loadVideos() },
+                                                        selectedIds = uiState.selectedIds,
+                                                        isMultiSelectMode = uiState.isMultiSelectMode,
                                                         onVideoClick = { video ->
-                                                            viewModel.playVideo(video)
+                                                            if (uiState.isMultiSelectMode) {
+                                                                viewModel.toggleItemSelection(video.id)
+                                                            } else {
+                                                                viewModel.playVideo(video)
+                                                            }
                                                         },
                                                         onVideoLongClick = { video ->
-                                                            selectedVideoForOptions = video
+                                                            if (uiState.isMultiSelectMode) {
+                                                                viewModel.toggleItemSelection(video.id)
+                                                            } else {
+                                                                selectedVideoForOptions = video
+                                                            }
                                                         }
                                                     )
                                                 }
@@ -2597,11 +2635,21 @@ fun MainScreen(
                                                         isRefreshing = uiState.isLoadingVideos,
                                                         columns = videoLayoutDensity.coerceIn(1, 4),
                                                         onRefresh = { viewModel.loadVideos() },
+                                                        selectedIds = uiState.selectedIds,
+                                                        isMultiSelectMode = uiState.isMultiSelectMode,
                                                         onVideoClick = { video ->
-                                                            viewModel.playVideo(video)
+                                                            if (uiState.isMultiSelectMode) {
+                                                                viewModel.toggleItemSelection(video.id)
+                                                            } else {
+                                                                viewModel.playVideo(video)
+                                                            }
                                                         },
                                                         onVideoLongClick = { video ->
-                                                            selectedVideoForOptions = video
+                                                            if (uiState.isMultiSelectMode) {
+                                                                viewModel.toggleItemSelection(video.id)
+                                                            } else {
+                                                                selectedVideoForOptions = video
+                                                            }
                                                         }
                                                     )
                                                 }
@@ -3552,7 +3600,7 @@ fun MainScreen(
             contentAlignment = Alignment.BottomEnd
         ) {
             androidx.compose.animation.AnimatedVisibility(
-                visible = showVideoFab && isVideoView && drawerProgress < 0.01f && !showFullPlayer,
+                visible = showVideoFab && isVideoView && uiState.currentView != LibraryView.HOME && drawerProgress < 0.01f && !showFullPlayer,
                 enter = scaleIn(animationSpec = tween(400)) + fadeIn(animationSpec = tween(400)),
                 exit = scaleOut(animationSpec = tween(300)) + fadeOut(animationSpec = tween(300))
             ) {
@@ -4202,75 +4250,14 @@ fun HomeScreen(
         contentPadding = PaddingValues(bottom = 140.dp)
     ) {
         if (isVideoMode) {
-            // Video Mode Specific Home Sections
-            item(key = "VIDEO_GREETING") {
-                Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 20.dp)) {
-                    Column {
-                        Text(
-                            text = "$greeting, Video Enthusiast",
-                            color = Color.White,
-                            fontSize = 24.sp,
-                            fontWeight = FontWeight.Black
-                        )
-                        Text(
-                            text = "Explore your cinematic collection",
-                            color = Color.White.copy(0.6f),
-                            fontSize = 14.sp
-                        )
-                    }
-                }
-            }
-            
-            if (uiState.continueWatching.isNotEmpty()) {
-                item(key = "CONTINUE_WATCHING") {
-                    HomeSectionHeader(
-                        title = "Continue Watching",
-                        actionText = "Resume where you left off",
-                        actionIcon = Icons.Rounded.History
-                    )
-                    com.beatraxus.app.ui.screens.library.ContinueWatchingRow(
-                        items = uiState.continueWatching,
-                        onVideoClick = { viewModel.playVideo(it) }
-                    )
-                    Spacer(Modifier.height(16.dp))
-                }
-            }
-            
-            if (videoFolders.isNotEmpty()) {
-                item(key = "VIDEO_FOLDERS_HOME") {
-                    HomeSectionHeader("Video Folders", "${videoFolders.size} locations", Icons.Rounded.FolderCopy) {
-                        viewModel.setLibraryView(LibraryView.VIDEO_FOLDERS)
-                    }
-                    LazyRow(
-                        contentPadding = PaddingValues(horizontal = 16.dp),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        items(videoFolders.take(8)) { folder ->
-                            HomeVideoFolderItem(
-                                title = folder.name,
-                                subtitle = "${folder.videoCount} videos",
-                                onClick = { viewModel.navigateToVideoFolder(folder.path, folder.name) }
-                            )
-                        }
-                    }
-                    Spacer(Modifier.height(24.dp))
-                }
-            }
-
-            if (videos.isNotEmpty()) {
-                item(key = "ALL_VIDEOS_HOME") {
-                    HomeSectionHeader("Recent Videos", "Your latest additions", Icons.Rounded.VideoLibrary) {
-                        viewModel.setLibraryView(LibraryView.VIDEO_ALL)
-                    }
-                }
-                items(videos.take(10)) { video ->
-                    VideoListItem(
-                        video = video,
-                        onClick = { viewModel.playVideo(video) },
-                        onLongClick = { /* options */ }
-                    )
-                }
-            }
+            // Video Mode Home (hero card with integrated play button) -> VideoHomeContent.kt
+            videoHomeItems(
+                viewModel = viewModel,
+                uiState = uiState,
+                videos = videos,
+                videoFolders = videoFolders,
+                greeting = greeting
+            )
         } else {
             uiState.appearance.homeScreenSectionsOrder.forEach { sectionKey ->
             when (sectionKey) {

@@ -2722,6 +2722,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             LibraryView.YEARS -> years.value.map { it.first }
             LibraryView.GENRES -> genres.value.map { it.first }
             LibraryView.PLAYLISTS -> playlists.value.map { it.id }
+            LibraryView.VIDEO_ALL, LibraryView.VIDEO_RECENTLY_ADDED, LibraryView.VIDEO_RECENTLY_PLAYED ->
+                _uiState.value.videos.map { it.id }
+            LibraryView.VIDEO_FOLDER_DETAIL ->
+                _uiState.value.videos.filter { it.folderPath == _uiState.value.currentFolderPath }.map { it.id }
             else -> emptyList()
         }
 

@@ -452,75 +452,86 @@ fun PipelineSignalPathSheet(
         label = "pulseProgress"
     )
 
-    Dialog(
-        onDismissRequest = onDismiss
-    ) {
-        val view = LocalView.current
-        DisposableEffect(Unit) {
-            val window = (view.parent as? DialogWindowProvider)?.window
-            window?.let { w ->
-                w.setDimAmount(0f)
-                w.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
-            }
-            onDispose {}
+    val view = LocalView.current
+    DisposableEffect(Unit) {
+        val window = (view.parent as? DialogWindowProvider)?.window
+        window?.let { w ->
+            w.setDimAmount(0f)
+            w.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
         }
+        onDispose {}
+    }
 
-        Surface(
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
             modifier = modifier
-                .fillMaxWidth(0.95f)
-                .fillMaxHeight(0.8f),
-            shape = RoundedCornerShape(28.dp),
-            color = Color.Transparent
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) 0.35f else 0.12f))
+                .clickable(onClick = onDismiss),
+            contentAlignment = Alignment.Center
         ) {
-            Box(
+            val screenHeight = LocalConfiguration.current.screenHeightDp.dp
+            Surface(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .background(
-                        Brush.verticalGradient(
-                            colors = listOf(
-                                Color(0xFF14141B).copy(alpha = 0.96f),
-                                Color(0xFF0F0F14).copy(alpha = 0.96f)
+                    .fillMaxWidth(0.96f)
+                    .widthIn(max = 520.dp)
+                    .heightIn(min = screenHeight * 0.70f, max = screenHeight * 0.92f)
+                    .clickable(onClick = {}),
+                shape = RoundedCornerShape(28.dp),
+                color = Color.Transparent
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(
+                            Brush.verticalGradient(
+                                colors = listOf(
+                                    Color(0xFF14141B).copy(alpha = 0.96f),
+                                    Color(0xFF0F0F14).copy(alpha = 0.96f)
+                                )
                             )
                         )
-                    )
-                    .border(
-                        BorderStroke(1.dp, Color.White.copy(alpha = 0.10f)),
-                        RoundedCornerShape(28.dp)
-                    )
-                    .padding(20.dp)
-            ) {
-                Column(modifier = Modifier.fillMaxSize()) {
-                    // Header
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(bottom = 12.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "SIGNAL PATH",
-                                style = MaterialTheme.typography.titleSmall.copy(
-                                    fontWeight = FontWeight.ExtraBold,
-                                    letterSpacing = 2.sp,
-                                    fontSize = 16.sp
-                                ),
-                                color = Color.White.copy(alpha = 0.70f)
-                            )
-                            Spacer(Modifier.height(6.dp))
-                            Text(
-                                text = verdict.summary,
-                                style = MaterialTheme.typography.bodySmall.copy(
-                                    fontFamily = FontFamily.Monospace,
-                                    fontSize = 12.sp,
-                                    lineHeight = 16.sp
-                                ),
-                                color = Color.White.copy(alpha = 0.90f),
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
+                        .border(
+                            BorderStroke(1.dp, Color.White.copy(alpha = 0.10f)),
+                            RoundedCornerShape(28.dp)
+                        )
+                        .padding(24.dp)
+                ) {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        // Header
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 12.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "SIGNAL PATH",
+                                    style = MaterialTheme.typography.titleSmall.copy(
+                                        fontWeight = FontWeight.ExtraBold,
+                                        letterSpacing = 2.sp,
+                                        fontSize = 18.sp
+                                    ),
+                                    color = Color.White.copy(alpha = 0.70f)
+                                )
+                                Spacer(Modifier.height(6.dp))
+                                Text(
+                                    text = verdict.summary,
+                                    style = MaterialTheme.typography.bodySmall.copy(
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 13.sp,
+                                        lineHeight = 18.sp
+                                    ),
+                                    color = Color.White.copy(alpha = 0.90f),
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
 
                             // Verdict Pill
                             val pillColor = Color(verdict.type.colorHex)
@@ -583,7 +594,7 @@ fun PipelineSignalPathSheet(
                                     Column {
                                         Text(
                                             text = "LATENCY",
-                                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp, fontWeight = FontWeight.Bold),
+                                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 12.sp, fontWeight = FontWeight.Bold),
                                             color = Color.White.copy(alpha = 0.5f)
                                         )
                                         val latencyMs = if (uiState.outputSampleRate > 0) (uiState.dsp.currentLatencyFrames * 1000f / uiState.outputSampleRate) else 0f
@@ -592,7 +603,7 @@ fun PipelineSignalPathSheet(
                                             style = MaterialTheme.typography.bodySmall.copy(
                                                 fontWeight = FontWeight.SemiBold,
                                                 fontFamily = FontFamily.Monospace,
-                                                fontSize = 14.sp
+                                                fontSize = 15.sp
                                             ),
                                             color = Color.White
                                         )
@@ -600,7 +611,7 @@ fun PipelineSignalPathSheet(
                                     Column {
                                         Text(
                                             text = "HEADROOM",
-                                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp, fontWeight = FontWeight.Bold),
+                                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 12.sp, fontWeight = FontWeight.Bold),
                                             color = Color.White.copy(alpha = 0.5f)
                                         )
                                         Text(
@@ -608,7 +619,7 @@ fun PipelineSignalPathSheet(
                                             style = MaterialTheme.typography.bodySmall.copy(
                                                 fontWeight = FontWeight.SemiBold,
                                                 fontFamily = FontFamily.Monospace,
-                                                fontSize = 14.sp
+                                                fontSize = 15.sp
                                             ),
                                             color = Color.White
                                         )
@@ -616,7 +627,7 @@ fun PipelineSignalPathSheet(
                                     Column {
                                         Text(
                                             text = "UNDERRUNS",
-                                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp, fontWeight = FontWeight.Bold),
+                                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 12.sp, fontWeight = FontWeight.Bold),
                                             color = Color.White.copy(alpha = 0.5f)
                                         )
                                         Text(
@@ -624,7 +635,7 @@ fun PipelineSignalPathSheet(
                                             style = MaterialTheme.typography.bodySmall.copy(
                                                 fontWeight = FontWeight.SemiBold,
                                                 fontFamily = FontFamily.Monospace,
-                                                fontSize = 14.sp
+                                                fontSize = 15.sp
                                             ),
                                             color = if (uiState.underrunCount > 0) Color(0xFFFF5252) else Color.White
                                         )
@@ -634,7 +645,7 @@ fun PipelineSignalPathSheet(
                             Spacer(Modifier.height(6.dp))
                             Text(
                                 text = verdict.oneLiner,
-                                style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                                style = MaterialTheme.typography.bodySmall.copy(fontSize = 13.sp),
                                 color = Color.White.copy(alpha = 0.65f),
                                 maxLines = 2,
                                 overflow = TextOverflow.Ellipsis
@@ -645,6 +656,7 @@ fun PipelineSignalPathSheet(
             }
         }
     }
+}
 
 @Composable
 fun CompactStageRow(

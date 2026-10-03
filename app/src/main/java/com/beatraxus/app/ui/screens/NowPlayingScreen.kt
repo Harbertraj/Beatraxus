@@ -563,14 +563,23 @@ fun NowPlayingScreen(
                             .offset(y = (-3).dp),
                         contentAlignment = Alignment.Center
                     ) {
+                        // Lyrics toggle: art melts into its own bottom-center (scale -> 0 + fade),
+                        // and grows back out of the same point when lyrics close.
                         val albumArtAlpha by animateFloatAsState(
                             targetValue = if (showLyrics) 0f else 1f,
-                            animationSpec = tween(600),
+                            animationSpec = tween(
+                                durationMillis = if (showLyrics) 380 else 520,
+                                delayMillis = if (showLyrics) 0 else 90,
+                                easing = LinearOutSlowInEasing
+                            ),
                             label = "albumArtAlpha"
                         )
                         val albumArtScale by animateFloatAsState(
-                            targetValue = if (showLyrics) 0.85f else 1f,
-                            animationSpec = tween(600),
+                            targetValue = if (showLyrics) 0f else 1f,
+                            animationSpec = tween(
+                                durationMillis = if (showLyrics) 560 else 620,
+                                easing = FastOutSlowInEasing
+                            ),
                             label = "albumArtScale"
                         )
 
@@ -582,20 +591,22 @@ fun NowPlayingScreen(
                                     alpha = albumArtAlpha
                                     scaleX = albumArtScale
                                     scaleY = albumArtScale
+                                    // bottom-center of the album art
+                                    transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, 1f)
                                 }
                         ) {
                             Surface(
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .shadow(
-                                        elevation = if (showLyrics) 0.dp else 24.dp,
+                                        elevation = 24.dp,
                                         shape = RoundedCornerShape(28.dp)
                                     ),
                                 shape = RoundedCornerShape(28.dp),
-                                color = if (showLyrics) Color.Transparent else Color(0xFF12121A),
+                                color = Color(0xFF12121A),
                                 border = BorderStroke(
                                     1.dp, 
-                                    Color.White.copy(alpha = if (showLyrics) 0f else 0.14f)
+                                    Color.White.copy(alpha = 0.14f)
                                 )
                             ) {
                                 Box(
@@ -758,8 +769,8 @@ fun NowPlayingScreen(
 
                         androidx.compose.animation.AnimatedVisibility(
                             visible = showLyrics,
-                            enter = fadeIn(tween(500)) + scaleIn(initialScale = 1.05f, animationSpec = tween(500)),
-                            exit = fadeOut(tween(400)) + scaleOut(targetScale = 1.05f, animationSpec = tween(400))
+                            enter = fadeIn(tween(450, delayMillis = 160)) + scaleIn(initialScale = 1.05f, animationSpec = tween(450, delayMillis = 160)),
+                            exit = fadeOut(tween(300)) + scaleOut(targetScale = 1.05f, animationSpec = tween(300))
                         ) {
                             Box(
                                 modifier = Modifier
@@ -1208,14 +1219,14 @@ fun NowPlayingScreen(
                 onDismissRequest = { showLyricsSourcesSheet = false },
                 sheetState = lyricsSheetState,
                 containerColor = Color.Transparent,
-                scrimColor = Color.Black.copy(alpha = 0.8f),
+                scrimColor = popupScrimColor(),
                 dragHandle = null
             ) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(topStart = 42.dp, topEnd = 42.dp))
-                        .background(Color(0xFF0F0E0E))
+                        .background(Color(0xFF0F0E0E).copy(alpha = POPUP_PANEL_ALPHA))
                 ) {
                     if (uiState.appearance.nowPlayingBackgroundMode == NowPlayingBackgroundMode.BLUR) {
                         AsyncImage(
@@ -2391,6 +2402,12 @@ private fun fmtSleepTime(seconds: Int): String {
 // Removed old string-based Pipeline overlay builders
 
 @OptIn(ExperimentalMaterial3Api::class)
+/** Shared popup look: same panel opacity + dim level as Song Info / Signal Path popups. */
+private const val POPUP_PANEL_ALPHA = 0.96f
+
+private fun popupScrimColor(): Color =
+    Color.Black.copy(alpha = if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.S) 0.35f else 0.12f)
+
 @Composable
 private fun SleepTimerSheet(
     albumArtUri: Uri?,
@@ -2422,14 +2439,14 @@ private fun SleepTimerSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         containerColor = Color.Transparent,
-        scrimColor = Color.Black.copy(alpha = 0.8f),
+        scrimColor = popupScrimColor(),
         dragHandle = null
     ) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(topStart = 42.dp, topEnd = 42.dp))
-                .background(Color(0xFF0F0E0E))
+                .background(Color(0xFF0F0E0E).copy(alpha = POPUP_PANEL_ALPHA))
         ) {
             // Background Layer with enhanced blur and subtle animation
             if (uiState.appearance.nowPlayingBackgroundMode == NowPlayingBackgroundMode.BLUR) {

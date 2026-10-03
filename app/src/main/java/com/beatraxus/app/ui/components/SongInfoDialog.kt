@@ -1,6 +1,13 @@
 package com.beatraxus.app.ui.components
 
+import android.os.Build
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -45,19 +52,54 @@ fun SongInfoDialog(
 ) {
     val context = LocalContext.current
 
-    Dialog(onDismissRequest = onDismiss) {
-        Surface(
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
             modifier = Modifier
-                .fillMaxWidth(0.95f)
-                .fillMaxHeight(0.8f),
-            shape = RoundedCornerShape(28.dp),
-            color = BgDeep,
-            border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(0.1f))
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) 0.35f else 0.12f))
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = onDismiss
+                ),
+            contentAlignment = Alignment.Center
         ) {
-            Column(
+            val screenHeight = LocalConfiguration.current.screenHeightDp.dp
+            Surface(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .padding(20.dp)
+                    .fillMaxWidth(0.96f)
+                    .widthIn(max = 520.dp)
+                    .heightIn(min = screenHeight * 0.70f, max = screenHeight * 0.92f)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = {}
+                    ),
+                shape = RoundedCornerShape(28.dp),
+                color = Color.Transparent
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(
+                            Brush.verticalGradient(
+                                colors = listOf(
+                                    Color(0xFF14141B).copy(alpha = 0.96f),
+                                    Color(0xFF0F0F14).copy(alpha = 0.96f)
+                                )
+                            )
+                        )
+                        .border(
+                            BorderStroke(1.dp, Color.White.copy(alpha = 0.10f)),
+                            RoundedCornerShape(28.dp)
+                        )
+                        .padding(24.dp)
+                ) {
+            Column(
+                modifier = Modifier.fillMaxWidth()
             ) {
                 Row(
                     modifier = Modifier
@@ -210,6 +252,8 @@ fun SongInfoDialog(
                     shape = RoundedCornerShape(16.dp)
                 ) {
                     Text("Dismiss", color = Color.White, fontWeight = FontWeight.Bold)
+                }
+            }
                 }
             }
         }
