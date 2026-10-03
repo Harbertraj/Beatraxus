@@ -67,6 +67,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.beatraxus.app.model.AppearanceConfig
+import com.beatraxus.app.model.NowPlayingBackgroundMode
 import com.beatraxus.app.model.Song
 import java.util.Locale
 
@@ -183,6 +185,14 @@ private fun AudioStatPill(icon: ImageVector, text: String, tint: Color) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Hero card with spinning vinyl
+//
+// Background follows Settings > Appearance > Mini Player Background (same style as the
+// Now Playing bar), so the card and the bar always match.
+//
+// Layout (fixed rows, so a HI-RES badge or a 2-line title can never push the play button):
+//   top    : status chip  [+ HI-RES chip]
+//   middle : title / artist / quality text   (takes the remaining space)
+//   bottom : play/pause button + equalizer bars
 // ─────────────────────────────────────────────────────────────────────────────
 @Composable
 fun AudioHeroCard(
@@ -190,7 +200,9 @@ fun AudioHeroCard(
     isCurrent: Boolean,
     isPlaying: Boolean,
     hasHistory: Boolean,
-    onPlay: () -> Unit
+    onPlay: () -> Unit,
+    appearance: AppearanceConfig = AppearanceConfig(),
+    dominantColor: Color = AudioViolet
 ) {
     val playingNow = isCurrent && isPlaying
     val label = when {
@@ -213,14 +225,16 @@ fun AudioHeroCard(
 
     val shape = RoundedCornerShape(30.dp)
     val quality = remember(song) { audioQualityLabel(song) }
+    val hiRes = remember(song) { isHiResSong(song) }
+    val accent = if (isCurrent) dominantColor else AudioViolet
 
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp)
-            .shadow(20.dp, shape, ambientColor = AudioViolet, spotColor = AudioPink)
+            .shadow(16.dp, shape, ambientColor = AudioViolet, spotColor = AudioPink)
             .clip(shape)
-            .height(200.dp)
+            .height(212.dp)
             .background(AudioInk)
             .border(
                 BorderStroke(
@@ -231,44 +245,20 @@ fun AudioHeroCard(
             )
             .clickable(onClick = onPlay)
     ) {
-        // Blurred artwork backdrop (blur needs Android 12+, older devices just see the scrim)
-        if (song.albumArtUri != null) {
-            AsyncImage(
-                model = song.albumArtUri,
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .graphicsLayer {
-                        scaleX = 1.3f
-                        scaleY = 1.3f
-                    }
-                    .blur(30.dp),
-                onError = { }
-            )
-        } else {
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .background(
-                        Brush.linearGradient(
-                            listOf(AudioViolet.copy(0.55f), AudioPink.copy(0.35f), AudioInk)
-                        )
-                    )
-            )
-        }
-        // readability scrim (left darker for the text, right lighter for the record)
+        HeroBackground(song = song, appearance = appearance, accent = accent)
+
+        // very light left-side readability tint (no heavy dark blotch behind the text any more)
         Box(
             Modifier
                 .fillMaxSize()
                 .background(
                     Brush.horizontalGradient(
-                        0f to AudioInk.copy(0.90f),
-                        0.55f to AudioInk.copy(0.58f),
-                        1f to AudioInk.copy(0.28f)
+                        0f to Color.Black.copy(0.28f),
+                        0.65f to Color.Transparent
                     )
                 )
         )
+
         // soft coloured glow behind the record
         Box(
             Modifier
@@ -277,7 +267,7 @@ fun AudioHeroCard(
                     val c = Offset(size.width * 0.82f, size.height * 0.5f)
                     drawCircle(
                         brush = Brush.radialGradient(
-                            listOf(AudioPink.copy(0.32f), AudioViolet.copy(0.12f), Color.Transparent),
+                            listOf(AudioPink.copy(0.26f), AudioViolet.copy(0.10f), Color.Transparent),
                             center = c,
                             radius = size.height * 0.95f
                         ),
@@ -297,35 +287,56 @@ fun AudioHeroCard(
                 .size(180.dp)
         )
 
-        // Text + controls
         Column(
             modifier = Modifier
                 .fillMaxHeight()
-                .padding(start = 20.dp, end = 128.dp, top = 16.dp, bottom = 16.dp),
-            verticalArrangement = Arrangement.SpaceBetween
+                .padding(start = 20.dp, end = 128.dp, top = 16.dp, bottom = 16.dp)
         ) {
-            Row(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(50))
-                    .background(Color.Black.copy(0.45f))
-                    .border(0.5.dp, Color.White.copy(0.2f), RoundedCornerShape(50))
-                    .padding(horizontal = 11.dp, vertical = 5.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Box(Modifier.size(7.dp).background(if (playingNow) AudioPink else AudioCyan, CircleShape))
-                Spacer(Modifier.width(7.dp))
-                Text(label, color = Color.White, fontSize = 9.5.sp, fontWeight = FontWeight.Black, letterSpacing = 1.4.sp)
+            // ── top: status chip (+ HI-RES) ──
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .background(Color.Black.copy(0.35f))
+                        .border(0.5.dp, Color.White.copy(0.2f), RoundedCornerShape(50))
+                        .padding(horizontal = 11.dp, vertical = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(Modifier.size(7.dp).background(if (playingNow) AudioPink else AudioCyan, CircleShape))
+                    Spacer(Modifier.width(7.dp))
+                    Text(label, color = Color.White, fontSize = 9.5.sp, fontWeight = FontWeight.Black, letterSpacing = 1.4.sp, maxLines = 1)
+                }
+                if (hiRes) {
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        "HI-RES",
+                        color = Color.Black,
+                        fontSize = 8.5.sp,
+                        fontWeight = FontWeight.Black,
+                        maxLines = 1,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(AudioGold)
+                            .padding(horizontal = 6.dp, vertical = 3.dp)
+                    )
+                }
             }
 
-            Column {
+            // ── middle: title / artist / quality ──
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                verticalArrangement = Arrangement.Center
+            ) {
                 Text(
                     text = song.title,
                     color = Color.White,
-                    fontSize = 19.sp,
+                    fontSize = 18.sp,
                     fontWeight = FontWeight.Black,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
-                    lineHeight = 23.sp
+                    lineHeight = 22.sp
                 )
                 Spacer(Modifier.height(2.dp))
                 Text(
@@ -337,37 +348,24 @@ fun AudioHeroCard(
                     overflow = TextOverflow.Ellipsis
                 )
                 if (quality != null) {
-                    Spacer(Modifier.height(8.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (isHiResSong(song)) {
-                            Text(
-                                "HI-RES",
-                                color = Color.Black,
-                                fontSize = 8.5.sp,
-                                fontWeight = FontWeight.Black,
-                                modifier = Modifier
-                                    .background(AudioGold, RoundedCornerShape(5.dp))
-                                    .padding(horizontal = 5.dp, vertical = 2.dp)
-                            )
-                            Spacer(Modifier.width(6.dp))
-                        }
-                        Text(
-                            quality,
-                            color = Color.White.copy(0.55f),
-                            fontSize = 10.5.sp,
-                            fontWeight = FontWeight.Medium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = quality,
+                        color = if (hiRes) AudioGold.copy(alpha = 0.9f) else Color.White.copy(0.55f),
+                        fontSize = 10.5.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 }
             }
 
+            // ── bottom: play / pause + equalizer ──
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
                     modifier = Modifier
                         .size(50.dp)
-                        .shadow(12.dp, CircleShape, ambientColor = AudioPink, spotColor = AudioPink)
+                        .shadow(10.dp, CircleShape, ambientColor = AudioPink, spotColor = AudioPink)
                         .clip(CircleShape)
                         .background(Brush.linearGradient(listOf(AudioPink, AudioViolet)))
                         .clickable(role = Role.Button, onClick = onPlay)
@@ -385,6 +383,52 @@ fun AudioHeroCard(
                 }
                 Spacer(Modifier.width(14.dp))
                 EqBars(active = playingNow, color = AudioCyan)
+            }
+        }
+    }
+}
+
+/** Card background driven by the Mini Player Background appearance settings. */
+@Composable
+private fun HeroBackground(song: Song, appearance: AppearanceConfig, accent: Color) {
+    Box(Modifier.fillMaxSize()) {
+        when (appearance.miniPlayerBackgroundMode) {
+            NowPlayingBackgroundMode.BLACK -> {
+                Box(Modifier.fillMaxSize().background(AudioInk))
+            }
+
+            NowPlayingBackgroundMode.SOLID -> {
+                Box(Modifier.fillMaxSize().background(accent.copy(alpha = appearance.miniPlayerSolidColorIntensity.coerceIn(0f, 1f))))
+                Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = appearance.miniPlayerSolidColorDarkness.coerceIn(0f, 1f))))
+            }
+
+            NowPlayingBackgroundMode.BLUR -> {
+                if (song.albumArtUri != null) {
+                    AsyncImage(
+                        model = song.albumArtUri,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer {
+                                scaleX = 1.3f
+                                scaleY = 1.3f
+                            }
+                            .blur(appearance.miniPlayerBlurIntensity.coerceIn(0f, 100f).dp),
+                        onError = { }
+                    )
+                } else {
+                    Box(
+                        Modifier
+                            .fillMaxSize()
+                            .background(
+                                Brush.linearGradient(
+                                    listOf(AudioViolet.copy(0.55f), AudioPink.copy(0.35f), AudioInk)
+                                )
+                            )
+                    )
+                }
+                Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = appearance.miniPlayerBlurDarkness.coerceIn(0f, 1f))))
             }
         }
     }

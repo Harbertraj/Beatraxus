@@ -601,7 +601,8 @@ fun NowPlayingScreen(
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .shadow(
-                                        elevation = 24.dp,
+                                        // Shadow fades out before the art shrinks, so no dark shape is left behind
+                                        elevation = 24.dp * ((albumArtScale - 0.9f) / 0.1f).coerceIn(0f, 1f),
                                         shape = RoundedCornerShape(28.dp)
                                     ),
                                 shape = RoundedCornerShape(28.dp),
@@ -1222,7 +1223,8 @@ fun NowPlayingScreen(
                 onDismissRequest = { showLyricsSourcesSheet = false },
                 sheetState = lyricsSheetState,
                 containerColor = Color.Transparent,
-                scrimColor = popupScrimColor(),
+                // Lyrics source popup dims the now-playing screen a bit more than other popups
+                scrimColor = Color.Black.copy(alpha = if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.S) 0.6f else 0.42f),
                 dragHandle = null
             ) {
                 Box(

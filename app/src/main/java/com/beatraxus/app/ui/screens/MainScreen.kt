@@ -11,6 +11,8 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -500,6 +502,9 @@ fun MainScreen(
         }
     }
     var activeMainSheet by remember { mutableStateOf<MainSheetType?>(null) }
+    var sortAnchor by remember { mutableStateOf(Rect.Zero) }
+    var cloudAnchor by remember { mutableStateOf(Rect.Zero) }
+    var densityAnchor by remember { mutableStateOf(Rect.Zero) }
     var selectedSongForOptions by remember { mutableStateOf<com.beatraxus.app.model.Song?>(null) }
     var selectedVideoForOptions by remember { mutableStateOf<com.beatraxus.app.model.Video?>(null) }
     var reopenSongOptionsInfo by remember { mutableStateOf(false) }
@@ -1200,56 +1205,35 @@ fun MainScreen(
                                             else -> true
                                         }
 
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            // Shuffle All
-                                            if (canShufflePlay && uiState.currentView != LibraryView.HOME) {
-                                                Box(
-                                                    modifier = Modifier.weight(3.5f),
-                                                    contentAlignment = Alignment.Center
-                                                ) {
-                                                    ShuffleAllPill(onClick = { viewModel.shuffleAndPlay() })
-                                                }
-                                            }
-
-                                            if (uiState.currentView != LibraryView.HOME) {
-                                                // Sort / Filter
-                                                val isCloud = uiState.currentView == LibraryView.CLOUD
-                                                Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                                                    GlassActionButton(
+                                        if (uiState.currentView != LibraryView.HOME) {
+                                            val isCloud = uiState.currentView == LibraryView.CLOUD
+                                            LibraryActionStrip(
+                                                showShuffle = canShufflePlay,
+                                                onShuffle = { viewModel.shuffleAndPlay() },
+                                                actions = listOf(
+                                                    StripAction(
                                                         icon = if (isCloud) Icons.Rounded.FilterList else Icons.AutoMirrored.Rounded.Sort,
                                                         contentDescription = if (isCloud) "Filter" else "Sort",
                                                         accent = Color(0xFF00F2FF),
                                                         selected = activeMainSheet == MainSheetType.SORT,
-                                                        onClick = { activeMainSheet = MainSheetType.SORT }
-                                                    )
-                                                }
-
-                                                // Cloud
-                                                Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                                                    GlassActionButton(
+                                                        onClick = { r -> sortAnchor = r; activeMainSheet = MainSheetType.SORT }
+                                                    ),
+                                                    StripAction(
                                                         icon = Icons.Rounded.Cloud,
                                                         contentDescription = "Cloud",
                                                         accent = AccentBlue,
                                                         selected = activeMainSheet == MainSheetType.CLOUD,
-                                                        onClick = { activeMainSheet = MainSheetType.CLOUD }
-                                                    )
-                                                }
-
-                                                // Layout density
-                                                Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                                                    GlassActionButton(
+                                                        onClick = { r -> cloudAnchor = r; activeMainSheet = MainSheetType.CLOUD }
+                                                    ),
+                                                    StripAction(
                                                         icon = Icons.Rounded.GridView,
                                                         contentDescription = "Layout density",
                                                         accent = Color(0xFFBF5AF2),
-                                                        iconSize = 21.dp,
                                                         selected = activeMainSheet == MainSheetType.DENSITY,
-                                                        onClick = { activeMainSheet = MainSheetType.DENSITY }
+                                                        onClick = { r -> densityAnchor = r; activeMainSheet = MainSheetType.DENSITY }
                                                     )
-                                                }
-                                            }
+                                                )
+                                            )
                                         }
                                     }
                                 }
@@ -3076,11 +3060,17 @@ fun MainScreen(
 
                                                 Spacer(Modifier.width(12.dp))
 
-                                                Column(Modifier.weight(1f)) {
+                                                // Tight vertical stack: explicit line heights remove the big
+                                                // default gap between title, artist and runtime.
+                                                Column(
+                                                    modifier = Modifier.weight(1f),
+                                                    verticalArrangement = Arrangement.spacedBy(1.dp, Alignment.CenterVertically)
+                                                ) {
                                                     Text(
                                                         text = uiState.currentSong?.title ?: "Unknown",
                                                         color = Color.White,
                                                         fontSize = 15.sp,
+                                                        lineHeight = 18.sp,
                                                         fontWeight = FontWeight.Bold,
                                                         maxLines = 1,
                                                         overflow = TextOverflow.Ellipsis
@@ -3089,12 +3079,13 @@ fun MainScreen(
                                                         Text(
                                                             text = if (isFromVideo) "Playing in Background" else (uiState.currentSong?.artist ?: "Unknown Artist"),
                                                             color = Color.White.copy(0.7f),
-                                                            fontSize = 13.sp,
+                                                            fontSize = 12.sp,
+                                                            lineHeight = 15.sp,
                                                             maxLines = 1,
                                                             overflow = TextOverflow.Ellipsis,
                                                             modifier = Modifier.weight(1f, fill = false)
                                                         )
-                                                        Spacer(Modifier.width(8.dp))
+                                                        Spacer(Modifier.width(6.dp))
                                                         MiniPlayerTimeText(
                                                             progressProvider = { progressMs },
                                                             duration = uiState.currentSong?.durationMs ?: 0L
@@ -3230,8 +3221,8 @@ fun MainScreen(
                             )
                         }
 
-                        // Integrated Main Sheets (Replacing Popups)
-                        if (activeMainSheet != null) {
+                        // Cast keeps its bottom sheet
+                        if (activeMainSheet == MainSheetType.CAST) {
                             ModalBottomSheet(
                                 onDismissRequest = { activeMainSheet = null },
                                 modifier = Modifier.fillMaxHeight(0.6f),
@@ -3240,82 +3231,95 @@ fun MainScreen(
                                 shape = RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp),
                                 tonalElevation = 8.dp
                             ) {
-                                when (activeMainSheet) {
-                                    MainSheetType.SORT -> SortSheetContent(viewModel, uiState, onDismiss = { activeMainSheet = null })
-                                    MainSheetType.CAST -> {
-                                        val context = LocalContext.current
-                                        CastSheetContent(
-                                            currentSong = uiState.currentSong,
-                                            onCast = { route ->
-                                                uiState.currentSong?.let { song ->
-                                                    com.beatraxus.app.cast.CastManager.castSong(context, route, song, song.uri.toString())
-                                                }
-                                            },
-                                            onDismiss = { activeMainSheet = null }
-                                        )
-                                    }
-                                    MainSheetType.CLOUD -> {
-                                        val allCloudAccounts = uiState.driveAccounts.map {
-                                            CloudAccountUi(it.email, it.accountName, it.enabled, com.beatraxus.app.model.SongSource.GDRIVE)
-                                        } + uiState.dropboxAccounts.map {
-                                            CloudAccountUi(it.email, it.accountName, it.enabled, com.beatraxus.app.model.SongSource.DROPBOX)
-                                        } + uiState.onedriveAccounts.map {
-                                            CloudAccountUi(it.email, it.accountName, it.enabled, com.beatraxus.app.model.SongSource.ONEDRIVE)
-                                        } + uiState.boxAccounts.map {
-                                            CloudAccountUi(it.email, it.accountName, it.enabled, com.beatraxus.app.model.SongSource.BOX)
-                                        } + uiState.nextcloudAccounts.map {
-                                            CloudAccountUi(it.username, it.displayName, it.enabled, com.beatraxus.app.model.SongSource.NEXTCLOUD)
+                                val context = LocalContext.current
+                                CastSheetContent(
+                                    currentSong = uiState.currentSong,
+                                    onCast = { route ->
+                                        uiState.currentSong?.let { song ->
+                                            com.beatraxus.app.cast.CastManager.castSong(context, route, song, song.uri.toString())
                                         }
-                                        val telegramChannels = uiState.telegramChannels
-                                        CloudSheetContent(
-                                            accounts = allCloudAccounts,
-                                            telegramChannels = telegramChannels,
-                                            onSelectAccount = { email -> viewModel.setLibraryView(LibraryView.CLOUD, email) },
-                                            onSelectTelegramChannel = { url -> viewModel.setLibraryViewTelegram(url) },
-                                            onRefreshAccount = { account ->
-                                                when (account.source) {
-                                                    com.beatraxus.app.model.SongSource.GDRIVE -> viewModel.scanDriveAccount(account.email)
-                                                    com.beatraxus.app.model.SongSource.DROPBOX -> viewModel.scanDropboxAccount(account.email)
-                                                    com.beatraxus.app.model.SongSource.ONEDRIVE -> viewModel.scanOneDriveAccount(account.email)
-                                                    com.beatraxus.app.model.SongSource.BOX -> viewModel.scanBoxAccount(account.email)
-                                                    com.beatraxus.app.model.SongSource.NEXTCLOUD -> {
-                                                        val nc = uiState.nextcloudAccounts.find { it.username == account.email }
-                                                        if (nc != null) viewModel.scanNextcloudAccount(nc.serverUrl, nc.username)
-                                                    }
-                                                    else -> {}
-                                                }
-                                            },
-                                            onSyncTelegramChannel = { url -> viewModel.syncTelegramChannel(url) },
-                                            onDismiss = { activeMainSheet = null }
-                                        )
-                                    }
-                                    MainSheetType.DENSITY -> {
-                                        val isGrid = uiState.currentView in listOf(
-                                            LibraryView.ALBUMS, LibraryView.ARTISTS, LibraryView.FOLDERS,
-                                            LibraryView.YEARS, LibraryView.GENRES, LibraryView.PLAYLISTS
-                                        )
-                                        val isVideo = uiState.currentView in listOf(
-                                            LibraryView.VIDEO_ALL, LibraryView.VIDEO_FOLDERS,
-                                            LibraryView.VIDEO_RECENTLY_ADDED, LibraryView.VIDEO_RECENTLY_PLAYED,
-                                            LibraryView.VIDEO_FOLDER_DETAIL
-                                        )
-                                        
-                                        LayoutDensitySheetContent(
-                                            isGrid = isGrid,
-                                            isVideo = isVideo,
-                                            categoryGridColumns = categoryGridColumns,
-                                            onCategoryGridColumnsChange = { categoryGridColumns = it },
-                                            trackLayoutDensity = trackLayoutDensity,
-                                            onTrackLayoutDensityChange = { trackLayoutDensity = it },
-                                            videoLayoutDensity = videoLayoutDensity,
-                                            onVideoLayoutDensityChange = { videoLayoutDensity = it },
-                                            onDismiss = { activeMainSheet = null }
-                                        )
-                                    }
-                                    else -> {}
-                                }
+                                    },
+                                    onDismiss = { activeMainSheet = null }
+                                )
                                 Spacer(modifier = Modifier.height(24.dp))
                             }
+                        }
+
+                        // Sort / Filter / Cloud / Density: small dropdowns under the strip segment
+                        LibraryDropdown(
+                            expanded = activeMainSheet == MainSheetType.SORT,
+                            onDismiss = { activeMainSheet = null },
+                            anchor = sortAnchor,
+                            width = 200.dp
+                        ) {
+                            SortDropdownContent(viewModel, uiState, onDismiss = { activeMainSheet = null })
+                        }
+
+                        LibraryDropdown(
+                            expanded = activeMainSheet == MainSheetType.CLOUD,
+                            onDismiss = { activeMainSheet = null },
+                            anchor = cloudAnchor,
+                            width = 240.dp
+                        ) {
+                            val allCloudAccounts = uiState.driveAccounts.map {
+                                CloudAccountUi(it.email, it.accountName, it.enabled, com.beatraxus.app.model.SongSource.GDRIVE)
+                            } + uiState.dropboxAccounts.map {
+                                CloudAccountUi(it.email, it.accountName, it.enabled, com.beatraxus.app.model.SongSource.DROPBOX)
+                            } + uiState.onedriveAccounts.map {
+                                CloudAccountUi(it.email, it.accountName, it.enabled, com.beatraxus.app.model.SongSource.ONEDRIVE)
+                            } + uiState.boxAccounts.map {
+                                CloudAccountUi(it.email, it.accountName, it.enabled, com.beatraxus.app.model.SongSource.BOX)
+                            } + uiState.nextcloudAccounts.map {
+                                CloudAccountUi(it.username, it.displayName, it.enabled, com.beatraxus.app.model.SongSource.NEXTCLOUD)
+                            }
+                            CloudDropdownContent(
+                                accounts = allCloudAccounts,
+                                telegramChannels = uiState.telegramChannels,
+                                onSelectAccount = { email -> viewModel.setLibraryView(LibraryView.CLOUD, email) },
+                                onSelectTelegramChannel = { url -> viewModel.setLibraryViewTelegram(url) },
+                                onRefreshAccount = { account ->
+                                    when (account.source) {
+                                        com.beatraxus.app.model.SongSource.GDRIVE -> viewModel.scanDriveAccount(account.email)
+                                        com.beatraxus.app.model.SongSource.DROPBOX -> viewModel.scanDropboxAccount(account.email)
+                                        com.beatraxus.app.model.SongSource.ONEDRIVE -> viewModel.scanOneDriveAccount(account.email)
+                                        com.beatraxus.app.model.SongSource.BOX -> viewModel.scanBoxAccount(account.email)
+                                        com.beatraxus.app.model.SongSource.NEXTCLOUD -> {
+                                            val nc = uiState.nextcloudAccounts.find { it.username == account.email }
+                                            if (nc != null) viewModel.scanNextcloudAccount(nc.serverUrl, nc.username)
+                                        }
+                                        else -> {}
+                                    }
+                                },
+                                onSyncTelegramChannel = { url -> viewModel.syncTelegramChannel(url) },
+                                onDismiss = { activeMainSheet = null }
+                            )
+                        }
+
+                        LibraryDropdown(
+                            expanded = activeMainSheet == MainSheetType.DENSITY,
+                            onDismiss = { activeMainSheet = null },
+                            anchor = densityAnchor,
+                            width = 220.dp
+                        ) {
+                            val isGrid = uiState.currentView in listOf(
+                                LibraryView.ALBUMS, LibraryView.ARTISTS, LibraryView.FOLDERS,
+                                LibraryView.YEARS, LibraryView.GENRES, LibraryView.PLAYLISTS
+                            )
+                            val isVideo = uiState.currentView in listOf(
+                                LibraryView.VIDEO_ALL, LibraryView.VIDEO_FOLDERS,
+                                LibraryView.VIDEO_RECENTLY_ADDED, LibraryView.VIDEO_RECENTLY_PLAYED,
+                                LibraryView.VIDEO_FOLDER_DETAIL
+                            )
+                            DensityDropdownContent(
+                                isGrid = isGrid,
+                                isVideo = isVideo,
+                                categoryGridColumns = categoryGridColumns,
+                                onCategoryGridColumnsChange = { categoryGridColumns = it },
+                                trackLayoutDensity = trackLayoutDensity,
+                                onTrackLayoutDensityChange = { trackLayoutDensity = it },
+                                videoLayoutDensity = videoLayoutDensity,
+                                onVideoLayoutDensityChange = { videoLayoutDensity = it }
+                            )
                         }
                     }
             }
@@ -5171,8 +5175,9 @@ fun MiniPlayerTimeText(progressProvider: () -> Long, duration: Long) {
     val totalDuration = remember(duration) { formatTime(duration) }
     Text(
         text = "($currentProgress/$totalDuration)",
-        color = Color.White.copy(0.7f),
-        fontSize = 12.sp,
+        color = Color.White.copy(0.55f),
+        fontSize = 11.sp,
+        lineHeight = 15.sp,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis
     )
@@ -6036,6 +6041,195 @@ fun Modifier.pinchToZoom(onZoomIn: () -> Unit, onZoomOut: () -> Unit): Modifier 
             }
         }
     }
+
+@Composable
+fun SortDropdownContent(
+    viewModel: PlayerViewModel,
+    uiState: com.beatraxus.app.model.PlayerUiState,
+    onDismiss: () -> Unit
+) {
+    DropdownHeader(
+        title = if (uiState.currentView == LibraryView.CLOUD) "SORT & FILTER" else "SORT BY",
+        trailing = {
+            IconButton(
+                onClick = { viewModel.toggleSortOrder() },
+                modifier = Modifier.size(28.dp).background(Color.White.copy(0.08f), CircleShape)
+            ) {
+                Icon(
+                    if (uiState.isAscending) Icons.Rounded.ArrowUpward else Icons.Rounded.ArrowDownward,
+                    contentDescription = "Toggle order",
+                    tint = AccentBlue,
+                    modifier = Modifier.size(15.dp)
+                )
+            }
+        }
+    )
+    listOf(
+        Triple("Name", com.beatraxus.app.model.SortType.NAME, Icons.Rounded.SortByAlpha),
+        Triple("Date Added", com.beatraxus.app.model.SortType.DATE_ADDED, Icons.Rounded.CalendarToday),
+        Triple("File Size", com.beatraxus.app.model.SortType.FILE_SIZE, Icons.Rounded.Storage),
+        Triple("Duration", com.beatraxus.app.model.SortType.DURATION, Icons.Rounded.Schedule)
+    ).forEach { (label, type, icon) ->
+        DropdownRow(
+            icon = icon,
+            label = label,
+            selected = uiState.sortType == type,
+            onClick = { viewModel.setSortType(type); onDismiss() }
+        )
+    }
+
+    if (uiState.currentView == LibraryView.ALL_SONGS ||
+        uiState.currentView == LibraryView.FAVORITES ||
+        uiState.currentView == LibraryView.RECENTLY_ADDED
+    ) {
+        HorizontalDivider(modifier = Modifier.padding(vertical = 6.dp, horizontal = 8.dp), color = Color.White.copy(0.08f))
+        DropdownHeader(title = "QUALITY")
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 6.dp, vertical = 2.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            listOf<String?>(null, "Excellent", "Good", "Fair", "Poor").forEach { tier ->
+                val isSelected = uiState.qualityTierFilter == tier
+                Text(
+                    text = tier ?: "All",
+                    color = if (isSelected) Color.White else Color.White.copy(0.7f),
+                    fontSize = 11.sp,
+                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(if (isSelected) AccentBlue.copy(0.22f) else Color.White.copy(0.05f))
+                        .border(1.dp, if (isSelected) AccentBlue.copy(0.6f) else Color.White.copy(0.08f), RoundedCornerShape(14.dp))
+                        .clickable { viewModel.setQualityTierFilter(tier) }
+                        .padding(horizontal = 10.dp, vertical = 5.dp)
+                )
+            }
+        }
+        Spacer(Modifier.height(4.dp))
+    }
+}
+
+@Composable
+fun CloudDropdownContent(
+    accounts: List<CloudAccountUi>,
+    telegramChannels: List<com.beatraxus.app.model.TelegramChannel>,
+    onSelectAccount: (String?) -> Unit,
+    onSelectTelegramChannel: (String) -> Unit,
+    onRefreshAccount: (CloudAccountUi) -> Unit,
+    onSyncTelegramChannel: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val enabledAccounts = remember(accounts) { accounts.filter { it.enabled } }
+
+    @Composable
+    fun SyncPill(color: Color, onClick: () -> Unit) {
+        Row(
+            modifier = Modifier
+                .clip(RoundedCornerShape(12.dp))
+                .background(color.copy(0.15f))
+                .clickable(onClick = onClick)
+                .padding(horizontal = 7.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(Icons.Rounded.Sync, null, tint = color, modifier = Modifier.size(11.dp))
+            Spacer(Modifier.width(3.dp))
+            Text("SYNC", color = color, fontSize = 9.sp, fontWeight = FontWeight.Black)
+        }
+    }
+
+    DropdownHeader(title = "CLOUD ACCOUNTS")
+    DropdownRow(
+        icon = Icons.Rounded.CloudQueue,
+        label = "All Accounts",
+        selected = false,
+        onClick = { onSelectAccount(null); onDismiss() }
+    )
+    if (enabledAccounts.isEmpty()) {
+        Text(
+            "No accounts connected",
+            color = Color.White.copy(0.4f),
+            fontSize = 12.sp,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 10.dp)
+        )
+    }
+    enabledAccounts.forEach { account ->
+        DropdownRow(
+            icon = Icons.Rounded.AccountCircle,
+            label = account.accountName,
+            subLabel = account.email,
+            selected = false,
+            onClick = { onSelectAccount(account.email); onDismiss() },
+            trailing = { SyncPill(AccentBlue) { onRefreshAccount(account) } }
+        )
+    }
+    val enabledChannels = telegramChannels.filter { it.enabled }
+    if (enabledChannels.isNotEmpty()) {
+        HorizontalDivider(modifier = Modifier.padding(vertical = 6.dp, horizontal = 8.dp), color = Color.White.copy(0.08f))
+        DropdownHeader(title = "TELEGRAM")
+        enabledChannels.forEach { channel ->
+            DropdownRow(
+                icon = Icons.AutoMirrored.Rounded.Send,
+                label = channel.name,
+                selected = false,
+                accent = Color(0xFF2AABEE),
+                onClick = { onSelectTelegramChannel(channel.url); onDismiss() },
+                trailing = { SyncPill(Color(0xFF2AABEE)) { onSyncTelegramChannel(channel.url) } }
+            )
+        }
+    }
+}
+
+@Composable
+fun DensityDropdownContent(
+    isGrid: Boolean,
+    isVideo: Boolean = false,
+    categoryGridColumns: Int,
+    onCategoryGridColumnsChange: (Int) -> Unit,
+    trackLayoutDensity: Int,
+    onTrackLayoutDensityChange: (Int) -> Unit,
+    videoLayoutDensity: Int = 1,
+    onVideoLayoutDensityChange: (Int) -> Unit = {}
+) {
+    val maxVal = if (isVideo) 4f else if (isGrid) 5f else 6f
+    val currentVal = if (isVideo) videoLayoutDensity.toFloat()
+                     else if (isGrid) categoryGridColumns.toFloat()
+                     else trackLayoutDensity.toFloat()
+
+    DropdownHeader(title = if (isVideo) "VIDEO COLUMNS" else if (isGrid) "GRID COLUMNS" else "LAYOUT DENSITY")
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, bottom = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Slider(
+            value = currentVal,
+            onValueChange = {
+                if (isVideo) onVideoLayoutDensityChange(it.toInt())
+                else if (isGrid) onCategoryGridColumnsChange(it.toInt())
+                else onTrackLayoutDensityChange(it.toInt())
+            },
+            valueRange = 1f..maxVal,
+            steps = (maxVal - 2).toInt(),
+            colors = SliderDefaults.colors(
+                thumbColor = AccentBlue,
+                activeTrackColor = AccentBlue,
+                inactiveTrackColor = Color.White.copy(0.12f)
+            ),
+            modifier = Modifier.weight(1f).height(28.dp)
+        )
+        Spacer(Modifier.width(8.dp))
+        Box(
+            modifier = Modifier
+                .size(28.dp)
+                .background(AccentBlue.copy(0.14f), CircleShape)
+                .border(1.dp, AccentBlue.copy(0.35f), CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(currentVal.toInt().toString(), color = Color.White, fontWeight = FontWeight.Black, fontSize = 13.sp)
+        }
+    }
+}
 
 @Composable
 fun SortSheetContent(

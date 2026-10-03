@@ -498,26 +498,28 @@ class LyricsRepository(
         )
     }
 
-    suspend fun fetchAllCandidates(song: Song): List<LyricsCandidate> = withContext(Dispatchers.IO) {
-        val cacheKey = getCandidatesCacheKey(song)
-        candidatesCache[cacheKey]?.let { return@withContext it }
+    /** How many upcoming songs get their lyric-source results preloaded. */
+    private val PRELOAD_COUNT = 10
 
-        val config = providerConfig()
-        val registryProviders = LyricsProviderRegistry.providers
-        val enabledProviders = registryProviders.filter { config.enabled.contains(it.id) && it.isConfigured }
-        val orderedProviders = enabledProviders.sortedBy { provider ->
-            val idx = config.order.indexOf(provider.id)
-            if (idx == -1) Int.MAX_VALUE else idx
-        }
+    /** Word-by-word first, then line-synced, then plain. */
+    private fun typeRank(type: LyricsType): Int = when (type) {
+        LyricsType.WORD_BY_WORD -> 0
+        LyricsType.SYNCED -> 1
+        LyricsType.PLAIN -> 2
+    }
 
-        val runResult = runProviders(song, orderedProviders, overallTimeoutMs = 15_000L)
-
-        val candidates = runResult.allResults.mapNotNull { fetchRes ->
+    /**
+     * Turns raw provider results into the list shown in the sources popup, ordered by the
+     * priority  Word -> Line -> Plain,  then clean (no validator warning) before warned,
+     * then the user's provider order.
+     */
+    private fun buildCandidates(song: Song, results: List<ProviderFetchResult>): List<LyricsCandidate> {
+        val order = providerConfig().order
+        return results.mapNotNull { fetchRes ->
             val res = fetchRes.result ?: return@mapNotNull null
             val lines = LrcParser.parse(res.content, song.durationMs)
             val previewLine = lines.firstOrNull { it.text.isNotBlank() }?.text ?: "No preview available"
             val validation = LyricsValidator.validate(res.content, song.durationMs, res.type)
-
             LyricsCandidate(
                 providerId = fetchRes.provider.id,
                 providerName = fetchRes.provider.displayName,
@@ -528,73 +530,112 @@ class LyricsRepository(
                 content = res.content,
                 warning = validation.reason
             )
-        }
+        }.sortedWith(
+            compareBy<LyricsCandidate>(
+                { typeRank(it.type) },
+                { if (it.warning.isNullOrBlank()) 0 else 1 },
+                { order.indexOf(it.providerId).let { idx -> if (idx == -1) Int.MAX_VALUE else idx } }
+            )
+        )
+    }
+
+    private fun enabledOrderedProviders(): List<LyricsProvider> {
+        val config = providerConfig()
+        return LyricsProviderRegistry.providers
+            .filter { config.enabled.contains(it.id) && it.isConfigured }
+            .sortedBy { provider ->
+                val idx = config.order.indexOf(provider.id)
+                if (idx == -1) Int.MAX_VALUE else idx
+            }
+    }
+
+    /** Instant lookup for the sources popup (null when this song has not been fetched/preloaded yet). */
+    fun getCachedCandidates(song: Song): List<LyricsCandidate>? = candidatesCache[getCandidatesCacheKey(song)]
+
+    suspend fun fetchAllCandidates(song: Song): List<LyricsCandidate> = withContext(Dispatchers.IO) {
+        val cacheKey = getCandidatesCacheKey(song)
+        candidatesCache[cacheKey]?.let { return@withContext it }
+
+        val runResult = runProviders(song, enabledOrderedProviders(), overallTimeoutMs = 15_000L)
+        val candidates = buildCandidates(song, runResult.allResults)
 
         candidatesCache[cacheKey] = candidates
         candidates
     }
 
+    /**
+     * Preloads lyric results for the next [PRELOAD_COUNT] songs:
+     *  1. every enabled source is queried once and the per-source results are stored for the
+     *     sources popup (so it opens instantly), ordered Word -> Line -> Plain;
+     *  2. the best result (same Word > Line > Plain rule in runProviders) is cached for playback,
+     *     unless the song already has synced/word lyrics.
+     */
     suspend fun preloadLyrics(songs: List<Song>) = withContext(Dispatchers.IO) {
-        val semaphore = Semaphore(3) // up to 3 fetches in flight at once
+        checkConfigChange()
+        val semaphore = Semaphore(2) // gentle on the providers: 2 songs in flight at once
 
-        songs.map { song ->
+        songs.take(PRELOAD_COUNT).map { song ->
             async {
                 if (!isActive) return@async
 
-                val memCached = cache[song.id]
-                if (memCached != null && (memCached.type == LyricsType.WORD_BY_WORD || memCached.type == LyricsType.SYNCED)) return@async
-
-                val dbEntry = lyricsDao.getLyrics(song.id)
-                val dbType = dbEntry?.let { determineType(it.lyrics) } ?: LyricsType.PLAIN
-                if (dbType == LyricsType.WORD_BY_WORD || dbType == LyricsType.SYNCED) return@async
-
-                if (!song.lyrics.isNullOrBlank()) {
-                    val metaType = determineType(song.lyrics)
-                    if (metaType == LyricsType.WORD_BY_WORD || metaType == LyricsType.SYNCED) return@async
-                }
+                val candidatesKey = getCandidatesCacheKey(song)
+                if (candidatesCache.containsKey(candidatesKey)) return@async
 
                 semaphore.withPermit {
-                    Log.d(TAG, "Preloading lyrics for ${song.title}...")
+                    if (candidatesCache.containsKey(candidatesKey)) return@withPermit
 
-                    val config = providerConfig()
-                    val registryProviders = LyricsProviderRegistry.providers
-                    val enabledProviders = registryProviders.filter { config.enabled.contains(it.id) && it.isConfigured }
-                    val orderedProviders = enabledProviders.sortedBy { provider ->
-                        val idx = config.order.indexOf(provider.id)
-                        if (idx == -1) Int.MAX_VALUE else idx
-                    }.take(4) // Only try first four providers for preload
+                    val orderedProviders = enabledOrderedProviders()
+                    if (orderedProviders.isEmpty()) return@withPermit
 
+                    Log.d(TAG, "Preloading lyric sources for ${song.title}...")
                     val runResult = runProviders(song, orderedProviders, overallTimeoutMs = 15_000L)
 
-                    if (runResult.bestResult != null) {
-                        val finalRes = runResult.bestResult
-                        val providerId = runResult.providerId
-                        val validation = runResult.bestValidation ?: LyricsValidator.validate(finalRes.content, song.durationMs, finalRes.type)
+                    // 1) per-source results for the popup
+                    val anyHit = runResult.allResults.any { it.result != null }
+                    if (anyHit || !runResult.hasTransientError) {
+                        candidatesCache[candidatesKey] = buildCandidates(song, runResult.allResults)
+                    }
 
-                        val res = LyricsLoadResult(
-                            lines = LrcParser.parse(finalRes.content, song.durationMs),
-                            source = LyricsSource.ONLINE,
-                            type = finalRes.type,
-                            rawContent = finalRes.content,
-                            syncOffset = 0L,
-                            score = finalRes.score,
-                            providerId = providerId
-                        )
-                        cache[song.id] = res
-                        saveToDbIfBetter(song.id, res, providerId, validation)
+                    // 2) best result for playback, only when the song has nothing better already
+                    val memCached = cache[song.id]
+                    val dbType = lyricsDao.getLyrics(song.id)?.let { determineType(it.lyrics) } ?: LyricsType.PLAIN
+                    val metaType = song.lyrics?.takeIf { it.isNotBlank() }?.let { determineType(it) } ?: LyricsType.PLAIN
+                    fun LyricsType.isTimedType() = this == LyricsType.WORD_BY_WORD || this == LyricsType.SYNCED
+                    val alreadyHasTimed = (memCached?.type?.isTimedType() == true) || dbType.isTimedType() || metaType.isTimedType()
 
-                        val provider = registryProviders.find { it.id == providerId }
-                        val isExperimental = provider?.experimental == true
+                    val finalRes = runResult.bestResult
+                    if (finalRes != null) {
+                        if (!alreadyHasTimed) {
+                            val providerId = runResult.providerId
+                            val validation = runResult.bestValidation
+                                ?: LyricsValidator.validate(finalRes.content, song.durationMs, finalRes.type)
 
-                        if (!isExperimental && validation.isValid && validation.penalty == 0.0 && finalRes.score >= 0.85 && song.lyrics.isNullOrBlank()) {
-                            embeddedSource.saveLyrics(song.uri, finalRes.content)
-                            songDao.updateLyrics(song.id, finalRes.content)
+                            val res = LyricsLoadResult(
+                                lines = LrcParser.parse(finalRes.content, song.durationMs),
+                                source = LyricsSource.ONLINE,
+                                type = finalRes.type,
+                                rawContent = finalRes.content,
+                                syncOffset = 0L,
+                                score = finalRes.score,
+                                providerId = providerId
+                            )
+                            cache[song.id] = res
+                            saveToDbIfBetter(song.id, res, providerId, validation)
+
+                            val provider = LyricsProviderRegistry.providers.find { it.id == providerId }
+                            val isExperimental = provider?.experimental == true
+                            if (!isExperimental && validation.isValid && validation.penalty == 0.0 &&
+                                finalRes.score >= 0.85 && song.lyrics.isNullOrBlank()
+                            ) {
+                                embeddedSource.saveLyrics(song.uri, finalRes.content)
+                                songDao.updateLyrics(song.id, finalRes.content)
+                            }
                         }
                     } else if (!runResult.hasTransientError) {
                         notFoundCache[song.id] = System.currentTimeMillis()
                     }
 
-                    delay(500)
+                    delay(300)
                 }
             }
         }.forEach { it.await() }

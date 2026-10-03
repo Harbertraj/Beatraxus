@@ -426,12 +426,13 @@ fun PlainLyricLine(
     }
 
     val isTamil = remember(text) { text.any { it in '\u0B80'..'\u0BFF' } }
+    // Plain lyrics: same compact size the word/line-synced lyrics show at rest
     val baseStyle = MaterialTheme.typography.headlineMedium.copy(
-        fontWeight = FontWeight.ExtraBold,
-        fontSize = if (isTamil) 22.sp else 24.sp,
-        lineHeight = if (isTamil) 28.sp else 30.sp,
+        fontWeight = FontWeight.Bold,
+        fontSize = if (isTamil) 18.sp else 20.sp,
+        lineHeight = if (isTamil) 24.sp else 26.sp,
         textAlign = lineTextAlign,
-        letterSpacing = (-0.5).sp,
+        letterSpacing = (-0.3).sp,
         shadow = Shadow(
             color = Color.White.copy(alpha = 0.35f),
             blurRadius = with(LocalDensity.current) { 10.dp.toPx() }
