@@ -310,7 +310,11 @@ class VideoPlayerViewModel(
         if (videoQueue.isEmpty()) return
         val video = videoQueue[startIndex]
         val context = getApplication<Application>()
-        
+
+        // A brand-new player has NO video effects yet. Without this reset a stale `true`
+        // from a previous player made updateVideoEffects() skip setVideoEffects() forever.
+        isEffectActive = false
+
         val audioAttributes = AudioAttributes.Builder()
             .setUsage(C.USAGE_MEDIA)
             .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
@@ -1482,28 +1486,17 @@ class VideoPlayerViewModel(
         updateVideoEffects()
     }
 
+    /**
+     * Colour grading is now drawn by the UI (ColorMatrix on the video TextureView, see
+     * VideoPlayerScreen), which updates instantly - also while paused - and does not depend on the
+     * codec / media3 effect pipeline. Make sure no leftover GL effect is active so the grade is
+     * never applied twice.
+     */
     private fun updateVideoEffects() {
         val player = exoPlayer ?: return
-        val state = _uiState.value
-        
-        colorGradeEffect.brightness = state.colorBrightness
-        colorGradeEffect.contrast = state.colorContrast
-        colorGradeEffect.saturation = state.colorSaturation
-        
-        val isIdentity = abs(state.colorBrightness) < 0.001f &&
-                         abs(state.colorContrast - 1f) < 0.001f &&
-                         abs(state.colorSaturation - 1f) < 0.001f
-
-        if (isIdentity) {
-            if (isEffectActive) {
-                player.setVideoEffects(emptyList())
-                isEffectActive = false
-            }
-        } else {
-            if (!isEffectActive) {
-                player.setVideoEffects(listOf(colorGradeEffect))
-                isEffectActive = true
-            }
+        if (isEffectActive) {
+            player.setVideoEffects(emptyList())
+            isEffectActive = false
         }
     }
 

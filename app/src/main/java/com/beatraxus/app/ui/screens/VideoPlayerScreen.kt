@@ -438,16 +438,48 @@ fun VideoPlayerScreen(
             onDispose { exo?.removeListener(listener) }
         }
 
+        // Colour grading is applied as a ColorMatrix filter on a TextureView layer (instant, works
+        // while playing AND paused, independent of the codec/effect pipeline). A SurfaceView cannot
+        // be colour-filtered, so we only use the TextureView variant while grading is in use or the
+        // Color Grading sheet is open; otherwise the normal (best quality) SurfaceView is kept.
+        val gradingActive = uiState.colorBrightness != 0f ||
+            uiState.colorContrast != 1f ||
+            uiState.colorSaturation != 1f
+        val useTextureSurface = gradingActive || sheetType == PlayerSheetType.COLOR
+
+        key(useTextureSurface) {
         AndroidView(
             factory = { ctx ->
-                PlayerView(ctx).apply {
+                val pv = if (useTextureSurface) {
+                    android.view.LayoutInflater.from(ctx)
+                        .inflate(com.beatraxus.app.R.layout.player_view_texture, null) as PlayerView
+                } else {
+                    PlayerView(ctx)
+                }
+                pv.apply {
                     player = viewModel.getPlayer()
                     useController = false
                     setBackgroundColor(android.graphics.Color.BLACK)
                     playerViewRef = this
                 }
             },
+            onRelease = { it.player = null },
             update = { view ->
+                // Apply brightness / contrast / saturation to the video layer.
+                (view.videoSurfaceView as? TextureView)?.setLayerPaint(
+                    if (gradingActive) {
+                        android.graphics.Paint().apply {
+                            colorFilter = android.graphics.ColorMatrixColorFilter(
+                                buildColorGradeMatrix(
+                                    uiState.colorBrightness,
+                                    uiState.colorContrast,
+                                    uiState.colorSaturation
+                                )
+                            )
+                        }
+                    } else null
+                )
+
                 // NOTE: no player.videoScalingMode changes here. Codec scaling only applies to
                 // the NEXT rendered frame, so while paused the new mode appeared "late".
                 // The frame layout (resizeMode + aspect ratio) is applied instantly instead.
@@ -489,7 +521,12 @@ fun VideoPlayerScreen(
                     scaleY = zoomScale
                 }
                 .then(
-                    if (sheetType != PlayerSheetType.NONE && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    // Never blur / re-saturate the video while the Color Grading sheet is open:
+                    // the user must see the REAL picture to judge brightness / contrast / saturation.
+                    if (sheetType != PlayerSheetType.NONE &&
+                        sheetType != PlayerSheetType.COLOR &&
+                        Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+                    ) {
                         Modifier.graphicsLayer {
                             renderEffect = RenderEffectHelper.createBlurAndSaturationEffect(20f, 1.1f)
                         }
@@ -498,6 +535,7 @@ fun VideoPlayerScreen(
                     }
                 )
         )
+        } // key(useTextureSurface)
 
 
         // Ripple Animation Layer
@@ -710,7 +748,8 @@ fun VideoPlayerScreen(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.20f))
+                    // no dim for Color Grading, so the true colours stay visible
+                    .background(Color.Black.copy(alpha = if (sheetType == PlayerSheetType.COLOR) 0f else 0.20f))
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null
@@ -2125,6 +2164,33 @@ private fun formatTime(ms: Long): String {
         String.format("%d:%02d:%02d", hours, minutes, seconds)
     } else {
         String.format("%02d:%02d", minutes, seconds)
+    }
+}
+
+/**
+ * Builds the 4x5 colour matrix for brightness (-1..1, additive), contrast (0..2, around mid-grey)
+ * and saturation (0..2). Same order as the old shader: brightness -> contrast -> saturation.
+ */
+private fun buildColorGradeMatrix(brightness: Float, contrast: Float, saturation: Float): android.graphics.ColorMatrix {
+    val b = brightness * 255f
+    val brightnessM = android.graphics.ColorMatrix(floatArrayOf(
+        1f, 0f, 0f, 0f, b,
+        0f, 1f, 0f, 0f, b,
+        0f, 0f, 1f, 0f, b,
+        0f, 0f, 0f, 1f, 0f
+    ))
+    val t = 127.5f * (1f - contrast)
+    val contrastM = android.graphics.ColorMatrix(floatArrayOf(
+        contrast, 0f, 0f, 0f, t,
+        0f, contrast, 0f, 0f, t,
+        0f, 0f, contrast, 0f, t,
+        0f, 0f, 0f, 1f, 0f
+    ))
+    val saturationM = android.graphics.ColorMatrix().apply { setSaturation(saturation) }
+
+    return android.graphics.ColorMatrix(brightnessM).apply {
+        postConcat(contrastM)
+        postConcat(saturationM)
     }
 }
 
