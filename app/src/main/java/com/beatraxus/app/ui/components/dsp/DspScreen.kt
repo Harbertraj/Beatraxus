@@ -88,13 +88,28 @@ import com.beatraxus.app.model.PlayerUiState
 import com.beatraxus.app.ui.components.PremiumSwitch
 import com.beatraxus.app.viewmodel.PlayerViewModel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlin.math.*
 
 // Premium Studio Color Palette
-private val PremiumSurface = Color(0xFF08090C) // Onyx Black
-private val PremiumAccent = Color(0xFF00C2A8)  // Teal
-private val PremiumAccentSoft = Color(0xFF80E1D4)
-private val GraphicGold = Color(0xFFD4A24C)   // Keep Graphic Line Gold
+// "Aurora Console" palette — deep indigo glass, teal -> violet -> pink light
+private val PremiumSurface = Color(0xFF0B0D1A) // Deep indigo black
+private val PremiumAccent = Color(0xFF26E6CB)  // Aurora teal
+private val PremiumAccentSoft = Color(0xFF9CF3E5)
+private val GraphicGold = Color(0xFFA99BFF)    // Graph dots / fill tint (soft violet)
+private val DspViolet = Color(0xFF8C7BFF)
+private val DspPink = Color(0xFFFF6FB5)
+
+/** Shared glass panel used by every DSP card: sheen, aurora rim and rounded corners. */
+private fun Modifier.dspPanel(radius: androidx.compose.ui.unit.Dp = 22.dp): Modifier = this
+    .clip(RoundedCornerShape(radius))
+    .background(PremiumSurface.copy(alpha = 0.66f))
+    .background(Brush.verticalGradient(listOf(Color.White.copy(0.075f), Color.White.copy(0.012f))))
+    .border(
+        1.dp,
+        Brush.linearGradient(listOf(PremiumAccent.copy(0.42f), Color.White.copy(0.06f), DspViolet.copy(0.32f))),
+        RoundedCornerShape(radius)
+    )
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -240,26 +255,38 @@ fun DspScreen(
             .background(
                 Brush.verticalGradient(
                     listOf(
-                        Color(0xFF0E1116), // Studio Dark Gray
-                        Color(0xFF050608)  // Near Black
+                        Color(0xFF12142A), // Midnight indigo
+                        Color(0xFF05060C)  // Near black
                     )
                 )
             )
     ) {
-        // Subtle ambient gold glow
+        // Aurora glows (teal top-left, violet bottom-right)
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(
                     Brush.radialGradient(
-                        colors = listOf(PremiumAccent.copy(alpha = 0.05f), Color.Transparent),
-                        center = Offset(500f, 0f),
-                        radius = 2500f
+                        colors = listOf(PremiumAccent.copy(alpha = 0.13f), Color.Transparent),
+                        center = Offset(80f, 60f),
+                        radius = 1300f
+                    )
+                )
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.radialGradient(
+                        colors = listOf(DspViolet.copy(alpha = 0.14f), Color.Transparent),
+                        center = Offset(1050f, 2300f),
+                        radius = 1500f
                     )
                 )
         )
 
         val pagerState = rememberPagerState(pageCount = { 4 })
+        val pageScope = rememberCoroutineScope()
 
         Scaffold(
             containerColor = Color.Transparent,
@@ -272,29 +299,31 @@ fun DspScreen(
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Text(
                                 text = "STUDIO DSP",
-                                color = Color.White,
                                 fontWeight = FontWeight.Black,
                                 letterSpacing = 4.sp,
-                                style = MaterialTheme.typography.titleLarge,
-                                modifier = Modifier.graphicsLayer { alpha = 0.9f }
+                                style = MaterialTheme.typography.titleLarge.copy(
+                                    brush = Brush.horizontalGradient(listOf(PremiumAccentSoft, Color.White, DspViolet))
+                                ),
+                                modifier = Modifier.graphicsLayer { alpha = 0.96f }
                             )
                             Text(
                                 text = "Settings for: ${uiState.dsp.activeOutputDeviceLabel}",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = Color.White.copy(0.4f),
+                                color = PremiumAccentSoft.copy(0.55f),
                                 fontSize = 9.sp,
+                                letterSpacing = 0.6.sp,
                                 modifier = Modifier.padding(top = 2.dp)
                             )
                             Surface(
                                 modifier = Modifier.padding(top = 8.dp),
-                                color = Color.White.copy(0.03f),
+                                color = Color.White.copy(0.05f),
                                 shape = RoundedCornerShape(50),
-                                border = BorderStroke(0.5.dp, Color.White.copy(0.1f))
+                                border = BorderStroke(0.8.dp, Brush.horizontalGradient(listOf(PremiumAccent.copy(0.45f), Color.White.copy(0.08f), DspViolet.copy(0.45f))))
                             ) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
+                                    horizontalArrangement = Arrangement.spacedBy(2.dp),
+                                    modifier = Modifier.padding(3.dp)
                                 ) {
                                     val pageIcons = listOf(
                                         Icons.Rounded.GraphicEq,
@@ -302,23 +331,44 @@ fun DspScreen(
                                         Icons.Rounded.Waves,
                                         Icons.Rounded.SurroundSound
                                     )
+                                    val pageLabels = listOf("EQ", "MASTER", "REVERB", "SPATIAL")
                                     pageIcons.forEachIndexed { i, icon ->
                                         val isActive = pagerState.currentPage == i
-                                        val size by animateDpAsState(
-                                            targetValue = if (isActive) 18.dp else 12.dp,
-                                            animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
-                                            label = "icon_size"
-                                        )
                                         val color by animateColorAsState(
-                                            targetValue = if (isActive) PremiumAccent else Color.White.copy(alpha = 0.3f),
+                                            targetValue = if (isActive) PremiumAccentSoft else Color.White.copy(alpha = 0.38f),
                                             label = "icon_color"
                                         )
-                                        Icon(
-                                            imageVector = icon,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(size),
-                                            tint = color
-                                        )
+                                        Row(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(50))
+                                                .then(
+                                                    if (isActive) Modifier.background(
+                                                        Brush.horizontalGradient(listOf(PremiumAccent.copy(0.26f), DspViolet.copy(0.26f)))
+                                                    ) else Modifier
+                                                )
+                                                .clickable { pageScope.launch { pagerState.animateScrollToPage(i) } }
+                                                .animateContentSize()
+                                                .padding(horizontal = if (isActive) 11.dp else 9.dp, vertical = 5.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(
+                                                imageVector = icon,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(if (isActive) 15.dp else 14.dp),
+                                                tint = color
+                                            )
+                                            if (isActive) {
+                                                Spacer(Modifier.width(5.dp))
+                                                Text(
+                                                    text = pageLabels[i],
+                                                    color = Color.White,
+                                                    fontSize = 9.sp,
+                                                    fontWeight = FontWeight.Black,
+                                                    letterSpacing = 1.2.sp,
+                                                    maxLines = 1
+                                                )
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -326,7 +376,16 @@ fun DspScreen(
                     },
                     navigationIcon = {
                         IconButton(onClick = safeBack) {
-                            Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back", tint = Color.White)
+                            Box(
+                                modifier = Modifier
+                                    .size(38.dp)
+                                    .clip(CircleShape)
+                                    .background(Brush.verticalGradient(listOf(Color.White.copy(0.14f), Color.White.copy(0.04f))))
+                                    .border(1.dp, Color.White.copy(0.18f), CircleShape),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back", tint = Color.White, modifier = Modifier.size(20.dp))
+                            }
                         }
                     }
                 )
@@ -343,8 +402,8 @@ fun DspScreen(
                     modifier = Modifier
                         .fillMaxSize()
                         .verticalScroll(rememberScrollState())
-                        .padding(horizontal = 14.dp, vertical = 2.dp),
-                    verticalArrangement = Arrangement.spacedBy(if (page == 0) 4.dp else 2.dp)
+                        .padding(horizontal = 14.dp, vertical = 6.dp),
+                    verticalArrangement = Arrangement.spacedBy(if (page == 0) 10.dp else 8.dp)
                 ) {
                     if (page == 0) {
                         // Settings text moved to top bar
@@ -417,7 +476,8 @@ fun DspScreen(
         if (showSavedPresetsSheet) {
             ModalBottomSheet(
                 onDismissRequest = { showSavedPresetsSheet = false },
-                containerColor = Color(0xFF121218),
+                shape = RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp),
+                containerColor = Color(0xFF10121F),
                 sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
                 dragHandle = {
                     Box(
@@ -542,7 +602,7 @@ fun DspScreen(
                                             ) {
                                                 Row(
                                                     modifier = Modifier
-                                                        .background(Color(0xFF1A1A24), RoundedCornerShape(12.dp))
+                                                        .background(Color(0xFF181B2E), RoundedCornerShape(12.dp))
                                                         .border(1.dp, Color.White.copy(0.1f), RoundedCornerShape(12.dp))
                                                         .padding(horizontal = 8.dp, vertical = 4.dp),
                                                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -618,7 +678,7 @@ fun DspScreen(
         if (presetToRename != null) {
             AlertDialog(
                 onDismissRequest = { presetToRename = null },
-                containerColor = Color(0xFF1A1A24),
+                containerColor = Color(0xFF181B2E),
                 title = { Text("Rename Preset", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold) },
                 text = {
                     OutlinedTextField(
@@ -680,7 +740,7 @@ fun DspScreen(
                         .fillMaxHeight(0.85f)
                         .padding(vertical = 24.dp),
                     shape = RoundedCornerShape(28.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF121218)),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF10121F)),
                     border = BorderStroke(1.dp, Color.White.copy(0.1f))
                 ) {
                     Column(
@@ -915,7 +975,7 @@ fun DspScreen(
 
             AlertDialog(
                 onDismissRequest = { showDevicePicker = false },
-                containerColor = Color(0xFF1A1A24),
+                containerColor = Color(0xFF181B2E),
                 title = { Text("Copy Settings From", color = Color.White, fontWeight = FontWeight.Bold) },
                 text = {
                     Column(
@@ -984,7 +1044,7 @@ private fun ValueEditDialog(
     var textValue by remember { mutableStateOf(format.format(initialValue)) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        containerColor = Color(0xFF1A1A24),
+        containerColor = Color(0xFF181B2E),
         titleContentColor = Color.White,
         textContentColor = Color.White,
         title = { Text("Edit $label", fontWeight = FontWeight.Bold) },
@@ -1041,7 +1101,7 @@ private fun AiOptionsPopup(
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        containerColor = Color(0xFF121218),
+        containerColor = Color(0xFF10121F),
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         dragHandle = {
             Box(
@@ -1182,14 +1242,8 @@ private fun PremiumGraphicCard(uiState: PlayerUiState, presetName: String, fftBa
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .background(PremiumSurface.copy(alpha = 0.4f))
-            .border(
-                1.dp,
-                Brush.linearGradient(listOf(Color.White.copy(0.1f), Color.Transparent)),
-                RoundedCornerShape(16.dp)
-            )
-            .padding(12.dp),
+            .dspPanel()
+            .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         Row(
@@ -1199,14 +1253,14 @@ private fun PremiumGraphicCard(uiState: PlayerUiState, presetName: String, fftBa
         ) {
             Text(
                 "GRAPHIC RESPONSE",
-                color = PremiumAccent.copy(0.6f),
+                color = PremiumAccentSoft.copy(0.75f),
                 fontWeight = FontWeight.Black,
                 fontSize = 10.sp,
                 letterSpacing = 2.sp
             )
             Text(
                 text = presetName.uppercase(),
-                color = PremiumAccent,
+                color = DspViolet,
                 fontWeight = FontWeight.Black,
                 fontSize = 10.sp,
                 textAlign = TextAlign.End,
@@ -1220,10 +1274,10 @@ private fun PremiumGraphicCard(uiState: PlayerUiState, presetName: String, fftBa
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(102.dp)
-                .clip(RoundedCornerShape(14.dp))
-                .background(Color.Black.copy(alpha = 0.3f))
-                .border(1.dp, Color.White.copy(alpha = 0.05f), RoundedCornerShape(14.dp))
+                .height(110.dp)
+                .clip(RoundedCornerShape(18.dp))
+                .background(Brush.verticalGradient(listOf(Color(0xFF05060F).copy(0.85f), Color(0xFF0C0E1E).copy(0.85f))))
+                .border(1.dp, Brush.verticalGradient(listOf(PremiumAccent.copy(0.22f), Color.White.copy(0.04f))), RoundedCornerShape(18.dp))
         ) {
             EqPreviewGraph(displayBands, displayEnabled, fftBars = fftBars)
         }
@@ -1244,14 +1298,8 @@ private fun PremiumEqualizerCard(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .background(PremiumSurface.copy(alpha = 0.4f))
-            .border(
-                1.dp,
-                Brush.linearGradient(listOf(Color.White.copy(0.1f), Color.Transparent)),
-                RoundedCornerShape(16.dp)
-            )
-            .padding(4.dp),
+            .dspPanel()
+            .padding(8.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp)
     ) {
         Row(
@@ -1261,15 +1309,15 @@ private fun PremiumEqualizerCard(
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("EQUALIZER", color = PremiumAccent, fontWeight = FontWeight.Black, fontSize = 14.sp, letterSpacing = 2.sp)
+                    Text("EQUALIZER", color = Color.White, fontWeight = FontWeight.Black, fontSize = 14.sp, letterSpacing = 2.sp)
                     Spacer(Modifier.width(10.dp))
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(if (config.autoEqEnabled) PremiumAccent.copy(alpha = 0.1f) else Color.White.copy(alpha = 0.05f))
+                            .clip(RoundedCornerShape(50))
+                            .background(if (config.autoEqEnabled) PremiumAccent.copy(alpha = 0.16f) else Color.White.copy(alpha = 0.06f))
                             .clickable { onShowPresets() }
-                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                            .padding(horizontal = 9.dp, vertical = 3.dp)
                     ) {
                         Icon(
                             Icons.Rounded.AutoAwesome,
@@ -1291,10 +1339,10 @@ private fun PremiumEqualizerCard(
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(if (config.aiEqEnabled) PremiumAccent.copy(alpha = 0.1f) else Color.White.copy(alpha = 0.05f))
+                            .clip(RoundedCornerShape(50))
+                            .background(if (config.aiEqEnabled) DspViolet.copy(alpha = 0.2f) else Color.White.copy(alpha = 0.06f))
                             .clickable { onShowAiOptions() }
-                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                            .padding(horizontal = 9.dp, vertical = 3.dp)
                     ) {
                         Icon(
                             Icons.Rounded.AutoAwesome,
@@ -1316,7 +1364,7 @@ private fun PremiumEqualizerCard(
             if (isEqBypassed) {
                 Box(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(6.dp))
+                        .clip(RoundedCornerShape(50))
                         .background(Color.White.copy(0.05f))
                         .padding(horizontal = 8.dp, vertical = 4.dp)
                 ) {
@@ -1404,7 +1452,7 @@ private fun PremiumPreampSlider(
         ) {
             Text(
                 "PREAMP GAIN",
-                color = PremiumAccent.copy(0.6f),
+                color = PremiumAccentSoft.copy(0.75f),
                 fontWeight = FontWeight.Black,
                 fontSize = 10.sp,
                 letterSpacing = 1.5.sp
@@ -1412,12 +1460,12 @@ private fun PremiumPreampSlider(
             Surface(
                 onClick = { if (enabled) onEditValue() },
                 color = Color.White.copy(0.04f),
-                shape = RoundedCornerShape(6.dp),
-                border = BorderStroke(0.5.dp, Color.White.copy(0.1f))
+                shape = RoundedCornerShape(50),
+                border = BorderStroke(0.8.dp, Color.White.copy(0.14f))
             ) {
                 Text(
                     text = if (value >= 0) "+%.1f dB".format(value) else "%.1f dB".format(value),
-                    color = if (value != 0f) (if (value > 0) Color(0xFFDDDDDD) else Color(0xFF888888)) else Color.White.copy(0.4f),
+                    color = if (value != 0f) (if (value > 0) PremiumAccent else DspViolet) else Color.White.copy(0.4f),
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Black,
                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
@@ -1455,7 +1503,7 @@ private fun PremiumPreampSlider(
 
                 // 1. Recessed Track
                 drawRoundRect(
-                    color = Color.Black.copy(0.4f),
+                    color = Color(0xFF05060F).copy(0.7f),
                     topLeft = Offset(0f, (h - trackH) / 2f),
                     size = Size(w, trackH),
                     cornerRadius = corner
@@ -1495,7 +1543,7 @@ private fun PremiumPreampSlider(
                 if (value != 0f) {
                     val startX = midX
                     val endX = progressX
-                    val color = if (value > 0) Color(0xFFDDDDDD) else Color(0xFF888888)
+                    val color = if (value > 0) PremiumAccent else DspViolet
                     
                     drawRoundRect(
                         brush = Brush.horizontalGradient(
@@ -1526,22 +1574,22 @@ private fun PremiumPreampSlider(
                 // Thumb Body
                 drawRoundRect(
                     brush = Brush.verticalGradient(
-                        listOf(Color(0xFF4A4E58), Color(0xFF2A2E38), Color(0xFF1A1E26))
+                        listOf(Color(0xFF4A5075), Color(0xFF2A2F4C), Color(0xFF181B30))
                     ),
                     topLeft = Offset(thumbX, thumbY),
                     size = Size(thumbW, thumbH),
-                    cornerRadius = CornerRadius(4.dp.toPx(), 4.dp.toPx())
+                    cornerRadius = CornerRadius(12.dp.toPx(), 12.dp.toPx())
                 )
                 drawRoundRect(
                     color = Color.White.copy(0.15f),
                     topLeft = Offset(thumbX, thumbY),
                     size = Size(thumbW, thumbH),
-                    cornerRadius = CornerRadius(4.dp.toPx(), 4.dp.toPx()),
+                    cornerRadius = CornerRadius(12.dp.toPx(), 12.dp.toPx()),
                     style = Stroke(1.dp.toPx())
                 )
 
                 // Neon Indicator Line on Thumb
-                val indicatorColor = if (value == 0f) Color.White.copy(0.4f) else (if (value > 0) Color(0xFFDDDDDD) else Color(0xFF888888))
+                val indicatorColor = if (value == 0f) Color.White.copy(0.4f) else (if (value > 0) PremiumAccent else DspViolet)
                 drawLine(
                     color = indicatorColor,
                     start = Offset(progressX, thumbY + 4.dp.toPx()),
@@ -1595,8 +1643,8 @@ private fun PremiumVerticalBand(
 
     val gainColor = when {
         !isActive -> Color.White.copy(0.12f)
-        band.gainDb > 0.1f -> Color(0xFF00FF88) // High-end Level Green
-        band.gainDb < -0.1f -> Color(0xFFFF5252) // Warning Red
+        band.gainDb > 0.1f -> Color(0xFF3CF2A6) // High-end Level Green
+        band.gainDb < -0.1f -> Color(0xFFFF6B88) // Warning Red
         else -> PremiumAccent
     }
 
@@ -1644,13 +1692,13 @@ private fun PremiumVerticalBand(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .clip(RoundedCornerShape(4.dp))
+                    .clip(RoundedCornerShape(18.dp))
                     .background(
                         Brush.horizontalGradient(
-                            listOf(Color(0xFF0A0C10), Color(0xFF1A1F26), Color(0xFF0A0C10))
+                            listOf(Color(0xFF05060F), Color(0xFF1A1E36), Color(0xFF05060F))
                         )
                     )
-                    .border(1.dp, Color.White.copy(0.05f), RoundedCornerShape(4.dp))
+                    .border(1.dp, Brush.verticalGradient(listOf(Color.White.copy(0.10f), Color.White.copy(0.03f))), RoundedCornerShape(18.dp))
             )
 
             // Etched Center Line
@@ -1682,6 +1730,28 @@ private fun PremiumVerticalBand(
                 }
             }
 
+            // Aurora fill from the 0 dB line to the knob
+            if (isActive) {
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    val knobY = 202.dp.toPx() * (1f - gainProgress)
+                    val midY = 101.dp.toPx()
+                    val top = min(knobY, midY)
+                    val hgt = abs(knobY - midY)
+                    if (hgt > 0.5f) {
+                        drawRoundRect(
+                            brush = Brush.verticalGradient(
+                                colors = if (knobY < midY) listOf(gainColor, gainColor.copy(0.08f)) else listOf(gainColor.copy(0.08f), gainColor),
+                                startY = top,
+                                endY = top + hgt
+                            ),
+                            topLeft = Offset(size.width / 2f - 2.5.dp.toPx(), top),
+                            size = Size(5.dp.toPx(), hgt),
+                            cornerRadius = CornerRadius(3.dp.toPx(), 3.dp.toPx())
+                        )
+                    }
+                }
+            }
+
             // Glow from under the knob
             if (isActive) {
                 Box(
@@ -1691,7 +1761,7 @@ private fun PremiumVerticalBand(
                         .size(40.dp, 60.dp)
                         .background(
                             Brush.radialGradient(
-                                listOf(gainColor.copy(0.1f), Color.Transparent)
+                                listOf(gainColor.copy(0.28f), Color.Transparent)
                             )
                         )
                 )
@@ -1704,14 +1774,20 @@ private fun PremiumVerticalBand(
                     .offset(y = (202.dp * (1f - gainProgress)))
                     .graphicsLayer { translationY = -24.dp.toPx() }
                     .size(40.dp, 48.dp)
-                    .shadow(12.dp, RoundedCornerShape(4.dp), spotColor = Color.Black)
+                    .shadow(12.dp, RoundedCornerShape(14.dp), spotColor = if (isActive) gainColor else Color.Black)
                     .background(
                         Brush.verticalGradient(
-                            listOf(Color(0xFF4A4E58), Color(0xFF2A2E38), Color(0xFF1A1E26))
+                            listOf(Color(0xFF4A5075), Color(0xFF2A2F4C), Color(0xFF181B30))
                         ),
-                        RoundedCornerShape(4.dp)
+                        RoundedCornerShape(14.dp)
                     )
-                    .border(1.dp, Color.White.copy(0.1f), RoundedCornerShape(4.dp)),
+                    .border(
+                        1.dp,
+                        Brush.verticalGradient(
+                            listOf(if (isActive) gainColor.copy(0.8f) else Color.White.copy(0.12f), Color.White.copy(0.05f))
+                        ),
+                        RoundedCornerShape(14.dp)
+                    ),
                 contentAlignment = Alignment.Center
             ) {
                 // Knob Center Line (Indicator)
@@ -1742,7 +1818,7 @@ private fun PremiumVerticalBand(
             text = if (band.frequencyHz >= 1000f)
                 "%.1fk".format(band.frequencyHz / 1000f).removeSuffix(".0")
             else "${band.frequencyHz.toInt()}",
-            color = if (isActive) Color.White.copy(0.9f) else Color.White.copy(0.3f),
+            color = if (isActive) PremiumAccentSoft else Color.White.copy(0.3f),
             fontSize = 11.sp,
             fontWeight = FontWeight.Black,
             letterSpacing = 1.sp,
@@ -1774,8 +1850,8 @@ private fun EqPreviewGraph(bands: List<ParametricEqBand>, enabled: Boolean, show
                 // Frequency-dependent color selection (Deep Gray -> Medium Gray -> Dim White)
                 val colorFraction = i.toFloat() / fftBars.size
                 val baseColor = when {
-                    colorFraction < 0.5f -> lerp(Color(0xFF444444), Color(0xFF888888), colorFraction / 0.5f)
-                    else -> lerp(Color(0xFF888888), Color(0xFFDDDDDD), (colorFraction - 0.5f) / 0.5f)
+                    colorFraction < 0.5f -> lerp(PremiumAccent, DspViolet, colorFraction / 0.5f)
+                    else -> lerp(DspViolet, DspPink, (colorFraction - 0.5f) / 0.5f)
                 }
 
                 // 1. Neon Bloom (Glow)
@@ -1877,14 +1953,14 @@ private fun EqPreviewGraph(bands: List<ParametricEqBand>, enabled: Boolean, show
             if (enabled) {
                 drawPath(
                     path = path,
-                    color = GraphicGold.copy(0.3f),
-                    style = Stroke(width = 6.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+                    brush = Brush.horizontalGradient(listOf(PremiumAccent.copy(0.30f), DspViolet.copy(0.30f), DspPink.copy(0.30f))),
+                    style = Stroke(width = 7.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
                 )
             }
             
             drawPath(
                 path = path,
-                color = if (enabled) GraphicGold else Color.White.copy(0.2f),
+                brush = if (enabled) Brush.horizontalGradient(listOf(PremiumAccent, DspViolet, DspPink)) else SolidColor(Color.White.copy(0.2f)),
                 style = Stroke(width = 2.5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
             )
 
@@ -1955,14 +2031,8 @@ private fun UnifiedPresetSection(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .background(PremiumSurface.copy(alpha = 0.4f))
-            .border(
-                1.dp,
-                Brush.linearGradient(listOf(Color.White.copy(0.1f), Color.Transparent)),
-                RoundedCornerShape(16.dp)
-            )
-            .padding(4.dp),
+            .dspPanel()
+            .padding(8.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp)
     ) {
         Row(
@@ -1971,15 +2041,15 @@ private fun UnifiedPresetSection(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("AUDIO PRESETS", color = PremiumAccent.copy(0.7f), fontWeight = FontWeight.Black, fontSize = 10.sp, letterSpacing = 2.sp)
+                Text("AUDIO PRESETS", color = PremiumAccentSoft.copy(0.8f), fontWeight = FontWeight.Black, fontSize = 10.sp, letterSpacing = 2.sp)
                 Spacer(Modifier.width(10.dp))
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
-                        .clip(RoundedCornerShape(6.dp))
+                        .clip(RoundedCornerShape(50))
                         .background(if (activeCustom != null) PremiumAccent.copy(alpha = 0.1f) else Color.White.copy(alpha = 0.05f))
                         .clickable { onShowSavedPresets() }
-                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                        .padding(horizontal = 9.dp, vertical = 3.dp)
                 ) {
                     Icon(
                         Icons.Rounded.Tune,
@@ -2012,7 +2082,7 @@ private fun UnifiedPresetSection(
                     onDismissRequest = { onShowMenuChange(false) },
                     modifier = Modifier.width(180.dp).border(1.dp, Color.White.copy(0.1f), RoundedCornerShape(14.dp)),
                     shape = RoundedCornerShape(14.dp),
-                    containerColor = Color(0xFF1A1A24)
+                    containerColor = Color(0xFF181B2E)
                 ) {
                     val menuItemPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp)
                     DropdownMenuItem(
@@ -2102,16 +2172,16 @@ private fun UnifiedPresetSection(
                 val isActive = activeBuiltIn == preset.name && activeCustom == null
                 Card(
                     onClick = { viewModel.setAllEqGains(preset.gains) },
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(50),
                     colors = CardDefaults.cardColors(
-                        containerColor = if (isActive) PremiumAccent.copy(alpha = 0.1f) else Color.White.copy(alpha = 0.05f)
+                        containerColor = if (isActive) PremiumAccent.copy(alpha = 0.18f) else Color.White.copy(alpha = 0.06f)
                     ),
-                    border = BorderStroke(1.dp, if (isActive) PremiumAccent.copy(alpha = 0.5f) else Color.White.copy(alpha = 0.1f))
+                    border = BorderStroke(1.dp, if (isActive) PremiumAccent.copy(alpha = 0.7f) else Color.White.copy(alpha = 0.1f))
                 ) {
                     Text(
                         preset.name,
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
-                        color = if (isActive) PremiumAccent else Color.White,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 7.dp),
+                        color = if (isActive) PremiumAccentSoft else Color.White.copy(0.9f),
                         fontWeight = FontWeight.SemiBold,
                         fontSize = 12.sp
                     )
@@ -2196,11 +2266,15 @@ private fun PremiumSoundStageCard(
             Box(
                 modifier = Modifier
                     .background(
-                        Color.White.copy(0.05f),
-                        RoundedCornerShape(12.dp)
+                        Brush.horizontalGradient(listOf(PremiumAccent.copy(0.14f), DspViolet.copy(0.14f))),
+                        RoundedCornerShape(50)
                     )
-                    .border(1.dp, Color.White.copy(0.1f), RoundedCornerShape(12.dp))
-                    .padding(horizontal = 16.dp, vertical = 6.dp)
+                    .border(
+                        1.dp,
+                        Brush.horizontalGradient(listOf(PremiumAccent.copy(0.55f), DspViolet.copy(0.55f))),
+                        RoundedCornerShape(50)
+                    )
+                    .padding(horizontal = 20.dp, vertical = 7.dp)
             ) {
                 Text(
                     text = "SPATIAL AUDIO",
@@ -2214,9 +2288,9 @@ private fun PremiumSoundStageCard(
             // UI Mode Toggle
             Row(
                 modifier = Modifier
-                    .background(Color.Black.copy(0.3f), RoundedCornerShape(20.dp))
-                    .border(1.dp, Color.White.copy(0.05f), RoundedCornerShape(20.dp))
-                    .padding(2.dp),
+                    .background(Color(0xFF05060F).copy(0.6f), RoundedCornerShape(50))
+                    .border(1.dp, Color.White.copy(0.10f), RoundedCornerShape(50))
+                    .padding(3.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 SpatialModeChip("CLASSIC", config.spatialUiMode == SpatialUiMode.CLASSIC) {
@@ -2244,10 +2318,13 @@ private fun SpatialModeChip(
 ) {
     Box(
         modifier = Modifier
-            .clip(RoundedCornerShape(18.dp))
-            .background(if (selected) PremiumAccent else Color.Transparent)
+            .clip(RoundedCornerShape(50))
+            .then(
+                if (selected) Modifier.background(Brush.horizontalGradient(listOf(PremiumAccent, DspViolet)))
+                else Modifier
+            )
             .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 4.dp),
+            .padding(horizontal = 16.dp, vertical = 6.dp),
         contentAlignment = Alignment.Center
     ) {
         Text(
@@ -2518,9 +2595,7 @@ private fun ClassicControlPanel(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(28.dp))
-            .background(Color(0xFF0D1117).copy(0.7f))
-            .border(1.dp, Color.White.copy(0.06f), RoundedCornerShape(28.dp))
+            .dspPanel(26.dp)
             .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
@@ -2847,9 +2922,7 @@ private fun ModernSpatialAudioContent(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(28.dp))
-                .background(Color(0xFF0D1117).copy(0.7f))
-                .border(1.dp, Color.White.copy(0.06f), RoundedCornerShape(28.dp))
+                .dspPanel(26.dp)
                 .padding(14.dp)
                 .graphicsLayer { alpha = if (spatialActive) 1f else 0.4f },
             verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -3019,7 +3092,7 @@ private fun ModernSpatialAudioContent(
                             )
                             .size(24.dp)
                             .shadow(8.dp, CircleShape, ambientColor = PremiumAccent, spotColor = PremiumAccent)
-                            .background(Color(0xFF1A1A24), CircleShape)
+                            .background(Color(0xFF181B2E), CircleShape)
                             .border(2.dp, if (spatialActive) PremiumAccent else Color.Gray, CircleShape),
                         contentAlignment = Alignment.Center
                     ) {
@@ -3033,9 +3106,7 @@ private fun ModernSpatialAudioContent(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(16.dp))
-                .background(Color(0xFF0D1117).copy(0.6f))
-                .border(1.dp, Color.White.copy(0.05f), RoundedCornerShape(16.dp))
+                .dspPanel(22.dp)
                 .padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
@@ -3122,7 +3193,7 @@ private fun ModernSpatialAudioContent(
                         expanded = expanded,
                         onDismissRequest = { expanded = false },
                         modifier = Modifier
-                            .background(Color(0xFF1A1A24))
+                            .background(Color(0xFF181B2E))
                             .border(1.dp, Color.White.copy(0.1f), RoundedCornerShape(10.dp))
                     ) {
                         com.beatraxus.app.model.HrtfMode.entries.forEach { mode ->
@@ -3215,7 +3286,7 @@ private fun SoundStageActionChip(
     Surface(
         onClick = onClick,
         enabled = enabled,
-        shape = RoundedCornerShape(8.dp),
+        shape = RoundedCornerShape(50),
         color = if (isAccent) PremiumAccent.copy(0.12f) else Color.White.copy(0.04f),
         border = BorderStroke(
             0.6.dp,
@@ -3249,7 +3320,7 @@ private fun SoundStageActionButton(text: String, onClick: () -> Unit) {
     Surface(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(10.dp),
+        shape = RoundedCornerShape(50),
         color = Color.White.copy(0.06f),
         border = BorderStroke(1.dp, Color.White.copy(0.1f))
     ) {
@@ -3399,14 +3470,8 @@ private fun PremiumReverbCard(uiState: PlayerUiState, viewModel: PlayerViewModel
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .background(PremiumSurface.copy(alpha = 0.4f))
-            .border(
-                1.dp,
-                Brush.linearGradient(listOf(Color.White.copy(0.1f), Color.Transparent)),
-                RoundedCornerShape(16.dp)
-            )
-            .padding(12.dp),
+            .dspPanel()
+            .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         // Header
@@ -3419,7 +3484,7 @@ private fun PremiumReverbCard(uiState: PlayerUiState, viewModel: PlayerViewModel
                 Icon(Icons.Rounded.Waves, null, tint = PremiumAccent, modifier = Modifier.size(16.dp))
                 Text(
                     "REVERB ENGINE",
-                    color = PremiumAccent,
+                    color = Color.White,
                     fontWeight = FontWeight.Black,
                     fontSize = 12.sp,
                     letterSpacing = 2.sp
@@ -3557,7 +3622,7 @@ private fun PremiumReverbCard(uiState: PlayerUiState, viewModel: PlayerViewModel
         if (showPresetPicker) {
             AlertDialog(
                 onDismissRequest = { showPresetPicker = false },
-                containerColor = Color(0xFF1A1A24),
+                containerColor = Color(0xFF181B2E),
                 title = { Text("Reverb Environment", color = Color.White, fontWeight = FontWeight.Bold) },
                 text = {
                     Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
@@ -3612,14 +3677,8 @@ private fun PremiumMasteringCard(uiState: PlayerUiState, viewModel: PlayerViewMo
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .background(PremiumSurface.copy(alpha = 0.4f))
-            .border(
-                1.dp,
-                Brush.linearGradient(listOf(Color.White.copy(0.1f), Color.Transparent)),
-                RoundedCornerShape(16.dp)
-            )
-            .padding(12.dp),
+            .dspPanel()
+            .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         Row(
@@ -3631,7 +3690,7 @@ private fun PremiumMasteringCard(uiState: PlayerUiState, viewModel: PlayerViewMo
                 Icon(Icons.Rounded.AutoAwesome, null, tint = PremiumAccent, modifier = Modifier.size(16.dp))
                 Text(
                     "MASTERING & ENHANCEMENTS",
-                    color = PremiumAccent,
+                    color = Color.White,
                     fontWeight = FontWeight.Black,
                     fontSize = 12.sp,
                     letterSpacing = 2.sp
@@ -3701,20 +3760,41 @@ private fun PremiumMasteringCard(uiState: PlayerUiState, viewModel: PlayerViewMo
 
 @Composable
 internal fun MasteringSectionHeader(label: String, icon: ImageVector, isActive: Boolean = false) {
-    val alpha = if (isActive) 1f else 0.3f
-    val iconAlpha = if (isActive) 0.8f else 0.2f
+    val alpha = if (isActive) 1f else 0.38f
+    val iconAlpha = if (isActive) 1f else 0.3f
     Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp)
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Icon(icon, null, tint = Color.White.copy(iconAlpha), modifier = Modifier.size(10.dp))
+        Box(
+            modifier = Modifier
+                .size(20.dp)
+                .clip(CircleShape)
+                .background(
+                    if (isActive) Brush.linearGradient(listOf(PremiumAccent.copy(0.30f), DspViolet.copy(0.30f)))
+                    else Brush.linearGradient(listOf(Color.White.copy(0.06f), Color.White.copy(0.06f)))
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(icon, null, tint = if (isActive) PremiumAccentSoft else Color.White.copy(iconAlpha), modifier = Modifier.size(12.dp))
+        }
         Text(
             label,
             color = Color.White.copy(alpha),
             fontWeight = FontWeight.Black,
-            fontSize = 8.sp,
-            letterSpacing = 1.5.sp
+            fontSize = 9.sp,
+            letterSpacing = 1.8.sp
+        )
+        Box(
+            Modifier
+                .weight(1f)
+                .height(1.dp)
+                .background(
+                    Brush.horizontalGradient(
+                        listOf(if (isActive) PremiumAccent.copy(0.45f) else Color.White.copy(0.10f), Color.Transparent)
+                    )
+                )
         )
     }
 }
@@ -3722,9 +3802,9 @@ internal fun MasteringSectionHeader(label: String, icon: ImageVector, isActive: 
 @Composable
 internal fun StatChip(label: String, value: String) {
     Surface(
-        color = Color.White.copy(0.05f),
-        shape = RoundedCornerShape(8.dp),
-        border = BorderStroke(1.dp, Color.White.copy(0.1f))
+        color = Color.White.copy(0.06f),
+        shape = RoundedCornerShape(14.dp),
+        border = BorderStroke(1.dp, Brush.linearGradient(listOf(PremiumAccent.copy(0.35f), Color.White.copy(0.06f))))
     ) {
         Column(
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
@@ -3772,7 +3852,7 @@ private fun KnobControl(
     val sliderColor = when {
         !isActive -> Color.White.copy(0.15f)
         isNeutralValue -> Color.White.copy(0.1f)
-        unit == "dB" || unit == "L/R" -> if (internalValue > 0.05f) Color(0xFF00FF88) else Color(0xFFFF5252)
+        unit == "dB" || unit == "L/R" -> if (internalValue > 0.05f) Color(0xFF3CF2A6) else Color(0xFFFF6B88)
         else -> PremiumAccent
     }
 
@@ -3900,7 +3980,8 @@ private fun KnobControl(
                     .graphicsLayer {
                         rotationZ = (progress * 270f) - 135f
                     }
-                    .shadow(if (isActive) 16.dp else 4.dp, CircleShape, spotColor = Color.Black)
+                    .shadow(if (isActive) 16.dp else 4.dp, CircleShape, spotColor = if (isActive) sliderColor else Color.Black)
+                    .border(1.dp, if (isActive) sliderColor.copy(0.5f) else Color.White.copy(0.08f), CircleShape)
                     .combinedClickable(
                         enabled = enabled,
                         onClick = { onToggle() },
@@ -3914,7 +3995,7 @@ private fun KnobControl(
                     Canvas(modifier = Modifier.fillMaxSize()) {
                         drawCircle(
                             brush = Brush.linearGradient(
-                                listOf(Color(0xFF323842), Color(0xFF16191E), Color(0xFF262B33))
+                                listOf(Color(0xFF3F4568), Color(0xFF141729), Color(0xFF2B3050))
                             )
                         )
                         // Circular "Brushed" texture lines
@@ -3947,16 +4028,16 @@ private fun KnobControl(
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(
                 text = label.uppercase(),
-                color = if (isActive) Color.White.copy(0.9f) else Color.White.copy(0.3f),
+                color = if (isActive) Color.White else Color.White.copy(0.3f),
                 fontWeight = FontWeight.Black,
                 fontSize = 10.sp,
                 letterSpacing = 2.sp
             )
             Surface(
                 onClick = { if (enabled) onLongPress() },
-                color = Color.White.copy(0.04f),
-                shape = RoundedCornerShape(4.dp),
-                border = BorderStroke(0.5.dp, Color.White.copy(0.1f))
+                color = Color.White.copy(0.06f),
+                shape = RoundedCornerShape(50),
+                border = BorderStroke(0.8.dp, if (isActive) sliderColor.copy(0.45f) else Color.White.copy(0.12f))
             ) {
                 Text(
                     text = when (unit) {
@@ -3972,7 +4053,7 @@ private fun KnobControl(
                     color = if (isActive) sliderColor else Color.White.copy(0.2f),
                     fontWeight = FontWeight.Black,
                     fontSize = 12.sp,
-                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
                 )
             }
         }
@@ -4014,7 +4095,7 @@ private fun AutoEqResultRow(
 
                     val isGithub = result.source.startsWith("GITHUB:")
                     val badgeText = if (isGithub) "LIVE" else "BUILT-IN"
-                    val badgeColor = if (isSelected) PremiumAccent else (if (isGithub) Color(0xFF00FF88).copy(0.8f) else PremiumAccent.copy(0.6f))
+                    val badgeColor = if (isSelected) PremiumAccent else (if (isGithub) Color(0xFF3CF2A6).copy(0.8f) else PremiumAccent.copy(0.6f))
 
                     Surface(
                         color = badgeColor.copy(0.12f),
