@@ -65,6 +65,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import com.beatraxus.app.ui.utils.DialogBlurBehind
 import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
@@ -126,6 +127,10 @@ fun LyricsSourcesPopup(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
+        // The Now Playing screen behind already dims + blurs itself, so remove the
+        // platform's default flat dark dim to avoid double-darkening.
+        DialogBlurBehind(radiusDp = 0)
+
         Box(
             modifier = Modifier
                 .fillMaxSize()

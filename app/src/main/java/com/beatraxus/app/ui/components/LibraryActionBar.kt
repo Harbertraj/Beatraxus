@@ -64,12 +64,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.TransformOrigin
-import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
+import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
 import kotlin.math.roundToInt
 
 private val ActionCyan = Color(0xFF00F2FF)
@@ -362,7 +366,7 @@ private fun StripSegment(action: StripAction, modifier: Modifier = Modifier) {
     )
     Box(
         modifier = modifier
-            .onGloballyPositioned { bounds = it.boundsInRoot() }
+            .onGloballyPositioned { bounds = it.boundsInWindow() }
             .background(
                 Brush.verticalGradient(
                     listOf(Color.Transparent, action.accent.copy(alpha = 0.22f * sel))
@@ -420,7 +424,7 @@ fun MultiSelectActionBar(
     modifier: Modifier = Modifier
 ) {
     val actions = buildList {
-        add(StripAction(Icons.Rounded.SelectAll, "Select all", ActionCyan, selected = true, label = "ALL") { onSelectAll() })
+        add(StripAction(Icons.Rounded.SelectAll, "Select all", AccentBlue, selected = true, label = "ALL") { onSelectAll() })
         if (showDelete) add(StripAction(Icons.Rounded.Delete, "Delete", Color(0xFFFF453A), label = "DELETE") { onDelete() })
         add(StripAction(Icons.AutoMirrored.Rounded.PlaylistPlay, "Play next", Color(0xFF30D158), label = "NEXT") { onPlayNext() })
         add(StripAction(Icons.AutoMirrored.Rounded.PlaylistAdd, "Add to playlist", Color(0xFFFFD60A), label = "ADD") { onAddToPlaylist() })
@@ -432,6 +436,23 @@ fun MultiSelectActionBar(
 // ─────────────────────────────────────────────────────────────────────────────
 //  Compact dropdown (replaces the big bottom sheets)
 // ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Pins the popup window to the top-left corner of the WINDOW.
+ *
+ * Compose's default popup placement is relative to the *parent composable's* top-left, so any
+ * parent offset (status bar, padding, header) was silently added on top of the anchor's own
+ * position and pushed the dropdown far below its icon. With the window origin as reference,
+ * the anchor bounds (also in window coordinates) land exactly where the icon is.
+ */
+private object WindowOriginPopupPositionProvider : PopupPositionProvider {
+    override fun calculatePosition(
+        anchorBounds: IntRect,
+        windowSize: IntSize,
+        layoutDirection: LayoutDirection,
+        popupContentSize: IntSize
+    ): IntOffset = IntOffset.Zero
+}
 
 /**
  * Small dropdown card that opens right under [anchor] (bounds of the tapped strip segment),
@@ -448,8 +469,14 @@ fun LibraryDropdown(
 ) {
     if (!expanded) return
     Popup(
+        popupPositionProvider = WindowOriginPopupPositionProvider,
         onDismissRequest = onDismiss,
-        properties = PopupProperties(focusable = true, dismissOnBackPress = true, dismissOnClickOutside = false)
+        properties = PopupProperties(
+            focusable = true,
+            dismissOnBackPress = true,
+            dismissOnClickOutside = false,
+            clippingEnabled = false
+        )
     ) {
         val progress = remember { Animatable(0f) }
         LaunchedEffect(Unit) { progress.animateTo(1f, tween(190, easing = FastOutSlowInEasing)) }
@@ -463,7 +490,7 @@ fun LibraryDropdown(
             val anchorCx = if (hasAnchor) anchor.center.x else maxWidthPx / 2f
             val leftPx = (anchorCx - widthPx / 2f)
                 .coerceIn(marginPx, (maxWidthPx - widthPx - marginPx).coerceAtLeast(marginPx))
-            val topPx = if (hasAnchor) anchor.bottom + with(density) { 6.dp.toPx() } else with(density) { 100.dp.toPx() }
+            val topPx = if (hasAnchor) anchor.bottom + with(density) { 4.dp.toPx() } else with(density) { 100.dp.toPx() }
             val originX = ((anchorCx - leftPx) / widthPx).coerceIn(0.1f, 0.9f)
             val cardShape = RoundedCornerShape(18.dp)
 

@@ -292,16 +292,20 @@ fun KaraokeLyricsView(
                     .align(Alignment.TopCenter)
                     .padding(top = 24.dp)
             ) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     Surface(
                         color = Color.White.copy(alpha = 0.12f),
                         shape = RoundedCornerShape(24.dp),
                         border = BorderStroke(1.dp, Color.White.copy(alpha = 0.1f)),
-                        modifier = Modifier.clip(RoundedCornerShape(24.dp))
+                        // weight(fill=false): the SOURCES pill is measured first and always
+                        // keeps its full width; the offset pill only shrinks if space runs out.
+                        modifier = Modifier
+                            .weight(1f, fill = false)
+                            .clip(RoundedCornerShape(24.dp))
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)
                         ) {
                             IconButton(
                                 enabled = !isPlainLyrics,
@@ -319,7 +323,9 @@ fun KaraokeLyricsView(
                             Column(
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 modifier = Modifier
-                                    .padding(horizontal = 16.dp)
+                                    // Fixed width: synced and plain lyrics render the SAME pill size.
+                                    .padding(horizontal = 6.dp)
+                                    .width(92.dp)
                                     .clickable(enabled = !isPlainLyrics) {
                                         tempOffsetStr = lyricsOffsetMs.toString()
                                         isLongPressing = true
@@ -330,14 +336,18 @@ fun KaraokeLyricsView(
                                     else "${if (lyricsOffsetMs >= 0) "+" else ""}${lyricsOffsetMs}ms",
                                     color = Color.White.copy(alpha = if (isPlainLyrics) 0.45f else 1f),
                                     style = MaterialTheme.typography.labelLarge,
-                                    fontWeight = FontWeight.Black
+                                    fontWeight = FontWeight.Black,
+                                    maxLines = 1,
+                                    softWrap = false
                                 )
                                 Text(
-                                    text = if (isPlainLyrics) "PLAIN LYRICS · NO SYNC" else "SYNC OFFSET",
+                                    text = if (isPlainLyrics) "PLAIN · NO SYNC" else "SYNC OFFSET",
                                     color = Color.White.copy(alpha = 0.5f),
                                     style = MaterialTheme.typography.labelSmall,
                                     fontSize = 9.sp,
-                                    letterSpacing = 1.sp
+                                    letterSpacing = 1.sp,
+                                    maxLines = 1,
+                                    softWrap = false
                                 )
                             }
 
@@ -362,6 +372,7 @@ fun KaraokeLyricsView(
                             shape = RoundedCornerShape(24.dp),
                             border = BorderStroke(1.dp, Color.White.copy(alpha = 0.1f)),
                             modifier = Modifier
+                                .wrapContentWidth()
                                 .clip(RoundedCornerShape(24.dp))
                                 .clickable { onShowAllLyrics.invoke() }
                         ) {
@@ -373,7 +384,9 @@ fun KaraokeLyricsView(
                                     text = "SOURCES",
                                     color = Color.White,
                                     style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = FontWeight.Bold
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    softWrap = false
                                 )
                             }
                         }

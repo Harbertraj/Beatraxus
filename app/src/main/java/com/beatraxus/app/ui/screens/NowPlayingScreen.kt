@@ -273,12 +273,29 @@ fun NowPlayingScreen(
         )
     }
 
-    // Screen behind the pipeline sheet AND the song-info popup is blurred (no dark shade)
-    val overlayBlurActive = showPipelineOverlay || showSongInfo
+    // Screen behind every popup is blurred + dimmed.
+    //  - Sleep timer / lyric sources: deeper dim, softer blur (focus on the sheet).
+    //  - Song info / signal path: only a LITTLE dim on top of the existing blur.
+    val strongOverlay = showSleepTimerSheet || showLyricsSourcesSheet
+    val lightOverlay = showPipelineOverlay || showSongInfo
+    val overlayBlurActive = strongOverlay || lightOverlay
     val pipelineBlurRadius by animateDpAsState(
-        targetValue = if (overlayBlurActive) 24.dp else 0.dp,
-        animationSpec = tween(250),
+        targetValue = when {
+            strongOverlay -> 14.dp
+            lightOverlay -> 24.dp
+            else -> 0.dp
+        },
+        animationSpec = tween(280),
         label = "pipelineBlur"
+    )
+    val overlayDim by animateFloatAsState(
+        targetValue = when {
+            strongOverlay -> 0.42f
+            lightOverlay -> 0.16f
+            else -> 0f
+        },
+        animationSpec = tween(280),
+        label = "overlayDim"
     )
     val pipelineScale by animateFloatAsState(
         targetValue = if (overlayBlurActive && Build.VERSION.SDK_INT < Build.VERSION_CODES.S) 0.97f else 1.0f,
@@ -294,6 +311,21 @@ fun NowPlayingScreen(
         Box(
             modifier = Modifier
                 .fillMaxSize()
+                .drawWithContent {
+                    drawContent()
+                    if (overlayDim > 0f) {
+                        // Soft vignette-style dim: a touch darker at the edges, lighter in the
+                        // middle, so the screen recedes without looking flat or muddy.
+                        drawRect(Color.Black.copy(alpha = overlayDim * 0.8f))
+                        drawRect(
+                            brush = Brush.radialGradient(
+                                colors = listOf(Color.Transparent, Color.Black.copy(alpha = overlayDim * 0.5f)),
+                                center = center,
+                                radius = size.maxDimension * 0.75f
+                            )
+                        )
+                    }
+                }
                 .then(
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && pipelineBlurRadius > 0.dp) {
                         Modifier.blur(
@@ -2203,9 +2235,6 @@ private fun fmtSleepTime(seconds: Int): String {
 /** Shared popup look: same panel opacity + dim level as Song Info / Signal Path popups. */
 private const val POPUP_PANEL_ALPHA = 0.96f
 
-private fun popupScrimColor(): Color =
-    Color.Black.copy(alpha = if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.S) 0.35f else 0.12f)
-
 @Composable
 private fun SleepTimerSheet(
     albumArtUri: Uri?,
@@ -2237,7 +2266,7 @@ private fun SleepTimerSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         containerColor = Color.Transparent,
-        scrimColor = popupScrimColor(),
+        scrimColor = Color.Transparent, // NowPlayingScreen dims + blurs itself (animated)
         dragHandle = null
     ) {
         Box(

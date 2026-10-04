@@ -103,10 +103,9 @@ private val DspSheet = Color(0xFF1A1411)           // Dialog / sheet container
 private val DspSheetHigh = Color(0xFF241B16)       // Raised container
 private val DspInk = Color(0xFF070504)             // Deepest inset background
 
-// Active EQ curve colours - intentionally NOT part of the amber/coral/rose screen theme,
-// so the live curve stands out from the UI. Cool electric cyan -> mint.
-private val EqLineStart = Color(0xFF22D3FF)
-private val EqLineEnd = Color(0xFF5CFFB4)
+// Active EQ curve colour: clean white when the EQ is on (inactive stays dim grey).
+private val EqLineStart = Color.White
+private val EqLineEnd = Color.White
 
 /** Shared glass panel used by every DSP card: sheen, aurora rim and rounded corners. */
 private fun Modifier.dspPanel(radius: androidx.compose.ui.unit.Dp = 22.dp): Modifier = this
@@ -2017,7 +2016,7 @@ private fun EqPreviewGraph(bands: List<ParametricEqBand>, enabled: Boolean, show
             if (enabled) {
                 drawPath(
                     path = path,
-                    brush = Brush.horizontalGradient(listOf(EqLineStart.copy(0.30f), EqLineEnd.copy(0.30f))),
+                    brush = Brush.horizontalGradient(listOf(EqLineStart.copy(0.18f), EqLineEnd.copy(0.18f))),
                     style = Stroke(width = 7.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
                 )
             }
@@ -2038,7 +2037,7 @@ private fun EqPreviewGraph(bands: List<ParametricEqBand>, enabled: Boolean, show
                 path = fillPath,
                 brush = Brush.verticalGradient(
                     colors = listOf(
-                        (if (enabled) EqLineStart else Color.White).copy(alpha = 0.16f),
+                        (if (enabled) EqLineStart else Color.White).copy(alpha = 0.12f),
                         (if (enabled) EqLineStart else Color.White).copy(alpha = 0.02f),
                         Color.Transparent
                     ),

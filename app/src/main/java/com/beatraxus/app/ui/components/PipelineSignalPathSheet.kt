@@ -28,6 +28,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
@@ -58,8 +59,8 @@ import com.beatraxus.app.ui.utils.rememberWindowBlurSupported
 import java.util.Locale
 import kotlin.math.abs
 
-private const val PULSE_PERIOD_MS = 700      // one dot-spacing of travel
-private val DOT_SPACING = 20.dp              // distance between flowing dots
+private const val PULSE_PERIOD_MS = 2200     // one slow, calm packet pass per connector
+private val PACKET_TAIL = 16.dp              // length of the fading comet tail
 private val RAIL_WIDTH = 22.dp
 private val LIST_H_PAD = 14.dp
 private val LIST_V_PAD = 10.dp
@@ -640,7 +641,6 @@ fun PipelineSignalPathSheet(
                         .verticalScroll(listScroll)
                         .drawBehind {
                             val x = (LIST_H_PAD + RAIL_WIDTH / 2).toPx()
-                            val spacing = DOT_SPACING.toPx()
                             val stroke = 2.dp.toPx()
                             var top = LIST_V_PAD.toPx()
                             for (i in 0 until stages.lastIndex) {
@@ -669,25 +669,46 @@ fun PipelineSignalPathSheet(
                                         strokeWidth = stroke
                                     )
                                     if (isPlaying) {
-                                        // Several dots flow down the connector at a constant speed.
-                                        val fadeLen = 7.dp.toPx()
-                                        var k = 0
-                                        while (true) {
-                                            val d = (k + pulseProgress) * spacing
-                                            if (d >= h) break
-                                            val fade = minOf(d / fadeLen, (h - d) / fadeLen, 1f).coerceIn(0f, 1f)
-                                            val cy = y0 + d
-                                            drawCircle(
-                                                color = c.copy(alpha = 0.20f * fade),
-                                                radius = 4.5.dp.toPx(),
-                                                center = Offset(x, cy)
+                                        // ONE slim "data packet" per connector: a tapered comet streak
+                                        // with a tiny bright head, easing along the wire. Each stage is
+                                        // phase-offset so the signal appears to hand off down the chain.
+                                        val tail = PACKET_TAIL.toPx()
+                                        val phase = (pulseProgress + i * 0.18f) % 1f
+                                        val eased = phase * phase * (3f - 2f * phase) // smoothstep
+                                        val travel = h + tail
+                                        val headY = y0 + eased * travel
+                                        val tailY = headY - tail
+                                        val a = maxOf(tailY, y0)
+                                        val b = minOf(headY, y1)
+                                        if (b > a) {
+                                            // fade in/out near the node ends so it never pops
+                                            val edge = 10.dp.toPx()
+                                            val fade = minOf(
+                                                (headY - y0) / edge,
+                                                (y1 + tail - headY) / edge,
+                                                1f
+                                            ).coerceIn(0f, 1f)
+                                            drawLine(
+                                                brush = Brush.verticalGradient(
+                                                    colors = listOf(
+                                                        c.copy(alpha = 0f),
+                                                        c.copy(alpha = 0.85f * fade)
+                                                    ),
+                                                    startY = tailY,
+                                                    endY = headY
+                                                ),
+                                                start = Offset(x, a),
+                                                end = Offset(x, b),
+                                                strokeWidth = 2.dp.toPx(),
+                                                cap = StrokeCap.Round
                                             )
-                                            drawCircle(
-                                                color = c.copy(alpha = 0.95f * fade),
-                                                radius = 2.dp.toPx(),
-                                                center = Offset(x, cy)
-                                            )
-                                            k++
+                                            if (headY <= y1) {
+                                                drawCircle(
+                                                    color = Color.White.copy(alpha = 0.9f * fade),
+                                                    radius = 1.4.dp.toPx(),
+                                                    center = Offset(x, headY)
+                                                )
+                                            }
                                         }
                                     }
                                 }

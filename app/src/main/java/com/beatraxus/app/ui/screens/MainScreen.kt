@@ -1215,21 +1215,21 @@ fun MainScreen(
                                                     StripAction(
                                                         icon = if (isCloud) Icons.Rounded.FilterList else Icons.AutoMirrored.Rounded.Sort,
                                                         contentDescription = if (isCloud) "Filter" else "Sort",
-                                                        accent = Color(0xFF00F2FF),
+                                                        accent = LibraryStripActive,
                                                         selected = activeMainSheet == MainSheetType.SORT,
                                                         onClick = { r -> sortAnchor = r; activeMainSheet = MainSheetType.SORT }
                                                     ),
                                                     StripAction(
                                                         icon = Icons.Rounded.Cloud,
                                                         contentDescription = "Cloud",
-                                                        accent = AccentBlue,
+                                                        accent = LibraryStripActive,
                                                         selected = activeMainSheet == MainSheetType.CLOUD,
                                                         onClick = { r -> cloudAnchor = r; activeMainSheet = MainSheetType.CLOUD }
                                                     ),
                                                     StripAction(
                                                         icon = Icons.Rounded.GridView,
                                                         contentDescription = "Layout density",
-                                                        accent = Color(0xFFBF5AF2),
+                                                        accent = LibraryStripActive,
                                                         selected = activeMainSheet == MainSheetType.DENSITY,
                                                         onClick = { r -> densityAnchor = r; activeMainSheet = MainSheetType.DENSITY }
                                                     )
@@ -6014,16 +6014,27 @@ fun SortDropdownContent(
     DropdownHeader(
         title = if (uiState.currentView == LibraryView.CLOUD) "SORT & FILTER" else "SORT BY",
         trailing = {
-            IconButton(
-                onClick = { viewModel.toggleSortOrder() },
-                modifier = Modifier.size(28.dp).background(Color.White.copy(0.08f), CircleShape)
+            // Compact order toggle: small circle, still easy to hit via the padded click area.
+            Box(
+                modifier = Modifier
+                    .size(34.dp)
+                    .clip(CircleShape)
+                    .clickable { viewModel.toggleSortOrder() },
+                contentAlignment = Alignment.Center
             ) {
-                Icon(
-                    if (uiState.isAscending) Icons.Rounded.ArrowUpward else Icons.Rounded.ArrowDownward,
-                    contentDescription = "Toggle order",
-                    tint = AccentBlue,
-                    modifier = Modifier.size(15.dp)
-                )
+                Box(
+                    modifier = Modifier
+                        .size(20.dp)
+                        .background(Color.White.copy(0.08f), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        if (uiState.isAscending) Icons.Rounded.ArrowUpward else Icons.Rounded.ArrowDownward,
+                        contentDescription = "Toggle order",
+                        tint = AccentBlue,
+                        modifier = Modifier.size(12.dp)
+                    )
+                }
             }
         }
     )
@@ -6193,6 +6204,9 @@ fun DensityDropdownContent(
         }
     }
 }
+
+/** ONE calm accent for the selected library top icon (sort / cloud / layout). */
+private val LibraryStripActive = AccentBlue
 
 @Composable
 fun SortSheetContent(
