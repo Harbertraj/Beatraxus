@@ -103,6 +103,11 @@ private val DspSheet = Color(0xFF1A1411)           // Dialog / sheet container
 private val DspSheetHigh = Color(0xFF241B16)       // Raised container
 private val DspInk = Color(0xFF070504)             // Deepest inset background
 
+// Active EQ curve colours - intentionally NOT part of the amber/coral/rose screen theme,
+// so the live curve stands out from the UI. Cool electric cyan -> mint.
+private val EqLineStart = Color(0xFF22D3FF)
+private val EqLineEnd = Color(0xFF5CFFB4)
+
 /** Shared glass panel used by every DSP card: sheen, aurora rim and rounded corners. */
 private fun Modifier.dspPanel(radius: androidx.compose.ui.unit.Dp = 22.dp): Modifier = this
     .clip(RoundedCornerShape(radius))
@@ -395,52 +400,59 @@ fun DspScreen(
             modifier = Modifier.background(Color.Transparent),
             contentWindowInsets = WindowInsets.systemBars,
             topBar = {
-                CenterAlignedTopAppBar(
-                    colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = Color.Transparent),
-                    title = {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .windowInsetsPadding(WindowInsets.statusBars)
+                        .padding(horizontal = 12.dp, vertical = 4.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.CenterStart)
+                                .size(38.dp)
+                                .clip(CircleShape)
+                                .background(Brush.verticalGradient(listOf(Color.White.copy(0.14f), Color.White.copy(0.04f))))
+                                .border(1.dp, Color.White.copy(0.18f), CircleShape)
+                                .clickable(onClick = safeBack),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back", tint = Color.White, modifier = Modifier.size(20.dp))
+                        }
+                        Column(
+                            modifier = Modifier.padding(horizontal = 48.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
                             Text(
                                 text = "STUDIO DSP",
+                                color = Color.White,
                                 fontWeight = FontWeight.Black,
                                 letterSpacing = 4.sp,
-                                style = MaterialTheme.typography.titleLarge.copy(
-                                    brush = Brush.horizontalGradient(listOf(PremiumAccentSoft, Color.White, DspViolet))
-                                ),
-                                modifier = Modifier.graphicsLayer { alpha = 0.96f }
+                                style = MaterialTheme.typography.titleLarge,
+                                maxLines = 1
                             )
                             Text(
                                 text = "Settings for: ${uiState.dsp.activeOutputDeviceLabel}",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = PremiumAccentSoft.copy(0.55f),
+                                color = Color.White.copy(0.55f),
                                 fontSize = 9.sp,
                                 letterSpacing = 0.6.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.padding(top = 2.dp)
                             )
-                            DspTabBar(
-                                pagerState = pagerState,
-                                modifier = Modifier
-                                    .padding(top = 8.dp)
-                                    .widthIn(max = 340.dp)
-                                    .fillMaxWidth(),
-                                onSelect = { i -> pageScope.launch { pagerState.animateScrollToPage(i) } }
-                            )
-                        }
-                    },
-                    navigationIcon = {
-                        IconButton(onClick = safeBack) {
-                            Box(
-                                modifier = Modifier
-                                    .size(38.dp)
-                                    .clip(CircleShape)
-                                    .background(Brush.verticalGradient(listOf(Color.White.copy(0.14f), Color.White.copy(0.04f))))
-                                    .border(1.dp, Color.White.copy(0.18f), CircleShape),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back", tint = Color.White, modifier = Modifier.size(20.dp))
-                            }
                         }
                     }
-                )
+                    DspTabBar(
+                        pagerState = pagerState,
+                        modifier = Modifier
+                            .padding(top = 8.dp)
+                            .widthIn(max = 340.dp)
+                            .fillMaxWidth(),
+                        onSelect = { i -> pageScope.launch { pagerState.animateScrollToPage(i) } }
+                    )
+                }
             }
         ) { paddingValues ->
             HorizontalPager(
@@ -2005,14 +2017,14 @@ private fun EqPreviewGraph(bands: List<ParametricEqBand>, enabled: Boolean, show
             if (enabled) {
                 drawPath(
                     path = path,
-                    brush = Brush.horizontalGradient(listOf(PremiumAccent.copy(0.30f), DspViolet.copy(0.30f), DspPink.copy(0.30f))),
+                    brush = Brush.horizontalGradient(listOf(EqLineStart.copy(0.30f), EqLineEnd.copy(0.30f))),
                     style = Stroke(width = 7.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
                 )
             }
             
             drawPath(
                 path = path,
-                brush = if (enabled) Brush.horizontalGradient(listOf(PremiumAccent, DspViolet, DspPink)) else SolidColor(Color.White.copy(0.2f)),
+                brush = if (enabled) Brush.horizontalGradient(listOf(EqLineStart, EqLineEnd)) else SolidColor(Color.White.copy(0.2f)),
                 style = Stroke(width = 2.5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
             )
 
@@ -2026,8 +2038,8 @@ private fun EqPreviewGraph(bands: List<ParametricEqBand>, enabled: Boolean, show
                 path = fillPath,
                 brush = Brush.verticalGradient(
                     colors = listOf(
-                        (if (enabled) GraphicGold else Color.White).copy(alpha = 0.15f),
-                        (if (enabled) GraphicGold else Color.White).copy(alpha = 0.02f),
+                        (if (enabled) EqLineStart else Color.White).copy(alpha = 0.16f),
+                        (if (enabled) EqLineStart else Color.White).copy(alpha = 0.02f),
                         Color.Transparent
                     ),
                     startY = 0f,
@@ -2041,7 +2053,7 @@ private fun EqPreviewGraph(bands: List<ParametricEqBand>, enabled: Boolean, show
                     if (i < bands.size) {
                         val band = bands[i]
                         if (band.enabled) {
-                            val dotColor = if (enabled) GraphicGold else Color.White.copy(0.4f)
+                            val dotColor = if (enabled) EqLineStart else Color.White.copy(0.4f)
                             // Outer glow
                             drawCircle(color = dotColor.copy(0.3f), radius = 6.dp.toPx(), center = pt)
                             // Core

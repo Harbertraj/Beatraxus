@@ -27,6 +27,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
@@ -57,11 +58,19 @@ import com.beatraxus.app.ui.utils.rememberWindowBlurSupported
 import java.util.Locale
 import kotlin.math.abs
 
-private const val PULSE_SWEEP_MS = 5200
+private const val PULSE_PERIOD_MS = 700      // one dot-spacing of travel
+private val DOT_SPACING = 20.dp              // distance between flowing dots
 private val RAIL_WIDTH = 22.dp
 private val LIST_H_PAD = 14.dp
 private val LIST_V_PAD = 10.dp
 private val NODE_CENTER_Y = 17.dp // spacer(10) + half of 14dp node
+
+private fun stageStateColor(state: StageState): Color = when (state) {
+    StageState.UNTOUCHED -> Color(0xFF30D158)
+    StageState.PROCESSED -> Color(0xFFFF9500)
+    StageState.DEGRADED -> Color(0xFFFF453A)
+    StageState.BYPASSED -> Color.White.copy(alpha = 0.35f)
+}
 
 enum class StageState {
     UNTOUCHED, PROCESSED, DEGRADED, BYPASSED
@@ -465,7 +474,7 @@ fun PipelineSignalPathSheet(
         initialValue = 0f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(
-            animation = tween(PULSE_SWEEP_MS, easing = LinearEasing),
+            animation = tween(PULSE_PERIOD_MS, easing = LinearEasing),
             repeatMode = RepeatMode.Restart
         ),
         label = "pulseProgress"
@@ -618,8 +627,11 @@ fun PipelineSignalPathSheet(
                 // ONE continuous rail line + travelling dot is drawn behind the whole list so the
                 // dot never skips the gaps where the wire-format chips sit.
                 val listScroll = rememberScrollState()
-                var lastRowHeightPx by remember { mutableIntStateOf(0) }
-                val density = LocalDensity.current
+                // Measured height of each stage group (card + wire-format chip). A group's height
+                // is exactly the length of the connector that leaves that stage's node.
+                val groupHeights = remember(stages.size) {
+                    mutableStateListOf<Int>().apply { repeat(stages.size) { add(0) } }
+                }
 
                 Column(
                     modifier = Modifier
@@ -627,48 +639,73 @@ fun PipelineSignalPathSheet(
                         .weight(1f, fill = false)
                         .verticalScroll(listScroll)
                         .drawBehind {
-                            val x = with(density) { (LIST_H_PAD + RAIL_WIDTH / 2).toPx() }
-                            val yStart = with(density) { (LIST_V_PAD + NODE_CENTER_Y).toPx() }
-                            val yEnd = size.height -
-                                with(density) { LIST_V_PAD.toPx() } -
-                                lastRowHeightPx +
-                                with(density) { NODE_CENTER_Y.toPx() }
-                            if (yEnd > yStart) {
-                                drawLine(
-                                    color = Color.White.copy(alpha = 0.12f),
-                                    start = Offset(x, yStart),
-                                    end = Offset(x, yEnd),
-                                    strokeWidth = 2.dp.toPx()
-                                )
-                                if (isPlaying) {
-                                    val y = yStart + (yEnd - yStart) * pulseProgress
-                                    // soft glow + bright core, fading in/out at both ends
-                                    val edge = minOf(pulseProgress, 1f - pulseProgress) * 12f
-                                    val fade = edge.coerceIn(0f, 1f)
-                                    drawCircle(
-                                        color = verdictColor.copy(alpha = 0.25f * fade),
-                                        radius = 7.dp.toPx(),
-                                        center = Offset(x, y)
+                            val x = (LIST_H_PAD + RAIL_WIDTH / 2).toPx()
+                            val spacing = DOT_SPACING.toPx()
+                            val stroke = 2.dp.toPx()
+                            var top = LIST_V_PAD.toPx()
+                            for (i in 0 until stages.lastIndex) {
+                                val h = groupHeights.getOrElse(i) { 0 }.toFloat()
+                                if (h <= 0f) continue
+                                val y0 = top + NODE_CENTER_Y.toPx()
+                                val y1 = y0 + h
+                                val st = stages[i].state
+                                val bypassed = st == StageState.BYPASSED
+                                val c = stageStateColor(st)
+
+                                if (bypassed) {
+                                    // Bypassed stage: dim dashed connector, no travelling dots.
+                                    drawLine(
+                                        color = Color.White.copy(alpha = 0.10f),
+                                        start = Offset(x, y0),
+                                        end = Offset(x, y1),
+                                        strokeWidth = stroke,
+                                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(5.dp.toPx(), 6.dp.toPx()))
                                     )
-                                    drawCircle(
-                                        color = verdictColor.copy(alpha = 0.95f * fade),
-                                        radius = 3.dp.toPx(),
-                                        center = Offset(x, y)
+                                } else {
+                                    drawLine(
+                                        color = c.copy(alpha = 0.22f),
+                                        start = Offset(x, y0),
+                                        end = Offset(x, y1),
+                                        strokeWidth = stroke
                                     )
+                                    if (isPlaying) {
+                                        // Several dots flow down the connector at a constant speed.
+                                        val fadeLen = 7.dp.toPx()
+                                        var k = 0
+                                        while (true) {
+                                            val d = (k + pulseProgress) * spacing
+                                            if (d >= h) break
+                                            val fade = minOf(d / fadeLen, (h - d) / fadeLen, 1f).coerceIn(0f, 1f)
+                                            val cy = y0 + d
+                                            drawCircle(
+                                                color = c.copy(alpha = 0.20f * fade),
+                                                radius = 4.5.dp.toPx(),
+                                                center = Offset(x, cy)
+                                            )
+                                            drawCircle(
+                                                color = c.copy(alpha = 0.95f * fade),
+                                                radius = 2.dp.toPx(),
+                                                center = Offset(x, cy)
+                                            )
+                                            k++
+                                        }
+                                    }
                                 }
+                                top += h
                             }
                         }
                         .padding(horizontal = LIST_H_PAD, vertical = LIST_V_PAD)
                 ) {
                     stages.forEachIndexed { index, stage ->
-                        val isLast = index == stages.lastIndex
                         CompactStageRow(
                             stage = stage,
                             wireFormat = wireFormats.getOrNull(index),
-                            isLast = isLast,
-                            modifier = if (isLast) {
-                                Modifier.onSizeChanged { lastRowHeightPx = it.height }
-                            } else Modifier
+                            isLast = index == stages.lastIndex,
+                            modifier = Modifier.onSizeChanged {
+                                if (index < groupHeights.size && groupHeights[index] != it.height) {
+                                    groupHeights[index] = it.height
+                                }
+                            }
                         )
                     }
                 }
@@ -773,8 +810,9 @@ fun CompactStageRow(
     val railWidth = RAIL_WIDTH
     val cardShape = RoundedCornerShape(14.dp)
 
+    Column(modifier = modifier.fillMaxWidth()) {
     Row(
-        modifier = modifier
+        modifier = Modifier
             .fillMaxWidth()
             .height(IntrinsicSize.Min)
             .semantics(mergeDescendants = true) {
@@ -970,6 +1008,7 @@ fun CompactStageRow(
                 }
             }
         }
+    }
     }
 }
 
