@@ -32,6 +32,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.*
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.semantics.Role
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -515,16 +518,17 @@ fun VideoPlayerScreen(
             // Aspect Ratio Overlay
             uiState.aspectRatioMessage?.let { message ->
                 Surface(
-                    color = Color.Black.copy(0.6f),
-                    shape = RoundedCornerShape(16.dp),
+                    color = Color(0xE60E0E12),
+                    shape = RoundedCornerShape(50),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, VpAmberSoft.copy(alpha = 0.55f)),
                     modifier = Modifier.padding(16.dp)
                 ) {
                     Text(
                         text = message,
                         color = Color.White,
-                        modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp),
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold
+                        modifier = Modifier.padding(horizontal = 26.dp, vertical = 12.dp),
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.ExtraBold
                     )
                 }
             }
@@ -536,17 +540,18 @@ fun VideoPlayerScreen(
                 modifier = Modifier.align(Alignment.TopCenter).padding(top = 100.dp)
             ) {
                 Surface(
-                    color = Color.Black.copy(0.6f),
-                    shape = RoundedCornerShape(20.dp),
+                    color = Color(0xE60E0E12),
+                    shape = RoundedCornerShape(50),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, VpAmberSoft.copy(alpha = 0.55f)),
                     modifier = Modifier.padding(16.dp)
                 ) {
                     Row(
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                        modifier = Modifier.padding(horizontal = 18.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.Rounded.FastForward, null, tint = Color.White, modifier = Modifier.size(16.dp))
+                        Icon(Icons.Rounded.FastForward, null, tint = VpAmberSoft, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(8.dp))
-                        Text("2X Speed", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                        Text("2X Speed", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.ExtraBold)
                     }
                 }
             }
@@ -570,7 +575,7 @@ fun VideoPlayerScreen(
                             onDismiss = { showChapterStrip = false },
                             modifier = Modifier
                                 .align(Alignment.BottomCenter)
-                                .padding(bottom = 120.dp)
+                                .padding(bottom = 190.dp)
                         )
                     }
 
@@ -643,29 +648,29 @@ fun VideoPlayerScreen(
                         exit = fadeOut() + shrinkHorizontally(shrinkTowards = Alignment.End),
                         modifier = Modifier
                             .align(Alignment.BottomEnd)
-                            .padding(bottom = 120.dp, end = 24.dp)
+                            .padding(bottom = 190.dp, end = 24.dp)
                     ) {
                         Surface(
                             onClick = { viewModel.skipIntro() },
-                            color = Color.Black.copy(alpha = 0.6f),
-                            shape = RoundedCornerShape(24.dp),
-                            border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))
+                            color = VpAmber,
+                            shape = RoundedCornerShape(50),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.35f))
                         ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                                modifier = Modifier.padding(start = 20.dp, end = 12.dp, top = 10.dp, bottom = 10.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
                                     "Skip Intro",
-                                    color = Color.White,
+                                    color = Color.Black,
                                     fontSize = 14.sp,
-                                    fontWeight = FontWeight.Bold
+                                    fontWeight = FontWeight.ExtraBold
                                 )
-                                Spacer(Modifier.width(8.dp))
+                                Spacer(Modifier.width(6.dp))
                                 Icon(
                                     Icons.Rounded.ChevronRight,
                                     null,
-                                    tint = Color.White,
+                                    tint = Color.Black,
                                     modifier = Modifier.size(18.dp)
                                 )
                             }
@@ -678,13 +683,12 @@ fun VideoPlayerScreen(
                             .align(Alignment.CenterStart)
                             .padding(24.dp)
                     ) {
-                        IconButton(
+                        VpGlassButton(
                             onClick = { viewModel.toggleLock() },
-                            modifier = Modifier
-                                .size(56.dp)
-                                .background(Color.Black.copy(0.4f), RoundedCornerShape(28.dp))
+                            size = 60.dp,
+                            active = true
                         ) {
-                            Icon(Icons.Rounded.Lock, null, tint = Color.White, modifier = Modifier.size(32.dp))
+                            Icon(Icons.Rounded.Lock, null, tint = VpAmberSoft, modifier = Modifier.size(30.dp))
                         }
                     }
                 }
@@ -775,6 +779,106 @@ fun VideoPlayerScreen(
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+//  Video player UI  —  "Amber Glass" look
+//  UI only: every callback, state read and gesture is unchanged.
+// ─────────────────────────────────────────────────────────────────────────────
+private val VpAmber = Color(0xFFFF8F00)
+private val VpAmberSoft = Color(0xFFFFB347)
+
+/** Round frosted-glass button. [active] lights it up with an amber rim. */
+@Composable
+private fun VpGlassButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    size: Dp = 44.dp,
+    active: Boolean = false,
+    content: @Composable BoxScope.() -> Unit
+) {
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (pressed) 0.88f else 1f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
+        label = "vpGlassScale"
+    )
+    val fill = if (active) {
+        Brush.verticalGradient(listOf(VpAmber.copy(alpha = 0.34f), VpAmber.copy(alpha = 0.14f)))
+    } else {
+        Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.18f), Color.White.copy(alpha = 0.06f)))
+    }
+    val rim = if (active) {
+        Brush.verticalGradient(listOf(VpAmberSoft.copy(alpha = 0.95f), VpAmber.copy(alpha = 0.30f)))
+    } else {
+        Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.34f), Color.White.copy(alpha = 0.06f)))
+    }
+    Box(
+        modifier = modifier
+            .size(size)
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
+            .clip(CircleShape)
+            .background(fill)
+            .border(1.dp, rim, CircleShape)
+            .clickable(
+                interactionSource = interaction,
+                indication = null,
+                role = Role.Button,
+                onClick = onClick
+            ),
+        contentAlignment = Alignment.Center,
+        content = content
+    )
+}
+
+/** Flat icon used inside the floating tool capsule. Active = amber disc behind an amber icon. */
+@Composable
+private fun VpToolButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    active: Boolean,
+    onClick: () -> Unit
+) {
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (pressed) 0.84f else 1f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
+        label = "vpToolScale"
+    )
+    val activeAmount by animateFloatAsState(
+        targetValue = if (active) 1f else 0f,
+        animationSpec = tween(220),
+        label = "vpToolActive"
+    )
+    Box(
+        modifier = Modifier
+            .size(42.dp)
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
+            .clip(CircleShape)
+            .background(VpAmber.copy(alpha = 0.20f * activeAmount))
+            .border(1.dp, VpAmberSoft.copy(alpha = 0.65f * activeAmount), CircleShape)
+            .clickable(
+                interactionSource = interaction,
+                indication = null,
+                role = Role.Button,
+                onClick = onClick
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = androidx.compose.ui.graphics.lerp(Color.White.copy(alpha = 0.92f), VpAmberSoft, activeAmount),
+            modifier = Modifier.size(22.dp)
+        )
+    }
+}
+
 @Composable
 fun FloatingControls(
     uiState: VideoPlayerUiState,
@@ -791,78 +895,72 @@ fun FloatingControls(
     modifier: Modifier = Modifier
 ) {
     val scrollState = rememberScrollState()
-    
+    val capsule = RoundedCornerShape(30.dp)
+
     Box(
         modifier = modifier
             .padding(horizontal = 24.dp)
-            .clip(RoundedCornerShape(24.dp))
-            .background(Color.Black.copy(0.4f))
+            .shadow(14.dp, capsule, ambientColor = Color.Black, spotColor = Color.Black)
+            .clip(capsule)
+            .background(Color.Black.copy(alpha = 0.40f))
+            .background(Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.14f), Color.White.copy(alpha = 0.03f))))
+            .border(
+                1.dp,
+                Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.30f), Color.White.copy(alpha = 0.05f))),
+                capsule
+            )
             .pointerInput(Unit) {
-                // Consume all touches/gestures to prevent them from triggering 
+                // Consume all touches/gestures to prevent them from triggering
                 // underlying player navigation gestures (seek, brightness, etc.)
                 detectTapGestures { }
             }
             .horizontalScroll(scrollState)
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            IconButton(onClick = onPiPClick) {
-                Icon(Icons.Rounded.PictureInPicture, null, tint = Color.White)
-            }
-            IconButton(onClick = onAbRepeatClick) {
-                Icon(
-                    Icons.Rounded.Repeat, 
-                    null, 
-                    tint = if (uiState.isAbRepeatActive || uiState.abRepeatPointA != null) Color(0xFFFF8F00) else Color.White
-                )
-            }
-            IconButton(onClick = onSleepTimerClick) {
-                Icon(
-                    Icons.Rounded.Bedtime, 
-                    null, 
-                    tint = if (uiState.sleepTimerMode != com.beatraxus.app.viewmodel.SleepTimerMode.OFF) Color(0xFFFF8F00) else Color.White
-                )
-            }
-            IconButton(onClick = onSpeedClick) {
-                Icon(Icons.Rounded.Speed, null, tint = if (uiState.playbackSpeed != 1.0f) Color(0xFFFF8F00) else Color.White)
-            }
-            IconButton(onClick = onEqClick) {
-                Icon(Icons.Rounded.Equalizer, null, tint = if (uiState.isEqEnabled) Color(0xFFFF8F00) else Color.White)
-            }
-            IconButton(onClick = onToggleBoost) {
-                Icon(if (uiState.isVolumeBoost) Icons.Rounded.VolumeUp else Icons.Rounded.VolumeDown, null, tint = if (uiState.isVolumeBoost) Color(0xFFFF8F00) else Color.White)
-            }
-            IconButton(onClick = onHeadphonesClick) {
-                val iconColor = if (uiState.isBackgroundPlayEnabled) Color(0xFFFF8F00) else Color.White
-                Icon(
-                    Icons.Rounded.Headset, 
-                    null, 
-                    tint = iconColor
-                )
-            }
-            IconButton(onClick = onRotationClick) {
-                Icon(Icons.Rounded.ScreenRotation, null, tint = Color.White)
-            }
-            IconButton(onClick = onColorClick) {
-                 Icon(
-                    Icons.Rounded.Tune,
-                    null,
-                    tint = if (uiState.colorBrightness != 0f || uiState.colorContrast != 1f || uiState.colorSaturation != 1f) Color(0xFFFF8F00) else Color.White
-                )
-            }
+            VpToolButton(Icons.Rounded.PictureInPicture, false, onPiPClick)
+            VpToolButton(Icons.Rounded.Repeat, uiState.isAbRepeatActive || uiState.abRepeatPointA != null, onAbRepeatClick)
+            VpToolButton(
+                Icons.Rounded.Bedtime,
+                uiState.sleepTimerMode != com.beatraxus.app.viewmodel.SleepTimerMode.OFF,
+                onSleepTimerClick
+            )
+            VpToolButton(Icons.Rounded.Speed, uiState.playbackSpeed != 1.0f, onSpeedClick)
+            VpToolButton(Icons.Rounded.Equalizer, uiState.isEqEnabled, onEqClick)
+            VpToolButton(
+                if (uiState.isVolumeBoost) Icons.Rounded.VolumeUp else Icons.Rounded.VolumeDown,
+                uiState.isVolumeBoost,
+                onToggleBoost
+            )
+            VpToolButton(Icons.Rounded.Headset, uiState.isBackgroundPlayEnabled, onHeadphonesClick)
+            VpToolButton(Icons.Rounded.ScreenRotation, false, onRotationClick)
+            VpToolButton(
+                Icons.Rounded.Tune,
+                uiState.colorBrightness != 0f || uiState.colorContrast != 1f || uiState.colorSaturation != 1f,
+                onColorClick
+            )
         }
     }
 }
 
 @Composable
 fun GestureOverlay(type: GestureType, value: Float) {
-    Surface(
-        color = Color.Black.copy(0.6f),
-        shape = RoundedCornerShape(16.dp),
-        modifier = Modifier.size(120.dp)
+    val shape = RoundedCornerShape(30.dp)
+    Box(
+        modifier = Modifier
+            .size(134.dp)
+            .shadow(20.dp, shape, ambientColor = Color.Black, spotColor = VpAmber)
+            .clip(shape)
+            .background(Brush.verticalGradient(listOf(Color(0xE61E1A14), Color(0xE60C0C10))))
+            .border(
+                1.dp,
+                Brush.verticalGradient(listOf(VpAmberSoft.copy(alpha = 0.55f), Color.White.copy(alpha = 0.06f))),
+                shape
+            ),
+        contentAlignment = Alignment.Center
     ) {
         Column(
             modifier = Modifier.fillMaxSize(),
@@ -882,8 +980,17 @@ fun GestureOverlay(type: GestureType, value: Float) {
                 GestureType.SUBTITLE -> Icons.Rounded.Subtitles
                 else -> Icons.Rounded.TouchApp
             }
-            
-            Icon(icon, null, tint = Color.White, modifier = Modifier.size(48.dp))
+
+            Box(
+                modifier = Modifier
+                    .size(52.dp)
+                    .clip(CircleShape)
+                    .background(Brush.verticalGradient(listOf(VpAmber.copy(alpha = 0.34f), VpAmber.copy(alpha = 0.12f))))
+                    .border(1.dp, VpAmberSoft.copy(alpha = 0.6f), CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(icon, null, tint = Color.White, modifier = Modifier.size(30.dp))
+            }
             Spacer(Modifier.height(8.dp))
             Text(
                 text = when (type) {
@@ -893,9 +1000,26 @@ fun GestureOverlay(type: GestureType, value: Float) {
                     else -> ""
                 },
                 color = Color.White,
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Bold
+                fontSize = 17.sp,
+                fontWeight = FontWeight.ExtraBold
             )
+            if (type == GestureType.BRIGHTNESS || type == GestureType.VOLUME) {
+                Spacer(Modifier.height(8.dp))
+                Box(
+                    modifier = Modifier
+                        .width(76.dp)
+                        .height(4.dp)
+                        .clip(CircleShape)
+                        .background(Color.White.copy(alpha = 0.18f))
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth((value / 100f).coerceIn(0f, 1f))
+                            .fillMaxHeight()
+                            .background(Brush.horizontalGradient(listOf(VpAmberSoft, VpAmber)))
+                    )
+                }
+            }
         }
     }
 }
@@ -920,7 +1044,11 @@ fun DoubleTapRipple(offset: Offset, text: String) {
                 .offset { IntOffset(offset.x.toInt() - 50, offset.y.toInt() - 50) }
                 .size(100.dp)
                 .graphicsLayer(scaleX = scale.value, scaleY = scale.value, alpha = alpha.value)
-                .background(Color.White.copy(0.3f), CircleShape),
+                .background(
+                    Brush.radialGradient(listOf(Color.White.copy(alpha = 0.40f), VpAmber.copy(alpha = 0.22f))),
+                    CircleShape
+                )
+                .border(1.5.dp, Color.White.copy(alpha = 0.5f), CircleShape),
             contentAlignment = Alignment.Center
         ) {
             Text(text, color = Color.White, fontWeight = FontWeight.Black, fontSize = 16.sp)
@@ -943,78 +1071,87 @@ fun PlayerTopBar(
             .fillMaxWidth()
             .background(
                 Brush.verticalGradient(
-                    listOf(Color.Black.copy(0.7f), Color.Transparent)
+                    listOf(Color.Black.copy(0.80f), Color.Black.copy(0.38f), Color.Transparent)
                 )
             )
             .statusBarsPadding()
-            .padding(bottom = 8.dp, start = 8.dp, end = 8.dp)
+            .padding(start = 12.dp, end = 12.dp, top = 6.dp, bottom = 16.dp)
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.fillMaxWidth()
         ) {
-            IconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Rounded.ArrowBack, null, tint = Color.White)
+            VpGlassButton(onClick = onBack, size = 42.dp) {
+                Icon(Icons.AutoMirrored.Rounded.ArrowBack, null, tint = Color.White, modifier = Modifier.size(22.dp))
             }
-            Spacer(Modifier.width(8.dp))
-            Column(Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = title,
-                        color = Color.White,
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false)
-                    )
-                    
-                    if (sleepTimerRemainingMs != null) {
-                        Spacer(Modifier.width(8.dp))
-                        Surface(
-                            color = Color(0xFFFF8F00).copy(alpha = 0.2f),
-                            shape = RoundedCornerShape(12.dp),
-                            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFF8F00).copy(alpha = 0.5f))
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(Icons.Rounded.Timer, null, tint = Color(0xFFFF8F00), modifier = Modifier.size(14.dp))
-                                Spacer(Modifier.width(4.dp))
-                                Text(
-                                    formatTime(sleepTimerRemainingMs),
-                                    color = Color(0xFFFF8F00),
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                        }
+            Spacer(Modifier.width(12.dp))
+            Row(
+                modifier = Modifier.weight(1f),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .width(3.dp)
+                        .height(22.dp)
+                        .clip(CircleShape)
+                        .background(Brush.verticalGradient(listOf(VpAmberSoft, VpAmber)))
+                )
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    text = title,
+                    color = Color.White,
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    letterSpacing = 0.2.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false)
+                )
+
+                if (sleepTimerRemainingMs != null) {
+                    Spacer(Modifier.width(8.dp))
+                    Row(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(50))
+                            .background(VpAmber.copy(alpha = 0.20f))
+                            .border(1.dp, VpAmberSoft.copy(alpha = 0.55f), RoundedCornerShape(50))
+                            .padding(horizontal = 9.dp, vertical = 3.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Rounded.Timer, null, tint = VpAmberSoft, modifier = Modifier.size(14.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            formatTime(sleepTimerRemainingMs),
+                            color = VpAmberSoft,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
                     }
                 }
             }
             if (isHdr) {
                 Box(
                     modifier = Modifier
-                        .padding(horizontal = 12.dp)
-                        .clip(RoundedCornerShape(20.dp))
-                        .background(Color(0xFFFFD54F).copy(alpha = 0.9f))
-                        .padding(horizontal = 8.dp, vertical = 2.dp)
+                        .padding(horizontal = 10.dp)
+                        .clip(RoundedCornerShape(50))
+                        .background(Brush.horizontalGradient(listOf(Color(0xFFFFE082), Color(0xFFFFB300))))
+                        .padding(horizontal = 10.dp, vertical = 3.dp)
                 ) {
                     Text(
                         "HDR",
                         color = Color.Black,
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Black,
-                        letterSpacing = 0.5.sp
+                        letterSpacing = 0.8.sp
                     )
                 }
             }
-            IconButton(onClick = onAudioClick) {
-                Icon(Icons.Rounded.AudioFile, null, tint = Color.White)
+            VpGlassButton(onClick = onAudioClick, size = 42.dp) {
+                Icon(Icons.Rounded.AudioFile, null, tint = Color.White, modifier = Modifier.size(21.dp))
             }
-            IconButton(onClick = onSubtitleClick) {
-                Icon(Icons.Rounded.Subtitles, null, tint = Color.White)
+            Spacer(Modifier.width(8.dp))
+            VpGlassButton(onClick = onSubtitleClick, size = 42.dp) {
+                Icon(Icons.Rounded.Subtitles, null, tint = Color.White, modifier = Modifier.size(21.dp))
             }
         }
     }
@@ -1036,15 +1173,17 @@ fun PlayerBottomBar(
     onLongPress: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val panelShape = RoundedCornerShape(30.dp)
+
     Box(
         modifier = modifier
             .fillMaxWidth()
             .background(
                 Brush.verticalGradient(
-                    listOf(Color.Transparent, Color.Black.copy(0.7f))
+                    listOf(Color.Transparent, Color.Black.copy(0.60f))
                 )
             )
-            .padding(bottom = 20.dp, top = 20.dp, start = 16.dp, end = 16.dp)
+            .padding(bottom = 14.dp, top = 28.dp, start = 16.dp, end = 16.dp)
     ) {
         Column {
             // Scrub Preview Overlay
@@ -1052,21 +1191,26 @@ fun PlayerBottomBar(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(bottom = 8.dp),
+                        .padding(bottom = 10.dp),
                     contentAlignment = Alignment.BottomStart
                 ) {
                     val progress = if (uiState.duration > 0) timeMs.toFloat() / uiState.duration else 0f
-                    
+
                     BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
                         val xOffset = this.maxWidth * progress
-                        
+
                         Column(
                             modifier = Modifier
                                 .offset(x = xOffset - 80.dp) // center the 160dp wide preview
                                 .width(160.dp)
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(Color.Black.copy(0.8f))
-                                .border(1.dp, Color.White.copy(0.2f), RoundedCornerShape(8.dp)),
+                                .shadow(16.dp, RoundedCornerShape(16.dp), ambientColor = Color.Black, spotColor = VpAmber)
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(Color(0xE60C0C10))
+                                .border(
+                                    1.dp,
+                                    Brush.verticalGradient(listOf(VpAmberSoft.copy(alpha = 0.7f), Color.White.copy(alpha = 0.08f))),
+                                    RoundedCornerShape(16.dp)
+                                ),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             if (uiState.scrubbingThumbnail != null) {
@@ -1076,7 +1220,7 @@ fun PlayerBottomBar(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .aspectRatio(16f / 9f)
-                                        .clip(RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp)),
+                                        .clip(RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)),
                                     contentScale = ContentScale.Crop
                                 )
                             } else {
@@ -1087,176 +1231,245 @@ fun PlayerBottomBar(
                                         .background(Color.DarkGray.copy(0.5f)),
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp, color = Color.White)
+                                    CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp, color = VpAmberSoft)
                                 }
                             }
-                            
+
                             Text(
                                 text = formatTime(timeMs),
-                                color = Color.White,
+                                color = VpAmberSoft,
                                 fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.padding(vertical = 4.dp)
+                                fontWeight = FontWeight.ExtraBold,
+                                modifier = Modifier.padding(vertical = 5.dp)
                             )
                         }
                     }
                 }
             }
 
-            // Seek bar
-            val currentPosition by positionFlow.collectAsState()
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = formatTime(currentPosition),
-                    color = Color.White,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium
-                )
-                val mxOrange = Color(0xFFFF8F00)
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(horizontal = 8.dp)
-                        .pointerInput(Unit) {
-                            detectTapGestures(
-                                onLongPress = { onLongPress() }
-                            )
-                        },
-                    contentAlignment = Alignment.Center
-                ) {
-                    // Chapter Ticks & AB Repeat Track Background
-                    if (uiState.duration > 0) {
-                        androidx.compose.foundation.Canvas(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(4.dp)
-                        ) {
-                            val trackWidth = size.width
-                            
-                            // Draw Chapter Ticks
-                            uiState.chapters.forEach { chapter ->
-                                val tickX = (chapter.timestampMs.toFloat() / uiState.duration.toFloat()) * trackWidth
-                                drawRect(
-                                    color = Color.White.copy(alpha = 0.6f),
-                                    topLeft = Offset(tickX - 0.5.dp.toPx(), 0f),
-                                    size = androidx.compose.ui.geometry.Size(1.dp.toPx(), size.height)
+            // Glass control panel
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .shadow(16.dp, panelShape, ambientColor = Color.Black, spotColor = Color.Black)
+                    .clip(panelShape)
+                    .background(Color.Black.copy(alpha = 0.42f))
+                    .background(Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.12f), Color.White.copy(alpha = 0.03f))))
+                    .border(
+                        1.dp,
+                        Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.28f), Color.White.copy(alpha = 0.04f))),
+                        panelShape
+                    )
+                    .padding(horizontal = 14.dp, vertical = 8.dp)
+            ) {
+                // Seek bar
+                val currentPosition by positionFlow.collectAsState()
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = formatTime(currentPosition),
+                        color = VpAmberSoft,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Color.White.copy(alpha = 0.10f))
+                            .padding(horizontal = 8.dp, vertical = 3.dp)
+                    )
+                    val mxOrange = VpAmber
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(horizontal = 6.dp)
+                            .pointerInput(Unit) {
+                                detectTapGestures(
+                                    onLongPress = { onLongPress() }
                                 )
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Slider(
+                            value = (uiState.scrubbingTimeMs ?: currentPosition).toFloat(),
+                            onValueChange = {
+                                onScrubbing(it.toLong())
+                            },
+                            onValueChangeFinished = {
+                                uiState.scrubbingTimeMs?.let { onSeek(it) }
+                                onScrubbing(null)
+                            },
+                            valueRange = 0f..uiState.duration.toFloat().coerceAtLeast(1f),
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = SliderDefaults.colors(
+                                thumbColor = mxOrange,
+                                activeTrackColor = mxOrange,
+                                inactiveTrackColor = Color.White.copy(0.3f)
+                            ),
+                            thumb = {
+                                Box(
+                                    modifier = Modifier
+                                        .size(14.dp)
+                                        .shadow(8.dp, CircleShape, ambientColor = VpAmber, spotColor = VpAmber)
+                                        .background(Color.White, CircleShape)
+                                        .border(3.dp, mxOrange, CircleShape)
+                                )
+                            },
+                            track = { sliderState ->
+                                val range = sliderState.valueRange
+                                val span = (range.endInclusive - range.start).coerceAtLeast(1f)
+                                val fraction = ((sliderState.value - range.start) / span).coerceIn(0f, 1f)
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(5.dp)
+                                        .clip(CircleShape)
+                                        .background(Color.White.copy(alpha = 0.22f))
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth(fraction)
+                                            .fillMaxHeight()
+                                            .background(Brush.horizontalGradient(listOf(VpAmberSoft, mxOrange)))
+                                    )
+                                }
                             }
+                        )
 
-                            val startX = (uiState.abRepeatPointA?.toFloat() ?: 0f) / uiState.duration.toFloat() * trackWidth
-                            val endX = (uiState.abRepeatPointB?.toFloat() ?: uiState.duration.toFloat()) / uiState.duration.toFloat() * trackWidth
-                            
-                            if (uiState.abRepeatPointA != null && uiState.abRepeatPointB != null) {
-                                drawRect(
-                                    color = mxOrange.copy(alpha = 0.3f),
-                                    topLeft = Offset(startX, 0f),
-                                    size = androidx.compose.ui.geometry.Size(endX - startX, size.height)
-                                )
-                            }
-                            
-                            uiState.abRepeatPointA?.let {
-                                drawRect(
-                                    color = mxOrange,
-                                    topLeft = Offset(startX - 1.dp.toPx(), -2.dp.toPx()),
-                                    size = androidx.compose.ui.geometry.Size(2.dp.toPx(), size.height + 4.dp.toPx())
-                                )
-                            }
-                            
-                            uiState.abRepeatPointB?.let {
-                                drawRect(
-                                    color = mxOrange,
-                                    topLeft = Offset(endX - 1.dp.toPx(), -2.dp.toPx()),
-                                    size = androidx.compose.ui.geometry.Size(2.dp.toPx(), size.height + 4.dp.toPx())
-                                )
+                        // Chapter Ticks & AB Repeat markers (drawn on top of the track, touches pass through)
+                        if (uiState.duration > 0) {
+                            androidx.compose.foundation.Canvas(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 7.dp)
+                                    .height(5.dp)
+                            ) {
+                                val trackWidth = size.width
+
+                                // Draw Chapter Ticks
+                                uiState.chapters.forEach { chapter ->
+                                    val tickX = (chapter.timestampMs.toFloat() / uiState.duration.toFloat()) * trackWidth
+                                    drawRect(
+                                        color = Color.Black.copy(alpha = 0.55f),
+                                        topLeft = Offset(tickX - 0.75.dp.toPx(), 0f),
+                                        size = androidx.compose.ui.geometry.Size(1.5.dp.toPx(), size.height)
+                                    )
+                                }
+
+                                val startX = (uiState.abRepeatPointA?.toFloat() ?: 0f) / uiState.duration.toFloat() * trackWidth
+                                val endX = (uiState.abRepeatPointB?.toFloat() ?: uiState.duration.toFloat()) / uiState.duration.toFloat() * trackWidth
+
+                                if (uiState.abRepeatPointA != null && uiState.abRepeatPointB != null) {
+                                    drawRect(
+                                        color = mxOrange.copy(alpha = 0.35f),
+                                        topLeft = Offset(startX, 0f),
+                                        size = androidx.compose.ui.geometry.Size(endX - startX, size.height)
+                                    )
+                                }
+
+                                uiState.abRepeatPointA?.let {
+                                    drawRect(
+                                        color = Color.White,
+                                        topLeft = Offset(startX - 1.dp.toPx(), -3.dp.toPx()),
+                                        size = androidx.compose.ui.geometry.Size(2.dp.toPx(), size.height + 6.dp.toPx())
+                                    )
+                                }
+
+                                uiState.abRepeatPointB?.let {
+                                    drawRect(
+                                        color = Color.White,
+                                        topLeft = Offset(endX - 1.dp.toPx(), -3.dp.toPx()),
+                                        size = androidx.compose.ui.geometry.Size(2.dp.toPx(), size.height + 6.dp.toPx())
+                                    )
+                                }
                             }
                         }
                     }
-
-                    Slider(
-                        value = (uiState.scrubbingTimeMs ?: currentPosition).toFloat(),
-                        onValueChange = { 
-                            onScrubbing(it.toLong())
+                    Text(
+                        text = if (uiState.showTotalTime) {
+                            "-${formatTime(uiState.duration - currentPosition)}"
+                        } else {
+                            formatTime(uiState.duration)
                         },
-                        onValueChangeFinished = {
-                            uiState.scrubbingTimeMs?.let { onSeek(it) }
-                            onScrubbing(null)
-                        },
-                        valueRange = 0f..uiState.duration.toFloat().coerceAtLeast(1f),
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = SliderDefaults.colors(
-                            thumbColor = mxOrange,
-                            activeTrackColor = mxOrange,
-                            inactiveTrackColor = Color.White.copy(0.3f)
-                        )
+                        color = Color.White,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Color.White.copy(alpha = 0.10f))
+                            .clickable { onTimeClick() }
+                            .padding(horizontal = 8.dp, vertical = 3.dp)
                     )
                 }
-                Text(
-                    text = if (uiState.showTotalTime) {
-                        "-${formatTime(uiState.duration - currentPosition)}"
-                    } else {
-                        formatTime(uiState.duration)
-                    },
-                    color = Color.White,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium,
-                    modifier = Modifier.clickable { onTimeClick() }
-                )
-            }
 
-            Spacer(Modifier.height(4.dp))
+                Spacer(Modifier.height(4.dp))
 
-            // Controls
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                IconButton(onClick = onLock) {
-                    Icon(if (uiState.isLocked) Icons.Rounded.Lock else Icons.Rounded.LockOpen, null, tint = Color.White.copy(0.8f))
-                }
-
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = onPlayPrevious) {
-                        Icon(Icons.Rounded.SkipPrevious, null, tint = Color.White, modifier = Modifier.size(32.dp))
-                    }
-                    
-                    if (!uiState.isPlaying) {
-                        IconButton(
-                            onClick = { onStepFrame(false) },
-                            modifier = Modifier.size(24.dp)
-                        ) {
-                            Icon(Icons.Rounded.KeyboardArrowLeft, null, tint = Color.White.copy(0.7f), modifier = Modifier.size(20.dp))
-                        }
-                    }
-
-                    IconButton(
-                        onClick = onTogglePlayPause,
-                        modifier = Modifier.size(64.dp)
-                    ) {
+                // Controls
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    VpGlassButton(onClick = onLock, size = 44.dp, active = uiState.isLocked) {
                         Icon(
-                            if (uiState.isPlaying) Icons.Rounded.PauseCircleFilled else Icons.Rounded.PlayCircleFilled,
+                            if (uiState.isLocked) Icons.Rounded.Lock else Icons.Rounded.LockOpen,
                             null,
-                            tint = Color.White,
-                            modifier = Modifier.size(56.dp)
+                            tint = Color.White.copy(0.9f),
+                            modifier = Modifier.size(21.dp)
                         )
                     }
 
-                    if (!uiState.isPlaying) {
-                        IconButton(
-                            onClick = { onStepFrame(true) },
-                            modifier = Modifier.size(24.dp)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        VpGlassButton(onClick = onPlayPrevious, size = 46.dp) {
+                            Icon(Icons.Rounded.SkipPrevious, null, tint = Color.White, modifier = Modifier.size(28.dp))
+                        }
+
+                        AnimatedVisibility(
+                            visible = !uiState.isPlaying,
+                            enter = fadeIn() + expandHorizontally(),
+                            exit = fadeOut() + shrinkHorizontally()
                         ) {
-                            Icon(Icons.Rounded.KeyboardArrowRight, null, tint = Color.White.copy(0.7f), modifier = Modifier.size(20.dp))
+                            VpGlassButton(onClick = { onStepFrame(false) }, size = 32.dp) {
+                                Icon(Icons.Rounded.KeyboardArrowLeft, null, tint = Color.White.copy(0.85f), modifier = Modifier.size(22.dp))
+                            }
+                        }
+
+                        Box(
+                            modifier = Modifier
+                                .size(68.dp)
+                                .shadow(18.dp, CircleShape, ambientColor = VpAmber, spotColor = VpAmber)
+                                .clip(CircleShape)
+                                .background(Brush.linearGradient(listOf(VpAmberSoft, VpAmber)))
+                                .border(1.dp, Color.White.copy(alpha = 0.35f), CircleShape)
+                                .clickable(role = Role.Button, onClick = onTogglePlayPause),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                if (uiState.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                                null,
+                                tint = Color.Black,
+                                modifier = Modifier.size(40.dp)
+                            )
+                        }
+
+                        AnimatedVisibility(
+                            visible = !uiState.isPlaying,
+                            enter = fadeIn() + expandHorizontally(),
+                            exit = fadeOut() + shrinkHorizontally()
+                        ) {
+                            VpGlassButton(onClick = { onStepFrame(true) }, size = 32.dp) {
+                                Icon(Icons.Rounded.KeyboardArrowRight, null, tint = Color.White.copy(0.85f), modifier = Modifier.size(22.dp))
+                            }
+                        }
+
+                        VpGlassButton(onClick = onPlayNext, size = 46.dp) {
+                            Icon(Icons.Rounded.SkipNext, null, tint = Color.White, modifier = Modifier.size(28.dp))
                         }
                     }
 
-                    IconButton(onClick = onPlayNext) {
-                        Icon(Icons.Rounded.SkipNext, null, tint = Color.White, modifier = Modifier.size(32.dp))
+                    VpGlassButton(onClick = onAspectRatioClick, size = 44.dp) {
+                        Icon(Icons.Rounded.AspectRatio, null, tint = Color.White.copy(0.9f), modifier = Modifier.size(21.dp))
                     }
-                }
-
-                IconButton(onClick = onAspectRatioClick) {
-                    Icon(Icons.Rounded.AspectRatio, null, tint = Color.White.copy(0.8f))
                 }
             }
         }
@@ -1830,7 +2043,13 @@ fun ChapterThumbnailStrip(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .background(Color.Black.copy(alpha = 0.8f))
+            .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
+            .background(Brush.verticalGradient(listOf(Color(0xE6181820), Color(0xF20C0C10))))
+            .border(
+                1.dp,
+                Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.22f), Color.Transparent)),
+                RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+            )
             .padding(vertical = 16.dp)
     ) {
         Row(
@@ -1860,7 +2079,7 @@ fun ChapterThumbnailStrip(
                         modifier = Modifier
                             .fillMaxWidth()
                             .aspectRatio(16f / 9f)
-                            .clip(RoundedCornerShape(8.dp))
+                            .clip(RoundedCornerShape(14.dp))
                             .background(Color.White.copy(alpha = 0.1f))
                     ) {
                         if (chapter.thumbnailPath != null) {

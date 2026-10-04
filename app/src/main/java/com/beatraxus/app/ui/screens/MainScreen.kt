@@ -3494,44 +3494,6 @@ fun MainScreen(
             }
         }
 
-        val isVideoView = uiState.currentView in listOf(
-            LibraryView.HOME, LibraryView.VIDEO_ALL, LibraryView.VIDEO_FOLDERS, LibraryView.VIDEO_FOLDER_DETAIL,
-            LibraryView.VIDEO_RECENTLY_ADDED, LibraryView.VIDEO_RECENTLY_PLAYED
-        )
-        val isMiniPlayerVisible = uiState.currentSong != null
-        val videoFabBottomPadding by animateDpAsState(
-            targetValue = if (isMiniPlayerVisible) 84.dp else 16.dp,
-            label = "video_fab_bottom_padding"
-        )
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(bottom = videoFabBottomPadding, end = 16.dp),
-            contentAlignment = Alignment.BottomEnd
-        ) {
-            androidx.compose.animation.AnimatedVisibility(
-                visible = showVideoFab && isVideoView && uiState.currentView != LibraryView.HOME && drawerProgress < 0.01f && !showFullPlayer,
-                enter = scaleIn(animationSpec = tween(400)) + fadeIn(animationSpec = tween(400)),
-                exit = scaleOut(animationSpec = tween(300)) + fadeOut(animationSpec = tween(300))
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(48.dp)
-                        .clickable(
-                            onClick = { viewModel.playLastPlayedVideo() },
-                            role = Role.Button
-                        )
-                        .semantics {
-                            contentDescription = "Resume last video"
-                        },
-                    contentAlignment = Alignment.Center
-                ) {
-                    CornerPlayButton()
-                }
-            }
-        }
-
-
         AnimatedVisibility(
             visible = showFullPlayer && uiState.currentSong != null,
             modifier = Modifier.fillMaxSize().zIndex(100f),
@@ -4941,8 +4903,8 @@ fun HomeSongItem(song: com.beatraxus.app.model.Song, onClick: () -> Unit) {
                     modifier = Modifier
                         .align(Alignment.TopStart)
                         .padding(8.dp)
-                        .background(AudioGold, RoundedCornerShape(5.dp))
-                        .padding(horizontal = 5.dp, vertical = 2.dp)
+                        .background(AudioGold, RoundedCornerShape(50))
+                        .padding(horizontal = 7.dp, vertical = 2.dp)
                 )
             }
             Box(

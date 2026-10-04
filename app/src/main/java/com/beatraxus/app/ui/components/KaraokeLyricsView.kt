@@ -127,17 +127,21 @@ fun KaraokeLyricsView(
     val isPlainLyrics = remember(lyrics) { lyrics.isNotEmpty() && lyrics.none { it.isTimed } }
 
     LaunchedEffect(isDragged, isPlainLyrics) {
-        if (!isPlainLyrics) {
-            if (isDragged) {
-                autoScrollEnabled = false
+        if (isDragged) {
+            // Plain lyrics have nothing to auto-scroll, but the controls still appear
+            // (offset is shown as unavailable) so the source can be changed.
+            if (!isPlainLyrics) autoScrollEnabled = false
+            showSyncControls = true
+            lastInteractionTime = System.currentTimeMillis()
+        } else {
+            if (isPlainLyrics && lastInteractionTime == 0L) {
                 showSyncControls = true
                 lastInteractionTime = System.currentTimeMillis()
-            } else {
-                delay(3000)
-                if (System.currentTimeMillis() - lastInteractionTime >= 3000) {
-                    autoScrollEnabled = true
-                    showSyncControls = false
-                }
+            }
+            delay(3000)
+            if (System.currentTimeMillis() - lastInteractionTime >= 3000) {
+                if (!isPlainLyrics) autoScrollEnabled = true
+                showSyncControls = false
             }
         }
     }
@@ -281,7 +285,7 @@ fun KaraokeLyricsView(
             }
 
             AnimatedVisibility(
-                visible = showSyncControls && !isPlainLyrics,
+                visible = showSyncControls,
                 enter = fadeIn() + slideInVertically { -it },
                 exit = fadeOut() + slideOutVertically { -it },
                 modifier = Modifier
@@ -299,30 +303,37 @@ fun KaraokeLyricsView(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
                         ) {
-                            IconButton(onClick = {
-                                onAdjustOffset(-100)
-                                lastInteractionTime = System.currentTimeMillis()
-                            }) {
-                                Icon(Icons.Rounded.Remove, "Earlier", tint = Color.White)
+                            IconButton(
+                                enabled = !isPlainLyrics,
+                                onClick = {
+                                    onAdjustOffset(-100)
+                                    lastInteractionTime = System.currentTimeMillis()
+                                }
+                            ) {
+                                Icon(
+                                    Icons.Rounded.Remove, "Earlier",
+                                    tint = Color.White.copy(alpha = if (isPlainLyrics) 0.3f else 1f)
+                                )
                             }
 
                             Column(
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 modifier = Modifier
                                     .padding(horizontal = 16.dp)
-                                    .clickable {
+                                    .clickable(enabled = !isPlainLyrics) {
                                         tempOffsetStr = lyricsOffsetMs.toString()
                                         isLongPressing = true
                                     }
                             ) {
                                 Text(
-                                    text = "${if (lyricsOffsetMs >= 0) "+" else ""}${lyricsOffsetMs}ms",
-                                    color = Color.White,
+                                    text = if (isPlainLyrics) "Unavailable"
+                                    else "${if (lyricsOffsetMs >= 0) "+" else ""}${lyricsOffsetMs}ms",
+                                    color = Color.White.copy(alpha = if (isPlainLyrics) 0.45f else 1f),
                                     style = MaterialTheme.typography.labelLarge,
                                     fontWeight = FontWeight.Black
                                 )
                                 Text(
-                                    text = "SYNC OFFSET",
+                                    text = if (isPlainLyrics) "PLAIN LYRICS · NO SYNC" else "SYNC OFFSET",
                                     color = Color.White.copy(alpha = 0.5f),
                                     style = MaterialTheme.typography.labelSmall,
                                     fontSize = 9.sp,
@@ -330,11 +341,17 @@ fun KaraokeLyricsView(
                                 )
                             }
 
-                            IconButton(onClick = {
-                                onAdjustOffset(100)
-                                lastInteractionTime = System.currentTimeMillis()
-                            }) {
-                                Icon(Icons.Rounded.Add, "Later", tint = Color.White)
+                            IconButton(
+                                enabled = !isPlainLyrics,
+                                onClick = {
+                                    onAdjustOffset(100)
+                                    lastInteractionTime = System.currentTimeMillis()
+                                }
+                            ) {
+                                Icon(
+                                    Icons.Rounded.Add, "Later",
+                                    tint = Color.White.copy(alpha = if (isPlainLyrics) 0.3f else 1f)
+                                )
                             }
                         }
                     }

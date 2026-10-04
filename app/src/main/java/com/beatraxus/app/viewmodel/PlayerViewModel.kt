@@ -4362,10 +4362,20 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    private var lastPreloadKey: List<String> = emptyList()
+
+    /**
+     * Preloads lyric sources for the next 10 songs. The window is only (re)started when it
+     * actually changes, and running work is never cancelled, so rapid playlist emissions can
+     * no longer keep restarting (and wasting) the provider requests.
+     */
     private fun preloadUpcomingLyrics(songs: List<Song>) {
-        preloadLyricsJob?.cancel()
+        val targets = songs.take(10)
+        val key = targets.map { it.id }
+        if (key.isEmpty() || key == lastPreloadKey) return
+        lastPreloadKey = key
         preloadLyricsJob = viewModelScope.launch {
-            lyricsRepository.preloadLyrics(songs)
+            lyricsRepository.preloadLyrics(targets)
         }
     }
 

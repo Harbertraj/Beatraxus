@@ -500,6 +500,8 @@ class LyricsRepository(
 
     /** How many upcoming songs get their lyric-source results preloaded. */
     private val PRELOAD_COUNT = 10
+    private val preloadSemaphore = Semaphore(3)
+    private val preloadInFlight: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
     /** Word-by-word first, then line-synced, then plain. */
     private fun typeRank(type: LyricsType): Int = when (type) {
@@ -572,7 +574,7 @@ class LyricsRepository(
      */
     suspend fun preloadLyrics(songs: List<Song>) = withContext(Dispatchers.IO) {
         checkConfigChange()
-        val semaphore = Semaphore(2) // gentle on the providers: 2 songs in flight at once
+        val semaphore = preloadSemaphore // gentle on the providers: 3 songs in flight at once (shared across calls)
 
         songs.take(PRELOAD_COUNT).map { song ->
             async {
@@ -580,7 +582,9 @@ class LyricsRepository(
 
                 val candidatesKey = getCandidatesCacheKey(song)
                 if (candidatesCache.containsKey(candidatesKey)) return@async
+                if (!preloadInFlight.add(candidatesKey)) return@async // already being preloaded by another call
 
+                try {
                 semaphore.withPermit {
                     if (candidatesCache.containsKey(candidatesKey)) return@withPermit
 
@@ -635,7 +639,10 @@ class LyricsRepository(
                         notFoundCache[song.id] = System.currentTimeMillis()
                     }
 
-                    delay(300)
+                    delay(150)
+                }
+                } finally {
+                    preloadInFlight.remove(candidatesKey)
                 }
             }
         }.forEach { it.await() }

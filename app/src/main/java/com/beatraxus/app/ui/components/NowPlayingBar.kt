@@ -47,6 +47,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
@@ -54,6 +55,9 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.PlatformTextStyle
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -98,11 +102,12 @@ fun NowPlayingBar(
     val durationMs = song?.durationMs ?: 0L
     val latestNext by rememberUpdatedState(onNext)
     val latestPrev by rememberUpdatedState(onPrevious)
+    val accent = remember(dominantColor) { lerp(dominantColor, Color.White, 0.65f) }
 
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .height(68.dp)
+            .height(64.dp)
             .shadow(
                 elevation = 14.dp,
                 shape = shape,
@@ -180,27 +185,36 @@ fun NowPlayingBar(
 
             Spacer(Modifier.width(12.dp))
 
-            // Title / artist / time
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.Center) {
+            // Title / artist · runtime
+            // Font padding is trimmed and line heights are explicit, so the three lines sit
+            // tightly together instead of floating apart.
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(1.dp, Alignment.CenterVertically)
+            ) {
                 AnimatedContent(
                     targetState = (song?.title ?: "Unknown") to
                         (if (isFromVideo) "Playing in background" else (song?.artist ?: "Unknown artist")),
                     transitionSpec = { fadeIn(tween(220)) togetherWith fadeOut(tween(160)) },
                     label = "nowPlayingBarText"
                 ) { (title, subtitle) ->
-                    Column {
+                    Column(verticalArrangement = Arrangement.spacedBy(0.dp)) {
                         Text(
                             text = title,
                             color = Color.White,
                             fontSize = 14.5.sp,
+                            lineHeight = 18.sp,
                             fontWeight = FontWeight.Bold,
+                            style = TightTextStyle,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
                         Text(
                             text = subtitle,
-                            color = Color.White.copy(alpha = 0.68f),
+                            color = Color.White.copy(alpha = 0.7f),
                             fontSize = 12.sp,
+                            lineHeight = 15.sp,
+                            style = TightTextStyle,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
@@ -210,9 +224,11 @@ fun NowPlayingBar(
                     val elapsed by remember { derivedStateOf { formatBarTime(progressMs()) } }
                     Text(
                         text = "$elapsed / ${formatBarTime(durationMs)}",
-                        color = Color.White.copy(alpha = 0.5f),
+                        color = accent.copy(alpha = 0.9f),
                         fontSize = 10.5.sp,
-                        fontWeight = FontWeight.Medium,
+                        lineHeight = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        style = TightTextStyle,
                         maxLines = 1
                     )
                 }
@@ -237,7 +253,7 @@ fun NowPlayingBar(
                     )
                     val p = if (durationMs > 0) (progressMs().toFloat() / durationMs).coerceIn(0f, 1f) else 0f
                     drawArc(
-                        color = Color.White,
+                        color = accent,
                         startAngle = -90f, sweepAngle = 360f * p, useCenter = false,
                         topLeft = Offset(inset, inset), size = arcSize,
                         style = Stroke(width = stroke, cap = StrokeCap.Round)
@@ -333,6 +349,14 @@ private fun NowPlayingBarBackground(
         }
     }
 }
+
+private val TightTextStyle = TextStyle(
+    platformStyle = PlatformTextStyle(includeFontPadding = false),
+    lineHeightStyle = LineHeightStyle(
+        alignment = LineHeightStyle.Alignment.Center,
+        trim = LineHeightStyle.Trim.Both
+    )
+)
 
 private fun formatBarTime(ms: Long): String {
     val totalSec = (ms / 1000L).coerceAtLeast(0L)

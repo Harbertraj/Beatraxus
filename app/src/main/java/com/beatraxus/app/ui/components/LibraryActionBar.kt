@@ -316,13 +316,9 @@ private fun ShuffleSegment(onClick: () -> Unit, modifier: Modifier = Modifier) {
         animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
         label = "shuffleSegScale"
     )
+    // Same neutral glass look as the other strip icons (no cyan/blue colour).
     Box(
         modifier = modifier
-            .background(
-                Brush.horizontalGradient(
-                    listOf(ActionCyan.copy(alpha = 0.22f), AccentBlue.copy(alpha = 0.10f))
-                )
-            )
             .clickable(interactionSource = interaction, indication = null, role = Role.Button, onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
@@ -330,33 +326,22 @@ private fun ShuffleSegment(onClick: () -> Unit, modifier: Modifier = Modifier) {
             modifier = Modifier.graphicsLayer { scaleX = press; scaleY = press },
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Box(
-                modifier = Modifier
-                    .size(24.dp)
-                    .clip(CircleShape)
-                    .background(Brush.horizontalGradient(listOf(ActionCyan, AccentBlue))),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(Icons.Rounded.Shuffle, null, tint = Color.Black, modifier = Modifier.size(15.dp))
-            }
+            Icon(
+                Icons.Rounded.Shuffle,
+                contentDescription = null,
+                tint = Color.White.copy(alpha = 0.85f),
+                modifier = Modifier.size(21.dp)
+            )
             Spacer(Modifier.width(8.dp))
             Text(
                 text = "Shuffle All",
-                color = Color.White,
+                color = Color.White.copy(alpha = 0.85f),
                 fontSize = 13.sp,
-                fontWeight = FontWeight.ExtraBold,
+                fontWeight = FontWeight.Bold,
                 letterSpacing = 0.2.sp,
                 maxLines = 1
             )
         }
-        // permanent thin stripe along the bottom edge
-        Box(
-            Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .height(2.dp)
-                .background(Brush.horizontalGradient(listOf(ActionCyan, AccentBlue)))
-        )
     }
 }
 

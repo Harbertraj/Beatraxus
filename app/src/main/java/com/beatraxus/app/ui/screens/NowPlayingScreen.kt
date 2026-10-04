@@ -1,5 +1,9 @@
 package com.beatraxus.app.ui.screens
 
+import com.beatraxus.app.ui.components.LyricsSourcesPopup
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.border
+import androidx.compose.ui.composed
 import androidx.compose.material.icons.outlined.Equalizer
 import androidx.compose.material.icons.outlined.Repeat
 import androidx.compose.material.icons.outlined.Shuffle
@@ -597,33 +601,16 @@ fun NowPlayingScreen(
                                     transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, 1f)
                                 }
                         ) {
-                            Surface(
+                            // No Surface fill / shadow / gradient here: those drew a dark rounded rectangle
+                            // behind the art while it scaled back in after the lyrics closed.
+                            val artShape = RoundedCornerShape(28.dp)
+                            Box(
                                 modifier = Modifier
                                     .fillMaxSize()
-                                    .shadow(
-                                        // Shadow fades out before the art shrinks, so no dark shape is left behind
-                                        elevation = 24.dp * ((albumArtScale - 0.9f) / 0.1f).coerceIn(0f, 1f),
-                                        shape = RoundedCornerShape(28.dp)
-                                    ),
-                                shape = RoundedCornerShape(28.dp),
-                                color = Color(0xFF12121A),
-                                border = BorderStroke(
-                                    1.dp, 
-                                    Color.White.copy(alpha = 0.14f)
-                                )
+                                    .clip(artShape)
+                                    .border(1.dp, Color.White.copy(alpha = 0.10f), artShape)
                             ) {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .background(
-                                            Brush.linearGradient(
-                                                colors = listOf(
-                                                    Color.White.copy(alpha = 0.06f),
-                                                    Color.Black.copy(alpha = 0.16f)
-                                                )
-                                            )
-                                        )
-                                ) {
+                                Box(modifier = Modifier.fillMaxSize()) {
                                     AnimatedContent(
                                         targetState = song.id to song.albumArtUri,
                                         transitionSpec = {
@@ -1216,226 +1203,18 @@ fun NowPlayingScreen(
         }
 
         if (showLyricsSourcesSheet) {
-            val lyricsSheetState = rememberModalBottomSheetState(
-                skipPartiallyExpanded = true
+            LyricsSourcesPopup(
+                candidates = uiState.lyricsCandidates,
+                isLoading = uiState.isLoadingLyricsCandidates,
+                appliedProviderId = uiState.lyricsProviderId,
+                albumArtUri = song.albumArtUri,
+                useArtBackdrop = uiState.appearance.nowPlayingBackgroundMode == NowPlayingBackgroundMode.BLUR,
+                onApply = { candidate ->
+                    onApplyLyricsCandidate(candidate)
+                    showLyricsSourcesSheet = false
+                },
+                onDismiss = { showLyricsSourcesSheet = false }
             )
-            ModalBottomSheet(
-                onDismissRequest = { showLyricsSourcesSheet = false },
-                sheetState = lyricsSheetState,
-                containerColor = Color.Transparent,
-                // Lyrics source popup dims the now-playing screen a bit more than other popups
-                scrimColor = Color.Black.copy(alpha = if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.S) 0.6f else 0.42f),
-                dragHandle = null
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(topStart = 42.dp, topEnd = 42.dp))
-                        .background(Color(0xFF0F0E0E).copy(alpha = POPUP_PANEL_ALPHA))
-                ) {
-                    if (uiState.appearance.nowPlayingBackgroundMode == NowPlayingBackgroundMode.BLUR) {
-                        AsyncImage(
-                            model = ImageRequest.Builder(LocalContext.current)
-                                .data(song.albumArtUri)
-                                .build(),
-                            contentDescription = null,
-                            modifier = Modifier
-                                .matchParentSize()
-                                .blur(160.dp)
-                                .alpha(0.3f)
-                                .graphicsLayer {
-                                    scaleX = 1.2f
-                                    scaleY = 1.2f
-                                },
-                            contentScale = ContentScale.Crop
-                        )
-                    }
-
-                    Column(
-                        modifier = Modifier
-                            .padding(horizontal = 24.dp)
-                            .padding(top = 16.dp, bottom = 24.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(16.dp)
-                    ) {
-                        // Refined Drag handle
-                        Box(
-                            modifier = Modifier
-                                .size(40.dp, 4.dp)
-                                .background(Color.White.copy(0.2f), CircleShape)
-                        )
-
-                        // Title Section
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(
-                                "Lyrics Sources",
-                                color = Color.White,
-                                style = MaterialTheme.typography.headlineSmall.copy(
-                                    fontWeight = FontWeight.ExtraBold,
-                                    letterSpacing = 0.5.sp
-                                )
-                            )
-                            Spacer(Modifier.height(4.dp))
-                            Text(
-                                "Select a provider to display lyrics for this song",
-                                color = Color.White.copy(alpha = 0.4f),
-                                style = MaterialTheme.typography.bodySmall
-                            )
-                        }
-
-                        if (uiState.lyricsCandidates.isEmpty()) {
-                            if (uiState.isLoadingLyricsCandidates) {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(150.dp),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
-                                }
-                            } else {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(100.dp),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text("No lyrics found from enabled sources.", color = Color.White.copy(0.5f))
-                                }
-                            }
-                        } else {
-                            LazyColumn(
-                                verticalArrangement = Arrangement.spacedBy(12.dp),
-                                contentPadding = PaddingValues(bottom = 16.dp),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                items(uiState.lyricsCandidates) { candidate ->
-                                    val isApplied = candidate.providerId == uiState.lyricsProviderId
-                                    val isEmbedded = candidate.providerId == "embedded"
-                                    Surface(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        color = if (isApplied) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else Color.White.copy(alpha = 0.04f),
-                                        shape = RoundedCornerShape(24.dp),
-                                        border = BorderStroke(
-                                            1.dp,
-                                            if (isApplied) MaterialTheme.colorScheme.primary.copy(alpha = 0.3f) else Color.White.copy(alpha = 0.06f)
-                                        ),
-                                        onClick = {
-                                            onApplyLyricsCandidate(candidate)
-                                            showLyricsSourcesSheet = false
-                                        }
-                                    ) {
-                                        Row(
-                                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Column(modifier = Modifier.weight(1f)) {
-                                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                                    Text(
-                                                        text = candidate.providerName,
-                                                        color = Color.White,
-                                                        fontWeight = FontWeight.ExtraBold,
-                                                        fontSize = 16.sp
-                                                    )
-                                                    Spacer(Modifier.width(8.dp))
-                                                    if (isEmbedded) {
-                                                        Surface(
-                                                            color = Color(0xFFFF9800).copy(alpha = 0.15f),
-                                                            shape = RoundedCornerShape(6.dp),
-                                                            border = BorderStroke(1.dp, Color(0xFFFF9800).copy(alpha = 0.4f))
-                                                        ) {
-                                                            Text(
-                                                                text = "FILE",
-                                                                color = Color(0xFFFF9800),
-                                                                fontSize = 9.sp,
-                                                                fontWeight = FontWeight.Black,
-                                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                                            )
-                                                        }
-                                                        Spacer(Modifier.width(8.dp))
-                                                    }
-                                                    val badgeText = when (candidate.type) {
-                                                        LyricsType.WORD_BY_WORD -> "Word"
-                                                        LyricsType.SYNCED -> "Line"
-                                                        LyricsType.PLAIN -> "Plain"
-                                                    }
-                                                    val badgeColor = when (candidate.type) {
-                                                        LyricsType.WORD_BY_WORD -> Color(0xFF00C2A8)
-                                                        LyricsType.SYNCED -> Color(0xFF2196F3)
-                                                        LyricsType.PLAIN -> Color.Gray
-                                                    }
-                                                    Surface(
-                                                        color = badgeColor.copy(alpha = 0.15f),
-                                                        shape = RoundedCornerShape(6.dp),
-                                                        border = BorderStroke(1.dp, badgeColor.copy(alpha = 0.4f))
-                                                    ) {
-                                                        Text(
-                                                            text = badgeText.uppercase(),
-                                                            color = badgeColor,
-                                                            fontSize = 9.sp,
-                                                            fontWeight = FontWeight.Black,
-                                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                                        )
-                                                    }
-                                                    Spacer(Modifier.width(8.dp))
-                                                    Text(
-                                                        text = "${candidate.lineCount} lines",
-                                                        color = Color.White.copy(0.4f),
-                                                        fontSize = 12.sp
-                                                    )
-                                                }
-                                                Spacer(Modifier.height(6.dp))
-                                                Text(
-                                                    text = candidate.preview,
-                                                    color = Color.White.copy(alpha = 0.6f),
-                                                    fontSize = 13.sp,
-                                                    maxLines = 1,
-                                                    overflow = TextOverflow.Ellipsis
-                                                )
-                                                if (!candidate.warning.isNullOrBlank()) {
-                                                    Spacer(Modifier.height(6.dp))
-                                                    Surface(
-                                                        color = Color(0xFFFF9800).copy(alpha = 0.15f),
-                                                        shape = RoundedCornerShape(6.dp),
-                                                        border = BorderStroke(1.dp, Color(0xFFFF9800).copy(alpha = 0.4f))
-                                                    ) {
-                                                        Text(
-                                                            text = candidate.warning,
-                                                            color = Color(0xFFFF9800),
-                                                            fontSize = 11.sp,
-                                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                                        )
-                                                    }
-                                                }
-                                            }
-                                            if (isApplied) {
-                                                Icon(Icons.Rounded.Check, null, tint = MaterialTheme.colorScheme.primary)
-                                            }
-                                        }
-                                    }
-                                }
-
-                                if (uiState.isLoadingLyricsCandidates) {
-                                    item {
-                                        Box(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(vertical = 12.dp),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            CircularProgressIndicator(
-                                                modifier = Modifier.size(24.dp),
-                                                color = MaterialTheme.colorScheme.primary,
-                                                strokeWidth = 2.dp
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
         }
 
         if (showPipelineOverlay) {
@@ -1533,6 +1312,27 @@ fun AudioQualityBadge(
     }
 }
 
+
+/**
+ * Press handling for the quality badge. The clickable is clipped to the badge's own shape and has
+ * no indication, so a long press never paints the square dark ripple/shade over the curved badge.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+private fun Modifier.badgePressable(
+    shape: androidx.compose.ui.graphics.Shape,
+    onClick: () -> Unit,
+    onLongPress: () -> Unit
+): Modifier = composed {
+    this
+        .clip(shape)
+        .combinedClickable(
+            interactionSource = remember { MutableInteractionSource() },
+            indication = null,
+            onClick = onClick,
+            onLongClick = onLongPress
+        )
+}
+
 /** The original badge style: gradient border, shimmer sweep, animated glow shadow. */
 @Composable
 private fun QualityBadgeGoldenShimmer(
@@ -1566,21 +1366,13 @@ private fun QualityBadgeGoldenShimmer(
 
     Surface(
         modifier = Modifier
-            .graphicsLayer {
-                shadowElevation = 28f
-                shape = RoundedCornerShape(18.dp)
-                clip = false
-            }
             .shadow(
                 elevation = 26.dp,
                 shape = RoundedCornerShape(18.dp),
                 ambientColor = primaryColor.copy(alpha = glowAlpha * 0.55f),
                 spotColor = primaryColor.copy(alpha = glowAlpha * 0.75f)
             )
-            .combinedClickable(
-                onClick = onClick,
-                onLongClick = onLongPress
-            ),
+            .badgePressable(RoundedCornerShape(18.dp), onClick, onLongPress),
         shape = RoundedCornerShape(18.dp),
         color = Color(0xCC0A0A0F),
         border = BorderStroke(
@@ -1659,7 +1451,7 @@ private fun QualityBadgeMinimalOutline(
     onLongPress: () -> Unit
 ) {
     Surface(
-        modifier = Modifier.combinedClickable(onClick = onClick, onLongClick = onLongPress),
+        modifier = Modifier.badgePressable(RoundedCornerShape(14.dp), onClick, onLongPress),
         shape = RoundedCornerShape(14.dp),
         color = Color.Transparent,
         border = BorderStroke(1.dp, primaryColor.copy(alpha = 0.6f))
@@ -1699,7 +1491,7 @@ private fun QualityBadgeGlassmorphic(
 ) {
     Surface(
         modifier = Modifier
-            .combinedClickable(onClick = onClick, onLongClick = onLongPress),
+            .badgePressable(RoundedCornerShape(20.dp), onClick, onLongPress),
         shape = RoundedCornerShape(20.dp),
         color = Color.White.copy(alpha = 0.08f),
         border = BorderStroke(1.dp, Color.White.copy(alpha = 0.25f))
@@ -1768,7 +1560,7 @@ private fun QualityBadgeNeonPulse(
                 ambientColor = primaryColor.copy(alpha = pulse),
                 spotColor = secondaryColor.copy(alpha = pulse)
             )
-            .combinedClickable(onClick = onClick, onLongClick = onLongPress),
+            .badgePressable(RoundedCornerShape(16.dp), onClick, onLongPress),
         shape = RoundedCornerShape(16.dp),
         color = primaryColor.copy(alpha = 0.16f),
         border = BorderStroke(1.6.dp, primaryColor.copy(alpha = pulse))

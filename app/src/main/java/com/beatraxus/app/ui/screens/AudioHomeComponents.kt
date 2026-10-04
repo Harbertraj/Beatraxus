@@ -315,9 +315,9 @@ fun AudioHeroCard(
                         fontWeight = FontWeight.Black,
                         maxLines = 1,
                         modifier = Modifier
-                            .clip(RoundedCornerShape(6.dp))
+                            .clip(RoundedCornerShape(50))
                             .background(AudioGold)
-                            .padding(horizontal = 6.dp, vertical = 3.dp)
+                            .padding(horizontal = 9.dp, vertical = 3.dp)
                     )
                 }
             }
@@ -677,8 +677,8 @@ fun AudioFeaturedCard(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
                     .padding(14.dp)
-                    .background(AudioGold, RoundedCornerShape(5.dp))
-                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                    .background(AudioGold, RoundedCornerShape(50))
+                    .padding(horizontal = 8.dp, vertical = 2.dp)
             )
         }
 
