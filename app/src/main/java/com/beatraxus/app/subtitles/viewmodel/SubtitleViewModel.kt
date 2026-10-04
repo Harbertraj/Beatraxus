@@ -418,17 +418,20 @@ class SubtitleViewModel(
 
     fun setSubtitleDelay(delayMs: Long) {
         val video = currentVideo ?: return
-        val activeSubId = _uiState.value.selectedSubtitleId ?: return
-        val mediaKey = currentMediaKey
+        val mediaKey = currentMediaKey.ifBlank { MediaKey.of(video) }
+        val activeSubId = _uiState.value.selectedSubtitleId
+            ?.takeIf { it != "none" && it.isNotBlank() }
 
         subtitleController.setSubtitleDelay(video.id, delayMs) {
             val cachedList: List<CachedSubtitle> = runBlocking { subtitleCache.getCachedSubtitles(mediaKey) }
             val item: CachedSubtitle? = cachedList.firstOrNull { it.subtitleId == activeSubId } ?: cachedList.firstOrNull()
-            item?.let { File(it.localPath) }
+            item?.let { File(it.localPath) }?.takeIf { it.exists() }
         }
 
-        viewModelScope.launch(Dispatchers.IO) {
-            subtitleCache.updateDelay(mediaKey, activeSubId, delayMs)
+        if (activeSubId != null) {
+            viewModelScope.launch(Dispatchers.IO) {
+                subtitleCache.updateDelay(mediaKey, activeSubId, delayMs)
+            }
         }
     }
 

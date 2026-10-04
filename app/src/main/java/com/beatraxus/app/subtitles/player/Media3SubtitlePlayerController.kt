@@ -195,9 +195,11 @@ class Media3SubtitlePlayerController(
         _currentDelayMs.value = delayMs
         delayJob?.cancel()
         delayJob = scope.launch {
-            delay(600)
-            val origFile = originalFileProvider() ?: return@launch
-            val shiftedFile = SubtitleDelayShifter.getOrCreateShiftedFile(origFile, delayMs)
+            delay(250)
+            val origFile = withContext(Dispatchers.IO) { originalFileProvider() } ?: return@launch
+            val shiftedFile = withContext(Dispatchers.IO) {
+                SubtitleDelayShifter.getOrCreateShiftedFile(origFile, delayMs)
+            }
             val currentTrackId = _activeExternalTrackId.value?.removePrefix("bx_ext_") ?: "default"
             val currentLabel = _activeExternalSubtitleName.value ?: "Subtitle"
 

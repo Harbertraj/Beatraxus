@@ -301,13 +301,16 @@ fun VideoPlayerScreen(
                 if (uiState.isLocked) return@pointerInput
                 
                 awaitEachGesture {
-                    val firstDown = awaitFirstDown(requireUnconsumed = false)
+                    // Initial pass: we see touches BEFORE the tap detector below, so we can
+                    // consume swipe movement and stop it being treated as a tap (which was
+                    // toggling the controls/title/top-icons on every swipe).
+                    val firstDown = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
                     var dragStarted = false
                     var initialDragIntent = GestureType.NONE
                     var cumulativeChange = Offset.Zero
                     
                     while (true) {
-                        val event = awaitPointerEvent()
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
                         if (event.changes.all { !it.pressed }) {
                             // Release - hide overlays
                             showGestureOverlay = false
@@ -347,6 +350,13 @@ fun VideoPlayerScreen(
                             gestureType = initialDragIntent
                             // Show overlay for navigation gestures
                             showGestureOverlay = true
+
+                            if (initialDragIntent != GestureType.ZOOM) {
+                                // Swipe in progress: keep player UI hidden and swallow the
+                                // touch so it can't register as a tap on release.
+                                if (controlsVisible) controlsVisible = false
+                                event.changes.forEach { it.consume() }
+                            }
                             
                             val delta = change.position - change.previousPosition
                             when (initialDragIntent) {
@@ -774,7 +784,7 @@ fun VideoPlayerScreen(
                 Box(
                     modifier = Modifier
                         .fillMaxHeight()
-                        .widthIn(min = 340.dp, max = 440.dp)
+                        .widthIn(min = 260.dp, max = 320.dp)
                         .clip(RoundedCornerShape(topStart = 28.dp, bottomStart = 28.dp))
                         .shadow(
                             elevation = 24.dp,
@@ -1531,7 +1541,7 @@ fun VideoSettingsSheetContent(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 20.dp, vertical = 20.dp)
+            .padding(horizontal = 14.dp, vertical = 12.dp)
             .verticalScroll(rememberScrollState())
             .navigationBarsPadding()
     ) {

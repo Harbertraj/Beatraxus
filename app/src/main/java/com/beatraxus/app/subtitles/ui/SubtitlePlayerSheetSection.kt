@@ -344,9 +344,9 @@ fun SubtitlePlayerSheetSection(
                     disabledContentColor = Color.Black
                 )
             ) {
-                Icon(Icons.Rounded.Search, null, modifier = Modifier.size(18.dp))
+                Icon(Icons.Rounded.Search, null, tint = Color.Black, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(6.dp))
-                Text("Search online", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                Text("Search online", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 13.sp)
             }
 
             OutlinedButton(

@@ -5,7 +5,7 @@ import java.util.Locale
 
 object SubtitleDelayShifter {
 
-    private val TIMESTAMP_LINE_REGEX = Regex("^(\\d{2}:\\d{2}:\\d{2}[,.]\\d{3})\\s*-->\\s*(\\d{2}:\\d{2}:\\d{2}[,.]\\d{3})")
+    private val TIMESTAMP_LINE_REGEX = Regex("^((?:\\d{1,2}:)?\\d{1,2}:\\d{2}[,.]\\d{1,3})\\s*-->\\s*((?:\\d{1,2}:)?\\d{1,2}:\\d{2}[,.]\\d{1,3})")
 
     fun shiftDelay(srtContent: String, delayMs: Long): String {
         if (delayMs == 0L) return srtContent
@@ -14,6 +14,7 @@ object SubtitleDelayShifter {
         val result = StringBuilder()
 
         for (line in lines) {
+            if (line.trim().startsWith("WEBVTT")) continue
             val match = TIMESTAMP_LINE_REGEX.find(line.trim())
             if (match != null) {
                 val startMs = parseTimestampToMs(match.groupValues[1])
@@ -42,7 +43,8 @@ object SubtitleDelayShifter {
         val targetName = "${baseName}_delay_${delayMs}.srt"
         val targetFile = File(parentDir, targetName)
 
-        if (targetFile.exists() && targetFile.length() > 0) {
+        if (targetFile.exists() && targetFile.length() > 0 &&
+            targetFile.lastModified() >= originalFile.lastModified()) {
             return targetFile
         }
 
@@ -61,12 +63,14 @@ object SubtitleDelayShifter {
     }
 
     private fun parseTimestampToMs(timestamp: String): Long {
-        val parts = timestamp.replace('.', ',').split(":", ",")
+        val parts = timestamp.replace('.', ',').split(":", ",").toMutableList()
+        if (parts.size == 3) parts.add(0, "0") // mm:ss,ms (WebVTT short form)
         if (parts.size >= 4) {
             val h = parts[0].toLongOrNull() ?: 0L
             val m = parts[1].toLongOrNull() ?: 0L
             val s = parts[2].toLongOrNull() ?: 0L
-            val ms = parts[3].toLongOrNull() ?: 0L
+            val msRaw = parts[3]
+            val ms = (msRaw.padEnd(3, '0').take(3)).toLongOrNull() ?: 0L
             return (h * 3600_000L) + (m * 60_000L) + (s * 1000L) + ms
         }
         return 0L

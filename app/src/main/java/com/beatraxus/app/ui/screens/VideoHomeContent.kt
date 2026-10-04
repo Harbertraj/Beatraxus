@@ -233,6 +233,8 @@ private fun VideoHeroCard(
     val thumb = rememberVideoThumb(video)
     val progress = if (entity != null && entity.durationMs > 0)
         (entity.lastPositionMs.toFloat() / entity.durationMs).coerceIn(0f, 1f) else 0f
+    // Any saved history means this card is the "last played" video.
+    val hasHistory = entity != null
     val isResume = entity != null && entity.lastPositionMs > 0
     val leftMs = if (entity != null && entity.durationMs > 0)
         (entity.durationMs - entity.lastPositionMs).coerceAtLeast(0) else video.durationMs
@@ -293,7 +295,7 @@ private fun VideoHeroCard(
             Box(Modifier.size(7.dp).background(CinemaCyan, CircleShape))
             Spacer(Modifier.width(8.dp))
             Text(
-                if (isResume) "CONTINUE WATCHING" else "START WATCHING",
+                if (hasHistory) "LAST PLAYED" else "START WATCHING",
                 color = Color.White,
                 fontSize = 10.sp,
                 fontWeight = FontWeight.Black,
@@ -324,7 +326,7 @@ private fun VideoHeroCard(
                 )
                 Spacer(Modifier.width(4.dp))
                 Text(
-                    if (isResume) "${formatClock(leftMs)} left" else formatClock(video.durationMs),
+                    if (isResume) "Resume ${formatClock(entity!!.lastPositionMs)}  ·  ${formatClock(leftMs)} left" else formatClock(video.durationMs),
                     color = Color.White.copy(0.7f),
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Medium
