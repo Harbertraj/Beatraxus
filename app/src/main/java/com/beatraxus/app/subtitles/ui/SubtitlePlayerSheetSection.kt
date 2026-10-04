@@ -454,7 +454,7 @@ fun SubtitlePlayerSheetSection(
                     val label = when (step) {
                         -500L -> "-0.5s"
                         -100L -> "-0.1s"
-                        0L -> "0"
+                        0L -> "Reset"
                         100L -> "+0.1s"
                         500L -> "+0.5s"
                         else -> "$step"
@@ -466,10 +466,11 @@ fun SubtitlePlayerSheetSection(
                         },
                         enabled = subUiState.delaySupported,
                         modifier = Modifier.weight(1f),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 0.dp, vertical = 8.dp),
                         border = BorderStroke(1.dp, if (subUiState.delaySupported) mxOrange.copy(0.5f) else Color.White.copy(0.1f)),
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
                     ) {
-                        Text(label, fontSize = 11.sp, maxLines = 1)
+                        Text(label, fontSize = 11.sp, maxLines = 1, softWrap = false)
                     }
                 }
             }

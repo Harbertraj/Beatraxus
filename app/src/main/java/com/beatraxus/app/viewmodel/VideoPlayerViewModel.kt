@@ -98,6 +98,7 @@ data class VideoPlayerUiState(
     val abRepeatPointA: Long? = null,
     val abRepeatPointB: Long? = null,
     val isAbRepeatActive: Boolean = false,
+    val isLooping: Boolean = false,
     val sleepTimerRemainingMs: Long? = null,
     val sleepTimerMode: SleepTimerMode = SleepTimerMode.OFF,
     val showSkipIntroButton: Boolean = false,
@@ -618,8 +619,10 @@ class VideoPlayerViewModel(
         val duration = player.duration
         if (duration <= 0) return
 
+        // Always record so the home card shows the LAST PLAYED video.
+        // Finished videos (>95%) restart from the beginning next time.
         val progress = currentPos.toDouble() / duration.toDouble()
-        if (progress < 0.02 || progress > 0.95) return
+        val savedPos = if (progress > 0.95) 0L else currentPos
 
         val currentRatio = _uiState.value.aspectRatio.name
         
@@ -637,12 +640,13 @@ class VideoPlayerViewModel(
             subtitleIdx = -2
         }
 
-        viewModelScope.launch(Dispatchers.IO) {
+        // Own scope: viewModelScope is already cancelled when onCleared() runs.
+        saveScope.launch {
             videoRecentlyPlayedDao.addRecentlyPlayed(
                 VideoRecentlyPlayedEntity(
                     videoId = video.id,
                     timestamp = System.currentTimeMillis(),
-                    lastPositionMs = currentPos,
+                    lastPositionMs = savedPos,
                     durationMs = duration,
                     lastAspectRatio = currentRatio,
                     lastAudioTrackIndex = audioIdx,
@@ -653,6 +657,12 @@ class VideoPlayerViewModel(
     }
 
     private var lastDbSaveTime = 0L
+    private val saveScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /** Call when leaving the player screen so "last played" + position are stored. */
+    fun saveProgressNow() {
+        _uiState.value.currentVideo?.let { recordVideoPlayed(it) }
+    }
 
     private fun startProgressUpdate() {
         progressJob?.cancel()
@@ -1406,6 +1416,14 @@ class VideoPlayerViewModel(
             seekTo(range.endMs)
             _uiState.update { it.copy(showSkipIntroButton = false) }
         }
+    }
+
+    /** Simple on/off loop of the current video (tap once = on, tap again = off). */
+    fun toggleLoop() {
+        val player = exoPlayer ?: return
+        val enable = !_uiState.value.isLooping
+        player.repeatMode = if (enable) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
+        _uiState.update { it.copy(isLooping = enable) }
     }
 
     fun toggleAbRepeat() {

@@ -63,6 +63,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.ui.draw.clipToBounds
@@ -218,6 +219,7 @@ fun VideoPlayerScreen(
     // Gesture States
     var gestureType by remember { mutableStateOf(GestureType.NONE) }
     var gestureValue by remember { mutableFloatStateOf(0f) }
+    var gestureSubText by remember { mutableStateOf<String?>(null) }
     var showGestureOverlay by remember { mutableStateOf(false) }
     var zoomScale by remember { mutableFloatStateOf(1f) }
     var isFastForwarding by remember { mutableStateOf(false) }
@@ -225,6 +227,7 @@ fun VideoPlayerScreen(
     var doubleTapRippleText by remember { mutableStateOf("") }
 
     var showChapterStrip by remember { mutableStateOf(false) }
+    var lastScrubSeek by remember { mutableLongStateOf(0L) }
 
     // Auto-hide controls
     LaunchedEffect(controlsVisible, uiState.isPlaying, uiState.isLocked) {
@@ -267,6 +270,7 @@ fun VideoPlayerScreen(
         }
         
         onDispose {
+            viewModel.saveProgressNow()
             PlaybackGlobalState.setVideoPlayerOnScreen(false)
             activity?.requestedOrientation = originalOrientation
             if (window != null) {
@@ -308,6 +312,8 @@ fun VideoPlayerScreen(
                     var dragStarted = false
                     var initialDragIntent = GestureType.NONE
                     var cumulativeChange = Offset.Zero
+                    var seekStartPos = 0L
+                    var lastLiveSeek = 0L
                     
                     while (true) {
                         val event = awaitPointerEvent(PointerEventPass.Initial)
@@ -317,7 +323,10 @@ fun VideoPlayerScreen(
                             gestureType = GestureType.NONE
                             
                             if (initialDragIntent == GestureType.SEEK) {
-                                viewModel.seekTo(viewModel.positionFlow.value + gestureValue.toLong() * 1000)
+                                val dur = uiState.duration.coerceAtLeast(0L)
+                                val target = (seekStartPos + (gestureValue * 1000f).toLong())
+                                    .coerceIn(0L, if (dur > 0) dur else Long.MAX_VALUE)
+                                viewModel.seekTo(target)
                             }
                             break
                         }
@@ -332,6 +341,7 @@ fun VideoPlayerScreen(
                         
                         if (!dragStarted && cumulativeChange.getDistance() > 10.dp.toPx()) {
                             dragStarted = true
+                            seekStartPos = viewModel.positionFlow.value
                             
                             initialDragIntent = if (abs(cumulativeChange.x) > abs(cumulativeChange.y)) {
                                 GestureType.SEEK
@@ -383,6 +393,16 @@ fun VideoPlayerScreen(
                                 GestureType.SEEK -> {
                                     val deltaSeconds = (cumulativeChange.x / size.width) * 60f
                                     gestureValue = deltaSeconds
+                                    val dur = uiState.duration.coerceAtLeast(0L)
+                                    val target = (seekStartPos + (deltaSeconds * 1000f).toLong())
+                                        .coerceIn(0L, if (dur > 0) dur else Long.MAX_VALUE)
+                                    // live seek (throttled) so the picture follows the finger
+                                    val now = System.currentTimeMillis()
+                                    if (now - lastLiveSeek > 120) {
+                                        lastLiveSeek = now
+                                        viewModel.seekTo(target)
+                                    }
+                                    gestureSubText = "${formatTime(target)} / ${formatTime(dur)}"
                                 }
                                 GestureType.SUBTITLE -> {
                                     viewModel.setSubtitleOffset(uiState.subtitleOffset + delta.y)
@@ -560,7 +580,7 @@ fun VideoPlayerScreen(
                 enter = fadeIn(),
                 exit = fadeOut()
             ) {
-                GestureOverlay(type = gestureType, value = gestureValue)
+                GestureOverlay(type = gestureType, value = gestureValue, subText = gestureSubText)
             }
 
             // Aspect Ratio Overlay
@@ -656,6 +676,7 @@ fun VideoPlayerScreen(
                         onRotationClick = { activity?.let { viewModel.toggleOrientation(it) } },
                         onColorClick = { sheetType = PlayerSheetType.COLOR },
                         onAbRepeatClick = { viewModel.toggleAbRepeat() },
+                        onLoopClick = { viewModel.toggleLoop() },
                         onSleepTimerClick = { sheetType = PlayerSheetType.SLEEP_TIMER },
                         modifier = Modifier
                             .align(Alignment.TopCenter)
@@ -684,7 +705,16 @@ fun VideoPlayerScreen(
                             viewModel.setAspectRatio(nextRatio)
                         },
 
-                        onScrubbing = { viewModel.updateScrubbingPreview(it) },
+                        onScrubbing = {
+                            viewModel.updateScrubbingPreview(it)
+                            if (it != null) {
+                                val now = System.currentTimeMillis()
+                                if (now - lastScrubSeek > 120) {
+                                    lastScrubSeek = now
+                                    viewModel.seekTo(it)
+                                }
+                            }
+                        },
                         onLongPress = { showChapterStrip = true },
                         modifier = Modifier.align(Alignment.BottomCenter)
                     )
@@ -884,10 +914,12 @@ private fun VpGlassButton(
 
 /** Flat icon used inside the floating tool capsule. Active = amber disc behind an amber icon. */
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
 private fun VpToolButton(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     active: Boolean,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onLongClick: (() -> Unit)? = null
 ) {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
@@ -911,11 +943,12 @@ private fun VpToolButton(
             .clip(CircleShape)
             .background(VpAmber.copy(alpha = 0.20f * activeAmount))
             .border(1.dp, VpAmberSoft.copy(alpha = 0.65f * activeAmount), CircleShape)
-            .clickable(
+            .combinedClickable(
                 interactionSource = interaction,
                 indication = null,
                 role = Role.Button,
-                onClick = onClick
+                onClick = onClick,
+                onLongClick = onLongClick
             ),
         contentAlignment = Alignment.Center
     ) {
@@ -940,6 +973,7 @@ fun FloatingControls(
     onRotationClick: () -> Unit,
     onColorClick: () -> Unit,
     onAbRepeatClick: () -> Unit,
+    onLoopClick: () -> Unit,
     onSleepTimerClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -971,7 +1005,12 @@ fun FloatingControls(
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             VpToolButton(Icons.Rounded.PictureInPicture, false, onPiPClick)
-            VpToolButton(Icons.Rounded.Repeat, uiState.isAbRepeatActive || uiState.abRepeatPointA != null, onAbRepeatClick)
+            VpToolButton(
+                if (uiState.isLooping) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
+                uiState.isLooping || uiState.isAbRepeatActive || uiState.abRepeatPointA != null,
+                onLoopClick,
+                onLongClick = onAbRepeatClick
+            )
             VpToolButton(
                 Icons.Rounded.Bedtime,
                 uiState.sleepTimerMode != com.beatraxus.app.viewmodel.SleepTimerMode.OFF,
@@ -996,7 +1035,7 @@ fun FloatingControls(
 }
 
 @Composable
-fun GestureOverlay(type: GestureType, value: Float) {
+fun GestureOverlay(type: GestureType, value: Float, subText: String? = null) {
     val shape = RoundedCornerShape(30.dp)
     Box(
         modifier = Modifier
@@ -1052,6 +1091,10 @@ fun GestureOverlay(type: GestureType, value: Float) {
                 fontSize = 17.sp,
                 fontWeight = FontWeight.ExtraBold
             )
+            if (type == GestureType.SEEK && subText != null) {
+                Spacer(Modifier.height(4.dp))
+                Text(subText, color = VpAmberSoft, fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+            }
             if (type == GestureType.BRIGHTNESS || type == GestureType.VOLUME) {
                 Spacer(Modifier.height(8.dp))
                 Box(
@@ -1138,14 +1181,6 @@ fun PlayerTopBar(
                 modifier = Modifier.weight(1f),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Box(
-                    modifier = Modifier
-                        .width(3.dp)
-                        .height(22.dp)
-                        .clip(CircleShape)
-                        .background(Brush.verticalGradient(listOf(VpAmberSoft, VpAmber)))
-                )
-                Spacer(Modifier.width(10.dp))
                 Text(
                     text = title,
                     color = Color.White,
@@ -1227,11 +1262,6 @@ fun PlayerBottomBar(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .background(
-                Brush.verticalGradient(
-                    listOf(Color.Transparent, Color.Black.copy(0.60f))
-                )
-            )
             .padding(bottom = 14.dp, top = 28.dp, start = 16.dp, end = 16.dp)
     ) {
         Column {
