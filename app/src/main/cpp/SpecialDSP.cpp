@@ -1469,9 +1469,18 @@ public:
     int getBufferSize() { return stream ? AAudioStream_getBufferSizeInFrames(stream) : 0; }
     int getSampleRate() { return sampleRate; }
     int getLatency() {
+        if (!stream || sampleRate <= 0) return 0;
+        // Queued latency = frames handed to the stream minus frames already presented.
+        int64_t written = AAudioStream_getFramesWritten(stream);
+        int64_t played = getPosition();
+        int64_t queued = written - played;
+        if (queued < 0) queued = 0;
+        return (int)((queued * 1000LL) / sampleRate);
+    }
+    int getXRunCount() {
         if (!stream) return 0;
-        // Approximation
-        return 0; // Latency calculation needs more state
+        int32_t x = AAudioStream_getXRunCount(stream);
+        return x < 0 ? 0 : x;
     }
     void setBufferConfig(int bufferFrames, int bufferCount, int postFadeFrames) {
         if (stream) {
@@ -2592,6 +2601,9 @@ JNIEXPORT jint JNICALL Java_com_beatraxus_app_engine_MmapAudioOutput_nMmapGetBuf
 }
 JNIEXPORT jint JNICALL Java_com_beatraxus_app_engine_MmapAudioOutput_nMmapGetLatencyMs(JNIEnv* env, jobject thiz, jlong handle) {
     return handle ? ((MmapStream*)handle)->getLatency() : 0;
+}
+JNIEXPORT jint JNICALL Java_com_beatraxus_app_engine_MmapAudioOutput_nMmapGetXRunCount(JNIEnv* env, jobject thiz, jlong handle) {
+    return handle ? ((MmapStream*)handle)->getXRunCount() : 0;
 }
 JNIEXPORT jint JNICALL Java_com_beatraxus_app_engine_MmapAudioOutput_nMmapGetSampleRate(JNIEnv* env, jobject thiz, jlong handle) {
     return handle ? ((MmapStream*)handle)->getSampleRate() : 48000;

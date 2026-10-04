@@ -67,6 +67,32 @@ class AudioTrackOutput(
     private var mmapOutput: MmapAudioOutput? = null
     private var usingMmap: Boolean = false
 
+    // Underrun accounting. AudioTrack.getUnderrunCount()/AAudio XRunCount are per-stream and
+    // reset to 0 whenever a stream is recreated, so released streams are harvested into
+    // [underrunHarvested] and a per-song [underrunBaseline] is subtracted.
+    @Volatile private var underrunHarvested = 0
+    @Volatile private var underrunBaseline = 0
+
+    private fun rawUnderruns(): Int {
+        val t = try { audioTrack?.underrunCount ?: 0 } catch (_: Exception) { 0 }
+        val m = try { mmapOutput?.xRunCount() ?: 0 } catch (_: Exception) { 0 }
+        return underrunHarvested + t + m
+    }
+
+    private fun harvestUnderruns(track: AudioTrack?, mmap: MmapAudioOutput?) {
+        val t = try { track?.underrunCount ?: 0 } catch (_: Exception) { 0 }
+        val m = try { mmap?.xRunCount() ?: 0 } catch (_: Exception) { 0 }
+        underrunHarvested += t + m
+    }
+
+    override fun underrunCount(): Int = (rawUnderruns() - underrunBaseline).coerceAtLeast(0)
+
+    override fun queuedLatencyFrames(): Int {
+        val written = totalFramesWritten()
+        val played = playbackPositionFrames()
+        return (written - played).coerceIn(0L, Int.MAX_VALUE.toLong()).toInt()
+    }
+
     private var bufferFrames: Int = 0
     private var bufferCount: Int = 2
     private var postFadeFrames: Int = 0
@@ -277,6 +303,7 @@ class AudioTrackOutput(
             if (mmap.init(resolvedSampleRate, channels, mmapRequestedBufferFrames, format, resetOffsets)) {
                 mmapOutput = mmap
                 usingMmap = true
+                if (resetOffsets) underrunBaseline = rawUnderruns()
                 this.sampleRate = mmap.outputSampleRate()
                 this.channels = channels
                 this.currentEncoding = AudioFormat.ENCODING_PCM_FLOAT
@@ -373,7 +400,9 @@ class AudioTrackOutput(
             if (canDoSeamless && oldTrack != null) {
                 val isPlaying = oldTrack.playState == AudioTrack.PLAYSTATE_PLAYING
                 if (isPlaying) newTrack.play()
+                harvestUnderruns(oldTrack, null)
                 audioTrack = newTrack
+                if (resetOffsets) underrunBaseline = rawUnderruns()
                 
                 synchronized(stateLock) {
                     if (resetOffsets) {
@@ -403,6 +432,7 @@ class AudioTrackOutput(
                 }
             } else {
                 audioTrack = newTrack
+                if (resetOffsets) underrunBaseline = rawUnderruns()
                 synchronized(stateLock) {
                     if (resetOffsets) {
                         totalFramesWritten = 0L
@@ -538,6 +568,7 @@ class AudioTrackOutput(
     }
 
     private fun releaseInternal() {
+        harvestUnderruns(audioTrack, mmapOutput)
         mmapOutput?.release()
         mmapOutput = null
         usingMmap = false

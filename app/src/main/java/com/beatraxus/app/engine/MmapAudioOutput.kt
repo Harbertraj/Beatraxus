@@ -81,6 +81,11 @@ internal class MmapAudioOutput {
         return nMmapGetLatencyMs(nativeHandle)
     }
 
+    fun xRunCount(): Int = lock.readLock().withLock {
+        if (nativeHandle == 0L) return 0
+        return nMmapGetXRunCount(nativeHandle)
+    }
+
     fun outputSampleRate(): Int = lock.readLock().withLock {
         if (nativeHandle == 0L) return 48000
         return nMmapGetSampleRate(nativeHandle)
@@ -110,6 +115,7 @@ internal class MmapAudioOutput {
     private external fun nMmapGetBufferFrames(handle: Long): Int
     private external fun nMmapGetLatencyMs(handle: Long): Int
     private external fun nMmapGetSampleRate(handle: Long): Int
+    private external fun nMmapGetXRunCount(handle: Long): Int
     private external fun nMmapSetBufferConfig(handle: Long, bufferFrames: Int, bufferCount: Int, postFadeFrames: Int)
 
     companion object {

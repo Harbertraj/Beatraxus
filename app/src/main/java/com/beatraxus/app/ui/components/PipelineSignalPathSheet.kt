@@ -12,8 +12,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -29,6 +29,8 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
@@ -54,6 +56,12 @@ import com.beatraxus.app.ui.utils.DialogBlurBehind
 import com.beatraxus.app.ui.utils.rememberWindowBlurSupported
 import java.util.Locale
 import kotlin.math.abs
+
+private const val PULSE_SWEEP_MS = 5200
+private val RAIL_WIDTH = 22.dp
+private val LIST_H_PAD = 14.dp
+private val LIST_V_PAD = 10.dp
+private val NODE_CENTER_Y = 17.dp // spacer(10) + half of 14dp node
 
 enum class StageState {
     UNTOUCHED, PROCESSED, DEGRADED, BYPASSED
@@ -457,7 +465,7 @@ fun PipelineSignalPathSheet(
         initialValue = 0f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(
-            animation = tween(1200, easing = LinearEasing),
+            animation = tween(PULSE_SWEEP_MS, easing = LinearEasing),
             repeatMode = RepeatMode.Restart
         ),
         label = "pulseProgress"
@@ -606,22 +614,61 @@ fun PipelineSignalPathSheet(
 
                 HorizontalDivider(color = Color.White.copy(0.08f))
 
-                // Stages list (wraps content, scrolls only if the card hits its max height)
-                LazyColumn(
+                // Stages list (wraps content, scrolls only if the card hits its max height).
+                // ONE continuous rail line + travelling dot is drawn behind the whole list so the
+                // dot never skips the gaps where the wire-format chips sit.
+                val listScroll = rememberScrollState()
+                var lastRowHeightPx by remember { mutableIntStateOf(0) }
+                val density = LocalDensity.current
+
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .weight(1f, fill = false),
-                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp)
+                        .weight(1f, fill = false)
+                        .verticalScroll(listScroll)
+                        .drawBehind {
+                            val x = with(density) { (LIST_H_PAD + RAIL_WIDTH / 2).toPx() }
+                            val yStart = with(density) { (LIST_V_PAD + NODE_CENTER_Y).toPx() }
+                            val yEnd = size.height -
+                                with(density) { LIST_V_PAD.toPx() } -
+                                lastRowHeightPx +
+                                with(density) { NODE_CENTER_Y.toPx() }
+                            if (yEnd > yStart) {
+                                drawLine(
+                                    color = Color.White.copy(alpha = 0.12f),
+                                    start = Offset(x, yStart),
+                                    end = Offset(x, yEnd),
+                                    strokeWidth = 2.dp.toPx()
+                                )
+                                if (isPlaying) {
+                                    val y = yStart + (yEnd - yStart) * pulseProgress
+                                    // soft glow + bright core, fading in/out at both ends
+                                    val edge = minOf(pulseProgress, 1f - pulseProgress) * 12f
+                                    val fade = edge.coerceIn(0f, 1f)
+                                    drawCircle(
+                                        color = verdictColor.copy(alpha = 0.25f * fade),
+                                        radius = 7.dp.toPx(),
+                                        center = Offset(x, y)
+                                    )
+                                    drawCircle(
+                                        color = verdictColor.copy(alpha = 0.95f * fade),
+                                        radius = 3.dp.toPx(),
+                                        center = Offset(x, y)
+                                    )
+                                }
+                            }
+                        }
+                        .padding(horizontal = LIST_H_PAD, vertical = LIST_V_PAD)
                 ) {
-                    itemsIndexed(stages) { index, stage ->
-                        val wireFormat = wireFormats.getOrNull(index)
+                    stages.forEachIndexed { index, stage ->
+                        val isLast = index == stages.lastIndex
                         CompactStageRow(
                             stage = stage,
-                            wireFormat = wireFormat,
-                            isLast = index == stages.lastIndex,
-                            isPlaying = isPlaying,
-                            pulseProgress = pulseProgress,
-                            index = index
+                            wireFormat = wireFormats.getOrNull(index),
+                            isLast = isLast,
+                            modifier = if (isLast) {
+                                Modifier.onSizeChanged { lastRowHeightPx = it.height }
+                            } else Modifier
                         )
                     }
                 }
@@ -636,9 +683,12 @@ fun PipelineSignalPathSheet(
                         .border(0.5.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(14.dp))
                         .padding(horizontal = 14.dp, vertical = 10.dp)
                 ) {
-                    val latencyMs = if (uiState.outputSampleRate > 0) {
-                        uiState.dsp.currentLatencyFrames * 1000f / uiState.outputSampleRate
-                    } else 0f
+                    val statSr = when {
+                        uiState.outputSampleRate > 0 -> uiState.outputSampleRate
+                        uiState.inputSampleRate > 0 -> uiState.inputSampleRate
+                        else -> 44100
+                    }
+                    val latencyMs = uiState.dsp.currentLatencyFrames * 1000f / statSr
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -704,9 +754,7 @@ fun CompactStageRow(
     stage: PipelineStage,
     wireFormat: WireFormat?,
     isLast: Boolean,
-    isPlaying: Boolean,
-    pulseProgress: Float,
-    index: Int
+    modifier: Modifier = Modifier
 ) {
     val stateColor = when (stage.state) {
         StageState.UNTOUCHED -> Color(0xFF30D158)
@@ -722,18 +770,19 @@ fun CompactStageRow(
         StageState.BYPASSED -> "BYPASSED"
     }
 
-    val railWidth = 22.dp
+    val railWidth = RAIL_WIDTH
     val cardShape = RoundedCornerShape(14.dp)
 
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .height(IntrinsicSize.Min)
             .semantics(mergeDescendants = true) {
                 contentDescription = "${stage.title}: ${stage.primary}, state ${stage.state.name}"
             }
     ) {
-        // Rail: glowing node + connector line that stretches to the card height
+        // Rail: glowing node only. The connector line + travelling dot are drawn once,
+        // continuously, by the parent list so they run through the wire-format chips too.
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier
@@ -757,28 +806,6 @@ fun CompactStageRow(
                 )
             }
 
-            if (!isLast) {
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .width(2.dp)
-                        .drawBehind {
-                            drawLine(
-                                color = Color.White.copy(alpha = 0.12f),
-                                start = Offset(size.width / 2, 0f),
-                                end = Offset(size.width / 2, size.height),
-                                strokeWidth = 2.dp.toPx()
-                            )
-                            if (isPlaying && stage.state != StageState.BYPASSED) {
-                                drawCircle(
-                                    color = stateColor.copy(alpha = 0.8f),
-                                    radius = 2.5.dp.toPx(),
-                                    center = Offset(size.width / 2, size.height * pulseProgress)
-                                )
-                            }
-                        }
-                )
-            }
         }
 
         Spacer(Modifier.width(8.dp))
@@ -904,19 +931,7 @@ fun CompactStageRow(
                 .fillMaxWidth()
                 .height(IntrinsicSize.Min)
         ) {
-            Box(
-                modifier = Modifier
-                    .width(railWidth)
-                    .fillMaxHeight(),
-                contentAlignment = Alignment.Center
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxHeight()
-                        .width(2.dp)
-                        .background(Color.White.copy(alpha = 0.12f))
-                )
-            }
+            Spacer(Modifier.width(railWidth))
 
             Spacer(Modifier.width(8.dp))
 

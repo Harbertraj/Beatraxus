@@ -48,6 +48,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
@@ -91,14 +92,16 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.*
 
-// Premium Studio Color Palette
-// "Aurora Console" palette — deep indigo glass, teal -> violet -> pink light
-private val PremiumSurface = Color(0xFF0B0D1A) // Deep indigo black
-private val PremiumAccent = Color(0xFF26E6CB)  // Aurora teal
-private val PremiumAccentSoft = Color(0xFF9CF3E5)
-private val GraphicGold = Color(0xFFA99BFF)    // Graph dots / fill tint (soft violet)
-private val DspViolet = Color(0xFF8C7BFF)
-private val DspPink = Color(0xFFFF6FB5)
+// "Obsidian Ember" palette - warm black glass with amber -> coral -> rose light.
+private val PremiumSurface = Color(0xFF110D0B)     // Warm obsidian
+private val PremiumAccent = Color(0xFFFFB13B)      // Ember amber
+private val PremiumAccentSoft = Color(0xFFFFD9A3)  // Sand glow
+private val GraphicGold = Color(0xFFFFC15E)        // Graph dots / fill tint
+private val DspViolet = Color(0xFFFF6A4D)          // Coral (secondary accent, name kept for call sites)
+private val DspPink = Color(0xFFFF4F8B)            // Hot rose (tertiary accent)
+private val DspSheet = Color(0xFF1A1411)           // Dialog / sheet container
+private val DspSheetHigh = Color(0xFF241B16)       // Raised container
+private val DspInk = Color(0xFF070504)             // Deepest inset background
 
 /** Shared glass panel used by every DSP card: sheen, aurora rim and rounded corners. */
 private fun Modifier.dspPanel(radius: androidx.compose.ui.unit.Dp = 22.dp): Modifier = this
@@ -110,6 +113,84 @@ private fun Modifier.dspPanel(radius: androidx.compose.ui.unit.Dp = 22.dp): Modi
         Brush.linearGradient(listOf(PremiumAccent.copy(0.42f), Color.White.copy(0.06f), DspViolet.copy(0.32f))),
         RoundedCornerShape(radius)
     )
+
+
+/**
+ * Top page switcher. Flat tab row (icon + label always visible) with a single amber bar that
+ * slides continuously with the pager swipe - replaces the old tiny capsule of icons.
+ */
+@Composable
+private fun DspTabBar(
+    pagerState: androidx.compose.foundation.pager.PagerState,
+    modifier: Modifier = Modifier,
+    onSelect: (Int) -> Unit
+) {
+    val icons = listOf(Icons.Rounded.GraphicEq, Icons.Rounded.AutoAwesome, Icons.Rounded.Waves, Icons.Rounded.SurroundSound)
+    val labels = listOf("EQ", "MASTER", "REVERB", "SPATIAL")
+    Column(modifier = modifier) {
+        Row(modifier = Modifier.fillMaxWidth()) {
+            labels.forEachIndexed { i, label ->
+                val selected = pagerState.currentPage == i
+                val tint by animateColorAsState(
+                    if (selected) PremiumAccent else Color.White.copy(alpha = 0.42f),
+                    label = "tab_tint"
+                )
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null
+                        ) { onSelect(i) }
+                        .padding(vertical = 5.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Icon(icons[i], contentDescription = label, tint = tint, modifier = Modifier.size(17.dp))
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        text = label,
+                        color = tint,
+                        fontSize = 8.5.sp,
+                        fontWeight = if (selected) FontWeight.Black else FontWeight.Bold,
+                        letterSpacing = 1.1.sp,
+                        maxLines = 1
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(3.dp))
+        val tabCount = labels.size
+        val pagePos: Float = (pagerState.currentPage + pagerState.currentPageOffsetFraction)
+            .coerceIn(0f, (tabCount - 1).toFloat())
+        Canvas(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(3.dp)
+        ) {
+            val barH: Float = size.height
+            val totalW: Float = size.width
+            val tabW: Float = totalW / tabCount.toFloat()
+            val inset: Float = tabW * 0.2f
+            val startX: Float = pagePos * tabW
+            drawRoundRect(
+                color = Color.White.copy(alpha = 0.08f),
+                size = Size(totalW, barH),
+                cornerRadius = CornerRadius(barH / 2f, barH / 2f)
+            )
+            drawRoundRect(
+                brush = Brush.horizontalGradient(
+                    colors = listOf(PremiumAccent, DspViolet, DspPink),
+                    startX = startX,
+                    endX = startX + tabW
+                ),
+                topLeft = Offset(startX + inset, 0f),
+                size = Size(tabW - inset * 2f, barH),
+                cornerRadius = CornerRadius(barH / 2f, barH / 2f)
+            )
+        }
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -198,13 +279,30 @@ fun DspScreen(
 
     BackHandler(onBack = safeBack)
 
-    // Real-time FFT state for Graphic Response
+    // Real-time FFT state for Graphic Response.
+    // The capture window keeps returning the LAST buffer after pause, which froze the bars at the
+    // paused position. While not playing we now drop the buffer and let the bars fall to rest.
     var liveFftBars by remember { mutableStateOf(FloatArray(32)) }
+    val isPlayingState by rememberUpdatedState(uiState.isPlaying)
     LaunchedEffect(viewModel) {
         val fftSize = 512
         val ring = FloatArray(fftSize)
         var ringPos = 0
+        var smooth = FloatArray(32)
         while (true) {
+            if (!isPlayingState) {
+                // Paused / stopped: clear history and release the bars smoothly.
+                java.util.Arrays.fill(ring, 0f)
+                var anyLeft = false
+                val fallen = FloatArray(smooth.size) { i ->
+                    val v = smooth[i] * 0.78f
+                    if (v > 0.004f) { anyLeft = true; v } else 0f
+                }
+                smooth = fallen
+                if (anyLeft || liveFftBars.any { it > 0f }) liveFftBars = fallen
+                delay(if (anyLeft) 16 else 120)
+                continue
+            }
             val capture = viewModel.captureLiveWindow()
             if (capture != null && capture.samples.isNotEmpty()) {
                 val ch = capture.channels.coerceAtLeast(1)
@@ -231,18 +329,22 @@ fun DspScreen(
                         val fEnd = 10.0.pow(logMin + ((b + 1).toDouble() / bars.size) * (logMax - logMin))
                         val binStart = (fStart * fftSize / 44100.0).toInt().coerceIn(0, numBins - 1)
                         val binEnd = (fEnd * fftSize / 44100.0).toInt().coerceIn(binStart + 1, numBins)
-                        var s = 0f
+                        var sum = 0f
                         var count = 0
                         for (i in binStart until binEnd) {
-                            s += mags[i]
+                            sum += mags[i]
                             count++
                         }
                         if (count > 0) {
                             val boost = 1.0f + (b.toFloat() / bars.size) * 1.5f
-                            bars[b] = (s / count / (fftSize / 8f) * boost).coerceIn(0f, 1f)
+                            bars[b] = (sum / count / (fftSize / 8f) * boost).coerceIn(0f, 1f)
                         }
                     }
-                    liveFftBars = bars
+                    // fast attack, smooth release
+                    for (i in bars.indices) {
+                        smooth[i] = if (bars[i] > smooth[i]) bars[i] else smooth[i] * 0.82f + bars[i] * 0.18f
+                    }
+                    liveFftBars = smooth.copyOf()
                 }
             }
             delay(16) // ~60fps
@@ -255,19 +357,19 @@ fun DspScreen(
             .background(
                 Brush.verticalGradient(
                     listOf(
-                        Color(0xFF12142A), // Midnight indigo
-                        Color(0xFF05060C)  // Near black
+                        Color(0xFF1C1410), // Warm ember dusk
+                        Color(0xFF060403)  // Near black
                     )
                 )
             )
     ) {
-        // Aurora glows (teal top-left, violet bottom-right)
+        // Ember glows (amber top-left, coral bottom-right)
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(
                     Brush.radialGradient(
-                        colors = listOf(PremiumAccent.copy(alpha = 0.13f), Color.Transparent),
+                        colors = listOf(PremiumAccent.copy(alpha = 0.11f), Color.Transparent),
                         center = Offset(80f, 60f),
                         radius = 1300f
                     )
@@ -278,7 +380,7 @@ fun DspScreen(
                 .fillMaxSize()
                 .background(
                     Brush.radialGradient(
-                        colors = listOf(DspViolet.copy(alpha = 0.14f), Color.Transparent),
+                        colors = listOf(DspViolet.copy(alpha = 0.12f), Color.Transparent),
                         center = Offset(1050f, 2300f),
                         radius = 1500f
                     )
@@ -314,64 +416,14 @@ fun DspScreen(
                                 letterSpacing = 0.6.sp,
                                 modifier = Modifier.padding(top = 2.dp)
                             )
-                            Surface(
-                                modifier = Modifier.padding(top = 8.dp),
-                                color = Color.White.copy(0.05f),
-                                shape = RoundedCornerShape(50),
-                                border = BorderStroke(0.8.dp, Brush.horizontalGradient(listOf(PremiumAccent.copy(0.45f), Color.White.copy(0.08f), DspViolet.copy(0.45f))))
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(2.dp),
-                                    modifier = Modifier.padding(3.dp)
-                                ) {
-                                    val pageIcons = listOf(
-                                        Icons.Rounded.GraphicEq,
-                                        Icons.Rounded.AutoAwesome,
-                                        Icons.Rounded.Waves,
-                                        Icons.Rounded.SurroundSound
-                                    )
-                                    val pageLabels = listOf("EQ", "MASTER", "REVERB", "SPATIAL")
-                                    pageIcons.forEachIndexed { i, icon ->
-                                        val isActive = pagerState.currentPage == i
-                                        val color by animateColorAsState(
-                                            targetValue = if (isActive) PremiumAccentSoft else Color.White.copy(alpha = 0.38f),
-                                            label = "icon_color"
-                                        )
-                                        Row(
-                                            modifier = Modifier
-                                                .clip(RoundedCornerShape(50))
-                                                .then(
-                                                    if (isActive) Modifier.background(
-                                                        Brush.horizontalGradient(listOf(PremiumAccent.copy(0.26f), DspViolet.copy(0.26f)))
-                                                    ) else Modifier
-                                                )
-                                                .clickable { pageScope.launch { pagerState.animateScrollToPage(i) } }
-                                                .animateContentSize()
-                                                .padding(horizontal = if (isActive) 11.dp else 9.dp, vertical = 5.dp),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Icon(
-                                                imageVector = icon,
-                                                contentDescription = null,
-                                                modifier = Modifier.size(if (isActive) 15.dp else 14.dp),
-                                                tint = color
-                                            )
-                                            if (isActive) {
-                                                Spacer(Modifier.width(5.dp))
-                                                Text(
-                                                    text = pageLabels[i],
-                                                    color = Color.White,
-                                                    fontSize = 9.sp,
-                                                    fontWeight = FontWeight.Black,
-                                                    letterSpacing = 1.2.sp,
-                                                    maxLines = 1
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                            }
+                            DspTabBar(
+                                pagerState = pagerState,
+                                modifier = Modifier
+                                    .padding(top = 8.dp)
+                                    .widthIn(max = 340.dp)
+                                    .fillMaxWidth(),
+                                onSelect = { i -> pageScope.launch { pagerState.animateScrollToPage(i) } }
+                            )
                         }
                     },
                     navigationIcon = {
@@ -477,7 +529,7 @@ fun DspScreen(
             ModalBottomSheet(
                 onDismissRequest = { showSavedPresetsSheet = false },
                 shape = RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp),
-                containerColor = Color(0xFF10121F),
+                containerColor = DspSheet,
                 sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
                 dragHandle = {
                     Box(
@@ -602,7 +654,7 @@ fun DspScreen(
                                             ) {
                                                 Row(
                                                     modifier = Modifier
-                                                        .background(Color(0xFF181B2E), RoundedCornerShape(12.dp))
+                                                        .background(DspSheetHigh, RoundedCornerShape(12.dp))
                                                         .border(1.dp, Color.White.copy(0.1f), RoundedCornerShape(12.dp))
                                                         .padding(horizontal = 8.dp, vertical = 4.dp),
                                                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -678,7 +730,7 @@ fun DspScreen(
         if (presetToRename != null) {
             AlertDialog(
                 onDismissRequest = { presetToRename = null },
-                containerColor = Color(0xFF181B2E),
+                containerColor = DspSheetHigh,
                 title = { Text("Rename Preset", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold) },
                 text = {
                     OutlinedTextField(
@@ -740,7 +792,7 @@ fun DspScreen(
                         .fillMaxHeight(0.85f)
                         .padding(vertical = 24.dp),
                     shape = RoundedCornerShape(28.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF10121F)),
+                    colors = CardDefaults.cardColors(containerColor = DspSheet),
                     border = BorderStroke(1.dp, Color.White.copy(0.1f))
                 ) {
                     Column(
@@ -975,7 +1027,7 @@ fun DspScreen(
 
             AlertDialog(
                 onDismissRequest = { showDevicePicker = false },
-                containerColor = Color(0xFF181B2E),
+                containerColor = DspSheetHigh,
                 title = { Text("Copy Settings From", color = Color.White, fontWeight = FontWeight.Bold) },
                 text = {
                     Column(
@@ -1044,7 +1096,7 @@ private fun ValueEditDialog(
     var textValue by remember { mutableStateOf(format.format(initialValue)) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        containerColor = Color(0xFF181B2E),
+        containerColor = DspSheetHigh,
         titleContentColor = Color.White,
         textContentColor = Color.White,
         title = { Text("Edit $label", fontWeight = FontWeight.Bold) },
@@ -1101,7 +1153,7 @@ private fun AiOptionsPopup(
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        containerColor = Color(0xFF10121F),
+        containerColor = DspSheet,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         dragHandle = {
             Box(
@@ -1276,7 +1328,7 @@ private fun PremiumGraphicCard(uiState: PlayerUiState, presetName: String, fftBa
                 .fillMaxWidth()
                 .height(110.dp)
                 .clip(RoundedCornerShape(18.dp))
-                .background(Brush.verticalGradient(listOf(Color(0xFF05060F).copy(0.85f), Color(0xFF0C0E1E).copy(0.85f))))
+                .background(Brush.verticalGradient(listOf(DspInk.copy(0.85f), Color(0xFF130E0B).copy(0.85f))))
                 .border(1.dp, Brush.verticalGradient(listOf(PremiumAccent.copy(0.22f), Color.White.copy(0.04f))), RoundedCornerShape(18.dp))
         ) {
             EqPreviewGraph(displayBands, displayEnabled, fftBars = fftBars)
@@ -1503,7 +1555,7 @@ private fun PremiumPreampSlider(
 
                 // 1. Recessed Track
                 drawRoundRect(
-                    color = Color(0xFF05060F).copy(0.7f),
+                    color = DspInk.copy(0.7f),
                     topLeft = Offset(0f, (h - trackH) / 2f),
                     size = Size(w, trackH),
                     cornerRadius = corner
@@ -1574,7 +1626,7 @@ private fun PremiumPreampSlider(
                 // Thumb Body
                 drawRoundRect(
                     brush = Brush.verticalGradient(
-                        listOf(Color(0xFF4A5075), Color(0xFF2A2F4C), Color(0xFF181B30))
+                        listOf(Color(0xFF6B5444), Color(0xFF3D2E25), Color(0xFF211813))
                     ),
                     topLeft = Offset(thumbX, thumbY),
                     size = Size(thumbW, thumbH),
@@ -1695,7 +1747,7 @@ private fun PremiumVerticalBand(
                     .clip(RoundedCornerShape(18.dp))
                     .background(
                         Brush.horizontalGradient(
-                            listOf(Color(0xFF05060F), Color(0xFF1A1E36), Color(0xFF05060F))
+                            listOf(DspInk, Color(0xFF2A1F18), DspInk)
                         )
                     )
                     .border(1.dp, Brush.verticalGradient(listOf(Color.White.copy(0.10f), Color.White.copy(0.03f))), RoundedCornerShape(18.dp))
@@ -1777,7 +1829,7 @@ private fun PremiumVerticalBand(
                     .shadow(12.dp, RoundedCornerShape(14.dp), spotColor = if (isActive) gainColor else Color.Black)
                     .background(
                         Brush.verticalGradient(
-                            listOf(Color(0xFF4A5075), Color(0xFF2A2F4C), Color(0xFF181B30))
+                            listOf(Color(0xFF6B5444), Color(0xFF3D2E25), Color(0xFF211813))
                         ),
                         RoundedCornerShape(14.dp)
                     )
@@ -2082,7 +2134,7 @@ private fun UnifiedPresetSection(
                     onDismissRequest = { onShowMenuChange(false) },
                     modifier = Modifier.width(180.dp).border(1.dp, Color.White.copy(0.1f), RoundedCornerShape(14.dp)),
                     shape = RoundedCornerShape(14.dp),
-                    containerColor = Color(0xFF181B2E)
+                    containerColor = DspSheetHigh
                 ) {
                     val menuItemPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp)
                     DropdownMenuItem(
@@ -2288,7 +2340,7 @@ private fun PremiumSoundStageCard(
             // UI Mode Toggle
             Row(
                 modifier = Modifier
-                    .background(Color(0xFF05060F).copy(0.6f), RoundedCornerShape(50))
+                    .background(DspInk.copy(0.6f), RoundedCornerShape(50))
                     .border(1.dp, Color.White.copy(0.10f), RoundedCornerShape(50))
                     .padding(3.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -2463,7 +2515,7 @@ private fun ClassicSoundStageView(
                 onClick = { viewModel.setAudio3DStageEnabled(!config.audio3DStageEnabled) },
                 modifier = Modifier.size(80.dp),
                 shape = CircleShape,
-                color = Color(0xFF0D1117),
+                color = Color(0xFF0E0A08),
                 border = BorderStroke(2.dp, if (spatialActive) PremiumAccent.copy(0.8f) else Color.White.copy(0.1f)),
                 shadowElevation = if (spatialActive) 32.dp else 0.dp
             ) {
@@ -2756,7 +2808,7 @@ private fun ModernSpatialAudioContent(
                     onClick = { if (!isSpatialBypassed) viewModel.setSpatialAudioEnabled(!config.spatialAudioEnabled) },
                     modifier = Modifier.size(80.dp),
                     shape = CircleShape,
-                    color = Color(0xFF0D1117),
+                    color = Color(0xFF0E0A08),
                     border = BorderStroke(1.5.dp, if (spatialActive) PremiumAccent.copy(0.6f) else Color.White.copy(0.1f)),
                     shadowElevation = 24.dp
                 ) {
@@ -2862,8 +2914,8 @@ private fun ModernSpatialAudioContent(
                             .background(
                                 brush = Brush.verticalGradient(
                                     listOf(
-                                        if (isSelected) Color(0xFF252B33) else Color(0xFF0F1218).copy(0.8f),
-                                        if (isSelected) Color(0xFF0D1117) else Color(0xFF050608).copy(0.9f)
+                                        if (isSelected) Color(0xFF30241D) else Color(0xFF120C09).copy(0.8f),
+                                        if (isSelected) Color(0xFF0E0A08) else Color(0xFF070504).copy(0.9f)
                                     )
                                 ),
                                 shape = RoundedCornerShape(12.dp)
@@ -3092,7 +3144,7 @@ private fun ModernSpatialAudioContent(
                             )
                             .size(24.dp)
                             .shadow(8.dp, CircleShape, ambientColor = PremiumAccent, spotColor = PremiumAccent)
-                            .background(Color(0xFF181B2E), CircleShape)
+                            .background(DspSheetHigh, CircleShape)
                             .border(2.dp, if (spatialActive) PremiumAccent else Color.Gray, CircleShape),
                         contentAlignment = Alignment.Center
                     ) {
@@ -3193,7 +3245,7 @@ private fun ModernSpatialAudioContent(
                         expanded = expanded,
                         onDismissRequest = { expanded = false },
                         modifier = Modifier
-                            .background(Color(0xFF181B2E))
+                            .background(DspSheetHigh)
                             .border(1.dp, Color.White.copy(0.1f), RoundedCornerShape(10.dp))
                     ) {
                         com.beatraxus.app.model.HrtfMode.entries.forEach { mode ->
@@ -3622,7 +3674,7 @@ private fun PremiumReverbCard(uiState: PlayerUiState, viewModel: PlayerViewModel
         if (showPresetPicker) {
             AlertDialog(
                 onDismissRequest = { showPresetPicker = false },
-                containerColor = Color(0xFF181B2E),
+                containerColor = DspSheetHigh,
                 title = { Text("Reverb Environment", color = Color.White, fontWeight = FontWeight.Bold) },
                 text = {
                     Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
@@ -3995,7 +4047,7 @@ private fun KnobControl(
                     Canvas(modifier = Modifier.fillMaxSize()) {
                         drawCircle(
                             brush = Brush.linearGradient(
-                                listOf(Color(0xFF3F4568), Color(0xFF141729), Color(0xFF2B3050))
+                                listOf(Color(0xFF6B5444), Color(0xFF1E1511), Color(0xFF3D2E25))
                             )
                         )
                         // Circular "Brushed" texture lines

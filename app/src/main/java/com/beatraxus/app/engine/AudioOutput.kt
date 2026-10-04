@@ -25,6 +25,10 @@ interface AudioOutput {
     fun outputPathLabel(): String
     fun outputDeviceLabel(): String
     fun estimatedLatencyMs(): Int
+    /** Frames written to the device but not yet played (real output-buffer latency). */
+    fun queuedLatencyFrames(): Int = 0
+    /** Underruns (XRuns) since the current track started. Never negative. */
+    fun underrunCount(): Int = 0
     fun release()
     /** Android audio session id for the active AudioTrack, or -1/0 (AudioManager.ERROR /
      *  AUDIO_SESSION_ID_GENERATE) when unavailable, e.g. during MMAP-exclusive output where

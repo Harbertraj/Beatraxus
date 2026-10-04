@@ -659,6 +659,62 @@ class AudioEngine(
         _playbackStateFlow.update { it.copy(repeatMode = mode) }
     }
 
+    // ---- Live pipeline stats (latency / headroom / underruns) -------------------------------
+    // These used to be published once per track start, so the Signal Path sheet always showed
+    // 0. They are now refreshed while audio is playing.
+    private var peakHoldLin = 0f
+
+    private fun startLiveStatsPolling() {
+        engineScope.launch {
+            while (isActive) {
+                delay(LIVE_STATS_INTERVAL_MS)
+                val playing = _playbackStateFlow.value.isPlaying || _videoRouteStateFlow.value.isPlaying
+                if (playing) {
+                    try { publishLiveStats() } catch (e: Exception) { Log.w(TAG, "live stats failed: ${e.message}") }
+                }
+            }
+        }
+    }
+
+    private fun publishLiveStats() {
+        val pipeline = (activeSession ?: videoSession)?.dspPipeline
+
+        // Headroom: engine auto-headroom (EQ boost compensation) when active, otherwise the
+        // real distance of the signal peak to 0 dBFS (peak-hold with slow decay).
+        val autoHeadroom = pipeline?.getHeadroomDb() ?: 0f
+        val levels = pipeline?.getLevels() ?: floatArrayOf(0f, 0f)
+        val peak = maxOf(levels.getOrElse(0) { 0f }, levels.getOrElse(1) { 0f })
+        peakHoldLin = maxOf(peak, peakHoldLin * 0.9f)
+        val peakHeadroom = if (peakHoldLin > 1e-4f) {
+            (-20f * kotlin.math.log10(peakHoldLin)).coerceIn(0f, 96f)
+        } else null
+
+        // Latency: real queued output frames + EQ processing delay.
+        val eqFrames = pipeline?.getLatencyFrames() ?: 0
+        val totalLatencyFrames = output.queuedLatencyFrames() + eqFrames
+        val underruns = output.underrunCount()
+        val outLatencyMs = output.estimatedLatencyMs()
+
+        // Quantise so the UI only recomposes on meaningful changes.
+        val headroomQ = when {
+            autoHeadroom != 0f -> autoHeadroom
+            peakHeadroom != null -> Math.round(peakHeadroom * 2f) / 2f
+            else -> null
+        }
+        val latencyQ = (totalLatencyFrames / 16) * 16
+
+        _audioStateFlow.update { st ->
+            st.copy(
+                headroomDb = headroomQ ?: st.headroomDb,
+                latencyFrames = latencyQ,
+                outputLatencyMs = outLatencyMs,
+                underrunCount = underruns
+            )
+        }
+    }
+
+    init { startLiveStatsPolling() }
+
     fun release() {
         if (!isReleased.compareAndSet(false, true)) {
             Log.w(TAG, "release() called more than once — ignoring redundant call")
@@ -1361,6 +1417,7 @@ class AudioEngine(
         private const val RENDER_BATCH_SAMPLES = 1_024
         private const val NO_SEEK_PENDING = -1L
         private const val OUTPUT_RECONFIG_SKIP_MS = 0L
+        private const val LIVE_STATS_INTERVAL_MS = 500L
 
         private fun framesToMs(frames: Long, sampleRate: Int): Long {
             if (sampleRate <= 0) return 0L
@@ -1420,8 +1477,9 @@ class AudioEngine(
                 resamplerType = if (currentConfig.highQualityResampler) "SOXR" else "Cubic",
                 activeEffects = currentConfig.activeEffects(),
                 autoEqProfileName = currentConfig.autoEqProfile?.name,
-                headroomDb = activeSession?.dspPipeline?.getHeadroomDb() ?: 0f,
-                latencyFrames = activeSession?.dspPipeline?.getLatencyFrames() ?: 0,
+                headroomDb = activeSession?.dspPipeline?.getHeadroomDb()?.takeIf { it != 0f } ?: state.headroomDb,
+                latencyFrames = (output.queuedLatencyFrames() + (activeSession?.dspPipeline?.getLatencyFrames() ?: 0)),
+                underrunCount = output.underrunCount(),
                 ditherType = currentConfig.ditherType.displayName,
                 eqMode = if (currentConfig.eqPhaseMode == com.beatraxus.app.model.EqPhaseMode.LINEAR_PHASE) "Linear Phase" else "IIR",
                 pipelineSummary = buildPipelineSummary(
