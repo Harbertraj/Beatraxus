@@ -230,8 +230,8 @@ fun VideoPlayerScreen(
     var lastScrubSeek by remember { mutableLongStateOf(0L) }
 
     // Auto-hide controls
-    LaunchedEffect(controlsVisible, uiState.isPlaying, uiState.isLocked) {
-        if (controlsVisible && (uiState.isPlaying || uiState.isLocked)) {
+    LaunchedEffect(controlsVisible, uiState.isPlaying, uiState.isLocked, uiState.scrubbingTimeMs == null) {
+        if (controlsVisible && uiState.scrubbingTimeMs == null && (uiState.isPlaying || uiState.isLocked)) {
             delay(3000)
             controlsVisible = false
         }
@@ -312,6 +312,12 @@ fun VideoPlayerScreen(
                     var dragStarted = false
                     var initialDragIntent = GestureType.NONE
                     var cumulativeChange = Offset.Zero
+                    // Touch began on the visible control panels (seekbar, buttons, top bar):
+                    // leave it entirely to those controls, no screen gestures, no auto-hide.
+                    val onControls = controlsVisible && (
+                        firstDown.position.y > size.height - 200.dp.toPx() ||
+                        firstDown.position.y < 130.dp.toPx()
+                    )
                     var seekStartPos = 0L
                     var lastLiveSeek = 0L
                     
@@ -330,6 +336,8 @@ fun VideoPlayerScreen(
                             }
                             break
                         }
+
+                        if (onControls) continue
 
                         if (event.changes.size > 1) {
                             initialDragIntent = GestureType.ZOOM
@@ -919,7 +927,8 @@ private fun VpToolButton(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     active: Boolean,
     onClick: () -> Unit,
-    onLongClick: (() -> Unit)? = null
+    onLongClick: (() -> Unit)? = null,
+    label: String? = null
 ) {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
@@ -952,12 +961,17 @@ private fun VpToolButton(
             ),
         contentAlignment = Alignment.Center
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = androidx.compose.ui.graphics.lerp(Color.White.copy(alpha = 0.92f), VpAmberSoft, activeAmount),
-            modifier = Modifier.size(22.dp)
-        )
+        val tint = androidx.compose.ui.graphics.lerp(Color.White.copy(alpha = 0.92f), VpAmberSoft, activeAmount)
+        if (label != null) {
+            Text(label, color = tint, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1)
+        } else {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = tint,
+                modifier = Modifier.size(22.dp)
+            )
+        }
     }
 }
 
@@ -1007,9 +1021,18 @@ fun FloatingControls(
             VpToolButton(Icons.Rounded.PictureInPicture, false, onPiPClick)
             VpToolButton(
                 if (uiState.isLooping) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
-                uiState.isLooping || uiState.isAbRepeatActive || uiState.abRepeatPointA != null,
-                onLoopClick,
-                onLongClick = onAbRepeatClick
+                uiState.isLooping,
+                onLoopClick
+            )
+            VpToolButton(
+                Icons.Rounded.Repeat,
+                uiState.isAbRepeatActive || uiState.abRepeatPointA != null,
+                onAbRepeatClick,
+                label = when {
+                    uiState.isAbRepeatActive -> "A-B"
+                    uiState.abRepeatPointA != null -> "A-"
+                    else -> "A-B"
+                }
             )
             VpToolButton(
                 Icons.Rounded.Bedtime,
@@ -1608,40 +1631,6 @@ fun VideoSettingsSheetContent(
             }
             
             Row(verticalAlignment = Alignment.CenterVertically) {
-                if (activeSheetType == PlayerSheetType.AUDIO) {
-                    val canRoute = uiState.availableAudioTracks.isNotEmpty() && uiState.playbackSpeed == 1.0f && !uiState.isConnectingEngineRoute
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Text(
-                            text = "Connect to audio mode",
-                            color = Color.White,
-                            fontSize = 14.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        if (uiState.isConnectingEngineRoute) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(18.dp),
-                                color = mxOrange,
-                                strokeWidth = 2.dp
-                            )
-                        }
-                        Switch(
-                            checked = uiState.routeAudioToEngine || uiState.isConnectingEngineRoute,
-                            enabled = canRoute,
-                            onCheckedChange = { viewModel.setRouteAudioToEngine(it) },
-                            colors = SwitchDefaults.colors(
-                                checkedThumbColor = mxOrange,
-                                checkedTrackColor = mxOrange.copy(0.4f),
-                                disabledCheckedThumbColor = mxOrange.copy(0.4f),
-                                disabledUncheckedThumbColor = Color.Gray.copy(0.4f)
-                            )
-                        )
-                    }
-                }
-
                 if (activeSheetType == PlayerSheetType.EQUALIZER) {
                     Switch(
                         checked = uiState.isEqEnabled && !eqLockedByEngine,
@@ -1660,6 +1649,41 @@ fun VideoSettingsSheetContent(
         }
 
         if (activeSheetType == PlayerSheetType.AUDIO) {
+            // "Connect to audio mode" toggle sits on its own line, below the title
+            val canRoute = uiState.availableAudioTracks.isNotEmpty() && uiState.playbackSpeed == 1.0f && !uiState.isConnectingEngineRoute
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = "Connect to audio mode",
+                    color = Color.White,
+                    fontSize = 14.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+                if (uiState.isConnectingEngineRoute) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        color = mxOrange,
+                        strokeWidth = 2.dp
+                    )
+                    Spacer(Modifier.width(8.dp))
+                }
+                Switch(
+                    checked = uiState.routeAudioToEngine || uiState.isConnectingEngineRoute,
+                    enabled = canRoute,
+                    onCheckedChange = { viewModel.setRouteAudioToEngine(it) },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = mxOrange,
+                        checkedTrackColor = mxOrange.copy(0.4f),
+                        disabledCheckedThumbColor = mxOrange.copy(0.4f),
+                        disabledUncheckedThumbColor = Color.Gray.copy(0.4f)
+                    )
+                )
+            }
             if (uiState.isConnectingEngineRoute) {
                 Text(
                     text = "Connecting to Audio Engine...",

@@ -648,11 +648,13 @@ data class PlayerUiState(
                 videoFolders == other.videoFolders &&
                 isLoadingVideos == other.isLoadingVideos &&
                 activeVideoQueue == other.activeVideoQueue &&
+                continueWatching == other.continueWatching &&
                 navigateToVideoPlayer == other.navigateToVideoPlayer
     }
 
     override fun hashCode(): Int {
         var result = currentSong?.hashCode() ?: 0
+        result = 31 * result + continueWatching.hashCode()
         result = 31 * result + (lyricsProviderId?.hashCode() ?: 0)
         result = 31 * result + lyricsCandidates.hashCode()
         result = 31 * result + isLoadingLyricsCandidates.hashCode()
