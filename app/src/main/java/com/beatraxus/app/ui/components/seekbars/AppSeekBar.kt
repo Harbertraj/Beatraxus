@@ -8,6 +8,10 @@ import com.beatraxus.app.model.LrcLine
 import com.beatraxus.app.model.SeekbarStyle
 import com.beatraxus.app.ui.components.WaveformSeekBar
 
+/**
+ * Seekbar dispatcher. Available styles: five Beatraxus exclusives (Pulse, Thread, Prism, Matrix, Comet), Waveform,
+ * Spectrum Timeline and Live Waveform. Unused parameters are kept so existing callers still compile.
+ */
 @Composable
 fun AppSeekBar(
     style: SeekbarStyle,
@@ -27,6 +31,61 @@ fun AppSeekBar(
     isPlaying: Boolean = false
 ) {
     when (style) {
+        SeekbarStyle.BEATRAXUS_PULSE -> BeatraxusPulseSeekBar(
+            progress = progress,
+            onProgressChange = onProgressChange,
+            modifier = modifier,
+            onProgressFinished = onProgressFinished,
+            activeColor = activeColor,
+            inactiveColor = inactiveColor,
+            seed = seed,
+            dominantColor = dominantColor,
+            isPlaying = isPlaying
+        )
+        SeekbarStyle.BEATRAXUS_THREAD -> BeatraxusThreadSeekBar(
+            progress = progress,
+            onProgressChange = onProgressChange,
+            modifier = modifier,
+            onProgressFinished = onProgressFinished,
+            activeColor = activeColor,
+            inactiveColor = inactiveColor,
+            seed = seed,
+            dominantColor = dominantColor,
+            isPlaying = isPlaying
+        )
+        SeekbarStyle.BEATRAXUS_PRISM -> BeatraxusPrismSeekBar(
+            progress = progress,
+            onProgressChange = onProgressChange,
+            modifier = modifier,
+            onProgressFinished = onProgressFinished,
+            activeColor = activeColor,
+            inactiveColor = inactiveColor,
+            seed = seed,
+            dominantColor = dominantColor,
+            isPlaying = isPlaying
+        )
+        SeekbarStyle.BEATRAXUS_MATRIX -> BeatraxusMatrixSeekBar(
+            progress = progress,
+            onProgressChange = onProgressChange,
+            modifier = modifier,
+            onProgressFinished = onProgressFinished,
+            activeColor = activeColor,
+            inactiveColor = inactiveColor,
+            seed = seed,
+            dominantColor = dominantColor,
+            isPlaying = isPlaying
+        )
+        SeekbarStyle.BEATRAXUS_COMET -> BeatraxusCometSeekBar(
+            progress = progress,
+            onProgressChange = onProgressChange,
+            modifier = modifier,
+            onProgressFinished = onProgressFinished,
+            activeColor = activeColor,
+            inactiveColor = inactiveColor,
+            seed = seed,
+            dominantColor = dominantColor,
+            isPlaying = isPlaying
+        )
         SeekbarStyle.WAVEFORM -> WaveformSeekBar(
             progress = progress,
             onProgressChange = onProgressChange,
@@ -46,84 +105,6 @@ fun AppSeekBar(
             seed = seed,
             spectrumData = spectrumData
         )
-        SeekbarStyle.SMART_CHAPTER -> SmartChapterSeekBar(
-            progress = progress,
-            onProgressChange = onProgressChange,
-            modifier = modifier,
-            onProgressFinished = onProgressFinished,
-            activeColor = activeColor,
-            inactiveColor = inactiveColor,
-            durationMs = durationMs,
-            chapters = chapters
-        )
-        SeekbarStyle.PARTICLE_TRAIL -> ParticleTrailSeekBar(
-            progress = progress,
-            onProgressChange = onProgressChange,
-            modifier = modifier,
-            onProgressFinished = onProgressFinished,
-            activeColor = activeColor,
-            inactiveColor = inactiveColor,
-            seed = seed,
-            dominantColor = dominantColor
-        )
-        SeekbarStyle.MORPHING_BLOB -> MorphingBlobSeekBar(
-            progress = progress,
-            onProgressChange = onProgressChange,
-            modifier = modifier,
-            onProgressFinished = onProgressFinished,
-            activeColor = activeColor,
-            inactiveColor = inactiveColor,
-            seed = seed
-        )
-        SeekbarStyle.ALBUM_ART_GRADIENT -> AlbumArtGradientSeekBar(
-            progress = progress,
-            onProgressChange = onProgressChange,
-            modifier = modifier,
-            onProgressFinished = onProgressFinished,
-            activeColor = activeColor,
-            inactiveColor = inactiveColor,
-            seed = seed,
-            dominantColor = dominantColor
-        )
-        SeekbarStyle.LOUDNESS_HEATMAP -> LoudnessHeatmapSeekBar(
-            progress = progress,
-            onProgressChange = onProgressChange,
-            modifier = modifier,
-            onProgressFinished = onProgressFinished,
-            activeColor = activeColor,
-            inactiveColor = inactiveColor,
-            seed = seed,
-            loudnessData = loudnessData
-        )
-        SeekbarStyle.LYRICS_MARKER -> LyricsMarkerSeekBar(
-            progress = progress,
-            onProgressChange = onProgressChange,
-            modifier = modifier,
-            onProgressFinished = onProgressFinished,
-            activeColor = activeColor,
-            inactiveColor = inactiveColor,
-            durationMs = durationMs,
-            lyrics = lyrics
-        )
-        SeekbarStyle.MINI_SPECTRUM_THUMB -> MiniSpectrumThumbSeekBar(
-            progress = progress,
-            onProgressChange = onProgressChange,
-            modifier = modifier,
-            onProgressFinished = onProgressFinished,
-            activeColor = activeColor,
-            inactiveColor = inactiveColor,
-            seed = seed,
-            dominantColor = dominantColor
-        )
-        SeekbarStyle.GLASS_TUBE -> GlassTubeSeekBar(
-            progress = progress,
-            onProgressChange = onProgressChange,
-            modifier = modifier,
-            onProgressFinished = onProgressFinished,
-            activeColor = activeColor,
-            inactiveColor = inactiveColor,
-            seed = seed
-        )
         SeekbarStyle.LIVE_WAVEFORM -> LiveWaveformSeekBar(
             progress = progress,
             onProgressChange = onProgressChange,
@@ -133,108 +114,6 @@ fun AppSeekBar(
             inactiveColor = inactiveColor,
             seed = seed,
             isPlaying = isPlaying
-        )
-        SeekbarStyle.VINYL_GROOVE -> VinylGrooveSeekBar(
-            progress = progress,
-            onProgressChange = onProgressChange,
-            modifier = modifier,
-            onProgressFinished = onProgressFinished,
-            activeColor = activeColor,
-            inactiveColor = inactiveColor,
-            seed = seed
-        )
-        SeekbarStyle.LIQUID_FLOW -> LiquidFlowSeekBar(
-            progress = progress,
-            onProgressChange = onProgressChange,
-            modifier = modifier,
-            onProgressFinished = onProgressFinished,
-            activeColor = activeColor,
-            inactiveColor = inactiveColor,
-            seed = seed
-        )
-        SeekbarStyle.FREQUENCY_SPECTRUM -> FrequencySpectrumSeekBar(
-            progress = progress,
-            onProgressChange = onProgressChange,
-            modifier = modifier,
-            onProgressFinished = onProgressFinished,
-            activeColor = activeColor,
-            inactiveColor = inactiveColor,
-            seed = seed,
-            spectrumData = spectrumData
-        )
-        SeekbarStyle.CONSTELLATION -> ConstellationSeekBar(
-            progress = progress,
-            onProgressChange = onProgressChange,
-            modifier = modifier,
-            onProgressFinished = onProgressFinished,
-            activeColor = activeColor,
-            inactiveColor = inactiveColor,
-            seed = seed
-        )
-        SeekbarStyle.HEARTBEAT -> HeartbeatSeekBar(
-            progress = progress,
-            onProgressChange = onProgressChange,
-            modifier = modifier,
-            onProgressFinished = onProgressFinished,
-            activeColor = activeColor,
-            inactiveColor = inactiveColor,
-            seed = seed
-        )
-        SeekbarStyle.GALAXY -> GalaxySeekBar(
-            progress = progress,
-            onProgressChange = onProgressChange,
-            modifier = modifier,
-            onProgressFinished = onProgressFinished,
-            activeColor = activeColor,
-            inactiveColor = inactiveColor,
-            seed = seed,
-            dominantColor = dominantColor
-        )
-        SeekbarStyle.ROPE -> RopeSeekBar(
-            progress = progress,
-            onProgressChange = onProgressChange,
-            modifier = modifier,
-            onProgressFinished = onProgressFinished,
-            activeColor = activeColor,
-            inactiveColor = inactiveColor,
-            seed = seed
-        )
-        SeekbarStyle.SOUND_PARTICLES -> SoundParticlesSeekBar(
-            progress = progress,
-            onProgressChange = onProgressChange,
-            modifier = modifier,
-            onProgressFinished = onProgressFinished,
-            activeColor = activeColor,
-            inactiveColor = inactiveColor,
-            seed = seed
-        )
-        SeekbarStyle.CRYSTAL_PRISM -> CrystalPrismSeekBar(
-            progress = progress,
-            onProgressChange = onProgressChange,
-            modifier = modifier,
-            onProgressFinished = onProgressFinished,
-            activeColor = activeColor,
-            inactiveColor = inactiveColor,
-            seed = seed
-        )
-        SeekbarStyle.MAGNETIC_FLOATING -> MagneticFloatingSeekBar(
-            progress = progress,
-            onProgressChange = onProgressChange,
-            modifier = modifier,
-            onProgressFinished = onProgressFinished,
-            activeColor = activeColor,
-            inactiveColor = inactiveColor,
-            seed = seed
-        )
-        SeekbarStyle.SPECTRUM_GLOW -> SpectrumGlowSeekBar(
-            progress = progress,
-            onProgressChange = onProgressChange,
-            modifier = modifier,
-            onProgressFinished = onProgressFinished,
-            activeColor = activeColor,
-            inactiveColor = inactiveColor,
-            seed = seed,
-            spectrumData = spectrumData
         )
     }
 }

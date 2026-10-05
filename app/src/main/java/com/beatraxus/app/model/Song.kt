@@ -180,28 +180,16 @@ enum class QualityBadgeStyle { NONE, GOLDEN_SHIMMER, MINIMAL_OUTLINE, GLASSMORPH
 enum class NowPlayingIconStyle { FILLED, OUTLINED, ROUNDED, SHARP_MINIMAL }
 
 enum class SeekbarStyle {
-    WAVEFORM,          // existing WaveformSeekBar, kept as-is, default
+    // Beatraxus exclusive styles
+    BEATRAXUS_PULSE,
+    BEATRAXUS_THREAD,
+    BEATRAXUS_PRISM,
+    BEATRAXUS_MATRIX,
+    BEATRAXUS_COMET,
+    // Classic styles
+    WAVEFORM,
     SPECTRUM_TIMELINE,
-    SMART_CHAPTER,
-    PARTICLE_TRAIL,
-    MORPHING_BLOB,
-    ALBUM_ART_GRADIENT,
-    LOUDNESS_HEATMAP,
-    LYRICS_MARKER,
-    MINI_SPECTRUM_THUMB,
-    GLASS_TUBE,
-    LIVE_WAVEFORM,
-    VINYL_GROOVE,
-    LIQUID_FLOW,
-    FREQUENCY_SPECTRUM,
-    CONSTELLATION,
-    HEARTBEAT,
-    GALAXY,
-    ROPE,
-    SOUND_PARTICLES,
-    CRYSTAL_PRISM,
-    MAGNETIC_FLOATING,
-    SPECTRUM_GLOW
+    LIVE_WAVEFORM
 }
 
 data class AppearanceConfig(
@@ -214,7 +202,7 @@ data class AppearanceConfig(
     val qualityBadgeStyle: QualityBadgeStyle = QualityBadgeStyle.GLASSMORPHIC,
     val nowPlayingIconStyle: NowPlayingIconStyle = NowPlayingIconStyle.FILLED,
 
-    val seekbarStyle: SeekbarStyle = SeekbarStyle.WAVEFORM,
+    val seekbarStyle: SeekbarStyle = SeekbarStyle.BEATRAXUS_PULSE,
 
     // Main Screen Background
     val mainBackgroundMode: NowPlayingBackgroundMode = if (DeviceUtils.isClassicDevice()) NowPlayingBackgroundMode.BLACK else NowPlayingBackgroundMode.BLUR,
@@ -282,7 +270,8 @@ enum class LibraryView {
     ALBUM_DETAIL, ARTIST_DETAIL, FOLDER_DETAIL, YEAR_DETAIL, GENRE_DETAIL, PLAYLISTS, PLAYLIST_DETAIL,
     CLOUD, RADIO, SMB_NAS, FTP_SFTP,
     VIDEO_ALL, VIDEO_FOLDERS, VIDEO_RECENTLY_ADDED, VIDEO_RECENTLY_PLAYED, VIDEO_FOLDER_DETAIL,
-    ADDONS
+    ADDONS,
+    SMART_PLAYLISTS
 }
 
 data class RadioStation(

@@ -105,6 +105,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import java.util.*
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 enum class GestureType {
     NONE, BRIGHTNESS, VOLUME, SEEK, ZOOM, SUBTITLE
@@ -320,6 +321,8 @@ fun VideoPlayerScreen(
                     )
                     var seekStartPos = 0L
                     var lastLiveSeek = 0L
+                    var volumeAccum = 0f
+                    var volumeGestureActive = false
                     
                     while (true) {
                         val event = awaitPointerEvent(PointerEventPass.Initial)
@@ -392,11 +395,16 @@ fun VideoPlayerScreen(
                                 }
                                 GestureType.VOLUME -> {
                                     val max = uiState.maxVolume
-                                    val current = uiState.volume
-                                    val changeVal = -(delta.y / size.height) * max
-                                    val next = (current + changeVal).coerceIn(0f, max.toFloat())
-                                    viewModel.setVolume(next.toInt())
-                                    gestureValue = (next / max) * 100
+                                    if (!volumeGestureActive) {
+                                        volumeAccum = uiState.volume.toFloat()
+                                        volumeGestureActive = true
+                                    }
+                                    // Float accumulator: sub-step deltas are no longer lost to Int truncation.
+                                    // 1.5f = a full-height swipe covers the whole range.
+                                    volumeAccum = (volumeAccum - (delta.y / size.height) * max * 1.5f)
+                                        .coerceIn(0f, max.toFloat())
+                                    viewModel.setVolume(volumeAccum.roundToInt())
+                                    gestureValue = (volumeAccum / max) * 100
                                 }
                                 GestureType.SEEK -> {
                                     val deltaSeconds = (cumulativeChange.x / size.width) * 60f

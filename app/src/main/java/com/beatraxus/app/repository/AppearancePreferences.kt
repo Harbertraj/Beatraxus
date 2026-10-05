@@ -42,9 +42,10 @@ class AppearancePreferences(context: Context) {
             nowPlayingIconStyle = NowPlayingIconStyle.valueOf(
                 preferences[NOW_PLAYING_ICON_STYLE] ?: NowPlayingIconStyle.FILLED.name
             ),
-            seekbarStyle = SeekbarStyle.valueOf(
-                preferences[SEEKBAR_STYLE] ?: SeekbarStyle.LIVE_WAVEFORM.name
-            ),
+            // Removed styles saved by older versions safely fall back to Beatraxus Pulse.
+            seekbarStyle = runCatching {
+                SeekbarStyle.valueOf(preferences[SEEKBAR_STYLE] ?: SeekbarStyle.BEATRAXUS_PULSE.name)
+            }.getOrDefault(SeekbarStyle.BEATRAXUS_PULSE),
 
             // Home Screen Sections
             showGreetingHeader = preferences[SHOW_GREETING_HEADER] ?: true,

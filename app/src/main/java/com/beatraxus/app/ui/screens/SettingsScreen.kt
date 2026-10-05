@@ -1052,7 +1052,7 @@ fun SeekbarSettingsContent(uiState: PlayerUiState, playerViewModel: PlayerViewMo
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = style.name.replace("_", " ").lowercase().replaceFirstChar { it.uppercase() },
+                            text = style.name.replace("_", " ").lowercase().split(" ").joinToString(" ") { w -> w.replaceFirstChar { c -> c.uppercase() } } + if (style.name.startsWith("BEATRAXUS_")) "  ★ Exclusive" else "",
                             color = if (isSelected) PremiumAccent else Color.White,
                             fontSize = 16.sp,
                             fontWeight = FontWeight.Bold
@@ -1083,6 +1083,7 @@ fun SeekbarSettingsContent(uiState: PlayerUiState, playerViewModel: PlayerViewMo
                             onProgressChange = {},
                             modifier = Modifier.fillMaxWidth().height(if (style == com.beatraxus.app.model.SeekbarStyle.WAVEFORM) 32.dp else 40.dp),
                             seed = 123,
+                            isPlaying = true,
                             dominantColor = PremiumAccent,
                             durationMs = 240000L,
                             loudnessData = FloatArray(100) { (kotlin.math.sin(it.toFloat() / 5f) + 1f) / 2f },

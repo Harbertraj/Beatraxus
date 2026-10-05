@@ -159,9 +159,19 @@ fun NowPlayingScreen(
     onDeleteSong: (Song) -> Unit = {},
     onGoToArtist: (String) -> Unit = {},
     onGoToFolder: (String, String) -> Unit = { _, _ -> },
-    onGoToGenre: (String) -> Unit = {}
+    onGoToGenre: (String) -> Unit = {},
+    onTagsSaved: (Song, com.beatraxus.app.features.TagData) -> Unit = { _, _ -> },
+    onPlaySongs: (List<Song>, Int) -> Unit = { _, _ -> },
+    onPauseLocalPlayback: () -> Unit = {}
 ) {
     if (song == null) return
+    val abLoop = com.beatraxus.app.features.rememberAbLoopState(song.id)
+    com.beatraxus.app.features.AbLoopEffect(
+        state = abLoop,
+        isPlaying = isPlaying,
+        positionMs = progressMs,
+        seekTo = onSeek
+    )
     val showQueue = uiState.showQueue
     val showLyrics = uiState.showLyrics
     var showSleepTimerSheet by remember { mutableStateOf(false) }
@@ -623,8 +633,7 @@ fun NowPlayingScreen(
 
                         Box(
                             modifier = Modifier
-                                .fillMaxWidth()
-                                .aspectRatio(1f)
+                                .aspectRatio(1f, matchHeightConstraintsFirst = true)
                                 .graphicsLayer {
                                     alpha = albumArtAlpha
                                     scaleX = albumArtScale
@@ -1146,6 +1155,14 @@ fun NowPlayingScreen(
                                 iconSize = 34.dp // Slightly larger to match visual weight
                             )
 
+                            // A-B Loop
+                            UtilityItem(
+                                icon = Icons.Rounded.Loop,
+                                label = abLoop.label,
+                                isActive = abLoop.pointA != null,
+                                onClick = { abLoop.tap(progressMs()) }
+                            )
+
                             // Equalizer
                             UtilityItem(
                                 icon = Icons.Rounded.Equalizer,
@@ -1213,6 +1230,10 @@ fun NowPlayingScreen(
                     onGoToGenre(song.genre)
                     showSongOptions = false
                 },
+                onTagsSaved = onTagsSaved,
+                onPlaySongs = onPlaySongs,
+                onPauseLocalPlayback = onPauseLocalPlayback,
+                currentPositionMs = progressMs(),
                 showPlayNext = false,
                 showMark = false
             )
@@ -2197,7 +2218,7 @@ private fun UtilityItem(
                 indication = null,
                 onClick = onClick
             )
-            .padding(horizontal = 12.dp, vertical = 8.dp),
+            .padding(horizontal = 6.dp, vertical = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {

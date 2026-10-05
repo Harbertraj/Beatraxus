@@ -353,6 +353,7 @@ fun MainScreen(
         LibraryView.SMB_NAS -> Color(0xFF546E7A)
         LibraryView.FTP_SFTP -> Color(0xFF8D6E63)
         LibraryView.ADDONS -> Color(0xFFFFA000)
+        LibraryView.SMART_PLAYLISTS -> Color(0xFF7C4DFF)
         LibraryView.VIDEO_ALL, LibraryView.VIDEO_FOLDER_DETAIL -> Color(0xFF00E5FF)
         LibraryView.VIDEO_FOLDERS -> Color(0xFFFFAB40)
         LibraryView.VIDEO_RECENTLY_ADDED -> Color(0xFF00E676)
@@ -365,6 +366,7 @@ fun MainScreen(
     )
 
     val songs   by viewModel.songs.collectAsStateWithLifecycle()
+    val smartAllSongs by viewModel.allSongs.collectAsStateWithLifecycle()
     val albums  by viewModel.albums.collectAsStateWithLifecycle()
     val artists by viewModel.artists.collectAsStateWithLifecycle()
     val folders by viewModel.folders.collectAsStateWithLifecycle()
@@ -798,6 +800,7 @@ fun MainScreen(
                                     LibraryView.SMB_NAS -> "SMB/NAS"
                                     LibraryView.FTP_SFTP -> "FTP/SFTP"
                                     LibraryView.ADDONS -> "ADD-ONS"
+                                    LibraryView.SMART_PLAYLISTS -> "SMART PLAYLISTS"
                                     LibraryView.VIDEO_ALL -> "ALL VIDEOS"
                                     LibraryView.VIDEO_FOLDERS -> "VIDEO FOLDERS"
                                     LibraryView.VIDEO_FOLDER_DETAIL -> uiState.selectedItemName ?: "VIDEO FOLDER"
@@ -827,6 +830,7 @@ fun MainScreen(
                                     LibraryView.SMB_NAS -> Icons.Rounded.Storage
                                     LibraryView.FTP_SFTP -> Icons.Rounded.NetworkCheck
                                     LibraryView.ADDONS -> Icons.Rounded.Extension
+                                    LibraryView.SMART_PLAYLISTS -> Icons.Rounded.AutoAwesome
                                     LibraryView.VIDEO_ALL -> Icons.Rounded.Movie
                                     LibraryView.VIDEO_FOLDERS -> Icons.Rounded.FolderOpen
                                     LibraryView.VIDEO_FOLDER_DETAIL -> Icons.Rounded.Folder
@@ -2433,6 +2437,13 @@ fun MainScreen(
                                                         }
                                                     }
                                                 }
+                                                LibraryView.SMART_PLAYLISTS -> {
+                                                    com.beatraxus.app.features.SmartPlaylistsScreen(
+                                                        songs = smartAllSongs,
+                                                        onPlay = { list, index -> viewModel.playList(list, index) },
+                                                        onShuffle = { list -> viewModel.playList(list.shuffled(), 0) }
+                                                    )
+                                                }
                                                 LibraryView.VIDEO_ALL -> {
                                                     com.beatraxus.app.ui.screens.library.VideoLibraryScreen(
                                                         videos = uiState.videos,
@@ -3211,6 +3222,10 @@ fun MainScreen(
                                     onNavigateToInspector(s.id)
                                     selectedSongForOptions = null
                                 },
+                                onTagsSaved = { s, t -> viewModel.applyEditedTags(s, t) },
+                                onPlaySongs = { list, index -> viewModel.playList(list, index) },
+                                onPauseLocalPlayback = { viewModel.pausePlayback() },
+                                currentPositionMs = if (song.id == uiState.currentSong?.id) progressMs else 0L,
                                 lastFmTrackInfo = uiState.lastFmTrackInfo,
                                 lastFmArtistInfo = uiState.lastFmArtistInfo,
                                 lastFmAlbumInfo = uiState.lastFmAlbumInfo,
@@ -3520,6 +3535,9 @@ fun MainScreen(
                 onShuffle = { viewModel.toggleShuffle() },
                 onRepeat = { viewModel.toggleRepeat() },
                 onSeek = { viewModel.seekTo(it) },
+                onTagsSaved = { s, t -> viewModel.applyEditedTags(s, t) },
+                onPlaySongs = { list, index -> viewModel.playList(list, index) },
+                onPauseLocalPlayback = { viewModel.pausePlayback() },
                 onClose = { showFullPlayer = false },
                 onOpenEqualizer = onNavigateToDsp,
                 onToggleQueue = { viewModel.toggleQueue() },
@@ -5692,6 +5710,7 @@ fun SlideDrawerMenu(
                 DrawerMenuItem("Favorite Songs", LibraryView.FAVORITES, Icons.Rounded.Favorite, Color(0xFFFF5252)),
                 DrawerMenuItem("Recently Added", LibraryView.RECENTLY_ADDED, Icons.Rounded.NewReleases, Color(0xFF00E676)),
                 DrawerMenuItem("Recently Played", LibraryView.RECENTLY_PLAYED, Icons.Rounded.History, Color(0xFF40C4FF)),
+                DrawerMenuItem("Smart Playlists", LibraryView.SMART_PLAYLISTS, Icons.Rounded.AutoAwesome, Color(0xFF7C4DFF)),
                 DrawerMenuItem("Radio", LibraryView.RADIO, Icons.Rounded.Radio, Color(0xFF00B8D4)),
                 DrawerMenuItem("SMB / NAS", LibraryView.SMB_NAS, Icons.Rounded.Storage, Color(0xFF546E7A)),
                 DrawerMenuItem("FTP / SFTP", LibraryView.FTP_SFTP, Icons.Rounded.Dns, Color(0xFF8D6E63)),
@@ -5716,7 +5735,8 @@ fun SlideDrawerMenu(
             // SECTION 1 — Header
             Column(
                 modifier = Modifier
-                    .padding(top = 40.dp, start = 16.dp, end = 16.dp, bottom = 24.dp)
+                    .statusBarsPadding()
+                    .padding(top = 16.dp, start = 16.dp, end = 16.dp, bottom = 24.dp)
             ) {
                 Surface(
                     color = Color.Transparent,
@@ -5914,6 +5934,7 @@ fun SlideDrawerMenu(
             // SECTION 4 — Bottom controls
             Column(
                 modifier = Modifier
+                    .navigationBarsPadding()
                     .padding(12.dp)
                     .graphicsLayer {
                         alpha = drawerProgress.coerceIn(0f, 1f)

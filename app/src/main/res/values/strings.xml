@@ -15,9 +15,9 @@
     <string name="cd_repeat">Repeat mode</string>
 
     <!-- Widgets -->
-    <string name="widget_small_description">Compact music player widget for quick playback control.</string>
-    <string name="widget_medium_description">Bar music player widget with track controls and artwork.</string>
-    <string name="widget_large_description">Full music player widget with album cover and complete controls.</string>
+    <string name="widget_small_description">Compact Beatraxus player with artwork-matched colors and quick controls.</string>
+    <string name="widget_medium_description">Slim player with the signature Beatraxus slash progress bar and full controls.</string>
+    <string name="widget_large_description">Large player with big artwork, glowing accent color, slash progress bar and shuffle / repeat.</string>
     <string name="widget_no_song">Not Playing</string>
     <string name="widget_tap_to_play">Tap to play</string>
 

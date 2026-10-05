@@ -69,9 +69,17 @@ fun SongOptionsSheet(
     initialShowInfoOverlay: Boolean = false,
     showPlayNext: Boolean = true,
     onMark: () -> Unit = {},
-    showMark: Boolean = true
+    showMark: Boolean = true,
+    // --- new features (all optional, existing callers keep working) ---
+    onTagsSaved: (Song, com.beatraxus.app.features.TagData) -> Unit = { _, _ -> },
+    onPlaySongs: (List<Song>, Int) -> Unit = { _, _ -> },
+    onPauseLocalPlayback: () -> Unit = {},
+    currentPositionMs: Long = 0L
 ) {
     var showInfoOverlay by remember { mutableStateOf(initialShowInfoOverlay) }
+    var showTagEditor by remember { mutableStateOf(false) }
+    var showRingtone by remember { mutableStateOf(false) }
+    var showDlna by remember { mutableStateOf(false) }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -166,7 +174,7 @@ fun SongOptionsSheet(
                 Spacer(Modifier.height(8.dp))
 
                 // Options Grid
-                val options = remember(showPlayNext, showMark) {
+                val options = remember(showPlayNext, showMark, song.id) {
                     buildList {
                         add(OptionItem(Icons.AutoMirrored.Rounded.PlaylistAdd, "Playlist", onAddToPlaylist))
                         if (showPlayNext) {
@@ -177,6 +185,13 @@ fun SongOptionsSheet(
                         }
                         add(OptionItem(Icons.AutoMirrored.Rounded.QueueMusic, "Add to Queue", onAddToQueue))
                         add(OptionItem(Icons.Rounded.Info, "Info/Tags", { onInfo(); showInfoOverlay = true }))
+                        if (com.beatraxus.app.features.TagEditor.canEdit(song)) {
+                            add(OptionItem(Icons.Rounded.Edit, "Edit Tags", { showTagEditor = true }))
+                        }
+                        if (!song.isCloud()) {
+                            add(OptionItem(Icons.Rounded.RingVolume, "Set as Ringtone", { showRingtone = true }))
+                        }
+                        add(OptionItem(Icons.Rounded.Cast, "DLNA / UPnP", { showDlna = true }))
                         add(OptionItem(Icons.Rounded.Person, "Artist", onGoToArtist))
                         add(OptionItem(Icons.Rounded.Album, "Album", onGoToAlbum))
                         add(OptionItem(Icons.Rounded.FolderOpen, "Folder", onGoToFolder))
@@ -191,7 +206,7 @@ fun SongOptionsSheet(
                             rowOptions.forEach { option ->
                                 OptionGridItem(option, contentColor, Modifier.weight(1f)) {
                                     option.onClick()
-                                    if (option.label != "Info/Tags") onDismiss()
+                                    if (option.label !in setOf("Info/Tags", "Edit Tags", "Set as Ringtone", "DLNA / UPnP")) onDismiss()
                                 }
                             }
                             if (rowOptions.size == 1) {
@@ -200,6 +215,29 @@ fun SongOptionsSheet(
                         }
                     }
                 }
+            }
+
+            if (showTagEditor) {
+                com.beatraxus.app.features.TagEditorDialog(
+                    song = song,
+                    onDismiss = { showTagEditor = false; onDismiss() },
+                    onSaved = onTagsSaved
+                )
+            }
+            if (showRingtone) {
+                com.beatraxus.app.features.RingtoneDialog(
+                    song = song,
+                    onDismiss = { showRingtone = false; onDismiss() }
+                )
+            }
+            if (showDlna) {
+                com.beatraxus.app.features.DlnaSheet(
+                    song = song,
+                    positionMs = currentPositionMs,
+                    onPauseLocal = onPauseLocalPlayback,
+                    onPlaySongs = onPlaySongs,
+                    onDismiss = { showDlna = false; onDismiss() }
+                )
             }
 
             // Info Overlay

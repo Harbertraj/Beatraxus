@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="320dp" android:height="110dp"
+    android:viewportWidth="320" android:viewportHeight="110">
+    <!-- glass card -->
+    <path android:fillColor="#FF14121C"
+        android:pathData="M24,0h272a24,24 0 0 1 24,24v62a24,24 0 0 1 -24,24h-272a24,24 0 0 1 -24,-24v-62a24,24 0 0 1 24,-24z" />
+    <path android:fillColor="#24E23AF0"
+        android:pathData="M24,0h272a24,24 0 0 1 24,24v62a24,24 0 0 1 -24,24h-272a24,24 0 0 1 -24,-24v-62a24,24 0 0 1 24,-24z" />
+    <!-- cover -->
+    <path android:fillColor="#FFE23AF0"
+        android:pathData="M28,16h40a8,8 0 0 1 8,8v40a8,8 0 0 1 -8,8h-40a8,8 0 0 1 -8,-8v-40a8,8 0 0 1 8,-8z" />
+    <path android:fillColor="#55FFFFFF" android:pathData="M20,56l56,-24v32a8,8 0 0 1 -8,8h-40a8,8 0 0 1 -8,-8z" />
+    <!-- title / artist -->
+    <path android:fillColor="#FFFFFFFF"
+        android:pathData="M88,24h96a3,3 0 0 1 3,3v0a3,3 0 0 1 -3,3h-96a3,3 0 0 1 -3,-3v0a3,3 0 0 1 3,-3z" />
+    <path android:fillColor="#99FFFFFF"
+        android:pathData="M88,40h64a3,3 0 0 1 3,3v0a3,3 0 0 1 -3,3h-64a3,3 0 0 1 -3,-3v0a3,3 0 0 1 3,-3z" />
+    <!-- play button -->
+    <path android:fillColor="#59E23AF0" android:pathData="M268,44m-22,0a22,22 0 1,1 44,0a22,22 0 1,1 -44,0" />
+    <path android:fillColor="#FFE23AF0" android:pathData="M268,44m-18,0a18,18 0 1,1 36,0a18,18 0 1,1 -36,0" />
+    <path android:fillColor="#FF101010" android:pathData="M263,34l14,10l-14,10z" />
+    <!-- slash progress bar -->
+    <path android:fillColor="#FFE23AF0" android:pathData="M20,88l3,0l-3,12l-3,0z M30,86l3,0l-3,16l-3,0z M40,90l3,0l-3,8l-3,0z M50,85l3,0l-3,18l-3,0z M60,89l3,0l-3,10l-3,0z M70,86l3,0l-3,16l-3,0z M80,88l3,0l-3,12l-3,0z M90,84l3,0l-3,20l-3,0z M100,89l3,0l-3,10l-3,0z M110,87l3,0l-3,14l-3,0z M120,85l3,0l-3,18l-3,0z M130,90l3,0l-3,8l-3,0z M140,86l3,0l-3,16l-3,0z M150,88l3,0l-3,12l-3,0z" />
+    <path android:fillColor="#59FFFFFF" android:pathData="M160,89l3,0l-3,10l-3,0z M170,85l3,0l-3,18l-3,0z M180,88l3,0l-3,12l-3,0z M190,86l3,0l-3,16l-3,0z M200,90l3,0l-3,8l-3,0z M210,87l3,0l-3,14l-3,0z M220,84l3,0l-3,20l-3,0z M230,89l3,0l-3,10l-3,0z M240,86l3,0l-3,16l-3,0z M250,88l3,0l-3,12l-3,0z M260,85l3,0l-3,18l-3,0z M270,90l3,0l-3,8l-3,0z M280,87l3,0l-3,14l-3,0z M290,89l3,0l-3,10l-3,0z" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M157,82h3v22h-3z" />
+</vector>

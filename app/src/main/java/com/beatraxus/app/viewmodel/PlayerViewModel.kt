@@ -2519,6 +2519,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun updateRecentlyPlayed(song: Song) {
         val songId = song.id
+        com.beatraxus.app.features.PlayStatsStore.record(getApplication(), songId)
         val current = _recentlyPlayed.value.toMutableList()
         current.remove(songId)
         current.add(0, songId)
@@ -3109,6 +3110,21 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun skipToNext() {
         service?.next()
+    }
+
+    /** Pauses only if currently playing (used when handing playback over to a DLNA device). */
+    fun pausePlayback() {
+        if (_uiState.value.isPlaying) togglePlayPause()
+    }
+
+    /** Updates the library (memory + database) after the tag editor saved a song. */
+    fun applyEditedTags(song: Song, tags: com.beatraxus.app.features.TagData) {
+        val updated = with(com.beatraxus.app.features.TagEditorHelper) { song.withEditedTags(tags) }
+        viewModelScope.launch(Dispatchers.IO) { songDao.insertSong(updated.toEntity()) }
+        _songs.update { list -> list.map { if (it.id == song.id) updated else it } }
+        _uiState.update { st ->
+            if (st.currentSong?.id == song.id) st.copy(currentSong = updated) else st
+        }
     }
 
     fun skipToPrevious() {
