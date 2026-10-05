@@ -313,8 +313,10 @@ fun StreamingAddonsScreen(
                 addon = addon,
                 onDismiss = { addonToSignIn = null },
                 onSuccess = {
+                    val signedIn = addon
                     addonToSignIn = null
                     Toast.makeText(context, "Signed in successfully!", Toast.LENGTH_SHORT).show()
+                    if (signedIn is com.beatraxus.app.addons.StremioAddon || signedIn is com.beatraxus.app.addons.YouTubeAddon) onNavigateToBrowse(signedIn.id)
                 }
             )
         }

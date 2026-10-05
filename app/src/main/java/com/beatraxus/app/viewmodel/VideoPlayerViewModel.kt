@@ -327,6 +327,11 @@ class VideoPlayerViewModel(
             .build()
 
         val player = ExoPlayer.Builder(context, VideoRenderersFactory(context))
+            .setMediaSourceFactory(
+                androidx.media3.exoplayer.source.DefaultMediaSourceFactory(
+                    com.beatraxus.app.addons.AddonStreamHeaders.dataSourceFactory(context)
+                )
+            )
             .setAudioAttributes(audioAttributes, true)
             .setHandleAudioBecomingNoisy(true)
             .setLoadControl(loadControl)

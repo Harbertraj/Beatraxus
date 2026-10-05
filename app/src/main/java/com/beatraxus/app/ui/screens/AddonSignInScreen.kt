@@ -15,6 +15,8 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.beatraxus.app.addons.MediaServerAddon
+import com.beatraxus.app.addons.StremioAddon
+import com.beatraxus.app.addons.YouTubeAddon
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -25,6 +27,8 @@ fun AddonSignInScreen(
     onSuccess: () -> Unit
 ) {
     val coroutineScope = rememberCoroutineScope()
+    val isOtt = addon is StremioAddon
+    val isYt = addon is YouTubeAddon
     var serverUrl by remember { mutableStateOf("") }
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
@@ -70,10 +74,10 @@ fun AddonSignInScreen(
                     )
                 }
                 
-                OutlinedTextField(
+                if (!isYt) OutlinedTextField(
                     value = serverUrl,
                     onValueChange = { serverUrl = it },
-                    label = { Text("Server URL", color = Color.White.copy(alpha = 0.7f)) },
+                    label = { Text(if (isOtt) "Addon manifest URL (stremio:// or https://)" else "Server URL", color = Color.White.copy(alpha = 0.7f)) },
                     singleLine = true,
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedTextColor = Color.White,
@@ -82,7 +86,21 @@ fun AddonSignInScreen(
                     modifier = Modifier.fillMaxWidth()
                 )
 
-                if (addon.authType == "server_credentials") {
+                if (isYt) {
+                    OutlinedTextField(
+                        value = apiKey,
+                        onValueChange = { apiKey = it },
+                        label = { Text("YouTube Data API v3 key", color = Color.White.copy(alpha = 0.7f)) },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                } else if (isOtt) {
+                    // OTT addon only needs the manifest URL
+                } else if (addon.authType == "server_credentials") {
                     OutlinedTextField(
                         value = username,
                         onValueChange = { username = it },
@@ -135,7 +153,11 @@ fun AddonSignInScreen(
                     coroutineScope.launch {
                         isLoading = true
                         errorMessage = null
-                        val result = if (addon.authType == "server_credentials") {
+                        val result = if (isYt) {
+                            addon.login("", "", apiKey)
+                        } else if (isOtt) {
+                            addon.login(serverUrl, "", "")
+                        } else if (addon.authType == "server_credentials") {
                             addon.login(serverUrl, username, password)
                         } else {
                             addon.login(serverUrl, "", apiKey) // password param acts as api key placeholder
@@ -149,7 +171,7 @@ fun AddonSignInScreen(
                         }
                     }
                 },
-                enabled = !isLoading && serverUrl.isNotBlank() && (addon.authType == "api_key" || username.isNotBlank()),
+                enabled = !isLoading && (if (isYt) apiKey.isNotBlank() else serverUrl.isNotBlank() && (isOtt || addon.authType == "api_key" || username.isNotBlank())),
                 colors = ButtonDefaults.buttonColors(containerColor = addon.brandColor)
             ) {
                 if (isLoading) {
