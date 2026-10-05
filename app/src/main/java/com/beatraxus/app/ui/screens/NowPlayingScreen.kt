@@ -633,7 +633,8 @@ fun NowPlayingScreen(
 
                         Box(
                             modifier = Modifier
-                                .aspectRatio(1f, matchHeightConstraintsFirst = true)
+                                .fillMaxWidth()
+                                .aspectRatio(1f)
                                 .graphicsLayer {
                                     alpha = albumArtAlpha
                                     scaleX = albumArtScale
