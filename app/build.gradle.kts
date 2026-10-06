@@ -15,6 +15,15 @@ if (localPropertiesFile.exists()) {
     localProperties.load(localPropertiesFile.inputStream())
 }
 
+// Play Together reads its Firebase settings from google-services.json at runtime.
+// Put the file from the Firebase console in this folder (app/google-services.json);
+// it is copied into the app's assets before every build. No Firebase Gradle plugin needed.
+val copyGoogleServices = tasks.register<Copy>("copyGoogleServices") {
+    from(file("google-services.json"))
+    into(file("src/main/assets"))
+}
+tasks.named("preBuild") { dependsOn(copyGoogleServices) }
+
 configure<ApplicationExtension> {
     namespace = "com.beatraxus.app"
     compileSdk = 36

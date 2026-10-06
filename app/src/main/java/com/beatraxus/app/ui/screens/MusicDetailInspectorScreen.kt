@@ -10,6 +10,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -34,6 +35,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -87,9 +89,17 @@ fun MusicDetailInspectorScreen(
 
     var spectrumResult by remember(songId) { mutableStateOf<AudioSpectrumAnalyzer.SpectrumAnalysisResult?>(null) }
 
+    var spectrumDone by remember(songId) { mutableStateOf(false) }
+    var spectrumRetry by remember(songId) { mutableStateOf(0) }
+
     // Task 3: single shared decode pass for both Waveform and Spectrogram cards.
-    LaunchedEffect(songId) {
-        song?.let { spectrumResult = viewModel.analyzeSpectrum(it) }
+    // NOTE: keyed on "song loaded" too — `song` is null on the first frame (it comes from a
+    // Flow), so a songId-only key ran once as a no-op and the spinner never went away.
+    LaunchedEffect(songId, song != null, spectrumRetry) {
+        val s = song ?: return@LaunchedEffect
+        spectrumDone = false
+        spectrumResult = try { viewModel.analyzeSpectrum(s) } catch (e: Exception) { null }
+        spectrumDone = true
     }
 
     // System/gesture back must behave identically to the on-screen back arrow (which
@@ -101,10 +111,15 @@ fun MusicDetailInspectorScreen(
     // If this song hasn't been scored yet, kick off analysis immediately rather than
     // waiting for the next periodic scan (which may never queue this song again — see
     // requestQualityAnalysis in PlayerViewModel).
-    LaunchedEffect(songId, quality) {
-        if (quality == null) {
-            song?.let { viewModel.requestQualityAnalysis(it) }
-        }
+    var qualityGaveUp by remember(songId) { mutableStateOf(false) }
+    var qualityRetry by remember(songId) { mutableStateOf(0) }
+    LaunchedEffect(songId, song != null, quality == null, qualityRetry) {
+        val s = song ?: return@LaunchedEffect
+        if (quality != null) return@LaunchedEffect
+        qualityGaveUp = false
+        viewModel.requestQualityAnalysis(s)          // runs now, even while music is playing
+        kotlinx.coroutines.delay(90_000)             // cancelled automatically once a result arrives
+        qualityGaveUp = true
     }
 
     Box(modifier = Modifier.fillMaxSize().background(InspectorPalette.Bg)) {
@@ -132,7 +147,7 @@ fun MusicDetailInspectorScreen(
                 LiveMetersCard(viewModel, isActive = isCurrentlyPlaying, quality = quality)
 
                 Spacer(Modifier.height(14.dp))
-                SpectrogramCard(spectrumResult)
+                SpectrogramCard(spectrumResult, spectrumDone, onRetry = { spectrumRetry++ })
 
                 Spacer(Modifier.height(14.dp))
                 WaveformCard(
@@ -144,7 +159,7 @@ fun MusicDetailInspectorScreen(
                 )
 
                 Spacer(Modifier.height(14.dp))
-                QualityScoreCard(quality)
+                QualityScoreCard(quality, qualityGaveUp, onRetry = { qualityRetry++ })
 
                 Spacer(Modifier.height(14.dp))
                 CodecCard(currentSong, quality)
@@ -229,17 +244,21 @@ private fun InstrumentCard(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(20.dp))
+            .clip(RoundedCornerShape(22.dp))
             .background(
                 Brush.verticalGradient(
                     colors = listOf(
-                        accent.copy(alpha = 0.10f),
-                        Color.White.copy(alpha = 0.03f)
+                        accent.copy(alpha = 0.12f),
+                        Color.White.copy(alpha = 0.025f)
                     )
                 )
             )
-            .border(1.dp, accent.copy(alpha = 0.35f), RoundedCornerShape(20.dp))
-            .padding(16.dp)
+            .border(
+                1.dp,
+                Brush.verticalGradient(listOf(accent.copy(alpha = 0.50f), accent.copy(alpha = 0.12f))),
+                RoundedCornerShape(22.dp)
+            )
+            .padding(horizontal = 16.dp, vertical = 14.dp)
     ) {
         if (label != null && icon != null) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -253,13 +272,20 @@ private fun InstrumentCard(
                     Icon(icon, contentDescription = null, tint = accent, modifier = Modifier.size(15.dp))
                 }
                 Spacer(Modifier.width(10.dp))
-                Text(label, color = accent, fontSize = 12.sp, fontWeight = FontWeight.Black, letterSpacing = 1.2.sp)
+                Text(label, color = accent, fontSize = 12.sp, fontWeight = FontWeight.Black, letterSpacing = 1.4.sp)
                 if (trailing != null) {
                     Spacer(Modifier.weight(1f))
                     trailing()
                 }
             }
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(4.dp))
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp)
+                    .height(1.dp)
+                    .background(Brush.horizontalGradient(listOf(accent.copy(alpha = 0.45f), Color.Transparent)))
+            )
         }
         content()
     }
@@ -267,37 +293,70 @@ private fun InstrumentCard(
 
 @Composable
 private fun InspectorHeader(song: Song, onBack: () -> Unit) {
-    Row(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(top = 16.dp, bottom = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .padding(top = 12.dp, bottom = 6.dp)
     ) {
-        IconButton(
-            onClick = onBack,
-            modifier = Modifier
-                .clip(CircleShape)
-                .background(Color.Black.copy(alpha = 0.3f))
-        ) {
-            Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back", tint = Color.White)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(
+                onClick = onBack,
+                modifier = Modifier
+                    .size(42.dp)
+                    .clip(CircleShape)
+                    .background(Color.White.copy(alpha = 0.08f))
+                    .border(0.5.dp, Color.White.copy(alpha = 0.18f), CircleShape)
+            ) {
+                Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back", tint = Color.White)
+            }
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    "INSPECT",
+                    color = InspectorPalette.Quality,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Black,
+                    letterSpacing = 2.sp
+                )
+                Text(
+                    song.title,
+                    color = Color.White,
+                    fontSize = 19.sp,
+                    fontWeight = FontWeight.Black,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    "${song.artist} • ${song.album}",
+                    color = Color.White.copy(0.65f),
+                    fontSize = 13.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
         }
-        Spacer(Modifier.width(16.dp))
-        Column(Modifier.weight(1f)) {
-            Text(
-                song.title,
-                color = Color.White,
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Black,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            Text(
-                "${song.artist} • ${song.album}",
-                color = Color.White.copy(0.65f),
-                fontSize = 13.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
+        Spacer(Modifier.height(12.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            val chips = buildList {
+                add(song.format.uppercase())
+                if (song.sampleRateHz > 0) add("%.1f kHz".format(song.sampleRateHz / 1000.0))
+                if (song.bitDepth > 0) add("${song.bitDepth}-bit")
+                if (song.bitrate > 0) add("${song.bitrate} kbps")
+            }
+            chips.forEach { c ->
+                Text(
+                    c,
+                    color = Color.White.copy(0.85f),
+                    fontSize = 10.5.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .background(Color.White.copy(alpha = 0.07f))
+                        .border(0.5.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(50))
+                        .padding(horizontal = 10.dp, vertical = 4.dp)
+                )
+            }
         }
     }
 }
@@ -306,13 +365,18 @@ private fun InspectorHeader(song: Song, onBack: () -> Unit) {
 // 2. Overall quality score — gradient radial dial + tier badge
 // ---------------------------------------------------------------------------
 @Composable
-private fun QualityScoreCard(quality: SongQualityEntity?) {
+private fun QualityScoreCard(quality: SongQualityEntity?, gaveUp: Boolean = false, onRetry: () -> Unit = {}) {
     InstrumentCard(label = "OVERALL QUALITY", accent = InspectorPalette.Quality, icon = Icons.Rounded.WorkspacePremium) {
         if (quality == null) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 8.dp)) {
-                CircularProgressIndicator(color = InspectorPalette.Quality, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                Spacer(Modifier.width(12.dp))
-                Text("Analyzing on next scan…", color = Color.White.copy(0.5f), fontSize = 13.sp)
+                if (!gaveUp) {
+                    CircularProgressIndicator(color = InspectorPalette.Quality, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(12.dp))
+                    Text("Analyzing this track…", color = Color.White.copy(0.6f), fontSize = 13.sp)
+                } else {
+                    Text("Analysis didn't finish.", color = Color.White.copy(0.6f), fontSize = 13.sp, modifier = Modifier.weight(1f))
+                    RetryPill(InspectorPalette.Quality, onRetry)
+                }
             }
             return@InstrumentCard
         }
@@ -512,7 +576,9 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawWaveform(
 // ---------------------------------------------------------------------------
 @Composable
 private fun SpectrogramCard(
-    result: AudioSpectrumAnalyzer.SpectrumAnalysisResult?
+    result: AudioSpectrumAnalyzer.SpectrumAnalysisResult?,
+    done: Boolean = false,
+    onRetry: () -> Unit = {}
 ) {
     InstrumentCard(
         label = "SPECTROGRAM",
@@ -535,6 +601,15 @@ private fun SpectrogramCard(
                     result = result,
                     modifier = Modifier.fillMaxSize()
                 )
+            } else if (done) {
+                Row(
+                    modifier = Modifier.align(Alignment.Center),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Spectrum unavailable for this file", color = Color.White.copy(0.55f), fontSize = 12.sp)
+                    Spacer(Modifier.width(10.dp))
+                    RetryPill(InspectorPalette.Spectrogram, onRetry)
+                }
             } else {
                 CircularProgressIndicator(
                     color = InspectorPalette.Spectrogram,
@@ -558,6 +633,89 @@ private fun SpectrogramCard(
             )
             Spacer(Modifier.width(8.dp))
             Text("quiet → loud  •  low → high freq bottom → top", color = Color.White.copy(0.4f), fontSize = 10.sp)
+        }
+        if (result != null) {
+            Spacer(Modifier.height(12.dp))
+            AuthenticityDetails(result)
+        }
+    }
+}
+
+@Composable
+private fun RetryPill(color: Color, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(50))
+            .background(color.copy(alpha = 0.16f))
+            .border(0.5.dp, color.copy(alpha = 0.5f), RoundedCornerShape(50))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 5.dp)
+    ) { Text("Retry", color = color, fontSize = 11.sp, fontWeight = FontWeight.Bold) }
+}
+
+/** Original-lossless evidence: what was measured, and why the verdict is what it is. */
+@Composable
+private fun AuthenticityDetails(r: AudioSpectrumAnalyzer.SpectrumAnalysisResult) {
+    val color = r.badgeColor()
+    val lossyOrUnknown = r.authenticity == AudioSpectrumAnalyzer.LosslessAuthenticity.LOSSY_FORMAT ||
+        r.authenticity == AudioSpectrumAnalyzer.LosslessAuthenticity.INCONCLUSIVE
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(Color.White.copy(alpha = 0.04f))
+            .border(0.5.dp, color.copy(alpha = 0.35f), RoundedCornerShape(14.dp))
+            .padding(12.dp)
+    ) {
+        Text("LOSSLESS CHECK", color = Color.White.copy(0.5f), fontSize = 10.sp, fontWeight = FontWeight.Black, letterSpacing = 1.4.sp)
+        Spacer(Modifier.height(6.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(r.badgeLabel(), color = color, fontSize = 15.sp, fontWeight = FontWeight.Black, modifier = Modifier.weight(1f))
+            if (!lossyOrUnknown) Text("${r.confidenceScore}%", color = color, fontSize = 15.sp, fontWeight = FontWeight.Black, fontFamily = FontFamily.Monospace)
+        }
+        if (!lossyOrUnknown) {
+            Spacer(Modifier.height(6.dp))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(5.dp)
+                    .clip(RoundedCornerShape(3.dp))
+                    .background(Color.White.copy(0.08f))
+            ) {
+                Box(
+                    Modifier
+                        .fillMaxWidth(r.confidenceScore / 100f)
+                        .fillMaxHeight()
+                        .clip(RoundedCornerShape(3.dp))
+                        .background(color)
+                )
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        InspectorRow("Sample rate", "%.1f kHz  (Nyquist %.2f kHz)".format(r.sampleRateHz / 1000.0, r.nyquistHz / 1000.0))
+        InspectorRow(
+            "Bit depth",
+            when {
+                r.bitDepth <= 16 -> "${r.bitDepth}-bit"
+                r.bitDepthLooksPadded -> "${r.bitDepth}-bit declared, padded"
+                else -> "${r.bitDepth}-bit, full resolution"
+            }
+        )
+        InspectorRow(
+            "Frequency cut-off",
+            if (r.hasBrickWall) "%.1f kHz hard wall (%.0f dB step)".format(r.spectralCutoffHz / 1000.0, r.edgeDropDb)
+            else "natural roll-off to %.1f kHz".format(r.bandwidthHz / 1000.0)
+        )
+        if (r.analyzedSeconds > 0) InspectorRow("Analyzed", "${r.analyzedSeconds} s of audio")
+        if (r.reasons.isNotEmpty()) {
+            Spacer(Modifier.height(6.dp))
+            r.reasons.forEach {
+                Row(Modifier.padding(vertical = 2.dp)) {
+                    Text("•", color = color, fontSize = 12.sp)
+                    Spacer(Modifier.width(6.dp))
+                    Text(it, color = Color.White.copy(0.75f), fontSize = 12.sp, lineHeight = 17.sp)
+                }
+            }
         }
     }
 }
@@ -958,20 +1116,23 @@ private fun InspectorRow(label: String, value: String) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 5.dp),
+            .padding(vertical = 7.dp),
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        Text(label, color = Color.White.copy(0.45f), fontSize = 12.sp)
+        Text(label, color = Color.White.copy(0.5f), fontSize = 12.sp)
         Text(
             value,
             color = Color.White,
             fontSize = 12.sp,
             fontFamily = FontFamily.Monospace,
-            maxLines = 1,
+            fontWeight = FontWeight.Medium,
+            textAlign = TextAlign.End,
+            maxLines = 2,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(start = 12.dp)
+            modifier = Modifier.padding(start = 12.dp).weight(1f)
         )
     }
+    Box(Modifier.fillMaxWidth().height(0.5.dp).background(Color.White.copy(alpha = 0.06f)))
 }
 
 private fun formatDuration(ms: Long): String {

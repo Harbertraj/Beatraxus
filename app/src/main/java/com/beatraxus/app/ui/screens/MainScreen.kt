@@ -297,6 +297,7 @@ fun MainScreen(
     viewModel: PlayerViewModel,
     onNavigateToSettings: () -> Unit,
     onNavigateToDsp: () -> Unit,
+    onNavigateToPlayTogether: () -> Unit = {},
     onNavigateToInspector: (String) -> Unit = {},
     onRequestPermissions: (onGranted: () -> Unit) -> Unit = {}
 ) {
@@ -682,6 +683,7 @@ fun MainScreen(
                     },
                     onNavigateToSettings = onNavigateToSettings,
                     onNavigateToDsp = onNavigateToDsp,
+                    onNavigateToPlayTogether = onNavigateToPlayTogether,
                     onClose = { showDrawer = false }
                 )
             }
@@ -3396,27 +3398,33 @@ fun MainScreen(
         }
 
         videoToDelete?.let { video ->
-            AlertDialog(
-                onDismissRequest = { videoToDelete = null },
-                title = { Text("Delete Video?") },
-                text = { Text("Are you sure you want to delete '${video.title}'? This will permanently remove the file from your device.") },
-                confirmButton = {
-                    TextButton(
+            com.beatraxus.app.ui.components.InfoStyleDialog(
+                title = "Delete Video?",
+                icon = Icons.Rounded.Delete,
+                onDismiss = { videoToDelete = null },
+                footer = {
+                    com.beatraxus.app.ui.components.InfoActionButton("Cancel", onClick = { videoToDelete = null }, modifier = Modifier.weight(1f))
+                    com.beatraxus.app.ui.components.InfoActionButton(
+                        "Delete",
                         onClick = {
                             viewModel.deleteVideo(video)
                             videoToDelete = null
                             selectedVideoForOptions = null
                         },
-                        colors = ButtonDefaults.textButtonColors(contentColor = Color.Red)
-                    ) {
-                        Text("DELETE")
-                    }
-                },
-                dismissButton = {
-                    TextButton(onClick = { videoToDelete = null }) { Text("CANCEL", color = Color.White) }
-                },
-                containerColor = Color(0xFF1A1A1A)
-            )
+                        danger = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            ) {
+                com.beatraxus.app.ui.components.InfoGlassBlock {
+                    com.beatraxus.app.ui.components.InfoMetaRow("File", video.title, showDivider = false)
+                }
+                Text(
+                    "This will permanently remove the file from your device.",
+                    color = Color.White.copy(0.7f),
+                    fontSize = 13.sp
+                )
+            }
         }
 
         showVideoProperties?.let { video ->
@@ -5674,6 +5682,7 @@ fun SlideDrawerMenu(
     onSetPlaybackMode: (com.beatraxus.app.model.PlaybackMode) -> Unit,
     onNavigateToSettings: () -> Unit,
     onNavigateToDsp: () -> Unit,
+    onNavigateToPlayTogether: () -> Unit = {},
     onClose: () -> Unit
 ) {
     val infiniteTransition = rememberInfiniteTransition(label = "menuBackground")
@@ -5959,24 +5968,24 @@ fun SlideDrawerMenu(
                         color = Color.White.copy(0.08f),
                         shape = RoundedCornerShape(14.dp),
                         modifier = Modifier
-                            .weight(2f)
+                            .weight(1f)
+                            .height(52.dp)
+                            .clickable { onNavigateToPlayTogether(); onClose() }
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(Icons.Rounded.Groups, "Play Together", tint = Color.White.copy(0.7f), modifier = Modifier.size(24.dp))
+                        }
+                    }
+                    Surface(
+                        color = Color.White.copy(0.08f),
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier
+                            .weight(1f)
                             .height(52.dp)
                             .clickable { onNavigateToSettings(); onClose() }
                     ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.Center
-                        ) {
-                            Icon(Icons.Rounded.Settings, null, tint = Color.White.copy(0.7f), modifier = Modifier.size(20.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text(
-                                "Settings",
-                                color = Color.White.copy(0.7f),
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Bold,
-                                maxLines = 1
-                            )
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(Icons.Rounded.Settings, "Settings", tint = Color.White.copy(0.7f), modifier = Modifier.size(22.dp))
                         }
                     }
                 }
@@ -6477,34 +6486,24 @@ fun VideoRenameDialog(
     onRename: (String) -> Unit
 ) {
     var name by remember { mutableStateOf(video.displayName) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Rename Video", color = Color.White) },
-        text = {
-            OutlinedTextField(
-                value = name,
-                onValueChange = { name = it },
-                label = { Text("New Name") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-                colors = OutlinedTextFieldDefaults.colors(
-                    unfocusedTextColor = Color.White,
-                    focusedTextColor = Color.White,
-                    focusedBorderColor = AccentBlue,
-                    unfocusedBorderColor = Color.White.copy(0.3f)
-                )
+    com.beatraxus.app.ui.components.InfoStyleDialog(
+        title = "Edit Name",
+        icon = Icons.Rounded.Edit,
+        onDismiss = onDismiss,
+        footer = {
+            com.beatraxus.app.ui.components.InfoActionButton("Cancel", onClick = onDismiss, modifier = Modifier.weight(1f))
+            com.beatraxus.app.ui.components.InfoActionButton(
+                "Save",
+                onClick = { onRename(name) },
+                primary = true,
+                enabled = name.isNotBlank(),
+                modifier = Modifier.weight(1f)
             )
-        },
-        confirmButton = {
-            Button(onClick = { onRename(name) }, colors = ButtonDefaults.buttonColors(containerColor = AccentBlue)) {
-                Text("SAVE")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("CANCEL", color = Color.White) }
-        },
-        containerColor = Color(0xFF1A1A1A)
-    )
+        }
+    ) {
+        com.beatraxus.app.ui.components.InfoSectionLabel("FILE NAME")
+        com.beatraxus.app.ui.components.InfoTextField(label = "New name", value = name, onValueChange = { name = it })
+    }
 }
 
 @Composable
@@ -6512,25 +6511,22 @@ fun VideoPropertiesDialog(
     video: com.beatraxus.app.model.Video,
     onDismiss: () -> Unit
 ) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        containerColor = Color(0xFF1A1A1A),
-        title = { Text("Video Properties", color = Color.White, fontWeight = FontWeight.Bold) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                PropertyRow("Title", video.title)
-                PropertyRow("Path", video.folderPath)
-                PropertyRow("Format", video.mimeType)
-                PropertyRow("Resolution", "${video.resolutionWidth} x ${video.resolutionHeight}")
-                PropertyRow("Duration", com.beatraxus.app.utils.FormatUtils.formatDuration(video.durationMs))
-                PropertyRow("Size", com.beatraxus.app.utils.FormatUtils.formatFileSize(video.sizeBytes))
-                PropertyRow("Added", com.beatraxus.app.utils.FormatUtils.formatDateShort(video.dateAdded * 1000))
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) { Text("CLOSE", color = AccentBlue) }
+    com.beatraxus.app.ui.components.InfoStyleDialog(
+        title = "Video Properties",
+        icon = Icons.Rounded.Info,
+        onDismiss = onDismiss
+    ) {
+        com.beatraxus.app.ui.components.InfoSectionLabel("FILE METADATA")
+        com.beatraxus.app.ui.components.InfoGlassBlock {
+            com.beatraxus.app.ui.components.InfoMetaRow("Title", video.title)
+            com.beatraxus.app.ui.components.InfoMetaRow("Format", video.mimeType)
+            com.beatraxus.app.ui.components.InfoMetaRow("Resolution", "${video.resolutionWidth} x ${video.resolutionHeight}")
+            com.beatraxus.app.ui.components.InfoMetaRow("Duration", com.beatraxus.app.utils.FormatUtils.formatDuration(video.durationMs))
+            com.beatraxus.app.ui.components.InfoMetaRow("Size", com.beatraxus.app.utils.FormatUtils.formatFileSize(video.sizeBytes))
+            com.beatraxus.app.ui.components.InfoMetaRow("Added", com.beatraxus.app.utils.FormatUtils.formatDateShort(video.dateAdded * 1000))
+            com.beatraxus.app.ui.components.InfoMetaRow("Location", video.folderPath, stacked = true, showDivider = false)
         }
-    )
+    }
 }
 
 @Composable

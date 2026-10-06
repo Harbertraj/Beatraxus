@@ -975,13 +975,29 @@ fun NowPlayingScreen(
                                 }
 
                                 // Like Button (located between song name and three dot button)
-                                IconButton(onClick = onFavoriteClick) {
-                                    Icon(
-                                        if (isFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
-                                        contentDescription = if (isFavorite) "Remove from favorites" else "Add to favorites",
-                                        tint = if (isFavorite) Color(0xFFFF4081) else Color.White.copy(0.7f),
-                                        modifier = Modifier.size(28.dp)
-                                    )
+                                // While an A-B loop is waiting for point B, this button becomes "Set B".
+                                if (abLoop.pointA != null && abLoop.pointB == null) {
+                                    Box(
+                                        modifier = Modifier
+                                            .padding(horizontal = 6.dp)
+                                            .clip(RoundedCornerShape(50))
+                                            .background(Color.White.copy(alpha = 0.16f))
+                                            .border(1.dp, Color.White.copy(alpha = 0.35f), RoundedCornerShape(50))
+                                            .clickable { abLoop.tap(progressMs()) }
+                                            .padding(horizontal = 14.dp, vertical = 8.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text("Set B", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                } else {
+                                    IconButton(onClick = onFavoriteClick) {
+                                        Icon(
+                                            if (isFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                                            contentDescription = if (isFavorite) "Remove from favorites" else "Add to favorites",
+                                            tint = if (isFavorite) Color(0xFFFF4081) else Color.White.copy(0.7f),
+                                            modifier = Modifier.size(28.dp)
+                                        )
+                                    }
                                 }
 
                                 // Song Options Menu (three dot button)
@@ -1156,14 +1172,6 @@ fun NowPlayingScreen(
                                 iconSize = 34.dp // Slightly larger to match visual weight
                             )
 
-                            // A-B Loop
-                            UtilityItem(
-                                icon = Icons.Rounded.Loop,
-                                label = abLoop.label,
-                                isActive = abLoop.pointA != null,
-                                onClick = { abLoop.tap(progressMs()) }
-                            )
-
                             // Equalizer
                             UtilityItem(
                                 icon = Icons.Rounded.Equalizer,
@@ -1236,7 +1244,10 @@ fun NowPlayingScreen(
                 onPauseLocalPlayback = onPauseLocalPlayback,
                 currentPositionMs = progressMs(),
                 showPlayNext = false,
-                showMark = false
+                showMark = false,
+                abLoopLabel = abLoop.label,
+                abLoopActive = abLoop.pointA != null,
+                onAbLoop = { abLoop.tap(progressMs()) }
             )
         }
 

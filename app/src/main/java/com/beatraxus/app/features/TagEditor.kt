@@ -19,10 +19,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -33,6 +32,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.beatraxus.app.model.Song
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -215,48 +215,47 @@ fun TagEditorDialog(
         }
     }
 
-    @Composable
-    fun field(label: String, value: String, numeric: Boolean = false, onChange: (String) -> Unit) {
-        OutlinedTextField(
-            value = value,
-            onValueChange = onChange,
-            label = { Text(label) },
-            singleLine = true,
-            enabled = !busy,
-            keyboardOptions = if (numeric) KeyboardOptions(keyboardType = KeyboardType.Number) else KeyboardOptions.Default,
-            modifier = Modifier.fillMaxWidth()
-        )
+    com.beatraxus.app.ui.components.InfoStyleDialog(
+        title = "Edit Tags",
+        icon = androidx.compose.material.icons.Icons.Rounded.Edit,
+        onDismiss = onDismiss,
+        dismissible = !busy,
+        maxHeightFraction = 0.78f,
+        footer = {
+            com.beatraxus.app.ui.components.InfoActionButton(
+                "Cancel", onClick = onDismiss, enabled = !busy, modifier = Modifier.weight(1f)
+            )
+            com.beatraxus.app.ui.components.InfoActionButton(
+                if (busy) "Saving\u2026" else "Save",
+                onClick = { doWrite() },
+                primary = true,
+                enabled = !busy && tags.title.isNotBlank(),
+                modifier = Modifier.weight(1f)
+            )
+        }
+    ) {
+        @Composable
+        fun field(label: String, value: String, numeric: Boolean = false, onChange: (String) -> Unit) {
+            com.beatraxus.app.ui.components.InfoTextField(
+                label = label, value = value, onValueChange = onChange, enabled = !busy, numeric = numeric
+            )
+        }
+        com.beatraxus.app.ui.components.InfoSectionLabel("TAGS")
+        field("Title", tags.title) { tags = tags.copy(title = it) }
+        field("Artist", tags.artist) { tags = tags.copy(artist = it) }
+        field("Album", tags.album) { tags = tags.copy(album = it) }
+        field("Album artist", tags.albumArtist) { tags = tags.copy(albumArtist = it) }
+        field("Genre", tags.genre) { tags = tags.copy(genre = it) }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(Modifier.weight(1f)) { field("Year", tags.year, true) { tags = tags.copy(year = it.filter(Char::isDigit).take(4)) } }
+            Column(Modifier.weight(1f)) { field("Track", tags.trackNumber, true) { tags = tags.copy(trackNumber = it.filter(Char::isDigit).take(3)) } }
+            Column(Modifier.weight(1f)) { field("Disc", tags.discNumber, true) { tags = tags.copy(discNumber = it.filter(Char::isDigit).take(2)) } }
+        }
+        field("Composer", tags.composer) { tags = tags.copy(composer = it) }
+        error?.let {
+            androidx.compose.material3.Text(it, color = androidx.compose.ui.graphics.Color(0xFFFF5252), fontSize = 12.sp)
+        }
     }
-
-    AlertDialog(
-        onDismissRequest = { if (!busy) onDismiss() },
-        title = { Text("Edit tags") },
-        text = {
-            Column(
-                modifier = Modifier.verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                field("Title", tags.title) { tags = tags.copy(title = it) }
-                field("Artist", tags.artist) { tags = tags.copy(artist = it) }
-                field("Album", tags.album) { tags = tags.copy(album = it) }
-                field("Album artist", tags.albumArtist) { tags = tags.copy(albumArtist = it) }
-                field("Genre", tags.genre) { tags = tags.copy(genre = it) }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Column(Modifier.weight(1f)) { field("Year", tags.year, true) { tags = tags.copy(year = it.filter(Char::isDigit).take(4)) } }
-                    Column(Modifier.weight(1f)) { field("Track", tags.trackNumber, true) { tags = tags.copy(trackNumber = it.filter(Char::isDigit).take(3)) } }
-                    Column(Modifier.weight(1f)) { field("Disc", tags.discNumber, true) { tags = tags.copy(discNumber = it.filter(Char::isDigit).take(2)) } }
-                }
-                field("Composer", tags.composer) { tags = tags.copy(composer = it) }
-                error?.let { Text(it, color = androidx.compose.ui.graphics.Color(0xFFFF5252)) }
-            }
-        },
-        confirmButton = {
-            TextButton(enabled = !busy && tags.title.isNotBlank(), onClick = { doWrite() }) {
-                Text(if (busy) "Saving…" else "Save")
-            }
-        },
-        dismissButton = { TextButton(enabled = !busy, onClick = onDismiss) { Text("Cancel") } }
-    )
 }
 
 /** Small helper so other classes can apply edited tags to a Song. */

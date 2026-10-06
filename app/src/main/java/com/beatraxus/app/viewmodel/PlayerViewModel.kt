@@ -777,69 +777,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 }
 
                 try {
-                    // Runs the native DSP feature extraction ONCE per song; both the AI
-                    // entity and the quality entity below are built from this same result
-                    // so scanning doesn't get twice as slow.
-                    val result = aiAnalysisEngine.analyzeSong(song)
-                    val analysis = result.aiAnalysis
-                    if (analysis != null) {
-                        aiAnalysisDao.insertAnalysis(analysis)
-
-                        // If AI found a better genre, update the song in DB and Memory
-                        if (analysis.genre.isNotEmpty() && analysis.genre != song.genre) {
-                            val updatedSong = song.copy(genre = analysis.genre)
-                            withContext(Dispatchers.IO) {
-                                songDao.insertSong(updatedSong.toEntity())
-                            }
-                            _songs.update { current ->
-                                current.map { if (it.id == song.id) updatedSong else it }
-                            }
-                        }
-                    }
-
-                    // Quality analysis (Phase 3) — same LOCAL-only guard as analyzeSong,
-                    // since result.features is null for skipped/failed songs.
-                    var features = result.features
-                    var resolutionFromSpectrum: AudioSpectrumAnalyzer.SpectrumAnalysisResult? = null
-
-                    if (features == null) {
-                        // Task 4: Fallback for ALAC + cloud formats that NativeDsp skips
-                        resolutionFromSpectrum = audioSpectrumAnalyzer.getOrAnalyze(song)
-                    }
-
-                    if (features != null || resolutionFromSpectrum != null) {
-                        val scored = com.beatraxus.app.engine.QualityScorer.score(
-                            bitrateKbps = song.bitrate,
-                            sampleRateHz = resolutionFromSpectrum?.sampleRateHz ?: song.sampleRateHz,
-                            bitDepth = resolutionFromSpectrum?.bitDepth ?: song.bitDepth,
-                            codec = song.format,
-                            lufs = features?.lufs ?: -14.0f,
-                            dynamicRange = features?.dynamicRange ?: 10.0f,
-                            truePeakDb = features?.truePeakDb ?: -1.0f,
-                            clippedSamplePct = features?.clippedSamplePct ?: 0.0f,
-                            stereoWidth = features?.stereoWidth ?: 1.0f
-                        )
-                        songQualityDao.upsertQuality(
-                            com.beatraxus.app.model.SongQualityEntity(
-                                songId = song.id,
-                                bitrateKbps = song.bitrate,
-                                sampleRateHz = resolutionFromSpectrum?.sampleRateHz ?: song.sampleRateHz,
-                                bitDepth = resolutionFromSpectrum?.bitDepth ?: song.bitDepth,
-                                codec = song.format,
-                                lufs = features?.lufs ?: -14.0f,
-                                dynamicRange = features?.dynamicRange ?: 10.0f,
-                                truePeakDb = features?.truePeakDb ?: -1.0f,
-                                clippedSamplePct = features?.clippedSamplePct ?: 0.0f,
-                                stereoWidth = features?.stereoWidth ?: 1.0f,
-                                freqRangeLowHz = features?.freqRangeLowHz ?: 0f,
-                                freqRangeHighHz = features?.freqRangeHighHz ?: (resolutionFromSpectrum?.spectralCutoffHz?.toFloat() ?: 0f),
-                                qualityScore = scored.score,
-                                qualityTier = scored.tier,
-                                analysisVersion = 1,
-                                lastAnalyzed = System.currentTimeMillis()
-                            )
-                        )
-                    }
+                    analyzeAndStoreQuality(song)
                 } catch (t: Throwable) {
                     Log.e("PlayerViewModel", "AI Analysis failed for ${song.title}: ${t.message}", t)
                 }
@@ -3098,6 +3036,39 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    /** "Play Together" rooms. Created lazily so it costs nothing until the screen is opened. */
+    val playTogether: com.beatraxus.app.features.PlayTogetherManager by lazy {
+        com.beatraxus.app.features.PlayTogetherManager(
+            getApplication(),
+            viewModelScope,
+            object : com.beatraxus.app.features.PlayTogetherManager.Host {
+                override fun librarySongs(): List<Song> = allSongs.value
+                override fun currentSong(): Song? = _uiState.value.currentSong
+                override fun isPlaying(): Boolean = _uiState.value.isPlaying
+                override fun positionMs(): Long = _progressMs.value
+                override fun queue(): List<Song> = service?.getPlaylist().orEmpty()
+
+                override fun playQueue(songs: List<Song>, index: Int, positionMs: Long, playing: Boolean) {
+                    viewModelScope.launch(Dispatchers.Main) {
+                        playList(songs, index)
+                        if (positionMs > 1_500) { delay(700); this@PlayerViewModel.seekTo(positionMs) }
+                        if (!playing) { delay(300); pausePlayback() }
+                    }
+                }
+
+                override fun setPlaying(play: Boolean) {
+                    viewModelScope.launch(Dispatchers.Main) {
+                        if (_uiState.value.isPlaying != play) togglePlayPause()
+                    }
+                }
+
+                override fun seekTo(ms: Long) {
+                    viewModelScope.launch(Dispatchers.Main) { this@PlayerViewModel.seekTo(ms) }
+                }
+            }
+        )
+    }
+
     fun togglePlayPause() {
         if (CastManager.isConnected) {
             if (_uiState.value.isPlaying) CastManager.pause() else CastManager.play()
@@ -4094,14 +4065,103 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
      *  [com.beatraxus.app.engine.AudioOutput.captureLiveWindow]. */
     fun captureLiveWindow(): com.beatraxus.app.engine.AudioOutput.LiveCapture? = service?.captureLiveWindow()
 
+    /** Runs the DSP + quality scoring for one song and stores SongQualityEntity (+ AI entity). */
+    private suspend fun analyzeAndStoreQuality(song: Song) {
+            // Runs the native DSP feature extraction ONCE per song; both the AI
+            // entity and the quality entity below are built from this same result
+            // so scanning doesn't get twice as slow.
+            val result = try { aiAnalysisEngine.analyzeSong(song) } catch (t: Throwable) {
+                Log.w("PlayerViewModel", "DSP analysis failed for ${song.title}: ${t.message}")
+                null
+            }
+            val analysis = result?.aiAnalysis
+            if (analysis != null) {
+                aiAnalysisDao.insertAnalysis(analysis)
+
+                // If AI found a better genre, update the song in DB and Memory
+                if (analysis.genre.isNotEmpty() && analysis.genre != song.genre) {
+                    val updatedSong = song.copy(genre = analysis.genre)
+                    withContext(Dispatchers.IO) {
+                        songDao.insertSong(updatedSong.toEntity())
+                    }
+                    _songs.update { current ->
+                        current.map { if (it.id == song.id) updatedSong else it }
+                    }
+                }
+            }
+
+            // Quality analysis (Phase 3) — same LOCAL-only guard as analyzeSong,
+            // since result.features is null for skipped/failed songs.
+            val features = result?.features
+            var resolutionFromSpectrum: AudioSpectrumAnalyzer.SpectrumAnalysisResult? = null
+
+            if (features == null) {
+                // Task 4: Fallback for ALAC + cloud formats that NativeDsp skips
+                resolutionFromSpectrum = try { audioSpectrumAnalyzer.getOrAnalyze(song) } catch (t: Throwable) { null }
+            }
+
+            // ALWAYS store a result. When neither analysis could run (unsupported codec,
+            // unreadable cloud file...) we still score from the file metadata so the
+            // Inspector never sits on "Analyzing..." forever.
+            run {
+                val scored = com.beatraxus.app.engine.QualityScorer.score(
+                    bitrateKbps = song.bitrate,
+                    sampleRateHz = resolutionFromSpectrum?.sampleRateHz ?: song.sampleRateHz,
+                    bitDepth = resolutionFromSpectrum?.bitDepth ?: song.bitDepth,
+                    codec = song.format,
+                    lufs = features?.lufs ?: -14.0f,
+                    dynamicRange = features?.dynamicRange ?: 10.0f,
+                    truePeakDb = features?.truePeakDb ?: -1.0f,
+                    clippedSamplePct = features?.clippedSamplePct ?: 0.0f,
+                    stereoWidth = features?.stereoWidth ?: 1.0f
+                )
+                songQualityDao.upsertQuality(
+                    com.beatraxus.app.model.SongQualityEntity(
+                        songId = song.id,
+                        bitrateKbps = song.bitrate,
+                        sampleRateHz = resolutionFromSpectrum?.sampleRateHz ?: song.sampleRateHz,
+                        bitDepth = resolutionFromSpectrum?.bitDepth ?: song.bitDepth,
+                        codec = song.format,
+                        lufs = features?.lufs ?: -14.0f,
+                        dynamicRange = features?.dynamicRange ?: 10.0f,
+                        truePeakDb = features?.truePeakDb ?: -1.0f,
+                        clippedSamplePct = features?.clippedSamplePct ?: 0.0f,
+                        stereoWidth = features?.stereoWidth ?: 1.0f,
+                        freqRangeLowHz = features?.freqRangeLowHz ?: 0f,
+                        freqRangeHighHz = features?.freqRangeHighHz ?: (resolutionFromSpectrum?.spectralCutoffHz?.toFloat() ?: 0f),
+                        qualityScore = scored.score,
+                        qualityTier = scored.tier,
+                        analysisVersion = 1,
+                        lastAnalyzed = System.currentTimeMillis()
+                    )
+                )
+            }
+    }
+
+    private val qualityInFlight = java.util.Collections.synchronizedSet(HashSet<String>())
+
     /** Kicks off quality analysis for a single song right away instead of waiting for the
      *  next periodic catch-up pass — used by the Inspector screen when it opens on a song
      *  that has no SongQualityEntity yet, so "Analyzing on next scan…" doesn't get stuck
      *  waiting for a scan that may never queue that particular song again (see the
      *  qualityDone filter below). Safe to call repeatedly; upserts on completion. */
     fun requestQualityAnalysis(song: Song) {
-        viewModelScope.launch(Dispatchers.Default) { aiAnalysisChannel.send(song) }
+        // Runs immediately (not behind the library queue, and not paused while music plays),
+        // because the person is staring at the Inspector waiting for it.
+        if (!qualityInFlight.add(song.id)) return
+        viewModelScope.launch(aiAnalysisDispatcher) {
+            try {
+                analyzeAndStoreQuality(song)
+            } catch (t: Throwable) {
+                Log.e("PlayerViewModel", "Quality analysis failed for ${song.title}: ${t.message}", t)
+            } finally {
+                qualityInFlight.remove(song.id)
+            }
+        }
     }
+
+    /** True while an Inspector-triggered analysis for [songId] is running. */
+    fun isQualityAnalysisRunning(songId: String): Boolean = qualityInFlight.contains(songId)
 
     /** Phase 4: library filter by audio-quality tier. Pass null for "All". */
     fun setQualityTierFilter(tier: String?) {

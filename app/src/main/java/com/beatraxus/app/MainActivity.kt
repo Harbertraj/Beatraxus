@@ -412,6 +412,7 @@ sealed class Screen(val route: String) {
     object Main      : Screen("main")
     object Settings  : Screen("settings")
     object Dsp             : Screen("dsp")
+    object PlayTogether    : Screen("play_together")
     object Inspector       : Screen("inspector")
     object StreamingAddons : Screen("streaming_addons")
 }
@@ -634,8 +635,41 @@ fun BeatraxusApp(
                     viewModel            = viewModel,
                     onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
                     onNavigateToDsp      = { navController.navigate(Screen.Dsp.route) },
+                    onNavigateToPlayTogether = { navController.navigate(Screen.PlayTogether.route) },
                     onNavigateToInspector = { songId -> navController.navigate("inspector/$songId") },
                     onRequestPermissions = onRequestPermissions
+                )
+            }
+            composable(
+                Screen.PlayTogether.route,
+                enterTransition = {
+                    slideIntoContainer(
+                        towards = AnimatedContentTransitionScope.SlideDirection.Start,
+                        animationSpec = tween(400, easing = FastOutSlowInEasing)
+                    ) + fadeIn(tween(400))
+                },
+                exitTransition = {
+                    slideOutOfContainer(
+                        towards = AnimatedContentTransitionScope.SlideDirection.Start,
+                        animationSpec = tween(400, easing = FastOutSlowInEasing)
+                    ) + fadeOut(tween(400))
+                },
+                popEnterTransition = {
+                    slideIntoContainer(
+                        towards = AnimatedContentTransitionScope.SlideDirection.End,
+                        animationSpec = tween(400, easing = FastOutSlowInEasing)
+                    ) + fadeIn(tween(400))
+                },
+                popExitTransition = {
+                    slideOutOfContainer(
+                        towards = AnimatedContentTransitionScope.SlideDirection.End,
+                        animationSpec = tween(400, easing = FastOutSlowInEasing)
+                    ) + fadeOut(tween(400))
+                }
+            ) {
+                com.beatraxus.app.ui.screens.PlayTogetherScreen(
+                    viewModel = viewModel,
+                    onBack = { navController.popBackStack() }
                 )
             }
             composable(

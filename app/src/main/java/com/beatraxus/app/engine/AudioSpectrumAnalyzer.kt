@@ -91,7 +91,11 @@ internal class AudioSpectrumAnalyzer(
         /** Significant band-limiting or suspicious noise floor detected. (40-69% confidence) */
         POSSIBLY_UPSCALED,
         /** Obvious brick-wall filtering or zero-padded bits detected. (0-39% confidence) */
-        DEFINITELY_UPSCALED
+        DEFINITELY_UPSCALED,
+        /** The file itself is a lossy format (MP3, AAC, OGG...) so "lossless" does not apply. */
+        LOSSY_FORMAT,
+        /** Too short / too quiet to judge reliably. */
+        INCONCLUSIVE
     }
 
     data class SpectrumAnalysisResult(
@@ -105,25 +109,38 @@ internal class AudioSpectrumAnalyzer(
         val confidenceScore: Int,        // 0-100 weighted confidence
         val spectralCutoffHz: Int,       // detected high-frequency rolloff point
         val nyquistHz: Int,              // sampleRateHz / 2, for comparison in the UI
-        val bitDepthLooksPadded: Boolean // true if the declared bit depth's low bits are silent/constant
+        val bitDepthLooksPadded: Boolean, // true if the declared bit depth's low bits are silent/constant
+        val edgeDropDb: Double = 0.0,     // size of the brick-wall step (dB) at [spectralCutoffHz]
+        val hasBrickWall: Boolean = false,
+        val bandwidthHz: Int = 0,         // highest frequency still within 70 dB of the mid-band level
+        val analyzedSeconds: Int = 0,
+        val reasons: List<String> = emptyList()
     ) {
         /** Badge color based on tier: Green for original, Amber for likely, Gray for fake. */
         fun badgeColor(): Color = when (authenticity) {
             LosslessAuthenticity.ORIGINAL_LOSSLESS -> Color(0xFF43E97B) // Green
             LosslessAuthenticity.LIKELY_LOSSLESS -> Color(0xFF43E97B)   // Green (still considered "good")
             LosslessAuthenticity.POSSIBLY_UPSCALED -> Color(0xFFFFB03B) // Amber/Orange
-            LosslessAuthenticity.DEFINITELY_UPSCALED -> Color(0xFF9AA3AF) // Gray
+            LosslessAuthenticity.DEFINITELY_UPSCALED -> Color(0xFFFF6B6B) // Red
+            LosslessAuthenticity.LOSSY_FORMAT -> Color(0xFF9AA3AF)      // Gray
+            LosslessAuthenticity.INCONCLUSIVE -> Color(0xFF9AA3AF)      // Gray
         }
 
         fun badgeLabel(): String = when (authenticity) {
             LosslessAuthenticity.ORIGINAL_LOSSLESS -> "ORIGINAL LOSSLESS"
             LosslessAuthenticity.LIKELY_LOSSLESS -> "LIKELY LOSSLESS"
             LosslessAuthenticity.POSSIBLY_UPSCALED -> "POSSIBLY UPSCALED"
-            LosslessAuthenticity.DEFINITELY_UPSCALED -> "DEFINITELY UPSCALED"
+            LosslessAuthenticity.DEFINITELY_UPSCALED -> "UPSCALED / FAKE"
+            LosslessAuthenticity.LOSSY_FORMAT -> "LOSSY FORMAT"
+            LosslessAuthenticity.INCONCLUSIVE -> "NOT ENOUGH DATA"
         }
 
         /** Detail text showing the score and detected cutoff. */
-        fun badgeSubtitle(): String = "${confidenceScore}% \u00b7 \u2248${spectralCutoffHz / 1000}kHz"
+        fun badgeSubtitle(): String = when (authenticity) {
+            LosslessAuthenticity.LOSSY_FORMAT, LosslessAuthenticity.INCONCLUSIVE ->
+                "\u2248${"%.1f".format(spectralCutoffHz / 1000.0)}kHz"
+            else -> "${confidenceScore}% \u00b7 \u2248${"%.1f".format(spectralCutoffHz / 1000.0)}kHz"
+        }
     }
 
     // ------------------------------------------------------------------
@@ -204,16 +221,10 @@ internal class AudioSpectrumAnalyzer(
         private var frameCounter = 0
         private var frameStride = 1
 
-        // Averaged spectrum across the whole track, for cutoff-frequency detection.
-        private val cutoffAccum = DoubleArray(SPECTROGRAM_BUCKETS)
-        private var cutoffFrameCount = 0
-
-        // Per-frame cutoff history for temporal stability analysis.
-        private val frameCutoffs = ArrayList<Int>()
-
-        // High-frequency energy accumulation (>15kHz).
-        private var hfEnergyTotal = 0.0
-        private var energyTotal = 0.0
+        // Average linear power per FFT bin (dBFS-normalised) over all non-silent frames.
+        private val binPower = DoubleArray(SPECTRUM_BINS)
+        private val framePower = DoubleArray(SPECTRUM_BINS)
+        private var activeFrames = 0
 
         // Bit-depth authenticity: histogram of the lowest byte of each sample once
         // rescaled to the declared bit depth. A genuine 24-bit source has a roughly
@@ -275,40 +286,21 @@ internal class AudioSpectrumAnalyzer(
                 fftFill++
                 if (fftFill >= SPECTROGRAM_FFT_SIZE) {
                     fftFill = 0
-                    val frame = computeSpectrogramFrame(fftBuffer, sampleRate)
-                    val nyquist = sampleRate / 2
-                    
-                    // Track temporal signals
-                    val frameCutoff = detectFrameCutoff(frame, nyquist)
-                    frameCutoffs.add(frameCutoff)
-                    accumulateEnergy(frame, nyquist)
-                    
-                    accumulateCutoff(frame)
+                    val frame = computeSpectrogramFrame(fftBuffer, sampleRate, framePower)
+
+                    // Skip near-silent frames (intros, gaps) so they can't fake a "cutoff".
+                    var sumSq = 0.0
+                    for (v in fftBuffer) sumSq += v.toDouble() * v
+                    if (kotlin.math.sqrt(sumSq / fftBuffer.size) >= SILENCE_RMS) {
+                        for (k in 0 until SPECTRUM_BINS) binPower[k] += framePower[k]
+                        activeFrames++
+                    }
                     if (frameCounter % frameStride == 0 && spectrogramFrames.size < SPECTROGRAM_MAX_FRAMES) {
                         spectrogramFrames.add(frame)
                     }
                     frameCounter++
                     framesCollected++
                 }
-            }
-        }
-
-        private fun detectFrameCutoff(frame: FloatArray, nyquist: Int): Int {
-            // Quick per-frame cutoff check (0.1 magnitude threshold)
-            val hzPerBucket = nyquist.toDouble() / frame.size
-            for (b in frame.indices.reversed()) {
-                if (frame[b] > 0.1f) return (b * hzPerBucket).toInt()
-            }
-            return 0
-        }
-
-        private fun accumulateEnergy(frame: FloatArray, nyquist: Int) {
-            val hzPerBucket = nyquist.toDouble() / frame.size
-            for (b in frame.indices) {
-                val hz = b * hzPerBucket
-                val energy = frame[b].toDouble()
-                energyTotal += energy
-                if (hz > 15000) hfEnergyTotal += energy
             }
         }
 
@@ -321,45 +313,44 @@ internal class AudioSpectrumAnalyzer(
             return q and 0xFF
         }
 
-        private fun accumulateCutoff(frame: FloatArray) {
-            for (b in frame.indices) cutoffAccum[b] += frame[b]
-            cutoffFrameCount++
-        }
-
         fun buildResult(song: Song): SpectrumAnalysisResult {
             if (bucketCount > 0) { minPeaks.add(bucketMin); maxPeaks.add(bucketMax) }
 
             val nyquist = sampleRate / 2
-            val cutoffMetrics = analyzeSpectralRollOff(cutoffAccum, cutoffFrameCount, nyquist)
             val bitDepthPadded = detectBitDepthPadding(lowByteHistogram, lowByteSamples, declaredBitDepth)
-            
-            // Temporal stability: variance of frame cutoffs (normalized 0-1)
-            val temporalStability = computeTemporalStability(frameCutoffs, cutoffMetrics.cutoffHz)
-            
-            // HF Energy ratio
-            val hfRatio = if (energyTotal > 0) hfEnergyTotal / energyTotal else 0.0
-
             val declaredLosslessCodec = LOSSLESS_CODECS.any { song.format.uppercase().contains(it) }
 
-            val score = if (!declaredLosslessCodec) 0 else {
-                computeConfidenceScore(
-                    cutoffHz = cutoffMetrics.cutoffHz,
-                    nyquistHz = nyquist,
-                    slopeDbOct = cutoffMetrics.slopeDbOct,
-                    noiseFloorDb = cutoffMetrics.hfNoiseFloorDb,
-                    temporalStability = temporalStability,
-                    bitDepthPadded = bitDepthPadded,
-                    hfRatio = hfRatio
-                )
-            }
+            val avgPower = DoubleArray(SPECTRUM_BINS) { binPower[it] / kotlin.math.max(1, activeFrames) }
+            val edge = findSpectralEdge(avgPower, nyquist)
+            val seconds = (framesCollected * SPECTROGRAM_FFT_SIZE / kotlin.math.max(1, sampleRate)).toInt()
+            val enoughData = activeFrames >= MIN_ACTIVE_FRAMES && edge.refDb > MIN_REF_DB
 
-            val authenticity = when {
-                !declaredLosslessCodec -> LosslessAuthenticity.DEFINITELY_UPSCALED
-                score >= 90 -> LosslessAuthenticity.ORIGINAL_LOSSLESS
-                score >= 70 -> LosslessAuthenticity.LIKELY_LOSSLESS
-                score >= 40 -> LosslessAuthenticity.POSSIBLY_UPSCALED
-                else -> LosslessAuthenticity.DEFINITELY_UPSCALED
+            val reasons = ArrayList<String>()
+            val score: Int
+            val authenticity: LosslessAuthenticity
+            when {
+                !declaredLosslessCodec -> {
+                    score = 0
+                    authenticity = LosslessAuthenticity.LOSSY_FORMAT
+                    reasons += "${song.format.uppercase()} is a lossy format, so it cannot be original lossless."
+                    if (edge.hasBrickWall) reasons += "Encoder low-pass found at ${"%.1f".format(edge.edgeHz / 1000.0)} kHz."
+                }
+                !enoughData -> {
+                    score = 0
+                    authenticity = LosslessAuthenticity.INCONCLUSIVE
+                    reasons += "The track is too short or too quiet to analyse reliably."
+                }
+                else -> {
+                    score = scoreAuthenticity(edge, nyquist, bitDepthPadded, reasons)
+                    authenticity = when {
+                        score >= 90 -> LosslessAuthenticity.ORIGINAL_LOSSLESS
+                        score >= 70 -> LosslessAuthenticity.LIKELY_LOSSLESS
+                        score >= 40 -> LosslessAuthenticity.POSSIBLY_UPSCALED
+                        else -> LosslessAuthenticity.DEFINITELY_UPSCALED
+                    }
+                }
             }
+            val shownCutoff = if (edge.hasBrickWall) edge.edgeHz else edge.bandwidthHz
 
             return SpectrumAnalysisResult(
                 minPeaks = minPeaks.toFloatArray(),
@@ -370,9 +361,14 @@ internal class AudioSpectrumAnalyzer(
                 bitDepth = declaredBitDepth,
                 authenticity = authenticity,
                 confidenceScore = score,
-                spectralCutoffHz = cutoffMetrics.cutoffHz,
+                spectralCutoffHz = shownCutoff,
                 nyquistHz = nyquist,
-                bitDepthLooksPadded = bitDepthPadded
+                bitDepthLooksPadded = bitDepthPadded,
+                edgeDropDb = edge.dropDb,
+                hasBrickWall = edge.hasBrickWall,
+                bandwidthHz = edge.bandwidthHz,
+                analyzedSeconds = seconds,
+                reasons = reasons
             )
         }
     }
@@ -387,6 +383,11 @@ internal class AudioSpectrumAnalyzer(
         private const val SPECTROGRAM_FFT_SIZE = 2048
         private const val SPECTROGRAM_BUCKETS = 128
         private const val SPECTROGRAM_MAX_FRAMES = 200
+        private const val SPECTRUM_BINS = SPECTROGRAM_FFT_SIZE / 2
+        private const val SILENCE_RMS = 0.001      // -60 dBFS
+        private const val MIN_ACTIVE_FRAMES = 20
+        private const val MIN_REF_DB = -80.0       // mid-band level below this = practically silent
+        private const val BRICK_WALL_DROP_DB = 18.0
         private const val MAX_ANALYSIS_FRAMES = 2000L // decode cap so a 3-hour file doesn't stall analysis
 
         private val LOSSLESS_CODECS = setOf("FLAC", "ALAC", "WAV", "AIFF", "APE", "WV", "DSD", "DSF", "PCM")
@@ -396,6 +397,108 @@ internal class AudioSpectrumAnalyzer(
         private const val WEIGHT_NOISE = 0.15
         private const val WEIGHT_STABILITY = 0.10
         private const val WEIGHT_BIT_DEPTH = 0.10
+
+        data class SpectralEdge(
+            val edgeHz: Int,
+            val dropDb: Double,
+            val refDb: Double,
+            val bandwidthHz: Int,
+            val hasBrickWall: Boolean
+        )
+
+        /**
+         * Finds the steepest low-pass "wall" in the long-term average spectrum.
+         * [power] = average linear power per FFT bin (dBFS-normalised), 0..Nyquist.
+         * Lossy encoders (MP3/AAC/OGG) and CD-rate -> hi-res upsampling leave a very steep
+         * step (usually 30-60 dB inside a few hundred Hz); real recordings roll off gently.
+         * The step is measured as: mean level of the 600 Hz below a frequency minus the mean
+         * level of the 600 Hz above it, searched from 8 kHz up to just under Nyquist.
+         */
+        internal fun findSpectralEdge(power: DoubleArray, nyquistHz: Int): SpectralEdge {
+            val bins = power.size
+            val bw = nyquistHz.toDouble() / bins
+            val db = DoubleArray(bins) { 10.0 * log10(power[it].coerceAtLeast(1e-20)) }
+
+            // Smooth (moving average in dB, ~150 Hz) using prefix sums with clamped edges.
+            val sw = (kotlin.math.max(3, (150.0 / bw).roundToInt())) or 1
+            val half = sw / 2
+            val s = DoubleArray(bins) { i ->
+                var sum = 0.0
+                for (k in i - half..i + half) sum += db[k.coerceIn(0, bins - 1)]
+                sum / sw
+            }
+            val sp = DoubleArray(bins + 1)
+            for (i in 0 until bins) sp[i + 1] = sp[i] + s[i]
+
+            val lo = (500.0 / bw).toInt().coerceIn(0, bins - 2)
+            val hi = kotlin.math.max(lo + 2, (kotlin.math.min(8000.0, nyquistHz * 0.5) / bw).toInt()).coerceAtMost(bins)
+            val refBand = s.copyOfRange(lo, hi).sorted()
+            val refDb = refBand[refBand.size / 2]
+
+            var bandwidth = 0
+            for (i in bins - 1 downTo 0) if (s[i] >= refDb - 70.0) { bandwidth = (i * bw).toInt(); break }
+
+            val w = kotlin.math.max(4, (600.0 / bw).roundToInt())
+            val start = (8000.0 / bw).toInt()
+            val end = (nyquistHz * 0.985 / bw).toInt() - w
+            var best = -1e9
+            var bestIdx = -1
+            for (i in (start + w) until end) {
+                val below = (sp[i] - sp[i - w]) / w
+                val above = (sp[i + w] - sp[i]) / w
+                val d = below - above
+                if (d > best) { best = d; bestIdx = i }
+            }
+            if (bestIdx < 0) return SpectralEdge(nyquistHz, 0.0, refDb, bandwidth, false)
+            return SpectralEdge((bestIdx * bw).roundToInt(), best, refDb, bandwidth, best >= BRICK_WALL_DROP_DB)
+        }
+
+        /** 0-100 "how likely is this a genuine, un-processed lossless file" from the spectrum + bit depth. */
+        internal fun scoreAuthenticity(
+            edge: SpectralEdge,
+            nyquistHz: Int,
+            bitDepthPadded: Boolean,
+            reasons: MutableList<String>
+        ): Int {
+            val e = edge.edgeHz
+            val ek = "%.1f".format(e / 1000.0)
+            var score: Int
+            if (!edge.hasBrickWall) {
+                score = 95
+                reasons += "No artificial low-pass: the spectrum rolls off naturally up to ${"%.1f".format(edge.bandwidthHz / 1000.0)} kHz."
+            } else if (nyquistHz > 24000) {
+                // Hi-res container: genuine masters keep content well above CD bandwidth.
+                score = when {
+                    e < 27000 -> 15
+                    e < 32000 -> 60
+                    else -> 95
+                }
+                reasons += when {
+                    e < 27000 -> "Hi-res file but content stops at $ek kHz: upsampled from CD-quality (44.1/48 kHz) or a lossy source."
+                    e < 32000 -> "Content stops at $ek kHz inside a hi-res container: possibly upsampled."
+                    else -> "Content extends to $ek kHz, beyond CD bandwidth."
+                }
+            } else {
+                score = when {
+                    e < 17000 -> 8
+                    e < 19000 -> 22
+                    e < 20000 -> 38
+                    e < 20600 -> 60
+                    e < 21000 -> 80
+                    else -> 88
+                }
+                reasons += when {
+                    e < 19000 -> "Hard cut-off at $ek kHz (${"%.0f".format(edge.dropDb)} dB step): typical of an MP3/AAC/OGG that was converted to lossless."
+                    e < 20600 -> "Hard cut-off at $ek kHz (${"%.0f".format(edge.dropDb)} dB step): matches a 256-320 kbps lossy encode, but some CD masters use a 20 kHz filter too."
+                    else -> "Slight low-pass at $ek kHz, normal for CD-rate masters."
+                }
+            }
+            if (bitDepthPadded) {
+                score = kotlin.math.min(score, 40)
+                reasons += "The lowest bits are unused: the file is padded from a lower bit depth (fake hi-res)."
+            }
+            return score
+        }
 
         data class CutoffMetrics(
             val cutoffHz: Int,
@@ -527,7 +630,7 @@ internal class AudioSpectrumAnalyzer(
         /** Windowed FFT -> 128-bucket log-magnitude spectrum, 0-1 normalized. Identical
          *  algorithm/constants to the previous WaveformExtractor so cached spectrogram
          *  visuals look the same to users. */
-        internal fun computeSpectrogramFrame(buffer: FloatArray, sampleRate: Int): FloatArray {
+        internal fun computeSpectrogramFrame(buffer: FloatArray, sampleRate: Int, powerOut: DoubleArray? = null): FloatArray {
             val n = buffer.size
             val real = DoubleArray(n)
             val imag = DoubleArray(n)
@@ -538,6 +641,11 @@ internal class AudioSpectrumAnalyzer(
             fft(real, imag)
 
             val half = n / 2
+            if (powerOut != null) {
+                // dBFS-normalised power: a full-scale sine under a Hann window peaks at |X| = N/4.
+                val norm = (n / 4.0) * (n / 4.0)
+                for (i in 0 until min(half, powerOut.size)) powerOut[i] = (real[i] * real[i] + imag[i] * imag[i]) / norm
+            }
             val binsPerBucket = max(1, half / SPECTROGRAM_BUCKETS)
             val magnitudes = DoubleArray(SPECTROGRAM_BUCKETS)
             var maxMag = 1e-9
@@ -607,7 +715,7 @@ internal class AudioSpectrumAnalyzer(
     private fun cacheFile(context: Context, song: Song): File {
         val dir = File(context.filesDir, "spectrum_analysis_cache").apply { mkdirs() }
         // Task 3: key on both ID and size for extra safety against file swaps/updates.
-        return File(dir, "${song.id}_${song.fileSizeBytes}.json")
+        return File(dir, "${song.id}_${song.fileSizeBytes}_v2.json")
     }
 
     private fun readCache(file: File): SpectrumAnalysisResult? = try {
@@ -632,7 +740,12 @@ internal class AudioSpectrumAnalyzer(
             confidenceScore = json.optInt("confidenceScore", 0),
             spectralCutoffHz = json.optInt("spectralCutoffHz", 0),
             nyquistHz = json.optInt("nyquistHz", 22050),
-            bitDepthLooksPadded = json.optBoolean("bitDepthLooksPadded", false)
+            bitDepthLooksPadded = json.optBoolean("bitDepthLooksPadded", false),
+            edgeDropDb = json.optDouble("edgeDropDb", 0.0),
+            hasBrickWall = json.optBoolean("hasBrickWall", false),
+            bandwidthHz = json.optInt("bandwidthHz", 0),
+            analyzedSeconds = json.optInt("analyzedSeconds", 0),
+            reasons = json.optJSONArray("reasons")?.let { a -> List(a.length()) { a.getString(it) } } ?: emptyList()
         )
     } catch (e: Exception) {
         null
@@ -651,6 +764,11 @@ internal class AudioSpectrumAnalyzer(
         json.put("spectralCutoffHz", data.spectralCutoffHz)
         json.put("nyquistHz", data.nyquistHz)
         json.put("bitDepthLooksPadded", data.bitDepthLooksPadded)
+        json.put("edgeDropDb", data.edgeDropDb)
+        json.put("hasBrickWall", data.hasBrickWall)
+        json.put("bandwidthHz", data.bandwidthHz)
+        json.put("analyzedSeconds", data.analyzedSeconds)
+        json.put("reasons", JSONArray(data.reasons))
         file.writeText(json.toString())
     }
 }

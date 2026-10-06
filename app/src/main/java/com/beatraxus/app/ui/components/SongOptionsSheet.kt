@@ -74,7 +74,11 @@ fun SongOptionsSheet(
     onTagsSaved: (Song, com.beatraxus.app.features.TagData) -> Unit = { _, _ -> },
     onPlaySongs: (List<Song>, Int) -> Unit = { _, _ -> },
     onPauseLocalPlayback: () -> Unit = {},
-    currentPositionMs: Long = 0L
+    currentPositionMs: Long = 0L,
+    // A-B loop entry: only passed by the Now Playing screen, so it is shown nowhere else.
+    abLoopLabel: String? = null,
+    abLoopActive: Boolean = false,
+    onAbLoop: (() -> Unit)? = null
 ) {
     var showInfoOverlay by remember { mutableStateOf(initialShowInfoOverlay) }
     var showTagEditor by remember { mutableStateOf(false) }
@@ -174,7 +178,7 @@ fun SongOptionsSheet(
                 Spacer(Modifier.height(8.dp))
 
                 // Options Grid
-                val options = remember(showPlayNext, showMark, song.id) {
+                val options = remember(showPlayNext, showMark, song.id, abLoopLabel, abLoopActive) {
                     buildList {
                         add(OptionItem(Icons.AutoMirrored.Rounded.PlaylistAdd, "Playlist", onAddToPlaylist))
                         if (showPlayNext) {
@@ -189,9 +193,12 @@ fun SongOptionsSheet(
                             add(OptionItem(Icons.Rounded.Edit, "Edit Tags", { showTagEditor = true }))
                         }
                         if (!song.isCloud()) {
-                            add(OptionItem(Icons.Rounded.RingVolume, "Set as Ringtone", { showRingtone = true }))
+                            add(OptionItem(Icons.Rounded.RingVolume, "Set as", { showRingtone = true }))
                         }
                         add(OptionItem(Icons.Rounded.Cast, "DLNA / UPnP", { showDlna = true }))
+                        if (abLoopLabel != null && onAbLoop != null) {
+                            add(OptionItem(Icons.Rounded.Loop, abLoopLabel, onAbLoop, tint = if (abLoopActive) AccentBlue else null))
+                        }
                         add(OptionItem(Icons.Rounded.Person, "Artist", onGoToArtist))
                         add(OptionItem(Icons.Rounded.Album, "Album", onGoToAlbum))
                         add(OptionItem(Icons.Rounded.FolderOpen, "Folder", onGoToFolder))
@@ -206,7 +213,7 @@ fun SongOptionsSheet(
                             rowOptions.forEach { option ->
                                 OptionGridItem(option, contentColor, Modifier.weight(1f)) {
                                     option.onClick()
-                                    if (option.label !in setOf("Info/Tags", "Edit Tags", "Set as Ringtone", "DLNA / UPnP")) onDismiss()
+                                    if (!option.keepOpen && option.label !in setOf("Info/Tags", "Edit Tags", "Set as", "DLNA / UPnP")) onDismiss()
                                 }
                             }
                             if (rowOptions.size == 1) {
@@ -273,7 +280,7 @@ private fun OptionGridItem(
         Icon(
             option.icon,
             contentDescription = null,
-            tint = contentColor,
+            tint = option.tint ?: contentColor,
             modifier = Modifier.size(24.dp)
         )
         Spacer(Modifier.width(16.dp))
@@ -291,5 +298,6 @@ private data class OptionItem(
     val icon: ImageVector,
     val label: String,
     val onClick: () -> Unit,
-    val tint: Color? = null
+    val tint: Color? = null,
+    val keepOpen: Boolean = false
 )

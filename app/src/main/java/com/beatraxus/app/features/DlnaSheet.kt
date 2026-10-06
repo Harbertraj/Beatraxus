@@ -14,8 +14,6 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -29,10 +27,8 @@ import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
@@ -64,8 +60,7 @@ object DlnaSession {
     var isPlaying by mutableStateOf(false)
 }
 
-private val Accent = Color(0xFF00E5FF)
-private val SheetBg = Color(0xFF14121C)
+private val Accent = com.beatraxus.app.ui.theme.AccentBlue
 
 /**
  * DLNA / UPnP sheet.
@@ -77,7 +72,6 @@ private val SheetBg = Color(0xFF14121C)
  * @param onPauseLocal called when casting starts so the phone stops playing
  * @param onPlaySongs called when a song from a media server is chosen
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DlnaSheet(
     song: Song?,
@@ -99,30 +93,32 @@ fun DlnaSheet(
         scanning = false
     }
 
-    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = SheetBg) {
-        Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 16.dp).heightIn(min = 360.dp, max = 640.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Rounded.Cast, null, tint = Accent)
-                Spacer(Modifier.width(10.dp))
-                Text("DLNA / UPnP", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp, modifier = Modifier.weight(1f))
-                if (scanning) CircularProgressIndicator(Modifier.size(20.dp), color = Accent, strokeWidth = 2.dp)
-                else IconButton(onClick = { scanToken++ }) { Icon(Icons.Rounded.Refresh, "Rescan", tint = Color.White) }
+    com.beatraxus.app.ui.components.InfoStyleDialog(
+        title = "DLNA / UPnP",
+        icon = Icons.Rounded.Cast,
+        onDismiss = onDismiss,
+        maxHeightFraction = 0.82f,
+        headerTrailing = {
+            if (scanning) CircularProgressIndicator(Modifier.size(20.dp), color = Accent, strokeWidth = 2.dp)
+            else IconButton(onClick = { scanToken++ }, modifier = Modifier.size(32.dp)) {
+                Icon(Icons.Rounded.Refresh, "Rescan", tint = Color.White)
             }
-            Row(Modifier.padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("Play on device", "Browse servers").forEachIndexed { i, label ->
-                    Box(
-                        Modifier.clip(RoundedCornerShape(50))
-                            .background(if (tab == i) Accent else Color.White.copy(alpha = 0.08f))
-                            .clickable { tab = i }
-                            .padding(horizontal = 16.dp, vertical = 8.dp)
-                    ) { Text(label, color = if (tab == i) Color.Black else Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp) }
-                }
+        }
+    ) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf("Play on device", "Browse servers").forEachIndexed { i, label ->
+                Box(
+                    Modifier.clip(RoundedCornerShape(50))
+                        .background(if (tab == i) Accent.copy(alpha = 0.9f) else Color.White.copy(alpha = 0.08f))
+                        .clickable { tab = i }
+                        .padding(horizontal = 16.dp, vertical = 8.dp)
+                ) { Text(label, color = if (tab == i) Color.Black else Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp) }
             }
-            if (tab == 0) {
-                RendererTab(devices.filter { it.isRenderer }, scanning, song, positionMs, onPauseLocal)
-            } else {
-                ServerTab(devices.filter { it.isServer }, scanning, onPlaySongs, onDismiss)
-            }
+        }
+        if (tab == 0) {
+            RendererTab(devices.filter { it.isRenderer }, scanning, song, positionMs, onPauseLocal)
+        } else {
+            ServerTab(devices.filter { it.isServer }, scanning, onPlaySongs, onDismiss)
         }
     }
 }
@@ -201,8 +197,8 @@ private fun RendererTab(
                 color = Color.White.copy(alpha = 0.6f), fontSize = 13.sp, modifier = Modifier.padding(vertical = 16.dp)
             )
         }
-        LazyColumn {
-            items(renderers, key = { it.udn }) { d ->
+        Column {
+            renderers.forEach { d ->
                 Row(
                     Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
                         .clickable {
@@ -264,8 +260,8 @@ private fun ServerTab(
                 color = Color.White.copy(alpha = 0.6f), fontSize = 13.sp, modifier = Modifier.padding(vertical = 16.dp)
             )
         }
-        LazyColumn {
-            items(servers, key = { it.udn }) { d ->
+        Column {
+            servers.forEach { d ->
                 Row(
                     Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
                         .clickable { server = d; stack = listOf("0" to d.name); load(d, "0") }
@@ -290,8 +286,8 @@ private fun ServerTab(
             Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Accent) }
         } else {
             val audio = entries.filter { !it.isContainer && it.resUrl != null }
-            LazyColumn {
-                items(entries, key = { it.id }) { e ->
+            Column {
+                entries.forEach { e ->
                     Row(
                         Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
                             .clickable {

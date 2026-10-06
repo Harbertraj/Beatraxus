@@ -9,9 +9,10 @@ import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import android.provider.Settings
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Alarm
+import androidx.compose.material.icons.rounded.Notifications
+import androidx.compose.material.icons.rounded.RingVolume
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -112,7 +113,7 @@ object RingtoneHelper {
     }
 }
 
-/** Dialog: choose Ringtone / Notification / Alarm, handles the WRITE_SETTINGS permission. */
+/** "Set as" popup (same glass style as Song Details): Ringtone / Notification / Alarm. */
 @Composable
 fun RingtoneDialog(song: Song, onDismiss: () -> Unit) {
     val context = LocalContext.current
@@ -140,18 +141,34 @@ fun RingtoneDialog(song: Song, onDismiss: () -> Unit) {
         }
     }
 
-    AlertDialog(
-        onDismissRequest = { if (!busy) onDismiss() },
-        title = { Text("Set as…") },
-        text = { Text(if (busy) "Working…" else "\"${song.title}\"") },
-        confirmButton = {
-            TextButton(enabled = !busy, onClick = { apply(RingtoneManager.TYPE_RINGTONE) }) { Text("Ringtone") }
-        },
-        dismissButton = {
-            androidx.compose.foundation.layout.Row {
-                TextButton(enabled = !busy, onClick = { apply(RingtoneManager.TYPE_NOTIFICATION) }) { Text("Notification") }
-                TextButton(enabled = !busy, onClick = { apply(RingtoneManager.TYPE_ALARM) }) { Text("Alarm") }
-            }
+    com.beatraxus.app.ui.components.InfoStyleDialog(
+        title = "Set as",
+        icon = androidx.compose.material.icons.Icons.Rounded.RingVolume,
+        onDismiss = onDismiss,
+        dismissible = !busy,
+        footer = {
+            com.beatraxus.app.ui.components.InfoActionButton(
+                if (busy) "Working\u2026" else "Cancel",
+                onClick = onDismiss,
+                enabled = !busy,
+                modifier = androidx.compose.ui.Modifier.weight(1f)
+            )
         }
-    )
+    ) {
+        com.beatraxus.app.ui.components.InfoSectionLabel("SONG")
+        com.beatraxus.app.ui.components.InfoGlassBlock {
+            com.beatraxus.app.ui.components.InfoMetaRow("Title", song.title)
+            com.beatraxus.app.ui.components.InfoMetaRow("Artist", song.artist, showDivider = false)
+        }
+        com.beatraxus.app.ui.components.InfoSectionLabel("USE THIS SONG AS")
+        com.beatraxus.app.ui.components.InfoChoiceRow(
+            androidx.compose.material.icons.Icons.Rounded.RingVolume, "Phone ringtone", "Incoming calls", enabled = !busy
+        ) { apply(RingtoneManager.TYPE_RINGTONE) }
+        com.beatraxus.app.ui.components.InfoChoiceRow(
+            androidx.compose.material.icons.Icons.Rounded.Notifications, "Notification sound", "Default alerts", enabled = !busy
+        ) { apply(RingtoneManager.TYPE_NOTIFICATION) }
+        com.beatraxus.app.ui.components.InfoChoiceRow(
+            androidx.compose.material.icons.Icons.Rounded.Alarm, "Alarm sound", "Default alarm tone", enabled = !busy
+        ) { apply(RingtoneManager.TYPE_ALARM) }
+    }
 }

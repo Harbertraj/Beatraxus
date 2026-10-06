@@ -25,3 +25,7 @@ replay_pid*.log
 buildlog.txt
 compile_out.txt
 .artifacts
+
+# Firebase config (copied into assets at build time)
+app/google-services.json
+app/src/main/assets/google-services.json
