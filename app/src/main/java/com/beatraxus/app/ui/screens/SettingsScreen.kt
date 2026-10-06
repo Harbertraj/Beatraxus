@@ -69,6 +69,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -340,9 +341,18 @@ fun SettingsScreen(
             contentWindowInsets = WindowInsets.systemBars,
             topBar = {
                 CenterAlignedTopAppBar(
+                    modifier = Modifier.drawBehind {
+                        drawRect(
+                            brush = Brush.horizontalGradient(
+                                listOf(Color.Transparent, PremiumAccent.copy(alpha = 0.55f), Color.Transparent)
+                            ),
+                            topLeft = Offset(0f, size.height - 1.dp.toPx()),
+                            size = androidx.compose.ui.geometry.Size(size.width, 1.dp.toPx())
+                        )
+                    },
                     colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
-                        containerColor = Color.Black.copy(0.15f),
-                        scrolledContainerColor = Color.Black.copy(0.3f)
+                        containerColor = Color(0xFF0A0A0C).copy(0.55f),
+                        scrolledContainerColor = Color(0xFF0A0A0C).copy(0.8f)
                     ),
                     title = {
                         val displayTitle = if (currentSection != null && currentSection.contains(": ")) {
@@ -426,6 +436,7 @@ fun SettingsScreen(
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
                     if (section == null) {
+                        SettingsGroupLabel("ENGINE & UI")
                         SettingMenuItem(
                             title = "Audio",
                             subtitle = "Output, Sample rates, USB Direct, Bit-Perfect, DVC, Limiter",
@@ -447,6 +458,7 @@ fun SettingsScreen(
                             iconColor = Color(0xFF2196F3),
                             onClick = { sectionStack.add("Replay Gain") }
                         )
+                        SettingsGroupLabel("LIBRARY & MEDIA")
                         SettingMenuItem(
                             title = "Library",
                             subtitle = "Manage music folders and scanning",
@@ -461,6 +473,7 @@ fun SettingsScreen(
                             iconColor = Color(0xFFFF9800),
                             onClick = { sectionStack.add("Video Settings") }
                         )
+                        SettingsGroupLabel("CONNECTED SERVICES")
                         SettingMenuItem(
                             title = "Cloud Account",
                             subtitle = "Cloud, Telegram and Metadata Sync",
@@ -483,6 +496,7 @@ fun SettingsScreen(
                             iconColor = Color(0xFF00C2A8),
                             onClick = onNavigateToStreamingAddons
                         )
+                        SettingsGroupLabel("SYSTEM")
                         SettingMenuItem(
                             title = "Backup & Restore",
                             subtitle = "Export/Import settings and assign to devices",
@@ -751,8 +765,8 @@ fun AppearanceContent(sectionStack: SnapshotStateList<String>) {
             onClick = { sectionStack.add("Appearance: Settings Interface") }
         )
         SettingMenuItem(
-            title = "Dual Colour Palette",
-            subtitle = "Studio DSP Interface",
+            title = "Studio DSP Interface",
+            subtitle = "Dual Colour Palette",
             icon = Icons.Rounded.ColorLens,
             iconColor = Color(0xFFFFB300),
             onClick = { sectionStack.add("Appearance: Dual Colour Palette") }
@@ -1467,6 +1481,40 @@ fun LastFmContent(uiState: PlayerUiState, viewModel: PlayerViewModel) {
 
 
 @Composable
+private fun SettingsGroupLabel(text: String) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 6.dp, top = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(width = 3.dp, height = 12.dp)
+                .background(PremiumAccent, RoundedCornerShape(2.dp))
+        )
+        Text(
+            text,
+            color = SecondaryText,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Black,
+            letterSpacing = 2.sp
+        )
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .height(1.dp)
+                .background(
+                    Brush.horizontalGradient(
+                        listOf(Color.White.copy(alpha = 0.12f), Color.Transparent)
+                    )
+                )
+        )
+    }
+}
+
+@Composable
 fun SettingMenuItem(
     title: String,
     subtitle: String,
@@ -1512,33 +1560,46 @@ fun SettingMenuItem(
                     onClick()
                 }
             ),
-        shape = RoundedCornerShape(20.dp),
-        color = Color.Black.copy(alpha = 0.15f),
+        shape = RoundedCornerShape(22.dp),
+        color = Color(0xFF111216).copy(alpha = 0.72f),
         border = BorderStroke(
             width = 0.8.dp,
             brush = Brush.linearGradient(
                 listOf(
-                    Color.White.copy(alpha = 0.15f),
-                    Color.White.copy(alpha = 0.02f),
-                    iconColor.copy(alpha = 0.2f)
+                    iconColor.copy(alpha = 0.35f),
+                    Color.White.copy(alpha = 0.04f),
+                    Color.White.copy(alpha = 0.10f)
                 )
             )
         )
     ) {
         Row(
             modifier = Modifier
-                .padding(horizontal = 18.dp, vertical = 16.dp),
+                .background(
+                    Brush.horizontalGradient(
+                        listOf(iconColor.copy(alpha = 0.10f), Color.Transparent)
+                    )
+                )
+                .padding(horizontal = 16.dp, vertical = 15.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = if (centered) Arrangement.Center else Arrangement.Start
         ) {
             if (!centered) {
                 Box(
                     modifier = Modifier
-                        .size(46.dp)
-                        .glassIconBackground(
-                            backgroundColor = iconColor.copy(alpha = 0.12f),
-                            shape = RoundedCornerShape(14.dp),
-                            borderColor = iconColor.copy(alpha = 0.25f)
+                        .size(48.dp)
+                        .clip(RoundedCornerShape(15.dp))
+                        .background(
+                            Brush.linearGradient(
+                                listOf(iconColor.copy(alpha = 0.32f), iconColor.copy(alpha = 0.08f))
+                            )
+                        )
+                        .border(
+                            1.dp,
+                            Brush.linearGradient(
+                                listOf(iconColor.copy(alpha = 0.65f), iconColor.copy(alpha = 0.10f))
+                            ),
+                            RoundedCornerShape(15.dp)
                         ),
                     contentAlignment = Alignment.Center
                 ) {
@@ -1620,7 +1681,7 @@ fun SettingMenuItem(
                 Spacer(Modifier.height(4.dp))
                 Text(
                     text = subtitle,
-                    color = TextWhite.copy(alpha = 0.55f),
+                    color = Color(0xFF9AA5AB),
                     style = TextStyle(
                         fontSize = 12.sp,
                         lineHeight = 16.sp,
@@ -1632,12 +1693,20 @@ fun SettingMenuItem(
             }
 
             if (!centered) {
-                Icon(
-                    Icons.AutoMirrored.Rounded.KeyboardArrowRight,
-                    null,
-                    tint = TextWhite.copy(0.2f),
-                    modifier = Modifier.size(22.dp)
-                )
+                Box(
+                    modifier = Modifier
+                        .size(30.dp)
+                        .background(Color.White.copy(alpha = 0.05f), CircleShape)
+                        .border(0.8.dp, Color.White.copy(alpha = 0.08f), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                        null,
+                        tint = iconColor.copy(alpha = 0.9f),
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
             }
         }
     }
@@ -5245,14 +5314,15 @@ fun SettingsSection(
                 ambientColor = Color.Black.copy(0.5f),
                 spotColor = Color.Black.copy(0.5f)
             ),
-        shape = RoundedCornerShape(26.dp),
-        color = Color.Black.copy(alpha = 0.12f),
+        shape = RoundedCornerShape(24.dp),
+        color = Color(0xFF111216).copy(alpha = 0.70f),
         border = BorderStroke(
-            0.6.dp,
+            0.8.dp,
             Brush.linearGradient(
                 listOf(
-                    accentColor.copy(alpha = if (isActive) 0.5f else 0.15f),
-                    Color.White.copy(alpha = 0.02f)
+                    accentColor.copy(alpha = if (isActive) 0.55f else 0.20f),
+                    Color.White.copy(alpha = 0.04f),
+                    Color.White.copy(alpha = 0.08f)
                 )
             )
         )
@@ -5261,10 +5331,10 @@ fun SettingsSection(
             modifier = Modifier
                 .background(
                     Brush.verticalGradient(
-                        listOf(accentColor.copy(alpha = 0.03f), Color.Transparent)
+                        listOf(accentColor.copy(alpha = if (isActive) 0.09f else 0.05f), Color.Transparent)
                     )
                 )
-                .padding(horizontal = 20.dp, vertical = 18.dp),
+                .padding(horizontal = 18.dp, vertical = 18.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             Row(
@@ -5280,10 +5350,18 @@ fun SettingsSection(
                     Box(
                         modifier = Modifier
                             .size(44.dp)
-                            .glassIconBackground(
-                                backgroundColor = accentColor.copy(alpha = 0.08f),
-                                shape = RoundedCornerShape(14.dp),
-                                borderColor = accentColor.copy(alpha = 0.2f)
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(
+                                Brush.linearGradient(
+                                    listOf(accentColor.copy(alpha = 0.28f), accentColor.copy(alpha = 0.06f))
+                                )
+                            )
+                            .border(
+                                1.dp,
+                                Brush.linearGradient(
+                                    listOf(accentColor.copy(alpha = 0.55f), accentColor.copy(alpha = 0.08f))
+                                ),
+                                RoundedCornerShape(14.dp)
                             ),
                         contentAlignment = Alignment.Center
                     ) {
@@ -5335,6 +5413,16 @@ fun SettingsSection(
                     headerActions()
                 }
             }
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(1.dp)
+                    .background(
+                        Brush.horizontalGradient(
+                            listOf(accentColor.copy(alpha = 0.45f), Color.White.copy(alpha = 0.04f), Color.Transparent)
+                        )
+                    )
+            )
             content()
         }
     }

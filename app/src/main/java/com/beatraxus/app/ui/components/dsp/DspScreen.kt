@@ -2330,24 +2330,12 @@ private fun PremiumSoundStageCard(
             .padding(bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp)
     ) {
-        // Spatial Audio Title
+        // Spatial mode toggle
         Column(
             modifier = Modifier.fillMaxWidth(),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Box(
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 7.dp)
-            ) {
-                Text(
-                    text = "SPATIAL AUDIO",
-                    color = PremiumAccent,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Black,
-                    letterSpacing = 2.sp
-                )
-            }
-
             // UI Mode Toggle
             Row(
                 modifier = Modifier

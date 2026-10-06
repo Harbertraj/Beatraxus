@@ -166,7 +166,7 @@ private fun DspPalettePreview(palette: DspPalette) {
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         Text(
-            text = "SPATIAL AUDIO",
+            text = "STUDIO DSP",
             color = palette.primary,
             fontSize = 12.sp,
             fontWeight = FontWeight.Black,
