@@ -187,7 +187,8 @@ fun PlayTogetherScreen(
                     busy = ui.busy,
                     message = ui.message,
                     onCreate = { pt.createRoom(name) },
-                    onJoin = { pt.joinRoom(joinCode, name) }
+                    onJoin = { pt.joinRoom(joinCode, name) },
+                    onSetDbUrl = { pt.setDatabaseUrl(it) }
                 )
             }
 
@@ -297,8 +298,10 @@ private fun StartCard(
     busy: Boolean,
     message: String?,
     onCreate: () -> Unit,
-    onJoin: () -> Unit
+    onJoin: () -> Unit,
+    onSetDbUrl: (String) -> Unit = {}
 ) {
+    var dbUrlText by remember { mutableStateOf("") }
     GlassCard {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(
@@ -322,6 +325,12 @@ private fun StartCard(
         message?.let {
             Spacer(Modifier.height(10.dp))
             Text(it, color = Color(0xFFFF6B6B), fontSize = 12.sp, lineHeight = 17.sp)
+            if (it.startsWith("Database not found")) {
+                Spacer(Modifier.height(10.dp))
+                PtField("Database URL (https://...firebasedatabase.app)", dbUrlText, { v -> dbUrlText = v }, mono = true)
+                Spacer(Modifier.height(8.dp))
+                PrimaryButton("Save database URL", enabled = dbUrlText.isNotBlank(), onClick = { onSetDbUrl(dbUrlText); dbUrlText = "" })
+            }
         }
         Spacer(Modifier.height(16.dp))
         PrimaryButton("Create a room", enabled = name.isNotBlank(), busy = busy, onClick = onCreate)

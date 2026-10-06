@@ -974,30 +974,36 @@ fun NowPlayingScreen(
                                     }
                                 }
 
-                                // Like Button (located between song name and three dot button)
-                                // While an A-B loop is waiting for point B, this button becomes "Set B".
-                                if (abLoop.pointA != null && abLoop.pointB == null) {
-                                    Box(
-                                        modifier = Modifier
-                                            .padding(horizontal = 6.dp)
-                                            .clip(RoundedCornerShape(50))
-                                            .background(Color.White.copy(alpha = 0.16f))
-                                            .border(1.dp, Color.White.copy(alpha = 0.35f), RoundedCornerShape(50))
-                                            .clickable { abLoop.tap(progressMs()) }
-                                            .padding(horizontal = 14.dp, vertical = 8.dp),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Text("Set B", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                // A-B loop control: small button next to the like button, only while a loop is
+                                // being set (Set B) or running (tap = stop). It never replaces the like button.
+                                if (abLoop.pointA != null) {
+                                    val waitingForB = abLoop.pointB == null
+                                    IconButton(onClick = { abLoop.tap(progressMs()) }) {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Icon(
+                                                Icons.Rounded.Loop,
+                                                contentDescription = if (waitingForB) "Set loop point B" else "Stop A-B loop",
+                                                tint = if (waitingForB) Color.White.copy(0.7f) else com.beatraxus.app.ui.theme.AccentBlue,
+                                                modifier = Modifier.size(26.dp)
+                                            )
+                                            Text(
+                                                if (waitingForB) "B" else "A-B",
+                                                color = Color.White,
+                                                fontSize = 7.sp,
+                                                fontWeight = FontWeight.Black
+                                            )
+                                        }
                                     }
-                                } else {
-                                    IconButton(onClick = onFavoriteClick) {
-                                        Icon(
-                                            if (isFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
-                                            contentDescription = if (isFavorite) "Remove from favorites" else "Add to favorites",
-                                            tint = if (isFavorite) Color(0xFFFF4081) else Color.White.copy(0.7f),
-                                            modifier = Modifier.size(28.dp)
-                                        )
-                                    }
+                                }
+
+                                // Like Button (located between song name and three dot button) - always visible
+                                IconButton(onClick = onFavoriteClick) {
+                                    Icon(
+                                        if (isFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                                        contentDescription = if (isFavorite) "Remove from favorites" else "Add to favorites",
+                                        tint = if (isFavorite) Color(0xFFFF4081) else Color.White.copy(0.7f),
+                                        modifier = Modifier.size(28.dp)
+                                    )
                                 }
 
                                 // Song Options Menu (three dot button)

@@ -2327,17 +2327,7 @@ private fun PremiumSoundStageCard(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Box(
-                modifier = Modifier
-                    .background(
-                        Brush.horizontalGradient(listOf(PremiumAccent.copy(0.14f), DspViolet.copy(0.14f))),
-                        RoundedCornerShape(50)
-                    )
-                    .border(
-                        1.dp,
-                        Brush.horizontalGradient(listOf(PremiumAccent.copy(0.55f), DspViolet.copy(0.55f))),
-                        RoundedCornerShape(50)
-                    )
-                    .padding(horizontal = 20.dp, vertical = 7.dp)
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 7.dp)
             ) {
                 Text(
                     text = "SPATIAL AUDIO",

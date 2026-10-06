@@ -17,6 +17,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import okhttp3.FormBody
 import okhttp3.MediaType.Companion.toMediaType
@@ -92,6 +94,12 @@ class PlayTogetherManager(
     private val http = OkHttpClient.Builder().callTimeout(15, TimeUnit.SECONDS).build()
     private val streamHttp = OkHttpClient.Builder().readTimeout(75, TimeUnit.SECONDS).build()
 
+    // Database URL discovery (declared before _state because loadConfig() fills them in)
+    private var cfgProjectId: String = ""
+    private var cfgDbUrlFromFile: String = ""
+    @Volatile private var dbResolved = false
+    private val dbMutex = Mutex()
+
     private val _state = MutableStateFlow(loadConfig())
     val state: StateFlow<PtUiState> = _state.asStateFlow()
 
@@ -152,8 +160,13 @@ class PlayTogetherManager(
             val root = JSONObject(text)
             val info = root.optJSONObject("project_info")
             val projectId = info?.optString("project_id").orEmpty()
-            var dbUrl = info?.optString("firebase_url").orEmpty()
+            cfgProjectId = projectId
+            cfgDbUrlFromFile = info?.optString("firebase_url").orEmpty().trim().trimEnd('/')
+            var dbUrl = cfgDbUrlFromFile
             if (dbUrl.isBlank() && projectId.isNotBlank()) dbUrl = "https://$projectId-default-rtdb.firebaseio.com"
+            // A URL the person pasted in (Database not found screen) always wins.
+            val override = prefs.getString("dbUrlOverride", null)?.trim().orEmpty()
+            if (override.isNotBlank()) { dbUrl = override; dbResolved = true }
 
             // pick the client entry for this app (fall back to the first one)
             val clients = root.optJSONArray("client")
@@ -188,6 +201,18 @@ class PlayTogetherManager(
     }
 
     fun clearMessage() = _state.update { it.copy(message = null) }
+
+    /** Lets the person paste the Realtime Database URL when it cannot be worked out from google-services.json. */
+    fun setDatabaseUrl(raw: String) {
+        var u = raw.trim()
+        if (u.isEmpty()) return
+        if (!u.startsWith("http", ignoreCase = true)) u = "https://$u"
+        u = Regex("^https://[^/?#]+", RegexOption.IGNORE_CASE).find(u)?.value ?: u
+        u = u.trimEnd('/')
+        prefs.edit().putString("dbUrlOverride", u).putString("dbUrlResolved", u).apply()
+        dbResolved = true
+        _state.update { it.copy(databaseUrl = u, message = null) }
+    }
 
     fun createRoom(name: String) {
         if (_state.value.busy || room != null) return
@@ -629,6 +654,7 @@ class PlayTogetherManager(
     private suspend fun call(method: String, path: String, body: String? = null): String =
         withContext(Dispatchers.IO) {
             ensureAuth()
+            resolveDatabaseUrl()
             val code = path.substringBefore('/')
             val sub = if (path.contains('/')) path.substringAfter('/') else ""
             val extra = if (method == "GET") "" else "print=silent"
@@ -644,9 +670,61 @@ class PlayTogetherManager(
             }
         }
 
+    /**
+     * The Realtime Database URL depends on the region it was created in
+     * (https://NAME.firebaseio.com for the US, https://NAME.REGION.firebasedatabase.app elsewhere),
+     * and google-services.json only carries it when the database existed at download time.
+     * Try the likely addresses once and keep the one that answers.
+     */
+    private suspend fun resolveDatabaseUrl() {
+        if (dbResolved) return
+        dbMutex.withLock {
+            if (dbResolved) return
+            val pid = cfgProjectId
+            val candidates = buildList {
+                prefs.getString("dbUrlResolved", null)?.let { add(it) }
+                add(_state.value.databaseUrl)
+                if (cfgDbUrlFromFile.isNotBlank()) add(cfgDbUrlFromFile)
+                if (pid.isNotBlank()) {
+                    add("https://$pid-default-rtdb.firebaseio.com")
+                    add("https://$pid-default-rtdb.asia-southeast1.firebasedatabase.app")
+                    add("https://$pid-default-rtdb.europe-west1.firebasedatabase.app")
+                    add("https://$pid.firebaseio.com")
+                }
+            }.map { it.trim().trimEnd('/') }.filter { it.startsWith("https://") }.distinct()
+
+            for (c in candidates) {
+                when (probeDatabase(c)) {
+                    true -> {
+                        prefs.edit().putString("dbUrlResolved", c).apply()
+                        _state.update { it.copy(databaseUrl = c) }
+                        dbResolved = true
+                        return
+                    }
+                    false -> Unit
+                    null -> return // network trouble: let the real request report it, probe again next time
+                }
+            }
+            dbResolved = true // every address answered "no such database"; the real request reports it
+        }
+    }
+
+    /** true = database exists at [base], false = it does not, null = could not tell (offline / server error). */
+    private fun probeDatabase(base: String): Boolean? = try {
+        val q = idToken?.let { "?auth=$it" }.orEmpty()
+        val req = Request.Builder().url("$base/playTogether/rooms/__probe__.json$q").get().build()
+        http.newCall(req).execute().use { r ->
+            when {
+                r.code == 200 || r.code == 401 || r.code == 403 -> true
+                r.code >= 500 -> null
+                else -> false
+            }
+        }
+    } catch (_: Exception) { null }
+
     private fun friendly(code: Int) = when (code) {
         401, 403 -> "Permission denied. In Firebase enable Anonymous sign-in, publish the database rules shown above, and add this app\u2019s SHA-1 under Project settings > Your apps."
-        404 -> "Database not found. Check the Database URL."
+        404 -> "Database not found. Open Firebase console > Realtime Database > Data, copy the database URL shown at the top and paste it below."
         else -> "Server error ($code)."
     }
 
