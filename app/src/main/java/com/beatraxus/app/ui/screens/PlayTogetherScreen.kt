@@ -38,6 +38,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -186,6 +187,7 @@ fun PlayTogetherScreen(
                     onJoinCode = { joinCode = it.uppercase().filter { c -> c.isLetterOrDigit() }.take(8) },
                     busy = ui.busy,
                     message = ui.message,
+                    info = ui.info,
                     onCreate = { pt.createRoom(name) },
                     onJoin = { pt.joinRoom(joinCode, name) },
                     onSetDbUrl = { pt.setDatabaseUrl(it) }
@@ -299,9 +301,15 @@ private fun StartCard(
     message: String?,
     onCreate: () -> Unit,
     onJoin: () -> Unit,
+    info: String? = null,
     onSetDbUrl: (String) -> Unit = {}
 ) {
     var dbUrlText by remember { mutableStateOf("") }
+    // Keep the URL box on screen once a "Database not found" error appeared, until a URL is accepted
+    // (the error message itself is cleared whenever the person taps a button).
+    var showDbUrl by remember { mutableStateOf(false) }
+    LaunchedEffect(message) { if (message?.startsWith("Database not found") == true) showDbUrl = true }
+    LaunchedEffect(info) { if (info != null) { showDbUrl = false; dbUrlText = "" } }
     GlassCard {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(
@@ -325,12 +333,21 @@ private fun StartCard(
         message?.let {
             Spacer(Modifier.height(10.dp))
             Text(it, color = Color(0xFFFF6B6B), fontSize = 12.sp, lineHeight = 17.sp)
-            if (it.startsWith("Database not found")) {
-                Spacer(Modifier.height(10.dp))
-                PtField("Database URL (https://...firebasedatabase.app)", dbUrlText, { v -> dbUrlText = v }, mono = true)
-                Spacer(Modifier.height(8.dp))
-                PrimaryButton("Save database URL", enabled = dbUrlText.isNotBlank(), onClick = { onSetDbUrl(dbUrlText); dbUrlText = "" })
-            }
+        }
+        info?.let {
+            Spacer(Modifier.height(10.dp))
+            Text(it, color = PtGreen, fontSize = 12.sp, lineHeight = 17.sp)
+        }
+        if (showDbUrl) {
+            Spacer(Modifier.height(10.dp))
+            PtField("Database URL (https://...firebasedatabase.app)", dbUrlText, { v -> dbUrlText = v }, mono = true)
+            Spacer(Modifier.height(8.dp))
+            PrimaryButton(
+                "Save database URL",
+                enabled = dbUrlText.isNotBlank(),
+                busy = busy,
+                onClick = { onSetDbUrl(dbUrlText) }
+            )
         }
         Spacer(Modifier.height(16.dp))
         PrimaryButton("Create a room", enabled = name.isNotBlank(), busy = busy, onClick = onCreate)

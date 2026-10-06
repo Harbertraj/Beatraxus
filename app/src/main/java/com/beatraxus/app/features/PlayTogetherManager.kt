@@ -55,6 +55,8 @@ data class PtUiState(
     /** The song the room is playing does not exist in this phone's library. */
     val songMissing: Boolean = false,
     val message: String? = null,
+    /** Positive notice (e.g. "Database connected"), shown in green. */
+    val info: String? = null,
     val busy: Boolean = false
 )
 
@@ -202,16 +204,95 @@ class PlayTogetherManager(
 
     fun clearMessage() = _state.update { it.copy(message = null) }
 
-    /** Lets the person paste the Realtime Database URL when it cannot be worked out from google-services.json. */
+    /** Every address a database called [n] can live at (US = firebaseio.com, others = regional hosts). */
+    private fun dbUrlsForName(n: String): List<String> =
+        if (n.isBlank()) emptyList() else listOf(
+            "https://$n.firebaseio.com",
+            "https://$n.europe-west1.firebasedatabase.app",
+            "https://$n.asia-southeast1.firebasedatabase.app",
+            "https://$n.us-central1.firebasedatabase.app"
+        )
+
+    /**
+     * Turns whatever the person pasted into a list of database URLs worth trying: a plain URL,
+     * a URL with a path / query, a Firebase console address, or just the database name.
+     */
+    private fun databaseUrlCandidates(raw: String): List<String> {
+        val s = raw.trim().trim('"', '\'', '<', '>').replace(Regex("\\s+"), "")
+        if (s.isEmpty()) return emptyList()
+
+        // Firebase console address: https://console.firebase.google.com/project/ID/database/NAME/data
+        if (s.contains("console.firebase.google.com", ignoreCase = true)) {
+            val name = Regex("/database/([^/?#]+)", RegexOption.IGNORE_CASE).find(s)?.groupValues?.get(1)
+            return if (name != null) dbUrlsForName(name) else emptyList()
+        }
+        val withScheme = if (s.startsWith("http", ignoreCase = true)) s else "https://$s"
+        val host = Regex("^https?://([^/?#:]+)", RegexOption.IGNORE_CASE)
+            .find(withScheme)?.groupValues?.get(1)?.lowercase() ?: return emptyList()
+        return when {
+            host.endsWith(".firebaseio.com") ->
+                (listOf("https://$host") + dbUrlsForName(host.removeSuffix(".firebaseio.com"))).distinct()
+            host.endsWith(".firebasedatabase.app") ->
+                (listOf("https://$host") + dbUrlsForName(host.substringBefore('.'))).distinct()
+            !host.contains('.') -> dbUrlsForName(host) // just the database name
+            else -> emptyList()
+        }
+    }
+
+    /**
+     * Lets the person paste the Realtime Database URL. The address is checked against Firebase
+     * before it is kept, so a wrong paste is reported immediately instead of on "Create a room".
+     */
     fun setDatabaseUrl(raw: String) {
-        var u = raw.trim()
-        if (u.isEmpty()) return
-        if (!u.startsWith("http", ignoreCase = true)) u = "https://$u"
-        u = Regex("^https://[^/?#]+", RegexOption.IGNORE_CASE).find(u)?.value ?: u
-        u = u.trimEnd('/')
-        prefs.edit().putString("dbUrlOverride", u).putString("dbUrlResolved", u).apply()
-        dbResolved = true
-        _state.update { it.copy(databaseUrl = u, message = null) }
+        if (_state.value.busy) return
+        val candidates = databaseUrlCandidates(raw)
+        if (candidates.isEmpty()) {
+            _state.update {
+                it.copy(
+                    info = null,
+                    message = "Database not found. That does not look like a Firebase database URL - " +
+                        "it should look like https://your-project-default-rtdb.firebaseio.com"
+                )
+            }
+            return
+        }
+        _state.update { it.copy(busy = true, message = null, info = null) }
+        scope.launch(Dispatchers.IO) {
+            try {
+                ensureAuth()
+                var offline = false
+                for (c in candidates) {
+                    when (probeDatabase(c)) {
+                        true -> {
+                            prefs.edit().putString("dbUrlOverride", c).putString("dbUrlResolved", c).apply()
+                            dbResolved = true
+                            _state.update {
+                                it.copy(
+                                    databaseUrl = c, busy = false, message = null,
+                                    info = "Database connected. You can create or join a room now."
+                                )
+                            }
+                            return@launch
+                        }
+                        false -> Unit
+                        null -> offline = true
+                    }
+                }
+                _state.update {
+                    it.copy(
+                        busy = false,
+                        message = if (offline) "Could not reach Firebase. Check your internet connection and try again."
+                        else "Database not found at the address you pasted. Make sure the Realtime Database is created " +
+                            "(Firebase console > Build > Realtime Database > Create database), then copy the URL shown " +
+                            "at the top of its Data tab."
+                    )
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _state.update { it.copy(busy = false, message = "Could not check the database URL, try again.") }
+            }
+        }
     }
 
     fun createRoom(name: String) {
@@ -297,7 +378,7 @@ class PlayTogetherManager(
     }
 
     private fun launchBusy(block: suspend () -> Unit) {
-        _state.update { it.copy(busy = true, message = null) }
+        _state.update { it.copy(busy = true, message = null, info = null) }
         scope.launch(Dispatchers.IO) {
             try {
                 block()
@@ -685,10 +766,12 @@ class PlayTogetherManager(
                 prefs.getString("dbUrlResolved", null)?.let { add(it) }
                 add(_state.value.databaseUrl)
                 if (cfgDbUrlFromFile.isNotBlank()) add(cfgDbUrlFromFile)
+                if (cfgDbUrlFromFile.isNotBlank()) {
+                    val h = cfgDbUrlFromFile.removePrefix("https://").substringBefore('/')
+                    addAll(dbUrlsForName(h.substringBefore('.')))
+                }
                 if (pid.isNotBlank()) {
-                    add("https://$pid-default-rtdb.firebaseio.com")
-                    add("https://$pid-default-rtdb.asia-southeast1.firebasedatabase.app")
-                    add("https://$pid-default-rtdb.europe-west1.firebasedatabase.app")
+                    addAll(dbUrlsForName("$pid-default-rtdb"))
                     add("https://$pid.firebaseio.com")
                 }
             }.map { it.trim().trimEnd('/') }.filter { it.startsWith("https://") }.distinct()
@@ -705,7 +788,8 @@ class PlayTogetherManager(
                     null -> return // network trouble: let the real request report it, probe again next time
                 }
             }
-            dbResolved = true // every address answered "no such database"; the real request reports it
+            // every address answered "no such database": stay unresolved so the next try (after the
+            // database is created or its URL pasted) probes again; the real request reports the error.
         }
     }
 
@@ -724,7 +808,7 @@ class PlayTogetherManager(
 
     private fun friendly(code: Int) = when (code) {
         401, 403 -> "Permission denied. In Firebase enable Anonymous sign-in, publish the database rules shown above, and add this app\u2019s SHA-1 under Project settings > Your apps."
-        404 -> "Database not found. Open Firebase console > Realtime Database > Data, copy the database URL shown at the top and paste it below."
+        404 -> "Database not found. Open Firebase console > Build > Realtime Database (create it if needed), copy the database URL shown at the top of the Data tab and paste it below."
         else -> "Server error ($code)."
     }
 
