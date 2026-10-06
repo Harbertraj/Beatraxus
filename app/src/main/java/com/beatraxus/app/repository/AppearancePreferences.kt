@@ -126,7 +126,11 @@ class AppearancePreferences(context: Context) {
             },
             
             lyricsShowAll = preferences[LYRICS_SHOW_ALL] ?: true,
-            alignLyricsBySinger = preferences[ALIGN_LYRICS_BY_SINGER] ?: true
+            alignLyricsBySinger = preferences[ALIGN_LYRICS_BY_SINGER] ?: true,
+
+            dspPaletteId = preferences[DSP_PALETTE_ID] ?: "solar_flare",
+            dspCustomPrimary = preferences[DSP_CUSTOM_PRIMARY] ?: 0xFFFFD60A.toInt(),
+            dspCustomSecondary = preferences[DSP_CUSTOM_SECONDARY] ?: 0xFFFF7A00.toInt()
         )
     }
 
@@ -314,6 +318,18 @@ class AppearancePreferences(context: Context) {
         dataStore.edit { it[LYRICS_SHOW_ALL] = showAll }
     }
 
+    suspend fun setDspPalette(id: String) {
+        dataStore.edit { it[DSP_PALETTE_ID] = id }
+    }
+
+    suspend fun setDspCustomColors(primary: Int, secondary: Int) {
+        dataStore.edit {
+            it[DSP_CUSTOM_PRIMARY] = primary
+            it[DSP_CUSTOM_SECONDARY] = secondary
+            it[DSP_PALETTE_ID] = "custom"
+        }
+    }
+
     suspend fun setAlignLyricsBySinger(align: Boolean) {
         dataStore.edit { it[ALIGN_LYRICS_BY_SINGER] = align }
     }
@@ -425,5 +441,10 @@ class AppearancePreferences(context: Context) {
         private val LYRICS_PROVIDERS_ENABLED = stringPreferencesKey("lyrics_providers_enabled")
         private val LYRICS_SHOW_ALL = booleanPreferencesKey("lyrics_show_all")
         private val ALIGN_LYRICS_BY_SINGER = booleanPreferencesKey("align_lyrics_by_singer")
+
+        // Studio DSP dual colour palette
+        private val DSP_PALETTE_ID = stringPreferencesKey("dsp_palette_id")
+        private val DSP_CUSTOM_PRIMARY = intPreferencesKey("dsp_custom_primary")
+        private val DSP_CUSTOM_SECONDARY = intPreferencesKey("dsp_custom_secondary")
     }
 }

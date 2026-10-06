@@ -254,7 +254,12 @@ data class AppearanceConfig(
     val lyricsProviderOrder: List<String> = emptyList(),
     val lyricsEnabledProviders: Set<String> = emptySet(),
     val lyricsShowAll: Boolean = false,
-    val alignLyricsBySinger: Boolean = true
+    val alignLyricsBySinger: Boolean = true,
+
+    // Studio DSP interface dual colour palette
+    val dspPaletteId: String = "solar_flare",
+    val dspCustomPrimary: Int = 0xFFFFD60A.toInt(),
+    val dspCustomSecondary: Int = 0xFFFF7A00.toInt()
 )
 
 enum class AudioOutputDevice(val displayName: String) {

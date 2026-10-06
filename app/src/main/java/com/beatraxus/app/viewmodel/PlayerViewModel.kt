@@ -839,6 +839,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         // Appearance settings
         viewModelScope.launch {
             appearancePreferences.appearanceConfig.collect { config ->
+                com.beatraxus.app.ui.theme.DspPaletteState.apply(config)
                 _uiState.update { it.copy(appearance = config) }
             }
         }
@@ -5098,6 +5099,14 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             appearancePreferences.setSettingsBlurIntensity(value)
         }
+    }
+
+    fun setDspPalette(id: String) {
+        viewModelScope.launch { appearancePreferences.setDspPalette(id) }
+    }
+
+    fun setDspCustomColors(primary: Int, secondary: Int) {
+        viewModelScope.launch { appearancePreferences.setDspCustomColors(primary, secondary) }
     }
 
     fun setSettingsBlurDarkness(value: Float) {

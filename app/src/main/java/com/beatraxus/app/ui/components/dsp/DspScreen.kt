@@ -92,16 +92,26 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.*
 
-// "Obsidian Ember" palette - warm black glass with amber -> coral -> rose light.
-private val PremiumSurface = Color(0xFF110D0B)     // Warm obsidian
-private val PremiumAccent = Color(0xFFFFB13B)      // Ember amber
-private val PremiumAccentSoft = Color(0xFFFFD9A3)  // Sand glow
-private val GraphicGold = Color(0xFFFFC15E)        // Graph dots / fill tint
-private val DspViolet = Color(0xFFFF6A4D)          // Coral (secondary accent, name kept for call sites)
-private val DspPink = Color(0xFFFF4F8B)            // Hot rose (tertiary accent)
-private val DspSheet = Color(0xFF1A1411)           // Dialog / sheet container
-private val DspSheetHigh = Color(0xFF241B16)       // Raised container
-private val DspInk = Color(0xFF070504)             // Deepest inset background
+// Studio DSP dual colour palette. Defaults to Yellow + Orange ("Solar Flare") and follows
+// Settings > Appearance > Dual Colour Palette. All values are derived from two colours and
+// read from snapshot state, so the whole screen recolours live.
+private val Pal get() = com.beatraxus.app.ui.theme.DspPaletteState.current
+private val PremiumSurface get() = Pal.surface           // Tinted obsidian
+private val PremiumAccent get() = Pal.accent             // Primary colour
+private val PremiumAccentSoft get() = Pal.accentSoft     // Soft glow
+private val GraphicGold get() = Pal.graphic              // Graph dots / fill tint
+private val DspViolet get() = Pal.secondary              // Secondary colour (name kept for call sites)
+private val DspPink get() = Pal.tertiary                 // Tertiary accent (hue-shifted secondary)
+private val DspSheet get() = Pal.sheet                   // Dialog / sheet container
+private val DspSheetHigh get() = Pal.sheetHigh           // Raised container
+private val DspInk get() = Pal.ink                       // Deepest inset background
+private val DspBgTop get() = Pal.bgTop
+private val DspBgBottom get() = Pal.bgBottom
+private val DspPanelDeep get() = Pal.panelDeep
+private val DspPanelRaised get() = Pal.panelRaised
+private val DspMetalHigh get() = Pal.metalHigh
+private val DspMetalMid get() = Pal.metalMid
+private val DspMetalLow get() = Pal.metalLow
 
 // Active EQ curve colour: clean white when the EQ is on (inactive stays dim grey).
 private val EqLineStart = Color.White
@@ -361,8 +371,8 @@ fun DspScreen(
             .background(
                 Brush.verticalGradient(
                     listOf(
-                        Color(0xFF1C1410), // Warm ember dusk
-                        Color(0xFF060403)  // Near black
+                        DspBgTop,
+                        DspBgBottom
                     )
                 )
             )
@@ -1339,7 +1349,7 @@ private fun PremiumGraphicCard(uiState: PlayerUiState, presetName: String, fftBa
                 .fillMaxWidth()
                 .height(110.dp)
                 .clip(RoundedCornerShape(18.dp))
-                .background(Brush.verticalGradient(listOf(DspInk.copy(0.85f), Color(0xFF130E0B).copy(0.85f))))
+                .background(Brush.verticalGradient(listOf(DspInk.copy(0.85f), DspSheet.copy(0.85f))))
                 .border(1.dp, Brush.verticalGradient(listOf(PremiumAccent.copy(0.22f), Color.White.copy(0.04f))), RoundedCornerShape(18.dp))
         ) {
             EqPreviewGraph(displayBands, displayEnabled, fftBars = fftBars)
@@ -1637,7 +1647,7 @@ private fun PremiumPreampSlider(
                 // Thumb Body
                 drawRoundRect(
                     brush = Brush.verticalGradient(
-                        listOf(Color(0xFF6B5444), Color(0xFF3D2E25), Color(0xFF211813))
+                        listOf(DspMetalHigh, DspMetalMid, DspMetalLow)
                     ),
                     topLeft = Offset(thumbX, thumbY),
                     size = Size(thumbW, thumbH),
@@ -1758,7 +1768,7 @@ private fun PremiumVerticalBand(
                     .clip(RoundedCornerShape(18.dp))
                     .background(
                         Brush.horizontalGradient(
-                            listOf(DspInk, Color(0xFF2A1F18), DspInk)
+                            listOf(DspInk, DspPanelRaised, DspInk)
                         )
                     )
                     .border(1.dp, Brush.verticalGradient(listOf(Color.White.copy(0.10f), Color.White.copy(0.03f))), RoundedCornerShape(18.dp))
@@ -1840,7 +1850,7 @@ private fun PremiumVerticalBand(
                     .shadow(12.dp, RoundedCornerShape(14.dp), spotColor = if (isActive) gainColor else Color.Black)
                     .background(
                         Brush.verticalGradient(
-                            listOf(Color(0xFF6B5444), Color(0xFF3D2E25), Color(0xFF211813))
+                            listOf(DspMetalHigh, DspMetalMid, DspMetalLow)
                         ),
                         RoundedCornerShape(14.dp)
                     )
@@ -2516,7 +2526,7 @@ private fun ClassicSoundStageView(
                 onClick = { viewModel.setAudio3DStageEnabled(!config.audio3DStageEnabled) },
                 modifier = Modifier.size(80.dp),
                 shape = CircleShape,
-                color = Color(0xFF0E0A08),
+                color = DspPanelDeep,
                 border = BorderStroke(2.dp, if (spatialActive) PremiumAccent.copy(0.8f) else Color.White.copy(0.1f)),
                 shadowElevation = if (spatialActive) 32.dp else 0.dp
             ) {
@@ -2554,7 +2564,7 @@ private fun ClassicSoundStageView(
         val speakerL = config.audio3DSpeakerPositions.find { it.id == "L" } ?: com.beatraxus.app.model.Audio3DSpeakerPosition("L", 270f, 0f, 2.0f)
         val speakerR = config.audio3DSpeakerPositions.find { it.id == "R" } ?: com.beatraxus.app.model.Audio3DSpeakerPosition("R", 90f, 0f, 2.0f)
 
-        listOf(speakerL to Color(0xFF42A5F5), speakerR to Color(0xFFFF7043)).forEach { (speaker, color) ->
+        listOf(speakerL to PremiumAccent, speakerR to DspViolet).forEach { (speaker, color) ->
             val level = if (speaker.id == "L") levelL else levelR
             ClassicSpeakerBubble(speaker, color, maxOrbitRadius, centerX, centerY, spatialActive, level) { az, dist ->
                 viewModel.setSpeakerPosition(speaker.id, az, 0f, dist)
@@ -2809,7 +2819,7 @@ private fun ModernSpatialAudioContent(
                     onClick = { if (!isSpatialBypassed) viewModel.setSpatialAudioEnabled(!config.spatialAudioEnabled) },
                     modifier = Modifier.size(80.dp),
                     shape = CircleShape,
-                    color = Color(0xFF0E0A08),
+                    color = DspPanelDeep,
                     border = BorderStroke(1.5.dp, if (spatialActive) PremiumAccent.copy(0.6f) else Color.White.copy(0.1f)),
                     shadowElevation = 24.dp
                 ) {
@@ -2915,8 +2925,8 @@ private fun ModernSpatialAudioContent(
                             .background(
                                 brush = Brush.verticalGradient(
                                     listOf(
-                                        if (isSelected) Color(0xFF30241D) else Color(0xFF120C09).copy(0.8f),
-                                        if (isSelected) Color(0xFF0E0A08) else Color(0xFF070504).copy(0.9f)
+                                        if (isSelected) DspPanelRaised else DspSheet.copy(0.8f),
+                                        if (isSelected) DspPanelDeep else DspInk.copy(0.9f)
                                     )
                                 ),
                                 shape = RoundedCornerShape(12.dp)
@@ -4048,7 +4058,7 @@ private fun KnobControl(
                     Canvas(modifier = Modifier.fillMaxSize()) {
                         drawCircle(
                             brush = Brush.linearGradient(
-                                listOf(Color(0xFF6B5444), Color(0xFF1E1511), Color(0xFF3D2E25))
+                                listOf(DspMetalHigh, DspMetalLow, DspMetalMid)
                             )
                         )
                         // Circular "Brushed" texture lines

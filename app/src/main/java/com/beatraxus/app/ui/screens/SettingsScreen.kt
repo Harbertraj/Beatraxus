@@ -435,7 +435,7 @@ fun SettingsScreen(
                         )
                         SettingMenuItem(
                             title = "Appearance",
-                            subtitle = "Main Screen, Now Playing, Home Screen",
+                            subtitle = "Main Screen, Now Playing, Home Screen, Studio DSP colours",
                             icon = Icons.Rounded.Palette,
                             iconColor = Color(0xFF9C27B0),
                             onClick = { sectionStack.add("Appearance") }
@@ -507,6 +507,7 @@ fun SettingsScreen(
                             "Appearance: Home Interface" -> HomeScreenAppearanceContent(uiState, playerViewModel, sectionStack)
                             "Appearance: Home Screen Layout" -> HomeScreenLayoutContent(uiState, playerViewModel)
                             "Appearance: Settings Interface" -> SettingsScreenAppearanceContent(uiState, playerViewModel)
+                            "Appearance: Dual Colour Palette" -> DspPaletteContent(uiState, playerViewModel)
                             "Appearance: Lyrics Database" -> LyricsDatabaseContent(uiState, playerViewModel)
                             "Replay Gain" -> ReplayGainContent(uiState, playerViewModel, onEditValue = { editingValue = it })
                             "Library" -> LibraryContent(uiState, playerViewModel, onShowInfo = { showInfoPopup = true })
@@ -748,6 +749,13 @@ fun AppearanceContent(sectionStack: SnapshotStateList<String>) {
             icon = Icons.Rounded.Palette,
             iconColor = PrimaryCyan,
             onClick = { sectionStack.add("Appearance: Settings Interface") }
+        )
+        SettingMenuItem(
+            title = "Dual Colour Palette",
+            subtitle = "Studio DSP Interface",
+            icon = Icons.Rounded.ColorLens,
+            iconColor = Color(0xFFFFB300),
+            onClick = { sectionStack.add("Appearance: Dual Colour Palette") }
         )
     }
 }
