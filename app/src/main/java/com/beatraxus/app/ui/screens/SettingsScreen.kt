@@ -768,7 +768,7 @@ fun AppearanceContent(sectionStack: SnapshotStateList<String>) {
             title = "Studio DSP Interface",
             subtitle = "Dual Colour Palette",
             icon = Icons.Rounded.ColorLens,
-            iconColor = Color(0xFFFFB300),
+            iconColor = PrimaryCyan,
             onClick = { sectionStack.add("Appearance: Dual Colour Palette") }
         )
     }
