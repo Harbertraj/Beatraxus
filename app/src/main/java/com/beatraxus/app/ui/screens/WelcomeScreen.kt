@@ -12,6 +12,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -64,6 +65,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -71,6 +73,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.beatraxus.app.R
 import com.beatraxus.app.ui.theme.AccentBlue
 import com.beatraxus.app.ui.theme.AccentBlueSoft
 import com.beatraxus.app.viewmodel.PlayerViewModel
@@ -611,18 +614,30 @@ private fun Reveal(
     }
 }
 
+/** The Beatraxus app-icon logo (same artwork as the launcher icon and the app-open screen) over a soft glow. */
 @Composable
 private fun BrandTile(tile: Dp) {
-    val shape = RoundedCornerShape(tile * 0.28f)
     Box(
-        modifier = Modifier
-            .size(tile)
-            .clip(shape)
-            .background(Brush.linearGradient(listOf(WelcomeAccent, WelcomeAccentAlt)))
-            .border(1.dp, Color.White.copy(alpha = 0.25f), shape),
+        modifier = Modifier.size(tile * 1.7f),
         contentAlignment = Alignment.Center
     ) {
-        BrandMark(sizeDp = tile * 0.55f)
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val r = size.minDimension / 2f
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(Color(0xFF7B5CFF).copy(alpha = 0.28f), Color.Transparent),
+                    center = center,
+                    radius = r
+                ),
+                radius = r,
+                center = center
+            )
+        }
+        Image(
+            painter = painterResource(R.drawable.beatraxus_logo),
+            contentDescription = "Beatraxus",
+            modifier = Modifier.size(tile * 1.2f)
+        )
     }
 }
 
@@ -771,29 +786,5 @@ fun WelcomeStatItem(
             color = Color.White.copy(alpha = 0.5f),
             fontSize = 12.sp
         )
-    }
-}
-
-/** Brand mark: five soundwave bars. Shared by the welcome tile and the app-open screen. */
-@Composable
-fun BrandMark(sizeDp: Dp) {
-    Canvas(modifier = Modifier.size(sizeDp)) {
-        val w = size.width
-        val h = size.height
-        val barWidths = listOf(0.10f, 0.16f, 0.22f, 0.16f, 0.10f)
-        val barHeights = listOf(0.35f, 0.65f, 1.0f, 0.65f, 0.35f)
-        val gap = w * 0.06f
-        var x = w * 0.08f
-        barWidths.forEachIndexed { i, wf ->
-            val barW = w * wf * 0.7f
-            val barH = h * barHeights[i]
-            drawRoundRect(
-                color = Color.White,
-                topLeft = Offset(x, (h - barH) / 2f),
-                size = androidx.compose.ui.geometry.Size(barW, barH),
-                cornerRadius = androidx.compose.ui.geometry.CornerRadius(barW / 2f)
-            )
-            x += barW + gap
-        }
     }
 }

@@ -8,6 +8,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -23,17 +24,19 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.beatraxus.app.R
 import kotlinx.coroutines.delay
 import kotlin.math.PI
-import kotlin.math.sin
+import kotlin.math.cos
 
 /** Process-wide flag: the app-open screen is shown once per cold start, never again until the process dies. */
 object AppOpenSplashState {
@@ -41,19 +44,26 @@ object AppOpenSplashState {
     var shown: Boolean = false
 }
 
+// Brand colours sampled from the app icon (cyan -> violet -> magenta).
+private val LogoCyan = Color(0xFF22D3FF)
+private val LogoViolet = Color(0xFF7B5CFF)
+private val LogoMagenta = Color(0xFFE040FB)
+
 /**
- * Minimal app-open screen shown on a cold start (after the app was fully closed).
+ * App-open screen shown on a cold start (after the app was fully closed).
  *
- * It continues the system splash without a jump: same background colour and the same five-bar
- * mark at the exact centre of the screen. The bars then breathe softly like an idle level meter
- * while the app name and then a short tagline ("Feel every beat") fade in and rise underneath, and
- * the whole screen is dismissed by the caller after roughly 1.5 seconds. No spinners.
+ * It continues the system splash without a jump: same background colour and the same Beatraxus
+ * app-icon logo at the exact centre of the screen, at the same size. The logo then "beats" like a
+ * kick drum: it swells slightly and sends soft cyan/violet/magenta rings outward on every beat,
+ * over a gently pulsing glow. Underneath, the app name, then a signature word and finally a
+ * one-line promise fade in and rise. The caller dismisses the screen after roughly 2 seconds.
  */
 @Composable
 fun AppOpenScreen(onFinished: () -> Unit) {
     val finished by rememberUpdatedState(onFinished)
 
     val transition = rememberInfiniteTransition(label = "appOpen")
+    // One full beat: 0 -> 2*PI over 1.4s. Everything that "beats" is driven by this single value.
     val phase by transition.animateFloat(
         initialValue = 0f,
         targetValue = (2.0 * PI).toFloat(),
@@ -61,9 +71,11 @@ fun AppOpenScreen(onFinished: () -> Unit) {
         label = "appOpenPhase"
     )
 
-    // 0f -> 1f progress for the app name and the tagline; each drives alpha + a short slide-up.
+    // 0f -> 1f progress; each drives alpha + a short slide-up (or, for rings, a fade-in).
+    val ringsIn = remember { Animatable(0f) }
     val wordmarkAlpha = remember { Animatable(0f) }
     val taglineAlpha = remember { Animatable(0f) }
+    val promiseAlpha = remember { Animatable(0f) }
     LaunchedEffect(Unit) {
         delay(150)
         wordmarkAlpha.animateTo(1f, tween(500, easing = FastOutSlowInEasing))
@@ -72,6 +84,18 @@ fun AppOpenScreen(onFinished: () -> Unit) {
         delay(750)
         finished()
     }
+    // The promise line arrives just after the signature word has started rising in.
+    LaunchedEffect(Unit) {
+        delay(900)
+        promiseAlpha.animateTo(1f, tween(500, easing = FastOutSlowInEasing))
+    }
+    // Glow and rings ease in so the first frame matches the system splash exactly.
+    LaunchedEffect(Unit) {
+        ringsIn.animateTo(1f, tween(600, easing = FastOutSlowInEasing))
+    }
+
+    // 0 at the start of each beat (so frame 0 equals the static splash), peaking mid-beat.
+    val pulse = 0.5f - 0.5f * cos(phase)
 
     Box(
         modifier = Modifier
@@ -85,23 +109,55 @@ fun AppOpenScreen(onFinished: () -> Unit) {
             ),
         contentAlignment = Alignment.Center
     ) {
-        Canvas(modifier = Modifier.size(width = 108.dp, height = 144.dp)) {
-            val barWidth = 12.dp.toPx()
-            val step = 24.dp.toPx()
-            val heights = floatArrayOf(56f, 104f, 144f, 104f, 56f)
-            for (i in heights.indices) {
-                val base = heights[i].dp.toPx()
-                // Never taller than the resting shape, so it matches the system splash at its peak.
-                val breathe = 0.88f + 0.12f * (0.5f + 0.5f * sin(phase - i * 0.9f))
-                val barHeight = base * breathe
-                drawRoundRect(
-                    color = Color.White,
-                    topLeft = Offset(i * step, (size.height - barHeight) / 2f),
-                    size = Size(barWidth, barHeight),
-                    cornerRadius = CornerRadius(barWidth / 2f)
+        // Glow + beat rings behind the logo.
+        Canvas(modifier = Modifier.size(320.dp)) {
+            val c = center
+            val base = 60.dp.toPx() // half of the 120dp logo
+            val intro = ringsIn.value
+
+            val glowRadius = base * 2.3f
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(
+                        LogoViolet.copy(alpha = (0.18f + 0.14f * pulse) * intro),
+                        Color.Transparent
+                    ),
+                    center = c,
+                    radius = glowRadius
+                ),
+                radius = glowRadius,
+                center = c
+            )
+
+            val turns = phase / (2f * PI.toFloat())
+            for (k in 0..1) {
+                val t = (turns + k * 0.5f) % 1f
+                val e = FastOutSlowInEasing.transform(t)
+                drawCircle(
+                    brush = Brush.sweepGradient(
+                        colors = listOf(LogoCyan, LogoViolet, LogoMagenta, LogoCyan),
+                        center = c
+                    ),
+                    radius = base * (1.05f + 0.95f * e),
+                    center = c,
+                    alpha = (1f - t) * 0.4f * intro,
+                    style = Stroke(width = 1.5.dp.toPx())
                 )
             }
         }
+
+        // The Beatraxus app-icon logo, swelling slightly on every beat.
+        Image(
+            painter = painterResource(R.drawable.beatraxus_logo),
+            contentDescription = null,
+            modifier = Modifier
+                .size(120.dp)
+                .graphicsLayer {
+                    val s = 1f + 0.05f * pulse
+                    scaleX = s
+                    scaleY = s
+                }
+        )
 
         Text(
             text = "BEATRAXUS",
@@ -117,18 +173,33 @@ fun AppOpenScreen(onFinished: () -> Unit) {
                 }
         )
 
-        // App-related word under the name: fades in and rises slightly after the name.
+        // Signature word under the name: fades in and rises slightly after the name.
         Text(
-            text = "Feel every beat",
+            text = "SOUND, REIMAGINED",
             color = Color(0xFFFFB300).copy(alpha = 0.9f),
             fontSize = 12.sp,
-            fontWeight = FontWeight.Normal,
-            letterSpacing = 3.sp,
+            fontWeight = FontWeight.Medium,
+            letterSpacing = 4.sp,
             modifier = Modifier
                 .offset(y = 144.dp)
                 .graphicsLayer {
                     alpha = taglineAlpha.value
                     translationY = 12.dp.toPx() * (1f - taglineAlpha.value)
+                }
+        )
+
+        // One-line promise about the app, arriving just after the signature word.
+        Text(
+            text = "Where every beat finds its orbit.",
+            color = Color.White.copy(alpha = 0.55f),
+            fontSize = 11.sp,
+            fontStyle = FontStyle.Italic,
+            letterSpacing = 0.5.sp,
+            modifier = Modifier
+                .offset(y = 168.dp)
+                .graphicsLayer {
+                    alpha = promiseAlpha.value
+                    translationY = 12.dp.toPx() * (1f - promiseAlpha.value)
                 }
         )
     }

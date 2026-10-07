@@ -1,24 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Five-bar Beatraxus mark for the system splash. Kept inside the central 192dp circle that
-     Android 12+ shows, and identical in proportion to AppOpenScreen so the hand-off is seamless. -->
-<vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="288dp"
-    android:height="288dp"
-    android:viewportWidth="288"
-    android:viewportHeight="288">
-    <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M90,122 a6,6 0 0 1 12,0 v44 a6,6 0 0 1 -12,0 z" />
-    <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M114,98 a6,6 0 0 1 12,0 v92 a6,6 0 0 1 -12,0 z" />
-    <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M138,78 a6,6 0 0 1 12,0 v132 a6,6 0 0 1 -12,0 z" />
-    <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M162,98 a6,6 0 0 1 12,0 v92 a6,6 0 0 1 -12,0 z" />
-    <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M186,122 a6,6 0 0 1 12,0 v44 a6,6 0 0 1 -12,0 z" />
-</vector>
+<!-- Beatraxus app-icon logo for the system splash. 288dp canvas (Android 12+ shows the central
+     192dp circle); the logo is 120dp and centred, identical in size to AppOpenScreen so the
+     hand-off from the system splash to the animated screen has no jump. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:width="288dp" android:height="288dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#00000000" />
+            <size android:width="288dp" android:height="288dp" />
+        </shape>
+    </item>
+    <item
+        android:width="120dp"
+        android:height="120dp"
+        android:gravity="center">
+        <bitmap
+            android:gravity="fill"
+            android:src="@drawable/beatraxus_logo" />
+    </item>
+</layer-list>
