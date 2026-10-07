@@ -3619,6 +3619,22 @@ fun MainScreen(
                 )
             }
         }
+
+        // Minimal app-open screen: only on a cold start (app fully closed), once per process.
+        var showAppOpen by remember { mutableStateOf(!AppOpenSplashState.shown) }
+        AnimatedVisibility(
+            visible = showAppOpen,
+            modifier = Modifier.fillMaxSize().zIndex(1000f),
+            enter = EnterTransition.None,
+            exit = fadeOut(tween(350))
+        ) {
+            AppOpenScreen(
+                onFinished = {
+                    AppOpenSplashState.shown = true
+                    showAppOpen = false
+                }
+            )
+        }
     }
 }
 

@@ -11,7 +11,7 @@
     <!-- Splash Screen theme -->
     <style name="Theme.Beatraxus.Starting" parent="Theme.SplashScreen">
         <item name="windowSplashScreenBackground">@color/bg_deep</item>
-        <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_splash_mark</item>
         <item name="postSplashScreenTheme">@style/Theme.Beatraxus</item>
     </style>
 
