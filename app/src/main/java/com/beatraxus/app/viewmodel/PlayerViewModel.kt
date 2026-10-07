@@ -2238,7 +2238,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             }
             updateLibraryCounts(results)
             viewModelScope.launch {
-                val folders = results.map { it.folder }.distinct()
+                // Folder list comes from the folder table, NOT from the folders of scanned songs.
+                val folders = musicRepository.getMusicFolders()
                 _uiState.update { it.copy(
                     musicFolders = folders,
                     blockedFolders = musicRepository.getBlockedFolders()
@@ -3299,21 +3300,30 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun removeMusicFolder(path: String) {
         viewModelScope.launch {
+            val normalized = withContext(Dispatchers.IO) { musicRepository.normalizePath(path) }
+            val targets = setOf(path.trimEnd('/'), normalized.trimEnd('/')).filter { it.isNotBlank() }
+
+            // 1) Instantly drop the folder row and its songs from the UI.
+            _uiState.update { st ->
+                st.copy(musicFolders = st.musicFolders.filterNot { it == path || it.trimEnd('/') in targets })
+            }
+            _songs.update { list ->
+                list.filterNot { song ->
+                    song.source == SongSource.LOCAL &&
+                        targets.any { t -> song.folder == t || song.folder.startsWith("$t/") }
+                }
+            }
+
+            // 2) Persist: remove the folder, block it, delete its songs from the DB.
             musicRepository.removeMusicFolder(path)
-            // Instant removal of songs from DB
-            songDao.deleteSongsInFolder(path)
-            
+            targets.forEach { songDao.deleteSongsInFolder(it) }
+
             val folders = musicRepository.getMusicFolders()
-            val isFirstRun = _uiState.value.isFirstRun
             _uiState.update { it.copy(
                 musicFolders = folders,
                 blockedFolders = musicRepository.getBlockedFolders()
             ) }
-            
-            // Trigger a quick scan to sync UI if needed, but songs are already gone from DB
-            if (!isFirstRun) {
-                quickScan()
-            }
+            updateLibraryCounts(_songs.value.filter { it.source == SongSource.LOCAL })
         }
     }
 

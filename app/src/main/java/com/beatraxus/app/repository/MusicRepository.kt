@@ -830,6 +830,11 @@ class MusicRepository(private val context: Context) {
             val normalized = normalizePath(uri)
             folderDao.deleteFolder(uri)
             folderDao.deleteFolder(normalized)
+            // Also remove any stored entry that resolves to the same folder (URI vs path,
+            // trailing slash, ...), otherwise it keeps showing in "Music Folders".
+            folderDao.getActiveFoldersList()
+                .filter { it.path.trimEnd('/') == normalized.trimEnd('/') || normalizePath(it.path) == normalized }
+                .forEach { folderDao.deleteFolder(it.path) }
             addBlockedFolder(normalized)
         }
     }

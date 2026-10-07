@@ -938,7 +938,8 @@ class AudioPlaybackService : Service() {
                         folderDao.updateLastModified(folder.path, actualLastModified)
                     }
 
-                    if (activeFolders.isEmpty() && results.isNotEmpty()) {
+                    // Never auto re-add folders once the user has removed/excluded one.
+                    if (activeFolders.isEmpty() && results.isNotEmpty() && blocked.isEmpty()) {
                         // Auto-register common music roots to fix "Empty Music Folders" in settings
                         val discoveredRoots = results.asSequence()
                             .map { it.folder }

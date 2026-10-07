@@ -87,6 +87,42 @@ class AudioTrackOutput(
 
     override fun underrunCount(): Int = (rawUnderruns() - underrunBaseline).coerceAtLeast(0)
 
+    /** Start the displayed underrun counter from zero (called when a new song becomes active). */
+    override fun resetUnderrunCount() { underrunBaseline = rawUnderruns() }
+
+    // ── Primed start ─────────────────────────────────────────────────────────
+    // Calling AudioTrack.play() on an EMPTY buffer makes the mixer starve immediately and the
+    // driver counts an underrun. So after a flush / new track / (re)start we only ARM the track and
+    // let write() call play() once enough audio is queued.
+    @Volatile private var awaitingPrime = false
+    @Volatile private var bufferHasData = false
+    @Volatile private var framesSinceArm = 0L
+
+    private fun armOrPlay(track: AudioTrack) {
+        if (bufferHasData) {
+            // Resuming from pause with audio still queued: safe to play right away.
+            track.play()
+            awaitingPrime = false
+        } else {
+            awaitingPrime = true
+        }
+    }
+
+    private fun primeIfReady(track: AudioTrack, writtenFrames: Int) {
+        if (writtenFrames > 0) {
+            bufferHasData = true
+            framesSinceArm += writtenFrames
+        }
+        if (awaitingPrime && track.playState != AudioTrack.PLAYSTATE_PLAYING) {
+            val prime = minOf(sampleRate / 10, track.bufferSizeInFrames / 2).coerceAtLeast(1)
+            // writtenFrames <= 0 means the track buffer is full -> start no matter what.
+            if (framesSinceArm >= prime || writtenFrames <= 0) {
+                try { track.play() } catch (_: Exception) {}
+                awaitingPrime = false
+            }
+        }
+    }
+
     override fun queuedLatencyFrames(): Int {
         val written = totalFramesWritten()
         val played = playbackPositionFrames()
@@ -399,9 +435,11 @@ class AudioTrackOutput(
 
             if (canDoSeamless && oldTrack != null) {
                 val isPlaying = oldTrack.playState == AudioTrack.PLAYSTATE_PLAYING
-                if (isPlaying) newTrack.play()
                 harvestUnderruns(oldTrack, null)
                 audioTrack = newTrack
+                bufferHasData = false
+                framesSinceArm = 0L
+                awaitingPrime = isPlaying
                 if (resetOffsets) underrunBaseline = rawUnderruns()
                 
                 synchronized(stateLock) {
@@ -432,6 +470,9 @@ class AudioTrackOutput(
                 }
             } else {
                 audioTrack = newTrack
+                bufferHasData = false
+                framesSinceArm = 0L
+                awaitingPrime = false
                 if (resetOffsets) underrunBaseline = rawUnderruns()
                 synchronized(stateLock) {
                     if (resetOffsets) {
@@ -511,7 +552,7 @@ class AudioTrackOutput(
             val track = audioTrack ?: return
             try {
                 applyTrackVolume()
-                track.play()
+                armOrPlay(track)
             } catch (_: Exception) {}
         }
     }
@@ -551,7 +592,10 @@ class AudioTrackOutput(
                     it.flush()
                     playbackHeadOffset = getAbsolutePlaybackHeadPositionInternal()
                     synchronized(stateLock) { totalFramesWritten = 0L }
-                    if (it.state == AudioTrack.STATE_INITIALIZED) it.play()
+                    // Do NOT play() an empty track (that is what produced the underruns).
+                    bufferHasData = false
+                    framesSinceArm = 0L
+                    awaitingPrime = true
                 }
             } catch (_: Exception) {}
         }
@@ -648,6 +692,7 @@ class AudioTrackOutput(
                 if (writtenFrames > 0) {
                     synchronized(stateLock) { totalFramesWritten += writtenFrames.toLong() }
                 }
+                primeIfReady(track, writtenFrames)
                 writtenFrames
             } catch (_: Exception) { 0 }
         }
@@ -692,6 +737,7 @@ class AudioTrackOutput(
                 if (writtenFrames > 0) {
                     synchronized(stateLock) { totalFramesWritten += writtenFrames.toLong() }
                 }
+                primeIfReady(track, writtenFrames)
                 writtenFrames
             } catch (_: Exception) { 0 }
         }

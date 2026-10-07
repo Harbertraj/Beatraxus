@@ -496,6 +496,7 @@ class AudioEngine(
     }
 
     private fun updateAudioStateForSong(song: Song) {
+        output.resetUnderrunCount()
         _audioStateFlow.update {
             it.copy(
                 songId = song.id,
