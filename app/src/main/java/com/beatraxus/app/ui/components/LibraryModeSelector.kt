@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
@@ -26,24 +25,20 @@ import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.Extension
 import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.material3.Icon
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.beatraxus.app.model.LibraryMode
 
 /**
  * Library source selector (Local / Cloud / Combined).
  *
  * A clean segmented control: a flat track, one sliding highlight with a short, non-bouncy tween
- * (no jelly squash/stretch or spring overshoot), and an icon + label in every segment so the
+ * (no jelly squash/stretch or spring overshoot), and an icon-only segment (no text labels) so the
  * three modes are readable at a glance.
  */
 @Composable
@@ -113,21 +108,7 @@ fun LibraryModeSelector(
                         },
                         contentDescription = mode.name,
                         tint = contentColor,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(Modifier.width(5.dp))
-                    Text(
-                        text = when (mode) {
-                            LibraryMode.LOCAL -> "Local"
-                            LibraryMode.CLOUD -> "Cloud"
-                            LibraryMode.COMBINED -> "Combined"
-                            else -> mode.name
-                        },
-                        color = contentColor,
-                        fontSize = 11.5.sp,
-                        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        modifier = Modifier.size(20.dp)
                     )
                 }
             }

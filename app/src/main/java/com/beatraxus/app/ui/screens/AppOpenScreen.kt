@@ -46,8 +46,8 @@ object AppOpenSplashState {
  *
  * It continues the system splash without a jump: same background colour and the same five-bar
  * mark at the exact centre of the screen. The bars then breathe softly like an idle level meter
- * while the wordmark fades in underneath, and the whole screen is dismissed by the caller after
- * roughly a second. No loading text, no spinners, no logos spinning.
+ * while the app name and then a short tagline ("Feel every beat") fade in and rise underneath, and
+ * the whole screen is dismissed by the caller after roughly 1.5 seconds. No spinners.
  */
 @Composable
 fun AppOpenScreen(onFinished: () -> Unit) {
@@ -61,11 +61,15 @@ fun AppOpenScreen(onFinished: () -> Unit) {
         label = "appOpenPhase"
     )
 
+    // 0f -> 1f progress for the app name and the tagline; each drives alpha + a short slide-up.
     val wordmarkAlpha = remember { Animatable(0f) }
+    val taglineAlpha = remember { Animatable(0f) }
     LaunchedEffect(Unit) {
         delay(150)
-        wordmarkAlpha.animateTo(1f, tween(450, easing = FastOutSlowInEasing))
-        delay(650)
+        wordmarkAlpha.animateTo(1f, tween(500, easing = FastOutSlowInEasing))
+        delay(100)
+        taglineAlpha.animateTo(1f, tween(500, easing = FastOutSlowInEasing))
+        delay(750)
         finished()
     }
 
@@ -107,7 +111,25 @@ fun AppOpenScreen(onFinished: () -> Unit) {
             letterSpacing = 8.sp,
             modifier = Modifier
                 .offset(y = 112.dp)
-                .graphicsLayer { alpha = wordmarkAlpha.value }
+                .graphicsLayer {
+                    alpha = wordmarkAlpha.value
+                    translationY = 12.dp.toPx() * (1f - wordmarkAlpha.value)
+                }
+        )
+
+        // App-related word under the name: fades in and rises slightly after the name.
+        Text(
+            text = "Feel every beat",
+            color = Color(0xFFFFB300).copy(alpha = 0.9f),
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Normal,
+            letterSpacing = 3.sp,
+            modifier = Modifier
+                .offset(y = 144.dp)
+                .graphicsLayer {
+                    alpha = taglineAlpha.value
+                    translationY = 12.dp.toPx() * (1f - taglineAlpha.value)
+                }
         )
     }
 }

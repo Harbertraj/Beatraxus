@@ -5970,24 +5970,23 @@ fun SlideDrawerMenu(
                     },
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceEvenly,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     DrawerBottomIconButton(
+                        modifier = Modifier.weight(1f),
                         icon = Icons.Rounded.GraphicEq,
                         contentDescription = "Equalizer",
                         iconSize = 22.dp,
                         onClick = { onNavigateToDsp(); onClose() }
                     )
                     DrawerBottomIconButton(
+                        modifier = Modifier.weight(1f),
                         icon = Icons.Rounded.Groups,
                         contentDescription = "Play Together",
                         iconSize = 24.dp,
                         onClick = { onNavigateToPlayTogether(); onClose() }
                     )
                     DrawerBottomIconButton(
+                        modifier = Modifier.weight(1f),
                         icon = Icons.Rounded.Settings,
                         contentDescription = "Settings",
                         iconSize = 22.dp,
@@ -6000,20 +5999,21 @@ fun SlideDrawerMenu(
 }
 
 /**
- * Round drawer shortcut button. The circle clip is applied BEFORE clickable so the press ripple /
- * highlight takes the same round shape as the icon instead of a rectangle.
+ * Drawer shortcut button with the original rounded-rectangle background (14dp corners, full-width
+ * share of the row). The clip is applied BEFORE clickable so the ripple follows the same shape.
  */
 @Composable
 private fun DrawerBottomIconButton(
     icon: ImageVector,
     contentDescription: String?,
     iconSize: androidx.compose.ui.unit.Dp,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     Box(
-        modifier = Modifier
-            .size(52.dp)
-            .clip(CircleShape)
+        modifier = modifier
+            .height(52.dp)
+            .clip(RoundedCornerShape(14.dp))
             .background(Color.White.copy(0.08f))
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center
