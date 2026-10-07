@@ -63,6 +63,8 @@ data class PtUiState(
     val songMissing: Boolean = false,
     /** The room song is not in this phone's library and is being streamed from the controller. */
     val streaming: Boolean = false,
+    /** 0..100 while the song is being received from the controller over WebRTC, -1 otherwise. */
+    val transferPercent: Int = -1,
     val message: String? = null,
     /** Positive notice (e.g. "Database connected"), shown in green. */
     val info: String? = null,
@@ -149,6 +151,59 @@ class PlayTogetherManager(
     private val uploadedNames = java.util.concurrent.CopyOnWriteArrayList<String>()
     private val uploading = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     private val uploadMutex = Mutex()
+
+    // ---- peer-to-peer transfer (controller -> phones that do not have the song) ----------------
+    /** Receiver: song signature -> file received from the controller. */
+    private val receivedFiles = java.util.concurrent.ConcurrentHashMap<String, java.io.File>()
+    /** Receiver: the session id of the transfer I asked for (null = none in flight). */
+    @Volatile private var mySid: String? = null
+    @Volatile private var mySig: String? = null
+    @Volatile private var lastNeedAt = 0L
+    /** Controller: sessions already started, so the same request is not served twice. */
+    private val servedSids = java.util.concurrent.CopyOnWriteArraySet<String>()
+
+    private val transfer: PtFileTransfer by lazy {
+        PtFileTransfer(app, scope) { sid, kind, json ->
+            val code = room ?: return@PtFileTransfer
+            // c = controller side, r = receiver side
+            val isSender = servedSids.contains(sid)
+            when (kind) {
+                "offer" -> call("PUT", "$code/signal/$sid/offer", json)
+                "answer" -> call("PUT", "$code/signal/$sid/answer", json)
+                else -> call("POST", "$code/signal/$sid/ice_${if (isSender) "c" else "r"}", json)
+            }
+        }.also { it.listener = transferListener }
+    }
+
+    private val transferListener = object : PtFileTransfer.Listener {
+        override fun onProgress(sid: String, percent: Int) {
+            if (sid == mySid) _state.update { it.copy(transferPercent = percent) }
+        }
+
+        override fun onReceived(sid: String, file: java.io.File) {
+            val sig = mySig ?: return
+            mySid = null
+            receivedFiles[sig] = file
+            _state.update { it.copy(transferPercent = -1, message = null) }
+            scope.launch(Dispatchers.IO) {
+                try { room?.let { c -> call("DELETE", "$c/needs/$uid"); call("DELETE", "$c/signal/$sid") } } catch (_: Exception) { }
+                // play it in sync with the room now
+                lastAppliedAt = 0L
+                roomState?.let { applyRemote(it) }
+            }
+        }
+
+        override fun onFailed(sid: String, reason: String) {
+            if (sid == mySid) {
+                mySid = null
+                lastNeedAt = SystemClock.elapsedRealtime() // retry after the 8 s throttle
+                _state.update { it.copy(transferPercent = -1, message = "Song transfer failed ($reason). Retrying…") }
+            }
+            scope.launch(Dispatchers.IO) {
+                try { room?.let { c -> call("DELETE", "$c/signal/$sid") } } catch (_: Exception) { }
+            }
+        }
+    }
 
     private data class RoomState(
         val by: String,
@@ -356,10 +411,13 @@ class PlayTogetherManager(
         val me = uid
         val others = _state.value.members.count { !it.isMe }
         stopJobs()
+        transfer.closeAll()
+        mySid = null; mySig = null; lastNeedAt = 0L; servedSids.clear()
         room = null
         roomState = null
         _state.update {
             it.copy(
+                transferPercent = -1,
                 status = PtStatus.IDLE, roomCode = null, members = emptyList(), nowPlayingTitle = null,
                 nowPlayingArtist = null, controllerName = null, roomPlaying = false, songMissing = false, streaming = false,
                 message = null, busy = false
@@ -368,6 +426,8 @@ class PlayTogetherManager(
         scope.launch(Dispatchers.IO + NonCancellable) {
             try {
                 call("DELETE", "$code/members/$me")
+                call("DELETE", "$code/needs/$me")
+                java.io.File(app.cacheDir, "pt_recv").deleteRecursively(); receivedFiles.clear()
                 if (others == 0) {
                     deleteUploads()
                     call("DELETE", code) // last one out closes the room
@@ -583,9 +643,83 @@ class PlayTogetherManager(
         if (st != null) {
             roomState = st
             applyRemote(st)
-            shareForRoom(st, members.any { !it.isMe })
+            if (STORAGE_UPLOAD_ENABLED) shareForRoom(st, members.any { !it.isMe })
+        }
+        handleSignaling(o, now)
+    }
+
+    // =========================================================================================
+    // Peer-to-peer song transfer (WebRTC data channel, Firebase RTDB = signaling only)
+    // =========================================================================================
+
+    private fun songSig(e: Entry) = sha(norm(e.title) + "|" + norm(e.artist) + "|" + (e.durationMs / 1000))
+
+    /** Receiver: tell the controller "I need this song". Re-sent at most every 25 s. */
+    private suspend fun requestSong(e: Entry) {
+        val code = room ?: return
+        val now = SystemClock.elapsedRealtime()
+        if (mySid != null && now - lastNeedAt < 25_000) return
+        if (now - lastNeedAt < 8_000) return
+        lastNeedAt = now
+        val sig = songSig(e)
+        val sid = uid + "_" + UUID.randomUUID().toString().take(6)
+        transfer.close(mySid ?: "")
+        mySid = sid; mySig = sig
+        _state.update { it.copy(transferPercent = 0) }
+        call(
+            "PUT", "$code/needs/$uid",
+            JSONObject().put("sig", sig).put("sid", sid).put("at", serverValue()).toString()
+        )
+    }
+
+    /** Both roles: look at `needs` (controller) and `signal` (everyone) in the room snapshot. */
+    private fun handleSignaling(o: JSONObject, now: Long) {
+        val signal = o.optJSONObject("signal")
+        val st = roomState
+
+        // controller: serve fresh requests for the song that is playing now
+        if (st != null && st.by == uid) {
+            val entry = st.song
+            val song = host.currentSong()?.takeIf { entry != null && entry.matches(it) }
+            val needs = o.optJSONObject("needs")
+            if (entry != null && song != null && isUploadable(song) && needs != null) {
+                val sig = songSig(entry)
+                needs.keys().forEach { who ->
+                    val n = needs.optJSONObject(who) ?: return@forEach
+                    val sid = n.optString("sid")
+                    if (who == uid || sid.isBlank() || n.optString("sig") != sig) return@forEach
+                    if (now - n.optLong("at", 0L) > 60_000 || servedSids.contains(sid)) return@forEach
+                    if (transfer.activeSenders() >= MAX_PARALLEL_SENDS) return@forEach
+                    servedSids.add(sid)
+                    val size = song.fileSizeBytes.takeIf { it > 0 } ?: 0L
+                    transfer.startSending(sid, extOf(song), size) { app.contentResolver.openInputStream(song.uri) }
+                }
+            }
+        }
+        if (signal == null) return
+        signal.keys().forEach { sid ->
+            val node = signal.optJSONObject(sid) ?: return@forEach
+            val iAmSender = servedSids.contains(sid)
+            val iAmReceiver = sid == mySid
+            if (iAmReceiver) {
+                if (!transfer.hasSession(sid)) {
+                    node.optJSONObject("offer")?.let { offer ->
+                        val sig = mySig ?: return@let
+                        transfer.acceptOffer(sid, offer.toString()) { ext ->
+                            java.io.File(app.cacheDir, "pt_recv/$sig.$ext")
+                        }
+                    }
+                }
+                node.optJSONObject("ice_c")?.let { feedIce(sid, it) }
+            } else if (iAmSender) {
+                node.optJSONObject("answer")?.let { transfer.onAnswer(sid, it.toString()) }
+                node.optJSONObject("ice_r")?.let { feedIce(sid, it) }
+            }
         }
     }
+
+    private fun feedIce(sid: String, list: JSONObject) =
+        list.keys().forEach { k -> list.optJSONObject(k)?.let { transfer.onRemoteIce(sid, k, it.toString()) } }
 
     private fun parseState(o: JSONObject?): RoomState? {
         if (o == null) return null
@@ -628,25 +762,30 @@ class PlayTogetherManager(
         val library = host.librarySongs()
         val local = findLocal(entry, library)
         if (local == null) {
-            if (entry.url.isNotBlank()) {
-                // Not in this library: play the controller's copy online, at the room's position.
-                val stream = streamSong(entry)
+            // 1) a copy already received from the controller, 2) the controller's online URL
+            val remote = receivedFiles[songSig(entry)]?.takeIf { it.exists() }?.let { receivedSong(entry, it) }
+                ?: entry.url.takeIf { it.isNotBlank() }?.let { streamSong(entry) }
+            if (remote != null) {
                 val target = expectedPosition(st)
                 ignoreLocalUntil = SystemClock.elapsedRealtime() + 2_500
                 _state.update { it.copy(songMissing = false, streaming = true) }
                 val cur = host.currentSong()
-                if (cur?.id != stream.id) {
-                    host.playQueue(listOf(stream), 0, target, st.playing)
+                if (cur?.id != remote.id) {
+                    host.playQueue(listOf(remote), 0, target, st.playing)
                 } else {
                     if (host.isPlaying() != st.playing) host.setPlaying(st.playing)
                     if (abs(host.positionMs() - target) > 1_500) host.seekTo(target)
                 }
                 return
             }
-            // Nothing to stream yet: silence this phone and ask the controller to share the file.
+            // Nothing to play yet: silence this phone and ask the controller to send the file.
             ignoreLocalUntil = SystemClock.elapsedRealtime() + 2_500
             if (host.isPlaying()) host.setPlaying(false)
             _state.update { it.copy(songMissing = true, streaming = false) }
+            lastAppliedAt = 0L // re-evaluate on the next refresh until the file arrives
+            scope.launch(Dispatchers.IO) {
+                try { requestSong(entry) } catch (e: CancellationException) { throw e } catch (_: Exception) { }
+            }
             return
         }
         _state.update { it.copy(songMissing = false, streaming = false) }
@@ -703,7 +842,7 @@ class PlayTogetherManager(
         )
         call("PUT", "$code/state", body.toString())
         // others are listening: start uploading right away so nobody has to wait for a request
-        if (_state.value.members.any { !it.isMe }) shareSong(song)
+        if (STORAGE_UPLOAD_ENABLED && _state.value.members.any { !it.isMe }) shareSong(song)
         _state.update {
             it.copy(
                 nowPlayingTitle = song.title, nowPlayingArtist = song.artist,
@@ -739,6 +878,15 @@ class PlayTogetherManager(
         title = e.title, artist = e.artist, album = e.album, durationMs = e.durationMs,
         format = e.ext.uppercase().ifBlank { "STREAM" }, sampleRateHz = 44100,
         source = SongSource.WEB
+    )
+
+    /** A song object for a file received from the controller over WebRTC. */
+    private fun receivedSong(e: Entry, f: java.io.File) = Song(
+        id = STREAM_PREFIX + songSig(e),
+        uri = Uri.fromFile(f),
+        title = e.title, artist = e.artist, album = e.album, durationMs = e.durationMs,
+        format = f.extension.uppercase().ifBlank { "MP3" }, sampleRateHz = 44100,
+        fileSizeBytes = f.length(), source = SongSource.WEB
     )
 
     /**
@@ -1061,7 +1209,12 @@ class PlayTogetherManager(
         }
     } catch (_: Exception) { null }
 
-    private companion object { const val STREAM_PREFIX = "pt_stream_" }
+    private companion object {
+        const val STREAM_PREFIX = "pt_stream_"
+        /** Old path: upload to Firebase Storage (needs the Blaze plan). WebRTC replaces it for free. */
+        const val STORAGE_UPLOAD_ENABLED = false
+        const val MAX_PARALLEL_SENDS = 4
+    }
 
     private fun randomCode(): String {
         val alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"

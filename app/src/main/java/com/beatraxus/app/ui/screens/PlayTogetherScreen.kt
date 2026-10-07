@@ -166,6 +166,7 @@ fun PlayTogetherScreen(
                     playing = ui.roomPlaying,
                     songMissing = ui.songMissing,
                     streaming = ui.streaming,
+                    transferPercent = ui.transferPercent,
                     message = ui.message,
                     onCopy = {
                         clipboard.setText(AnnotatedString(ui.roomCode.orEmpty()))
@@ -384,6 +385,7 @@ private fun RoomCard(
     playing: Boolean,
     songMissing: Boolean,
     streaming: Boolean,
+    transferPercent: Int = -1,
     message: String?,
     onCopy: () -> Unit,
     onShare: () -> Unit,
@@ -462,7 +464,7 @@ private fun RoomCard(
             } else if (songMissing) {
                 Spacer(Modifier.height(10.dp))
                 Text(
-                    "Getting this song from ${controller ?: "the controller"}…",
+                    "Getting this song from ${controller ?: "the controller"}" + (if (transferPercent in 0..100) " ($transferPercent%)…" else "…"),
                     color = PtAmber, fontSize = 12.sp, lineHeight = 17.sp
                 )
             }

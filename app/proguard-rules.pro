@@ -329,3 +329,7 @@
 -keep class org.bouncycastle.** { *; }
 -dontwarn org.bouncycastle.**
 -keepattributes InnerClasses
+
+# Play Together WebRTC
+-keep class org.webrtc.** { *; }
+-dontwarn org.webrtc.**

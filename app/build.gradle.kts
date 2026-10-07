@@ -252,6 +252,8 @@ dependencies {
     implementation("com.squareup.retrofit2:retrofit:$retrofitVersion")
     implementation("com.squareup.retrofit2:converter-gson:$retrofitVersion")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    // Play Together: free peer-to-peer song transfer (WebRTC data channel)
+    implementation("io.getstream:stream-webrtc-android:1.3.8")
     implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
     implementation("com.squareup.okhttp3:okhttp-dnsoverhttps:4.12.0")
 
