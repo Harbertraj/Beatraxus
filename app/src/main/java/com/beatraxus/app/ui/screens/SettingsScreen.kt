@@ -479,7 +479,6 @@ fun SettingsScreen(
                             subtitle = "Cloud, Telegram and Metadata Sync",
                             icon = Icons.Rounded.Cloud,
                             iconColor = Color(0xFF1A73E8),
-                            showBetaBadge = true,
                             onClick = { sectionStack.add("Cloud") }
                         )
                         SettingMenuItem(
@@ -1523,7 +1522,6 @@ fun SettingMenuItem(
     subtitle: String,
     icon: ImageVector,
     iconColor: Color,
-    showBetaBadge: Boolean = false,
     centered: Boolean = false,
     titleFontSize: androidx.compose.ui.unit.TextUnit = 17.sp,
     titleFontWeight: FontWeight = FontWeight.Bold,
@@ -1660,26 +1658,6 @@ fun SettingMenuItem(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f, fill = false)
                     )
-                    if (showBetaBadge) {
-                        Spacer(Modifier.width(8.dp))
-                        Surface(
-                            color = Color(0xFFFF4D4D).copy(0.15f),
-                            shape = RoundedCornerShape(4.dp),
-                            border = BorderStroke(1.dp, Color(0xFFFF4D4D).copy(0.4f))
-                        ) {
-                            Text(
-                                text = "BETA",
-                                color = Color(0xFFFF4D4D),
-                                fontSize = 9.sp,
-                                fontWeight = FontWeight.Black,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                                style = TextStyle(
-                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
-                                    textAlign = TextAlign.Center
-                                )
-                            )
-                        }
-                    }
                 }
                 Spacer(Modifier.height(4.dp))
                 Text(
@@ -4285,7 +4263,6 @@ fun CloudContent(
             subtitle = "Access private channels and login to your account",
             icon = Icons.AutoMirrored.Rounded.Send,
             iconColor = PremiumAccent,
-            showBetaBadge = true,
             titleFontSize = 14.sp,
             titleFontWeight = FontWeight.Black,
             titleLetterSpacing = 1.2.sp,

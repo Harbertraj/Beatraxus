@@ -3529,77 +3529,79 @@ fun MainScreen(
                 animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMediumLow)
             ) + fadeOut(tween(400))
         ) {
-            NowPlayingScreen(
-                song = uiState.currentSong,
-                isPlaying = uiState.isPlaying,
-                progressMs = { progressMs },
-                durationMs = uiState.currentSong?.durationMs ?: 0L,
-                shuffleMode = uiState.shuffleMode,
-                repeatMode = uiState.repeatMode,
-                uiState = uiState,
-                onPlayPause = { viewModel.togglePlayPause() },
-                onNext = { viewModel.skipToNext() },
-                onPrevious = { viewModel.skipToPrevious() },
-                onShuffle = { viewModel.toggleShuffle() },
-                onRepeat = { viewModel.toggleRepeat() },
-                onSeek = { viewModel.seekTo(it) },
-                onTagsSaved = { s, t -> viewModel.applyEditedTags(s, t) },
-                onPlaySongs = { list, index -> viewModel.playList(list, index) },
-                onPauseLocalPlayback = { viewModel.pausePlayback() },
-                onClose = { showFullPlayer = false },
-                onOpenEqualizer = onNavigateToDsp,
-                onToggleQueue = { viewModel.toggleQueue() },
-                onRemoveFromQueue = { viewModel.removeFromQueue(it) },
-                onMoveInQueue = { from, to -> viewModel.moveInQueue(from, to) },
-                onPlayFromQueue = { viewModel.playFromQueue(it) },
-                previousSongs = uiState.previousSongs,
-                upcomingSongs = uiState.upcomingSongs,
-                isFavorite = uiState.currentSong?.let { favorites.contains(it.id) } ?: false,
-                onFavoriteClick = { uiState.currentSong?.let { viewModel.toggleFavorite(it) } },
-                onNavigateToAlbum = { album ->
-                    viewModel.setCameFromNowPlaying(true)
-                    viewModel.setLibraryView(com.beatraxus.app.model.LibraryView.ALBUM_DETAIL, album)
-                    showFullPlayer = false
-                },
-                onNavigateToInspector = { songId ->
-                    onNavigateToInspector(songId)
-                },
-                onSetShowSongInfoConsumed = { viewModel.setShowSongInfo(false) },
-                onClearPendingInspectorReturn = { viewModel.setPendingInspectorReturn(null) },
-                onToggleLyrics = { viewModel.toggleLyrics() },
-                onAdjustOffset = { viewModel.adjustLyricsOffset(it) },
-                onSetLyricsOffset = { viewModel.setLyricsOffset(it) },
-                onSearchLyricsOnline = { viewModel.forceSearchLyricsOnline() },
-                onLoadLyricsCandidates = { viewModel.loadLyricsCandidates() },
-                onApplyLyricsCandidate = { viewModel.applyLyricsCandidate(it) },
-                showPipelineOverlay = showPipelineOverlay,
-                onTogglePipeline = { showPipelineOverlay = it },
-                onSetSleepTimer = { seconds, finishTrack, playCount ->
-                    viewModel.setSleepTimer(seconds, finishTrack, playCount)
-                },
-                onStopSleepTimer = { viewModel.stopSleepTimer() },
-                onAddToPlaylist = { song ->
-                    playlistDialogSong = song
-                    showPlaylistDialog = true
-                },
-                onDeleteSong = { song ->
-                    // We'll reuse the existing songToDelete state if possible, or just call directly if safe
-                    // MainScreen already has songToDelete logic for the main list
-                    viewModel.deleteSong(song)
-                },
-                onGoToArtist = { artist ->
-                    viewModel.setLibraryView(com.beatraxus.app.model.LibraryView.ARTIST_DETAIL, artist)
-                    showFullPlayer = false
-                },
-                onGoToFolder = { folder, name ->
-                    viewModel.navigateToFolder(folder, name)
-                    showFullPlayer = false
-                },
-                onGoToGenre = { genre ->
-                    viewModel.setLibraryView(com.beatraxus.app.model.LibraryView.GENRE_DETAIL, genre)
-                    showFullPlayer = false
-                }
-            )
+            com.beatraxus.app.ui.utils.ProvideLiveAudioLevel(viewModel, uiState.isPlaying) {
+                NowPlayingScreen(
+                    song = uiState.currentSong,
+                    isPlaying = uiState.isPlaying,
+                    progressMs = { progressMs },
+                    durationMs = uiState.currentSong?.durationMs ?: 0L,
+                    shuffleMode = uiState.shuffleMode,
+                    repeatMode = uiState.repeatMode,
+                    uiState = uiState,
+                    onPlayPause = { viewModel.togglePlayPause() },
+                    onNext = { viewModel.skipToNext() },
+                    onPrevious = { viewModel.skipToPrevious() },
+                    onShuffle = { viewModel.toggleShuffle() },
+                    onRepeat = { viewModel.toggleRepeat() },
+                    onSeek = { viewModel.seekTo(it) },
+                    onTagsSaved = { s, t -> viewModel.applyEditedTags(s, t) },
+                    onPlaySongs = { list, index -> viewModel.playList(list, index) },
+                    onPauseLocalPlayback = { viewModel.pausePlayback() },
+                    onClose = { showFullPlayer = false },
+                    onOpenEqualizer = onNavigateToDsp,
+                    onToggleQueue = { viewModel.toggleQueue() },
+                    onRemoveFromQueue = { viewModel.removeFromQueue(it) },
+                    onMoveInQueue = { from, to -> viewModel.moveInQueue(from, to) },
+                    onPlayFromQueue = { viewModel.playFromQueue(it) },
+                    previousSongs = uiState.previousSongs,
+                    upcomingSongs = uiState.upcomingSongs,
+                    isFavorite = uiState.currentSong?.let { favorites.contains(it.id) } ?: false,
+                    onFavoriteClick = { uiState.currentSong?.let { viewModel.toggleFavorite(it) } },
+                    onNavigateToAlbum = { album ->
+                        viewModel.setCameFromNowPlaying(true)
+                        viewModel.setLibraryView(com.beatraxus.app.model.LibraryView.ALBUM_DETAIL, album)
+                        showFullPlayer = false
+                    },
+                    onNavigateToInspector = { songId ->
+                        onNavigateToInspector(songId)
+                    },
+                    onSetShowSongInfoConsumed = { viewModel.setShowSongInfo(false) },
+                    onClearPendingInspectorReturn = { viewModel.setPendingInspectorReturn(null) },
+                    onToggleLyrics = { viewModel.toggleLyrics() },
+                    onAdjustOffset = { viewModel.adjustLyricsOffset(it) },
+                    onSetLyricsOffset = { viewModel.setLyricsOffset(it) },
+                    onSearchLyricsOnline = { viewModel.forceSearchLyricsOnline() },
+                    onLoadLyricsCandidates = { viewModel.loadLyricsCandidates() },
+                    onApplyLyricsCandidate = { viewModel.applyLyricsCandidate(it) },
+                    showPipelineOverlay = showPipelineOverlay,
+                    onTogglePipeline = { showPipelineOverlay = it },
+                    onSetSleepTimer = { seconds, finishTrack, playCount ->
+                        viewModel.setSleepTimer(seconds, finishTrack, playCount)
+                    },
+                    onStopSleepTimer = { viewModel.stopSleepTimer() },
+                    onAddToPlaylist = { song ->
+                        playlistDialogSong = song
+                        showPlaylistDialog = true
+                    },
+                    onDeleteSong = { song ->
+                        // We'll reuse the existing songToDelete state if possible, or just call directly if safe
+                        // MainScreen already has songToDelete logic for the main list
+                        viewModel.deleteSong(song)
+                    },
+                    onGoToArtist = { artist ->
+                        viewModel.setLibraryView(com.beatraxus.app.model.LibraryView.ARTIST_DETAIL, artist)
+                        showFullPlayer = false
+                    },
+                    onGoToFolder = { folder, name ->
+                        viewModel.navigateToFolder(folder, name)
+                        showFullPlayer = false
+                    },
+                    onGoToGenre = { genre ->
+                        viewModel.setLibraryView(com.beatraxus.app.model.LibraryView.GENRE_DETAIL, genre)
+                        showFullPlayer = false
+                    }
+                )
+            }
         }
 
         AnimatedVisibility(
@@ -5916,6 +5918,7 @@ fun SlideDrawerMenu(
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(56.dp)
+                            .clip(RoundedCornerShape(18.dp))
                             .clickable { onSelectView(item.view); onClose() }
                     ) {
                         Row(
@@ -5951,46 +5954,60 @@ fun SlideDrawerMenu(
                     },
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Surface(
-                        color = Color.White.copy(0.08f),
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(52.dp)
-                            .clickable { onNavigateToDsp(); onClose() }
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(Icons.Rounded.GraphicEq, null, tint = Color.White.copy(0.7f), modifier = Modifier.size(22.dp))
-                        }
-                    }
-                    Surface(
-                        color = Color.White.copy(0.08f),
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(52.dp)
-                            .clickable { onNavigateToPlayTogether(); onClose() }
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(Icons.Rounded.Groups, "Play Together", tint = Color.White.copy(0.7f), modifier = Modifier.size(24.dp))
-                        }
-                    }
-                    Surface(
-                        color = Color.White.copy(0.08f),
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(52.dp)
-                            .clickable { onNavigateToSettings(); onClose() }
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(Icons.Rounded.Settings, "Settings", tint = Color.White.copy(0.7f), modifier = Modifier.size(22.dp))
-                        }
-                    }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    DrawerBottomIconButton(
+                        icon = Icons.Rounded.GraphicEq,
+                        contentDescription = "Equalizer",
+                        iconSize = 22.dp,
+                        onClick = { onNavigateToDsp(); onClose() }
+                    )
+                    DrawerBottomIconButton(
+                        icon = Icons.Rounded.Groups,
+                        contentDescription = "Play Together",
+                        iconSize = 24.dp,
+                        onClick = { onNavigateToPlayTogether(); onClose() }
+                    )
+                    DrawerBottomIconButton(
+                        icon = Icons.Rounded.Settings,
+                        contentDescription = "Settings",
+                        iconSize = 22.dp,
+                        onClick = { onNavigateToSettings(); onClose() }
+                    )
                 }
             }
         }
+    }
+}
+
+/**
+ * Round drawer shortcut button. The circle clip is applied BEFORE clickable so the press ripple /
+ * highlight takes the same round shape as the icon instead of a rectangle.
+ */
+@Composable
+private fun DrawerBottomIconButton(
+    icon: ImageVector,
+    contentDescription: String?,
+    iconSize: androidx.compose.ui.unit.Dp,
+    onClick: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .size(52.dp)
+            .clip(CircleShape)
+            .background(Color.White.copy(0.08f))
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = contentDescription,
+            tint = Color.White.copy(0.7f),
+            modifier = Modifier.size(iconSize)
+        )
     }
 }
 
