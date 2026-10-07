@@ -44,8 +44,8 @@ class AppearancePreferences(context: Context) {
             ),
             // Removed styles saved by older versions safely fall back to Beatraxus Pulse.
             seekbarStyle = runCatching {
-                SeekbarStyle.valueOf(preferences[SEEKBAR_STYLE] ?: SeekbarStyle.BEATRAXUS_PULSE.name)
-            }.getOrDefault(SeekbarStyle.BEATRAXUS_PULSE),
+                SeekbarStyle.valueOf(preferences[SEEKBAR_STYLE] ?: SeekbarStyle.BEATRAXUS_MATRIX.name)
+            }.getOrDefault(SeekbarStyle.BEATRAXUS_MATRIX),
 
             // Home Screen Sections
             showGreetingHeader = preferences[SHOW_GREETING_HEADER] ?: true,

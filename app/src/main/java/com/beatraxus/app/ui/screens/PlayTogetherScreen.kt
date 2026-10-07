@@ -165,6 +165,7 @@ fun PlayTogetherScreen(
                     controller = ui.controllerName,
                     playing = ui.roomPlaying,
                     songMissing = ui.songMissing,
+                    streaming = ui.streaming,
                     message = ui.message,
                     onCopy = {
                         clipboard.setText(AnnotatedString(ui.roomCode.orEmpty()))
@@ -382,6 +383,7 @@ private fun RoomCard(
     controller: String?,
     playing: Boolean,
     songMissing: Boolean,
+    streaming: Boolean,
     message: String?,
     onCopy: () -> Unit,
     onShare: () -> Unit,
@@ -451,10 +453,16 @@ private fun RoomCard(
                 Spacer(Modifier.height(8.dp))
                 Text("Started by $it", color = Color.White.copy(0.5f), fontSize = 12.sp)
             }
-            if (songMissing) {
+            if (streaming) {
                 Spacer(Modifier.height(10.dp))
                 Text(
-                    "This song isn't in your library, so it can't play here. Add the track and it will join in on the next song.",
+                    "This song isn't in your library, so it is streaming online from ${controller ?: "the controller"}.",
+                    color = PtGreen, fontSize = 12.sp, lineHeight = 17.sp
+                )
+            } else if (songMissing) {
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    "Getting this song from ${controller ?: "the controller"}…",
                     color = PtAmber, fontSize = 12.sp, lineHeight = 17.sp
                 )
             }

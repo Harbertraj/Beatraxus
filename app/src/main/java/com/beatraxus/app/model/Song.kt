@@ -202,7 +202,7 @@ data class AppearanceConfig(
     val qualityBadgeStyle: QualityBadgeStyle = QualityBadgeStyle.GLASSMORPHIC,
     val nowPlayingIconStyle: NowPlayingIconStyle = NowPlayingIconStyle.FILLED,
 
-    val seekbarStyle: SeekbarStyle = SeekbarStyle.BEATRAXUS_PULSE,
+    val seekbarStyle: SeekbarStyle = SeekbarStyle.BEATRAXUS_MATRIX,
 
     // Main Screen Background
     val mainBackgroundMode: NowPlayingBackgroundMode = if (DeviceUtils.isClassicDevice()) NowPlayingBackgroundMode.BLACK else NowPlayingBackgroundMode.BLUR,

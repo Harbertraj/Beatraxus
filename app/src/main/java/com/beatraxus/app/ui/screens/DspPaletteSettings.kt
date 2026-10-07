@@ -73,7 +73,7 @@ fun DspPaletteContent(uiState: PlayerUiState, playerViewModel: PlayerViewModel) 
         )
         Text(
             text = "Choose the two colours that light up the Studio DSP screen: the Spatial Audio section, EQ curve, knobs, sheets and glow.",
-            color = Color.White.copy(0.5f),
+            color = Color(0xFF9AA5AB),   // same as the main settings subtitles
             fontSize = 12.sp,
             lineHeight = 18.sp,
             modifier = Modifier.padding(horizontal = 4.dp)
@@ -127,7 +127,7 @@ fun DspPaletteContent(uiState: PlayerUiState, playerViewModel: PlayerViewModel) 
             )
             Text(
                 text = "Changing a custom colour switches the Studio DSP interface to Custom Dual automatically.",
-                color = Color.White.copy(0.4f),
+                color = Color(0xFF9AA5AB),
                 fontSize = 11.sp,
                 lineHeight = 16.sp
             )

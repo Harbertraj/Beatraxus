@@ -3,7 +3,9 @@ package com.beatraxus.app.features
 import android.content.Context
 import android.os.Build
 import android.os.SystemClock
+import android.net.Uri
 import com.beatraxus.app.model.Song
+import com.beatraxus.app.model.SongSource
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -28,6 +30,11 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
+import java.net.URLEncoder
+import java.security.MessageDigest
+import okhttp3.RequestBody
+import okio.BufferedSink
+import okio.source
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 import kotlin.math.abs
@@ -54,6 +61,8 @@ data class PtUiState(
     val roomPlaying: Boolean = false,
     /** The song the room is playing does not exist in this phone's library. */
     val songMissing: Boolean = false,
+    /** The room song is not in this phone's library and is being streamed from the controller. */
+    val streaming: Boolean = false,
     val message: String? = null,
     /** Positive notice (e.g. "Database connected"), shown in green. */
     val info: String? = null,
@@ -94,11 +103,14 @@ class PlayTogetherManager(
     private val prefs = app.getSharedPreferences("play_together", Context.MODE_PRIVATE)
     private val jsonType = "application/json; charset=utf-8".toMediaType()
     private val http = OkHttpClient.Builder().callTimeout(15, TimeUnit.SECONDS).build()
+    private val uploadHttp = OkHttpClient.Builder()
+        .callTimeout(0, TimeUnit.MILLISECONDS).writeTimeout(120, TimeUnit.SECONDS).readTimeout(120, TimeUnit.SECONDS).build()
     private val streamHttp = OkHttpClient.Builder().readTimeout(75, TimeUnit.SECONDS).build()
 
     // Database URL discovery (declared before _state because loadConfig() fills them in)
     private var cfgProjectId: String = ""
     private var cfgDbUrlFromFile: String = ""
+    private var cfgBucket: String = ""
     @Volatile private var dbResolved = false
     private val dbMutex = Mutex()
 
@@ -126,7 +138,17 @@ class PlayTogetherManager(
     private var refreshJob: Job? = null
     private val refreshTrigger = Channel<Unit>(Channel.CONFLATED)
 
-    private data class Entry(val title: String, val artist: String, val album: String, val durationMs: Long)
+    /** [url] = where other phones can stream this song from when they do not own it. */
+    private data class Entry(
+        val title: String, val artist: String, val album: String, val durationMs: Long,
+        val url: String = "", val ext: String = ""
+    )
+
+    // ---- streaming (controller -> phones that do not have the song) -----------------------
+    private val streamUrls = java.util.concurrent.ConcurrentHashMap<String, String>() // local song id -> url
+    private val uploadedNames = java.util.concurrent.CopyOnWriteArrayList<String>()
+    private val uploading = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    private val uploadMutex = Mutex()
 
     private data class RoomState(
         val by: String,
@@ -163,6 +185,7 @@ class PlayTogetherManager(
             val info = root.optJSONObject("project_info")
             val projectId = info?.optString("project_id").orEmpty()
             cfgProjectId = projectId
+            cfgBucket = info?.optString("storage_bucket").orEmpty().trim()
             cfgDbUrlFromFile = info?.optString("firebase_url").orEmpty().trim().trimEnd('/')
             var dbUrl = cfgDbUrlFromFile
             if (dbUrl.isBlank() && projectId.isNotBlank()) dbUrl = "https://$projectId-default-rtdb.firebaseio.com"
@@ -338,14 +361,17 @@ class PlayTogetherManager(
         _state.update {
             it.copy(
                 status = PtStatus.IDLE, roomCode = null, members = emptyList(), nowPlayingTitle = null,
-                nowPlayingArtist = null, controllerName = null, roomPlaying = false, songMissing = false,
+                nowPlayingArtist = null, controllerName = null, roomPlaying = false, songMissing = false, streaming = false,
                 message = null, busy = false
             )
         }
         scope.launch(Dispatchers.IO + NonCancellable) {
             try {
                 call("DELETE", "$code/members/$me")
-                if (others == 0) call("DELETE", code) // last one out closes the room
+                if (others == 0) {
+                    deleteUploads()
+                    call("DELETE", code) // last one out closes the room
+                }
             } catch (_: Exception) { /* best effort */ }
         }
     }
@@ -491,7 +517,9 @@ class PlayTogetherManager(
                     lastId = cur?.id; lastPlaying = playing; lastPos = pos; lastT = now
                     continue
                 }
-                if (cur != null) {
+                val streamEnded = cur != null && cur.id.startsWith(STREAM_PREFIX) &&
+                    cur.durationMs > 0 && pos >= cur.durationMs - 1_500
+                if (cur != null && !streamEnded) {
                     try {
                         when {
                             cur.id != lastId -> if (!matchesRoomSong(cur) || roomState?.playing != playing) publish(cur, playing, pos)
@@ -555,13 +583,14 @@ class PlayTogetherManager(
         if (st != null) {
             roomState = st
             applyRemote(st)
+            shareForRoom(st, members.any { !it.isMe })
         }
     }
 
     private fun parseState(o: JSONObject?): RoomState? {
         if (o == null) return null
         fun entry(j: JSONObject?): Entry? = j?.let {
-            Entry(it.optString("t"), it.optString("a"), it.optString("al"), it.optLong("d"))
+            Entry(it.optString("t"), it.optString("a"), it.optString("al"), it.optLong("d"), it.optString("u"), it.optString("x"))
         }
         val q = ArrayList<Entry>()
         o.optJSONArray("queue")?.let { arr ->
@@ -590,20 +619,37 @@ class PlayTogetherManager(
     /** Someone else changed what is playing: do the same here. */
     private fun applyRemote(st: RoomState) {
         if (st.by == uid) return
-        if (st.updatedAt != 0L && st.updatedAt <= lastAppliedAt) return
-        lastAppliedAt = st.updatedAt
         val entry = st.song ?: return
+        // a stream URL that shows up later (controller finished uploading) must still be applied
+        val urlArrived = _state.value.songMissing && entry.url.isNotBlank()
+        if (st.updatedAt != 0L && st.updatedAt <= lastAppliedAt && !urlArrived) return
+        lastAppliedAt = st.updatedAt
 
         val library = host.librarySongs()
         val local = findLocal(entry, library)
         if (local == null) {
-            // This phone doesn't have the song: stop whatever is playing so nobody hears two songs.
+            if (entry.url.isNotBlank()) {
+                // Not in this library: play the controller's copy online, at the room's position.
+                val stream = streamSong(entry)
+                val target = expectedPosition(st)
+                ignoreLocalUntil = SystemClock.elapsedRealtime() + 2_500
+                _state.update { it.copy(songMissing = false, streaming = true) }
+                val cur = host.currentSong()
+                if (cur?.id != stream.id) {
+                    host.playQueue(listOf(stream), 0, target, st.playing)
+                } else {
+                    if (host.isPlaying() != st.playing) host.setPlaying(st.playing)
+                    if (abs(host.positionMs() - target) > 1_500) host.seekTo(target)
+                }
+                return
+            }
+            // Nothing to stream yet: silence this phone and ask the controller to share the file.
             ignoreLocalUntil = SystemClock.elapsedRealtime() + 2_500
             if (host.isPlaying()) host.setPlaying(false)
-            _state.update { it.copy(songMissing = true) }
+            _state.update { it.copy(songMissing = true, streaming = false) }
             return
         }
-        _state.update { it.copy(songMissing = false) }
+        _state.update { it.copy(songMissing = false, streaming = false) }
 
         val target = expectedPosition(st)
         ignoreLocalUntil = SystemClock.elapsedRealtime() + 2_500
@@ -656,6 +702,8 @@ class PlayTogetherManager(
             Entry(song.title, song.artist, song.album, song.durationMs), emptyList()
         )
         call("PUT", "$code/state", body.toString())
+        // others are listening: start uploading right away so nobody has to wait for a request
+        if (_state.value.members.any { !it.isMe }) shareSong(song)
         _state.update {
             it.copy(
                 nowPlayingTitle = song.title, nowPlayingArtist = song.artist,
@@ -664,8 +712,146 @@ class PlayTogetherManager(
         }
     }
 
-    private fun songJson(s: Song) = JSONObject()
-        .put("t", s.title).put("a", s.artist).put("al", s.album).put("d", s.durationMs)
+    private fun songJson(s: Song): JSONObject {
+        val j = JSONObject().put("t", s.title).put("a", s.artist).put("al", s.album).put("d", s.durationMs)
+        val url = if (s.source == SongSource.WEB && s.uri.scheme?.startsWith("http") == true) s.uri.toString()
+        else streamUrls[s.id]
+        if (url != null) j.put("u", url).put("x", extOf(s))
+        return j
+    }
+
+    // =========================================================================================
+    // Streaming from the controller
+    // =========================================================================================
+
+    private fun extOf(s: Song): String =
+        s.format.lowercase().filter { it.isLetterOrDigit() }.takeIf { it.length in 2..5 && it != "unknown" }
+            ?: s.uri.lastPathSegment?.substringAfterLast('.', "")?.lowercase()?.filter { it.isLetterOrDigit() }
+                ?.takeIf { it.length in 2..5 } ?: "mp3"
+
+    private fun sha(text: String) = MessageDigest.getInstance("SHA-1").digest(text.toByteArray())
+        .joinToString("") { "%02x".format(it) }.take(16)
+
+    /** A song object other phones use to play the controller's copy online. */
+    private fun streamSong(e: Entry) = Song(
+        id = STREAM_PREFIX + sha(e.url),
+        uri = Uri.parse(e.url),
+        title = e.title, artist = e.artist, album = e.album, durationMs = e.durationMs,
+        format = e.ext.uppercase().ifBlank { "STREAM" }, sampleRateHz = 44100,
+        source = SongSource.WEB
+    )
+
+    /**
+     * Controller: as soon as somebody else is in the room, the current song is uploaded in the
+     * background and its URL is attached to the room state, so phones without the song start
+     * streaming it with no request / waiting step.
+     */
+    private fun shareForRoom(st: RoomState, othersPresent: Boolean) {
+        if (st.by != uid || !othersPresent) return
+        val entry = st.song ?: return
+        val song = host.currentSong()?.takeIf { entry.matches(it) } ?: return
+        if (entry.url.isNotBlank() || !isUploadable(song)) return
+        shareSong(song)
+    }
+
+    /** Upload [song] (once), attach its URL to the room state, then get the next song ready. */
+    private fun shareSong(song: Song) {
+        val code = room ?: return
+        if (!isUploadable(song) || !uploading.add(song.id)) return
+        scope.launch(Dispatchers.IO) {
+            try {
+                val url = streamUrls[song.id] ?: uploadSong(code, song) ?: return@launch
+                // only attach it if the room is still on this song
+                if (room == code && roomState?.by == uid && matchesRoomSong(song)) {
+                    call("PATCH", "$code/state/song", JSONObject().put("u", url).put("x", extOf(song)).toString())
+                }
+                // keep one song ahead so the next track starts without a gap
+                val q = host.queue()
+                val i = q.indexOfFirst { it.id == song.id }
+                q.getOrNull(i + 1)?.takeIf { i >= 0 && isUploadable(it) && streamUrls[it.id] == null }?.let { next ->
+                    if (uploading.add(next.id)) try { uploadSong(code, next) } finally { uploading.remove(next.id) }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _state.update { it.copy(message = "Could not share \"${song.title}\": ${e.message ?: "upload failed"}") }
+            } finally {
+                uploading.remove(song.id)
+            }
+        }
+    }
+
+    private fun isUploadable(s: Song) = s.source == SongSource.LOCAL &&
+        (s.uri.scheme == "content" || s.uri.scheme == "file")
+
+    private fun bucketCandidates(): List<String> = buildList {
+        if (cfgBucket.isNotBlank()) add(cfgBucket)
+        if (cfgProjectId.isNotBlank()) { add("$cfgProjectId.firebasestorage.app"); add("$cfgProjectId.appspot.com") }
+    }.distinct()
+
+    private fun storageUrl(bucket: String, name: String) =
+        "https://firebasestorage.googleapis.com/v0/b/$bucket/o/" + URLEncoder.encode(name, "UTF-8")
+
+    /** Uploads the song file to Firebase Storage (REST) and returns a tokenised download URL. */
+    private suspend fun uploadSong(code: String, song: Song): String? = uploadMutex.withLock {
+        uploadLocked(code, song)
+    }
+
+    private suspend fun uploadLocked(code: String, song: Song): String {
+        streamUrls[song.id]?.let { return it }
+        ensureAuth()
+        val token = idToken ?: throw IOException("Not signed in to Firebase.")
+        val ext = extOf(song)
+        val name = "playTogether/$code/${sha(song.id)}.$ext"
+        val resolver = app.contentResolver
+        val length = try { resolver.openAssetFileDescriptor(song.uri, "r")?.use { it.length } ?: -1L } catch (_: Exception) { -1L }
+            .let { if (it > 0) it else song.fileSizeBytes.takeIf { n -> n > 0 } ?: -1L }
+        val mime = resolver.getType(song.uri)?.takeIf { it.startsWith("audio/") } ?: "audio/$ext"
+        val body = object : RequestBody() {
+            override fun contentType() = mime.toMediaType()
+            override fun contentLength() = length
+            override fun writeTo(sink: BufferedSink) {
+                (resolver.openInputStream(song.uri) ?: throw IOException("Cannot read the song file.")).use { sink.writeAll(it.source()) }
+            }
+        }
+        var lastErr: String? = null
+        for (bucket in bucketCandidates()) {
+            val req = Request.Builder()
+                .url("https://firebasestorage.googleapis.com/v0/b/$bucket/o?name=" + URLEncoder.encode(name, "UTF-8"))
+                .header("Authorization", "Firebase $token")
+                .post(body).build()
+            uploadHttp.newCall(req).execute().use { r ->
+                val text = r.body?.string().orEmpty()
+                if (r.isSuccessful) {
+                    val tok = JSONObject(text).optString("downloadTokens").substringBefore(',')
+                    val url = storageUrl(bucket, name) + "?alt=media" + if (tok.isNotBlank()) "&token=$tok" else ""
+                    streamUrls[song.id] = url
+                    uploadedNames += "$bucket|$name"
+                    return url
+                }
+                lastErr = when (r.code) {
+                    401, 403 -> "Firebase Storage denied the upload. Enable Storage and allow writes for signed-in users."
+                    404 -> null // wrong bucket name, try the next one
+                    else -> "Storage error (${r.code})."
+                }
+                if (lastErr != null) throw IOException(lastErr)
+            }
+        }
+        throw IOException("Firebase Storage bucket not found. Enable Storage in the Firebase console and rebuild with the new google-services.json.")
+    }
+
+    private suspend fun deleteUploads() {
+        val token = idToken
+        for (entry in uploadedNames.toList()) {
+            val (bucket, name) = entry.split('|', limit = 2)
+            try {
+                val rb = Request.Builder().url(storageUrl(bucket, name)).delete()
+                if (token != null) rb.header("Authorization", "Firebase $token")
+                http.newCall(rb.build()).execute().close()
+            } catch (_: Exception) { }
+        }
+        uploadedNames.clear(); streamUrls.clear()
+    }
 
     // ---- song matching ------------------------------------------------------------------
 
@@ -874,6 +1060,8 @@ class PlayTogetherManager(
             if (r.isSuccessful) JSONObject(r.body?.string().orEmpty()) else null
         }
     } catch (_: Exception) { null }
+
+    private companion object { const val STREAM_PREFIX = "pt_stream_" }
 
     private fun randomCode(): String {
         val alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
