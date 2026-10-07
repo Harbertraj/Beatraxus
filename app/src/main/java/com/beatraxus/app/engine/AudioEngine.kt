@@ -773,7 +773,7 @@ class AudioEngine(
 
         output.setBufferConfig(
             bufferFrames = (config.outputBufferMs * sourceSampleRate) / 1000,
-            bufferCount = config.outputBufferCount,
+            bufferCount = config.outputBufferCount.coerceIn(2, 4),
             postFadeFrames = (config.postFadeBufferMs * sourceSampleRate) / 1000
         )
 

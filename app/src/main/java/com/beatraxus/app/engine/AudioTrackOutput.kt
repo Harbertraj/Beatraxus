@@ -8,6 +8,7 @@ import android.media.AudioManager
 import android.media.AudioTrack
 import android.os.Build
 import android.os.Process
+import android.os.SystemClock
 import android.util.Log
 import com.beatraxus.app.model.DvcMode
 import com.beatraxus.app.model.OutputMode
@@ -85,10 +86,24 @@ class AudioTrackOutput(
         underrunHarvested += t + m
     }
 
-    override fun underrunCount(): Int = (rawUnderruns() - underrunBaseline).coerceAtLeast(0)
+    // Starting / flushing / re-creating a stream always drains the queue for a moment (decoder
+    // preparing the next song, seek, device reopen) and the driver reports that as an XRun even
+    // though nothing audible happened. Underruns in this window after any such event are absorbed
+    // so only real mid-playback buffer drops reach the UI.
+    @Volatile private var underrunGraceUntil = 0L
+
+    private fun armUnderrunGrace(ms: Long = UNDERRUN_GRACE_MS) {
+        underrunGraceUntil = SystemClock.elapsedRealtime() + ms
+        underrunBaseline = rawUnderruns()
+    }
+
+    override fun underrunCount(): Int {
+        if (SystemClock.elapsedRealtime() < underrunGraceUntil) underrunBaseline = rawUnderruns()
+        return (rawUnderruns() - underrunBaseline).coerceAtLeast(0)
+    }
 
     /** Start the displayed underrun counter from zero (called when a new song becomes active). */
-    override fun resetUnderrunCount() { underrunBaseline = rawUnderruns() }
+    override fun resetUnderrunCount() { armUnderrunGrace() }
 
     // ── Primed start ─────────────────────────────────────────────────────────
     // Calling AudioTrack.play() on an EMPTY buffer makes the mixer starve immediately and the
@@ -103,6 +118,7 @@ class AudioTrackOutput(
             // Resuming from pause with audio still queued: safe to play right away.
             track.play()
             awaitingPrime = false
+            armUnderrunGrace()
         } else {
             awaitingPrime = true
         }
@@ -119,6 +135,7 @@ class AudioTrackOutput(
             if (framesSinceArm >= prime || writtenFrames <= 0) {
                 try { track.play() } catch (_: Exception) {}
                 awaitingPrime = false
+                armUnderrunGrace()
             }
         }
     }
@@ -339,7 +356,7 @@ class AudioTrackOutput(
             if (mmap.init(resolvedSampleRate, channels, mmapRequestedBufferFrames, format, resetOffsets)) {
                 mmapOutput = mmap
                 usingMmap = true
-                if (resetOffsets) underrunBaseline = rawUnderruns()
+                if (resetOffsets) armUnderrunGrace() else armUnderrunGrace(UNDERRUN_GRACE_MS / 2)
                 this.sampleRate = mmap.outputSampleRate()
                 this.channels = channels
                 this.currentEncoding = AudioFormat.ENCODING_PCM_FLOAT
@@ -440,7 +457,7 @@ class AudioTrackOutput(
                 bufferHasData = false
                 framesSinceArm = 0L
                 awaitingPrime = isPlaying
-                if (resetOffsets) underrunBaseline = rawUnderruns()
+                if (resetOffsets) armUnderrunGrace() else armUnderrunGrace(UNDERRUN_GRACE_MS / 2)
                 
                 synchronized(stateLock) {
                     if (resetOffsets) {
@@ -473,7 +490,7 @@ class AudioTrackOutput(
                 bufferHasData = false
                 framesSinceArm = 0L
                 awaitingPrime = false
-                if (resetOffsets) underrunBaseline = rawUnderruns()
+                if (resetOffsets) armUnderrunGrace() else armUnderrunGrace(UNDERRUN_GRACE_MS / 2)
                 synchronized(stateLock) {
                     if (resetOffsets) {
                         totalFramesWritten = 0L
@@ -596,6 +613,7 @@ class AudioTrackOutput(
                     bufferHasData = false
                     framesSinceArm = 0L
                     awaitingPrime = true
+                    armUnderrunGrace()
                 }
             } catch (_: Exception) {}
         }
@@ -1065,6 +1083,7 @@ class AudioTrackOutput(
     }
 
     companion object {
+        private const val UNDERRUN_GRACE_MS = 2_000L
         private const val TAG = "AudioTrackOutput"
         private const val PCM_24_MAX = 8_388_607f
         private val DIRECT_RATE_CANDIDATES = listOf(44_100, 48_000, 88_200, 96_000, 176_400, 192_000, 352_800, 384_000)

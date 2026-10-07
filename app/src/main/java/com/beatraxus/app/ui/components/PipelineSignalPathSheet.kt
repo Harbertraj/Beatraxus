@@ -353,7 +353,7 @@ fun buildPipelineStages(song: Song, uiState: PlayerUiState): PipelineResult {
             primary = enginePrimary,
             details = listOf(
                 "Output Driver Path" to uiState.pipelineOutputPath,
-                "Buffer Configuration" to "${dspConf.outputBufferMs} ms (${dspConf.outputBufferCount} buffers)",
+                "Buffer Configuration" to "${dspConf.outputBufferMs} ms (${dspConf.outputBufferCount.coerceIn(2, 4)} buffers)",
                 "Latency" to String.format(Locale.US, "%.1f ms (%d frames)", latencyMs, uiState.dsp.currentLatencyFrames),
                 "Underruns (Buffer Drops)" to "${uiState.underrunCount}"
             ),
