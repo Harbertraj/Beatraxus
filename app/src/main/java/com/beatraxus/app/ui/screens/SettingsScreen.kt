@@ -1514,6 +1514,9 @@ private fun SettingsGroupLabel(text: String) {
     }
 }
 
+/** Single subtitle colour for every settings row (Home Interface, Studio DSP Interface, ...). */
+val SettingSubtitleColor = Color(0xFF9AA5AB)
+
 @Composable
 fun SettingMenuItem(
     title: String,
@@ -1681,7 +1684,7 @@ fun SettingMenuItem(
                 Spacer(Modifier.height(4.dp))
                 Text(
                     text = subtitle,
-                    color = Color(0xFF9AA5AB),
+                    color = SettingSubtitleColor,
                     style = TextStyle(
                         fontSize = 12.sp,
                         lineHeight = 16.sp,

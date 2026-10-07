@@ -3,6 +3,8 @@ package com.beatraxus.app.ui.screens
 import android.content.Intent
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -36,6 +38,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -96,6 +99,14 @@ fun PlayTogetherScreen(
     var joinCode by remember { mutableStateOf("") }
 
     val inRoom = ui.roomCode != null
+
+    val nearbyPermLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { granted ->
+        val ok = granted.values.all { it }
+        pt.setNearbyEnabled(ok)
+        if (!ok) Toast.makeText(context, "Nearby needs the Bluetooth / Nearby devices permission", Toast.LENGTH_LONG).show()
+    }
 
     Box(
         modifier = Modifier
@@ -168,6 +179,12 @@ fun PlayTogetherScreen(
                     streaming = ui.streaming,
                     transferPercent = ui.transferPercent,
                     message = ui.message,
+                    nearbyEnabled = ui.nearbyEnabled,
+                    onNearbyToggle = { on ->
+                        if (!on) pt.setNearbyEnabled(false)
+                        else if (com.beatraxus.app.features.PtNearbyTransfer.hasPermissions(context)) pt.setNearbyEnabled(true)
+                        else nearbyPermLauncher.launch(com.beatraxus.app.features.PtNearbyTransfer.requiredPermissions())
+                    },
                     onCopy = {
                         clipboard.setText(AnnotatedString(ui.roomCode.orEmpty()))
                         Toast.makeText(context, "Code copied", Toast.LENGTH_SHORT).show()
@@ -387,6 +404,8 @@ private fun RoomCard(
     streaming: Boolean,
     transferPercent: Int = -1,
     message: String?,
+    nearbyEnabled: Boolean,
+    onNearbyToggle: (Boolean) -> Unit,
     onCopy: () -> Unit,
     onShare: () -> Unit,
     onLeave: () -> Unit
@@ -468,6 +487,24 @@ private fun RoomCard(
                     color = PtAmber, fontSize = 12.sp, lineHeight = 17.sp
                 )
             }
+        }
+    }
+
+    Spacer(Modifier.height(14.dp))
+
+    // ---- same-place transfer ----
+    GlassCard {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                SectionLabel("NEARBY (SAME PLACE)")
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "Send songs over Bluetooth / Wi-Fi Direct to phones in the same room. Works without internet; falls back to online transfer.",
+                    color = Color.White.copy(0.55f), fontSize = 12.sp, lineHeight = 17.sp
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            Switch(checked = nearbyEnabled, onCheckedChange = onNearbyToggle)
         }
     }
 

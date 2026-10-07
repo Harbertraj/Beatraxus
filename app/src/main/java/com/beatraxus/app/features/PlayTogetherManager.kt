@@ -65,6 +65,8 @@ data class PtUiState(
     val streaming: Boolean = false,
     /** 0..100 while the song is being received from the controller over WebRTC, -1 otherwise. */
     val transferPercent: Int = -1,
+    /** Same-place transfer over Nearby Connections (Bluetooth / Wi-Fi Direct) is switched on. */
+    val nearbyEnabled: Boolean = false,
     val message: String? = null,
     /** Positive notice (e.g. "Database connected"), shown in green. */
     val info: String? = null,
@@ -175,6 +177,29 @@ class PlayTogetherManager(
         }.also { it.listener = transferListener }
     }
 
+    /** Same-place route: tried first, WebRTC (above) takes over when it cannot deliver. */
+    private val nearby: PtNearbyTransfer by lazy {
+        PtNearbyTransfer(app, scope) { sid ->
+            // Nearby could not deliver: ask over the internet instead.
+            if (sid == mySid) scope.launch(Dispatchers.IO) {
+                try {
+                    val sig = mySig ?: return@launch
+                    postNeed(sig, sid)
+                } catch (e: CancellationException) { throw e } catch (_: Exception) { }
+            }
+        }.also { it.listener = transferListener }
+    }
+
+    private fun nearbyReady() = _state.value.nearbyEnabled && PtNearbyTransfer.hasPermissions(app)
+
+    /** Switch same-place transfer on/off (the screen asks for the permissions first). */
+    fun setNearbyEnabled(on: Boolean) {
+        val enabled = on && PtNearbyTransfer.hasPermissions(app)
+        prefs.edit().putBoolean("nearby", enabled).apply()
+        _state.update { it.copy(nearbyEnabled = enabled) }
+        if (!enabled) nearby.stopAll()
+    }
+
     private val transferListener = object : PtFileTransfer.Listener {
         override fun onProgress(sid: String, percent: Int) {
             if (sid == mySid) _state.update { it.copy(transferPercent = percent) }
@@ -183,6 +208,8 @@ class PlayTogetherManager(
         override fun onReceived(sid: String, file: java.io.File) {
             val sig = mySig ?: return
             mySid = null
+            nearby.cancelRequest()
+            transfer.close(sid)
             receivedFiles[sig] = file
             _state.update { it.copy(transferPercent = -1, message = null) }
             scope.launch(Dispatchers.IO) {
@@ -226,7 +253,7 @@ class PlayTogetherManager(
      */
     private fun loadConfig(): PtUiState {
         val name = prefs.getString("name", null) ?: (Build.MODEL ?: "My phone")
-        val base = PtUiState(displayName = name)
+        val base = PtUiState(displayName = name, nearbyEnabled = prefs.getBoolean("nearby", false) && PtNearbyTransfer.hasPermissions(app))
         val text = try {
             app.assets.open("google-services.json").bufferedReader().use { it.readText() }
         } catch (e: Exception) {
@@ -412,6 +439,7 @@ class PlayTogetherManager(
         val others = _state.value.members.count { !it.isMe }
         stopJobs()
         transfer.closeAll()
+        nearby.stopAll()
         mySid = null; mySig = null; lastNeedAt = 0L; servedSids.clear()
         room = null
         roomState = null
@@ -664,8 +692,23 @@ class PlayTogetherManager(
         val sig = songSig(e)
         val sid = uid + "_" + UUID.randomUUID().toString().take(6)
         transfer.close(mySid ?: "")
+        nearby.cancelRequest()
         mySid = sid; mySig = sig
         _state.update { it.copy(transferPercent = 0) }
+        if (nearbyReady()) {
+            // Same place? Try Bluetooth / Wi-Fi Direct first; PtNearbyTransfer calls postNeed()
+            // itself if no controller is found nearby.
+            nearby.requestSong(code, sig, sid, myName.ifBlank { "Guest" }) { ext ->
+                java.io.File(app.cacheDir, "pt_recv/$sig.$ext")
+            }
+        } else {
+            postNeed(sig, sid)
+        }
+    }
+
+    /** Ask the controller for the song over the internet (WebRTC, signaled through the room). */
+    private suspend fun postNeed(sig: String, sid: String) {
+        val code = room ?: return
         call(
             "PUT", "$code/needs/$uid",
             JSONObject().put("sig", sig).put("sid", sid).put("at", serverValue()).toString()
@@ -676,6 +719,8 @@ class PlayTogetherManager(
     private fun handleSignaling(o: JSONObject, now: Long) {
         val signal = o.optJSONObject("signal")
         val st = roomState
+
+        syncNearbyHost(st)
 
         // controller: serve fresh requests for the song that is playing now
         if (st != null && st.by == uid) {
@@ -716,6 +761,22 @@ class PlayTogetherManager(
                 node.optJSONObject("ice_r")?.let { feedIce(sid, it) }
             }
         }
+    }
+
+    /** Controller advertises the room and offers the current song to phones in the same place. */
+    private fun syncNearbyHost(st: RoomState?) {
+        val code = room
+        if (code == null || st == null || st.by != uid || !nearbyReady()) { nearby.stopAdvertising(); return }
+        val entry = st.song
+        val song = host.currentSong()?.takeIf { entry != null && entry.matches(it) }
+        nearby.startAdvertising(code, myName.ifBlank { "Guest" })
+        nearby.setSource(
+            if (entry != null && song != null && isUploadable(song))
+                PtNearbyTransfer.Source(songSig(entry), extOf(song), song.fileSizeBytes.takeIf { it > 0 } ?: 0L) {
+                    app.contentResolver.openFileDescriptor(song.uri, "r")
+                }
+            else null
+        )
     }
 
     private fun feedIce(sid: String, list: JSONObject) =

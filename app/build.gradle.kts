@@ -287,6 +287,8 @@ dependencies {
     implementation("com.google.android.gms:play-services-cast-framework:21.4.0")
     implementation("androidx.mediarouter:mediarouter:1.7.0")
     implementation("com.google.android.gms:play-services-auth:21.2.0")
+    // Play Together: same-place song transfer (Bluetooth / Wi-Fi Direct)
+    implementation("com.google.android.gms:play-services-nearby:19.3.0")
     
     // TensorFlow Lite
     implementation("org.tensorflow:tensorflow-lite:2.16.1")
