@@ -412,7 +412,7 @@ class LR4Filter {
         double z1[2], z2[2]; // Stereo state
         void reset() { z1[0]=z1[1]=z2[0]=z2[1]=0.0; }
         void setLP(double f, double sr) {
-            double omega = M_PI * f / sr;
+            double omega = 2.0 * M_PI * f / sr;
             double sn = std::sin(omega), cs = std::cos(omega);
             double alpha = sn / std::sqrt(2.0);
             double a0 = 1.0 + alpha;
@@ -420,7 +420,7 @@ class LR4Filter {
             a1 = -2.0 * cs / a0; a2 = (1.0 - alpha) / a0;
         }
         void setHP(double f, double sr) {
-            double omega = M_PI * f / sr;
+            double omega = 2.0 * M_PI * f / sr;
             double sn = std::sin(omega), cs = std::cos(omega);
             double alpha = sn / std::sqrt(2.0);
             double a0 = 1.0 + alpha;
@@ -1052,7 +1052,34 @@ class Audio3DStageEngine {
 
         // Elevation filters (persistent state to prevent clicks)
         BiquadState elFilterL, elFilterR;
+
+        // ---- Modern-mode (Spatial Audio ON) extras ----
+        // Pinna peak for elevated sources + head-shadow one-pole state (far ear).
+        BiquadState elPeakL, elPeakR;
+        double shadowL = 0.0, shadowR = 0.0;
+        // Cached per-band cue values. Recomputed every kCoefInterval samples instead of
+        // every sample (trig/pow/biquad design per sample was the CPU hotspot).
+        double cPanL = 0.70710678, cPanR = 0.70710678;
+        double cItdSamples = 0.0;
+        double cShadowL = 0.0, cShadowR = 0.0;
+        double cDistGain = 1.3930; // 1.6 / 2^0.2
+        double cAirCoeff = 0.96;
+        double cDepthT = 0.17;
     };
+
+    // HRTF "personality" profiles (index == HrtfMode ordinal).
+    // Natural(Balanced), Natural(Wide), Cinematic, Studio(Reference)
+    struct HrtfProfile { double ild, itd, shadow, back, elev, side; };
+    static constexpr HrtfProfile kProfiles[4] = {
+        {1.00, 1.00, 1.00, 1.00, 1.00, 1.00},
+        {1.15, 1.25, 1.10, 1.00, 1.00, 0.85},
+        {1.10, 1.40, 1.00, 1.30, 1.30, 0.80},
+        {0.80, 0.80, 0.50, 0.40, 0.60, 1.20},
+    };
+    static constexpr int kCoefInterval = 16;     // samples between cue-coefficient refreshes
+    static constexpr double kSideRetain = 0.55;  // how much of the original stereo difference survives
+    unsigned int coefTick = 0;
+    double shadowCoef = 0.4;                     // one-pole LP (~4 kHz) for head shadow
 
     BandSpatialState bands[NUM_BANDS];
     double targetWidth = 1.0, curWidth = 1.0;
@@ -1067,6 +1094,8 @@ public:
     void init(int sampleRate) {
         currentSampleRate = sampleRate;
         crossover.init((double)sampleRate);
+        shadowCoef = 1.0 - std::exp(-2.0 * M_PI * 4000.0 / (double)sampleRate);
+        coefTick = 0;
 
         for (int i = 0; i < NUM_BANDS; i++) {
             // Up to 25ms of depth delay per band
@@ -1078,7 +1107,7 @@ public:
             bands[i].lpStateR = 0.0;
 
             // ITD Delay (Max 1ms)
-            bands[i].itdSize = (size_t)std::ceil(0.001 * sampleRate) + 4;
+            bands[i].itdSize = (size_t)std::ceil(0.0012 * sampleRate) + 4;
             bands[i].itdBufL.assign(bands[i].itdSize, 0.0);
             bands[i].itdBufR.assign(bands[i].itdSize, 0.0);
             bands[i].itdWritePos = 0;
@@ -1087,6 +1116,11 @@ public:
                 bands[i].hrtfL[j].reset(); bands[i].hrtfR[j].reset();
             }
             bands[i].elFilterL.reset(); bands[i].elFilterR.reset();
+
+            bands[i].elPeakL.reset(); bands[i].elPeakR.reset();
+            bands[i].elPeakL.setPeaking(sampleRate, 7500.0f, 0.0f, 2.0f);
+            bands[i].elPeakR.setPeaking(sampleRate, 7500.0f, 0.0f, 2.0f);
+            bands[i].shadowL = bands[i].shadowR = 0.0;
         }
     }
 
@@ -1113,6 +1147,8 @@ public:
         curWidth += (targetWidth - curWidth) * smoothCoeff;
         curCenterLock += (targetCenterLock - curCenterLock) * smoothCoeff;
         curSpatialIntensity += (targetSpatialIntensity - curSpatialIntensity) * smoothCoeff;
+
+        coefTick++;
 
         if (spatialUiMode == 1) {
             // Classic Mode: treated as two independent speakers (L and R)
@@ -1154,7 +1190,11 @@ private:
         bR = mid - focusedSide;
 
         // 3. 3D Spatialization (Apply only if Intensity > 0)
-        if (curSpatialIntensity > 0.001) {
+        if (curSpatialIntensity > 0.001 && spatialUiMode == 0) {
+            // Modern mode: improved spatial renderer (only runs when Spatial Audio is ON).
+            processModernWet(i, s, bL, bR);
+        } else if (curSpatialIntensity > 0.001) {
+            // Classic mode: unchanged legacy renderer.
             double azRad = (s.curAz - 90.0) * M_PI / 180.0;
             double cosAz = std::cos(azRad); // Positive = Right, Negative = Left
             double sinAz = std::sin(azRad); // Front/Back factor
@@ -1249,6 +1289,152 @@ private:
             bL = bL * dryGain + spatialL * wetGain;
             bR = bR * dryGain + spatialR * wetGain;
         }
+    }
+
+    // Fractional (linearly interpolated) read from a circular delay line.
+    // writePos must already point at the slot that was just written.
+    static inline double readFractional(const std::vector<double>& buf, double delay,
+                                        size_t writePos, size_t size) {
+        double readPos = (double)writePos + (double)size - delay;
+        double fl = std::floor(readPos);
+        size_t i0 = (size_t)fl % size;
+        size_t i1 = (i0 + 1) % size;
+        double frac = readPos - fl;
+        return buf[i0] * (1.0 - frac) + buf[i1] * frac;
+    }
+
+    static inline void copyCoeffs(BiquadState& dst, const BiquadState& src) {
+        dst.b0 = src.b0; dst.b1 = src.b1; dst.b2 = src.b2;
+        dst.a1 = src.a1; dst.a2 = src.a2;
+        dst.filterType = src.filterType;
+        dst.freq = src.freq; dst.gain = src.gain; dst.q = src.q;
+    }
+
+    // Refresh all cue coefficients for one band. L/R ears share spectral filters,
+    // so each filter is designed once and the coefficients are copied to the other ear.
+    void updateModernCues(BandSpatialState& s) {
+        const HrtfProfile& P = kProfiles[std::clamp(hrtfMode, 0, 3)];
+        const double sr = (double)currentSampleRate;
+
+        double azRad = (s.curAz - 90.0) * M_PI / 180.0;
+        double cosAz = std::cos(azRad);  // +1 = right, -1 = left
+        double sinAz = std::sin(azRad);  // +1 = behind, -1 = in front
+
+        // ILD: equal-power pan, but the far ear is never fully silenced (real heads
+        // diffract sound around). Max ~10 dB level difference for Natural.
+        double k = std::min(0.97, 0.8 * P.ild);
+        s.cPanL = std::sqrt(std::max(0.0, 0.5 * (1.0 - k * cosAz)));
+        s.cPanR = std::sqrt(std::max(0.0, 0.5 * (1.0 + k * cosAz)));
+
+        // ITD (far ear delayed), capped to the delay-line size.
+        double itdMax = std::min(0.00066 * P.itd, 0.00095) * sr;
+        s.cItdSamples = cosAz * itdMax;
+
+        // Head shadow amount per ear (the ear away from the source).
+        s.cShadowL = std::min(1.0, std::max(0.0,  cosAz) * P.shadow);
+        s.cShadowR = std::min(1.0, std::max(0.0, -cosAz) * P.shadow);
+
+        // Front/back spectral cues (continuous: no hard on/off switching).
+        double backFactor = std::clamp((sinAz + 1.0) * 0.5, 0.0, 1.0);
+        float muffDb  = (float)(-6.0  * backFactor * P.back);
+        float notchDb = (float)(-12.0 * backFactor * P.back);
+        s.hrtfL[0].setHighShelf(sr, 4000.0f, muffDb, 0.7f);  copyCoeffs(s.hrtfR[0], s.hrtfL[0]);
+        s.hrtfL[1].setPeaking(sr, 6500.0f, notchDb, 4.0f);   copyCoeffs(s.hrtfR[1], s.hrtfL[1]);
+
+        // Elevation: high shelf (up/down) plus pinna peak for elevated sources.
+        double elF = std::clamp(s.curEl / 90.0, -1.0, 1.0);
+        s.elFilterL.setHighShelf(sr, 3000.0f, (float)(4.0 * elF * P.elev), 0.7f);
+        copyCoeffs(s.elFilterR, s.elFilterL);
+        s.elPeakL.setPeaking(sr, 7500.0f, (float)(3.0 * std::max(0.0, elF) * P.elev), 2.0f);
+        copyCoeffs(s.elPeakR, s.elPeakL);
+
+        // Distance cues.
+        s.cDistGain = 1.6 / std::pow(std::max(0.5, s.curDist), 0.2);
+        s.cAirCoeff = std::clamp(1.0 - (s.curDist - 1.0) * 0.04, 0.2, 1.0);
+        s.cDepthT   = std::clamp((s.curDist - 0.3) / 10.0, 0.0, 1.0);
+    }
+
+    // Improved wet path for Modern mode.
+    // Differences vs legacy: keeps part of the stereo difference (no mono collapse),
+    // adds head-shadow, honours HRTF mode, fractional depth delay, cached coefficients
+    // and depth delay scaled with intensity (less comb filtering against the dry signal).
+    void processModernWet(int bandIdx, BandSpatialState& s, double& bL, double& bR) {
+        if (((coefTick + (unsigned int)bandIdx * 2u) & (unsigned int)(kCoefInterval - 1)) == 0) {
+            updateModernCues(s);
+        }
+        const HrtfProfile& P = kProfiles[std::clamp(hrtfMode, 0, 3)];
+
+        double mid  = (bL + bR) * 0.5;
+        double side = (bL - bR) * 0.5;
+
+        double spatialL = mid * s.cPanL;
+        double spatialR = mid * s.cPanR;
+
+        // ITD
+        s.itdBufL[s.itdWritePos] = spatialL;
+        s.itdBufR[s.itdWritePos] = spatialR;
+        if (s.cItdSamples >= 0.0) {
+            spatialL = readFractional(s.itdBufL, s.cItdSamples, s.itdWritePos, s.itdSize);
+        } else {
+            spatialR = readFractional(s.itdBufR, -s.cItdSamples, s.itdWritePos, s.itdSize);
+        }
+        s.itdWritePos = (s.itdWritePos + 1) % s.itdSize;
+
+        // Head shadow: far ear loses highs (first-order low-pass blended in by lateral amount).
+        s.shadowL += shadowCoef * (spatialL - s.shadowL);
+        s.shadowR += shadowCoef * (spatialR - s.shadowR);
+        spatialL += (s.shadowL - spatialL) * s.cShadowL;
+        spatialR += (s.shadowR - spatialR) * s.cShadowR;
+
+        // Spectral cues (front/back + elevation)
+        s.elFilterL.processSingle(spatialL, false);
+        s.elFilterR.processSingle(spatialR, true);
+        s.elPeakL.processSingle(spatialL, false);
+        s.elPeakR.processSingle(spatialR, true);
+        s.hrtfL[0].processSingle(spatialL, false);
+        s.hrtfR[0].processSingle(spatialR, true);
+        s.hrtfL[1].processSingle(spatialL, false);
+        s.hrtfR[1].processSingle(spatialR, true);
+
+        // Keep part of the original stereo difference so instruments don't collapse to mono.
+        const double sideK = kSideRetain * P.side;
+        spatialL += side * sideK;
+        spatialR -= side * sideK;
+
+        // Distance gain + air absorption
+        spatialL *= s.cDistGain;
+        spatialR *= s.cDistGain;
+        s.lpStateL += (spatialL - s.lpStateL) * s.cAirCoeff;
+        s.lpStateR += (spatialR - s.lpStateR) * s.cAirCoeff;
+        spatialL = s.lpStateL;
+        spatialR = s.lpStateR;
+
+        // Depth delay (fractional, scaled by intensity)
+        double t = curSpatialIntensity;
+        double delaySamples = s.cDepthT * 0.02 * currentSampleRate * t;
+        s.delayL[s.writePos] = spatialL;
+        s.delayR[s.writePos] = spatialR;
+        spatialL = readFractional(s.delayL, delaySamples, s.writePos, s.delaySize);
+        spatialR = readFractional(s.delayR, delaySamples, s.writePos, s.delaySize);
+        s.writePos = (s.writePos + 1) % s.delaySize;
+
+        // Safety: never let a bad value poison the filter state.
+        if (!std::isfinite(spatialL) || !std::isfinite(spatialR)) {
+            std::fill(s.delayL.begin(), s.delayL.end(), 0.0);
+            std::fill(s.delayR.begin(), s.delayR.end(), 0.0);
+            std::fill(s.itdBufL.begin(), s.itdBufL.end(), 0.0);
+            std::fill(s.itdBufR.begin(), s.itdBufR.end(), 0.0);
+            s.lpStateL = s.lpStateR = s.shadowL = s.shadowR = 0.0;
+            for (int j = 0; j < 2; j++) { s.hrtfL[j].reset(); s.hrtfR[j].reset(); }
+            s.elFilterL.reset(); s.elFilterR.reset(); s.elPeakL.reset(); s.elPeakR.reset();
+            return;
+        }
+
+        // Equal-power dry/wet crossfade (same loudness behaviour as before).
+        double dryGain = std::cos(t * M_PI * 0.5);
+        double wetGain = std::sin(t * M_PI * 0.5);
+        bL = bL * dryGain + spatialL * wetGain;
+        bR = bR * dryGain + spatialR * wetGain;
     }
 
 public:
