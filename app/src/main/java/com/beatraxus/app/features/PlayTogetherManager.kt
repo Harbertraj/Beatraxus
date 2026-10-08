@@ -67,6 +67,8 @@ data class PtUiState(
     val transferPercent: Int = -1,
     /** Same-place transfer over Nearby Connections (Bluetooth / Wi-Fi Direct) is switched on. */
     val nearbyEnabled: Boolean = false,
+    /** Phones currently connected over Nearby (controller: everyone who joined it; others: 0 or 1). */
+    val nearbyPeers: Int = 0,
     val message: String? = null,
     /** Positive notice (e.g. "Database connected"), shown in green. */
     val info: String? = null,
@@ -179,7 +181,7 @@ class PlayTogetherManager(
 
     /** Same-place route: tried first, WebRTC (above) takes over when it cannot deliver. */
     private val nearby: PtNearbyTransfer by lazy {
-        PtNearbyTransfer(app, scope) { sid ->
+        PtNearbyTransfer(app, scope, onPeers = { n -> _state.update { it.copy(nearbyPeers = n) } }) { sid ->
             // Nearby could not deliver: ask over the internet instead.
             if (sid == mySid) scope.launch(Dispatchers.IO) {
                 try {
@@ -192,12 +194,24 @@ class PlayTogetherManager(
 
     private fun nearbyReady() = _state.value.nearbyEnabled && PtNearbyTransfer.hasPermissions(app)
 
-    /** Switch same-place transfer on/off (the screen asks for the permissions first). */
-    fun setNearbyEnabled(on: Boolean) {
+    /** True once the person switched Nearby off by hand; stops it being switched on automatically. */
+    val nearbyOptedOut: Boolean get() = prefs.getBoolean("nearby_opt_out", false)
+
+    /**
+     * Switch same-place transfer on/off (the screen asks for the permissions and radios first).
+     * [byUser] is true when this comes from the person's own switch tap, which is remembered so a
+     * manual "off" is not undone the next time a room is created or joined.
+     */
+    fun setNearbyEnabled(on: Boolean, byUser: Boolean = false) {
+        if (byUser) prefs.edit().putBoolean("nearby_opt_out", !on).apply()
         val enabled = on && PtNearbyTransfer.hasPermissions(app)
         prefs.edit().putBoolean("nearby", enabled).apply()
         _state.update { it.copy(nearbyEnabled = enabled) }
-        if (!enabled) nearby.stopAll()
+        if (!enabled) { nearby.stopAll(); linkedController = null }
+        else roomState?.let { st ->
+            // connect right away instead of waiting for the next room update
+            scope.launch(Dispatchers.IO) { syncNearbyHost(st); syncNearbyLink(st) }
+        }
     }
 
     private val transferListener = object : PtFileTransfer.Listener {
@@ -253,7 +267,7 @@ class PlayTogetherManager(
      */
     private fun loadConfig(): PtUiState {
         val name = prefs.getString("name", null) ?: (Build.MODEL ?: "My phone")
-        val base = PtUiState(displayName = name, nearbyEnabled = prefs.getBoolean("nearby", false) && PtNearbyTransfer.hasPermissions(app))
+        val base = PtUiState(displayName = name, nearbyEnabled = prefs.getBoolean("nearby", true) && !prefs.getBoolean("nearby_opt_out", false) && PtNearbyTransfer.hasPermissions(app))
         val text = try {
             app.assets.open("google-services.json").bufferedReader().use { it.readText() }
         } catch (e: Exception) {
@@ -721,6 +735,7 @@ class PlayTogetherManager(
         val st = roomState
 
         syncNearbyHost(st)
+        syncNearbyLink(st)
 
         // controller: serve fresh requests for the song that is playing now
         if (st != null && st.by == uid) {
@@ -777,6 +792,22 @@ class PlayTogetherManager(
                 }
             else null
         )
+    }
+
+    private var linkedController: String? = null
+
+    /**
+     * Everyone who is not the controller keeps a standing Nearby connection to it, so every phone
+     * in the same place is connected as soon as someone starts playing, and songs can move over
+     * Bluetooth / Wi-Fi Direct without waiting for a request. Follows the controller if it changes.
+     */
+    private fun syncNearbyLink(st: RoomState?) {
+        val code = room
+        if (code == null || st == null || st.by.isBlank() || st.by == uid || !nearbyReady()) {
+            nearby.stopLink(); linkedController = null; return
+        }
+        if (linkedController != st.by) { nearby.stopLink(); linkedController = st.by }
+        nearby.startLink(code, myName.ifBlank { "Guest" })
     }
 
     private fun feedIce(sid: String, list: JSONObject) =

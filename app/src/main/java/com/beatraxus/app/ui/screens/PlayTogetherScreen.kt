@@ -1,6 +1,8 @@
 package com.beatraxus.app.ui.screens
 
+import android.app.Activity
 import android.content.Intent
+import android.os.Build
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -44,6 +46,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -63,6 +66,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.beatraxus.app.features.PtNearbyTransfer
+import com.beatraxus.app.features.PtRadios
 import com.beatraxus.app.features.PtMember
 import com.beatraxus.app.features.PtStatus
 import com.beatraxus.app.ui.theme.AccentBlue
@@ -100,12 +105,67 @@ fun PlayTogetherScreen(
 
     val inRoom = ui.roomCode != null
 
+    // ---- Nearby: permissions -> Bluetooth -> Wi-Fi -> (Location on Android 11-) -> switch on ----
+    // 0 = idle, 1 = permissions, 2 = Bluetooth, 3 = Wi-Fi, 4 = Location, 5 = finish
+    var nearbyStep by remember { mutableIntStateOf(0) }
+
     val nearbyPermLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { granted ->
-        val ok = granted.values.all { it }
-        pt.setNearbyEnabled(ok)
-        if (!ok) Toast.makeText(context, "Nearby needs the Bluetooth / Nearby devices permission", Toast.LENGTH_LONG).show()
+        if (granted.values.all { it } && PtNearbyTransfer.hasPermissions(context)) nearbyStep = 2
+        else {
+            nearbyStep = 0
+            pt.setNearbyEnabled(false)
+            Toast.makeText(context, "Nearby needs the Bluetooth / Nearby devices permission", Toast.LENGTH_LONG).show()
+        }
+    }
+    val btLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode != Activity.RESULT_OK) {
+            Toast.makeText(context, "Bluetooth is off, so phones nearby cannot be found", Toast.LENGTH_LONG).show()
+        }
+        nearbyStep = 3
+    }
+    val wifiLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        nearbyStep = 4
+    }
+    val locationLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        nearbyStep = 5
+    }
+
+    LaunchedEffect(nearbyStep) {
+        when (nearbyStep) {
+            1 -> {
+                if (PtNearbyTransfer.hasPermissions(context)) nearbyStep = 2
+                else nearbyPermLauncher.launch(PtNearbyTransfer.requiredPermissions())
+            }
+            2 -> {
+                if (PtRadios.bluetoothOn(context)) nearbyStep = 3
+                else try { btLauncher.launch(PtRadios.bluetoothEnableIntent()) } catch (_: Exception) { nearbyStep = 3 }
+            }
+            3 -> {
+                if (PtRadios.wifiOn(context) || PtRadios.enableWifiSilently(context) || Build.VERSION.SDK_INT < 29) {
+                    nearbyStep = 4
+                } else {
+                    try { wifiLauncher.launch(PtRadios.wifiPanelIntent()) } catch (_: Exception) { nearbyStep = 4 }
+                }
+            }
+            4 -> {
+                if (!PtRadios.locationOff(context)) nearbyStep = 5
+                else try { locationLauncher.launch(PtRadios.locationSettingsIntent()) } catch (_: Exception) { nearbyStep = 5 }
+            }
+            5 -> {
+                pt.setNearbyEnabled(true)
+                nearbyStep = 0
+            }
+        }
+    }
+
+    // Creating or joining a room switches Nearby on by itself (unless it was turned off by hand):
+    // asks for the permissions, turns Bluetooth and Wi-Fi on, then connects with everyone in the room.
+    LaunchedEffect(ui.roomCode) {
+        if (ui.roomCode != null && nearbyStep == 0 && !pt.nearbyOptedOut &&
+            (!ui.nearbyEnabled || PtRadios.anyOff(context))
+        ) nearbyStep = 1
     }
 
     Box(
@@ -180,10 +240,13 @@ fun PlayTogetherScreen(
                     transferPercent = ui.transferPercent,
                     message = ui.message,
                     nearbyEnabled = ui.nearbyEnabled,
+                    nearbyPeers = ui.nearbyPeers,
                     onNearbyToggle = { on ->
-                        if (!on) pt.setNearbyEnabled(false)
-                        else if (com.beatraxus.app.features.PtNearbyTransfer.hasPermissions(context)) pt.setNearbyEnabled(true)
-                        else nearbyPermLauncher.launch(com.beatraxus.app.features.PtNearbyTransfer.requiredPermissions())
+                        if (!on) { nearbyStep = 0; pt.setNearbyEnabled(false, byUser = true) }
+                        else {
+                            pt.setNearbyEnabled(true, byUser = true) // clears "turned off by hand"
+                            nearbyStep = 1
+                        }
                     },
                     onCopy = {
                         clipboard.setText(AnnotatedString(ui.roomCode.orEmpty()))
@@ -405,6 +468,7 @@ private fun RoomCard(
     transferPercent: Int = -1,
     message: String?,
     nearbyEnabled: Boolean,
+    nearbyPeers: Int = 0,
     onNearbyToggle: (Boolean) -> Unit,
     onCopy: () -> Unit,
     onShare: () -> Unit,
@@ -499,9 +563,18 @@ private fun RoomCard(
                 SectionLabel("NEARBY (SAME PLACE)")
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    "Send songs over Bluetooth / Wi-Fi Direct to phones in the same room. Works without internet; falls back to online transfer.",
+                    "Turns on Bluetooth and Wi-Fi and connects every phone in the same room, so songs are sent over Bluetooth / Wi-Fi Direct. Works without internet; falls back to online transfer.",
                     color = Color.White.copy(0.55f), fontSize = 12.sp, lineHeight = 17.sp
                 )
+                if (nearbyEnabled) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        if (nearbyPeers > 0) "Connected to $nearbyPeers nearby " + (if (nearbyPeers == 1) "phone" else "phones")
+                        else "Looking for nearby phones\u2026",
+                        color = if (nearbyPeers > 0) PtGreen else PtAmber,
+                        fontSize = 12.sp
+                    )
+                }
             }
             Spacer(Modifier.width(12.dp))
             Switch(checked = nearbyEnabled, onCheckedChange = onNearbyToggle)

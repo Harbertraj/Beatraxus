@@ -48,6 +48,7 @@ import com.google.api.services.drive.DriveScopes
 import com.beatraxus.app.R
 import com.beatraxus.app.repository.DriveAccount
 import com.beatraxus.app.service.AudioPlaybackService
+import com.beatraxus.app.ui.screens.AppOpenSplashState
 import com.beatraxus.app.ui.screens.MainScreen
 import com.beatraxus.app.ui.screens.SettingsScreen
 import com.beatraxus.app.ui.screens.WelcomeScreen
@@ -185,6 +186,13 @@ class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         val splashScreen = installSplashScreen()
         super.onCreate(savedInstanceState)
+
+        // A brand-new Activity (savedInstanceState == null) means the app was opened fresh: first
+        // launch, or reopened after being swiped away from recents. The process can survive that
+        // swipe because AudioPlaybackService has stopWithTask="false", so the process-wide flag
+        // would still say "already shown". Reset it so the app-open screen plays again. Rotation /
+        // config changes and process-death restores come with a non-null bundle and are left alone.
+        if (savedInstanceState == null) AppOpenSplashState.shown = false
         
         logSigningCertFingerprints() // See Logcat tag "SigningCert" — compare against Google Cloud Console
         frameJankMonitor = FrameJankMonitor("BeatraxusFrameMonitor")
