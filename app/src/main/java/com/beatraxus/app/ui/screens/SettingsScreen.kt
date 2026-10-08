@@ -826,6 +826,108 @@ fun MainScreenAppearanceContent(uiState: PlayerUiState, playerViewModel: PlayerV
             onBlurDarknessChange = { playerViewModel.setMiniPlayerBlurDarkness(it) },
             onReset = { playerViewModel.resetMiniPlayerBackground() }
         )
+
+        HorizontalDivider(color = Color.White.copy(0.05f))
+
+        MiniPlayerLayoutSection(appearance = appearance, playerViewModel = playerViewModel)
+    }
+}
+
+@Composable
+private fun MiniPlayerLayoutSection(
+    appearance: com.beatraxus.app.model.AppearanceConfig,
+    playerViewModel: PlayerViewModel
+) {
+    val isPill = appearance.miniPlayerStyle == com.beatraxus.app.model.MiniPlayerStyle.PILL
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("Mini Player Layout", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+            Text(
+                "Style and size of the now playing bar",
+                color = Color.White.copy(0.5f),
+                fontSize = 11.sp
+            )
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)
+        ) {
+            com.beatraxus.app.model.MiniPlayerStyle.entries.forEach { style ->
+                FilterChip(
+                    selected = appearance.miniPlayerStyle == style,
+                    onClick = { playerViewModel.setMiniPlayerStyle(style) },
+                    label = { Text(if (style == com.beatraxus.app.model.MiniPlayerStyle.PILL) "Pill" else "Classic") }
+                )
+            }
+        }
+
+        if (isPill) {
+            AppearanceSliderRow(
+                title = "Height",
+                value = appearance.miniPlayerHeight,
+                range = 56f..120f,
+                defaultValue = 88f,
+                onValueChange = { playerViewModel.setMiniPlayerHeight(it) }
+            )
+            AppearanceSliderRow(
+                title = "Corner Radius",
+                value = appearance.miniPlayerCornerRadius,
+                range = 8f..60f,
+                defaultValue = 36f,
+                onValueChange = { playerViewModel.setMiniPlayerCornerRadius(it) }
+            )
+            AppearanceSliderRow(
+                title = "Album Art Corner Radius",
+                value = appearance.miniPlayerArtCornerRadius,
+                range = 0f..40f,
+                defaultValue = 18f,
+                onValueChange = { playerViewModel.setMiniPlayerArtCornerRadius(it) }
+            )
+            MiniPlayerToggleRow(
+                title = "Progress ring",
+                subtitle = "Show playback progress around the play button",
+                checked = appearance.miniPlayerShowProgressRing,
+                onCheckedChange = { playerViewModel.setMiniPlayerShowProgressRing(it) }
+            )
+            MiniPlayerToggleRow(
+                title = "Show time",
+                subtitle = "Elapsed / total time under the artist",
+                checked = appearance.miniPlayerShowTime,
+                onCheckedChange = { playerViewModel.setMiniPlayerShowTime(it) }
+            )
+            MiniPlayerToggleRow(
+                title = "Tint from album art",
+                subtitle = "Time text and progress ring use the album colour",
+                checked = appearance.miniPlayerTintFromArt,
+                onCheckedChange = { playerViewModel.setMiniPlayerTintFromArt(it) }
+            )
+            TextButton(
+                onClick = { playerViewModel.resetMiniPlayerLayout() },
+                modifier = Modifier.align(Alignment.CenterHorizontally),
+                colors = ButtonDefaults.textButtonColors(contentColor = PremiumAccent)
+            ) { Text("Reset layout", fontWeight = FontWeight.Bold) }
+        }
+    }
+}
+
+@Composable
+private fun MiniPlayerToggleRow(
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, color = Color.White.copy(0.85f), fontSize = 13.sp, fontWeight = FontWeight.Medium)
+            Text(subtitle, color = Color.White.copy(0.5f), fontSize = 11.sp)
+        }
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }
 

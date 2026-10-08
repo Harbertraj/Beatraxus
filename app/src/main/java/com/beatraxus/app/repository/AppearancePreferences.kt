@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.*
 import androidx.datastore.preferences.preferencesDataStore
 import com.beatraxus.app.model.AppearanceConfig
 import com.beatraxus.app.model.NowPlayingBackgroundMode
+import com.beatraxus.app.model.MiniPlayerStyle
 import com.beatraxus.app.model.AlbumArtTransform
 import com.beatraxus.app.model.QualityBadgeStyle
 import com.beatraxus.app.model.NowPlayingIconStyle
@@ -93,6 +94,15 @@ class AppearancePreferences(context: Context) {
             miniPlayerSolidColorDarkness = preferences[MINI_PLAYER_SOLID_COLOR_DARKNESS] ?: 0.4f,
             miniPlayerBlurIntensity = preferences[MINI_PLAYER_BLUR_INTENSITY] ?: 70f,
             miniPlayerBlurDarkness = preferences[MINI_PLAYER_BLUR_DARKNESS] ?: 0.5f,
+            miniPlayerStyle = runCatching {
+                MiniPlayerStyle.valueOf(preferences[MINI_PLAYER_STYLE] ?: MiniPlayerStyle.PILL.name)
+            }.getOrDefault(MiniPlayerStyle.PILL),
+            miniPlayerHeight = preferences[MINI_PLAYER_HEIGHT] ?: 88f,
+            miniPlayerCornerRadius = preferences[MINI_PLAYER_CORNER_RADIUS] ?: 36f,
+            miniPlayerArtCornerRadius = preferences[MINI_PLAYER_ART_CORNER_RADIUS] ?: 18f,
+            miniPlayerShowProgressRing = preferences[MINI_PLAYER_SHOW_PROGRESS_RING] ?: true,
+            miniPlayerShowTime = preferences[MINI_PLAYER_SHOW_TIME] ?: true,
+            miniPlayerTintFromArt = preferences[MINI_PLAYER_TINT_FROM_ART] ?: true,
 
             homeScreenSectionsOrder = preferences[HOME_SCREEN_SECTIONS_ORDER]?.split(",")?.filter { it.isNotBlank() } ?: listOf(
                 "GREETING", "ACTION_CHIPS", "CLOUD_LIBRARY", "MOODS",
@@ -291,6 +301,46 @@ class AppearancePreferences(context: Context) {
         dataStore.edit { it[MINI_PLAYER_BLUR_DARKNESS] = value }
     }
 
+    suspend fun setMiniPlayerStyle(style: MiniPlayerStyle) {
+        dataStore.edit { it[MINI_PLAYER_STYLE] = style.name }
+    }
+
+    suspend fun setMiniPlayerHeight(value: Float) {
+        dataStore.edit { it[MINI_PLAYER_HEIGHT] = value }
+    }
+
+    suspend fun setMiniPlayerCornerRadius(value: Float) {
+        dataStore.edit { it[MINI_PLAYER_CORNER_RADIUS] = value }
+    }
+
+    suspend fun setMiniPlayerArtCornerRadius(value: Float) {
+        dataStore.edit { it[MINI_PLAYER_ART_CORNER_RADIUS] = value }
+    }
+
+    suspend fun setMiniPlayerShowProgressRing(show: Boolean) {
+        dataStore.edit { it[MINI_PLAYER_SHOW_PROGRESS_RING] = show }
+    }
+
+    suspend fun setMiniPlayerShowTime(show: Boolean) {
+        dataStore.edit { it[MINI_PLAYER_SHOW_TIME] = show }
+    }
+
+    suspend fun setMiniPlayerTintFromArt(tint: Boolean) {
+        dataStore.edit { it[MINI_PLAYER_TINT_FROM_ART] = tint }
+    }
+
+    suspend fun resetMiniPlayerLayout() {
+        dataStore.edit {
+            it[MINI_PLAYER_STYLE] = MiniPlayerStyle.PILL.name
+            it[MINI_PLAYER_HEIGHT] = 88f
+            it[MINI_PLAYER_CORNER_RADIUS] = 36f
+            it[MINI_PLAYER_ART_CORNER_RADIUS] = 18f
+            it[MINI_PLAYER_SHOW_PROGRESS_RING] = true
+            it[MINI_PLAYER_SHOW_TIME] = true
+            it[MINI_PLAYER_TINT_FROM_ART] = true
+        }
+    }
+
     suspend fun setHomeScreenSectionsOrder(order: List<String>) {
         dataStore.edit { it[HOME_SCREEN_SECTIONS_ORDER] = order.joinToString(",") }
     }
@@ -434,6 +484,13 @@ class AppearancePreferences(context: Context) {
         private val MINI_PLAYER_SOLID_COLOR_DARKNESS = floatPreferencesKey("mini_player_solid_color_darkness")
         private val MINI_PLAYER_BLUR_INTENSITY = floatPreferencesKey("mini_player_blur_intensity")
         private val MINI_PLAYER_BLUR_DARKNESS = floatPreferencesKey("mini_player_blur_darkness")
+        private val MINI_PLAYER_STYLE = stringPreferencesKey("mini_player_style")
+        private val MINI_PLAYER_HEIGHT = floatPreferencesKey("mini_player_height")
+        private val MINI_PLAYER_CORNER_RADIUS = floatPreferencesKey("mini_player_corner_radius")
+        private val MINI_PLAYER_ART_CORNER_RADIUS = floatPreferencesKey("mini_player_art_corner_radius")
+        private val MINI_PLAYER_SHOW_PROGRESS_RING = booleanPreferencesKey("mini_player_show_progress_ring")
+        private val MINI_PLAYER_SHOW_TIME = booleanPreferencesKey("mini_player_show_time")
+        private val MINI_PLAYER_TINT_FROM_ART = booleanPreferencesKey("mini_player_tint_from_art")
 
         private val HOME_SCREEN_SECTIONS_ORDER = stringPreferencesKey("home_screen_sections_order")
         

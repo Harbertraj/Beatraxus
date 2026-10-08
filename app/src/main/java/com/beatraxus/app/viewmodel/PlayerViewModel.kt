@@ -5156,6 +5156,38 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun setMiniPlayerStyle(style: com.beatraxus.app.model.MiniPlayerStyle) {
+        viewModelScope.launch { appearancePreferences.setMiniPlayerStyle(style) }
+    }
+
+    fun setMiniPlayerHeight(value: Float) {
+        viewModelScope.launch { appearancePreferences.setMiniPlayerHeight(value) }
+    }
+
+    fun setMiniPlayerCornerRadius(value: Float) {
+        viewModelScope.launch { appearancePreferences.setMiniPlayerCornerRadius(value) }
+    }
+
+    fun setMiniPlayerArtCornerRadius(value: Float) {
+        viewModelScope.launch { appearancePreferences.setMiniPlayerArtCornerRadius(value) }
+    }
+
+    fun setMiniPlayerShowProgressRing(show: Boolean) {
+        viewModelScope.launch { appearancePreferences.setMiniPlayerShowProgressRing(show) }
+    }
+
+    fun setMiniPlayerShowTime(show: Boolean) {
+        viewModelScope.launch { appearancePreferences.setMiniPlayerShowTime(show) }
+    }
+
+    fun setMiniPlayerTintFromArt(tint: Boolean) {
+        viewModelScope.launch { appearancePreferences.setMiniPlayerTintFromArt(tint) }
+    }
+
+    fun resetMiniPlayerLayout() {
+        viewModelScope.launch { appearancePreferences.resetMiniPlayerLayout() }
+    }
+
     fun resetNowPlayingBackground() {
         viewModelScope.launch {
             appearancePreferences.resetNowPlayingBackground()

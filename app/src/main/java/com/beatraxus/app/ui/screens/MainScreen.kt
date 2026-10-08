@@ -2884,13 +2884,25 @@ fun MainScreen(
                                     ) {
                                         val currentSong = uiState.currentSong
                                         val isFromVideo = currentSong?.isFromVideo == true
-                                        
+
+                                        // Mini player layout (Settings > Appearance > Mini Player)
+                                        val miniAppearance = uiState.appearance
+                                        val miniPill = miniAppearance.miniPlayerStyle == com.beatraxus.app.model.MiniPlayerStyle.PILL
+                                        val miniBarHeight = if (miniPill) miniAppearance.miniPlayerHeight.coerceIn(56f, 120f).dp else 64.dp
+                                        val miniShape = RoundedCornerShape(
+                                            if (miniPill) miniAppearance.miniPlayerCornerRadius.coerceIn(8f, miniAppearance.miniPlayerHeight.coerceIn(56f, 120f) / 2f).dp
+                                            else 20.dp
+                                        )
+                                        val miniAccent = if (miniPill && miniAppearance.miniPlayerTintFromArt)
+                                            androidx.compose.ui.graphics.lerp(currentDominantColor, Color.White, 0.55f)
+                                        else Color.White.copy(0.7f)
+
                                         Box(
                                             modifier = Modifier
                                                 .fillMaxWidth()
-                                                .height(64.dp)
-                                                .shadow(16.dp, RoundedCornerShape(20.dp))
-                                                .clip(RoundedCornerShape(20.dp))
+                                                .height(miniBarHeight)
+                                                .shadow(16.dp, miniShape)
+                                                .clip(miniShape)
                                                 .combinedClickable(
                                                     onClick = { 
                                                         if (isFromVideo) {
@@ -2956,7 +2968,6 @@ fun MainScreen(
                                                 }
                                         ) {
                                             // Glass Background Layer
-                                            val miniAppearance = uiState.appearance
                                             val miniMode = miniAppearance.miniPlayerBackgroundMode
                                             val miniBlurIntensity = miniAppearance.miniPlayerBlurIntensity
 
@@ -3017,28 +3028,31 @@ fun MainScreen(
                                                                 brush = Brush.verticalGradient(
                                                                     listOf(Color.White.copy(0.4f), Color.White.copy(0.05f))
                                                                 ),
-                                                                shape = RoundedCornerShape(20.dp)
+                                                                shape = miniShape
                                                             )
                                                     )
                                                 }
                                             }
 
-                                            MiniPlayerProgressBar(
-                                                progressProvider = {
-                                                    val duration = uiState.currentSong?.durationMs ?: 0L
-                                                    if (duration > 0) progressMs.toFloat() / duration.toFloat() else 0f
-                                                }
-                                            )
+                                            // The pill style shows progress as a ring around play/pause instead.
+                                            if (!(miniPill && miniAppearance.miniPlayerShowProgressRing)) {
+                                                MiniPlayerProgressBar(
+                                                    progressProvider = {
+                                                        val duration = uiState.currentSong?.durationMs ?: 0L
+                                                        if (duration > 0) progressMs.toFloat() / duration.toFloat() else 0f
+                                                    }
+                                                )
+                                            }
 
                                             Row(
                                                 modifier = Modifier
                                                     .fillMaxSize()
-                                                    .padding(horizontal = 12.dp),
+                                                    .padding(horizontal = if (miniPill) 14.dp else 12.dp),
                                                 verticalAlignment = Alignment.CenterVertically
                                             ) {
                                                 Surface(
-                                                    modifier = Modifier.size(44.dp),
-                                                    shape = RoundedCornerShape(8.dp),
+                                                    modifier = Modifier.size(if (miniPill) miniBarHeight - 20.dp else 44.dp),
+                                                    shape = RoundedCornerShape(if (miniPill) miniAppearance.miniPlayerArtCornerRadius.coerceIn(0f, 40f).dp else 8.dp),
                                                     color = Color.White.copy(0.05f)
                                                 ) {
                                                     if (isFromVideo) {
@@ -3072,41 +3086,121 @@ fun MainScreen(
                                                     }
                                                 }
 
-                                                Spacer(Modifier.width(12.dp))
+                                                Spacer(Modifier.width(if (miniPill) 14.dp else 12.dp))
 
                                                 // Tight vertical stack: explicit line heights remove the big
                                                 // default gap between title, artist and runtime.
                                                 Column(
                                                     modifier = Modifier.weight(1f),
-                                                    verticalArrangement = Arrangement.spacedBy(1.dp, Alignment.CenterVertically)
+                                                    verticalArrangement = Arrangement.spacedBy(if (miniPill) 2.dp else 1.dp, Alignment.CenterVertically)
                                                 ) {
                                                     Text(
                                                         text = uiState.currentSong?.title ?: "Unknown",
                                                         color = Color.White,
-                                                        fontSize = 15.sp,
-                                                        lineHeight = 18.sp,
+                                                        fontSize = if (miniPill) 19.sp else 15.sp,
+                                                        lineHeight = if (miniPill) 23.sp else 18.sp,
                                                         fontWeight = FontWeight.Bold,
                                                         maxLines = 1,
                                                         overflow = TextOverflow.Ellipsis
                                                     )
-                                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    if (miniPill) {
                                                         Text(
                                                             text = if (isFromVideo) "Playing in Background" else (uiState.currentSong?.artist ?: "Unknown Artist"),
-                                                            color = Color.White.copy(0.7f),
-                                                            fontSize = 12.sp,
-                                                            lineHeight = 15.sp,
+                                                            color = Color.White.copy(0.62f),
+                                                            fontSize = 15.sp,
+                                                            lineHeight = 19.sp,
+                                                            fontWeight = FontWeight.Medium,
                                                             maxLines = 1,
-                                                            overflow = TextOverflow.Ellipsis,
-                                                            modifier = Modifier.weight(1f, fill = false)
+                                                            overflow = TextOverflow.Ellipsis
                                                         )
-                                                        Spacer(Modifier.width(6.dp))
-                                                        MiniPlayerTimeText(
-                                                            progressProvider = { progressMs },
-                                                            duration = uiState.currentSong?.durationMs ?: 0L
-                                                        )
+                                                        if (miniAppearance.miniPlayerShowTime) {
+                                                            MiniPlayerTimeText(
+                                                                progressProvider = { progressMs },
+                                                                duration = uiState.currentSong?.durationMs ?: 0L,
+                                                                pill = true,
+                                                                color = miniAccent
+                                                            )
+                                                        }
+                                                    } else {
+                                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                                            Text(
+                                                                text = if (isFromVideo) "Playing in Background" else (uiState.currentSong?.artist ?: "Unknown Artist"),
+                                                                color = Color.White.copy(0.7f),
+                                                                fontSize = 12.sp,
+                                                                lineHeight = 15.sp,
+                                                                maxLines = 1,
+                                                                overflow = TextOverflow.Ellipsis,
+                                                                modifier = Modifier.weight(1f, fill = false)
+                                                            )
+                                                            Spacer(Modifier.width(6.dp))
+                                                            MiniPlayerTimeText(
+                                                                progressProvider = { progressMs },
+                                                                duration = uiState.currentSong?.durationMs ?: 0L
+                                                            )
+                                                        }
                                                     }
                                                 }
 
+                                                if (miniPill) {
+                                                    val ringDuration = uiState.currentSong?.durationMs ?: 0L
+                                                    Spacer(Modifier.width(8.dp))
+                                                    Box(
+                                                        modifier = Modifier.size((miniBarHeight - 28.dp).coerceAtMost(68.dp)),
+                                                        contentAlignment = Alignment.Center
+                                                    ) {
+                                                        Canvas(Modifier.fillMaxSize()) {
+                                                            val stroke = 4.dp.toPx()
+                                                            val inset = stroke / 2f
+                                                            val arcSize = Size(size.width - stroke, size.height - stroke)
+                                                            drawArc(
+                                                                color = Color.White.copy(alpha = 0.14f),
+                                                                startAngle = 0f, sweepAngle = 360f, useCenter = false,
+                                                                topLeft = Offset(inset, inset), size = arcSize,
+                                                                style = Stroke(width = stroke)
+                                                            )
+                                                            if (miniAppearance.miniPlayerShowProgressRing && ringDuration > 0L) {
+                                                                val p = (progressMs.toFloat() / ringDuration).coerceIn(0f, 1f)
+                                                                drawArc(
+                                                                    color = miniAccent,
+                                                                    startAngle = -90f, sweepAngle = 360f * p, useCenter = false,
+                                                                    topLeft = Offset(inset, inset), size = arcSize,
+                                                                    style = Stroke(width = stroke, cap = StrokeCap.Round)
+                                                                )
+                                                            }
+                                                        }
+                                                        Box(
+                                                            modifier = Modifier
+                                                                .fillMaxSize(0.76f)
+                                                                .clip(CircleShape)
+                                                                .background(Color.White)
+                                                                .clickable(role = Role.Button) { viewModel.togglePlayPause() },
+                                                            contentAlignment = Alignment.Center
+                                                        ) {
+                                                            Icon(
+                                                                if (uiState.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                                                                contentDescription = if (uiState.isPlaying) "Pause" else "Play",
+                                                                tint = Color.Black,
+                                                                modifier = Modifier.size(30.dp)
+                                                            )
+                                                        }
+                                                    }
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .size(46.dp)
+                                                            .clip(CircleShape)
+                                                            .clickable(role = Role.Button) {
+                                                                if (isFromVideo) viewModel.resumeBackgroundVideo() else viewModel.skipToNext()
+                                                            },
+                                                        contentAlignment = Alignment.Center
+                                                    ) {
+                                                        Icon(
+                                                            if (isFromVideo) Icons.Rounded.Fullscreen else Icons.Rounded.SkipNext,
+                                                            contentDescription = if (isFromVideo) "Open video" else "Next",
+                                                            tint = Color.White.copy(0.9f),
+                                                            modifier = Modifier.size(32.dp)
+                                                        )
+                                                    }
+                                                } else {
                                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                                     IconButton(onClick = { viewModel.togglePlayPause() }) {
                                                         Icon(
@@ -3130,6 +3224,7 @@ fun MainScreen(
                                                             )
                                                         }
                                                     }
+                                                }
                                                 }
                                             }
                                         }
@@ -5177,14 +5272,20 @@ fun MiniPlayerProgressBar(progressProvider: () -> Float) {
 }
 
 @Composable
-fun MiniPlayerTimeText(progressProvider: () -> Long, duration: Long) {
+fun MiniPlayerTimeText(
+    progressProvider: () -> Long,
+    duration: Long,
+    pill: Boolean = false,
+    color: Color = Color.White.copy(0.55f)
+) {
     val currentProgress by remember { derivedStateOf { formatTime(progressProvider()) } }
     val totalDuration = remember(duration) { formatTime(duration) }
     Text(
-        text = "($currentProgress/$totalDuration)",
-        color = Color.White.copy(0.55f),
-        fontSize = 11.sp,
-        lineHeight = 15.sp,
+        text = if (pill) "$currentProgress / $totalDuration" else "($currentProgress/$totalDuration)",
+        color = if (pill) color else Color.White.copy(0.55f),
+        fontSize = if (pill) 14.sp else 11.sp,
+        fontWeight = if (pill) FontWeight.SemiBold else null,
+        lineHeight = if (pill) 18.sp else 15.sp,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis
     )

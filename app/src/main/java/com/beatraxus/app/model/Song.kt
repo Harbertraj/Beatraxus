@@ -170,6 +170,9 @@ data class Playlist(
 
 enum class NowPlayingBackgroundMode { BLACK, SOLID, BLUR }
 
+/** Layout of the bottom now-playing (mini player) bar. */
+enum class MiniPlayerStyle { PILL, CLASSIC }
+
 enum class AlbumArtTransform {
     NONE, FADE, SLIDE, SCALE, ROTATE, FLIP, ZOOM,
     CROSSFADE_BLUR, VINYL_SPIN, PARALLAX_DEPTH, SHUTTER, GLITCH_SHIFT
@@ -231,6 +234,13 @@ data class AppearanceConfig(
     val miniPlayerSolidColorDarkness: Float = 0.4f,
     val miniPlayerBlurIntensity: Float = 70f,
     val miniPlayerBlurDarkness: Float = 0.5f,
+    val miniPlayerStyle: MiniPlayerStyle = MiniPlayerStyle.PILL,
+    val miniPlayerHeight: Float = 88f,
+    val miniPlayerCornerRadius: Float = 36f,
+    val miniPlayerArtCornerRadius: Float = 18f,
+    val miniPlayerShowProgressRing: Boolean = true,
+    val miniPlayerShowTime: Boolean = true,
+    val miniPlayerTintFromArt: Boolean = true,
 
     // Home Screen Sections
     val showGreetingHeader: Boolean = true,
