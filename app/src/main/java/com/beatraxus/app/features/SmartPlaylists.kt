@@ -18,9 +18,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
@@ -30,16 +32,13 @@ import androidx.compose.material.icons.rounded.HighQuality
 import androidx.compose.material.icons.rounded.HourglassBottom
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.LocalFireDepartment
-import androidx.compose.material.icons.rounded.PlayArrow
-import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material.icons.rounded.Timelapse
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -54,6 +53,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.beatraxus.app.model.Song
 import com.beatraxus.app.ui.components.AlbumArtImage
+import com.beatraxus.app.ui.components.DropdownHeader
+import com.beatraxus.app.ui.components.DropdownRow
+import com.beatraxus.app.ui.screens.SongGridItem
 
 /** Per-song play counter. Stored in SharedPreferences, so no database migration is needed. */
 object PlayStatsStore {
@@ -113,26 +115,36 @@ fun buildSmartPlaylist(context: Context, kind: SmartPlaylistKind, songs: List<So
 }
 
 /**
- * Self-contained Smart Playlists screen. Plug into the library with the SMART_PLAYLISTS view.
+ * Smart Playlists screen. Plug into the library with the SMART_PLAYLISTS view.
  *
- * Own navigation: a horizontally scrolling row of smart-playlist options, and this screen's own
- * Shuffle / Play buttons for the selected option (so the app's top-bar icons are not needed here).
+ * It only shows the smart-playlist chips, the selected list and its songs. Shuffle All, the filter
+ * (which smart playlist) and the layout density live in the library's shared top icon strip, so the
+ * selected playlist ([selectedOrdinal]) is owned by the caller and the resulting list is reported
+ * back through [onCurrentListChange] for the strip's Shuffle All.
+ *
+ * [layoutDensity] follows the library setting: 1-2 = list (2 is compact), 3+ = grid with that many columns.
  */
 @Composable
 fun SmartPlaylistsScreen(
     songs: List<Song>,
+    selectedOrdinal: Int,
+    onSelectedOrdinalChange: (Int) -> Unit,
+    layoutDensity: Int,
+    currentSongId: String?,
+    isPlaying: Boolean,
     onPlay: (List<Song>, Int) -> Unit,
-    onShuffle: (List<Song>) -> Unit,
+    onCurrentListChange: (List<Song>) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val kinds = remember { SmartPlaylistKind.values().toList() }
-    var selectedOrdinal by rememberSaveable { mutableIntStateOf(0) }
     val lists = remember(songs) {
         kinds.associateWith { buildSmartPlaylist(context, it, songs) }
     }
     val current = kinds[selectedOrdinal.coerceIn(0, kinds.lastIndex)]
     val list = lists[current].orEmpty()
+
+    LaunchedEffect(list) { onCurrentListChange(list) }
 
     Column(modifier.fillMaxSize()) {
         // Scrollable options
@@ -149,7 +161,7 @@ fun SmartPlaylistsScreen(
                         .clip(shape)
                         .background(if (isSelected) kind.color.copy(alpha = 0.22f) else Color.White.copy(alpha = 0.07f))
                         .border(1.dp, if (isSelected) kind.color.copy(alpha = 0.7f) else Color.White.copy(alpha = 0.1f), shape)
-                        .clickable { selectedOrdinal = kind.ordinal }
+                        .clickable { onSelectedOrdinalChange(kind.ordinal) }
                         .padding(start = 10.dp, end = 14.dp, top = 8.dp, bottom = 8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -168,48 +180,51 @@ fun SmartPlaylistsScreen(
             }
         }
 
-        // Selected playlist header with its own Shuffle / Play
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text(current.title, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text("${list.size} songs · ${current.subtitle}", color = Color.White.copy(alpha = 0.6f), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-            if (list.isNotEmpty()) {
-                Box(
-                    modifier = Modifier.size(42.dp).clip(CircleShape)
-                        .background(Color.White.copy(alpha = 0.08f))
-                        .border(1.dp, Color.White.copy(alpha = 0.12f), CircleShape)
-                        .clickable { onShuffle(list) },
-                    contentAlignment = Alignment.Center
-                ) { Icon(Icons.Rounded.Shuffle, "Shuffle", tint = Color.White, modifier = Modifier.size(22.dp)) }
-                Spacer(Modifier.width(10.dp))
-                Box(
-                    modifier = Modifier.size(42.dp).clip(CircleShape).background(current.color)
-                        .clickable { onPlay(list, 0) },
-                    contentAlignment = Alignment.Center
-                ) { Icon(Icons.Rounded.PlayArrow, "Play", tint = Color.Black, modifier = Modifier.size(26.dp)) }
-            }
+        // Selected playlist header (no Play / Shuffle buttons: Shuffle All is in the top icon strip)
+        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
+            Text(current.title, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text("${list.size} songs · ${current.subtitle}", color = Color.White.copy(alpha = 0.6f), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
 
         if (list.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text("Nothing here yet", color = Color.White.copy(alpha = 0.5f))
             }
+        } else if (layoutDensity >= 3) {
+            val columns = layoutDensity.coerceIn(3, 6)
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(columns),
+                contentPadding = PaddingValues(start = 16.dp, top = 8.dp, end = 16.dp, bottom = 120.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                itemsIndexed(list, key = { _, s -> s.id }) { index, song ->
+                    SongGridItem(
+                        song = song,
+                        isCurrent = currentSongId == song.id,
+                        isPlaying = isPlaying && currentSongId == song.id,
+                        isCompact = layoutDensity >= 5,
+                        onClick = { onPlay(list, index) }
+                    )
+                }
+            }
         } else {
+            val compact = layoutDensity == 2
             LazyColumn(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)) {
                 itemsIndexed(list, key = { _, s -> s.id }) { index, song ->
                     Row(
                         modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
-                            .clickable { onPlay(list, index) }.padding(vertical = 6.dp),
+                            .clickable { onPlay(list, index) }.padding(vertical = if (compact) 3.dp else 6.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        AlbumArtImage(song = song, size = 48.dp, cornerRadius = 10.dp)
+                        AlbumArtImage(song = song, size = if (compact) 38.dp else 48.dp, cornerRadius = 10.dp)
                         Spacer(Modifier.width(12.dp))
                         Column(Modifier.weight(1f)) {
-                            Text(song.title, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
+                            Text(
+                                song.title,
+                                color = if (currentSongId == song.id) current.color else Color.White,
+                                maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium
+                            )
                             Text(song.artist, color = Color.White.copy(alpha = 0.6f), maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 12.sp)
                         }
                         if (current == SmartPlaylistKind.MOST_PLAYED) {
@@ -220,5 +235,26 @@ fun SmartPlaylistsScreen(
                 item { Spacer(Modifier.height(96.dp)) }
             }
         }
+    }
+}
+
+/**
+ * Content of the top strip's filter dropdown while the Smart Playlists view is open: lets the user
+ * pick which smart playlist is shown.
+ */
+@Composable
+fun SmartFilterDropdownContent(
+    selectedOrdinal: Int,
+    onSelect: (Int) -> Unit
+) {
+    DropdownHeader(title = "SMART PLAYLIST")
+    SmartPlaylistKind.values().forEach { kind ->
+        DropdownRow(
+            icon = kind.icon,
+            label = kind.title,
+            selected = kind.ordinal == selectedOrdinal,
+            accent = kind.color,
+            onClick = { onSelect(kind.ordinal) }
+        )
     }
 }

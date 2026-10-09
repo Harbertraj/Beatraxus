@@ -515,6 +515,9 @@ fun MainScreen(
     var sortAnchor by remember { mutableStateOf(Rect.Zero) }
     var cloudAnchor by remember { mutableStateOf(Rect.Zero) }
     var densityAnchor by remember { mutableStateOf(Rect.Zero) }
+    // Smart Playlists: selected list (driven by the top strip's filter) and its songs (for Shuffle All)
+    var smartKindOrdinal by rememberSaveable { mutableIntStateOf(0) }
+    var smartCurrentList by remember { mutableStateOf<List<com.beatraxus.app.model.Song>>(emptyList()) }
     var selectedSongForOptions by remember { mutableStateOf<com.beatraxus.app.model.Song?>(null) }
     var selectedVideoForOptions by remember { mutableStateOf<com.beatraxus.app.model.Video?>(null) }
     var reopenSongOptionsInfo by remember { mutableStateOf(false) }
@@ -1211,7 +1214,8 @@ fun MainScreen(
 
                             // Action Icons Row
                             AnimatedVisibility(
-                                visible = (headerVisible || activeItemsCount <= 8) && uiState.currentView != LibraryView.HOME,
+                                // Radio has its own screen without the shuffle / sort / cloud / density strip.
+                                visible = (headerVisible || activeItemsCount <= 8) && uiState.currentView != LibraryView.HOME && uiState.currentView != LibraryView.RADIO,
                                 enter = fadeIn(tween(250)) + expandVertically(tween(250)),
                                 exit = fadeOut(tween(200)) + shrinkVertically(tween(200))
                             ) {
@@ -1242,18 +1246,27 @@ fun MainScreen(
 
                                         if (uiState.currentView != LibraryView.HOME) {
                                             val isCloud = uiState.currentView == LibraryView.CLOUD
+                                            val isSmart = uiState.currentView == LibraryView.SMART_PLAYLISTS
                                             LibraryActionStrip(
                                                 showShuffle = canShufflePlay,
-                                                onShuffle = { viewModel.shuffleAndPlay() },
-                                                actions = listOf(
+                                                onShuffle = {
+                                                    if (isSmart) {
+                                                        // Shuffle the smart playlist that is currently selected
+                                                        if (smartCurrentList.isNotEmpty()) viewModel.playList(smartCurrentList.shuffled(), 0)
+                                                    } else {
+                                                        viewModel.shuffleAndPlay()
+                                                    }
+                                                },
+                                                actions = listOfNotNull(
                                                     StripAction(
-                                                        icon = if (isCloud) Icons.Rounded.FilterList else Icons.AutoMirrored.Rounded.Sort,
-                                                        contentDescription = if (isCloud) "Filter" else "Sort",
+                                                        icon = if (isCloud || isSmart) Icons.Rounded.FilterList else Icons.AutoMirrored.Rounded.Sort,
+                                                        contentDescription = if (isCloud || isSmart) "Filter" else "Sort",
                                                         accent = LibraryStripActive,
                                                         selected = activeMainSheet == MainSheetType.SORT,
                                                         onClick = { r -> sortAnchor = r; activeMainSheet = MainSheetType.SORT }
                                                     ),
-                                                    StripAction(
+                                                    // Cloud accounts don't apply to smart playlists
+                                                    if (isSmart) null else StripAction(
                                                         icon = Icons.Rounded.Cloud,
                                                         contentDescription = "Cloud",
                                                         accent = LibraryStripActive,
@@ -2470,8 +2483,13 @@ fun MainScreen(
                                                 LibraryView.SMART_PLAYLISTS -> {
                                                     com.beatraxus.app.features.SmartPlaylistsScreen(
                                                         songs = smartAllSongs,
+                                                        selectedOrdinal = smartKindOrdinal,
+                                                        onSelectedOrdinalChange = { smartKindOrdinal = it },
+                                                        layoutDensity = trackLayoutDensity,
+                                                        currentSongId = uiState.currentSong?.id,
+                                                        isPlaying = uiState.isPlaying,
                                                         onPlay = { list, index -> viewModel.playList(list, index) },
-                                                        onShuffle = { list -> viewModel.playList(list.shuffled(), 0) }
+                                                        onCurrentListChange = { smartCurrentList = it }
                                                     )
                                                 }
                                                 LibraryView.VIDEO_ALL -> com.beatraxus.app.ui.components.VideoCloudGate(
@@ -2725,74 +2743,12 @@ fun MainScreen(
                                                     FtpBrowserScreen(uiState, viewModel)
                                                 }
                                                 LibraryView.RADIO -> {
-                                                    var radioStations by remember { mutableStateOf<List<RadioStation>>(emptyList()) }
-                                                    var isLoading by remember { mutableStateOf(false) }
-                                                    var searchCountry by rememberSaveable { mutableStateOf("") }
-
-                                                    // Default view: popular Tamil stations, loaded immediately —
-                                                    // no need to type anything. Typing a country overrides this
-                                                    // with a country-specific search.
-                                                    LaunchedEffect(searchCountry) {
-                                                        isLoading = true
-                                                        radioStations = withContext(Dispatchers.IO) {
-                                                            if (searchCountry.isBlank()) {
-                                                                RadioBrowserApi.tamilStations(limit = 150)
-                                                            } else {
-                                                                RadioBrowserApi.stationsByCountry(searchCountry)
-                                                            }
-                                                        }
-                                                        isLoading = false
-                                                    }
-
-                                                    Column(Modifier.fillMaxSize()) {
-                                                        Surface(
-                                                            modifier = Modifier.fillMaxWidth().padding(16.dp),
-                                                            color = Color.White.copy(0.05f),
-                                                            shape = RoundedCornerShape(12.dp)
-                                                        ) {
-                                                            Row(
-                                                                Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                                                                verticalAlignment = Alignment.CenterVertically
-                                                            ) {
-                                                                Icon(Icons.Rounded.Search, null, tint = Color.White.copy(0.5f), modifier = Modifier.size(20.dp))
-                                                                Spacer(Modifier.width(8.dp))
-                                                                BasicTextField(
-                                                                    value = searchCountry,
-                                                                    onValueChange = { searchCountry = it },
-                                                                    textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 16.sp),
-                                                                    modifier = Modifier.weight(1f),
-                                                                    cursorBrush = SolidColor(Color.White),
-                                                                    decorationBox = { innerTextField ->
-                                                                        if (searchCountry.isEmpty()) {
-                                                                            Text("Showing Tamil stations — type a country to search others...", color = Color.White.copy(0.3f), fontSize = 14.sp)
-                                                                        }
-                                                                        innerTextField()
-                                                                    }
-                                                                )
-                                                            }
-                                                        }
-
-                                                        if (isLoading) {
-                                                            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                                                CircularProgressIndicator(color = viewAccentColor)
-                                                            }
-                                                        } else {
-                                                            LazyColumn(
-                                                                modifier = Modifier.fillMaxSize(),
-                                                                contentPadding = PaddingValues(bottom = 120.dp)
-                                                            ) {
-                                                                itemsIndexed(radioStations, key = { _, station -> station.id }) { index, station ->
-                                                                    val song = station.toSong()
-                                                                    SongListItem(
-                                                                        song = song,
-                                                                        isPlaying = uiState.isPlaying && uiState.currentSong?.id == song.id,
-                                                                        trackNumber = index + 1,
-                                                                        onClick = { viewModel.playSong(song) }
-                                                                    )
-                                                                }
-                                                            }
-                                                        }
-                                                    }
+                                                    RadioLibraryScreen(
+                                                        currentSongId = uiState.currentSong?.id,
+                                                        isPlaying = uiState.isPlaying,
+                                                        accent = viewAccentColor,
+                                                        onStationClick = { station -> viewModel.playSong(station.toSong()) }
+                                                    )
                                                 }
                                                 else -> {
                                                     // Library list or grid based on zoom
@@ -3441,7 +3397,14 @@ fun MainScreen(
                             anchor = sortAnchor,
                             width = 200.dp
                         ) {
-                            SortDropdownContent(viewModel, uiState, onDismiss = { activeMainSheet = null })
+                            if (uiState.currentView == LibraryView.SMART_PLAYLISTS) {
+                                com.beatraxus.app.features.SmartFilterDropdownContent(
+                                    selectedOrdinal = smartKindOrdinal,
+                                    onSelect = { smartKindOrdinal = it; activeMainSheet = null }
+                                )
+                            } else {
+                                SortDropdownContent(viewModel, uiState, onDismiss = { activeMainSheet = null })
+                            }
                         }
 
                         LibraryDropdown(
@@ -3701,6 +3664,21 @@ fun MainScreen(
             ) + fadeOut(tween(400))
         ) {
             com.beatraxus.app.ui.utils.ProvideLiveAudioLevel(viewModel, uiState.isPlaying) {
+                // Live radio gets its own Now Playing screen; the song screen below is used for
+                // everything else. This follows uiState.currentSong, so switching between a radio
+                // station and a song swaps the screens automatically.
+                val radioSong = uiState.currentSong?.takeIf { it.isRadioStream }
+                if (radioSong != null) {
+                    RadioNowPlayingScreen(
+                        song = radioSong,
+                        isPlaying = uiState.isPlaying,
+                        onPlayPause = { viewModel.togglePlayPause() },
+                        onPlayStation = { viewModel.playSong(it) },
+                        onClose = { showFullPlayer = false },
+                        onOpenEqualizer = onNavigateToDsp
+                    )
+                    return@ProvideLiveAudioLevel
+                }
                 NowPlayingScreen(
                     song = uiState.currentSong,
                     isPlaying = uiState.isPlaying,
@@ -5764,8 +5742,8 @@ fun SlideDrawerMenu(
         } else {
             listOf(
                 DrawerMenuItem("Home", LibraryView.HOME, Icons.Rounded.Home, Color(0xFF00E676)),
-                DrawerMenuItem("All Songs", LibraryView.ALL_SONGS, Icons.Rounded.MusicNote, Color(0xFFFF4081)),
                 DrawerMenuItem("Smart Playlists", LibraryView.SMART_PLAYLISTS, Icons.Rounded.AutoAwesome, Color(0xFF7C4DFF)),
+                DrawerMenuItem("All Songs", LibraryView.ALL_SONGS, Icons.Rounded.MusicNote, Color(0xFFFF4081)),
                 DrawerMenuItem("Albums", LibraryView.ALBUMS, Icons.Rounded.Album, Color(0xFFB2FF59)),
                 DrawerMenuItem("Artists", LibraryView.ARTISTS, Icons.Rounded.Person, Color(0xFF7C4DFF)),
                 DrawerMenuItem("Folders", LibraryView.FOLDERS, Icons.Rounded.Folder, Color(0xFFFFAB40)),

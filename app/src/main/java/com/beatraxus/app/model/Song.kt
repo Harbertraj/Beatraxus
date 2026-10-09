@@ -311,6 +311,10 @@ fun RadioStation.toSong() = Song(
     source = SongSource.WEB
 )
 
+/** True for a Song created by [RadioStation.toSong], i.e. a live radio stream (no duration, no seeking). */
+val Song.isRadioStream: Boolean
+    get() = id.startsWith("radio_")
+
 enum class SortType {
     NAME, DATE_ADDED, FILE_SIZE, DURATION
 }
