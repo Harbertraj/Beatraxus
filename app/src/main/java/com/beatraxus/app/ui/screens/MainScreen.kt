@@ -464,6 +464,12 @@ fun MainScreen(
     val videoFolderDetailGridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
 
     val searchFieldRowVisible = uiState.isSearchActive
+    // Smart Playlists has its own controls and no search icon, so don't leave search open there.
+    LaunchedEffect(uiState.currentView) {
+        if (uiState.currentView == LibraryView.SMART_PLAYLISTS && uiState.isSearchActive) {
+            viewModel.setSearchActive(false)
+        }
+    }
 
     val scope = rememberCoroutineScope()
 
@@ -513,13 +519,36 @@ fun MainScreen(
     var selectedVideoForOptions by remember { mutableStateOf<com.beatraxus.app.model.Video?>(null) }
     var reopenSongOptionsInfo by remember { mutableStateOf(false) }
 
-    LaunchedEffect(uiState.pendingInspectorReturnSong) {
-        val pendingSong = uiState.pendingInspectorReturnSong
+    // True while the song sheet is the one restored after coming back from the Inspector,
+    // so it appears already open instead of replaying the slide-up animation.
+    var songSheetRestored by remember { mutableStateOf(false) }
+    LaunchedEffect(selectedSongForOptions) {
+        if (selectedSongForOptions == null) songSheetRestored = false
+    }
+    // Restore the song menu after coming back from the Inspector.
+    // The pending song is set *before* navigating away, so it must not be consumed while this
+    // screen is still composed under the outgoing transition (that would clear it too early and
+    // the back handler would then land on Now Playing). Consume it only when this screen is
+    // (re)entered: on first composition after a pop, or when its lifecycle resumes.
+    val restoreSongMenuAfterInspector = {
+        val pendingSong = viewModel.uiState.value.pendingInspectorReturnSong
         if (pendingSong != null) {
             selectedSongForOptions = pendingSong
-            reopenSongOptionsInfo = true
+            songSheetRestored = true
+            // "Inspect" menu entry -> back to the plain menu; Info dialog route -> back to the info overlay.
+            reopenSongOptionsInfo = !viewModel.inspectorReturnToMenu
+            viewModel.inspectorReturnToMenu = false
             viewModel.setPendingInspectorReturn(null)
         }
+    }
+    LaunchedEffect(Unit) { restoreSongMenuAfterInspector() }
+    val inspectorLifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    DisposableEffect(inspectorLifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) restoreSongMenuAfterInspector()
+        }
+        inspectorLifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { inspectorLifecycleOwner.lifecycle.removeObserver(observer) }
     }
     var showPlaylistDialog by remember { mutableStateOf(false) }
     var playlistDialogSong by remember { mutableStateOf<com.beatraxus.app.model.Song?>(null) }
@@ -1021,14 +1050,13 @@ fun MainScreen(
                                                 }
                                                 Spacer(Modifier.width(if (isDetailView) 10.dp else 8.dp))
                                                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                                    Text(
+                                                    com.beatraxus.app.ui.components.AutoFitText(
                                                         text = if (isDetailView) titleText else titleText.uppercase(),
                                                         fontWeight = if (isDetailView) FontWeight.Bold else FontWeight.Black,
-                                                        fontSize = if (isDetailView) 17.sp else 20.sp,
+                                                        baseFontSize = if (isDetailView) 17.sp else 20.sp,
+                                                        minFontSize = 11.sp,
                                                         color = Color.White,
                                                         letterSpacing = if (isDetailView) 0.sp else 1.5.sp,
-                                                        maxLines = 1,
-                                                        overflow = TextOverflow.Ellipsis,
                                                         style = if (!isDetailView) androidx.compose.ui.text.TextStyle(
                                                             shadow = Shadow(
                                                                 color = viewAccentColor.copy(alpha = 0.4f),
@@ -1054,8 +1082,8 @@ fun MainScreen(
                                     }
                                 }
 
-                                // Icons on the right
-                                Row(
+                                // Icons on the right (Smart Playlists has its own controls, so no app search icon there)
+                                if (uiState.currentView != LibraryView.SMART_PLAYLISTS) Row(
                                     modifier = Modifier.align(Alignment.CenterEnd).wrapContentSize(),
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -3311,6 +3339,7 @@ fun MainScreen(
                                 song = song,
                                 currentPlayingSong = uiState.currentSong,
                                 initialShowInfoOverlay = reopenSongOptionsInfo.also { reopenSongOptionsInfo = false },
+                                animateOpen = !songSheetRestored,
                                 onDismiss = { selectedSongForOptions = null },
                                 onPlayNext = {
                                     viewModel.playNext(song)
@@ -3361,7 +3390,8 @@ fun MainScreen(
                                     selectedSongForOptions = null
                                 },
                                 onInspect = { s ->
-                                    viewModel.setPendingInspectorReturn(null)
+                                    viewModel.inspectorReturnToMenu = true
+                                    viewModel.setPendingInspectorReturn(s)
                                     onNavigateToInspector(s.id)
                                     selectedSongForOptions = null
                                 },
@@ -5735,6 +5765,7 @@ fun SlideDrawerMenu(
             listOf(
                 DrawerMenuItem("Home", LibraryView.HOME, Icons.Rounded.Home, Color(0xFF00E676)),
                 DrawerMenuItem("All Songs", LibraryView.ALL_SONGS, Icons.Rounded.MusicNote, Color(0xFFFF4081)),
+                DrawerMenuItem("Smart Playlists", LibraryView.SMART_PLAYLISTS, Icons.Rounded.AutoAwesome, Color(0xFF7C4DFF)),
                 DrawerMenuItem("Albums", LibraryView.ALBUMS, Icons.Rounded.Album, Color(0xFFB2FF59)),
                 DrawerMenuItem("Artists", LibraryView.ARTISTS, Icons.Rounded.Person, Color(0xFF7C4DFF)),
                 DrawerMenuItem("Folders", LibraryView.FOLDERS, Icons.Rounded.Folder, Color(0xFFFFAB40)),
@@ -5744,7 +5775,6 @@ fun SlideDrawerMenu(
                 DrawerMenuItem("Favorite Songs", LibraryView.FAVORITES, Icons.Rounded.Favorite, Color(0xFFFF5252)),
                 DrawerMenuItem("Recently Added", LibraryView.RECENTLY_ADDED, Icons.Rounded.NewReleases, Color(0xFF00E676)),
                 DrawerMenuItem("Recently Played", LibraryView.RECENTLY_PLAYED, Icons.Rounded.History, Color(0xFF40C4FF)),
-                DrawerMenuItem("Smart Playlists", LibraryView.SMART_PLAYLISTS, Icons.Rounded.AutoAwesome, Color(0xFF7C4DFF)),
                 DrawerMenuItem("Radio", LibraryView.RADIO, Icons.Rounded.Radio, Color(0xFF00B8D4)),
                 DrawerMenuItem("SMB / NAS", LibraryView.SMB_NAS, Icons.Rounded.Storage, Color(0xFF546E7A)),
                 DrawerMenuItem("FTP / SFTP", LibraryView.FTP_SFTP, Icons.Rounded.Dns, Color(0xFF8D6E63)),

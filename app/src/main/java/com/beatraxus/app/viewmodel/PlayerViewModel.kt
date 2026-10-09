@@ -2914,6 +2914,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         _uiState.update { it.copy(showSongInfo = show) }
     }
 
+    /** True when the Inspector was opened via the song menu's "Inspect" entry (return = song menu). */
+    @Volatile var inspectorReturnToMenu: Boolean = false
+
     fun setPendingInspectorReturn(song: com.beatraxus.app.model.Song?) {
         _uiState.update { it.copy(pendingInspectorReturnSong = song) }
     }

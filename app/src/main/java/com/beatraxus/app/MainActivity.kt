@@ -885,9 +885,9 @@ fun BeatraxusApp(
                             // doesn't immediately reopen and cover the player.
                             viewModel.setShowFullPlayer(true)
                         } else {
-                            // Opened from a song's options sheet: clear the pending return
-                            // flag so MainScreen doesn't re-trigger the sheet on back.
-                            viewModel.setPendingInspectorReturn(null)
+                            // Opened from a song's options sheet: keep the pending song so MainScreen
+                            // restores that sheet (already open, no re-animation) when it is re-entered;
+                            // MainScreen clears it after consuming.
                         }
                         navController.popBackStack()
                     }

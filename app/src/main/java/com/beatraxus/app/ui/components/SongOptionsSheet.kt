@@ -70,6 +70,8 @@ fun SongOptionsSheet(
     selectedLastFmAlbumInfo: LastFmAlbum? = null,
     isSelectedLoading: Boolean = false,
     initialShowInfoOverlay: Boolean = false,
+    // false = sheet is composed already expanded (used when returning from the Inspector).
+    animateOpen: Boolean = true,
     showPlayNext: Boolean = true,
     onMark: () -> Unit = {},
     showMark: Boolean = true,
@@ -88,8 +90,18 @@ fun SongOptionsSheet(
     var showRingtone by remember { mutableStateOf(false) }
     var showDlna by remember { mutableStateOf(false) }
 
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val sheetState = remember {
+        SheetState(
+            skipPartiallyExpanded = false,
+            density = density,
+            initialValue = if (animateOpen) SheetValue.Hidden else SheetValue.Expanded
+        )
+    }
+
     ModalBottomSheet(
         onDismissRequest = onDismiss,
+        sheetState = sheetState,
         containerColor = Color.Transparent,
         scrimColor = Color.Black.copy(alpha = 0.8f),
         dragHandle = { 
