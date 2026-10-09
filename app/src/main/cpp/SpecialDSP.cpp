@@ -1,5 +1,7 @@
 #include <vector>
 #include <array>
+#include <cstring>
+#include <cstdint>
 #include <cmath>
 #include <algorithm>
 #include <map>
@@ -448,15 +450,58 @@ public:
 
 // 8-Band Crossover using a tree of LR4 filters
 class Crossover8Band {
+    // 2nd-order allpass, Q = 1/sqrt(2). This is exactly (LP4 + HP4) of an LR4 pair, so
+    // running band i through the allpass of every *later* split makes all 8 bands share the
+    // same phase response and the recombined output flat (see compensate()).
+    struct AllPass2 {
+        double b0 = 1, b1 = 0, b2 = 0, a1 = 0, a2 = 0;
+        double z1[2] = {0, 0}, z2[2] = {0, 0};
+        void set(double f, double sr) {
+            double w = 2.0 * M_PI * f / sr, sn = std::sin(w), cs = std::cos(w);
+            double al = sn / std::sqrt(2.0), a0 = 1.0 + al;
+            b0 = (1.0 - al) / a0; b1 = -2.0 * cs / a0; b2 = (1.0 + al) / a0;
+            a1 = -2.0 * cs / a0;  a2 = (1.0 - al) / a0;
+        }
+        void reset() { z1[0] = z1[1] = z2[0] = z2[1] = 0.0; }
+        inline void process(double& l, double& r) {
+            double in[2] = {l, r};
+            for (int c = 0; c < 2; c++) {
+                double out = in[c] * b0 + z1[c];
+                z1[c] = in[c] * b1 + z2[c] - a1 * out;
+                z2[c] = in[c] * b2 - a2 * out;
+                in[c] = out;
+            }
+            l = in[0]; r = in[1];
+        }
+    };
+
     LR4Filter tree[7][2]; // 7 split points, each has LP and HP
+    AllPass2 comp[7][7];  // comp[band][split], used for split > band
     double splitFreqs[7] = {120, 280, 550, 1100, 2500, 5000, 10000};
 public:
     void init(double sr) {
+        // A split point at or above Nyquist (5 kHz / 10 kHz at 8-16 kHz sample rates) makes the
+        // biquads unstable and the output blows up. Keep every split below Nyquist; for any
+        // sample rate where the split is already valid min() returns it unchanged.
+        const double fMax = 0.49 * sr;
         for(int i=0; i<7; i++) {
-            tree[i][0].setLP(splitFreqs[i], sr);
-            tree[i][1].setHP(splitFreqs[i], sr);
+            tree[i][0].setLP(std::min(splitFreqs[i], fMax), sr);
+            tree[i][1].setHP(std::min(splitFreqs[i], fMax), sr);
             tree[i][0].reset(); tree[i][1].reset();
+            for (int j = 0; j < 7; j++) { comp[i][j].set(std::min(splitFreqs[j], fMax), sr); comp[i][j].reset(); }
         }
+    }
+    // Phase-aligns the 8 bands produced by split() (in place). A plain serial LR4 split is NOT
+    // flat when its bands are summed (about -4.7 dB around the crossover points), because the
+    // lower bands never see the phase shift of the later splits. After this call the bands sum to
+    // an allpass (flat magnitude). split() itself is left untouched on purpose: the Spatial-off
+    // signal path keeps using the original bands, so its output does not change.
+    void compensate(double L[8], double R[8]) {
+        for (int i = 0; i < 7; i++)
+            for (int j = i + 1; j < 7; j++) comp[i][j].process(L[i], R[i]);
+    }
+    void resetCompensation() {
+        for (int i = 0; i < 7; i++) for (int j = 0; j < 7; j++) comp[i][j].reset();
     }
     // Splits input signal into 8 bands using sequential Linkwitz-Riley stages.
     void split(double l, double r, double outL[8], double outR[8]) {
@@ -1026,6 +1071,70 @@ public:
     }
 };
 
+// ---- Helpers for the Modern spatial renderer ----
+// Biquad coefficients (RBJ cookbook) shared by both ears.
+struct SpatialBqCoef {
+    double b0 = 1.0, b1 = 0.0, b2 = 0.0, a1 = 0.0, a2 = 0.0;
+    void setHighShelf(double sr, double f, double gainDb, double q) {
+        double w0 = 2.0 * M_PI * std::min(f, sr * 0.49) / sr;
+        double alpha = std::sin(w0) / (2.0 * q), cs = std::cos(w0);
+        double A = std::pow(10.0, gainDb / 40.0), sA = std::sqrt(A);
+        double a0 = (A + 1.0) - (A - 1.0) * cs + 2.0 * sA * alpha;
+        b0 = (A * ((A + 1.0) + (A - 1.0) * cs + 2.0 * sA * alpha)) / a0;
+        b1 = (-2.0 * A * ((A - 1.0) + (A + 1.0) * cs)) / a0;
+        b2 = (A * ((A + 1.0) + (A - 1.0) * cs - 2.0 * sA * alpha)) / a0;
+        a1 = (2.0 * ((A - 1.0) - (A + 1.0) * cs)) / a0;
+        a2 = ((A + 1.0) - (A - 1.0) * cs - 2.0 * sA * alpha) / a0;
+    }
+    void setPeaking(double sr, double f, double gainDb, double q) {
+        double w0 = 2.0 * M_PI * std::min(f, sr * 0.49) / sr;
+        double alpha = std::sin(w0) / (2.0 * q), cs = std::cos(w0);
+        double A = std::pow(10.0, gainDb / 40.0);
+        double a0 = 1.0 + alpha / A;
+        b0 = (1.0 + alpha * A) / a0; b1 = (-2.0 * cs) / a0; b2 = (1.0 - alpha * A) / a0;
+        a1 = (-2.0 * cs) / a0;       a2 = (1.0 - alpha / A) / a0;
+    }
+};
+// Per-ear filter memory. Never bypassed (unlike BiquadState), so the state stays valid while a
+// cue gain sweeps through 0 dB and there is no click when it comes back.
+struct SpatialBqState {
+    double z1 = 0.0, z2 = 0.0;
+    void reset() { z1 = z2 = 0.0; }
+    inline double tick(const SpatialBqCoef& c, double x) {
+        double y = x * c.b0 + z1;
+        z1 = x * c.b1 + z2 - c.a1 * y;
+        z2 = x * c.b2 - c.a2 * y;
+        return y;
+    }
+};
+// A control value that glides linearly from its previous block value (a) to the new one (b).
+struct SpatialRamp {
+    double a = 0.0, b = 0.0;
+    inline double at(double u) const { return a + (b - a) * u; }
+    void push(double v, bool snap) { a = snap ? v : b; b = v; }
+    void set(double v) { a = b = v; }
+};
+// Biquad coefficients that step toward a new target in equal increments, one per sample.
+// (Stepping all five coefficients every 16 samples put a small click on every block while a
+// source was moving.)
+struct SpatialBqRamp {
+    SpatialBqCoef cur, inc;
+    void snapTo(const SpatialBqCoef& t) { cur = t; inc = SpatialBqCoef{0, 0, 0, 0, 0}; }
+    void glideTo(const SpatialBqCoef& t, double steps) {
+        inc.b0 = (t.b0 - cur.b0) / steps; inc.b1 = (t.b1 - cur.b1) / steps; inc.b2 = (t.b2 - cur.b2) / steps;
+        inc.a1 = (t.a1 - cur.a1) / steps; inc.a2 = (t.a2 - cur.a2) / steps;
+    }
+    inline void advance() {
+        cur.b0 += inc.b0; cur.b1 += inc.b1; cur.b2 += inc.b2; cur.a1 += inc.a1; cur.a2 += inc.a2;
+    }
+};
+// The build uses -ffast-math, which lets the compiler assume values are finite and delete
+// std::isfinite() checks. Test the exponent bits instead; that survives fast-math.
+static inline bool spatialIsFinite(double x) {
+    uint64_t bits; std::memcpy(&bits, &x, sizeof(bits));
+    return ((bits >> 52) & 0x7FFu) != 0x7FFu;
+}
+
 // Refactored to support 8-band per-stem spatialization with HRTF cues.
 // The engine splits the signal using an LR4 crossover and applies independent
 // Panning, Distance, Depth, and Spectral (HRTF) processing to each band.
@@ -1053,18 +1162,19 @@ class Audio3DStageEngine {
         // Elevation filters (persistent state to prevent clicks)
         BiquadState elFilterL, elFilterR;
 
-        // ---- Modern-mode (Spatial Audio ON) extras ----
-        // Pinna peak for elevated sources + head-shadow one-pole state (far ear).
-        BiquadState elPeakL, elPeakR;
-        double shadowL = 0.0, shadowR = 0.0;
-        // Cached per-band cue values. Recomputed every kCoefInterval samples instead of
-        // every sample (trig/pow/biquad design per sample was the CPU hotspot).
-        double cPanL = 0.70710678, cPanR = 0.70710678;
-        double cItdSamples = 0.0;
-        double cShadowL = 0.0, cShadowR = 0.0;
-        double cDistGain = 1.3930; // 1.6 / 2^0.2
-        double cAirCoeff = 0.96;
-        double cDepthT = 0.17;
+        // ---- Modern-mode (Spatial Audio ON) renderer state ----
+        // Spectral cue filters per ear (front/back shelf+notch, elevation shelf+pinna peak).
+        // Coefficients are shared by both ears; only the memory is per ear.
+        SpatialBqRamp bsC, bnC, esC, epC;
+        SpatialBqState bsL, bsR, bnL, bnR, esL, esR, epL, epR;
+        double shadowL = 0.0, shadowR = 0.0;     // head-shadow one-pole state (far ear)
+        // Cue cache. Cues are recomputed every kCoefInterval samples (trig/pow/biquad design per
+        // sample was the CPU hotspot) and every value that touches the waveform is then glided
+        // across the block, so a moving source never zippers or clicks.
+        SpatialRamp gL, gR, gD;                  // ear gains (applied to the mid), distance gain
+        SpatialRamp itd, dly;                    // interaural delay (+ delays L) / depth delay, samples
+        SpatialRamp shL, shR, air, sideK;        // head-shadow blend per ear, air-absorption coeff, side level
+        bool cuesValid = false;
     };
 
     // HRTF "personality" profiles (index == HrtfMode ordinal).
@@ -1077,9 +1187,23 @@ class Audio3DStageEngine {
         {0.80, 0.80, 0.50, 0.40, 0.60, 1.20},
     };
     static constexpr int kCoefInterval = 16;     // samples between cue-coefficient refreshes
+    // How much of the interaural time difference each band gets. ITD is a fine-structure cue that
+    // only works below ~1.5 kHz; above that the ear relies on level differences. Giving the upper
+    // bands a full ITD localises nothing extra but makes neighbouring bands (which carry the same
+    // signal around their crossover) cancel each other, leaving deep one-ear notches.
+    // Set every entry to 1.0 to get the previous behaviour.
+    static constexpr double kBandItdWeight[NUM_BANDS] = {1.0, 1.0, 1.0, 1.0, 0.5, 0.15, 0.0, 0.0};
     static constexpr double kSideRetain = 0.55;  // how much of the original stereo difference survives
+    // The flat (phase-aligned) crossover is used while Spatial is on. With Spatial off the original
+    // crossover bands are used unchanged, so the Spatial-off sound is exactly what it was before.
+    // Set to true to make the Sound-Stage-only path (Spatial off) flat as well. NOTE: that changes
+    // the Spatial-off sound (the original path loses 2-4.6 dB between 100 Hz and 7 kHz).
+    static constexpr bool kFlatCrossoverWhenSpatialOff = false;
     unsigned int coefTick = 0;
     double shadowCoef = 0.4;                     // one-pole LP (~4 kHz) for head shadow
+    double flatMix = 0.0;                        // 0 = original bands, 1 = phase-aligned bands
+    bool flatWasOn = false;
+    bool wetWasActive = false;
 
     BandSpatialState bands[NUM_BANDS];
     double targetWidth = 1.0, curWidth = 1.0;
@@ -1117,11 +1241,9 @@ public:
             }
             bands[i].elFilterL.reset(); bands[i].elFilterR.reset();
 
-            bands[i].elPeakL.reset(); bands[i].elPeakR.reset();
-            bands[i].elPeakL.setPeaking(sampleRate, 7500.0f, 0.0f, 2.0f);
-            bands[i].elPeakR.setPeaking(sampleRate, 7500.0f, 0.0f, 2.0f);
-            bands[i].shadowL = bands[i].shadowR = 0.0;
+            resetModernWetState(bands[i]);
         }
+        flatMix = 0.0; flatWasOn = false; wetWasActive = false;
     }
 
     void setEnabled(bool enabled) { engineEnabled = enabled; }
@@ -1162,6 +1284,34 @@ public:
             // Modern Mode: 8-band crossover
             double bandL[NUM_BANDS], bandR[NUM_BANDS];
             crossover.split(left, right, bandL, bandR);
+
+            // Spatial on -> phase-aligned (flat) bands, glided in/out over ~10-20 ms.
+            // Spatial off -> flatMix is exactly 0 and the original bands pass through untouched.
+            const bool flatWanted = kFlatCrossoverWhenSpatialOff || targetSpatialIntensity > 0.001;
+            flatMix += ((flatWanted ? 1.0 : 0.0) - flatMix) * smoothCoeff;
+            if (!flatWanted && flatMix < 1e-4) flatMix = 0.0;
+            if (flatMix > 0.0) {
+                double cL[NUM_BANDS], cR[NUM_BANDS];
+                for (int b = 0; b < NUM_BANDS; b++) { cL[b] = bandL[b]; cR[b] = bandR[b]; }
+                crossover.compensate(cL, cR);
+                for (int b = 0; b < NUM_BANDS; b++) {
+                    bandL[b] += (cL[b] - bandL[b]) * flatMix;
+                    bandR[b] += (cR[b] - bandR[b]) * flatMix;
+                }
+                flatWasOn = true;
+            } else if (flatWasOn) {
+                crossover.resetCompensation();   // start clean next time Spatial is switched on
+                flatWasOn = false;
+            }
+
+            // When the spatial renderer goes idle, wipe its delay lines / filter memory so old
+            // audio can never leak back in when it is switched on again.
+            const bool wetNow = curSpatialIntensity > 0.001;
+            if (wetWasActive && !wetNow) {
+                for (int b = 0; b < NUM_BANDS; b++) resetModernWetState(bands[b]);
+            }
+            wetWasActive = wetNow;
+
             double outSumL = 0.0, outSumR = 0.0;
             for (int i = 0; i < NUM_BANDS; i++) {
                 processBand(i, bandL[i], bandR[i], smoothCoeff);
@@ -1178,7 +1328,18 @@ private:
         BandSpatialState& s = bands[i];
 
         // 1. Parameter Smoothing
-        s.curAz += (s.targetAz - s.curAz) * smoothCoeff;
+        if (spatialUiMode == 0) {
+            // Modern: glide along the SHORTEST arc. A plain linear glide from 350 deg to 10 deg
+            // would sweep the source through the back of the head (180 deg) on its way.
+            double dAz = s.targetAz - s.curAz;
+            if (dAz != 0.0) {
+                if (dAz > 180.0 || dAz < -180.0) dAz -= 360.0 * std::floor(dAz / 360.0 + 0.5);
+                s.curAz += dAz * smoothCoeff;
+                if (s.curAz >= 360.0) s.curAz -= 360.0; else if (s.curAz < 0.0) s.curAz += 360.0;
+            }
+        } else {
+            s.curAz += (s.targetAz - s.curAz) * smoothCoeff;
+        }
         s.curEl += (s.targetEl - s.curEl) * smoothCoeff;
         s.curDist += (s.targetDist - s.curDist) * smoothCoeff;
 
@@ -1303,138 +1464,153 @@ private:
         return buf[i0] * (1.0 - frac) + buf[i1] * frac;
     }
 
-    static inline void copyCoeffs(BiquadState& dst, const BiquadState& src) {
-        dst.b0 = src.b0; dst.b1 = src.b1; dst.b2 = src.b2;
-        dst.a1 = src.a1; dst.a2 = src.a2;
-        dst.filterType = src.filterType;
-        dst.freq = src.freq; dst.gain = src.gain; dst.q = src.q;
+    // Wipe everything the Modern wet path remembers (delay lines, filter memory, cue cache).
+    static void resetModernWetState(BandSpatialState& s) {
+        std::fill(s.delayL.begin(), s.delayL.end(), 0.0);
+        std::fill(s.delayR.begin(), s.delayR.end(), 0.0);
+        std::fill(s.itdBufL.begin(), s.itdBufL.end(), 0.0);
+        std::fill(s.itdBufR.begin(), s.itdBufR.end(), 0.0);
+        s.lpStateL = s.lpStateR = 0.0;
+        s.shadowL = s.shadowR = 0.0;
+        s.bsL.reset(); s.bsR.reset(); s.bnL.reset(); s.bnR.reset();
+        s.esL.reset(); s.esR.reset(); s.epL.reset(); s.epR.reset();
+        s.bsC.snapTo(SpatialBqCoef()); s.bnC.snapTo(SpatialBqCoef());
+        s.esC.snapTo(SpatialBqCoef()); s.epC.snapTo(SpatialBqCoef());
+        s.gL.set(1.0); s.gR.set(1.0); s.gD.set(1.0);
+        s.itd.set(0.0); s.dly.set(0.0);
+        s.shL.set(0.0); s.shR.set(0.0); s.air.set(1.0); s.sideK.set(1.0);
+        s.cuesValid = false;
     }
 
-    // Refresh all cue coefficients for one band. L/R ears share spectral filters,
-    // so each filter is designed once and the coefficients are copied to the other ear.
-    void updateModernCues(BandSpatialState& s) {
+    // Recompute one band's cues for the current position and intensity.
+    //
+    // Design rule: Spatial Intensity scales the CUES (level difference in dB, delay in samples,
+    // filter gains in dB), it does not crossfade a processed copy against the dry signal. At
+    // intensity 0 every stage is therefore exactly neutral (gain 1, delay 0, filters flat), which
+    // is also why there is no dry/wet comb filtering at partial intensity.
+    // Cue magnitudes at intensity 1 are the same as the previous renderer.
+    void updateModernCues(int bandIdx, BandSpatialState& s) {
         const HrtfProfile& P = kProfiles[std::clamp(hrtfMode, 0, 3)];
         const double sr = (double)currentSampleRate;
+        const double t = std::clamp(curSpatialIntensity, 0.0, 1.0);
+        const bool snap = !s.cuesValid;   // first block after a reset: jump, don't glide from neutral
 
         double azRad = (s.curAz - 90.0) * M_PI / 180.0;
         double cosAz = std::cos(azRad);  // +1 = right, -1 = left
         double sinAz = std::sin(azRad);  // +1 = behind, -1 = in front
 
-        // ILD: equal-power pan, but the far ear is never fully silenced (real heads
-        // diffract sound around). Max ~10 dB level difference for Natural.
-        double k = std::min(0.97, 0.8 * P.ild);
-        s.cPanL = std::sqrt(std::max(0.0, 0.5 * (1.0 - k * cosAz)));
-        s.cPanR = std::sqrt(std::max(0.0, 0.5 * (1.0 + k * cosAz)));
+        // ILD: power-preserving pan (gL^2 + gR^2 = 2, so a centred source keeps unity gain per
+        // ear). The far ear is never silenced (real heads diffract): max ~10 dB for Natural.
+        double lat = std::min(0.97, 0.8 * P.ild) * cosAz * t;
+        s.gL.push(std::sqrt(std::max(0.0, 1.0 - lat)), snap);
+        s.gR.push(std::sqrt(std::max(0.0, 1.0 + lat)), snap);
 
         // ITD (far ear delayed), capped to the delay-line size.
-        double itdMax = std::min(0.00066 * P.itd, 0.00095) * sr;
-        s.cItdSamples = cosAz * itdMax;
+        s.itd.push(cosAz * std::min(0.00066 * P.itd, 0.00095) * sr * t * kBandItdWeight[bandIdx], snap);
 
         // Head shadow amount per ear (the ear away from the source).
-        s.cShadowL = std::min(1.0, std::max(0.0,  cosAz) * P.shadow);
-        s.cShadowR = std::min(1.0, std::max(0.0, -cosAz) * P.shadow);
+        s.shL.push(std::min(1.0, std::max(0.0,  cosAz) * P.shadow) * t, snap);
+        s.shR.push(std::min(1.0, std::max(0.0, -cosAz) * P.shadow) * t, snap);
 
-        // Front/back spectral cues (continuous: no hard on/off switching).
+        // Front/back spectral cues (continuous: no hard on/off switching) and elevation:
+        // high shelf (up/down) plus pinna peak for elevated sources.
         double backFactor = std::clamp((sinAz + 1.0) * 0.5, 0.0, 1.0);
-        float muffDb  = (float)(-6.0  * backFactor * P.back);
-        float notchDb = (float)(-12.0 * backFactor * P.back);
-        s.hrtfL[0].setHighShelf(sr, 4000.0f, muffDb, 0.7f);  copyCoeffs(s.hrtfR[0], s.hrtfL[0]);
-        s.hrtfL[1].setPeaking(sr, 6500.0f, notchDb, 4.0f);   copyCoeffs(s.hrtfR[1], s.hrtfL[1]);
-
-        // Elevation: high shelf (up/down) plus pinna peak for elevated sources.
         double elF = std::clamp(s.curEl / 90.0, -1.0, 1.0);
-        s.elFilterL.setHighShelf(sr, 3000.0f, (float)(4.0 * elF * P.elev), 0.7f);
-        copyCoeffs(s.elFilterR, s.elFilterL);
-        s.elPeakL.setPeaking(sr, 7500.0f, (float)(3.0 * std::max(0.0, elF) * P.elev), 2.0f);
-        copyCoeffs(s.elPeakR, s.elPeakL);
+        SpatialBqCoef nbs, nbn, nes, nep;
+        nbs.setHighShelf(sr, 4000.0, -6.0  * backFactor * P.back * t, 0.7);
+        nbn.setPeaking  (sr, 6500.0, -12.0 * backFactor * P.back * t, 4.0);
+        nes.setHighShelf(sr, 3000.0, 4.0 * elF * P.elev * t, 0.7);
+        nep.setPeaking  (sr, 7500.0, 3.0 * std::max(0.0, elF) * P.elev * t, 2.0);
+        if (snap) { s.bsC.snapTo(nbs); s.bnC.snapTo(nbn); s.esC.snapTo(nes); s.epC.snapTo(nep); }
+        else {
+            s.bsC.glideTo(nbs, kCoefInterval); s.bnC.glideTo(nbn, kCoefInterval);
+            s.esC.glideTo(nes, kCoefInterval); s.epC.glideTo(nep, kCoefInterval);
+        }
 
-        // Distance cues.
-        s.cDistGain = 1.6 / std::pow(std::max(0.5, s.curDist), 0.2);
-        s.cAirCoeff = std::clamp(1.0 - (s.curDist - 1.0) * 0.04, 0.2, 1.0);
-        s.cDepthT   = std::clamp((s.curDist - 0.3) / 10.0, 0.0, 1.0);
+        // Distance: level relative to the 2 m reference (neutral there), air absorption, and a
+        // depth delay measured relative to the nearest band. Only the *relative* arrival time
+        // between bands is a cue; a common delay would just be latency.
+        s.gD.push(std::pow(2.0 / std::max(0.5, s.curDist), 0.2 * t), snap);
+        double airC = std::clamp(1.0 - (s.curDist - 1.0) * 0.04, 0.2, 1.0);
+        s.air.push(1.0 - (1.0 - airC) * t, snap);
+        double nearest = 1.0;
+        for (int b = 0; b < NUM_BANDS; b++)
+            nearest = std::min(nearest, std::clamp((bands[b].curDist - 0.3) / 10.0, 0.0, 1.0));
+        double depthT = std::clamp((s.curDist - 0.3) / 10.0, 0.0, 1.0) - nearest;
+        s.dly.push(depthT * 0.02 * sr * t, snap);
+
+        s.sideK.push(1.0 + (kSideRetain * P.side - 1.0) * t, snap);
+        s.cuesValid = true;
     }
 
-    // Improved wet path for Modern mode.
-    // Differences vs legacy: keeps part of the stereo difference (no mono collapse),
-    // adds head-shadow, honours HRTF mode, fractional depth delay, cached coefficients
-    // and depth delay scaled with intensity (less comb filtering against the dry signal).
+    // Spatial renderer for one band (Modern mode, runs only while Spatial is on).
     void processModernWet(int bandIdx, BandSpatialState& s, double& bL, double& bR) {
-        if (((coefTick + (unsigned int)bandIdx * 2u) & (unsigned int)(kCoefInterval - 1)) == 0) {
-            updateModernCues(s);
-        }
-        const HrtfProfile& P = kProfiles[std::clamp(hrtfMode, 0, 3)];
+        const unsigned int k = (coefTick + (unsigned int)bandIdx * 2u) & (unsigned int)(kCoefInterval - 1);
+        if (k == 0) updateModernCues(bandIdx, s);
+        const double u = (double)(k + 1) / (double)kCoefInterval;   // position inside the block
+        const double gL = s.gL.at(u), gR = s.gR.at(u), gD = s.gD.at(u);
+        const double itd = s.itd.at(u), dly = s.dly.at(u);
 
-        double mid  = (bL + bR) * 0.5;
-        double side = (bL - bR) * 0.5;
+        const double mid  = (bL + bR) * 0.5;
+        const double side = (bL - bR) * 0.5;
 
-        double spatialL = mid * s.cPanL;
-        double spatialR = mid * s.cPanR;
+        // ILD
+        double spatialL = mid * gL;
+        double spatialR = mid * gR;
 
-        // ITD
+        // ITD (fractional delay on the far ear)
         s.itdBufL[s.itdWritePos] = spatialL;
         s.itdBufR[s.itdWritePos] = spatialR;
-        if (s.cItdSamples >= 0.0) {
-            spatialL = readFractional(s.itdBufL, s.cItdSamples, s.itdWritePos, s.itdSize);
+        if (itd >= 0.0) {
+            spatialL = readFractional(s.itdBufL, itd, s.itdWritePos, s.itdSize);
         } else {
-            spatialR = readFractional(s.itdBufR, -s.cItdSamples, s.itdWritePos, s.itdSize);
+            spatialR = readFractional(s.itdBufR, -itd, s.itdWritePos, s.itdSize);
         }
         s.itdWritePos = (s.itdWritePos + 1) % s.itdSize;
 
         // Head shadow: far ear loses highs (first-order low-pass blended in by lateral amount).
         s.shadowL += shadowCoef * (spatialL - s.shadowL);
         s.shadowR += shadowCoef * (spatialR - s.shadowR);
-        spatialL += (s.shadowL - spatialL) * s.cShadowL;
-        spatialR += (s.shadowR - spatialR) * s.cShadowR;
+        spatialL += (s.shadowL - spatialL) * s.shL.at(u);
+        spatialR += (s.shadowR - spatialR) * s.shR.at(u);
 
-        // Spectral cues (front/back + elevation)
-        s.elFilterL.processSingle(spatialL, false);
-        s.elFilterR.processSingle(spatialR, true);
-        s.elPeakL.processSingle(spatialL, false);
-        s.elPeakR.processSingle(spatialR, true);
-        s.hrtfL[0].processSingle(spatialL, false);
-        s.hrtfR[0].processSingle(spatialR, true);
-        s.hrtfL[1].processSingle(spatialL, false);
-        s.hrtfR[1].processSingle(spatialR, true);
+        // Spectral cues (elevation + front/back)
+        spatialL = s.esL.tick(s.esC.cur, spatialL);  spatialR = s.esR.tick(s.esC.cur, spatialR);
+        spatialL = s.epL.tick(s.epC.cur, spatialL);  spatialR = s.epR.tick(s.epC.cur, spatialR);
+        spatialL = s.bsL.tick(s.bsC.cur, spatialL);  spatialR = s.bsR.tick(s.bsC.cur, spatialR);
+        spatialL = s.bnL.tick(s.bnC.cur, spatialL);  spatialR = s.bnR.tick(s.bnC.cur, spatialR);
+        s.esC.advance(); s.epC.advance(); s.bsC.advance(); s.bnC.advance();
 
         // Keep part of the original stereo difference so instruments don't collapse to mono.
-        const double sideK = kSideRetain * P.side;
+        const double sideK = s.sideK.at(u);
         spatialL += side * sideK;
         spatialR -= side * sideK;
 
-        // Distance gain + air absorption
-        spatialL *= s.cDistGain;
-        spatialR *= s.cDistGain;
-        s.lpStateL += (spatialL - s.lpStateL) * s.cAirCoeff;
-        s.lpStateR += (spatialR - s.lpStateR) * s.cAirCoeff;
+        // Distance gain + air absorption (coefficient 1 is a pass-through)
+        spatialL *= gD;
+        spatialR *= gD;
+        const double air = s.air.at(u);
+        s.lpStateL += (spatialL - s.lpStateL) * air;
+        s.lpStateR += (spatialR - s.lpStateR) * air;
         spatialL = s.lpStateL;
         spatialR = s.lpStateR;
 
-        // Depth delay (fractional, scaled by intensity)
-        double t = curSpatialIntensity;
-        double delaySamples = s.cDepthT * 0.02 * currentSampleRate * t;
+        // Depth delay (fractional, relative to the nearest band)
         s.delayL[s.writePos] = spatialL;
         s.delayR[s.writePos] = spatialR;
-        spatialL = readFractional(s.delayL, delaySamples, s.writePos, s.delaySize);
-        spatialR = readFractional(s.delayR, delaySamples, s.writePos, s.delaySize);
+        spatialL = readFractional(s.delayL, dly, s.writePos, s.delaySize);
+        spatialR = readFractional(s.delayR, dly, s.writePos, s.delaySize);
         s.writePos = (s.writePos + 1) % s.delaySize;
 
-        // Safety: never let a bad value poison the filter state.
-        if (!std::isfinite(spatialL) || !std::isfinite(spatialR)) {
-            std::fill(s.delayL.begin(), s.delayL.end(), 0.0);
-            std::fill(s.delayR.begin(), s.delayR.end(), 0.0);
-            std::fill(s.itdBufL.begin(), s.itdBufL.end(), 0.0);
-            std::fill(s.itdBufR.begin(), s.itdBufR.end(), 0.0);
-            s.lpStateL = s.lpStateR = s.shadowL = s.shadowR = 0.0;
-            for (int j = 0; j < 2; j++) { s.hrtfL[j].reset(); s.hrtfR[j].reset(); }
-            s.elFilterL.reset(); s.elFilterR.reset(); s.elPeakL.reset(); s.elPeakR.reset();
-            return;
+        // Safety: never let a bad value poison the delay lines / filters. (Bit test, not
+        // std::isfinite: the build uses -ffast-math, which would optimise isfinite away.)
+        if (!spatialIsFinite(spatialL) || !spatialIsFinite(spatialR)) {
+            resetModernWetState(s);
+            return;   // leave this band's dry signal untouched for this sample
         }
 
-        // Equal-power dry/wet crossfade (same loudness behaviour as before).
-        double dryGain = std::cos(t * M_PI * 0.5);
-        double wetGain = std::sin(t * M_PI * 0.5);
-        bL = bL * dryGain + spatialL * wetGain;
-        bR = bR * dryGain + spatialR * wetGain;
+        bL = spatialL;
+        bR = spatialR;
     }
 
 public:
