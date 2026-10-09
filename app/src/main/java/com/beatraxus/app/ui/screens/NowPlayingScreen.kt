@@ -1305,14 +1305,14 @@ fun NowPlayingScreen(
 }
 }
 
-private data class TransportIconSet(
+internal data class TransportIconSet(
     val prev: androidx.compose.ui.graphics.vector.ImageVector,
     val play: androidx.compose.ui.graphics.vector.ImageVector,
     val pause: androidx.compose.ui.graphics.vector.ImageVector,
     val next: androidx.compose.ui.graphics.vector.ImageVector
 )
 
-private fun transportIconsFor(style: com.beatraxus.app.model.NowPlayingIconStyle): TransportIconSet {
+internal fun transportIconsFor(style: com.beatraxus.app.model.NowPlayingIconStyle): TransportIconSet {
     return when (style) {
         com.beatraxus.app.model.NowPlayingIconStyle.FILLED -> TransportIconSet(
             Icons.Filled.SkipPrevious, Icons.Filled.PlayArrow, Icons.Filled.Pause, Icons.Filled.SkipNext
@@ -2225,7 +2225,7 @@ private fun SongQueueItem(
 }
 
 @Composable
-private fun UtilityItem(
+internal fun UtilityItem(
     icon: ImageVector,
     label: String,
     isActive: Boolean,
@@ -2266,7 +2266,7 @@ private fun fmtTime(ms: Long): String {
     val s = ms / 1000; return "%d:%02d".format(s / 60, s % 60)
 }
 
-private fun fmtSleepTime(seconds: Int): String {
+internal fun fmtSleepTime(seconds: Int): String {
     val m = seconds / 60
     val s = seconds % 60
     return if (m > 0) "%d:%02d".format(m, s) else "%ds".format(s)
@@ -2279,12 +2279,14 @@ private fun fmtSleepTime(seconds: Int): String {
 private const val POPUP_PANEL_ALPHA = 0.96f
 
 @Composable
-private fun SleepTimerSheet(
+internal fun SleepTimerSheet(
     albumArtUri: Uri?,
     uiState: PlayerUiState,
     onSetTimer: (Int, Boolean, Int) -> Unit,
     onStopTimer: () -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    // Live radio has no tracks: hides "Play Count" and "Finish current track", duration only.
+    liveStream: Boolean = false
 ) {
     val presets = listOf(0, 15, 30, 45, 60, 120, 180, 240) // in minutes
     var timerValue by remember { mutableFloatStateOf(0f) }
@@ -2301,8 +2303,8 @@ private fun SleepTimerSheet(
         presets[index]
     }
 
-    val selectedPlayCount = remember(playCountValue) {
-        (playCountValue * 50).roundToInt()
+    val selectedPlayCount = remember(playCountValue, liveStream) {
+        if (liveStream) 0 else (playCountValue * 50).roundToInt()
     }
 
     ModalBottomSheet(
@@ -2441,7 +2443,7 @@ private fun SleepTimerSheet(
                     }
 
                     // Play Count Slider
-                    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    if (!liveStream) Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -2470,7 +2472,7 @@ private fun SleepTimerSheet(
                 // Switch and Buttons Section
                 Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                     // End of track switch
-                    Surface(
+                    if (!liveStream) Surface(
                         onClick = { endOfTrack = !endOfTrack },
                         shape = RoundedCornerShape(24.dp),
                         color = Color.White.copy(0.05f),
@@ -2526,7 +2528,7 @@ private fun SleepTimerSheet(
                         Button(
                             onClick = {
                                 if (selectedMinutes > 0 || selectedPlayCount > 0) {
-                                    onSetTimer(selectedMinutes * 60, endOfTrack, selectedPlayCount)
+                                    onSetTimer(selectedMinutes * 60, endOfTrack && !liveStream, selectedPlayCount)
                                     onDismiss()
                                 } else {
                                     showCustomPicker = true
@@ -2566,7 +2568,7 @@ private fun SleepTimerSheet(
         CustomTimePickerDialog(
             onDismiss = { showCustomPicker = false },
             onConfirm = { seconds ->
-                onSetTimer(seconds, endOfTrack, 0)
+                onSetTimer(seconds, endOfTrack && !liveStream, 0)
                 showCustomPicker = false
                 onDismiss()
             }

@@ -30,6 +30,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Radio
@@ -91,7 +92,9 @@ fun RadioLibraryScreen(
     isPlaying: Boolean,
     accent: Color,
     onStationClick: (RadioStation) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    /** Song ids ("radio_<id>") the user hearted on the radio Now Playing screen. */
+    favoriteIds: Set<String> = emptySet()
 ) {
     var stations by remember { mutableStateOf<List<RadioStation>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
@@ -169,6 +172,7 @@ fun RadioLibraryScreen(
                         isCurrent = isCurrent,
                         isPlaying = isCurrent && isPlaying,
                         accent = accent,
+                        favorite = "radio_${station.id}" in favoriteIds,
                         onClick = { onStationClick(station) }
                     )
                 }
@@ -252,12 +256,13 @@ private fun RadioChip(label: String, selected: Boolean, accent: Color, onClick: 
 }
 
 @Composable
-private fun RadioStationRow(
+internal fun RadioStationRow(
     station: RadioStation,
     isCurrent: Boolean,
     isPlaying: Boolean,
     accent: Color,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    favorite: Boolean = false
 ) {
     val shape = RoundedCornerShape(18.dp)
     Row(
@@ -298,6 +303,14 @@ private fun RadioStationRow(
                 fontSize = 12.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
+            )
+        }
+        if (favorite) {
+            Icon(
+                Icons.Rounded.Favorite,
+                contentDescription = "Favorite station",
+                tint = Color(0xFFFF4081),
+                modifier = Modifier.size(16.dp)
             )
         }
         Spacer(Modifier.width(8.dp))

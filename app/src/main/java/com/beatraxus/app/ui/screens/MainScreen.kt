@@ -108,6 +108,7 @@ import coil.request.CachePolicy
 import coil.request.ImageRequest
 import com.beatraxus.app.model.*
 import com.beatraxus.app.repository.RadioBrowserApi
+import com.beatraxus.app.repository.RadioStationCache
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import com.beatraxus.app.ui.components.*
@@ -2747,7 +2748,8 @@ fun MainScreen(
                                                         currentSongId = uiState.currentSong?.id,
                                                         isPlaying = uiState.isPlaying,
                                                         accent = viewAccentColor,
-                                                        onStationClick = { station -> viewModel.playSong(station.toSong()) }
+                                                        onStationClick = { station -> viewModel.playSong(station.toSong()) },
+                                                        favoriteIds = favorites
                                                     )
                                                 }
                                                 else -> {
@@ -2921,6 +2923,24 @@ fun MainScreen(
                                             androidx.compose.ui.graphics.lerp(currentDominantColor, Color.White, 0.55f)
                                         else Color.White.copy(0.7f)
 
+                                        // Live radio: no duration / progress, and next / previous (buttons and
+                                        // swipe) step through stations because the song queue is just this stream.
+                                        val miniIsRadio = !isFromVideo && uiState.currentSong?.isRadioStream == true
+                                        val miniNext: () -> Unit = {
+                                            val cur = uiState.currentSong
+                                            if (miniIsRadio && cur != null) {
+                                                RadioStationCache.neighbour(cur.id, +1)?.let { viewModel.playSong(it.toSong()) }
+                                            } else viewModel.skipToNext()
+                                        }
+                                        val miniPrev: () -> Unit = {
+                                            val cur = uiState.currentSong
+                                            if (miniIsRadio && cur != null) {
+                                                RadioStationCache.neighbour(cur.id, -1)?.let { viewModel.playSong(it.toSong()) }
+                                            } else viewModel.skipToPrevious()
+                                        }
+                                        val miniNextState by rememberUpdatedState(miniNext)
+                                        val miniPrevState by rememberUpdatedState(miniPrev)
+
                                         Box(
                                             modifier = Modifier
                                                 .fillMaxWidth()
@@ -2981,8 +3001,8 @@ fun MainScreen(
                                                     detectHorizontalDragGestures(
                                                         onDragStart = { totalX = 0f },
                                                         onDragEnd = {
-                                                            if (totalX > 50) viewModel.skipToPrevious()
-                                                            else if (totalX < -50) viewModel.skipToNext()
+                                                            if (totalX > 50) miniPrevState()
+                                                            else if (totalX < -50) miniNextState()
                                                         },
                                                         onHorizontalDrag = { change, dragAmount ->
                                                             change.consume()
@@ -3059,7 +3079,9 @@ fun MainScreen(
                                             }
 
                                             // The pill style shows progress as a ring around play/pause instead.
-                                            if (!(miniPill && miniAppearance.miniPlayerShowProgressRing)) {
+                                            if (miniIsRadio) {
+                                                MiniPlayerLiveBar(playing = uiState.isPlaying)
+                                            } else if (!(miniPill && miniAppearance.miniPlayerShowProgressRing)) {
                                                 MiniPlayerProgressBar(
                                                     progressProvider = {
                                                         val duration = uiState.currentSong?.durationMs ?: 0L
@@ -3079,7 +3101,14 @@ fun MainScreen(
                                                     shape = RoundedCornerShape(if (miniPill) miniAppearance.miniPlayerArtCornerRadius.coerceIn(0f, 40f).dp else 8.dp),
                                                     color = Color.White.copy(0.05f)
                                                 ) {
-                                                    if (isFromVideo) {
+                                                    if (miniIsRadio) {
+                                                        RadioStationLogo(
+                                                            logoUrl = uiState.currentSong?.albumArtUri?.toString(),
+                                                            accent = Color(0xFF00B8D4),
+                                                            size = if (miniPill) miniBarHeight - 20.dp else 44.dp,
+                                                            cornerRadius = if (miniPill) miniAppearance.miniPlayerArtCornerRadius.coerceIn(0f, 40f).dp else 8.dp
+                                                        )
+                                                    } else if (isFromVideo) {
                                                         Box(contentAlignment = Alignment.Center, modifier = Modifier.background(AccentBlue.copy(0.15f))) {
                                                             Icon(Icons.Rounded.Movie, null, tint = AccentBlue, modifier = Modifier.size(20.dp))
                                                         }
@@ -3137,7 +3166,13 @@ fun MainScreen(
                                                             maxLines = 1,
                                                             overflow = TextOverflow.Ellipsis
                                                         )
-                                                        if (miniAppearance.miniPlayerShowTime) {
+                                                        if (miniIsRadio) {
+                                                            MiniPlayerLiveText(
+                                                                playing = uiState.isPlaying,
+                                                                pill = true,
+                                                                pillFontSize = pillTimeSp
+                                                            )
+                                                        } else if (miniAppearance.miniPlayerShowTime) {
                                                             MiniPlayerTimeText(
                                                                 progressProvider = { progressMs },
                                                                 duration = uiState.currentSong?.durationMs ?: 0L,
@@ -3158,7 +3193,9 @@ fun MainScreen(
                                                                 modifier = Modifier.weight(1f, fill = false)
                                                             )
                                                             Spacer(Modifier.width(6.dp))
-                                                            MiniPlayerTimeText(
+                                                            if (miniIsRadio) {
+                                                                MiniPlayerLiveText(playing = uiState.isPlaying)
+                                                            } else MiniPlayerTimeText(
                                                                 progressProvider = { progressMs },
                                                                 duration = uiState.currentSong?.durationMs ?: 0L
                                                             )
@@ -3214,7 +3251,7 @@ fun MainScreen(
                                                             .size(46.dp)
                                                             .clip(CircleShape)
                                                             .clickable(role = Role.Button) {
-                                                                if (isFromVideo) viewModel.resumeBackgroundVideo() else viewModel.skipToNext()
+                                                                if (isFromVideo) viewModel.resumeBackgroundVideo() else miniNextState()
                                                             },
                                                         contentAlignment = Alignment.Center
                                                     ) {
@@ -3240,7 +3277,7 @@ fun MainScreen(
                                                             Icon(Icons.Rounded.Fullscreen, null, tint = Color.White)
                                                         }
                                                     } else {
-                                                        IconButton(onClick = { viewModel.skipToNext() }) {
+                                                        IconButton(onClick = { miniNextState() }) {
                                                             Icon(
                                                                 Icons.Rounded.SkipNext,
                                                                 null,
@@ -3672,10 +3709,17 @@ fun MainScreen(
                     RadioNowPlayingScreen(
                         song = radioSong,
                         isPlaying = uiState.isPlaying,
+                        uiState = uiState,
+                        isFavorite = favorites.contains(radioSong.id),
+                        onFavoriteClick = { viewModel.toggleFavorite(radioSong) },
                         onPlayPause = { viewModel.togglePlayPause() },
                         onPlayStation = { viewModel.playSong(it) },
                         onClose = { showFullPlayer = false },
-                        onOpenEqualizer = onNavigateToDsp
+                        onOpenEqualizer = onNavigateToDsp,
+                        onSetSleepTimer = { seconds, finishTrack, playCount ->
+                            viewModel.setSleepTimer(seconds, finishTrack, playCount)
+                        },
+                        onStopSleepTimer = { viewModel.stopSleepTimer() }
                     )
                     return@ProvideLiveAudioLevel
                 }
@@ -5182,6 +5226,44 @@ fun MiniPlayerProgressBar(progressProvider: () -> Float) {
                 .background(Color.White)
         )
     }
+}
+
+/** Mini-player stand-in for the progress line while a live radio stream plays: a soft breathing line. */
+@Composable
+fun MiniPlayerLiveBar(playing: Boolean) {
+    val transition = androidx.compose.animation.core.rememberInfiniteTransition(label = "miniLiveBar")
+    val pulse by transition.animateFloat(
+        initialValue = 0.35f,
+        targetValue = 1f,
+        animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+            androidx.compose.animation.core.tween(1100, easing = androidx.compose.animation.core.LinearEasing),
+            androidx.compose.animation.core.RepeatMode.Reverse
+        ),
+        label = "miniLiveBarPulse"
+    )
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .height(2.5.dp)
+            .background(Color(0xFF00B8D4).copy(alpha = if (playing) pulse else 0.2f))
+    )
+}
+
+/** "● LIVE" in place of the "0:00 / 0:00" time on the mini player while a radio stream plays. */
+@Composable
+fun MiniPlayerLiveText(
+    playing: Boolean,
+    pill: Boolean = false,
+    pillFontSize: androidx.compose.ui.unit.TextUnit = 14.sp
+) {
+    Text(
+        text = if (playing) "● LIVE" else "Paused",
+        color = if (playing) Color(0xFF00B8D4) else Color.White.copy(0.55f),
+        fontSize = if (pill) pillFontSize else 11.sp,
+        fontWeight = FontWeight.SemiBold,
+        lineHeight = if (pill) pillFontSize * 1.25f else 15.sp,
+        maxLines = 1
+    )
 }
 
 @Composable
