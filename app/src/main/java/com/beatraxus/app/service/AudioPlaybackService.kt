@@ -848,8 +848,13 @@ class AudioPlaybackService : Service() {
                 }
 
                 if (!fullScan && foldersToScan.isEmpty()) {
-                    onProgress(1.0f, 0, 0, 0)
                     val currentLocal = currentSongs.filter { it.source == SongSource.LOCAL }
+                    onProgress(
+                        1.0f,
+                        currentLocal.size,
+                        currentLocal.map { it.album }.toSet().size,
+                        currentLocal.map { it.artist }.toSet().size
+                    )
                     try {
                         onComplete(currentLocal, emptyList(), emptyList(), "Library is up to date", false)
                     } catch (e: Exception) {
@@ -872,12 +877,29 @@ class AudioPlaybackService : Service() {
                     }
                     scannedResults.addAll(results)
                 } else {
-                    // Incremental scan of ONLY changed folders
+                    // Incremental scan of ONLY changed folders.
+                    // Songs from unchanged folders still belong to the library, so live counts
+                    // start from them and grow as each changed folder is scanned.
+                    val keptSongs = currentLocalSongsMap.values.filter { song ->
+                        unchangedFolders.any { folder -> song.folder.startsWith(folder) }
+                    }
+                    val baseAlbums = keptSongs.mapTo(HashSet()) { it.album }
+                    val baseArtists = keptSongs.mapTo(HashSet()) { it.artist }
                     for ((index, folderPath) in foldersToScan.withIndex()) {
-                        val results = musicRepository.scanAudioFiles(fullScan = false, targetPath = folderPath, excludedPaths = blocked) { count, albums, artists, progress ->
+                        // Include folders already scanned in this run so counts are cumulative
+                        val seedAlbums = HashSet(baseAlbums).apply { scannedResults.forEach { add(it.album) } }
+                        val seedArtists = HashSet(baseArtists).apply { scannedResults.forEach { add(it.artist) } }
+                        val baseCount = keptSongs.size + scannedResults.size
+                        val results = musicRepository.scanAudioFiles(
+                            fullScan = false,
+                            targetPath = folderPath,
+                            excludedPaths = blocked,
+                            seedAlbums = seedAlbums,
+                            seedArtists = seedArtists
+                        ) { count, albums, artists, progress ->
                             val overallProgress = (index.toFloat() + progress) / foldersToScan.size.toFloat()
-                            onProgress(overallProgress, scannedResults.size + count, 0, 0) // Simplified counts for progress
-                            updateScanningProgress(overallProgress, scannedResults.size + count, false)
+                            onProgress(overallProgress, baseCount + count, albums, artists)
+                            updateScanningProgress(overallProgress, baseCount + count, false)
                         }
                         scannedResults.addAll(results)
                         

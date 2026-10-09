@@ -37,11 +37,15 @@ class MusicRepository(private val context: Context) {
         fullScan: Boolean = true,
         targetPath: String? = null,
         excludedPaths: List<String> = emptyList(),
+        // Albums/artists already known from songs outside this scan (e.g. unchanged folders
+        // during a quick scan), so the live counts are cumulative instead of per-folder.
+        seedAlbums: Set<String> = emptySet(),
+        seedArtists: Set<String> = emptySet(),
         onProgress: (count: Int, albumCount: Int, artistCount: Int, progress: Float) -> Unit
     ): List<Song> = withContext(Dispatchers.IO) {
-        onProgress(0, 0, 0, 0f)
-        val albumsSet = mutableSetOf<String>()
-        val artistsSet = mutableSetOf<String>()
+        val albumsSet = seedAlbums.toMutableSet()
+        val artistsSet = seedArtists.toMutableSet()
+        onProgress(0, albumsSet.size, artistsSet.size, 0f)
         val collection = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
 
         val projection = mutableListOf(
