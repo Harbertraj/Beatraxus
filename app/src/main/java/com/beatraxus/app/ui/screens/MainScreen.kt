@@ -1429,7 +1429,7 @@ fun MainScreen(
                                         ) { (targetView, _) ->
                                             when (targetView) {
                                                 LibraryView.HOME -> {
-                                                    HomeScreen(viewModel, uiState, homeListState)
+                                                    HomeScreen(viewModel, uiState, homeListState, onNavigateToSettings)
                                                 }
                                                 LibraryView.CLOUD -> {
                                                     val accounts = uiState.driveAccounts.isNotEmpty() ||
@@ -2446,7 +2446,14 @@ fun MainScreen(
                                                         onShuffle = { list -> viewModel.playList(list.shuffled(), 0) }
                                                     )
                                                 }
-                                                LibraryView.VIDEO_ALL -> {
+                                                LibraryView.VIDEO_ALL -> com.beatraxus.app.ui.components.VideoCloudGate(
+                                                    libraryMode = uiState.libraryMode,
+                                                    uiState = uiState,
+                                                    onConnect = { p ->
+                                                        com.beatraxus.app.ui.components.SettingsDeepLink.request(p.settingsPath)
+                                                        onNavigateToSettings()
+                                                    }
+                                                ) {
                                                     com.beatraxus.app.ui.screens.library.VideoLibraryScreen(
                                                         videos = uiState.videos,
                                                         continueWatching = uiState.continueWatching,
@@ -2471,7 +2478,14 @@ fun MainScreen(
                                                         }
                                                     )
                                                 }
-                                                LibraryView.VIDEO_FOLDERS -> {
+                                                LibraryView.VIDEO_FOLDERS -> com.beatraxus.app.ui.components.VideoCloudGate(
+                                                    libraryMode = uiState.libraryMode,
+                                                    uiState = uiState,
+                                                    onConnect = { p ->
+                                                        com.beatraxus.app.ui.components.SettingsDeepLink.request(p.settingsPath)
+                                                        onNavigateToSettings()
+                                                    }
+                                                ) {
                                                     com.beatraxus.app.ui.screens.library.VideoFoldersScreen(
                                                         folders = uiState.videoFolders,
                                                         isRefreshing = uiState.isLoadingVideos,
@@ -2506,7 +2520,14 @@ fun MainScreen(
                                                         }
                                                     )
                                                 }
-                                                LibraryView.VIDEO_RECENTLY_ADDED -> {
+                                                LibraryView.VIDEO_RECENTLY_ADDED -> com.beatraxus.app.ui.components.VideoCloudGate(
+                                                    libraryMode = uiState.libraryMode,
+                                                    uiState = uiState,
+                                                    onConnect = { p ->
+                                                        com.beatraxus.app.ui.components.SettingsDeepLink.request(p.settingsPath)
+                                                        onNavigateToSettings()
+                                                    }
+                                                ) {
                                                     com.beatraxus.app.ui.screens.library.VideoLibraryScreen(
                                                         videos = uiState.videos,
                                                         continueWatching = uiState.continueWatching,
@@ -2531,7 +2552,14 @@ fun MainScreen(
                                                         }
                                                     )
                                                 }
-                                                LibraryView.VIDEO_RECENTLY_PLAYED -> {
+                                                LibraryView.VIDEO_RECENTLY_PLAYED -> com.beatraxus.app.ui.components.VideoCloudGate(
+                                                    libraryMode = uiState.libraryMode,
+                                                    uiState = uiState,
+                                                    onConnect = { p ->
+                                                        com.beatraxus.app.ui.components.SettingsDeepLink.request(p.settingsPath)
+                                                        onNavigateToSettings()
+                                                    }
+                                                ) {
                                                     com.beatraxus.app.ui.screens.library.VideoLibraryScreen(
                                                         videos = uiState.videos,
                                                         continueWatching = uiState.continueWatching,
@@ -3329,6 +3357,11 @@ fun MainScreen(
                                 },
                                 onOpenInspector = { s ->
                                     viewModel.setPendingInspectorReturn(s)
+                                    onNavigateToInspector(s.id)
+                                    selectedSongForOptions = null
+                                },
+                                onInspect = { s ->
+                                    viewModel.setPendingInspectorReturn(null)
                                     onNavigateToInspector(s.id)
                                     selectedSongForOptions = null
                                 },
@@ -4192,7 +4225,8 @@ fun CloudDrivePopup(
 fun HomeScreen(
     viewModel: PlayerViewModel,
     uiState: com.beatraxus.app.model.PlayerUiState,
-    listState: LazyListState
+    listState: LazyListState,
+    onNavigateToSettings: () -> Unit = {}
 ) {
     val recentlyPlayed by viewModel.homeRecentlyPlayed.collectAsStateWithLifecycle()
     val quickPicks by viewModel.homeQuickPicks.collectAsStateWithLifecycle()
@@ -4287,7 +4321,11 @@ fun HomeScreen(
                 uiState = uiState,
                 videos = videos,
                 videoFolders = videoFolders,
-                greeting = greeting
+                greeting = greeting,
+                onConnectCloudVideo = { p ->
+                    com.beatraxus.app.ui.components.SettingsDeepLink.request(p.settingsPath)
+                    onNavigateToSettings()
+                }
             )
         } else {
             uiState.appearance.homeScreenSectionsOrder.forEach { sectionKey ->
@@ -4349,185 +4387,38 @@ fun HomeScreen(
                             var showCloudPopup by remember { mutableStateOf(false) }
                             var anchorBounds by remember { mutableStateOf(Rect.Zero) }
 
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 16.dp, vertical = 8.dp)
-                                    .clip(RoundedCornerShape(24.dp))
-                                    .background(
-                                        Brush.verticalGradient(
-                                            listOf(Color.White.copy(0.08f), Color.White.copy(0.02f))
-                                        )
-                                    )
-                                    .border(
-                                        0.5.dp,
-                                        Brush.verticalGradient(
-                                            listOf(Color.White.copy(0.15f), Color.Transparent)
-                                        ),
-                                        RoundedCornerShape(24.dp)
-                                    )
-                                    .clickable {
-                                        if (uiState.selectedTelegramChannelUrl != null) {
-                                            viewModel.setLibraryViewTelegram(uiState.selectedTelegramChannelUrl!!)
-                                        } else {
-                                            viewModel.setLibraryView(LibraryView.CLOUD, uiState.selectedCloudEmail)
-                                        }
+                            val currentAccount = when {
+                                uiState.selectedCloudEmail != null -> uiState.selectedCloudEmail
+                                uiState.selectedTelegramChannelUrl != null ->
+                                    uiState.telegramChannels.find { it.url == uiState.selectedTelegramChannelUrl }?.name ?: "Telegram"
+                                else -> "All Accounts"
+                            }
+                            val cloudStatusText = if (uiState.isCloudScanning) {
+                                uiState.enrichmentStatus ?: uiState.driveErrorMessage ?: uiState.telegramSyncErrorMessage ?: "Syncing..."
+                            } else if (uiState.isSyncFinishedRecently) {
+                                uiState.driveErrorMessage ?: uiState.telegramSyncErrorMessage ?: "Sync Complete"
+                            } else ""
+
+                            AudioCloudLibraryCard(
+                                accountLabel = currentAccount ?: "All Accounts",
+                                isScanning = uiState.isCloudScanning,
+                                isSyncDone = uiState.isSyncFinishedRecently,
+                                scanProgress = uiState.scanProgress,
+                                statusText = cloudStatusText,
+                                songCount = uiState.cloudSongCount,
+                                albumCount = uiState.cloudAlbumCount,
+                                artistCount = uiState.cloudArtistCount,
+                                switcherOpen = showCloudPopup,
+                                onSwitcherBounds = { anchorBounds = it },
+                                onSwitcherClick = { showCloudPopup = true },
+                                onOpen = {
+                                    if (uiState.selectedTelegramChannelUrl != null) {
+                                        viewModel.setLibraryViewTelegram(uiState.selectedTelegramChannelUrl!!)
+                                    } else {
+                                        viewModel.setLibraryView(LibraryView.CLOUD, uiState.selectedCloudEmail)
                                     }
-                            ) {
-                                Column(modifier = Modifier.padding(16.dp)) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Box(
-                                                modifier = Modifier
-                                                    .size(36.dp)
-                                                    .background(Color(0xFF1A73E8).copy(0.15f), CircleShape)
-                                                    .border(1.dp, Color(0xFF1A73E8).copy(0.2f), CircleShape),
-                                                contentAlignment = Alignment.Center
-                                            ) {
-                                                Icon(
-                                                    Icons.Rounded.CloudSync,
-                                                    null,
-                                                    tint = Color(0xFF1A73E8),
-                                                    modifier = Modifier.size(20.dp)
-                                                )
-                                            }
-                                            Spacer(Modifier.width(12.dp))
-                                            Column {
-                                                Text(
-                                                    text = "CLOUD LIBRARY",
-                                                    color = Color.White,
-                                                    fontSize = 12.sp,
-                                                    fontWeight = FontWeight.Black,
-                                                    letterSpacing = 1.2.sp
-                                                )
-                                                val currentAccount = when {
-                                                    uiState.selectedCloudEmail != null -> uiState.selectedCloudEmail
-                                                    uiState.selectedTelegramChannelUrl != null -> {
-                                                        uiState.telegramChannels.find { it.url == uiState.selectedTelegramChannelUrl }?.name ?: "Telegram"
-                                                    }
-                                                    else -> "All Accounts"
-                                                }
-                                                Text(
-                                                    text = currentAccount ?: "All Accounts",
-                                                    color = Color.White.copy(0.5f),
-                                                    fontSize = 10.sp,
-                                                    fontWeight = FontWeight.Medium
-                                                )
-                                            }
-                                        }
-
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            if (uiState.isCloudScanning) {
-                                                CircularProgressIndicator(
-                                                    modifier = Modifier.size(18.dp),
-                                                    color = Color(0xFF1A73E8),
-                                                    strokeWidth = 2.dp
-                                                )
-                                            } else if (uiState.isSyncFinishedRecently) {
-                                                Icon(
-                                                    Icons.Rounded.CheckCircle,
-                                                    null,
-                                                    tint = Color(0xFF4CAF50),
-                                                    modifier = Modifier.size(18.dp)
-                                                )
-                                            }
-
-                                            Spacer(Modifier.width(12.dp))
-
-                                            IconButton(
-                                                onClick = { showCloudPopup = true },
-                                                modifier = Modifier
-                                                    .size(32.dp)
-                                                    .onGloballyPositioned { anchorBounds = it.boundsInRoot() }
-                                                    .background(if (showCloudPopup) Color.Black else Color.White.copy(0.08f), CircleShape)
-                                                    .then(if (showCloudPopup) Modifier.border(1.dp, Color.White.copy(0.4f), CircleShape) else Modifier)
-                                            ) {
-                                                Icon(
-                                                    Icons.Rounded.SwapHoriz,
-                                                    null,
-                                                    tint = Color.White,
-                                                    modifier = Modifier.size(18.dp)
-                                                )
-                                            }
-                                        }
-                                    }
-
-                                    Spacer(Modifier.height(16.dp))
-
-                                    val statusText = if (uiState.isCloudScanning) {
-                                        uiState.enrichmentStatus ?: uiState.driveErrorMessage ?: uiState.telegramSyncErrorMessage ?: "Syncing..."
-                                    } else if (uiState.isSyncFinishedRecently) {
-                                        uiState.driveErrorMessage ?: uiState.telegramSyncErrorMessage ?: "Sync Complete"
-                                    } else ""
-
-                                    if (statusText.isNotEmpty()) {
-                                        Text(
-                                            text = statusText,
-                                            color = Color.White.copy(0.7f),
-                                            fontSize = 13.sp,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                        Spacer(Modifier.height(12.dp))
-                                    }
-
-                                    if (uiState.isCloudScanning && uiState.scanProgress < 1f) {
-                                        LinearProgressIndicator(
-                                            progress = { uiState.scanProgress },
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .height(4.dp)
-                                                .clip(CircleShape),
-                                            color = Color(0xFF1A73E8),
-                                            trackColor = Color(0xFF1A73E8).copy(0.1f)
-                                        )
-                                        Spacer(Modifier.height(16.dp))
-                                    }
-
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .weight(1f)
-                                                .clip(RoundedCornerShape(20.dp))
-                                                .background(Color.White.copy(0.05f))
-                                                .border(0.5.dp, Color.White.copy(0.1f), RoundedCornerShape(20.dp))
-                                                .padding(vertical = 12.dp),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            StatItem(Icons.Rounded.MusicNote, uiState.cloudSongCount.toString(), "Songs", Color(0xFFFF4081))
-                                        }
-                                        Box(
-                                            modifier = Modifier
-                                                .weight(1f)
-                                                .clip(RoundedCornerShape(20.dp))
-                                                .background(Color.White.copy(0.05f))
-                                                .border(0.5.dp, Color.White.copy(0.1f), RoundedCornerShape(20.dp))
-                                                .padding(vertical = 12.dp),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            StatItem(Icons.Rounded.Album, uiState.cloudAlbumCount.toString(), "Albums", Color(0xFF00E676))
-                                        }
-                                        Box(
-                                            modifier = Modifier
-                                                .weight(1f)
-                                                .clip(RoundedCornerShape(20.dp))
-                                                .background(Color.White.copy(0.05f))
-                                                .border(0.5.dp, Color.White.copy(0.1f), RoundedCornerShape(20.dp))
-                                                .padding(vertical = 12.dp),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            StatItem(Icons.Rounded.Person, uiState.cloudArtistCount.toString(), "Artists", Color(0xFF2979FF))
-                                        }
-                                    }
-                                }
-
+                                },
+                                popup = {
                                 if (showCloudPopup) {
                                     val allCloudAccounts = remember(
                                         uiState.driveAccounts, uiState.dropboxAccounts,
@@ -4569,7 +4460,8 @@ fun HomeScreen(
                                         onSyncTelegramChannel = { viewModel.syncTelegramChannel(it) }
                                     )
                                 }
-                            }
+                                }
+                            )
                         }
                     }
                 }

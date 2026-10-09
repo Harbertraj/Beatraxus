@@ -1210,6 +1210,10 @@ fun NowPlayingScreen(
                 song = song,
                 currentPlayingSong = uiState.currentSong,
                 onDismiss = { showSongOptions = false },
+                onInspect = {
+                    onClearPendingInspectorReturn()
+                    onNavigateToInspector(it.id)
+                },
                 onPlayNext = { /* Not shown */ },
                 onAddToQueue = {
                     onToggleQueue()

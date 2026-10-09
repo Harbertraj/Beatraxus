@@ -32,6 +32,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Album
+import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.CloudSync
+import androidx.compose.material.icons.rounded.SwapHoriz
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.NewReleases
@@ -40,7 +43,9 @@ import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.Shuffle
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -53,6 +58,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -716,5 +724,147 @@ fun AudioFeaturedCard(
         ) {
             Icon(Icons.Rounded.PlayArrow, null, tint = Color.White, modifier = Modifier.size(28.dp))
         }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cloud library card (home) - same language as the greeting header, hero card and
+// quick tiles: letter-spaced accent label, big title, pill stats, soft gradient glass.
+// ─────────────────────────────────────────────────────────────────────────────
+private val AudioCloudBlue = Color(0xFF3D8BFF)
+
+@Composable
+fun AudioCloudLibraryCard(
+    accountLabel: String,
+    isScanning: Boolean,
+    isSyncDone: Boolean,
+    scanProgress: Float,
+    statusText: String,
+    songCount: Int,
+    albumCount: Int,
+    artistCount: Int,
+    switcherOpen: Boolean,
+    onSwitcherBounds: (Rect) -> Unit,
+    onSwitcherClick: () -> Unit,
+    onOpen: () -> Unit,
+    popup: @Composable () -> Unit = {}
+) {
+    val shape = RoundedCornerShape(26.dp)
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp)
+            .clip(shape)
+            .background(AudioInk)
+            .background(
+                Brush.linearGradient(
+                    listOf(AudioCloudBlue.copy(0.30f), AudioViolet.copy(0.14f), Color.Transparent)
+                )
+            )
+            .border(
+                BorderStroke(1.dp, Brush.verticalGradient(listOf(Color.White.copy(0.22f), Color.White.copy(0.04f)))),
+                shape
+            )
+            .clickable(role = Role.Button, onClick = onOpen)
+    ) {
+        Column(Modifier.padding(start = 18.dp, end = 14.dp, top = 16.dp, bottom = 16.dp)) {
+            Row(verticalAlignment = Alignment.Top) {
+                Column(Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            Modifier
+                                .size(26.dp)
+                                .background(AudioCloudBlue.copy(alpha = 0.18f), CircleShape)
+                                .border(1.dp, AudioCloudBlue.copy(alpha = 0.40f), CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(Icons.Rounded.CloudSync, null, tint = AudioCloudBlue, modifier = Modifier.size(15.dp))
+                        }
+                        Spacer(Modifier.width(10.dp))
+                        Text(
+                            text = "CLOUD LIBRARY",
+                            color = AudioCyan,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Black,
+                            letterSpacing = 3.sp
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = accountLabel,
+                        color = Color.White,
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.Black,
+                        letterSpacing = (-0.5).sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                Spacer(Modifier.width(10.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (isScanning) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            color = AudioCyan,
+                            strokeWidth = 2.dp
+                        )
+                        Spacer(Modifier.width(10.dp))
+                    } else if (isSyncDone) {
+                        Icon(Icons.Rounded.CheckCircle, null, tint = Color(0xFF4CAF50), modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(10.dp))
+                    }
+                    val accent = if (switcherOpen) AudioPink else AudioCloudBlue
+                    Box(
+                        Modifier
+                            .size(38.dp)
+                            .onGloballyPositioned { onSwitcherBounds(it.boundsInRoot()) }
+                            .clip(CircleShape)
+                            .background(accent.copy(alpha = 0.22f), CircleShape)
+                            .border(0.5.dp, accent.copy(alpha = 0.45f), CircleShape)
+                            .clickable(role = Role.Button, onClick = onSwitcherClick)
+                            .semantics { contentDescription = "Switch cloud account" },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(Icons.Rounded.SwapHoriz, null, tint = accent, modifier = Modifier.size(21.dp))
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(14.dp))
+            Row(
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                AudioStatPill(Icons.Rounded.MusicNote, "$songCount songs", AudioPink)
+                AudioStatPill(Icons.Rounded.Album, "$albumCount albums", AudioViolet)
+                AudioStatPill(Icons.Rounded.Person, "$artistCount artists", AudioCyan)
+            }
+
+            if (statusText.isNotEmpty()) {
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    text = statusText,
+                    color = Color.White.copy(0.65f),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            if (isScanning && scanProgress in 0.001f..0.999f) {
+                Spacer(Modifier.height(10.dp))
+                LinearProgressIndicator(
+                    progress = { scanProgress },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(4.dp)
+                        .clip(CircleShape),
+                    color = AudioCyan,
+                    trackColor = Color.White.copy(0.08f)
+                )
+            }
+        }
+        popup()
     }
 }

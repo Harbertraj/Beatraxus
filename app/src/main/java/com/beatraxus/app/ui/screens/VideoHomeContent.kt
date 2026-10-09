@@ -86,8 +86,10 @@ fun LazyListScope.videoHomeItems(
     uiState: PlayerUiState,
     videos: List<Video>,
     videoFolders: List<com.beatraxus.app.model.VideoFolder>,
-    greeting: String
+    greeting: String,
+    onConnectCloudVideo: (com.beatraxus.app.ui.components.CloudVideoProvider) -> Unit = {}
 ) {
+    val libMode = uiState.libraryMode
     val resumePair = uiState.continueWatching.firstOrNull()
     val heroVideo = resumePair?.first ?: videos.firstOrNull()
 
@@ -117,6 +119,16 @@ fun LazyListScope.videoHomeItems(
                 if (totalMs > 0) StatPill(formatHours(totalMs))
             }
         }
+    }
+
+    // ── Cloud / Combined: connect cloud videos ───────────────────────────
+    if (libMode != com.beatraxus.app.model.LibraryMode.LOCAL) {
+        item(key = "VIDEO_CLOUD_CONNECT") {
+            com.beatraxus.app.ui.components.CloudVideoConnectCard(uiState, onConnectCloudVideo)
+            Spacer(Modifier.height(12.dp))
+        }
+        // Cloud-only: there are no cloud videos to list yet, so hide the local sections.
+        if (libMode == com.beatraxus.app.model.LibraryMode.CLOUD) return
     }
 
     // ── Hero card with integrated play button ───────────────────────────

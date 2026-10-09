@@ -58,6 +58,9 @@ fun SongOptionsSheet(
     onGoToFolder: () -> Unit,
     onGoToGenre: () -> Unit,
     onOpenInspector: (Song) -> Unit = {},
+    // Direct "Inspect" menu entry. Defaults to the Info-dialog route; callers can pass a variant
+    // that doesn't reopen the info overlay on back.
+    onInspect: (Song) -> Unit = onOpenInspector,
     lastFmTrackInfo: LastFmTrack? = null,
     lastFmArtistInfo: LastFmArtistDetail? = null,
     lastFmAlbumInfo: LastFmAlbum? = null,
@@ -189,6 +192,7 @@ fun SongOptionsSheet(
                         }
                         add(OptionItem(Icons.AutoMirrored.Rounded.QueueMusic, "Add to Queue", onAddToQueue))
                         add(OptionItem(Icons.Rounded.Info, "Info/Tags", { onInfo(); showInfoOverlay = true }))
+                        add(OptionItem(Icons.Rounded.GraphicEq, "Inspect", { onInspect(song) }))
                         if (com.beatraxus.app.features.TagEditor.canEdit(song)) {
                             add(OptionItem(Icons.Rounded.Edit, "Edit Tags", { showTagEditor = true }))
                         }
@@ -203,7 +207,7 @@ fun SongOptionsSheet(
                         add(OptionItem(Icons.Rounded.Album, "Album", onGoToAlbum))
                         add(OptionItem(Icons.Rounded.FolderOpen, "Folder", onGoToFolder))
                         add(OptionItem(Icons.Rounded.Headphones, "Genre", onGoToGenre))
-                        add(OptionItem(Icons.Rounded.Delete, "Delete", onDelete, tint = Color(0xFFFF5252)))
+                        add(OptionItem(Icons.Rounded.Delete, "Delete", onDelete, tint = Color.White))
                     }
                 }
 

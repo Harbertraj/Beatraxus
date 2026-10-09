@@ -459,8 +459,13 @@ private class NativeDspProcessor(
         val eqMasterGain = if (effectiveEqEnabled) config.eqMasterGainDb else 0f
         val appliedEqMasterGain = eqMasterGain
         val dvcCompensationDb = if (config.dvcEnabled && config.compensateDvcVolumeEnabled && !isBP) {
-            val dvcAttenuationDb = if (config.dvcLevel > 0f) -20f * log10(config.dvcLevel) else 0f
-            val makeupGainDb = if (dvcAttenuationDb > 0f && Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) 4f else 0f
+            // Use the level the native DVC actually applies (forced to 1.0 with hardware volume).
+            val effectiveDvcLevel = if (config.hardwareVolumeEnabled) 1f else config.dvcLevel
+            val dvcAttenuationDb = if (effectiveDvcLevel > 0f) -20f * log10(effectiveDvcLevel) else 0f
+            // The Android 15+ makeup gain must NOT depend on the DVC level. It was gated on
+            // `dvcAttenuationDb > 0`, so at 100% the whole compensation collapsed to 0 dB and the
+            // option did nothing even though it was on.
+            val makeupGainDb = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) 4f else 0f
             (dvcAttenuationDb + makeupGainDb).coerceIn(0f, 12f)
         } else 0f
 

@@ -580,6 +580,17 @@ private fun SpectrogramCard(
     done: Boolean = false,
     onRetry: () -> Unit = {}
 ) {
+    // Don't flash "unavailable" the instant a pass fails: a retry/re-run often succeeds a moment
+    // later. Keep the spinner for a short grace period; any state change restarts the timer.
+    var showUnavailable by remember { mutableStateOf(false) }
+    LaunchedEffect(done, result) {
+        showUnavailable = false
+        if (done && result == null) {
+            kotlinx.coroutines.delay(2_500)
+            showUnavailable = true
+        }
+    }
+
     InstrumentCard(
         label = "SPECTROGRAM",
         accent = InspectorPalette.Spectrogram,
@@ -601,7 +612,7 @@ private fun SpectrogramCard(
                     result = result,
                     modifier = Modifier.fillMaxSize()
                 )
-            } else if (done) {
+            } else if (done && showUnavailable) {
                 Row(
                     modifier = Modifier.align(Alignment.Center),
                     verticalAlignment = Alignment.CenterVertically

@@ -249,7 +249,11 @@ fun SettingsScreen(
         }
     }
 
-    val sectionStack = remember { mutableStateListOf<String>() }
+    val sectionStack = remember {
+        mutableStateListOf<String>().apply {
+            com.beatraxus.app.ui.components.SettingsDeepLink.consume()?.let { addAll(it) }
+        }
+    }
     val currentSection = sectionStack.lastOrNull()
     var editingValue by remember { mutableStateOf<EditingValue?>(null) }
 
