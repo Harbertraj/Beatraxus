@@ -97,7 +97,7 @@ class AppearancePreferences(context: Context) {
             miniPlayerStyle = runCatching {
                 MiniPlayerStyle.valueOf(preferences[MINI_PLAYER_STYLE] ?: MiniPlayerStyle.PILL.name)
             }.getOrDefault(MiniPlayerStyle.PILL),
-            miniPlayerHeight = preferences[MINI_PLAYER_HEIGHT] ?: 88f,
+            miniPlayerHeight = preferences[MINI_PLAYER_HEIGHT] ?: 64f,
             miniPlayerCornerRadius = preferences[MINI_PLAYER_CORNER_RADIUS] ?: 36f,
             miniPlayerArtCornerRadius = preferences[MINI_PLAYER_ART_CORNER_RADIUS] ?: 18f,
             miniPlayerShowProgressRing = preferences[MINI_PLAYER_SHOW_PROGRESS_RING] ?: true,
@@ -332,7 +332,7 @@ class AppearancePreferences(context: Context) {
     suspend fun resetMiniPlayerLayout() {
         dataStore.edit {
             it[MINI_PLAYER_STYLE] = MiniPlayerStyle.PILL.name
-            it[MINI_PLAYER_HEIGHT] = 88f
+            it[MINI_PLAYER_HEIGHT] = 64f
             it[MINI_PLAYER_CORNER_RADIUS] = 36f
             it[MINI_PLAYER_ART_CORNER_RADIUS] = 18f
             it[MINI_PLAYER_SHOW_PROGRESS_RING] = true

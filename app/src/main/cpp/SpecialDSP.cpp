@@ -494,8 +494,8 @@ public:
     // Phase-aligns the 8 bands produced by split() (in place). A plain serial LR4 split is NOT
     // flat when its bands are summed (about -4.7 dB around the crossover points), because the
     // lower bands never see the phase shift of the later splits. After this call the bands sum to
-    // an allpass (flat magnitude). split() itself is left untouched on purpose: the Spatial-off
-    // signal path keeps using the original bands, so its output does not change.
+    // an allpass (flat magnitude). split() itself is unchanged; the caller decides whether to use
+    // the raw bands or these compensated ones (see kFlatCrossoverWhenSpatialOff).
     void compensate(double L[8], double R[8]) {
         for (int i = 0; i < 7; i++)
             for (int j = i + 1; j < 7; j++) comp[i][j].process(L[i], R[i]);
@@ -1187,18 +1187,17 @@ class Audio3DStageEngine {
         {0.80, 0.80, 0.50, 0.40, 0.60, 1.20},
     };
     static constexpr int kCoefInterval = 16;     // samples between cue-coefficient refreshes
-    // How much of the interaural time difference each band gets. ITD is a fine-structure cue that
-    // only works below ~1.5 kHz; above that the ear relies on level differences. Giving the upper
-    // bands a full ITD localises nothing extra but makes neighbouring bands (which carry the same
-    // signal around their crossover) cancel each other, leaving deep one-ear notches.
-    // Set every entry to 1.0 to get the previous behaviour.
-    static constexpr double kBandItdWeight[NUM_BANDS] = {1.0, 1.0, 1.0, 1.0, 0.5, 0.15, 0.0, 0.0};
+    // How much of the interaural time difference each band gets. Keep every entry at 1.0: the
+    // bands overlap around each crossover point and carry the same signal there, so giving
+    // neighbouring bands DIFFERENT delays makes them partly cancel on the far ear. Measured with a
+    // hard-panned mono source, weights {1,1,1,1,.5,.15,0,0} cut the far ear by 18-37 dB at 1.3,
+    // 2.4 and 5 kHz, while all-1.0 gives a smooth roll-off.
+    static constexpr double kBandItdWeight[NUM_BANDS] = {1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0};
     static constexpr double kSideRetain = 0.55;  // how much of the original stereo difference survives
-    // The flat (phase-aligned) crossover is used while Spatial is on. With Spatial off the original
-    // crossover bands are used unchanged, so the Spatial-off sound is exactly what it was before.
-    // Set to true to make the Sound-Stage-only path (Spatial off) flat as well. NOTE: that changes
-    // the Spatial-off sound (the original path loses 2-4.6 dB between 100 Hz and 7 kHz).
-    static constexpr bool kFlatCrossoverWhenSpatialOff = false;
+    // The flat (phase-aligned) crossover is used for the whole Modern path, Spatial on or off. The
+    // original serial LR4 split loses 2-4.6 dB between 100 Hz and 5 kHz when its bands are summed,
+    // which colours the Sound Stage even with Spatial off. Set to false to restore that response.
+    static constexpr bool kFlatCrossoverWhenSpatialOff = true;
     unsigned int coefTick = 0;
     double shadowCoef = 0.4;                     // one-pole LP (~4 kHz) for head shadow
     double flatMix = 0.0;                        // 0 = original bands, 1 = phase-aligned bands
@@ -1285,8 +1284,9 @@ public:
             double bandL[NUM_BANDS], bandR[NUM_BANDS];
             crossover.split(left, right, bandL, bandR);
 
-            // Spatial on -> phase-aligned (flat) bands, glided in/out over ~10-20 ms.
-            // Spatial off -> flatMix is exactly 0 and the original bands pass through untouched.
+            // Phase-aligned (flat) bands, glided in/out over ~10-20 ms. With
+            // kFlatCrossoverWhenSpatialOff they are used whenever the engine runs; otherwise only
+            // while Spatial is on (flatMix stays exactly 0 and the raw LR4 bands pass through).
             const bool flatWanted = kFlatCrossoverWhenSpatialOff || targetSpatialIntensity > 0.001;
             flatMix += ((flatWanted ? 1.0 : 0.0) - flatMix) * smoothCoeff;
             if (!flatWanted && flatMix < 1e-4) flatMix = 0.0;

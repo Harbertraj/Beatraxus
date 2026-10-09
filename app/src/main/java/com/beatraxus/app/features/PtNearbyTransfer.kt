@@ -316,7 +316,7 @@ class PtNearbyTransfer(
                     val o = try { JSONObject(String(payload.asBytes() ?: return)) } catch (_: Exception) { return }
                     if (o.optBoolean("none")) { giveUp(r); return }
                     r.expected = o.optLong("size")
-                    r.ext = o.optString("ext", "mp3")
+                    r.ext = ptSafeExt(o.optString("ext", "mp3"))
                 }
                 Payload.Type.FILE -> r.filePayload = payload
                 else -> {}

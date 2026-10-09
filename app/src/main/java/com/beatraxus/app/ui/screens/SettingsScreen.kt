@@ -868,7 +868,7 @@ private fun MiniPlayerLayoutSection(
                 title = "Height",
                 value = appearance.miniPlayerHeight,
                 range = 56f..120f,
-                defaultValue = 88f,
+                defaultValue = 64f,
                 onValueChange = { playerViewModel.setMiniPlayerHeight(it) }
             )
             AppearanceSliderRow(

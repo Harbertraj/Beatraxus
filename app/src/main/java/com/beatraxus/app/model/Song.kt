@@ -235,7 +235,7 @@ data class AppearanceConfig(
     val miniPlayerBlurIntensity: Float = 70f,
     val miniPlayerBlurDarkness: Float = 0.5f,
     val miniPlayerStyle: MiniPlayerStyle = MiniPlayerStyle.PILL,
-    val miniPlayerHeight: Float = 88f,
+    val miniPlayerHeight: Float = 64f,   // same as the Classic mini player bar
     val miniPlayerCornerRadius: Float = 36f,
     val miniPlayerArtCornerRadius: Float = 18f,
     val miniPlayerShowProgressRing: Boolean = true,

@@ -2889,6 +2889,18 @@ fun MainScreen(
                                         val miniAppearance = uiState.appearance
                                         val miniPill = miniAppearance.miniPlayerStyle == com.beatraxus.app.model.MiniPlayerStyle.PILL
                                         val miniBarHeight = if (miniPill) miniAppearance.miniPlayerHeight.coerceIn(56f, 120f).dp else 64.dp
+                                        // Everything inside the pill scales with its height. 64 dp (the Classic
+                                        // bar height) -> 15/12/11 sp text, 88 dp -> 19/15/14 sp, so the title,
+                                        // artist and time always fit however short or tall the pill is.
+                                        val pillT = ((miniBarHeight.value - 64f) / 24f)
+                                        val pillTitleSp = (15f + 4f * pillT).sp
+                                        val pillArtistSp = (12f + 3f * pillT).sp
+                                        val pillTimeSp = (11f + 3f * pillT).sp
+                                        val pillRingSize = (miniBarHeight - 24.dp).coerceIn(36.dp, 68.dp)
+                                        val pillPlayButtonSize = pillRingSize * 0.76f
+                                        // Play icon is always larger than the Next icon.
+                                        val pillPlayIconSize = pillPlayButtonSize * 0.80f
+                                        val pillNextIconSize = maxOf(pillPlayIconSize * 0.75f, 20.dp)
                                         val miniShape = RoundedCornerShape(
                                             if (miniPill) miniAppearance.miniPlayerCornerRadius.coerceIn(8f, miniAppearance.miniPlayerHeight.coerceIn(56f, 120f) / 2f).dp
                                             else 20.dp
@@ -3097,8 +3109,8 @@ fun MainScreen(
                                                     Text(
                                                         text = uiState.currentSong?.title ?: "Unknown",
                                                         color = Color.White,
-                                                        fontSize = if (miniPill) 19.sp else 15.sp,
-                                                        lineHeight = if (miniPill) 23.sp else 18.sp,
+                                                        fontSize = if (miniPill) pillTitleSp else 15.sp,
+                                                        lineHeight = if (miniPill) pillTitleSp * 1.2f else 18.sp,
                                                         fontWeight = FontWeight.Bold,
                                                         maxLines = 1,
                                                         overflow = TextOverflow.Ellipsis
@@ -3107,8 +3119,8 @@ fun MainScreen(
                                                         Text(
                                                             text = if (isFromVideo) "Playing in Background" else (uiState.currentSong?.artist ?: "Unknown Artist"),
                                                             color = Color.White.copy(0.62f),
-                                                            fontSize = 15.sp,
-                                                            lineHeight = 19.sp,
+                                                            fontSize = pillArtistSp,
+                                                            lineHeight = pillArtistSp * 1.25f,
                                                             fontWeight = FontWeight.Medium,
                                                             maxLines = 1,
                                                             overflow = TextOverflow.Ellipsis
@@ -3118,7 +3130,8 @@ fun MainScreen(
                                                                 progressProvider = { progressMs },
                                                                 duration = uiState.currentSong?.durationMs ?: 0L,
                                                                 pill = true,
-                                                                color = miniAccent
+                                                                color = miniAccent,
+                                                                pillFontSize = pillTimeSp
                                                             )
                                                         }
                                                     } else {
@@ -3145,7 +3158,7 @@ fun MainScreen(
                                                     val ringDuration = uiState.currentSong?.durationMs ?: 0L
                                                     Spacer(Modifier.width(8.dp))
                                                     Box(
-                                                        modifier = Modifier.size((miniBarHeight - 28.dp).coerceAtMost(68.dp)),
+                                                        modifier = Modifier.size(pillRingSize),
                                                         contentAlignment = Alignment.Center
                                                     ) {
                                                         Canvas(Modifier.fillMaxSize()) {
@@ -3170,7 +3183,7 @@ fun MainScreen(
                                                         }
                                                         Box(
                                                             modifier = Modifier
-                                                                .fillMaxSize(0.76f)
+                                                                .size(pillPlayButtonSize)
                                                                 .clip(CircleShape)
                                                                 .background(Color.White)
                                                                 .clickable(role = Role.Button) { viewModel.togglePlayPause() },
@@ -3180,7 +3193,7 @@ fun MainScreen(
                                                                 if (uiState.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
                                                                 contentDescription = if (uiState.isPlaying) "Pause" else "Play",
                                                                 tint = Color.Black,
-                                                                modifier = Modifier.size(30.dp)
+                                                                modifier = Modifier.size(pillPlayIconSize)
                                                             )
                                                         }
                                                     }
@@ -3197,7 +3210,7 @@ fun MainScreen(
                                                             if (isFromVideo) Icons.Rounded.Fullscreen else Icons.Rounded.SkipNext,
                                                             contentDescription = if (isFromVideo) "Open video" else "Next",
                                                             tint = Color.White.copy(0.9f),
-                                                            modifier = Modifier.size(32.dp)
+                                                            modifier = Modifier.size(pillNextIconSize)
                                                         )
                                                     }
                                                 } else {
@@ -5276,16 +5289,17 @@ fun MiniPlayerTimeText(
     progressProvider: () -> Long,
     duration: Long,
     pill: Boolean = false,
-    color: Color = Color.White.copy(0.55f)
+    color: Color = Color.White.copy(0.55f),
+    pillFontSize: androidx.compose.ui.unit.TextUnit = 14.sp
 ) {
     val currentProgress by remember { derivedStateOf { formatTime(progressProvider()) } }
     val totalDuration = remember(duration) { formatTime(duration) }
     Text(
         text = if (pill) "$currentProgress / $totalDuration" else "($currentProgress/$totalDuration)",
         color = if (pill) color else Color.White.copy(0.55f),
-        fontSize = if (pill) 14.sp else 11.sp,
+        fontSize = if (pill) pillFontSize else 11.sp,
         fontWeight = if (pill) FontWeight.SemiBold else null,
-        lineHeight = if (pill) 18.sp else 15.sp,
+        lineHeight = if (pill) pillFontSize * 1.25f else 15.sp,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis
     )

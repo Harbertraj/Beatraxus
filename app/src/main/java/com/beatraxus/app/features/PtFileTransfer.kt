@@ -188,7 +188,7 @@ class PtFileTransfer(
                         } else {
                             val h = JSONObject(t)
                             s.expected = h.optLong("size")
-                            s.ext = h.optString("ext", "mp3")
+                            s.ext = ptSafeExt(h.optString("ext", "mp3"))
                             val f = (targetFile ?: return).invoke(s.ext)
                             f.parentFile?.mkdirs()
                             s.outFile = f
@@ -308,3 +308,10 @@ class PtFileTransfer(
         const val MAX_BUFFERED = 1L * 1024 * 1024
     }
 }
+
+/**
+ * File extension received from a remote peer, reduced to lowercase letters/digits (max 8) so it
+ * can never contain path separators or ".." when it is used to build a cache file name.
+ */
+internal fun ptSafeExt(raw: String): String =
+    raw.lowercase().filter { it in 'a'..'z' || it in '0'..'9' }.take(8).ifEmpty { "mp3" }

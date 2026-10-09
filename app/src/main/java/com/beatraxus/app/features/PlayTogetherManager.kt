@@ -163,6 +163,8 @@ class PlayTogetherManager(
     @Volatile private var mySid: String? = null
     @Volatile private var mySig: String? = null
     @Volatile private var lastNeedAt = 0L
+    /** Last time the running song transfer reported progress; a live transfer is never restarted. */
+    @Volatile private var lastProgressAt = 0L
     /** Controller: sessions already started, so the same request is not served twice. */
     private val servedSids = java.util.concurrent.CopyOnWriteArraySet<String>()
 
@@ -216,7 +218,10 @@ class PlayTogetherManager(
 
     private val transferListener = object : PtFileTransfer.Listener {
         override fun onProgress(sid: String, percent: Int) {
-            if (sid == mySid) _state.update { it.copy(transferPercent = percent) }
+            if (sid == mySid) {
+                lastProgressAt = SystemClock.elapsedRealtime()
+                _state.update { it.copy(transferPercent = percent) }
+            }
         }
 
         override fun onReceived(sid: String, file: java.io.File) {
@@ -454,7 +459,7 @@ class PlayTogetherManager(
         stopJobs()
         transfer.closeAll()
         nearby.stopAll()
-        mySid = null; mySig = null; lastNeedAt = 0L; servedSids.clear()
+        mySid = null; mySig = null; lastNeedAt = 0L; lastProgressAt = 0L; servedSids.clear()
         room = null
         roomState = null
         _state.update {
@@ -650,9 +655,19 @@ class PlayTogetherManager(
         val text = call("GET", code).trim()
         if (text == "null") {
             if (room != null) {
-                stopJobs(); room = null
+                stopJobs()
+                transfer.closeAll()
+                nearby.stopAll()
+                mySid = null; mySig = null; lastNeedAt = 0L; lastProgressAt = 0L; servedSids.clear()
+                room = null
+                roomState = null
+                java.io.File(app.cacheDir, "pt_recv").deleteRecursively(); receivedFiles.clear()
                 _state.update {
-                    it.copy(status = PtStatus.IDLE, roomCode = null, members = emptyList(), message = "The room was closed.")
+                    it.copy(
+                        status = PtStatus.IDLE, roomCode = null, members = emptyList(), nowPlayingTitle = null,
+                        nowPlayingArtist = null, controllerName = null, roomPlaying = false, songMissing = false,
+                        streaming = false, transferPercent = -1, message = "The room was closed."
+                    )
                 }
             }
             return
@@ -700,7 +715,8 @@ class PlayTogetherManager(
     private suspend fun requestSong(e: Entry) {
         val code = room ?: return
         val now = SystemClock.elapsedRealtime()
-        if (mySid != null && now - lastNeedAt < 25_000) return
+        // Only re-issue when the transfer has stalled: no progress for 25 s since the request.
+        if (mySid != null && now - maxOf(lastNeedAt, lastProgressAt) < 25_000) return
         if (now - lastNeedAt < 8_000) return
         lastNeedAt = now
         val sig = songSig(e)
