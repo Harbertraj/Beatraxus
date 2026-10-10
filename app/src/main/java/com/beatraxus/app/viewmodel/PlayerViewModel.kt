@@ -3543,9 +3543,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    /** Moving a knob while a named environment is active turns it into a custom setting (the engine ignores knobs for named presets). */
+    /** Moving a knob while a named or saved environment is active turns it into a custom setting (the engine ignores knobs for built-in presets). */
     private fun com.beatraxus.app.model.DspConfig.customReverbPresetName(): String =
-        if (reverbPreset in com.beatraxus.app.model.REVERB_NAMED_PRESETS) "CUSTOM" else reverbPreset
+        if (reverbPreset == "FLAT" || reverbPreset == "CUSTOM") reverbPreset else "CUSTOM"
 
     fun setReverbDamping(value: Float) = applyDspConfig { it.copy(reverbDamping = value.coerceIn(0f, 1f), reverbPreset = it.customReverbPresetName()) }
     fun setReverbWidth(value: Float) = applyDspConfig { it.copy(reverbWidth = value.coerceIn(0f, 1f), reverbPreset = it.customReverbPresetName()) }
@@ -3560,6 +3560,50 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
     fun setReverbPredelayMix(value: Float) = applyDspConfig { it.copy(reverbPredelayMix = value.coerceIn(0f, 1f)) }
     fun setReverbPredelay(value: Float) = applyDspConfig { it.copy(reverbPredelayMs = value.coerceIn(0f, 1000f), reverbPreset = it.customReverbPresetName()) }
+
+    /** Saves the current reverb knobs under [name]. Names that clash with built-in environments get a suffix. */
+    fun saveReverbPreset(name: String) {
+        val trimmed = name.trim().take(40)
+        if (trimmed.isEmpty()) return
+        val reserved = com.beatraxus.app.model.REVERB_NAMED_PRESETS.keys + setOf("FLAT", "CUSTOM")
+        val finalName = if (trimmed.uppercase() in reserved) "$trimmed (mine)" else trimmed
+        applyDspConfig { cfg ->
+            val preset = com.beatraxus.app.model.SavedReverbPreset(
+                name = finalName,
+                room = cfg.reverbRoomSize,
+                decay = cfg.reverbDecay,
+                damping = cfg.reverbDamping,
+                width = cfg.reverbWidth,
+                predelayMs = cfg.reverbPredelayMs,
+                mix = cfg.reverbPredelayMix
+            )
+            cfg.copy(
+                reverbCustomPresets = (cfg.reverbCustomPresets.filter { !it.name.equals(finalName, ignoreCase = true) } + preset)
+                    .sortedBy { it.name.lowercase() },
+                reverbPreset = finalName
+            )
+        }
+    }
+
+    fun loadReverbPreset(name: String) = applyDspConfig { cfg ->
+        val p = cfg.reverbCustomPresets.firstOrNull { it.name == name } ?: return@applyDspConfig cfg
+        cfg.copy(
+            reverbPreset = p.name,
+            reverbRoomSize = p.room,
+            reverbDecay = p.decay,
+            reverbDamping = p.damping,
+            reverbWidth = p.width,
+            reverbPredelayMs = p.predelayMs,
+            reverbPredelayMix = p.mix
+        )
+    }
+
+    fun deleteReverbPreset(name: String) = applyDspConfig { cfg ->
+        cfg.copy(
+            reverbCustomPresets = cfg.reverbCustomPresets.filter { it.name != name },
+            reverbPreset = if (cfg.reverbPreset == name) "CUSTOM" else cfg.reverbPreset
+        )
+    }
 
     /** Restores every reverb control to its default. Unlike setReverbAmount(0f) this does not switch the reverb on. */
     fun resetReverb() = applyDspConfig {
@@ -3580,7 +3624,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun setSpatialAudioEnabled(enabled: Boolean) = applyDspConfig { it.copy(spatialAudioEnabled = enabled) }
     fun setSpatialAudioIntensity(value: Float) = applyDspConfig { it.copy(spatialAudioIntensity = value.coerceIn(0f, 1f)) }
-    fun setSpatialStageWidth(value: Float) = applyDspConfig { it.copy(spatialStageWidth = value.coerceIn(0f, 2f)) }
+    /** Stage Width on the Spatial tab. When the Master SOUNDSTAGE knob is active it owns the engine width, so keep both in step. */
+    fun setSpatialStageWidth(value: Float) = applyDspConfig {
+        val v = value.coerceIn(0f, 2f)
+        it.copy(spatialStageWidth = v, soundStageWidth = if (it.soundStageEnabled) v else it.soundStageWidth)
+    }
     fun setHrtfMode(mode: com.beatraxus.app.model.HrtfMode) = applyDspConfig { it.copy(hrtfMode = mode) }
     fun setSpatialUiMode(mode: com.beatraxus.app.model.SpatialUiMode) = applyDspConfig { it.copy(spatialUiMode = mode) }
     fun setSoundStageEnabled(enabled: Boolean) = applyDspConfig { it.copy(soundStageEnabled = enabled) }
@@ -3601,6 +3649,24 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun resetSoundStagePositions() {
         applyDspConfig { cfg ->
             cfg.copy(soundStageNodePositions = com.beatraxus.app.model.DEFAULT_SOUND_STAGE_NODE_POSITIONS)
+        }
+    }
+
+    /**
+     * AUTO on the Spatial tab: re-distribute the instruments evenly around the listener, keeping their
+     * current left-to-right order and distances. Useful after dragging several of them into a cluster.
+     */
+    fun autoSpreadSoundStageNodes() {
+        applyDspConfig { cfg ->
+            val ordered = cfg.soundStageNodePositions.entries.sortedWith(compareBy({ it.value.azimuth }, { it.key }))
+            if (ordered.isEmpty()) return@applyDspConfig cfg
+            val step = 360f / ordered.size
+            val start = ordered.first().value.azimuth
+            val spread = LinkedHashMap<String, com.beatraxus.app.model.SoundStageNodePosition>()
+            ordered.forEachIndexed { i, entry ->
+                spread[entry.key] = entry.value.copy(azimuth = (start + i * step) % 360f)
+            }
+            cfg.copy(soundStageNodePositions = spread)
         }
     }
 

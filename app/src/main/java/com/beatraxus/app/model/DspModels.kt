@@ -85,6 +85,17 @@ data class ReverbPresetValues(
     val predelayMs: Float
 )
 
+/** A reverb setting the user saved under their own name (appears in the reverb environment picker). */
+data class SavedReverbPreset(
+    val name: String,
+    val room: Float,
+    val decay: Float,
+    val damping: Float,
+    val width: Float,
+    val predelayMs: Float,
+    val mix: Float
+)
+
 /** Named reverb environments shared by the engine (DspPipeline) and the UI/ViewModel. */
 val REVERB_NAMED_PRESETS: Map<String, ReverbPresetValues> = mapOf(
     "ROOM" to ReverbPresetValues(1, 0.45f, 0.40f, 0.60f, 15f),
@@ -242,6 +253,7 @@ data class DspConfig(
     val reverbRoomSize: Float = 0.5f,
     val reverbDecay: Float = 0.5f,
     val reverbPredelayMix: Float = 0.62f,
+    val reverbCustomPresets: List<SavedReverbPreset> = emptyList(),
 
     // Replay Gain
     val replayGainEnabled: Boolean = false,

@@ -353,8 +353,10 @@ private class NativeDspProcessor(
             dsp.setReverbParams(params.room, params.damp)
             dsp.setReverbWidth(params.width)
             dsp.setReverbPredelay(params.delay)
+            dsp.setReverbMixBalance(0.62f) // neutral, so a disabled reverb never touches the dry signal
         } else {
             dsp.setReverb(cfg.reverbAmount)
+            dsp.setReverbMixBalance(cfg.reverbPredelayMix)
             dsp.setReverbType(params.type)
             dsp.setReverbParams(params.room, params.damp)
             dsp.setReverbWidth(params.width)

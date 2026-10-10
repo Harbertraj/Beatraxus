@@ -1660,6 +1660,8 @@ class Freeverb {
     static constexpr double fixedgain = 0.015;
     std::atomic<double> roomSize{0.5}; std::atomic<double> damp{0.5}; std::atomic<double> wet{0.0};
     std::atomic<double> dry{1.0}; std::atomic<double> width{1.0};
+    // Extra wet/dry balance on top of setWet(): 1.0/1.0 is neutral (see setMixBalance).
+    std::atomic<double> wetTrim{1.0}; std::atomic<double> dryTrim{1.0};
 public:
     void init(int sampleRate) {
         float scale = sampleRate / 44100.0f;
@@ -1686,10 +1688,19 @@ public:
         dry.store(d, std::memory_order_relaxed);
     }
     void setWidth(float v) { width.store((double)v, std::memory_order_relaxed); }
+    // UI "DRY/WET" balance, 0..1, neutral at 0.62 (the long-standing default): below it the
+    // reverb tail is faded out, above it the direct signal is faded out. Applied on top of setWet().
+    void setMixBalance(float mix) {
+        constexpr double kNeutral = 0.62;
+        double m = std::clamp((double)mix, 0.0, 1.0);
+        wetTrim.store(m >= kNeutral ? 1.0 : m / kNeutral, std::memory_order_relaxed);
+        dryTrim.store(m <= kNeutral ? 1.0 : (1.0 - m) / (1.0 - kNeutral), std::memory_order_relaxed);
+    }
     template<typename T>
     inline void process(T& l, T& r, int predelaySamples) {
         double rs = roomSize.load(std::memory_order_relaxed); double d = damp.load(std::memory_order_relaxed);
-        double w = wet.load(std::memory_order_relaxed); double dr = dry.load(std::memory_order_relaxed);
+        double w = wet.load(std::memory_order_relaxed) * wetTrim.load(std::memory_order_relaxed);
+        double dr = dry.load(std::memory_order_relaxed) * dryTrim.load(std::memory_order_relaxed);
         double wid = width.load(std::memory_order_relaxed);
         int pSamples = std::min(predelaySamples, predelaySize - 1);
         int readPos = (predelayPos + predelaySize - pSamples) % predelaySize;
@@ -2236,6 +2247,7 @@ public:
     }
     void setReverbPredelay(float ms) { reverbPredelayMs = ms; }
     void setReverbWidth(float w) { reverbWidth = w; reverb.setWidth(w); }
+    void setReverbMixBalance(float mix) { reverb.setMixBalance(mix); }
     void setReverbParams(float roomSize, float damping) {
         reverbRoomSize = roomSize; reverbDamping = damping; reverb.setRoomSize(roomSize); reverb.setDamping(damping);
     }
@@ -2902,6 +2914,7 @@ JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetReverb(JNIEnv
 JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetReverbType(JNIEnv* env, jobject thiz, jlong handle, jint type) { if (handle) ((DSP*)handle)->setReverbType(type); }
 JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetReverbPredelay(JNIEnv* env, jobject thiz, jlong handle, jfloat ms) { if (handle) ((DSP*)handle)->setReverbPredelay(ms); }
 JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetReverbWidth(JNIEnv* env, jobject thiz, jlong handle, jfloat width) { if (handle) ((DSP*)handle)->setReverbWidth(width); }
+JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetReverbMixBalance(JNIEnv* env, jobject thiz, jlong handle, jfloat mix) { if (handle) ((DSP*)handle)->setReverbMixBalance(mix); }
 JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetReverbParams(JNIEnv* env, jobject thiz, jlong handle, jfloat roomSize, jfloat damping) { if (handle) ((DSP*)handle)->setReverbParams(roomSize, damping); }
 JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nMuteReverb(JNIEnv* env, jobject thiz, jlong handle) { if (handle) ((DSP*)handle)->muteReverb(); }
 JNIEXPORT void JNICALL Java_com_beatraxus_app_engine_NativeDsp_nSetLimiter(JNIEnv* env, jobject thiz, jlong handle, jboolean enabled) { if (handle) ((DSP*)handle)->setLimiter(enabled); }

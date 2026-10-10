@@ -176,6 +176,7 @@ class DspPreferences(private val context: Context) {
             reverbRoomSize = pref(REVERB_ROOM_SIZE, 0.5f),
             reverbDecay = pref(REVERB_DECAY, 0.5f),
             reverbPredelayMix = pref(REVERB_PREDELAY_MIX, 0.62f),
+            reverbCustomPresets = deserializeReverbPresets(prefNullable(REVERB_CUSTOM_PRESETS)),
             dcBlockerEnabled = pref(DC_BLOCKER_ENABLED, false),
             replayGainEnabled = pref(REPLAY_GAIN_ENABLED, false),
             replayGainOption = ReplayGainOption.valueOf(prefNullable(REPLAY_GAIN_OPTION) ?: ReplayGainOption.APPLY_GAIN.name),
@@ -307,6 +308,7 @@ class DspPreferences(private val context: Context) {
             set(REVERB_ROOM_SIZE, config.reverbRoomSize)
             set(REVERB_DECAY, config.reverbDecay)
             set(REVERB_PREDELAY_MIX, config.reverbPredelayMix)
+            set(REVERB_CUSTOM_PRESETS, serializeReverbPresets(config.reverbCustomPresets))
             set(DC_BLOCKER_ENABLED, config.dcBlockerEnabled)
             set(REPLAY_GAIN_ENABLED, config.replayGainEnabled)
             set(REPLAY_GAIN_OPTION, config.replayGainOption.name)
@@ -472,6 +474,7 @@ class DspPreferences(private val context: Context) {
                 set(REVERB_ROOM_SIZE, config.reverbRoomSize)
                 set(REVERB_DECAY, config.reverbDecay)
                 set(REVERB_PREDELAY_MIX, config.reverbPredelayMix)
+                set(REVERB_CUSTOM_PRESETS, serializeReverbPresets(config.reverbCustomPresets))
                 set(DC_BLOCKER_ENABLED, config.dcBlockerEnabled)
                 set(REPLAY_GAIN_ENABLED, config.replayGainEnabled)
                 set(REPLAY_GAIN_OPTION, config.replayGainOption.name)
@@ -602,6 +605,41 @@ class DspPreferences(private val context: Context) {
             }
             map
         }.getOrDefault(defaultPositions)
+    }
+
+    private fun serializeReverbPresets(presets: List<SavedReverbPreset>): String {
+        val arr = JSONArray()
+        presets.forEach { p ->
+            arr.put(JSONObject().apply {
+                put("name", p.name)
+                put("room", p.room.toDouble())
+                put("decay", p.decay.toDouble())
+                put("damping", p.damping.toDouble())
+                put("width", p.width.toDouble())
+                put("predelay", p.predelayMs.toDouble())
+                put("mix", p.mix.toDouble())
+            })
+        }
+        return arr.toString()
+    }
+
+    private fun deserializeReverbPresets(json: String?): List<SavedReverbPreset> {
+        if (json.isNullOrBlank()) return emptyList()
+        return runCatching {
+            val arr = JSONArray(json)
+            (0 until arr.length()).map { i ->
+                val o = arr.getJSONObject(i)
+                SavedReverbPreset(
+                    name = o.getString("name"),
+                    room = o.getDouble("room").toFloat(),
+                    decay = o.getDouble("decay").toFloat(),
+                    damping = o.getDouble("damping").toFloat(),
+                    width = o.getDouble("width").toFloat(),
+                    predelayMs = o.getDouble("predelay").toFloat(),
+                    mix = o.getDouble("mix").toFloat()
+                )
+            }
+        }.getOrDefault(emptyList())
     }
 
     private fun serializeSpeakerPositions(positions: List<Audio3DSpeakerPosition>): String {
@@ -738,6 +776,7 @@ class DspPreferences(private val context: Context) {
         private val REVERB_ROOM_SIZE = floatPreferencesKey("reverb_room_size")
         private val REVERB_DECAY = floatPreferencesKey("reverb_decay")
         private val REVERB_PREDELAY_MIX = floatPreferencesKey("reverb_predelay_mix")
+        private val REVERB_CUSTOM_PRESETS = stringPreferencesKey("reverb_custom_presets")
         private val DC_BLOCKER_ENABLED = booleanPreferencesKey("dc_blocker_enabled")
         private val REPLAY_GAIN_ENABLED = booleanPreferencesKey("replay_gain_enabled")
         private val REPLAY_GAIN_OPTION = stringPreferencesKey("replay_gain_option")

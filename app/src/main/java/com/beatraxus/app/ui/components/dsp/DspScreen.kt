@@ -3017,7 +3017,7 @@ private fun ModernSpatialAudioContent(
                 ) {
                     // Compact Text Buttons with Icons
                     SoundStageActionChip("RESET", Icons.Rounded.Refresh, enabled = spatialActive, onClick = { viewModel.resetSoundStagePositions() })
-                    SoundStageActionChip("AUTO", Icons.Rounded.AutoAwesome, isAccent = true, enabled = spatialActive, onClick = { viewModel.setSoundStagePosition(0f, 0f, 3.5f) })
+                    SoundStageActionChip("AUTO", Icons.Rounded.AutoAwesome, isAccent = true, enabled = spatialActive, onClick = { viewModel.autoSpreadSoundStageNodes() })
                     SoundStageActionChip("DIST", Icons.Rounded.Straighten, enabled = spatialActive, onClick = { viewModel.setSoundStageDistance(2.0f) })
                 }
             }
@@ -3300,7 +3300,7 @@ private fun ModernSpatialAudioContent(
 
             SoundStageSliderRow(
                 title = "Stage Width",
-                value = config.spatialStageWidth,
+                value = if (config.soundStageEnabled) config.soundStageWidth else config.spatialStageWidth,
                 range = 0f..2f,
                 valueText = { "${(it * 100).toInt()}%" },
                 onValueChange = viewModel::setSpatialStageWidth,
@@ -3523,6 +3523,8 @@ private fun PremiumReverbCard(uiState: PlayerUiState, viewModel: PlayerViewModel
     val isReverbBypassed = config.bitPerfectEnabled && !config.bitPerfectUnbypassReverb
     val presets = listOf("FLAT", "ROOM", "HALL", "PLATE", "CATHEDRAL", "STUDIO", "CHAMBER")
     var showPresetPicker by remember { mutableStateOf(false) }
+    var showSavePresetDialog by remember { mutableStateOf(false) }
+    var newReverbPresetName by remember { mutableStateOf("") }
 
     val infiniteTransition = rememberInfiniteTransition(label = "reverb_glow")
     val pulseAlpha by infiniteTransition.animateFloat(
@@ -3606,7 +3608,7 @@ private fun PremiumReverbCard(uiState: PlayerUiState, viewModel: PlayerViewModel
 
             // Quick Actions
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                ReverbActionIcon(Icons.Rounded.Save, onClick = { viewModel.setReverbPreset("CUSTOM") }, enabled = !isReverbBypassed)
+                ReverbActionIcon(Icons.Rounded.Save, onClick = { newReverbPresetName = ""; showSavePresetDialog = true }, enabled = !isReverbBypassed)
                 ReverbActionIcon(Icons.Rounded.RestartAlt, onClick = { viewModel.resetReverb() }, enabled = !isReverbBypassed)
             }
         }
@@ -3710,10 +3712,85 @@ private fun PremiumReverbCard(uiState: PlayerUiState, viewModel: PlayerViewModel
                                 if (isSelected) Icon(Icons.Rounded.Check, null, tint = PremiumAccent, modifier = Modifier.size(18.dp))
                             }
                         }
+
+                        if (config.reverbCustomPresets.isNotEmpty()) {
+                            Text(
+                                "MY PRESETS",
+                                color = Color.White.copy(0.4f),
+                                fontWeight = FontWeight.Black,
+                                fontSize = 9.sp,
+                                letterSpacing = 1.5.sp,
+                                modifier = Modifier.padding(start = 16.dp, top = 12.dp, bottom = 4.dp)
+                            )
+                            config.reverbCustomPresets.forEach { saved ->
+                                val isSelected = config.reverbPreset == saved.name
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(if (isSelected) PremiumAccent.copy(0.1f) else Color.Transparent)
+                                        .clickable {
+                                            viewModel.loadReverbPreset(saved.name)
+                                            showPresetPicker = false
+                                        }
+                                        .padding(start = 16.dp, top = 4.dp, bottom = 4.dp, end = 4.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        saved.name,
+                                        color = if (isSelected) PremiumAccent else Color.White,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    IconButton(onClick = { viewModel.deleteReverbPreset(saved.name) }, modifier = Modifier.size(36.dp)) {
+                                        Icon(Icons.Rounded.DeleteOutline, "Delete ${saved.name}", tint = Color.Red.copy(0.7f), modifier = Modifier.size(18.dp))
+                                    }
+                                }
+                            }
+                        }
                     }
                 },
                 confirmButton = {
                     TextButton(onClick = { showPresetPicker = false }) { Text("CLOSE", color = PremiumAccent) }
+                }
+            )
+        }
+
+        if (showSavePresetDialog) {
+            AlertDialog(
+                onDismissRequest = { showSavePresetDialog = false },
+                containerColor = DspSheetHigh,
+                title = { Text("Save reverb preset", color = Color.White, fontWeight = FontWeight.Bold) },
+                text = {
+                    OutlinedTextField(
+                        value = newReverbPresetName,
+                        onValueChange = { newReverbPresetName = it.take(40) },
+                        singleLine = true,
+                        label = { Text("Preset name") },
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = PremiumAccent,
+                            unfocusedBorderColor = Color.White.copy(0.1f),
+                            cursorColor = PremiumAccent,
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedLabelColor = PremiumAccent,
+                            unfocusedLabelColor = Color.White.copy(0.5f)
+                        )
+                    )
+                },
+                confirmButton = {
+                    TextButton(
+                        enabled = newReverbPresetName.isNotBlank(),
+                        onClick = {
+                            viewModel.saveReverbPreset(newReverbPresetName)
+                            showSavePresetDialog = false
+                        }
+                    ) { Text("SAVE", color = if (newReverbPresetName.isNotBlank()) PremiumAccent else Color.White.copy(0.3f)) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showSavePresetDialog = false }) { Text("CANCEL", color = Color.White.copy(0.6f)) }
                 }
             )
         }
