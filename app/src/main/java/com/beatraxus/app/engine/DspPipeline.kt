@@ -335,16 +335,16 @@ private class NativeDspProcessor(
         dsp.setSoundStageCenterLock(cfg.soundStageCenterLock)
 
         data class ReverbParams(val type: Int, val room: Float, val damp: Float, val width: Float, val delay: Float)
-        val params = when (cfg.reverbPreset) {
-            "ROOM" ->       ReverbParams(1, 0.45f, 0.40f, 0.60f, 15f)
-            "HALL" ->       ReverbParams(2, 0.75f, 0.25f, 0.85f, 35f)
-            "PLATE" ->      ReverbParams(3, 0.60f, 0.10f, 0.70f, 5f)
-            "CATHEDRAL" ->  ReverbParams(4, 0.90f, 0.20f, 1.00f, 55f)
-            "STUDIO" ->     ReverbParams(5, 0.25f, 0.60f, 0.40f, 8f)
-            "CHAMBER" ->    ReverbParams(6, 0.40f, 0.30f, 0.50f, 12f)
-            else ->         ReverbParams(0, cfg.reverbDecay, cfg.reverbDamping, cfg.reverbWidth, cfg.reverbPredelayMs)
+        val namedPreset = com.beatraxus.app.model.REVERB_NAMED_PRESETS[cfg.reverbPreset]
+        val params = if (namedPreset != null) {
+            ReverbParams(namedPreset.type, namedPreset.room, namedPreset.damping, namedPreset.width, namedPreset.predelayMs)
+        } else {
+            // Custom / FLAT: the native reverb has a single room-size (feedback) parameter, so the
+            // SIZE and DECAY knobs are blended into it. Previously only DECAY was sent and SIZE was dead.
+            val room = ((cfg.reverbDecay + cfg.reverbRoomSize) * 0.5f).coerceIn(0f, 1f)
+            ReverbParams(0, room, cfg.reverbDamping, cfg.reverbWidth, cfg.reverbPredelayMs)
         }
-        
+
         val reverbUnbypassed = !isBP || cfg.bitPerfectUnbypassReverb
         if (!cfg.reverbEnabled || !reverbUnbypassed) {
             dsp.setReverb(0.0f)
@@ -353,8 +353,10 @@ private class NativeDspProcessor(
             dsp.setReverbParams(params.room, params.damp)
             dsp.setReverbWidth(params.width)
             dsp.setReverbPredelay(params.delay)
+            dsp.setReverbMixBalance(0.62f) // neutral, so a disabled reverb never touches the dry signal
         } else {
             dsp.setReverb(cfg.reverbAmount)
+            dsp.setReverbMixBalance(cfg.reverbPredelayMix)
             dsp.setReverbType(params.type)
             dsp.setReverbParams(params.room, params.damp)
             dsp.setReverbWidth(params.width)

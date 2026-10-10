@@ -137,6 +137,10 @@ class NativeDsp : AutoCloseable {
         if (nativeHandle != 0L) nSetReverbWidth(nativeHandle, width)
     }
 
+    fun setReverbMixBalance(mix: Float) = lock.readLock().withLock {
+        if (nativeHandle != 0L) nSetReverbMixBalance(nativeHandle, mix)
+    }
+
     fun setReverbParams(roomSize: Float, damping: Float) = lock.readLock().withLock {
         if (nativeHandle != 0L) nSetReverbParams(nativeHandle, roomSize, damping)
     }
@@ -385,6 +389,7 @@ class NativeDsp : AutoCloseable {
     private external fun nSetReverbType(handle: Long, type: Int)
     private external fun nSetReverbPredelay(handle: Long, ms: Float)
     private external fun nSetReverbWidth(handle: Long, width: Float)
+    private external fun nSetReverbMixBalance(handle: Long, mix: Float)
     private external fun nSetReverbParams(handle: Long, roomSize: Float, damping: Float)
     private external fun nMuteReverb(handle: Long)
     private external fun nSetBand(handle: Long, index: Int, frequency: Float, gainDb: Float, q: Float, type: Int)

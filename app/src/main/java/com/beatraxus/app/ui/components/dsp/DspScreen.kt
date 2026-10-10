@@ -2415,7 +2415,8 @@ private fun ClassicSoundStageView(
 ) {
     val density = LocalDensity.current
     val config = uiState.dsp.config
-    val spatialActive = config.audio3DStageEnabled
+    val isSpatialBypassed = config.bitPerfectEnabled && !config.bitPerfectUnbypass3DStage
+    val spatialActive = config.audio3DStageEnabled && !isSpatialBypassed
     val realtimeLevels by viewModel.realtimeLevels.collectAsState()
     val levelL = realtimeLevels[0]
     val levelR = realtimeLevels[1]
@@ -2511,7 +2512,7 @@ private fun ClassicSoundStageView(
             )
 
             Surface(
-                onClick = { viewModel.setAudio3DStageEnabled(!config.audio3DStageEnabled) },
+                onClick = { if (!isSpatialBypassed) viewModel.setAudio3DStageEnabled(!config.audio3DStageEnabled) },
                 modifier = Modifier.size(80.dp),
                 shape = CircleShape,
                 color = DspPanelDeep,
@@ -2585,6 +2586,11 @@ private fun ClassicSpeakerBubble(
         animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow)
     )
 
+    // The drag handler below lives across recompositions; read the live values through these.
+    val latestSpeaker by rememberUpdatedState(speaker)
+    val latestMaxRadius by rememberUpdatedState(maxOrbitRadius)
+    val latestOnPositionChange by rememberUpdatedState(onPositionChange)
+
     Box(
         modifier = Modifier
             .offset {
@@ -2608,24 +2614,26 @@ private fun ClassicSpeakerBubble(
             .border(1.5.dp, Color.White.copy(if (enabled) 0.5f else 0.1f), CircleShape)
             .pointerInput(enabled, speaker.id) {
                 if (!enabled) return@pointerInput
-                detectDragGestures { change, _ ->
+                detectDragGestures { change, dragAmount ->
                     change.consume()
-                    val touchPos = Offset(
-                        centerX + dotRadius * cos(angleRad) + change.position.x - 19.dp.toPx(),
-                        centerY + dotRadius * sin(angleRad) + change.position.y - 19.dp.toPx()
-                    )
-                    val dx = touchPos.x - centerX
-                    val dy = touchPos.y - centerY
-                    val newAngleRad = atan2(dy.toDouble(), dx.toDouble())
-                    var az = (newAngleRad * 180.0 / PI) + 90.0
+                    // Start from the speaker's committed position and add the finger delta. The old code
+                    // reused the radius/angle captured when the gesture block was first composed, so the
+                    // speaker drifted away from the finger as soon as it started to move.
+                    val maxR = latestMaxRadius
+                    val cur = latestSpeaker
+                    val curNorm = (minRadiusFactor + (cur.distance / 15f) * (1f - minRadiusFactor)).coerceIn(minRadiusFactor, 1.0f)
+                    val curRadius = maxR * curNorm
+                    val curAngle = (cur.azimuthDeg - 90f) * PI.toFloat() / 180f
+                    val x = curRadius * cos(curAngle) + dragAmount.x
+                    val y = curRadius * sin(curAngle) + dragAmount.y
+                    var az = atan2(y.toDouble(), x.toDouble()) * 180.0 / PI + 90.0
                     while (az < 0.0) az += 360.0
                     while (az >= 360.0) az -= 360.0
-                    
-                    val distPx = sqrt((dx * dx + dy * dy).toDouble()).toFloat()
-                    val newDistNormalized = (distPx / maxOrbitRadius).coerceIn(minRadiusFactor, 1.0f)
-                    val newDistance = (newDistNormalized - minRadiusFactor) / (1f - minRadiusFactor) * 15f
-                    
-                    onPositionChange(az.toFloat(), newDistance.toFloat())
+
+                    val distPx = sqrt((x * x + y * y).toDouble()).toFloat()
+                    val newNorm = (distPx / maxR).coerceIn(minRadiusFactor, 1.0f)
+                    val newDistance = (newNorm - minRadiusFactor) / (1f - minRadiusFactor) * 15f
+                    latestOnPositionChange(az.toFloat(), newDistance)
                 }
             },
         contentAlignment = Alignment.Center
@@ -2641,7 +2649,8 @@ private fun ClassicControlPanel(
     onEditValue: (EditingValue) -> Unit
 ) {
     val config = uiState.dsp.config
-    val spatialActive = config.audio3DStageEnabled
+    val isSpatialBypassed = config.bitPerfectEnabled && !config.bitPerfectUnbypass3DStage
+    val spatialActive = config.audio3DStageEnabled && !isSpatialBypassed
 
     Column(
         modifier = Modifier
@@ -2663,11 +2672,22 @@ private fun ClassicControlPanel(
                 letterSpacing = 1.5.sp
             )
 
-            PremiumSwitch(
-                checked = config.audio3DStageEnabled,
-                onCheckedChange = { viewModel.setAudio3DStageEnabled(it) },
-                accentColor = PremiumAccent
-            )
+            if (isSpatialBypassed) {
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(Color.White.copy(0.05f))
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                ) {
+                    Text("BYPASSED", color = Color.White.copy(0.3f), fontSize = 9.sp, fontWeight = FontWeight.Black)
+                }
+            } else {
+                PremiumSwitch(
+                    checked = config.audio3DStageEnabled,
+                    onCheckedChange = { viewModel.setAudio3DStageEnabled(it) },
+                    accentColor = PremiumAccent
+                )
+            }
         }
 
         SoundStageSliderRow(
@@ -2996,8 +3016,8 @@ private fun ModernSpatialAudioContent(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     // Compact Text Buttons with Icons
-                    SoundStageActionChip("RESET", Icons.Rounded.Refresh, enabled = spatialActive, onClick = { viewModel.setSoundStagePosition(0f, 0f, 2.0f) })
-                    SoundStageActionChip("AUTO", Icons.Rounded.AutoAwesome, isAccent = true, enabled = spatialActive, onClick = { viewModel.setSoundStagePosition(0f, 0f, 3.5f) })
+                    SoundStageActionChip("RESET", Icons.Rounded.Refresh, enabled = spatialActive, onClick = { viewModel.resetSoundStagePositions() })
+                    SoundStageActionChip("AUTO", Icons.Rounded.AutoAwesome, isAccent = true, enabled = spatialActive, onClick = { viewModel.autoSpreadSoundStageNodes() })
                     SoundStageActionChip("DIST", Icons.Rounded.Straighten, enabled = spatialActive, onClick = { viewModel.setSoundStageDistance(2.0f) })
                 }
             }
@@ -3009,14 +3029,6 @@ private fun ModernSpatialAudioContent(
                 var displayAzimuth by remember(config.soundStageSelectedNode) { mutableFloatStateOf(selectedNodePos.azimuth) }
                 var displayDistance by remember(config.soundStageSelectedNode) { mutableFloatStateOf(selectedNodePos.distance) }
                 var interactionCount by remember(config.soundStageSelectedNode) { mutableIntStateOf(0) }
-
-                // Sync UI -> VM
-                LaunchedEffect(displayAzimuth, displayDistance) {
-                    if (interactionCount > 0) {
-                        viewModel.setSoundStageAzimuth(displayAzimuth)
-                        viewModel.setSoundStageDistance(displayDistance)
-                    }
-                }
 
                 // Sync VM -> UI (only when idle)
                 LaunchedEffect(selectedNodePos.azimuth, selectedNodePos.distance) {
@@ -3084,6 +3096,9 @@ private fun ModernSpatialAudioContent(
 
                                 displayAzimuth = az.toFloat()
                                 displayDistance = dist.toFloat()
+                                // Commit directly: a tap releases before any effect keyed on the display state could see it.
+                                viewModel.setSoundStageAzimuth(displayAzimuth)
+                                viewModel.setSoundStageDistance(displayDistance)
                             }
                             detectTapGestures(
                                 onPress = {
@@ -3117,6 +3132,8 @@ private fun ModernSpatialAudioContent(
 
                                     displayAzimuth = az.toFloat()
                                     displayDistance = dist.toFloat()
+                                    viewModel.setSoundStageAzimuth(displayAzimuth)
+                                    viewModel.setSoundStageDistance(displayDistance)
                                 }
                             )
                         },
@@ -3283,7 +3300,7 @@ private fun ModernSpatialAudioContent(
 
             SoundStageSliderRow(
                 title = "Stage Width",
-                value = config.spatialStageWidth,
+                value = if (config.soundStageEnabled) config.soundStageWidth else config.spatialStageWidth,
                 range = 0f..2f,
                 valueText = { "${(it * 100).toInt()}%" },
                 onValueChange = viewModel::setSpatialStageWidth,
@@ -3395,7 +3412,7 @@ private fun SoundStageSliderRow(
     val interactionSource = remember { MutableInteractionSource() }
 
     // De-couple internal state for absolute stability during and after interaction
-    var internalValue by remember(value, enabled) { mutableFloatStateOf(value) }
+    var internalValue by remember(enabled) { mutableFloatStateOf(value) }
     var isDragging by remember { mutableStateOf(false) }
 
     // ONLY sync from external value when NOT interacting and after a generous "settle" delay
@@ -3506,6 +3523,8 @@ private fun PremiumReverbCard(uiState: PlayerUiState, viewModel: PlayerViewModel
     val isReverbBypassed = config.bitPerfectEnabled && !config.bitPerfectUnbypassReverb
     val presets = listOf("FLAT", "ROOM", "HALL", "PLATE", "CATHEDRAL", "STUDIO", "CHAMBER")
     var showPresetPicker by remember { mutableStateOf(false) }
+    var showSavePresetDialog by remember { mutableStateOf(false) }
+    var newReverbPresetName by remember { mutableStateOf("") }
 
     val infiniteTransition = rememberInfiniteTransition(label = "reverb_glow")
     val pulseAlpha by infiniteTransition.animateFloat(
@@ -3589,11 +3608,8 @@ private fun PremiumReverbCard(uiState: PlayerUiState, viewModel: PlayerViewModel
 
             // Quick Actions
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                ReverbActionIcon(Icons.Rounded.Save, onClick = { viewModel.setReverbPreset("CUSTOM") }, enabled = !isReverbBypassed)
-                ReverbActionIcon(Icons.Rounded.RestartAlt, onClick = {
-                    viewModel.setReverbPreset("FLAT")
-                    viewModel.setReverbAmount(0f)
-                }, enabled = !isReverbBypassed)
+                ReverbActionIcon(Icons.Rounded.Save, onClick = { newReverbPresetName = ""; showSavePresetDialog = true }, enabled = !isReverbBypassed)
+                ReverbActionIcon(Icons.Rounded.RestartAlt, onClick = { viewModel.resetReverb() }, enabled = !isReverbBypassed)
             }
         }
 
@@ -3666,7 +3682,7 @@ private fun PremiumReverbCard(uiState: PlayerUiState, viewModel: PlayerViewModel
             horizontalArrangement = Arrangement.SpaceEvenly
         ) {
             StatChip("REVERB", "${(config.reverbAmount * 100).roundToInt()}%")
-            StatChip("DECAY", String.format(Locale.US, "%.1f s", config.reverbRoomSize * 6f))
+            StatChip("DECAY", String.format(Locale.US, "%.1f s", config.reverbDecay * 6f))
             StatChip("STATUS", if (isReverbBypassed) "BYPASSED" else if (config.reverbEnabled) "ACTIVE" else "OFF")
         }
 
@@ -3696,10 +3712,85 @@ private fun PremiumReverbCard(uiState: PlayerUiState, viewModel: PlayerViewModel
                                 if (isSelected) Icon(Icons.Rounded.Check, null, tint = PremiumAccent, modifier = Modifier.size(18.dp))
                             }
                         }
+
+                        if (config.reverbCustomPresets.isNotEmpty()) {
+                            Text(
+                                "MY PRESETS",
+                                color = Color.White.copy(0.4f),
+                                fontWeight = FontWeight.Black,
+                                fontSize = 9.sp,
+                                letterSpacing = 1.5.sp,
+                                modifier = Modifier.padding(start = 16.dp, top = 12.dp, bottom = 4.dp)
+                            )
+                            config.reverbCustomPresets.forEach { saved ->
+                                val isSelected = config.reverbPreset == saved.name
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(if (isSelected) PremiumAccent.copy(0.1f) else Color.Transparent)
+                                        .clickable {
+                                            viewModel.loadReverbPreset(saved.name)
+                                            showPresetPicker = false
+                                        }
+                                        .padding(start = 16.dp, top = 4.dp, bottom = 4.dp, end = 4.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        saved.name,
+                                        color = if (isSelected) PremiumAccent else Color.White,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    IconButton(onClick = { viewModel.deleteReverbPreset(saved.name) }, modifier = Modifier.size(36.dp)) {
+                                        Icon(Icons.Rounded.DeleteOutline, "Delete ${saved.name}", tint = Color.Red.copy(0.7f), modifier = Modifier.size(18.dp))
+                                    }
+                                }
+                            }
+                        }
                     }
                 },
                 confirmButton = {
                     TextButton(onClick = { showPresetPicker = false }) { Text("CLOSE", color = PremiumAccent) }
+                }
+            )
+        }
+
+        if (showSavePresetDialog) {
+            AlertDialog(
+                onDismissRequest = { showSavePresetDialog = false },
+                containerColor = DspSheetHigh,
+                title = { Text("Save reverb preset", color = Color.White, fontWeight = FontWeight.Bold) },
+                text = {
+                    OutlinedTextField(
+                        value = newReverbPresetName,
+                        onValueChange = { newReverbPresetName = it.take(40) },
+                        singleLine = true,
+                        label = { Text("Preset name") },
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = PremiumAccent,
+                            unfocusedBorderColor = Color.White.copy(0.1f),
+                            cursorColor = PremiumAccent,
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedLabelColor = PremiumAccent,
+                            unfocusedLabelColor = Color.White.copy(0.5f)
+                        )
+                    )
+                },
+                confirmButton = {
+                    TextButton(
+                        enabled = newReverbPresetName.isNotBlank(),
+                        onClick = {
+                            viewModel.saveReverbPreset(newReverbPresetName)
+                            showSavePresetDialog = false
+                        }
+                    ) { Text("SAVE", color = if (newReverbPresetName.isNotBlank()) PremiumAccent else Color.White.copy(0.3f)) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showSavePresetDialog = false }) { Text("CANCEL", color = Color.White.copy(0.6f)) }
                 }
             )
         }
@@ -4099,6 +4190,7 @@ private fun KnobControl(
                             else -> "CENTER"
                         }
                         "x" -> String.format(Locale.US, "%.2fx", internalValue)
+                        "%" -> String.format(Locale.US, "%s%.0f%%", if (internalValue > 0.005f) "+" else "", internalValue * 100f)
                         else -> String.format(Locale.US, "%.1f%s", internalValue, unit)
                     },
                     color = if (isActive) sliderColor else Color.White.copy(0.2f),
