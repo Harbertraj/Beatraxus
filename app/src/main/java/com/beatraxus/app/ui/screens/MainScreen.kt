@@ -3814,12 +3814,13 @@ fun MainScreen(
         }
 
         // Minimal app-open screen: only on a cold start (app fully closed), once per process.
+        // It lasts APP_OPEN_DURATION_MS in total; this fade-out is the last APP_OPEN_EXIT_FADE_MS of it.
         var showAppOpen by remember { mutableStateOf(!AppOpenSplashState.shown) }
         AnimatedVisibility(
             visible = showAppOpen,
             modifier = Modifier.fillMaxSize().zIndex(1000f),
             enter = EnterTransition.None,
-            exit = fadeOut(tween(350))
+            exit = fadeOut(tween(APP_OPEN_EXIT_FADE_MS))
         ) {
             AppOpenScreen(
                 onFinished = {
