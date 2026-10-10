@@ -64,6 +64,37 @@ data class SoundStageNodePosition(
     val distance: Float = 2.0f
 )
 
+/** Single source of truth for the Spatial tab's default node layout (used by config defaults, prefs and RESET). */
+val DEFAULT_SOUND_STAGE_NODE_POSITIONS: Map<String, SoundStageNodePosition> = mapOf(
+    "Vocals" to SoundStageNodePosition(0f, 0f, 2.0f),
+    "Drums" to SoundStageNodePosition(45f, 0f, 2.8f),
+    "Keys" to SoundStageNodePosition(90f, 0f, 1.8f),
+    "Lead Guitar" to SoundStageNodePosition(135f, 0f, 2.3f),
+    "Ambience" to SoundStageNodePosition(180f, 0f, 3.5f),
+    "Backing Vocals" to SoundStageNodePosition(225f, 0f, 2.5f),
+    "Bass" to SoundStageNodePosition(270f, 0f, 2.2f),
+    "Guitar" to SoundStageNodePosition(315f, 0f, 2.6f)
+)
+
+/** Values of one named reverb environment. [type] is the native preset id. */
+data class ReverbPresetValues(
+    val type: Int,
+    val room: Float,
+    val damping: Float,
+    val width: Float,
+    val predelayMs: Float
+)
+
+/** Named reverb environments shared by the engine (DspPipeline) and the UI/ViewModel. */
+val REVERB_NAMED_PRESETS: Map<String, ReverbPresetValues> = mapOf(
+    "ROOM" to ReverbPresetValues(1, 0.45f, 0.40f, 0.60f, 15f),
+    "HALL" to ReverbPresetValues(2, 0.75f, 0.25f, 0.85f, 35f),
+    "PLATE" to ReverbPresetValues(3, 0.60f, 0.10f, 0.70f, 5f),
+    "CATHEDRAL" to ReverbPresetValues(4, 0.90f, 0.20f, 1.00f, 55f),
+    "STUDIO" to ReverbPresetValues(5, 0.25f, 0.60f, 0.40f, 8f),
+    "CHAMBER" to ReverbPresetValues(6, 0.40f, 0.30f, 0.50f, 12f)
+)
+
 data class Audio3DSpeakerPosition(
     val id: String,
     val azimuthDeg: Float = 0f,
@@ -195,16 +226,7 @@ data class DspConfig(
     val spatialTouchEnabled: Boolean = false,
     val spatialAudioIntensity: Float = 0.6f,
     val soundStageSelectedNode: String = "Vocals",
-    val soundStageNodePositions: Map<String, SoundStageNodePosition> = mapOf(
-        "Vocals" to SoundStageNodePosition(0f, 0f, 2.0f),
-        "Drums" to SoundStageNodePosition(45f, 0f, 2.0f),
-        "Keys" to SoundStageNodePosition(90f, 0f, 2.0f),
-        "Lead Guitar" to SoundStageNodePosition(135f, 0f, 2.0f),
-        "Ambience" to SoundStageNodePosition(180f, 0f, 2.0f),
-        "Backing Vocals" to SoundStageNodePosition(225f, 0f, 2.0f),
-        "Bass" to SoundStageNodePosition(270f, 0f, 2.0f),
-        "Guitar" to SoundStageNodePosition(315f, 0f, 2.0f)
-    ),
+    val soundStageNodePositions: Map<String, SoundStageNodePosition> = DEFAULT_SOUND_STAGE_NODE_POSITIONS,
     val soundStageWidth: Float = 1.0f,
     val spatialStageWidth: Float = 1.0f,
     val soundStageCenterLock: Float = 0f,
@@ -262,7 +284,7 @@ data class DspConfig(
     val audio3DHeight: Float = 0.0f,
     val audio3DDistance: Float = 1.0f,
     val audio3DCenterFocus: Float = 0.0f,
-    val audio3DRoomReflections: Float = 0.0f,
+    val audio3DRoomReflections: Float = 0.6f,
     val audio3DSpeakerPositions: List<Audio3DSpeakerPosition> = emptyList(),
     val audio3DPresets: List<Audio3DStagePreset> = emptyList(),
 

@@ -152,7 +152,21 @@ class DspPreferences(private val context: Context) {
             soundStageWidth = pref(SOUND_STAGE_WIDTH, 1.0f),
             spatialStageWidth = pref(SPATIAL_STAGE_WIDTH, 1.0f),
             soundStageCenterLock = pref(SOUND_STAGE_CENTER_LOCK, 0f),
-            hrtfMode = HrtfMode.valueOf(prefNullable(HRTF_MODE) ?: HrtfMode.NATURAL_BALANCED.name),
+            hrtfMode = runCatching {
+                HrtfMode.valueOf(prefNullable(HRTF_MODE) ?: HrtfMode.NATURAL_BALANCED.name)
+            }.getOrDefault(HrtfMode.NATURAL_BALANCED),
+            spatialUiMode = runCatching {
+                SpatialUiMode.valueOf(prefNullable(SPATIAL_UI_MODE) ?: SpatialUiMode.MODERN.name)
+            }.getOrDefault(SpatialUiMode.MODERN),
+            audio3DStageEnabled = pref(AUDIO3D_STAGE_ENABLED, false),
+            audio3DWidth = pref(AUDIO3D_WIDTH, 1.0f),
+            audio3DDepth = pref(AUDIO3D_DEPTH, 1.0f),
+            audio3DHeight = pref(AUDIO3D_HEIGHT, 0.0f),
+            audio3DDistance = pref(AUDIO3D_DISTANCE, 1.0f),
+            audio3DCenterFocus = pref(AUDIO3D_CENTER_FOCUS, 0.0f),
+            audio3DRoomReflections = pref(AUDIO3D_ROOM_REFLECTIONS, 0.6f),
+            audio3DSpeakerPositions = deserializeSpeakerPositions(prefNullable(AUDIO3D_SPEAKER_POSITIONS)),
+            audio3DPresets = deserializeAudio3DPresets(prefNullable(AUDIO3D_PRESETS)),
             reverbEnabled = pref(REVERB_ENABLED, false),
             reverbAmount = pref(REVERB_AMOUNT, 0f),
             reverbPreset = pref(REVERB_PRESET, "FLAT"),
@@ -274,6 +288,16 @@ class DspPreferences(private val context: Context) {
             set(SPATIAL_STAGE_WIDTH, config.spatialStageWidth)
             set(SOUND_STAGE_CENTER_LOCK, config.soundStageCenterLock)
             set(HRTF_MODE, config.hrtfMode.name)
+            set(SPATIAL_UI_MODE, config.spatialUiMode.name)
+            set(AUDIO3D_STAGE_ENABLED, config.audio3DStageEnabled)
+            set(AUDIO3D_WIDTH, config.audio3DWidth)
+            set(AUDIO3D_DEPTH, config.audio3DDepth)
+            set(AUDIO3D_HEIGHT, config.audio3DHeight)
+            set(AUDIO3D_DISTANCE, config.audio3DDistance)
+            set(AUDIO3D_CENTER_FOCUS, config.audio3DCenterFocus)
+            set(AUDIO3D_ROOM_REFLECTIONS, config.audio3DRoomReflections)
+            set(AUDIO3D_SPEAKER_POSITIONS, serializeSpeakerPositions(config.audio3DSpeakerPositions))
+            set(AUDIO3D_PRESETS, serializeAudio3DPresets(config.audio3DPresets))
             set(REVERB_ENABLED, config.reverbEnabled)
             set(REVERB_AMOUNT, config.reverbAmount)
             set(REVERB_PRESET, config.reverbPreset)
@@ -429,6 +453,16 @@ class DspPreferences(private val context: Context) {
                 set(SPATIAL_STAGE_WIDTH, config.spatialStageWidth)
                 set(SOUND_STAGE_CENTER_LOCK, config.soundStageCenterLock)
                 set(HRTF_MODE, config.hrtfMode.name)
+                set(SPATIAL_UI_MODE, config.spatialUiMode.name)
+                set(AUDIO3D_STAGE_ENABLED, config.audio3DStageEnabled)
+                set(AUDIO3D_WIDTH, config.audio3DWidth)
+                set(AUDIO3D_DEPTH, config.audio3DDepth)
+                set(AUDIO3D_HEIGHT, config.audio3DHeight)
+                set(AUDIO3D_DISTANCE, config.audio3DDistance)
+                set(AUDIO3D_CENTER_FOCUS, config.audio3DCenterFocus)
+                set(AUDIO3D_ROOM_REFLECTIONS, config.audio3DRoomReflections)
+                set(AUDIO3D_SPEAKER_POSITIONS, serializeSpeakerPositions(config.audio3DSpeakerPositions))
+                set(AUDIO3D_PRESETS, serializeAudio3DPresets(config.audio3DPresets))
                 set(REVERB_ENABLED, config.reverbEnabled)
                 set(REVERB_AMOUNT, config.reverbAmount)
                 set(REVERB_PRESET, config.reverbPreset)
@@ -553,16 +587,7 @@ class DspPreferences(private val context: Context) {
     }
 
     private fun deserializeNodePositions(json: String?): Map<String, SoundStageNodePosition> {
-        val defaultPositions = mapOf(
-            "Vocals" to SoundStageNodePosition(0f, 0f, 2.0f),
-            "Drums" to SoundStageNodePosition(45f, 0f, 2.8f),
-            "Keys" to SoundStageNodePosition(90f, 0f, 1.8f),
-            "Lead Guitar" to SoundStageNodePosition(135f, 0f, 2.3f),
-            "Ambience" to SoundStageNodePosition(180f, 0f, 3.5f),
-            "Backing Vocals" to SoundStageNodePosition(225f, 0f, 2.5f),
-            "Bass" to SoundStageNodePosition(270f, 0f, 2.2f),
-            "Guitar" to SoundStageNodePosition(315f, 0f, 2.6f)
-        )
+        val defaultPositions = DEFAULT_SOUND_STAGE_NODE_POSITIONS
         if (json.isNullOrBlank()) return defaultPositions
         return runCatching {
             val obj = JSONObject(json)
@@ -577,6 +602,72 @@ class DspPreferences(private val context: Context) {
             }
             map
         }.getOrDefault(defaultPositions)
+    }
+
+    private fun serializeSpeakerPositions(positions: List<Audio3DSpeakerPosition>): String {
+        val arr = JSONArray()
+        positions.forEach { pos ->
+            arr.put(JSONObject().apply {
+                put("id", pos.id)
+                put("az", pos.azimuthDeg.toDouble())
+                put("el", pos.elevationDeg.toDouble())
+                put("dist", pos.distance.toDouble())
+            })
+        }
+        return arr.toString()
+    }
+
+    private fun deserializeSpeakerPositions(json: String?): List<Audio3DSpeakerPosition> {
+        if (json.isNullOrBlank()) return emptyList()
+        return runCatching {
+            val arr = JSONArray(json)
+            (0 until arr.length()).map { i ->
+                val o = arr.getJSONObject(i)
+                Audio3DSpeakerPosition(
+                    id = o.getString("id"),
+                    azimuthDeg = o.getDouble("az").toFloat(),
+                    elevationDeg = o.getDouble("el").toFloat(),
+                    distance = o.getDouble("dist").toFloat()
+                )
+            }
+        }.getOrDefault(emptyList())
+    }
+
+    private fun serializeAudio3DPresets(presets: List<Audio3DStagePreset>): String {
+        val arr = JSONArray()
+        presets.forEach { p ->
+            arr.put(JSONObject().apply {
+                put("name", p.name)
+                put("width", p.width.toDouble())
+                put("depth", p.depth.toDouble())
+                put("height", p.height.toDouble())
+                put("distance", p.distance.toDouble())
+                put("centerFocus", p.centerFocus.toDouble())
+                put("roomReflections", p.roomReflections.toDouble())
+                put("speakers", JSONArray(serializeSpeakerPositions(p.speakerPositions)))
+            })
+        }
+        return arr.toString()
+    }
+
+    private fun deserializeAudio3DPresets(json: String?): List<Audio3DStagePreset> {
+        if (json.isNullOrBlank()) return emptyList()
+        return runCatching {
+            val arr = JSONArray(json)
+            (0 until arr.length()).map { i ->
+                val o = arr.getJSONObject(i)
+                Audio3DStagePreset(
+                    name = o.getString("name"),
+                    width = o.getDouble("width").toFloat(),
+                    depth = o.getDouble("depth").toFloat(),
+                    height = o.getDouble("height").toFloat(),
+                    distance = o.getDouble("distance").toFloat(),
+                    centerFocus = o.getDouble("centerFocus").toFloat(),
+                    roomReflections = o.getDouble("roomReflections").toFloat(),
+                    speakerPositions = deserializeSpeakerPositions(o.optJSONArray("speakers")?.toString())
+                )
+            }
+        }.getOrDefault(emptyList())
     }
 
     companion object {
@@ -628,6 +719,16 @@ class DspPreferences(private val context: Context) {
         private val SPATIAL_STAGE_WIDTH = floatPreferencesKey("spatial_stage_width")
         private val SOUND_STAGE_CENTER_LOCK = floatPreferencesKey("sound_stage_center_lock")
         private val HRTF_MODE = stringPreferencesKey("hrtf_mode")
+        private val SPATIAL_UI_MODE = stringPreferencesKey("spatial_ui_mode")
+        private val AUDIO3D_STAGE_ENABLED = booleanPreferencesKey("audio3d_stage_enabled")
+        private val AUDIO3D_WIDTH = floatPreferencesKey("audio3d_width")
+        private val AUDIO3D_DEPTH = floatPreferencesKey("audio3d_depth")
+        private val AUDIO3D_HEIGHT = floatPreferencesKey("audio3d_height")
+        private val AUDIO3D_DISTANCE = floatPreferencesKey("audio3d_distance")
+        private val AUDIO3D_CENTER_FOCUS = floatPreferencesKey("audio3d_center_focus")
+        private val AUDIO3D_ROOM_REFLECTIONS = floatPreferencesKey("audio3d_room_reflections")
+        private val AUDIO3D_SPEAKER_POSITIONS = stringPreferencesKey("audio3d_speaker_positions")
+        private val AUDIO3D_PRESETS = stringPreferencesKey("audio3d_presets")
         private val REVERB_ENABLED = booleanPreferencesKey("reverb_enabled")
         private val REVERB_AMOUNT = floatPreferencesKey("reverb_amount")
         private val REVERB_PRESET = stringPreferencesKey("reverb_preset")

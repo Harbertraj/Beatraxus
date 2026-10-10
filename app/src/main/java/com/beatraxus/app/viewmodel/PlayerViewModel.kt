@@ -3523,24 +3523,68 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun setStereoWidth(value: Float) = applyDspConfig { it.copy(stereoWidth = value.coerceIn(0.5f, 2f), stereoExpansionEnabled = true) }
     fun setReverbEnabled(enabled: Boolean) = applyDspConfig { it.copy(reverbEnabled = enabled) }
     fun setReverbAmount(value: Float) = applyDspConfig { it.copy(reverbAmount = value.coerceIn(0f, 1f), reverbEnabled = true) }
-    fun setReverbPreset(preset: String) = applyDspConfig { it.copy(reverbPreset = preset) }
-    fun setReverbDamping(value: Float) = applyDspConfig { it.copy(reverbDamping = value.coerceIn(0f, 1f)) }
-    fun setReverbWidth(value: Float) = applyDspConfig { it.copy(reverbWidth = value.coerceIn(0f, 1f)) }
-    fun setReverbRoomSize(value: Float) = applyDspConfig { it.copy(reverbRoomSize = value.coerceIn(0f, 1f)) }
-    fun setReverbDecay(value: Float) = applyDspConfig { it.copy(reverbDecay = value.coerceIn(0f, 1f)) }
-    fun setReverbParams(roomSize: Float, damping: Float) = applyDspConfig { it.copy(reverbRoomSize = roomSize, reverbDamping = damping) }
+    /**
+     * Selecting a named environment also loads its values into the knobs so the UI shows what is
+     * actually playing. "FLAT"/"CUSTOM" keep the current knob values.
+     */
+    fun setReverbPreset(preset: String) = applyDspConfig { cfg ->
+        val values = com.beatraxus.app.model.REVERB_NAMED_PRESETS[preset]
+        if (values == null) {
+            cfg.copy(reverbPreset = preset)
+        } else {
+            cfg.copy(
+                reverbPreset = preset,
+                reverbRoomSize = values.room,
+                reverbDecay = values.room,
+                reverbDamping = values.damping,
+                reverbWidth = values.width,
+                reverbPredelayMs = values.predelayMs
+            )
+        }
+    }
+
+    /** Moving a knob while a named environment is active turns it into a custom setting (the engine ignores knobs for named presets). */
+    private fun com.beatraxus.app.model.DspConfig.customReverbPresetName(): String =
+        if (reverbPreset in com.beatraxus.app.model.REVERB_NAMED_PRESETS) "CUSTOM" else reverbPreset
+
+    fun setReverbDamping(value: Float) = applyDspConfig { it.copy(reverbDamping = value.coerceIn(0f, 1f), reverbPreset = it.customReverbPresetName()) }
+    fun setReverbWidth(value: Float) = applyDspConfig { it.copy(reverbWidth = value.coerceIn(0f, 1f), reverbPreset = it.customReverbPresetName()) }
+    fun setReverbRoomSize(value: Float) = applyDspConfig { it.copy(reverbRoomSize = value.coerceIn(0f, 1f), reverbPreset = it.customReverbPresetName()) }
+    fun setReverbDecay(value: Float) = applyDspConfig { it.copy(reverbDecay = value.coerceIn(0f, 1f), reverbPreset = it.customReverbPresetName()) }
+    fun setReverbParams(roomSize: Float, damping: Float) = applyDspConfig {
+        it.copy(
+            reverbRoomSize = roomSize.coerceIn(0f, 1f),
+            reverbDamping = damping.coerceIn(0f, 1f),
+            reverbPreset = it.customReverbPresetName()
+        )
+    }
     fun setReverbPredelayMix(value: Float) = applyDspConfig { it.copy(reverbPredelayMix = value.coerceIn(0f, 1f)) }
-    fun setReverbPredelay(value: Float) = applyDspConfig { it.copy(reverbPredelayMs = value.coerceIn(0f, 1000f)) }
+    fun setReverbPredelay(value: Float) = applyDspConfig { it.copy(reverbPredelayMs = value.coerceIn(0f, 1000f), reverbPreset = it.customReverbPresetName()) }
+
+    /** Restores every reverb control to its default. Unlike setReverbAmount(0f) this does not switch the reverb on. */
+    fun resetReverb() = applyDspConfig {
+        val d = com.beatraxus.app.model.DspConfig()
+        it.copy(
+            reverbPreset = d.reverbPreset,
+            reverbAmount = d.reverbAmount,
+            reverbPredelayMs = d.reverbPredelayMs,
+            reverbWidth = d.reverbWidth,
+            reverbDamping = d.reverbDamping,
+            reverbRoomSize = d.reverbRoomSize,
+            reverbDecay = d.reverbDecay,
+            reverbPredelayMix = d.reverbPredelayMix
+        )
+    }
     fun setCrossfeedEnabled(enabled: Boolean) = applyDspConfig { it.copy(crossfeedEnabled = enabled) }
     fun setCrossfeedLevel(value: Float) = applyDspConfig { it.copy(crossfeedLevel = value.coerceIn(0f, 1f), crossfeedEnabled = true) }
 
     fun setSpatialAudioEnabled(enabled: Boolean) = applyDspConfig { it.copy(spatialAudioEnabled = enabled) }
-    fun setSpatialAudioIntensity(value: Float) = applyDspConfig { it.copy(spatialAudioIntensity = value) }
-    fun setSpatialStageWidth(value: Float) = applyDspConfig { it.copy(spatialStageWidth = value) }
+    fun setSpatialAudioIntensity(value: Float) = applyDspConfig { it.copy(spatialAudioIntensity = value.coerceIn(0f, 1f)) }
+    fun setSpatialStageWidth(value: Float) = applyDspConfig { it.copy(spatialStageWidth = value.coerceIn(0f, 2f)) }
     fun setHrtfMode(mode: com.beatraxus.app.model.HrtfMode) = applyDspConfig { it.copy(hrtfMode = mode) }
     fun setSpatialUiMode(mode: com.beatraxus.app.model.SpatialUiMode) = applyDspConfig { it.copy(spatialUiMode = mode) }
     fun setSoundStageEnabled(enabled: Boolean) = applyDspConfig { it.copy(soundStageEnabled = enabled) }
-    fun setSoundStageWidth(value: Float) = applyDspConfig { it.copy(soundStageWidth = value) }
+    fun setSoundStageWidth(value: Float) = applyDspConfig { it.copy(soundStageWidth = value.coerceIn(0f, 2f), soundStageEnabled = true) }
     fun setSoundStageCenterLock(value: Float) = applyDspConfig { it.copy(soundStageCenterLock = value) }
     fun selectSoundStageNode(node: String) = applyDspConfig { it.copy(soundStageSelectedNode = node) }
 
@@ -3550,6 +3594,13 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             val updatedMap = cfg.soundStageNodePositions.toMutableMap()
             updatedMap[node] = com.beatraxus.app.model.SoundStageNodePosition(azimuth, elevation, distance)
             cfg.copy(soundStageNodePositions = updatedMap)
+        }
+    }
+
+    /** RESET on the Spatial tab: put every instrument back at its own default azimuth/distance. */
+    fun resetSoundStagePositions() {
+        applyDspConfig { cfg ->
+            cfg.copy(soundStageNodePositions = com.beatraxus.app.model.DEFAULT_SOUND_STAGE_NODE_POSITIONS)
         }
     }
 
