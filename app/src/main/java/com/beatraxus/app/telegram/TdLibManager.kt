@@ -386,6 +386,69 @@ class TdLibManager private constructor(
         return emptyList()
     }
 
+    /** Resolves a channel username / "-100…" id / "+invite" link to a chat. Throws if it can't be found. */
+    private suspend fun resolveChat(channelUsername: String): TdApi.Chat {
+        return when {
+            channelUsername.startsWith("-") || channelUsername.toLongOrNull() != null ->
+                send(TdApi.GetChat(channelUsername.toLong()))
+            channelUsername.startsWith("+") -> {
+                val invite = send(TdApi.CheckChatInviteLink("https://t.me/$channelUsername"))
+                send(TdApi.GetChat(invite.chatId))
+            }
+            else -> send(TdApi.SearchPublicChat(channelUsername))
+        }
+    }
+
+    /**
+     * Fetches the messages of a channel that can contain videos: native video messages plus
+     * documents (e.g. .mkv sent as a file). The caller decides which of them are real videos.
+     *
+     * Throws when Telegram isn't ready or the chat can't be resolved, so callers can tell
+     * "failed" apart from "this channel really has no videos" and keep their cached list.
+     */
+    suspend fun getChannelVideoMessages(channelUsername: String, limit: Int = 500): List<TdApi.Message> {
+        ensureClientStarted()
+        if (!awaitTdlibReady(15000)) throw IllegalStateException("Telegram is not ready")
+
+        val chat = resolveChat(channelUsername)
+        Log.d("TDLib", "getChannelVideoMessages: ${chat.title} (ID: ${chat.id})")
+
+        suspend fun search(filter: TdApi.SearchMessagesFilter): List<TdApi.Message> {
+            val results = mutableListOf<TdApi.Message>()
+            var lastMessageId = 0L
+            while (results.size < limit) {
+                val req = TdApi.SearchChatMessages()
+                req.chatId = chat.id
+                req.query = ""
+                req.fromMessageId = lastMessageId
+                req.offset = 0
+                req.limit = (limit - results.size).coerceAtMost(100)
+                req.filter = filter
+                val res = try { send(req) } catch (e: Exception) {
+                    Log.e("TDLib", "Video search failed for ${filter::class.simpleName}", e)
+                    null
+                }
+                if (res == null || res.messages.isEmpty()) break
+                results.addAll(res.messages)
+                if (lastMessageId == res.messages.last().id) break // no progress
+                lastMessageId = res.messages.last().id
+            }
+            return results
+        }
+
+        val combined = mutableListOf<TdApi.Message>()
+        combined.addAll(search(TdApi.SearchMessagesFilterVideo()))
+        combined.addAll(search(TdApi.SearchMessagesFilterDocument()))
+
+        if (combined.isEmpty()) {
+            // Search index can lag behind on freshly joined channels: fall back to plain history.
+            val history = send(TdApi.GetChatHistory(chat.id, 0, 0, 100, false))
+            combined.addAll(history.messages.toList())
+        }
+
+        return combined.distinctBy { it.id }.sortedByDescending { it.date }
+    }
+
     /**
      * Downloads a file and returns its local path when complete.
      */

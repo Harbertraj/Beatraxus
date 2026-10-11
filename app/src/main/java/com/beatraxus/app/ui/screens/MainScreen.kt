@@ -2499,14 +2499,15 @@ fun MainScreen(
                                                     onConnect = { p ->
                                                         com.beatraxus.app.ui.components.SettingsDeepLink.request(p.settingsPath)
                                                         onNavigateToSettings()
-                                                    }
+                                                    },
+                                                    onSelectSource = { viewModel.setVideoSourceFilter(it) }
                                                 ) {
                                                     com.beatraxus.app.ui.screens.library.VideoLibraryScreen(
                                                         videos = uiState.videos,
                                                         continueWatching = uiState.continueWatching,
                                                         isRefreshing = uiState.isLoadingVideos,
                                                         columns = videoLayoutDensity.coerceIn(1, 4),
-                                                        onRefresh = { viewModel.loadVideos() },
+                                                        onRefresh = { viewModel.refreshVideos() },
                                                         selectedIds = uiState.selectedIds,
                                                         isMultiSelectMode = uiState.isMultiSelectMode,
                                                         onVideoClick = { video ->
@@ -2531,12 +2532,13 @@ fun MainScreen(
                                                     onConnect = { p ->
                                                         com.beatraxus.app.ui.components.SettingsDeepLink.request(p.settingsPath)
                                                         onNavigateToSettings()
-                                                    }
+                                                    },
+                                                    onSelectSource = { viewModel.setVideoSourceFilter(it) }
                                                 ) {
                                                     com.beatraxus.app.ui.screens.library.VideoFoldersScreen(
                                                         folders = uiState.videoFolders,
                                                         isRefreshing = uiState.isLoadingVideos,
-                                                        onRefresh = { viewModel.loadVideos() },
+                                                        onRefresh = { viewModel.refreshVideos() },
                                                         onFolderClick = { folder ->
                                                             viewModel.navigateToVideoFolder(folder.path, folder.name)
                                                         }
@@ -2548,7 +2550,7 @@ fun MainScreen(
                                                         continueWatching = uiState.continueWatching.filter { it.first.folderPath == uiState.currentFolderPath },
                                                         isRefreshing = uiState.isLoadingVideos,
                                                         columns = videoLayoutDensity.coerceIn(1, 4),
-                                                        onRefresh = { viewModel.loadVideos() },
+                                                        onRefresh = { viewModel.refreshVideos() },
                                                         selectedIds = uiState.selectedIds,
                                                         isMultiSelectMode = uiState.isMultiSelectMode,
                                                         onVideoClick = { video ->
@@ -2573,14 +2575,15 @@ fun MainScreen(
                                                     onConnect = { p ->
                                                         com.beatraxus.app.ui.components.SettingsDeepLink.request(p.settingsPath)
                                                         onNavigateToSettings()
-                                                    }
+                                                    },
+                                                    onSelectSource = { viewModel.setVideoSourceFilter(it) }
                                                 ) {
                                                     com.beatraxus.app.ui.screens.library.VideoLibraryScreen(
                                                         videos = uiState.videos,
                                                         continueWatching = uiState.continueWatching,
                                                         isRefreshing = uiState.isLoadingVideos,
                                                         columns = videoLayoutDensity.coerceIn(1, 4),
-                                                        onRefresh = { viewModel.loadVideos() },
+                                                        onRefresh = { viewModel.refreshVideos() },
                                                         selectedIds = uiState.selectedIds,
                                                         isMultiSelectMode = uiState.isMultiSelectMode,
                                                         onVideoClick = { video ->
@@ -2605,14 +2608,15 @@ fun MainScreen(
                                                     onConnect = { p ->
                                                         com.beatraxus.app.ui.components.SettingsDeepLink.request(p.settingsPath)
                                                         onNavigateToSettings()
-                                                    }
+                                                    },
+                                                    onSelectSource = { viewModel.setVideoSourceFilter(it) }
                                                 ) {
                                                     com.beatraxus.app.ui.screens.library.VideoLibraryScreen(
                                                         videos = uiState.videos,
                                                         continueWatching = uiState.continueWatching,
                                                         isRefreshing = uiState.isLoadingVideos,
                                                         columns = videoLayoutDensity.coerceIn(1, 4),
-                                                        onRefresh = { viewModel.loadVideos() },
+                                                        onRefresh = { viewModel.refreshVideos() },
                                                         selectedIds = uiState.selectedIds,
                                                         isMultiSelectMode = uiState.isMultiSelectMode,
                                                         onVideoClick = { video ->
@@ -4289,7 +4293,7 @@ fun HomeScreen(
     val allSongs by viewModel.allSongs.collectAsStateWithLifecycle()
     val favorites by viewModel.favorites.collectAsStateWithLifecycle()
     val aiAnalysis by viewModel.aiAnalysis.collectAsStateWithLifecycle()
-    val videos by viewModel.allVideos.collectAsStateWithLifecycle()
+    val videos by viewModel.modeVideos.collectAsStateWithLifecycle()
     val videoFolders by viewModel.videoFolders.collectAsStateWithLifecycle()
     val isVideoMode = uiState.playbackMode == com.beatraxus.app.model.PlaybackMode.VIDEO
     
@@ -6586,9 +6590,10 @@ fun VideoOptionsSheetContent(
             modifier = Modifier.padding(bottom = 16.dp)
         )
         
-        val options = listOf(
-            Triple("Delete", Icons.Rounded.Delete, onDelete),
-            Triple("Edit Name", Icons.Rounded.Edit, onEditName),
+        // Cloud videos are streamed: there is no file on this device to delete or rename.
+        val options = listOfNotNull(
+            if (video.isCloud) null else Triple("Delete", Icons.Rounded.Delete, onDelete),
+            if (video.isCloud) null else Triple("Edit Name", Icons.Rounded.Edit, onEditName),
             Triple("Mark", Icons.Rounded.CheckCircle, onMark),
             Triple("Share", Icons.Rounded.Share, onShare),
             Triple("Properties", Icons.Rounded.Info, onProperties)

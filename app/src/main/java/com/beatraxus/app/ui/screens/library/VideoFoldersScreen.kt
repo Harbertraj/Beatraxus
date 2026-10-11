@@ -51,7 +51,7 @@ fun VideoFoldersScreen(
                     )
                     Spacer(Modifier.height(16.dp))
                     Text(
-                        "No video folders found",
+                        "Videos not found",
                         color = Color.White.copy(alpha = 0.5f),
                         fontSize = 16.sp
                     )

@@ -155,6 +155,7 @@ class VideoPlayerViewModel(
     private val TAG = "VideoPlayerViewModel"
 
     private var exoPlayer: ExoPlayer? = null
+    private var telegramDataSourceFactory: com.beatraxus.app.telegram.TelegramAwareDataSourceFactory? = null
     private val database = (application as BeatraxusApplication).database
     private val videoRecentlyPlayedDao = database.videoRecentlyPlayedDao()
     private val videoChapterDao = database.videoChapterDao()
@@ -329,7 +330,11 @@ class VideoPlayerViewModel(
         val player = ExoPlayer.Builder(context, VideoRenderersFactory(context))
             .setMediaSourceFactory(
                 androidx.media3.exoplayer.source.DefaultMediaSourceFactory(
-                    com.beatraxus.app.addons.AddonStreamHeaders.dataSourceFactory(context)
+                    // Same as before for every normal Uri; `tgvideo://` Telegram videos are streamed through TDLib.
+                    com.beatraxus.app.telegram.TelegramAwareDataSourceFactory(
+                        (context.applicationContext as BeatraxusApplication).tdLibManager,
+                        com.beatraxus.app.addons.AddonStreamHeaders.dataSourceFactory(context)
+                    ).also { telegramDataSourceFactory = it }
                 )
             )
             .setAudioAttributes(audioAttributes, true)
@@ -529,7 +534,10 @@ class VideoPlayerViewModel(
         val player = exoPlayer ?: return
         val currentVideo = _uiState.value.currentVideo ?: return
         val videoId = currentVideo.id
-        
+
+        // Scrub previews and chapter detection decode the file directly, which streamed videos can't offer.
+        if (currentVideo.isCloud) return
+
         if (processedBackgroundVideos.contains(videoId)) return
         
         if (player.playbackState == Player.STATE_READY && player.isPlaying) {
@@ -876,6 +884,10 @@ class VideoPlayerViewModel(
         if (enabled == _uiState.value.routeAudioToEngine && !_uiState.value.isConnectingEngineRoute) return
 
         if (enabled) {
+            if (_uiState.value.currentVideo?.isCloud == true) {
+                _uiState.update { it.copy(engineRouteError = "Audio Engine routing isn't available for cloud videos", isConnectingEngineRoute = false) }
+                return
+            }
             if (_uiState.value.availableAudioTracks.isEmpty()) {
                 _uiState.update { it.copy(engineRouteError = "No audio tracks available to route", isConnectingEngineRoute = false) }
                 return
@@ -1540,6 +1552,11 @@ class VideoPlayerViewModel(
         loudnessEnhancer?.release()
         equalizer?.release()
         exoPlayer?.release()
+        // Don't leave streamed Telegram videos sitting in TDLib's cache (fire and forget: viewModelScope is cancelled below).
+        telegramDataSourceFactory?.let { factory ->
+            CoroutineScope(Dispatchers.IO).launch { factory.purgeDownloads() }
+        }
+        telegramDataSourceFactory = null
         spriteSheet?.recycle()
         backgroundTasksTimerJob?.cancel()
         spriteLoadingJob?.cancel()

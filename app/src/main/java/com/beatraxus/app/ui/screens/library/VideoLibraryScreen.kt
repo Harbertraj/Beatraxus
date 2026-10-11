@@ -84,7 +84,7 @@ fun VideoLibraryScreen(
                     )
                     Spacer(Modifier.height(16.dp))
                     Text(
-                        "No videos found",
+                        "Videos not found",
                         color = Color.White.copy(alpha = 0.5f),
                         fontSize = 16.sp
                     )
@@ -180,7 +180,10 @@ fun ContinueWatchingItem(
 
     LaunchedEffect(video.id, video.thumbnailUri) {
         val cachedUri = video.thumbnailUri
-        if (cachedUri == null || !VideoThumbnailHelper.thumbnailExists(context, video.id)) {
+        if (video.isCloud) {
+            // Streamed videos can't be decoded here; they bring their own thumbnail.
+            thumbnailUri = cachedUri
+        } else if (cachedUri == null || !VideoThumbnailHelper.thumbnailExists(context, video.id)) {
             thumbnailUri = VideoThumbnailHelper.getThumbnail(context, video.uri, video.id)
         } else {
             thumbnailUri = cachedUri
@@ -201,7 +204,7 @@ fun ContinueWatchingItem(
                 .background(Color.White.copy(alpha = 0.05f))
         ) {
             AsyncImage(
-                model = thumbnailUri ?: video.uri,
+                model = thumbnailUri ?: video.uri.takeUnless { video.isCloud },
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),
@@ -309,7 +312,9 @@ private fun rememberVideoThumbnail(video: Video): androidx.compose.runtime.Mutab
     val state = remember(video.id) { mutableStateOf(video.thumbnailUri) }
     LaunchedEffect(video.id, video.thumbnailUri) {
         val cachedUri = video.thumbnailUri
-        state.value = if (cachedUri == null || !VideoThumbnailHelper.thumbnailExists(context, video.id)) {
+        state.value = if (video.isCloud) {
+            cachedUri // streamed videos can't be decoded here; they bring their own thumbnail
+        } else if (cachedUri == null || !VideoThumbnailHelper.thumbnailExists(context, video.id)) {
             VideoThumbnailHelper.getThumbnail(context, video.uri, video.id)
         } else cachedUri
     }
@@ -370,7 +375,7 @@ private fun VideoThumbnail(
             .border(1.dp, Color.White.copy(alpha = 0.08f), shape)
     ) {
         AsyncImage(
-            model = thumbnailUri ?: video.uri,
+            model = thumbnailUri ?: video.uri.takeUnless { video.isCloud },
             contentDescription = null,
             contentScale = ContentScale.Crop,
             modifier = Modifier.fillMaxSize(),

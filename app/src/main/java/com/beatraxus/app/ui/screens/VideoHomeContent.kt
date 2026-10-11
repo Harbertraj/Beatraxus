@@ -122,13 +122,19 @@ fun LazyListScope.videoHomeItems(
     }
 
     // ── Cloud / Combined: connect cloud videos ───────────────────────────
+    // Only offer the full connect panel while nothing is connected; afterwards the library's source chips take over.
     if (libMode != com.beatraxus.app.model.LibraryMode.LOCAL) {
-        item(key = "VIDEO_CLOUD_CONNECT") {
-            com.beatraxus.app.ui.components.CloudVideoConnectCard(uiState, onConnectCloudVideo)
-            Spacer(Modifier.height(12.dp))
+        val anyConnected = uiState.telegramChannels.isNotEmpty() || uiState.driveAccounts.isNotEmpty() ||
+            uiState.onedriveAccounts.isNotEmpty() || uiState.dropboxAccounts.isNotEmpty() ||
+            uiState.boxAccounts.isNotEmpty() || uiState.nextcloudAccounts.isNotEmpty()
+        if (!anyConnected) {
+            item(key = "VIDEO_CLOUD_CONNECT") {
+                com.beatraxus.app.ui.components.CloudVideoConnectCard(uiState, onConnectCloudVideo)
+                Spacer(Modifier.height(12.dp))
+            }
+            // Cloud-only with no account: nothing to list.
+            if (libMode == com.beatraxus.app.model.LibraryMode.CLOUD) return
         }
-        // Cloud-only: there are no cloud videos to list yet, so hide the local sections.
-        if (libMode == com.beatraxus.app.model.LibraryMode.CLOUD) return
     }
 
     // ── Hero card with integrated play button ───────────────────────────
@@ -277,7 +283,7 @@ private fun VideoHeroCard(
             .clickable(onClick = onPlay)
     ) {
         AsyncImage(
-            model = thumb ?: video.uri,
+            model = thumb ?: video.uri.takeUnless { video.isCloud },
             contentDescription = null,
             contentScale = ContentScale.Crop,
             modifier = Modifier.fillMaxSize()
@@ -499,7 +505,7 @@ private fun ContinueCard(
                 .background(Color.White.copy(0.05f))
         ) {
             AsyncImage(
-                model = thumb ?: video.uri, contentDescription = null,
+                model = thumb ?: video.uri.takeUnless { video.isCloud }, contentDescription = null,
                 contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()
             )
             Box(
@@ -574,7 +580,7 @@ private fun GridVideoCard(video: Video, modifier: Modifier, onClick: () -> Unit)
                 .background(Color.White.copy(0.05f))
         ) {
             AsyncImage(
-                model = thumb ?: video.uri, contentDescription = null,
+                model = thumb ?: video.uri.takeUnless { video.isCloud }, contentDescription = null,
                 contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()
             )
             Box(
@@ -620,7 +626,9 @@ private fun rememberVideoThumb(video: Video): Uri? {
     var thumb by remember(video.id) { mutableStateOf(video.thumbnailUri) }
     LaunchedEffect(video.id, video.thumbnailUri) {
         val cached = video.thumbnailUri
-        thumb = if (cached == null || !VideoThumbnailHelper.thumbnailExists(context, video.id)) {
+        thumb = if (video.isCloud) {
+            cached // streamed videos can't be decoded here; they bring their own thumbnail
+        } else if (cached == null || !VideoThumbnailHelper.thumbnailExists(context, video.id)) {
             VideoThumbnailHelper.getThumbnail(context, video.uri, video.id)
         } else cached
     }

@@ -3,7 +3,9 @@ package com.beatraxus.app.ui.components
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -46,6 +48,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.beatraxus.app.model.LibraryMode
 import com.beatraxus.app.model.PlayerUiState
+import com.beatraxus.app.model.VideoSource
 
 /**
  * One-shot hand-off to SettingsScreen so "Connect" buttons elsewhere in the app can open
@@ -64,14 +67,15 @@ enum class CloudVideoProvider(
     val label: String,
     val icon: ImageVector,
     val color: Color,
-    val settingsPath: List<String>
+    val settingsPath: List<String>,
+    val source: VideoSource
 ) {
-    TELEGRAM("Telegram", Icons.AutoMirrored.Rounded.Send, Color(0xFF2AABEE), listOf("Cloud", "Telegram Channels")),
-    GDRIVE("Google Drive", Icons.Rounded.Cloud, Color(0xFF34A853), listOf("Cloud")),
-    ONEDRIVE("OneDrive", Icons.Rounded.CloudCircle, Color(0xFF00A1F1), listOf("Cloud")),
-    DROPBOX("Dropbox", Icons.Rounded.CloudQueue, Color(0xFF0061FF), listOf("Cloud")),
-    BOX("Box", Icons.Rounded.Cloud, Color(0xFF0075C9), listOf("Cloud")),
-    NEXTCLOUD("Nextcloud", Icons.Rounded.Dns, Color(0xFF0082C9), listOf("Cloud"))
+    TELEGRAM("Telegram", Icons.AutoMirrored.Rounded.Send, Color(0xFF2AABEE), listOf("Cloud", "Telegram Channels"), VideoSource.TELEGRAM),
+    GDRIVE("Google Drive", Icons.Rounded.Cloud, Color(0xFF34A853), listOf("Cloud"), VideoSource.GDRIVE),
+    ONEDRIVE("OneDrive", Icons.Rounded.CloudCircle, Color(0xFF00A1F1), listOf("Cloud"), VideoSource.ONEDRIVE),
+    DROPBOX("Dropbox", Icons.Rounded.CloudQueue, Color(0xFF0061FF), listOf("Cloud"), VideoSource.DROPBOX),
+    BOX("Box", Icons.Rounded.Cloud, Color(0xFF0075C9), listOf("Cloud"), VideoSource.BOX),
+    NEXTCLOUD("Nextcloud", Icons.Rounded.Dns, Color(0xFF0082C9), listOf("Cloud"), VideoSource.NEXTCLOUD)
 }
 
 private fun connectedCount(state: PlayerUiState, p: CloudVideoProvider): Int = when (p) {
@@ -84,25 +88,38 @@ private fun connectedCount(state: PlayerUiState, p: CloudVideoProvider): Int = w
 }
 
 /**
- * Video-mode wrapper. LOCAL: untouched. COMBINED: compact connect strip above the local list.
- * CLOUD: no cloud videos exist yet, so show the full "connect cloud videos" panel instead of the local list.
+ * Video-mode wrapper. LOCAL: untouched.
+ * CLOUD and COMBINED: a row of source chips (Telegram, Google Drive, ...) on top of the library.
+ *  - A connected source filters the list to that source (tap again to see everything).
+ *  - A source with no account sends the user to the cloud account settings.
+ * In CLOUD mode with no account connected at all the full "connect your cloud" panel replaces the (empty) list.
  */
 @Composable
 fun VideoCloudGate(
     libraryMode: LibraryMode,
     uiState: PlayerUiState,
     onConnect: (CloudVideoProvider) -> Unit,
+    onSelectSource: (VideoSource?) -> Unit,
     content: @Composable () -> Unit
 ) {
     when (libraryMode) {
-        LibraryMode.CLOUD -> Box(
-            Modifier.fillMaxSize().verticalScroll(rememberScrollState())
-        ) {
-            CloudVideoConnectCard(uiState, onConnect)
-        }
-        LibraryMode.COMBINED -> Column(Modifier.fillMaxSize()) {
-            CloudVideoConnectBanner(uiState, onConnect)
-            Box(Modifier.weight(1f)) { content() }
+        LibraryMode.CLOUD, LibraryMode.COMBINED -> Column(Modifier.fillMaxSize()) {
+            CloudVideoSourceChips(
+                uiState = uiState,
+                selected = uiState.selectedVideoSource,
+                onConnect = onConnect,
+                onSelect = onSelectSource
+            )
+            val anyConnected = CloudVideoProvider.values().any { connectedCount(uiState, it) > 0 }
+            Box(Modifier.weight(1f)) {
+                if (libraryMode == LibraryMode.CLOUD && !anyConnected) {
+                    Box(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+                        CloudVideoConnectCard(uiState, onConnect)
+                    }
+                } else {
+                    content()
+                }
+            }
         }
         else -> content()
     }
@@ -200,15 +217,23 @@ private fun ProviderTile(
     }
 }
 
-/** Compact strip for COMBINED mode: provider chips in a horizontal row. */
+/**
+ * Source chips shown above the video library in CLOUD and COMBINED mode.
+ *
+ * Tap: connected source -> filter to it (tap the selected one again to clear); source without an
+ * account -> open the cloud account settings. Long-press a connected source to manage its accounts.
+ */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun CloudVideoConnectBanner(
+fun CloudVideoSourceChips(
     uiState: PlayerUiState,
-    onConnect: (CloudVideoProvider) -> Unit
+    selected: VideoSource?,
+    onConnect: (CloudVideoProvider) -> Unit,
+    onSelect: (VideoSource?) -> Unit
 ) {
     Column(Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 6.dp)) {
         Text(
-            "CONNECT CLOUD VIDEOS",
+            "VIDEO SOURCES",
             color = Color(0xFF00F2FF), fontSize = 10.sp, fontWeight = FontWeight.Black, letterSpacing = 2.sp,
             modifier = Modifier.padding(horizontal = 20.dp)
         )
@@ -219,13 +244,21 @@ fun CloudVideoConnectBanner(
         ) {
             CloudVideoProvider.values().forEach { p ->
                 val n = connectedCount(uiState, p)
+                val isSelected = selected == p.source
                 val shape = RoundedCornerShape(50)
                 Row(
                     Modifier
                         .clip(shape)
-                        .background(p.color.copy(0.12f))
-                        .border(0.5.dp, p.color.copy(0.4f), shape)
-                        .clickable(role = Role.Button) { onConnect(p) }
+                        .background(p.color.copy(if (isSelected) 0.32f else 0.12f))
+                        .border(if (isSelected) 1.5.dp else 0.5.dp, p.color.copy(if (isSelected) 0.95f else 0.4f), shape)
+                        .combinedClickable(
+                            role = Role.Button,
+                            onClick = {
+                                if (n == 0) onConnect(p)
+                                else onSelect(if (isSelected) null else p.source)
+                            },
+                            onLongClick = { if (n > 0) onConnect(p) }
+                        )
                         .padding(start = 8.dp, end = 12.dp, top = 6.dp, bottom = 6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -233,8 +266,15 @@ fun CloudVideoConnectBanner(
                     Spacer(Modifier.width(6.dp))
                     Text(
                         if (n > 0) "${p.label} · $n" else p.label,
-                        color = Color.White.copy(0.88f), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1
+                        color = Color.White.copy(if (isSelected) 1f else 0.88f),
+                        fontSize = 12.sp,
+                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
+                        maxLines = 1
                     )
+                    if (isSelected) {
+                        Spacer(Modifier.width(4.dp))
+                        Icon(Icons.Rounded.Check, null, tint = p.color, modifier = Modifier.size(14.dp))
+                    }
                 }
             }
         }

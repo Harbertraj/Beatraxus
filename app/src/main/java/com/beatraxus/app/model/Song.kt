@@ -509,7 +509,10 @@ data class PlayerUiState(
     val bgVideoPos: Long = 0L,
 
     // Continue Watching
-    val continueWatching: List<Pair<Video, VideoRecentlyPlayedEntity>> = emptyList()
+    val continueWatching: List<Pair<Video, VideoRecentlyPlayedEntity>> = emptyList(),
+
+    // Source chip (Telegram, Google Drive, ...) filtering the cloud / combined video library. null = all sources.
+    val selectedVideoSource: VideoSource? = null
 )
 {
     override fun equals(other: Any?): Boolean {
@@ -657,12 +660,14 @@ data class PlayerUiState(
                 isLoadingVideos == other.isLoadingVideos &&
                 activeVideoQueue == other.activeVideoQueue &&
                 continueWatching == other.continueWatching &&
+                selectedVideoSource == other.selectedVideoSource &&
                 navigateToVideoPlayer == other.navigateToVideoPlayer
     }
 
     override fun hashCode(): Int {
         var result = currentSong?.hashCode() ?: 0
         result = 31 * result + continueWatching.hashCode()
+        result = 31 * result + (selectedVideoSource?.hashCode() ?: 0)
         result = 31 * result + (lyricsProviderId?.hashCode() ?: 0)
         result = 31 * result + lyricsCandidates.hashCode()
         result = 31 * result + isLoadingLyricsCandidates.hashCode()
