@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  PlayerView without its own video surface (subtitles, shutter and aspect-ratio frame only).
+  Used while the FPS Booster is on: the video is drawn by MotionBoostSurfaceView, which is added
+  to this view's content frame at runtime.
+-->
+<androidx.media3.ui.PlayerView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    app:surface_type="none"
+    app:use_controller="false" />

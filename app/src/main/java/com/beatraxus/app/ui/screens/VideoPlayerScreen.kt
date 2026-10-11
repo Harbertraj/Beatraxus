@@ -48,6 +48,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.ui.zIndex
 import com.beatraxus.app.ui.utils.RenderEffectHelper
+import com.beatraxus.app.motionboost.DisplayRefreshRate
+import com.beatraxus.app.motionboost.MotionBoostMode
+import com.beatraxus.app.motionboost.MotionBoostSurfaceView
+import com.beatraxus.app.motionboost.MotionBoostTiming
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
@@ -112,7 +116,7 @@ enum class GestureType {
 }
 
 enum class PlayerSheetType {
-    NONE, AUDIO, SUBTITLE, SPEED, ALL, EQUALIZER, SLEEP_TIMER, COLOR, AUDIO_DELAY
+    NONE, AUDIO, SUBTITLE, SPEED, ALL, EQUALIZER, SLEEP_TIMER, COLOR, AUDIO_DELAY, MOTION_BOOST
 }
 
 @UnstableApi
@@ -491,26 +495,57 @@ fun VideoPlayerScreen(
         val gradingActive = uiState.colorBrightness != 0f ||
             uiState.colorContrast != 1f ||
             uiState.colorSaturation != 1f
-        val useTextureSurface = gradingActive || sheetType == PlayerSheetType.COLOR
+        // FPS Booster: video is drawn by MotionBoostSurfaceView (interpolated frames). It does the colour
+        // grading itself, so the TextureView path is not used. HDR streams are not supported (no tone map).
+        val boostActive = uiState.motionBoostMode.isEnabled && !uiState.isHdr
+        val useTextureSurface = !boostActive && (gradingActive || sheetType == PlayerSheetType.COLOR)
 
-        key(useTextureSurface) {
+        key(useTextureSurface, boostActive) {
         AndroidView(
             factory = { ctx ->
-                val pv = if (useTextureSurface) {
-                    android.view.LayoutInflater.from(ctx)
+                val pv = when {
+                    boostActive -> android.view.LayoutInflater.from(ctx)
+                        .inflate(com.beatraxus.app.R.layout.player_view_none, null) as PlayerView
+                    useTextureSurface -> android.view.LayoutInflater.from(ctx)
                         .inflate(com.beatraxus.app.R.layout.player_view_texture, null) as PlayerView
-                } else {
-                    PlayerView(ctx)
+                    else -> PlayerView(ctx)
                 }
                 pv.apply {
                     player = viewModel.getPlayer()
                     useController = false
                     setBackgroundColor(android.graphics.Color.BLACK)
+                    if (boostActive) {
+                        // Same spot PlayerView uses for its own surface: under the subtitle layer.
+                        val frame = findViewById<AspectRatioFrameLayout>(androidx.media3.ui.R.id.exo_content_frame)
+                        val boostView = MotionBoostSurfaceView(ctx).apply {
+                            this.player = viewModel.getPlayer()
+                            onStats = { src, out -> viewModel.updateMotionBoostStats(src, out) }
+                            onError = { _ ->
+                                viewModel.onMotionBoostFailed()
+                                android.widget.Toast.makeText(
+                                    ctx, "FPS Booster is not supported on this device", android.widget.Toast.LENGTH_LONG
+                                ).show()
+                            }
+                        }
+                        frame?.addView(
+                            boostView,
+                            0,
+                            android.widget.FrameLayout.LayoutParams(
+                                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                                android.view.ViewGroup.LayoutParams.MATCH_PARENT
+                            )
+                        )
+                        tag = boostView
+                    }
                     playerViewRef = this
                 }
             },
             onRelease = { it.player = null },
             update = { view ->
+                (view.tag as? MotionBoostSurfaceView)?.apply {
+                    setTargetFps(uiState.motionBoostMode.targetFps)
+                    setColorGrade(uiState.colorBrightness, uiState.colorContrast, uiState.colorSaturation)
+                }
                 // Apply brightness / contrast / saturation to the video layer.
                 (view.videoSurfaceView as? TextureView)?.setLayerPaint(
                     if (gradingActive) {
@@ -698,6 +733,7 @@ fun VideoPlayerScreen(
                             }
                         },
                         onSpeedClick = { sheetType = PlayerSheetType.SPEED },
+                        onMotionBoostClick = { sheetType = PlayerSheetType.MOTION_BOOST },
                         onEqClick = { sheetType = PlayerSheetType.EQUALIZER },
                         onToggleBoost = { viewModel.toggleVolumeBoost() },
                         onHeadphonesClick = { viewModel.toggleBackgroundPlay() },
@@ -1001,6 +1037,7 @@ fun FloatingControls(
     sheetType: PlayerSheetType,
     onPiPClick: () -> Unit,
     onSpeedClick: () -> Unit,
+    onMotionBoostClick: () -> Unit,
     onEqClick: () -> Unit,
     onToggleBoost: () -> Unit,
     onHeadphonesClick: () -> Unit,
@@ -1060,6 +1097,12 @@ fun FloatingControls(
                 onSleepTimerClick
             )
             VpToolButton(Icons.Rounded.Speed, uiState.playbackSpeed != 1.0f, onSpeedClick)
+            VpToolButton(
+                Icons.Rounded.Animation,
+                uiState.motionBoostMode.isEnabled,
+                onMotionBoostClick,
+                label = if (uiState.motionBoostMode.isEnabled) uiState.motionBoostMode.targetFps.toString() else null
+            )
             VpToolButton(Icons.Rounded.Equalizer, uiState.isEqEnabled, onEqClick)
             VpToolButton(
                 if (uiState.isVolumeBoost) Icons.Rounded.VolumeUp else Icons.Rounded.VolumeDown,
@@ -1293,7 +1336,34 @@ fun PlayerTopBar(
             }
             Spacer(Modifier.width(8.dp))
             VpGlassButton(onClick = onAudioDelayClick, size = 42.dp, active = isAudioDelayActive) {
-                Icon(Icons.Rounded.Sync, "Audio delay", tint = Color.White, modifier = Modifier.size(21.dp))
+                // sound-wave glyph with a small clock badge = "audio timing"
+                Icon(
+                    Icons.Rounded.GraphicEq,
+                    "Audio delay",
+                    tint = Color.White,
+                    modifier = Modifier.align(Alignment.Center).size(22.dp)
+                )
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(end = 4.dp, bottom = 4.dp)
+                        .size(15.dp)
+                        .clip(CircleShape)
+                        .background(Color(0xE6101014))
+                        .border(
+                            0.8.dp,
+                            if (isAudioDelayActive) VpAmberSoft else Color.White.copy(alpha = 0.55f),
+                            CircleShape
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        Icons.Rounded.Schedule,
+                        null,
+                        tint = if (isAudioDelayActive) VpAmberSoft else Color.White,
+                        modifier = Modifier.size(10.dp)
+                    )
+                }
             }
             Spacer(Modifier.width(8.dp))
             VpGlassButton(onClick = onSubtitleClick, size = 42.dp) {
@@ -1652,6 +1722,7 @@ fun VideoSettingsSheetContent(
             PlayerSheetType.AUDIO_DELAY -> "Audio Delay"
             PlayerSheetType.SUBTITLE -> "Subtitles"
             PlayerSheetType.SPEED -> "Playback Speed"
+            PlayerSheetType.MOTION_BOOST -> "FPS Booster"
             PlayerSheetType.EQUALIZER -> "Premium Equalizer"
             PlayerSheetType.SLEEP_TIMER -> "Sleep Timer"
             PlayerSheetType.COLOR -> "Color Grading"
@@ -2086,6 +2157,11 @@ fun VideoSettingsSheetContent(
             }
         }
 
+        // FPS Booster Section
+        if (activeSheetType == PlayerSheetType.MOTION_BOOST) {
+            MotionBoostSheetContent(uiState = uiState, onModeSelect = { viewModel.setMotionBoostMode(it) })
+        }
+
         // Sleep Timer Section
         if (activeSheetType == PlayerSheetType.SLEEP_TIMER) {
             SleepTimerSheetContent(
@@ -2096,6 +2172,100 @@ fun VideoSettingsSheetContent(
     }
 }
 
+
+@Composable
+fun MotionBoostSheetContent(
+    uiState: VideoPlayerUiState,
+    onModeSelect: (MotionBoostMode) -> Unit
+) {
+    val mxOrange = Color(0xFFFF8F00)
+    val context = LocalContext.current
+    val supportedRates = remember { DisplayRefreshRate.supportedRates(context) }
+    val peakHz = supportedRates.max().toInt()
+    val supportedModes = remember(supportedRates) {
+        MotionBoostMode.entries.associateWith { MotionBoostTiming.isRateSupported(supportedRates, it.targetFps) }
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            text = "Adds in-between frames so low-FPS video looks smoother (e.g. 24 \u2192 60 FPS).",
+            color = Color.White.copy(alpha = 0.7f),
+            fontSize = 13.sp
+        )
+
+        if (uiState.motionBoostMode.isEnabled && uiState.isHdr) {
+            Text(
+                text = "Not available for HDR videos - playing normally.",
+                color = mxOrange,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium
+            )
+        } else if (uiState.motionBoostMode.isEnabled && uiState.motionBoostSourceFps > 0f) {
+            val src = uiState.motionBoostSourceFps
+            val out = uiState.motionBoostOutputFps
+            Text(
+                text = "Source %.0f FPS \u2192 showing %.0f FPS".format(src, out),
+                color = mxOrange,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium
+            )
+        }
+
+        MotionBoostMode.entries.forEach { mode ->
+            val supported = supportedModes[mode] == true
+            val isSelected = uiState.motionBoostMode == mode
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(
+                        if (isSelected) mxOrange.copy(alpha = 0.2f)
+                        else Color.White.copy(alpha = 0.06f)
+                    )
+                    .border(
+                        width = 1.dp,
+                        color = if (isSelected) mxOrange.copy(alpha = 0.8f) else Color.White.copy(alpha = 0.08f),
+                        shape = RoundedCornerShape(12.dp)
+                    )
+                    .clickable(enabled = supported) { onModeSelect(mode) }
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        text = mode.label,
+                        color = Color.White.copy(alpha = if (supported) 1f else 0.4f),
+                        fontSize = 16.sp,
+                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                    )
+                    if (!supported) {
+                        Text(
+                            text = "Display supports up to $peakHz Hz",
+                            color = Color.White.copy(alpha = 0.4f),
+                            fontSize = 12.sp
+                        )
+                    }
+                }
+                if (isSelected) {
+                    Icon(
+                        imageVector = Icons.Rounded.Check,
+                        contentDescription = "Selected",
+                        tint = mxOrange,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+        }
+
+        Text(
+            text = "Uses extra GPU and battery. Fast scenes and scene cuts may show small artifacts; " +
+                "it turns itself off for videos that already play at the chosen rate.",
+            color = Color.White.copy(alpha = 0.5f),
+            fontSize = 12.sp
+        )
+    }
+}
 
 @androidx.media3.common.util.UnstableApi
 @Composable
@@ -2433,53 +2603,139 @@ private fun AudioDelaySection(
     uiState: VideoPlayerUiState,
     viewModel: VideoPlayerViewModel
 ) {
-    val mxOrange = Color(0xFFFF8F00)
     val enabled = !uiState.routeAudioToEngine && !uiState.isConnectingEngineRoute
     val delayMs = uiState.audioDelayMs
     val step = com.beatraxus.app.engine.VideoPlaybackTuning.AUDIO_DELAY_STEP_MS
+    val active = delayMs != 0 && enabled
+    val sliderRange = 2000f
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .background(Color.White.copy(0.05f))
-            .padding(16.dp)
+            .clip(RoundedCornerShape(18.dp))
+            .background(Brush.verticalGradient(listOf(Color.White.copy(0.09f), Color.White.copy(0.04f))))
+            .border(1.dp, Color.White.copy(0.08f), RoundedCornerShape(18.dp))
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text("Audio delay", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                Text(
-                    if (enabled) "Positive plays the sound later than the picture"
-                    else "Not available while audio plays through the Audio Engine",
-                    color = Color.White.copy(0.6f),
-                    fontSize = 12.sp
-                )
-            }
+        Text(
+            if (enabled) "Positive = sound later than the picture"
+            else "Not available while audio plays through the Audio Engine",
+            color = Color.White.copy(0.6f),
+            fontSize = 12.sp,
+            textAlign = TextAlign.Center
+        )
+        Spacer(Modifier.height(8.dp))
+
+        // Big read-out: always one line.
+        Row(verticalAlignment = Alignment.Bottom) {
             Text(
-                formatAudioDelay(delayMs),
-                color = if (delayMs != 0 && enabled) mxOrange else Color.White,
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Bold
+                text = if (delayMs > 0) "+$delayMs" else "$delayMs",
+                color = if (active) VpAmberSoft else Color.White,
+                fontSize = 40.sp,
+                fontWeight = FontWeight.Black,
+                maxLines = 1,
+                softWrap = false
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(
+                text = "ms",
+                color = Color.White.copy(0.6f),
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                softWrap = false,
+                modifier = Modifier.padding(bottom = 7.dp)
             )
         }
-        Spacer(Modifier.height(12.dp))
+        Text(
+            text = when {
+                delayMs > 0 -> "Audio plays later"
+                delayMs < 0 -> "Audio plays earlier"
+                else -> "In sync"
+            },
+            color = Color.White.copy(0.55f),
+            fontSize = 12.sp,
+            maxLines = 1
+        )
+
+        Spacer(Modifier.height(6.dp))
+        Slider(
+            value = delayMs.toFloat().coerceIn(-sliderRange, sliderRange),
+            onValueChange = { v ->
+                if (enabled) viewModel.setAudioDelayMs((v / step).roundToInt() * step)
+            },
+            valueRange = -sliderRange..sliderRange,
+            steps = (sliderRange * 2 / step).toInt() - 1,
+            enabled = enabled,
+            colors = SliderDefaults.colors(
+                thumbColor = VpAmberSoft,
+                activeTrackColor = VpAmber,
+                inactiveTrackColor = Color.White.copy(0.16f),
+                activeTickColor = Color.Transparent,
+                inactiveTickColor = Color.Transparent
+            ),
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        Spacer(Modifier.height(6.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            val chipModifier = Modifier
-                .weight(1f)
-                .graphicsLayer { alpha = if (enabled) 1f else 0.4f }
-            MxFilterChip(selected = false, onClick = { if (enabled) viewModel.adjustAudioDelayMs(-500) }, label = "-500", modifier = chipModifier)
-            MxFilterChip(selected = false, onClick = { if (enabled) viewModel.adjustAudioDelayMs(-step) }, label = "-$step", modifier = chipModifier)
-            MxFilterChip(selected = delayMs == 0, onClick = { if (enabled) viewModel.setAudioDelayMs(0) }, label = "Reset", modifier = chipModifier)
-            MxFilterChip(selected = false, onClick = { if (enabled) viewModel.adjustAudioDelayMs(step) }, label = "+$step", modifier = chipModifier)
-            MxFilterChip(selected = false, onClick = { if (enabled) viewModel.adjustAudioDelayMs(500) }, label = "+500", modifier = chipModifier)
+            DelayStepButton("-500", enabled, Modifier.weight(1f)) { viewModel.adjustAudioDelayMs(-500) }
+            DelayStepButton("-$step", enabled, Modifier.weight(1f)) { viewModel.adjustAudioDelayMs(-step) }
+            DelayStepButton(null, enabled && delayMs != 0, Modifier.weight(1f), highlight = true) {
+                viewModel.setAudioDelayMs(0)
+            }
+            DelayStepButton("+$step", enabled, Modifier.weight(1f)) { viewModel.adjustAudioDelayMs(step) }
+            DelayStepButton("+500", enabled, Modifier.weight(1f)) { viewModel.adjustAudioDelayMs(500) }
+        }
+    }
+}
+
+/** One fixed-height pill of the delay row. A null [label] draws the reset icon. Text never wraps. */
+@Composable
+private fun DelayStepButton(
+    label: String?,
+    enabled: Boolean,
+    modifier: Modifier = Modifier,
+    highlight: Boolean = false,
+    onClick: () -> Unit
+) {
+    val shape = RoundedCornerShape(14.dp)
+    Box(
+        modifier = modifier
+            .height(44.dp)
+            .clip(shape)
+            .background(if (highlight && enabled) VpAmber.copy(alpha = 0.22f) else Color.White.copy(alpha = 0.08f))
+            .border(
+                1.dp,
+                if (highlight && enabled) VpAmberSoft.copy(alpha = 0.7f) else Color.White.copy(alpha = 0.10f),
+                shape
+            )
+            .graphicsLayer { alpha = if (enabled) 1f else 0.4f }
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        if (label == null) {
+            Icon(
+                Icons.Rounded.RestartAlt,
+                contentDescription = "Reset audio delay",
+                tint = if (highlight && enabled) VpAmberSoft else Color.White,
+                modifier = Modifier.size(22.dp)
+            )
+        } else {
+            Text(
+                text = label,
+                color = Color.White,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Clip
+            )
         }
     }
 }

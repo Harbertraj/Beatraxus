@@ -52,6 +52,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.ResolvedTextDirection
 import androidx.compose.ui.text.style.TextAlign
@@ -69,6 +70,15 @@ import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
+
+/** Devanagari through Sinhala (Hindi, Bengali, Gujarati, Tamil, Telugu, Kannada, Malayalam...). */
+private fun isIndicScript(text: String): Boolean = text.any { it in '\u0900'..'\u0DFF' }
+
+/** Full line box for Indic text so vowel signs above/below the line are not crushed. */
+private val IndicLineHeightStyle = LineHeightStyle(
+    alignment = LineHeightStyle.Alignment.Center,
+    trim = LineHeightStyle.Trim.None
+)
 
 private suspend fun LazyListState.bouncyScrollToItem(index: Int, targetOffset: Int) {
     val itemInfo = layoutInfo.visibleItemsInfo.firstOrNull { it.index == index }
@@ -457,12 +467,14 @@ fun PlainLyricLine(
 
     val isTamil = remember(text) { text.any { it in '\u0B80'..'\u0BFF' } }
     // Plain lyrics: same compact size the word/line-synced lyrics show at rest
+    val isIndic = remember(text) { isIndicScript(text) }
     val baseStyle = MaterialTheme.typography.headlineMedium.copy(
         fontWeight = FontWeight.Bold,
         fontSize = if (isTamil) 18.sp else 20.sp,
-        lineHeight = if (isTamil) 24.sp else 26.sp,
+        lineHeight = if (isIndic) 30.sp else if (isTamil) 24.sp else 26.sp,
         textAlign = lineTextAlign,
-        letterSpacing = (-0.3).sp,
+        letterSpacing = if (isIndic) 0.sp else (-0.3).sp,
+        lineHeightStyle = if (isIndic) IndicLineHeightStyle else null,
         shadow = Shadow(
             color = Color.White.copy(alpha = 0.35f),
             blurRadius = with(LocalDensity.current) { 10.dp.toPx() }
@@ -568,13 +580,18 @@ fun SyncedLyricLine(
     }
 
     val isTamil = remember(line.text) { line.text.any { it in '\u0B80'..'\u0BFF' } }
+    val isIndic = remember(line.text) { isIndicScript(line.text) }
     val baseStyle = MaterialTheme.typography.headlineMedium.copy(
         fontWeight = FontWeight.ExtraBold,
         fontSize = if (isTamil) 22.sp else 24.sp,
-        lineHeight = if (isTamil) 28.sp else 30.sp,
+        lineHeight = if (isIndic) 36.sp else if (isTamil) 28.sp else 30.sp,
         textAlign = lineTextAlign,
-        letterSpacing = (-0.5).sp
+        letterSpacing = if (isIndic) 0.sp else (-0.5).sp,
+        lineHeightStyle = if (isIndic) IndicLineHeightStyle else null
     )
+    // Line breaks come from the VISIBLE text. The highlight reuses its line boundaries
+    // instead of measuring a second, independent layout that could wrap differently.
+    var baseLayout by remember(line.text) { mutableStateOf<TextLayoutResult?>(null) }
 
     Column(
         modifier = Modifier
@@ -606,7 +623,8 @@ fun SyncedLyricLine(
                 text = line.text,
                 style = baseStyle,
                 color = Color.White.copy(alpha = 0.35f),
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth(),
+                onTextLayout = { baseLayout = it }
             )
 
             if (filledAlpha > 0.01f) {
@@ -615,6 +633,7 @@ fun SyncedLyricLine(
                     isCurrent = isCurrent,
                     progressMs = progressMs,
                     style = baseStyle,
+                    baseLayout = baseLayout,
                     filledAlpha = filledAlpha,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -637,7 +656,8 @@ fun KaraokeText(
     progressMs: () -> Long,
     style: TextStyle,
     filledAlpha: Float,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    baseLayout: TextLayoutResult? = null
 ) {
     val textMeasurer = rememberTextMeasurer()
     val density = LocalDensity.current
@@ -674,8 +694,10 @@ fun KaraokeText(
 
     BoxWithConstraints(modifier = modifier) {
         val width = this.constraints.maxWidth
-        val textLayoutResult = remember(line.text, style, width) {
-            textMeasurer.measure(
+        // Prefer the visible text's own layout so the highlight wraps exactly like it;
+        // fall back to measuring (first frame, before the base Text reported its layout).
+        val textLayoutResult = remember(baseLayout, line.text, style, width) {
+            baseLayout ?: textMeasurer.measure(
                 text = line.text,
                 style = style,
                 constraints = Constraints(maxWidth = width)
@@ -691,6 +713,8 @@ fun KaraokeText(
                 textMeasurer.measure(
                     text = text,
                     style = style,
+                    softWrap = false,
+                    maxLines = 1,
                     constraints = Constraints()
                 )
             }

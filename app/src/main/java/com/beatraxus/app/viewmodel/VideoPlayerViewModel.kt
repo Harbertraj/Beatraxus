@@ -32,6 +32,7 @@ import com.beatraxus.app.BeatraxusApplication
 import com.beatraxus.app.engine.AudioEngine
 import com.beatraxus.app.engine.AudioFrameUtils
 import com.beatraxus.app.engine.VideoDecoderMode
+import com.beatraxus.app.motionboost.MotionBoostMode
 import com.beatraxus.app.engine.VideoPlaybackTuning
 import com.beatraxus.app.engine.VideoRenderersFactory
 import com.beatraxus.app.engine.VideoRoutePhase
@@ -115,6 +116,11 @@ data class VideoPlayerUiState(
     val videoDecoderMode: VideoDecoderMode = VideoDecoderMode.DEFAULT,
     /** Audio delay for the current video in ms. Positive = audio later than video. Resets per video. */
     val audioDelayMs: Int = 0,
+    /** FPS Booster target (frame interpolation). Persisted; [MotionBoostMode.ORIGINAL] = off. */
+    val motionBoostMode: MotionBoostMode = MotionBoostMode.ORIGINAL,
+    /** Measured source / presented frame rate while the FPS Booster runs (0 = unknown). */
+    val motionBoostSourceFps: Float = 0f,
+    val motionBoostOutputFps: Float = 0f,
     val isConnectingEngineRoute: Boolean = false,
     val engineRouteError: String? = null
 )
@@ -203,6 +209,9 @@ class VideoPlayerViewModel(
         maxVolume = (application.getSystemService(Context.AUDIO_SERVICE) as AudioManager).getStreamMaxVolume(AudioManager.STREAM_MUSIC),
         isEqEnabled = application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE).getBoolean("video_eq_enabled", false),
         videoDecoderMode = tuning.decoderMode,
+        motionBoostMode = MotionBoostMode.fromName(
+            application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE).getString(PREF_MOTION_BOOST, null)
+        ),
         aspectRatio = application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE).getString("video_aspect_ratio", VideoAspectRatio.FIT.name)?.let { name ->
             val mappedName = when (name) {
                 "ORIGINAL" -> "FIT"
@@ -896,6 +905,26 @@ class VideoPlayerViewModel(
     }
 
     fun adjustAudioDelayMs(deltaMs: Int) = setAudioDelayMs(_uiState.value.audioDelayMs + deltaMs)
+
+    /**
+     * FPS Booster: interpolates extra frames (e.g. 24 -> 60 fps). The screen swaps the video output to
+     * the interpolating renderer while a mode other than ORIGINAL is selected. The choice is remembered.
+     */
+    fun setMotionBoostMode(mode: MotionBoostMode) {
+        if (mode == _uiState.value.motionBoostMode) return
+        prefs.edit().putString(PREF_MOTION_BOOST, mode.name).apply()
+        _uiState.update { it.copy(motionBoostMode = mode, motionBoostSourceFps = 0f, motionBoostOutputFps = 0f) }
+    }
+
+    fun updateMotionBoostStats(sourceFps: Float, outputFps: Float) {
+        _uiState.update { it.copy(motionBoostSourceFps = sourceFps, motionBoostOutputFps = outputFps) }
+    }
+
+    /** Turns the booster off (and forgets the choice, so it does not fail again next time) when the GL pipeline fails. */
+    fun onMotionBoostFailed() {
+        prefs.edit().putString(PREF_MOTION_BOOST, MotionBoostMode.ORIGINAL.name).apply()
+        _uiState.update { it.copy(motionBoostMode = MotionBoostMode.ORIGINAL, motionBoostSourceFps = 0f, motionBoostOutputFps = 0f) }
+    }
 
     fun setAspectRatio(ratio: VideoAspectRatio) {
         _uiState.update { it.copy(aspectRatio = ratio, aspectRatioMessage = ratio.displayName) }
@@ -1621,6 +1650,7 @@ class VideoPlayerViewModel(
 }
 
 private const val PREF_VIDEO_DECODER_MODE = "video_decoder_mode"
+private const val PREF_MOTION_BOOST = "video_motion_boost"
 
 class VideoPlayerViewModelFactory(private val application: Application, private val videoQueue: List<Video>, private val initialVideoId: String) : ViewModelProvider.Factory {
     @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
