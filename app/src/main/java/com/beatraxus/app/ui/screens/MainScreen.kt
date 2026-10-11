@@ -369,6 +369,7 @@ fun MainScreen(
 
     val songs   by viewModel.songs.collectAsStateWithLifecycle()
     val smartAllSongs by viewModel.allSongs.collectAsStateWithLifecycle()
+    val smartQualityTiers by viewModel.songQualityTiers.collectAsStateWithLifecycle()
     val albums  by viewModel.albums.collectAsStateWithLifecycle()
     val artists by viewModel.artists.collectAsStateWithLifecycle()
     val folders by viewModel.folders.collectAsStateWithLifecycle()
@@ -518,6 +519,8 @@ fun MainScreen(
     var densityAnchor by remember { mutableStateOf(Rect.Zero) }
     // Smart Playlists: selected list (driven by the top strip's filter) and its songs (for Shuffle All)
     var smartKindOrdinal by rememberSaveable { mutableIntStateOf(0) }
+    // Smart playlists keep their own natural order until the user picks a sort in the filter dropdown
+    var smartSortActive by rememberSaveable { mutableStateOf(false) }
     var smartCurrentList by remember { mutableStateOf<List<com.beatraxus.app.model.Song>>(emptyList()) }
     var selectedSongForOptions by remember { mutableStateOf<com.beatraxus.app.model.Song?>(null) }
     var selectedVideoForOptions by remember { mutableStateOf<com.beatraxus.app.model.Video?>(null) }
@@ -2490,7 +2493,12 @@ fun MainScreen(
                                                         currentSongId = uiState.currentSong?.id,
                                                         isPlaying = uiState.isPlaying,
                                                         onPlay = { list, index -> viewModel.playList(list, index) },
-                                                        onCurrentListChange = { smartCurrentList = it }
+                                                        onCurrentListChange = { smartCurrentList = it },
+                                                        sortActive = smartSortActive,
+                                                        sortType = uiState.sortType,
+                                                        sortAscending = uiState.isAscending,
+                                                        qualityTier = uiState.qualityTierFilter,
+                                                        qualityTiers = smartQualityTiers
                                                     )
                                                 }
                                                 LibraryView.VIDEO_ALL -> com.beatraxus.app.ui.components.VideoCloudGate(
@@ -3438,14 +3446,17 @@ fun MainScreen(
                             anchor = sortAnchor,
                             width = 200.dp
                         ) {
-                            if (uiState.currentView == LibraryView.SMART_PLAYLISTS) {
-                                com.beatraxus.app.features.SmartFilterDropdownContent(
-                                    selectedOrdinal = smartKindOrdinal,
-                                    onSelect = { smartKindOrdinal = it; activeMainSheet = null }
-                                )
-                            } else {
-                                SortDropdownContent(viewModel, uiState, onDismiss = { activeMainSheet = null })
-                            }
+                            // Smart Playlists use the very same Sort / Filter dropdown as All Songs
+                            val inSmart = uiState.currentView == LibraryView.SMART_PLAYLISTS
+                            SortDropdownContent(
+                                viewModel, uiState,
+                                onDismiss = { activeMainSheet = null },
+                                sortActive = !inSmart || smartSortActive,
+                                onSortChanged = { if (inSmart) smartSortActive = true },
+                                onResetOrder = if (inSmart) {
+                                    { smartSortActive = false; activeMainSheet = null }
+                                } else null
+                            )
                         }
 
                         LibraryDropdown(
@@ -6174,7 +6185,13 @@ fun Modifier.pinchToZoom(onZoomIn: () -> Unit, onZoomOut: () -> Unit): Modifier 
 fun SortDropdownContent(
     viewModel: PlayerViewModel,
     uiState: com.beatraxus.app.model.PlayerUiState,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    // Smart Playlists only: show a sort row as selected only once a sort has really been applied ...
+    sortActive: Boolean = true,
+    // ... get told when the user changes the sort / order ...
+    onSortChanged: () -> Unit = {},
+    // ... and offer a way back to the playlist's natural order (null = no such row)
+    onResetOrder: (() -> Unit)? = null
 ) {
     DropdownHeader(
         title = if (uiState.currentView == LibraryView.CLOUD) "SORT & FILTER" else "SORT BY",
@@ -6184,7 +6201,7 @@ fun SortDropdownContent(
                 modifier = Modifier
                     .size(34.dp)
                     .clip(CircleShape)
-                    .clickable { viewModel.toggleSortOrder() },
+                    .clickable { viewModel.toggleSortOrder(); onSortChanged() },
                 contentAlignment = Alignment.Center
             ) {
                 Box(
@@ -6212,14 +6229,23 @@ fun SortDropdownContent(
         DropdownRow(
             icon = icon,
             label = label,
-            selected = uiState.sortType == type,
-            onClick = { viewModel.setSortType(type); onDismiss() }
+            selected = sortActive && uiState.sortType == type,
+            onClick = { viewModel.setSortType(type); onSortChanged(); onDismiss() }
+        )
+    }
+    if (onResetOrder != null) {
+        DropdownRow(
+            icon = Icons.Rounded.AutoAwesome,
+            label = "Default order",
+            selected = !sortActive,
+            onClick = onResetOrder
         )
     }
 
     if (uiState.currentView == LibraryView.ALL_SONGS ||
         uiState.currentView == LibraryView.FAVORITES ||
-        uiState.currentView == LibraryView.RECENTLY_ADDED
+        uiState.currentView == LibraryView.RECENTLY_ADDED ||
+        uiState.currentView == LibraryView.SMART_PLAYLISTS
     ) {
         HorizontalDivider(modifier = Modifier.padding(vertical = 6.dp, horizontal = 8.dp), color = Color.White.copy(0.08f))
         DropdownHeader(title = "QUALITY")

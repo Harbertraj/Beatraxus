@@ -185,6 +185,14 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     var pendingPermissionAction: (() -> Unit)? = null
     private val aiAnalysisChannel = kotlinx.coroutines.channels.Channel<Song>(100, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+
+    // On-demand AI analysis of a single song (AI EQ sheet / AI EQ switched on). Ids of songs being analysed,
+    // and of songs whose analysis finished without a result.
+    private val aiAnalysisInFlight = java.util.Collections.synchronizedSet(HashSet<String>())
+    private val _aiAnalysisBusy = MutableStateFlow<Set<String>>(emptySet())
+    val aiAnalysisBusy: StateFlow<Set<String>> = _aiAnalysisBusy.asStateFlow()
+    private val _aiAnalysisFailed = MutableStateFlow<Set<String>>(emptySet())
+    val aiAnalysisFailed: StateFlow<Set<String>> = _aiAnalysisFailed.asStateFlow()
     private val musicBrainzService = com.beatraxus.app.repository.MusicBrainzService() // NEW
     private val yearEnrichmentChannel = kotlinx.coroutines.channels.Channel<Song>(kotlinx.coroutines.channels.Channel.UNLIMITED) // NEW
 
@@ -606,6 +614,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         list to qualityList.associateBy { it.songId }
     }
 
+    /** songId -> quality tier ("Excellent" / "Good" / "Fair" / "Poor"); lets Smart Playlists use the same quality filter as All Songs. */
+    val songQualityTiers: StateFlow<Map<String, String>> = songQualityDao.getAllQualityFlow()
+        .map { list -> list.associate { it.songId to it.qualityTier } }
+        .flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
+
     val songs: StateFlow<List<Song>> = combine(allSongsWithQuality, _uiState, debouncedSearchQuery, _recentlyPlayed, playlists) { (allSongsList, qualityMap), state, debouncedQuery, recentIds, pls ->
         val mode = state.libraryMode
         val all = when (mode) {
@@ -846,6 +860,18 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 // which wasn't enough breathing room given the decoder+TFLite+network cost)
                 delay(750)
             }
+        }
+
+        // AI EQ needs the current song's analysis. The queue above only fills during library scans and
+        // pauses while music plays, so a song you are listening to was never analysed and AI EQ did
+        // nothing for it. Analyse the playing song right away whenever AI EQ is on.
+        viewModelScope.launch {
+            _uiState
+                .map { Triple(it.currentSong?.id, it.dsp.config.aiEqEnabled, it.currentSong) }
+                .distinctUntilChangedBy { it.first to it.second }
+                .collect { (_, enabled, song) ->
+                    if (enabled && song != null) requestAiAnalysis(song)
+                }
         }
 
         // Year enrichment via MusicBrainz for songs with no tagged year
@@ -4406,6 +4432,35 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 Log.e("PlayerViewModel", "Quality analysis failed for ${song.title}: ${t.message}", t)
             } finally {
                 qualityInFlight.remove(song.id)
+            }
+        }
+    }
+
+    /**
+     * Analyses [song] right now (not behind the library queue, and not paused while music plays) and
+     * applies the result to the running AI EQ. No-op if the song is already analysed or being analysed.
+     * Only local files can be analysed; cloud / streamed songs are skipped by the analysis engine.
+     */
+    fun requestAiAnalysis(song: Song) {
+        if (song.source != SongSource.LOCAL) return
+        if (!aiAnalysisInFlight.add(song.id)) return
+        _aiAnalysisBusy.value = aiAnalysisInFlight.toSet()
+        _aiAnalysisFailed.update { it - song.id }
+        viewModelScope.launch(aiAnalysisDispatcher) {
+            try {
+                if (aiAnalysisDao.getAnalysisForSong(song.id) != null) return@launch
+                analyzeAndStoreQuality(song)
+                if (aiAnalysisDao.getAnalysisForSong(song.id) != null) {
+                    service?.refreshAiAnalysis(song.id)
+                } else {
+                    _aiAnalysisFailed.update { it + song.id }
+                }
+            } catch (t: Throwable) {
+                Log.e("PlayerViewModel", "AI analysis failed for ${song.title}: ${t.message}", t)
+                _aiAnalysisFailed.update { it + song.id }
+            } finally {
+                aiAnalysisInFlight.remove(song.id)
+                _aiAnalysisBusy.value = aiAnalysisInFlight.toSet()
             }
         }
     }

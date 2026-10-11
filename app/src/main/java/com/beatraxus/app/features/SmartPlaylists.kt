@@ -52,9 +52,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.beatraxus.app.model.Song
+import com.beatraxus.app.model.SortType
 import com.beatraxus.app.ui.components.AlbumArtImage
-import com.beatraxus.app.ui.components.DropdownHeader
-import com.beatraxus.app.ui.components.DropdownRow
 import com.beatraxus.app.ui.screens.SongGridItem
 
 /** Per-song play counter. Stored in SharedPreferences, so no database migration is needed. */
@@ -115,12 +114,42 @@ fun buildSmartPlaylist(context: Context, kind: SmartPlaylistKind, songs: List<So
 }
 
 /**
+ * Applies the library's Sort / Filter dropdown (the same one All Songs uses) to one smart playlist.
+ *
+ * The quality tier filter always applies. The sort only applies once [sortActive] is true, i.e. after the
+ * user picked a sort in the dropdown: until then every smart playlist keeps its own natural order
+ * (Most Played by play count, Long Tracks longest first, ...), which a default "by name" sort would destroy.
+ */
+fun applySmartOrder(
+    list: List<Song>,
+    sortActive: Boolean,
+    sortType: SortType,
+    ascending: Boolean,
+    qualityTier: String?,
+    qualityTiers: Map<String, String>
+): List<Song> {
+    var out = list
+    if (qualityTier != null) out = out.filter { qualityTiers[it.id] == qualityTier }
+    if (sortActive) {
+        val comparator: Comparator<Song> = when (sortType) {
+            SortType.NAME -> compareBy { it.title.lowercase() }
+            SortType.DATE_ADDED -> compareBy { it.dateAdded }
+            SortType.FILE_SIZE -> compareBy { it.fileSizeBytes }
+            SortType.DURATION -> compareBy { it.durationMs }
+        }
+        out = if (ascending) out.sortedWith(comparator) else out.sortedWith(comparator).reversed()
+    }
+    return out
+}
+
+/**
  * Smart Playlists screen. Plug into the library with the SMART_PLAYLISTS view.
  *
- * It only shows the smart-playlist chips, the selected list and its songs. Shuffle All, the filter
- * (which smart playlist) and the layout density live in the library's shared top icon strip, so the
- * selected playlist ([selectedOrdinal]) is owned by the caller and the resulting list is reported
- * back through [onCurrentListChange] for the strip's Shuffle All.
+ * It only shows the smart-playlist chips, the selected list and its songs. Shuffle All, the Sort / Filter
+ * dropdown (same as All Songs) and the layout density live in the library's shared top icon strip. The
+ * selected playlist ([selectedOrdinal]) is owned by the caller, the sort / quality settings are applied
+ * here with [applySmartOrder], and the resulting list is reported back through [onCurrentListChange]
+ * so the strip's Shuffle All shuffles exactly what is shown.
  *
  * [layoutDensity] follows the library setting: 1-2 = list (2 is compact), 3+ = grid with that many columns.
  */
@@ -134,6 +163,11 @@ fun SmartPlaylistsScreen(
     isPlaying: Boolean,
     onPlay: (List<Song>, Int) -> Unit,
     onCurrentListChange: (List<Song>) -> Unit,
+    sortActive: Boolean,
+    sortType: SortType,
+    sortAscending: Boolean,
+    qualityTier: String?,
+    qualityTiers: Map<String, String>,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -142,7 +176,10 @@ fun SmartPlaylistsScreen(
         kinds.associateWith { buildSmartPlaylist(context, it, songs) }
     }
     val current = kinds[selectedOrdinal.coerceIn(0, kinds.lastIndex)]
-    val list = lists[current].orEmpty()
+    val baseList = lists[current].orEmpty()
+    val list = remember(baseList, sortActive, sortType, sortAscending, qualityTier, qualityTiers) {
+        applySmartOrder(baseList, sortActive, sortType, sortAscending, qualityTier, qualityTiers)
+    }
 
     LaunchedEffect(list) { onCurrentListChange(list) }
 
@@ -188,7 +225,10 @@ fun SmartPlaylistsScreen(
 
         if (list.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("Nothing here yet", color = Color.White.copy(alpha = 0.5f))
+                Text(
+                    if (baseList.isEmpty()) "Nothing here yet" else "No songs match this filter",
+                    color = Color.White.copy(alpha = 0.5f)
+                )
             }
         } else if (layoutDensity >= 3) {
             val columns = layoutDensity.coerceIn(3, 6)
@@ -235,26 +275,5 @@ fun SmartPlaylistsScreen(
                 item { Spacer(Modifier.height(96.dp)) }
             }
         }
-    }
-}
-
-/**
- * Content of the top strip's filter dropdown while the Smart Playlists view is open: lets the user
- * pick which smart playlist is shown.
- */
-@Composable
-fun SmartFilterDropdownContent(
-    selectedOrdinal: Int,
-    onSelect: (Int) -> Unit
-) {
-    DropdownHeader(title = "SMART PLAYLIST")
-    SmartPlaylistKind.values().forEach { kind ->
-        DropdownRow(
-            icon = kind.icon,
-            label = kind.title,
-            selected = kind.ordinal == selectedOrdinal,
-            accent = kind.color,
-            onClick = { onSelect(kind.ordinal) }
-        )
     }
 }

@@ -749,6 +749,26 @@ class AudioEngine(
         }
     }
 
+    /**
+     * Re-reads [songId]'s AI analysis from the database and applies it to the running DSP pipeline.
+     * The pipeline normally only looks the analysis up when a song starts, so without this a song that
+     * gets analysed while it is already playing would keep playing without its AI EQ.
+     */
+    fun refreshAiAnalysis(songId: String) {
+        engineScope.launch {
+            try {
+                val analysis = aiAnalysisDao.getAnalysisForSong(songId) ?: return@launch
+                val session = activeSession ?: return@launch
+                if (session.song.id != songId) return@launch
+                session.dspLock.writeLock().withLock {
+                    session.dspPipeline.updateAiAnalysis(analysis)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "AI analysis refresh failed for $songId", e)
+            }
+        }
+    }
+
     fun updateDspConfig(config: DspConfig) {
         val oldConfig = dspConfig
         val sourceSampleRate = currentSong?.sampleRateHz ?: 44100

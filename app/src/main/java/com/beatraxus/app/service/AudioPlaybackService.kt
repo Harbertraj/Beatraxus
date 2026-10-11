@@ -766,6 +766,11 @@ class AudioPlaybackService : Service() {
         engine.updateDspConfig(config)
     }
 
+    /** Applies a freshly stored AI analysis to the song that is playing right now. */
+    fun refreshAiAnalysis(songId: String) {
+        engine.refreshAiAnalysis(songId)
+    }
+
     fun setOutputMode(mode: OutputMode) {
         if (_outputRouteStateFlow.value.selectedMode == mode) return
         audioOutput.setOutputMode(mode)

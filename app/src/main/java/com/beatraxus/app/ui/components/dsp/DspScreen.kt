@@ -1166,11 +1166,28 @@ private fun AiOptionsPopup(
     onDismiss: () -> Unit
 ) {
     val aiAnalysisMap by viewModel.aiAnalysis.collectAsStateWithLifecycle()
-    val currentAnalysis = uiState.currentSong?.id?.let { aiAnalysisMap[it] }
+    val aiBusy by viewModel.aiAnalysisBusy.collectAsStateWithLifecycle()
+    val aiFailed by viewModel.aiAnalysisFailed.collectAsStateWithLifecycle()
+    val currentSong = uiState.currentSong
+    val currentAnalysis = currentSong?.id?.let { aiAnalysisMap[it] }
 
-    val genreText = currentAnalysis?.genre?.takeIf { it.isNotBlank() } ?: "Not analysed yet"
-    val moodText = currentAnalysis?.mood?.takeIf { it.isNotBlank() } ?: "Not analysed yet"
-    val eqProfileText = currentAnalysis?.language?.takeIf { it.isNotBlank() } ?: "Not analysed yet"
+    // Why there may be nothing to show: still running, failed, or not possible for this kind of song.
+    val unsupported = currentSong != null && currentAnalysis == null &&
+        currentSong.source != com.beatraxus.app.model.SongSource.LOCAL
+    val analysing = currentSong != null && currentAnalysis == null && currentSong.id in aiBusy
+    val failed = currentSong != null && currentAnalysis == null && !analysing && currentSong.id in aiFailed
+    val placeholder = when {
+        currentSong == null -> "No song playing"
+        unsupported -> "Not available"
+        analysing -> "Analysing…"
+        failed -> "Analysis failed"
+        else -> "Not analysed yet"
+    }
+
+    val genreText = currentAnalysis?.genre?.takeIf { it.isNotBlank() } ?: placeholder
+    val moodText = currentAnalysis?.mood?.takeIf { it.isNotBlank() } ?: placeholder
+    // This row used to be labelled "EQ Profile" but has always shown the detected language.
+    val languageText = currentAnalysis?.language?.takeIf { it.isNotBlank() } ?: placeholder
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -1251,9 +1268,84 @@ private fun AiOptionsPopup(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
-                                Text("EQ Profile", color = Color.White.copy(0.4f), fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                Text(eqProfileText, color = PremiumAccent, fontSize = 12.sp, fontWeight = FontWeight.Black)
+                                Text("Language", color = Color.White.copy(0.4f), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                Text(languageText, color = PremiumAccent, fontSize = 12.sp, fontWeight = FontWeight.Black)
                             }
+                        }
+
+                        // Progress / explanation while there is no analysis yet
+                        if (currentAnalysis == null && currentSong != null) {
+                            when {
+                                analysing -> Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(16.dp),
+                                        strokeWidth = 2.dp,
+                                        color = PremiumAccent
+                                    )
+                                    Text(
+                                        "Analysing this song to build its EQ…",
+                                        color = Color.White.copy(0.6f),
+                                        fontSize = 12.sp
+                                    )
+                                }
+                                unsupported -> Text(
+                                    "AI EQ needs a local file, so it can't analyse cloud or streamed songs.",
+                                    color = Color.White.copy(0.5f),
+                                    fontSize = 12.sp
+                                )
+                                failed -> Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text(
+                                        "This song couldn't be analysed.",
+                                        color = Color.White.copy(0.5f),
+                                        fontSize = 12.sp,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    TextButton(onClick = { viewModel.requestAiAnalysis(currentSong) }) {
+                                        Text("RETRY", color = PremiumAccent, fontWeight = FontWeight.Black, fontSize = 12.sp)
+                                    }
+                                }
+                            }
+                        }
+
+                        // The EQ the AI has set for the song that is playing
+                        if (currentAnalysis != null) {
+                            val bypassed = uiState.dsp.config.bitPerfectEnabled
+                            HorizontalDivider(color = Color.White.copy(0.1f), modifier = Modifier.padding(vertical = 4.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    "EQ SET ON THIS SONG",
+                                    color = Color.White.copy(0.4f),
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    letterSpacing = 1.sp
+                                )
+                                Text(
+                                    if (bypassed) "BYPASSED · BIT-PERFECT" else "ACTIVE",
+                                    color = if (bypassed) Color.White.copy(0.4f) else PremiumAccent,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Black
+                                )
+                            }
+                            AiEqBandBars(
+                                gains = listOf(
+                                    currentAnalysis.eq31, currentAnalysis.eq62, currentAnalysis.eq125,
+                                    currentAnalysis.eq250, currentAnalysis.eq500, currentAnalysis.eq1k,
+                                    currentAnalysis.eq2k, currentAnalysis.eq4k, currentAnalysis.eq8k,
+                                    currentAnalysis.eq16k
+                                ),
+                                active = !bypassed
+                            )
                         }
                     }
 
@@ -1293,6 +1385,82 @@ private fun AiOptionsPopup(
                 }
             }
         }
+    }
+}
+
+/** The ten AI EQ band gains (31 Hz ... 16 kHz, +/-4 dB range) of the current song, one bar per band. */
+@Composable
+private fun AiEqBandBars(gains: List<Float>, active: Boolean) {
+    val labels = listOf("31", "62", "125", "250", "500", "1k", "2k", "4k", "8k", "16k")
+    val rangeDb = 4f
+    val positive = if (active) PremiumAccent else Color.White.copy(0.35f)
+    val negative = if (active) DspViolet else Color.White.copy(0.25f)
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth().height(96.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            gains.forEach { gain ->
+                Canvas(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                    val mid = size.height / 2f
+                    val barW = size.width * 0.55f
+                    val x = (size.width - barW) / 2f
+                    drawRoundRect(
+                        color = Color.White.copy(0.06f),
+                        topLeft = Offset(x, 0f),
+                        size = Size(barW, size.height),
+                        cornerRadius = CornerRadius(barW / 2f, barW / 2f)
+                    )
+                    val h = (abs(gain) / rangeDb).coerceIn(0f, 1f) * mid
+                    if (h > 0.5f) {
+                        drawRoundRect(
+                            color = if (gain >= 0f) positive else negative,
+                            topLeft = Offset(x, if (gain >= 0f) mid - h else mid),
+                            size = Size(barW, h),
+                            cornerRadius = CornerRadius(barW / 2f, barW / 2f)
+                        )
+                    }
+                    drawLine(
+                        color = Color.White.copy(0.25f),
+                        start = Offset(0f, mid),
+                        end = Offset(size.width, mid),
+                        strokeWidth = 1f
+                    )
+                }
+            }
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            gains.forEach { gain ->
+                Text(
+                    text = String.format(Locale.US, "%+.1f", gain),
+                    color = if (active) Color.White.copy(0.85f) else Color.White.copy(0.4f),
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center,
+                    maxLines = 1,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            labels.forEach { label ->
+                Text(
+                    text = label,
+                    color = Color.White.copy(0.4f),
+                    fontSize = 9.sp,
+                    textAlign = TextAlign.Center,
+                    maxLines = 1,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+        Text(
+            "Gains in dB, 31 Hz to 16 kHz",
+            color = Color.White.copy(0.3f),
+            fontSize = 9.sp,
+            modifier = Modifier.fillMaxWidth(),
+            textAlign = TextAlign.Center
+        )
     }
 }
 
