@@ -31,6 +31,7 @@ internal class FfmpegAlacDecoder(
         val ext = song.uri.lastPathSegment?.substringAfterLast('.', "")?.lowercase(Locale.US).orEmpty()
         if (song.format.equals("ALAC", ignoreCase = true) || song.format.equals("FLAC", ignoreCase = true) || song.format.equals("AC3", true) || song.format.equals("EAC3", true) || song.format.equals("DTS", true) || song.format.equals("DSD", true) || song.format.equals("TRUEHD", true)) return true
         if (song.format.equals("WAV", ignoreCase = true)) return true
+        if (FfmpegOnlyFormats.isFfmpegOnly(ext, song.format)) return true
         if (ext in setOf("alac", "flac", "m4a", "mp4", "caf", "wav", "bwf", "ac3", "eac3", "ec3", "dts", "dsf", "dff", "mkv", "mka", "ts", "m2ts", "webm") || isVideoRoute) return true
         return false
     }
@@ -113,6 +114,8 @@ internal class FfmpegAlacDecoder(
             isVideoRoute || ext in containerExts -> null
             ext == "ac3" || ext == "eac3" || ext == "ec3" -> "ac3"
             ext == "dts" -> "dts"
+            FfmpegOnlyFormats.demuxerHint(ext, request.song.format) != null ->
+                FfmpegOnlyFormats.demuxerHint(ext, request.song.format)
             ext == "dsf" || request.song.format.equals("DSD", ignoreCase = true) -> "dsf"
             ext == "dff" -> "dsdiff"
             format.codecName.contains("alac", ignoreCase = true) || request.song.format.equals("ALAC", ignoreCase = true) || request.song.format.equals("M4A", ignoreCase = true) -> "mov"
@@ -329,9 +332,13 @@ internal class FfmpegAlacDecoder(
             ffprobeCache[cacheKey]?.let { return@withContext it }
         }
 
+        // MediaExtractor cannot open APE/WV/TTA/MPC/MKA, so probe those with FFprobe directly.
+        val isFfmpegOnly = FfmpegOnlyFormats.isFfmpegOnly(ext, song.format) &&
+            !song.format.equals("DSD", ignoreCase = true) && ext != "dsf" && ext != "dff" && ext != "dsd"
+
         // For video_route songs and for Dolby/DTS/TrueHD tracks, get format from FFprobe
         // (reads real channels and sample_rate of the selected audio stream)
-        if (isVideoRoute || isDolbyDtsTrueHd) {
+        if (isVideoRoute || isDolbyDtsTrueHd || isFfmpegOnly) {
             val inputSource = resolveInputSource(song)
             if (inputSource.isNotBlank()) {
                 val ffprobed = probeFormatWithFfprobe(inputSource, headers, trackIndex)

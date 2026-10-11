@@ -49,6 +49,14 @@ internal class DecoderFactory(
             return ffmpegAlacDecoder
         }
 
+        // APE / WV / TTA / MPC / MKA are not decodable by MediaCodec, so they always use FFmpeg
+        // (local and cloud alike). Checked before the cloud/local routing below.
+        val fileExt = song.uri.lastPathSegment?.substringAfterLast('.', "")?.lowercase().orEmpty()
+        if (FfmpegOnlyFormats.isFfmpegOnly(fileExt, format)) {
+            Log.i(TAG, "Routing to FFmpeg (FFmpeg-only format): ${song.title} [format=$format, ext=$fileExt]")
+            return ffmpegAlacDecoder
+        }
+
         val durationMin = song.durationMs / 60000.0
         val sizeMb = song.fileSizeBytes / (1024.0 * 1024.0)
         val isLikelyLossyM4A = (format == "m4a" || format == "mp4" || format == "aac") &&

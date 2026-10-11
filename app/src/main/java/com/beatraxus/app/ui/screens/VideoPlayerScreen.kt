@@ -112,7 +112,7 @@ enum class GestureType {
 }
 
 enum class PlayerSheetType {
-    NONE, AUDIO, SUBTITLE, SPEED, ALL, EQUALIZER, SLEEP_TIMER, COLOR
+    NONE, AUDIO, SUBTITLE, SPEED, ALL, EQUALIZER, SLEEP_TIMER, COLOR, AUDIO_DELAY
 }
 
 @UnstableApi
@@ -668,8 +668,20 @@ fun VideoPlayerScreen(
                         title = uiState.currentVideo?.title ?: "",
                         isHdr = uiState.isHdr,
                         sleepTimerRemainingMs = uiState.sleepTimerRemainingMs,
+                        decoderLabel = uiState.videoDecoderMode.label,
+                        isAudioDelayActive = uiState.audioDelayMs != 0,
                         onBack = onBack,
+                        onDecoderClick = {
+                            val mode = viewModel.cycleVideoDecoderMode()
+                            val note = if (uiState.routeAudioToEngine) " (applies next start)" else ""
+                            android.widget.Toast.makeText(
+                                context,
+                                "Decoder: ${mode.label} - ${mode.description}$note",
+                                android.widget.Toast.LENGTH_SHORT
+                            ).show()
+                        },
                         onAudioClick = { sheetType = PlayerSheetType.AUDIO },
+                        onAudioDelayClick = { sheetType = PlayerSheetType.AUDIO_DELAY },
                         onSubtitleClick = { sheetType = PlayerSheetType.SUBTITLE },
                         modifier = Modifier.align(Alignment.TopCenter)
                     )
@@ -1184,8 +1196,12 @@ fun PlayerTopBar(
     title: String,
     isHdr: Boolean,
     sleepTimerRemainingMs: Long? = null,
+    decoderLabel: String,
+    isAudioDelayActive: Boolean,
     onBack: () -> Unit,
+    onDecoderClick: () -> Unit,
     onAudioClick: () -> Unit,
+    onAudioDelayClick: () -> Unit,
     onSubtitleClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -1261,8 +1277,23 @@ fun PlayerTopBar(
                     )
                 }
             }
+            // Decoder: no sheet, each tap switches to the next mode (HW -> HW+ -> SW -> HW)
+            VpGlassButton(onClick = onDecoderClick, size = 42.dp) {
+                Text(
+                    decoderLabel,
+                    color = Color.White,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Black,
+                    maxLines = 1
+                )
+            }
+            Spacer(Modifier.width(8.dp))
             VpGlassButton(onClick = onAudioClick, size = 42.dp) {
                 Icon(Icons.Rounded.AudioFile, null, tint = Color.White, modifier = Modifier.size(21.dp))
+            }
+            Spacer(Modifier.width(8.dp))
+            VpGlassButton(onClick = onAudioDelayClick, size = 42.dp, active = isAudioDelayActive) {
+                Icon(Icons.Rounded.Sync, "Audio delay", tint = Color.White, modifier = Modifier.size(21.dp))
             }
             Spacer(Modifier.width(8.dp))
             VpGlassButton(onClick = onSubtitleClick, size = 42.dp) {
@@ -1618,6 +1649,7 @@ fun VideoSettingsSheetContent(
         
         val title = when (activeSheetType) {
             PlayerSheetType.AUDIO -> "Audio Tracks"
+            PlayerSheetType.AUDIO_DELAY -> "Audio Delay"
             PlayerSheetType.SUBTITLE -> "Subtitles"
             PlayerSheetType.SPEED -> "Playback Speed"
             PlayerSheetType.EQUALIZER -> "Premium Equalizer"
@@ -1993,6 +2025,12 @@ fun VideoSettingsSheetContent(
                     }
                 }
             }
+        }
+
+        // Audio delay (opened from the top bar)
+        if (activeSheetType == PlayerSheetType.AUDIO_DELAY || activeSheetType == PlayerSheetType.ALL) {
+            Spacer(Modifier.height(16.dp))
+            AudioDelaySection(uiState = uiState, viewModel = viewModel)
         }
 
         // Subtitle Section
@@ -2383,6 +2421,65 @@ private fun applyVideoAspect(view: PlayerView, mode: VideoAspectRatio, size: Vid
         VideoAspectRatio.SIXTEEN_NINE -> {
             view.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
             frame.setAspectRatio(16f / 9f)
+        }
+    }
+}
+
+private fun formatAudioDelay(delayMs: Int): String = if (delayMs > 0) "+$delayMs ms" else "$delayMs ms"
+
+/** Shifts the sound against the picture: positive values play the audio later. */
+@Composable
+private fun AudioDelaySection(
+    uiState: VideoPlayerUiState,
+    viewModel: VideoPlayerViewModel
+) {
+    val mxOrange = Color(0xFFFF8F00)
+    val enabled = !uiState.routeAudioToEngine && !uiState.isConnectingEngineRoute
+    val delayMs = uiState.audioDelayMs
+    val step = com.beatraxus.app.engine.VideoPlaybackTuning.AUDIO_DELAY_STEP_MS
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color.White.copy(0.05f))
+            .padding(16.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Audio delay", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                Text(
+                    if (enabled) "Positive plays the sound later than the picture"
+                    else "Not available while audio plays through the Audio Engine",
+                    color = Color.White.copy(0.6f),
+                    fontSize = 12.sp
+                )
+            }
+            Text(
+                formatAudioDelay(delayMs),
+                color = if (delayMs != 0 && enabled) mxOrange else Color.White,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
+        Spacer(Modifier.height(12.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            val chipModifier = Modifier
+                .weight(1f)
+                .graphicsLayer { alpha = if (enabled) 1f else 0.4f }
+            MxFilterChip(selected = false, onClick = { if (enabled) viewModel.adjustAudioDelayMs(-500) }, label = "-500", modifier = chipModifier)
+            MxFilterChip(selected = false, onClick = { if (enabled) viewModel.adjustAudioDelayMs(-step) }, label = "-$step", modifier = chipModifier)
+            MxFilterChip(selected = delayMs == 0, onClick = { if (enabled) viewModel.setAudioDelayMs(0) }, label = "Reset", modifier = chipModifier)
+            MxFilterChip(selected = false, onClick = { if (enabled) viewModel.adjustAudioDelayMs(step) }, label = "+$step", modifier = chipModifier)
+            MxFilterChip(selected = false, onClick = { if (enabled) viewModel.adjustAudioDelayMs(500) }, label = "+500", modifier = chipModifier)
         }
     }
 }

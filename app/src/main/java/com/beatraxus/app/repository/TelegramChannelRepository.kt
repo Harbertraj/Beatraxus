@@ -39,6 +39,11 @@ internal fun detectAudioFormat(fileName: String, mimeType: String?): String {
         "alac", "caf" -> return "ALAC"
         "aiff", "aif" -> return "AIFF"
         "dsf", "dsd" -> return "DSD"
+        "ape" -> return "APE"
+        "wv" -> return "WV"
+        "tta" -> return "TTA"
+        "mpc" -> return "MPC"
+        "mka" -> return "MKA"
         "ac3", "eac3", "ec3", "dts" -> return "DOLBY"
         "mp3" -> return "MP3"
     }

@@ -1,4 +1,4 @@
-package com.beatraxus.app.motionboost
+package com.beatraxus.app.colorgrade
 
 import android.content.Context
 import androidx.media3.common.util.UnstableApi

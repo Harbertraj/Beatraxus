@@ -339,6 +339,11 @@ class MusicRepository(private val context: Context) {
                                                 extractorMime.contains("mpeg") || extension == "mp3" -> "MP3"
                                                 extractorMime.contains("ogg") || extension == "ogg" -> "OGG"
                                                 extractorMime.contains("opus") || extension == "opus" -> "OPUS"
+                                                extension == "ape" -> "APE"
+                                                extension == "wv" -> "WV"
+                                                extension == "tta" -> "TTA"
+                                                extension == "mpc" -> "MPC"
+                                                extension == "mka" -> "MKA"
                                                 else -> "MP3"
                                             }
                                             

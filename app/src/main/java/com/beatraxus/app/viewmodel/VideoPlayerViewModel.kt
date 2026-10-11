@@ -31,13 +31,15 @@ import androidx.media3.ui.CaptionStyleCompat
 import com.beatraxus.app.BeatraxusApplication
 import com.beatraxus.app.engine.AudioEngine
 import com.beatraxus.app.engine.AudioFrameUtils
+import com.beatraxus.app.engine.VideoDecoderMode
+import com.beatraxus.app.engine.VideoPlaybackTuning
 import com.beatraxus.app.engine.VideoRenderersFactory
 import com.beatraxus.app.engine.VideoRoutePhase
 import com.beatraxus.app.service.VideoAudioBridge
 import com.beatraxus.app.model.Video
 import com.beatraxus.app.model.SavedEqPreset
 import com.beatraxus.app.model.VideoRecentlyPlayedEntity
-import com.beatraxus.app.motionboost.ColorGradeEffect
+import com.beatraxus.app.colorgrade.ColorGradeEffect
 import com.beatraxus.app.subtitles.data.SubtitleCache
 import com.beatraxus.app.subtitles.domain.MediaKey
 import com.beatraxus.app.subtitles.domain.SubtitlePositionPreset
@@ -110,6 +112,9 @@ data class VideoPlayerUiState(
     val colorSaturation: Float = 1f,
     val forceSdrToneMapping: Boolean = false,
     val routeAudioToEngine: Boolean = false,
+    val videoDecoderMode: VideoDecoderMode = VideoDecoderMode.DEFAULT,
+    /** Audio delay for the current video in ms. Positive = audio later than video. Resets per video. */
+    val audioDelayMs: Int = 0,
     val isConnectingEngineRoute: Boolean = false,
     val engineRouteError: String? = null
 )
@@ -165,6 +170,10 @@ class VideoPlayerViewModel(
     private val sceneChangeDetector = com.beatraxus.app.engine.SceneChangeDetector(application)
     private var cachedIntroRange: com.beatraxus.app.model.IntroOutroRange? = null
     private val prefs = application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE)
+    // Read live by VideoRenderersFactory: decoder mode is persisted, audio delay is per video.
+    private val tuning = VideoPlaybackTuning(
+        decoderMode = VideoDecoderMode.fromName(prefs.getString(PREF_VIDEO_DECODER_MODE, null))
+    )
     private val audioManager = application.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
     private var spriteSheet: android.graphics.Bitmap? = null
@@ -193,6 +202,7 @@ class VideoPlayerViewModel(
         volume = (application.getSystemService(Context.AUDIO_SERVICE) as AudioManager).getStreamVolume(AudioManager.STREAM_MUSIC),
         maxVolume = (application.getSystemService(Context.AUDIO_SERVICE) as AudioManager).getStreamMaxVolume(AudioManager.STREAM_MUSIC),
         isEqEnabled = application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE).getBoolean("video_eq_enabled", false),
+        videoDecoderMode = tuning.decoderMode,
         aspectRatio = application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE).getString("video_aspect_ratio", VideoAspectRatio.FIT.name)?.let { name ->
             val mappedName = when (name) {
                 "ORIGINAL" -> "FIT"
@@ -327,7 +337,7 @@ class VideoPlayerViewModel(
             .setPrioritizeTimeOverSizeThresholds(true)
             .build()
 
-        val player = ExoPlayer.Builder(context, VideoRenderersFactory(context))
+        val player = ExoPlayer.Builder(context, VideoRenderersFactory(context, tuning))
             .setMediaSourceFactory(
                 androidx.media3.exoplayer.source.DefaultMediaSourceFactory(
                     // Same as before for every normal Uri; `tgvideo://` Telegram videos are streamed through TDLib.
@@ -498,6 +508,8 @@ class VideoPlayerViewModel(
         
         if (video?.id != lastHandledVideoId) {
             lastHandledVideoId = video?.id
+            // Audio delay is tuned per file, so a new video starts back in sync.
+            if (tuning.audioDelayMs != 0) setAudioDelayMs(0)
             video?.let { v ->
                 viewModelScope.launch {
                     val mediaKey = MediaKey.of(v)
@@ -843,6 +855,47 @@ class VideoPlayerViewModel(
         exoPlayer?.setPlaybackSpeed(speed)
         _uiState.update { it.copy(playbackSpeed = speed) }
     }
+
+    /**
+     * Chooses the video decoder (HW / HW+ / SW) and saves it for future videos.
+     * The player keeps its surface and queue: it is stopped and prepared again at the same
+     * position so the codec is re-created with the new choice. While audio is routed to the
+     * Audio Engine the restart is skipped (it would desync the engine), so the choice applies
+     * the next time playback starts.
+     */
+    fun setVideoDecoderMode(mode: VideoDecoderMode) {
+        if (mode == tuning.decoderMode) return
+        tuning.decoderMode = mode
+        prefs.edit().putString(PREF_VIDEO_DECODER_MODE, mode.name).apply()
+        _uiState.update { it.copy(videoDecoderMode = mode) }
+
+        val player = exoPlayer ?: return
+        if (_uiState.value.routeAudioToEngine || player.playbackState == Player.STATE_IDLE) return
+        // currentPosition includes the audio-delay clock shift, so take it back out.
+        val positionMs = (player.currentPosition - tuning.audioDelayMs).coerceAtLeast(0L)
+        val resumePlayback = player.playWhenReady
+        player.stop()
+        player.seekTo(player.currentMediaItemIndex, positionMs)
+        player.prepare()
+        player.playWhenReady = resumePlayback
+    }
+
+    /** Switches to the next decoder mode (HW -> HW+ -> SW -> HW) and returns it. */
+    fun cycleVideoDecoderMode(): VideoDecoderMode {
+        val modes = VideoDecoderMode.entries
+        val next = modes[(modes.indexOf(tuning.decoderMode) + 1) % modes.size]
+        setVideoDecoderMode(next)
+        return next
+    }
+
+    /** Delays (positive) or advances (negative) the audio relative to the video. Not available with Audio Engine routing. */
+    fun setAudioDelayMs(delayMs: Int) {
+        val clamped = VideoPlaybackTuning.clampAudioDelay(delayMs)
+        tuning.audioDelayMs = clamped
+        _uiState.update { it.copy(audioDelayMs = clamped) }
+    }
+
+    fun adjustAudioDelayMs(deltaMs: Int) = setAudioDelayMs(_uiState.value.audioDelayMs + deltaMs)
 
     fun setAspectRatio(ratio: VideoAspectRatio) {
         _uiState.update { it.copy(aspectRatio = ratio, aspectRatioMessage = ratio.displayName) }
@@ -1566,6 +1619,8 @@ class VideoPlayerViewModel(
         viewModelScope.cancel()
     }
 }
+
+private const val PREF_VIDEO_DECODER_MODE = "video_decoder_mode"
 
 class VideoPlayerViewModelFactory(private val application: Application, private val videoQueue: List<Video>, private val initialVideoId: String) : ViewModelProvider.Factory {
     @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
