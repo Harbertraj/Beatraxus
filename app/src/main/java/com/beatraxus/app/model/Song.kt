@@ -252,10 +252,13 @@ data class AppearanceConfig(
     val showFeaturedAlbums: Boolean = true,
     val showArtistsYouLove: Boolean = true,
     val showYourPlaylists: Boolean = true,
+    // Keys (see HomeSectionKeys) of the extra home sections the user switched off in Settings
+    val hiddenHomeSections: Set<String> = emptySet(),
 
     // Home Screen Layout
     val homeScreenSectionsOrder: List<String> = listOf(
         "GREETING", "ACTION_CHIPS", "CLOUD_LIBRARY", "STREAMING_ADDONS", "MOODS",
+        "HI_RES_VAULT", "DECADES", "GENRES", "REDISCOVER",
         "MADE_FOR_YOU", "LISTEN_AGAIN", "RECENTLY_ADDED",
         "YOUR_FAVORITES", "FEATURED_ALBUMS", "ARTISTS_YOU_LOVE", "YOUR_PLAYLISTS"
     ),

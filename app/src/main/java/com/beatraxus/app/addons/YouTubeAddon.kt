@@ -1,6 +1,7 @@
 package com.beatraxus.app.addons
 
 import android.content.Context
+import com.beatraxus.app.BuildConfig
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.ui.graphics.Color
@@ -55,7 +56,8 @@ class YouTubeAddon(
 
     override fun connect(context: Context) {
         appContext = context.applicationContext
-        apiKey = prefs()?.getString(prefsKey, null).orEmpty()
+        // A key typed in the sign-in dialog wins; otherwise fall back to YOUTUBE_API_KEY from local.properties.
+        apiKey = prefs()?.getString(prefsKey, null).orEmpty().ifBlank { BuildConfig.YOUTUBE_API_KEY }
         // No network call here (saves API quota); bad keys surface as an error on the home screen.
         _state.value = if (apiKey.isNotBlank()) AddonConnectionState.CONNECTED else AddonConnectionState.NOT_CONNECTED
     }

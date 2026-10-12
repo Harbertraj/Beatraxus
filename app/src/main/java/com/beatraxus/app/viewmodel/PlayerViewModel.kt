@@ -5803,6 +5803,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun setHomeSectionVisible(sectionKey: String, visible: Boolean) {
+        viewModelScope.launch {
+            appearancePreferences.setHomeSectionVisible(sectionKey, visible)
+        }
+    }
+
     fun setShowBrowseByMood(value: Boolean) {
         viewModelScope.launch {
             appearancePreferences.setShowBrowseByMood(value)

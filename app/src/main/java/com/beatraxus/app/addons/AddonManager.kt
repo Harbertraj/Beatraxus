@@ -105,6 +105,34 @@ object AddonManager {
         return result
     }
 
+    /**
+     * Installs a built-in preset (writes the same manifest.json a ZIP install would) and returns
+     * the add-on, or the existing instance if that preset is already installed.
+     */
+    fun installPreset(preset: AddonPreset): MusicServiceAddon? {
+        val existing = findById(preset.id)
+        if (existing != null) return existing
+        return try {
+            val dir = File(File(appContext.filesDir, "addons"), preset.id)
+            dir.mkdirs()
+            val manifest = JSONObject()
+                .put("id", preset.id)
+                .put("displayName", preset.displayName)
+                .put("mediaType", preset.mediaType)
+                .put("protocol", preset.protocol)
+                .put("authType", preset.authType)
+            File(dir, "manifest.json").writeText(manifest.toString())
+            val addon = createAddonInstance(preset.id, preset.displayName, preset.protocol, preset.authType)
+            if (addon != null) {
+                _allAddons.add(addon)
+                refreshLists()
+            }
+            addon
+        } catch (e: Exception) {
+            null
+        }
+    }
+
     fun addAddon(context: Context, addon: MusicServiceAddon) {
         _addedIds.value = _addedIds.value + addon.id
         persist()
@@ -113,6 +141,8 @@ object AddonManager {
     }
 
     fun uninstallAddon(id: String) {
+        // Sign the add-on out first so saved sign-in data doesn't outlive it.
+        findById(id)?.disconnect()
         AddonInstaller.uninstallAddon(appContext, id)
         _allAddons.removeAll { it.id == id }
         _addedIds.value = _addedIds.value - id

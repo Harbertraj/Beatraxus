@@ -35,6 +35,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.beatraxus.app.addons.AddonManager
+import com.beatraxus.app.addons.AddonPresets
 import com.beatraxus.app.addons.MediaServerAddon
 import com.beatraxus.app.addons.AddonConnectionState
 import com.beatraxus.app.addons.MusicServiceAddon
@@ -148,7 +149,7 @@ fun StreamingAddonsScreen(
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 Text(
-                    text = "Connect or open your streaming apps from Beatraxus. These link to or control the official app for each service — Beatraxus does not stream or store content from them.",
+                    text = "Connect your own media servers and catalogs. Content streams straight from the source into Beatraxus — Beatraxus doesn't host or store any of it. Long-press an add-on to remove it.",
                     color = TextWhite.copy(alpha = 0.55f),
                     style = TextStyle(
                         fontSize = 12.sp,
@@ -166,7 +167,7 @@ fun StreamingAddonsScreen(
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = "No streaming addons added yet.",
+                            text = "No add-ons yet — tap below to add one.",
                             color = TextWhite.copy(alpha = 0.35f),
                             style = TextStyle(fontSize = 14.sp, fontWeight = FontWeight.Medium)
                         )
@@ -194,9 +195,9 @@ fun StreamingAddonsScreen(
 
                 // "+ Add Streaming Addon" button styled as a glass card
                 Surface(
-                    onClick = { 
+                    onClick = {
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        zipLauncher.launch(arrayOf("application/zip")) 
+                        showAddSheet = true
                     },
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(20.dp),
@@ -224,7 +225,7 @@ fun StreamingAddonsScreen(
                         )
                         Spacer(Modifier.width(12.dp))
                         Text(
-                            text = "ADD STREAMING ADDON",
+                            text = "ADD AN ADD-ON",
                             color = TextWhite.copy(alpha = 0.7f),
                             style = TextStyle(
                                 fontSize = 13.sp,
@@ -254,29 +255,55 @@ fun StreamingAddonsScreen(
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
                     Text(
-                        text = "Available Addons",
+                        text = "ADD AN ADD-ON",
                         color = TextWhite,
-                        style = TextStyle(fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                        style = TextStyle(fontSize = 16.sp, fontWeight = FontWeight.Black, letterSpacing = 2.sp)
                     )
-                    
-                    if (availableAddons.isEmpty()) {
-                        Text(
-                            text = "No more addons available.",
-                            color = TextWhite.copy(alpha = 0.5f),
-                            modifier = Modifier.padding(vertical = 20.dp)
-                        )
-                    } else {
-                        availableAddons.forEach { addon ->
-                            StreamingServiceCard(
-                                addon = addon,
-                                isAvailable = true,
-                                onClick = {
+
+                    val installedIds = (addedAddons + availableAddons).map { it.id }.toSet()
+                    val presets = AddonPresets.all.filter { it.id !in installedIds }
+
+                    presets.forEach { preset ->
+                        ServiceCardContent(
+                            title = preset.displayName,
+                            subtitle = preset.blurb,
+                            icon = preset.icon,
+                            color = preset.brandColor,
+                            isAvailable = true,
+                            onClick = {
+                                val addon = AddonManager.installPreset(preset)
+                                if (addon != null) {
                                     AddonManager.addAddon(context, addon)
                                     showAddSheet = false
+                                } else {
+                                    Toast.makeText(context, "Couldn't add ${preset.displayName}", Toast.LENGTH_SHORT).show()
                                 }
-                            )
-                        }
+                            }
+                        )
                     }
+
+                    availableAddons.forEach { addon ->
+                        StreamingServiceCard(
+                            addon = addon,
+                            isAvailable = true,
+                            onClick = {
+                                AddonManager.addAddon(context, addon)
+                                showAddSheet = false
+                            }
+                        )
+                    }
+
+                    ServiceCardContent(
+                        title = "Install from ZIP",
+                        subtitle = "A custom add-on package with a manifest.json",
+                        icon = Icons.Rounded.Add,
+                        color = TextWhite,
+                        isAvailable = true,
+                        onClick = {
+                            showAddSheet = false
+                            zipLauncher.launch(arrayOf("application/zip"))
+                        }
+                    )
                 }
             }
         }
@@ -316,14 +343,16 @@ fun StreamingAddonsScreen(
                     val signedIn = addon
                     addonToSignIn = null
                     Toast.makeText(context, "Signed in successfully!", Toast.LENGTH_SHORT).show()
-                    if (signedIn is com.beatraxus.app.addons.StremioAddon || signedIn is com.beatraxus.app.addons.YouTubeAddon) onNavigateToBrowse(signedIn.id)
+                    onNavigateToBrowse(signedIn.id)
                 }
             )
         }
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
+private val StatusGreen = Color(0xFF4ADE80)
+private val StatusRed = Color(0xFFFF5252)
+
 @Composable
 fun StreamingServiceCard(
     addon: MusicServiceAddon,
@@ -331,8 +360,46 @@ fun StreamingServiceCard(
     onClick: () -> Unit,
     onLongClick: (() -> Unit)? = null
 ) {
+    val state by addon.connectionState.collectAsStateWithLifecycle()
+    val (statusText, statusColor) = when (state) {
+        AddonConnectionState.CONNECTED -> "Connected" to StatusGreen
+        AddonConnectionState.CONNECTING -> "Connecting…" to TextWhite.copy(alpha = 0.5f)
+        AddonConnectionState.ERROR -> "Couldn't connect" to StatusRed
+        AddonConnectionState.NOT_INSTALLED -> "App not installed" to TextWhite.copy(alpha = 0.5f)
+        AddonConnectionState.NOT_ELIGIBLE -> "Not eligible" to TextWhite.copy(alpha = 0.5f)
+        AddonConnectionState.NOT_CONNECTED -> "Sign-in needed" to TextWhite.copy(alpha = 0.5f)
+    }
+    ServiceCardContent(
+        title = addon.displayName,
+        subtitle = addon.description,
+        icon = addon.icon,
+        color = addon.brandColor,
+        isAvailable = isAvailable,
+        buttonLabel = addon.buttonLabel(),
+        statusText = if (isAvailable) null else statusText,
+        statusColor = statusColor,
+        onClick = onClick,
+        onLongClick = onLongClick
+    )
+}
+
+/** Shared glass card used for added add-ons, installable presets and the "install from ZIP" row. */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun ServiceCardContent(
+    title: String,
+    subtitle: String,
+    icon: ImageVector,
+    color: Color,
+    isAvailable: Boolean,
+    onClick: () -> Unit,
+    buttonLabel: String = "",
+    statusText: String? = null,
+    statusColor: Color = TextWhite.copy(alpha = 0.5f),
+    onLongClick: (() -> Unit)? = null
+) {
     val haptic = LocalHapticFeedback.current
-    val iconColor = if (isAvailable) addon.brandColor.copy(alpha = 0.6f) else addon.brandColor
+    val iconColor = if (isAvailable) color.copy(alpha = 0.75f) else color
     val surfaceAlpha = if (isAvailable) 0.08f else 0.15f
     val borderAlpha = if (isAvailable) 0.05f else 0.15f
 
@@ -379,7 +446,7 @@ fun StreamingServiceCard(
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    imageVector = addon.icon,
+                    imageVector = icon,
                     contentDescription = null,
                     tint = iconColor,
                     modifier = Modifier.size(22.dp)
@@ -390,7 +457,7 @@ fun StreamingServiceCard(
 
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = addon.displayName,
+                    text = title,
                     color = TextWhite,
                     style = TextStyle(
                         fontSize = 17.sp,
@@ -400,7 +467,7 @@ fun StreamingServiceCard(
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    text = addon.description,
+                    text = subtitle,
                     color = TextWhite.copy(alpha = 0.55f),
                     style = TextStyle(
                         fontSize = 12.sp,
@@ -408,6 +475,23 @@ fun StreamingServiceCard(
                         fontWeight = FontWeight.Medium
                     )
                 )
+                if (statusText != null) {
+                    Spacer(Modifier.height(6.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(6.dp)
+                                .clip(CircleShape)
+                                .background(statusColor)
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = statusText,
+                            color = statusColor,
+                            style = TextStyle(fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                        )
+                    }
+                }
             }
 
             if (!isAvailable) {
@@ -425,7 +509,7 @@ fun StreamingServiceCard(
                     modifier = Modifier.height(36.dp)
                 ) {
                     Text(
-                        text = addon.buttonLabel().uppercase(),
+                        text = buttonLabel.uppercase(),
                         style = TextStyle(
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Black,
@@ -433,6 +517,13 @@ fun StreamingServiceCard(
                         )
                     )
                 }
+            } else {
+                Icon(
+                    Icons.Rounded.Add,
+                    contentDescription = null,
+                    tint = iconColor,
+                    modifier = Modifier.size(20.dp)
+                )
             }
         }
     }

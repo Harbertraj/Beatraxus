@@ -13,6 +13,7 @@ import com.beatraxus.app.model.NowPlayingIconStyle
 import com.beatraxus.app.model.SeekbarStyle
 import com.beatraxus.app.repository.lyrics.LyricsProviderRegistry
 import com.beatraxus.app.utils.DeviceUtils
+import com.beatraxus.app.utils.HomeSectionKeys
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
@@ -58,6 +59,7 @@ class AppearancePreferences(context: Context) {
             showFeaturedAlbums = preferences[SHOW_FEATURED_ALBUMS] ?: true,
             showArtistsYouLove = preferences[SHOW_ARTISTS_YOU_LOVE] ?: true,
             showYourPlaylists = preferences[SHOW_YOUR_PLAYLISTS] ?: true,
+            hiddenHomeSections = preferences[HIDDEN_HOME_SECTIONS] ?: emptySet(),
 
             // Main Screen Background
             mainBackgroundMode = NowPlayingBackgroundMode.valueOf(
@@ -104,8 +106,11 @@ class AppearancePreferences(context: Context) {
             miniPlayerShowTime = preferences[MINI_PLAYER_SHOW_TIME] ?: true,
             miniPlayerTintFromArt = preferences[MINI_PLAYER_TINT_FROM_ART] ?: true,
 
-            homeScreenSectionsOrder = preferences[HOME_SCREEN_SECTIONS_ORDER]?.split(",")?.filter { it.isNotBlank() } ?: listOf(
+            // Orders saved before the extra sections existed get them inserted right after MOODS.
+            homeScreenSectionsOrder = preferences[HOME_SCREEN_SECTIONS_ORDER]?.split(",")?.filter { it.isNotBlank() }
+                ?.let { HomeSectionKeys.mergeNewSections(it) } ?: listOf(
                 "GREETING", "ACTION_CHIPS", "CLOUD_LIBRARY", "MOODS",
+                "HI_RES_VAULT", "DECADES", "GENRES", "REDISCOVER",
                 "MADE_FOR_YOU", "LISTEN_AGAIN", "RECENTLY_ADDED",
                 "YOUR_FAVORITES", "FEATURED_ALBUMS", "ARTISTS_YOU_LOVE", "YOUR_PLAYLISTS"
             ),
@@ -341,6 +346,14 @@ class AppearancePreferences(context: Context) {
         }
     }
 
+    /** Shows/hides one of the extra home sections (HI_RES_VAULT, DECADES, GENRES, REDISCOVER). */
+    suspend fun setHomeSectionVisible(sectionKey: String, visible: Boolean) {
+        dataStore.edit {
+            val hidden = it[HIDDEN_HOME_SECTIONS] ?: emptySet()
+            it[HIDDEN_HOME_SECTIONS] = if (visible) hidden - sectionKey else hidden + sectionKey
+        }
+    }
+
     suspend fun setHomeScreenSectionsOrder(order: List<String>) {
         dataStore.edit { it[HOME_SCREEN_SECTIONS_ORDER] = order.joinToString(",") }
     }
@@ -493,6 +506,7 @@ class AppearancePreferences(context: Context) {
         private val MINI_PLAYER_TINT_FROM_ART = booleanPreferencesKey("mini_player_tint_from_art")
 
         private val HOME_SCREEN_SECTIONS_ORDER = stringPreferencesKey("home_screen_sections_order")
+        private val HIDDEN_HOME_SECTIONS = stringSetPreferencesKey("hidden_home_sections")
         
         private val LYRICS_PROVIDER_ORDER = stringPreferencesKey("lyrics_provider_order")
         private val LYRICS_PROVIDERS_ENABLED = stringPreferencesKey("lyrics_providers_enabled")

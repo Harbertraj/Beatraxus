@@ -78,6 +78,11 @@ configure<ApplicationExtension> {
         val googleWebClientId = localProperties.getProperty("GOOGLE_WEB_CLIENT_ID", "")
         buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", "\"$googleWebClientId\"")
 
+        // Optional: pre-fills the YouTube add-on so it needs no sign-in. A key built into the app can be
+        // extracted from the APK, so restrict it to "YouTube Data API v3" in Google Cloud Console.
+        val youtubeApiKey = localProperties.getProperty("YOUTUBE_API_KEY", "")
+        buildConfigField("String", "YOUTUBE_API_KEY", "\"$youtubeApiKey\"")
+
         val tmdbApiKey = localProperties.getProperty("TMDB_API_KEY", "")
         buildConfigField("String", "TMDB_API_KEY", "\"$tmdbApiKey\"")
 
@@ -240,6 +245,10 @@ dependencies {
     implementation("androidx.media3:media3-session:$media3Version")
     implementation("androidx.media3:media3-ui:$media3Version")
     implementation("androidx.media3:media3-effect:$media3Version")
+    // HLS (.m3u8) and DASH (.mpd) streams from add-ons (Stremio catalogs, media servers, radio).
+    // DefaultMediaSourceFactory picks these up automatically when they are on the classpath.
+    implementation("androidx.media3:media3-exoplayer-hls:$media3Version")
+    implementation("androidx.media3:media3-exoplayer-dash:$media3Version")
     // Media3 FFmpeg extension for EAC3/AC3/DTS support. 
     // Fetched from Maven Central (maintained by Jellyfin project).
     implementation("org.jellyfin.media3:media3-ffmpeg-decoder:1.5.0+1")
@@ -280,6 +289,8 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 
     testImplementation("junit:junit:4.13.2")
+    // Android's org.json is stubbed in local unit tests; use the real implementation instead.
+    testImplementation("org.json:json:20240303")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")

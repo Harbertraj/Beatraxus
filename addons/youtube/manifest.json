@@ -1,0 +1,7 @@
+{
+  "id": "preset_youtube",
+  "displayName": "YouTube",
+  "mediaType": "video",
+  "protocol": "youtube",
+  "authType": "api_key"
+}

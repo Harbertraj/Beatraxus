@@ -75,6 +75,13 @@ object AddonInstaller {
                 throw Exception("Unsupported protocol: ${manifest.protocol}")
             }
 
+            // The id becomes a folder name: reject anything like "../databases" that could escape
+            // the add-ons directory (and be wiped by the deleteRecursively below).
+            if (!Regex("[A-Za-z0-9_]+").matches(id)) {
+                tempDir.deleteRecursively()
+                throw Exception("Invalid add-on id (use only letters, digits and _)")
+            }
+
             val finalDir = File(addonsDir, id)
             if (finalDir.exists()) finalDir.deleteRecursively()
             tempDir.renameTo(finalDir)

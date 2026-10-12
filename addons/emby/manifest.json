@@ -1,0 +1,7 @@
+{
+  "id": "preset_emby",
+  "displayName": "Emby",
+  "mediaType": "video",
+  "protocol": "emby",
+  "authType": "server_credentials"
+}

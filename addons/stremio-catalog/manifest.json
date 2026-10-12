@@ -1,0 +1,7 @@
+{
+  "id": "preset_stremio",
+  "displayName": "Stremio catalog",
+  "mediaType": "video",
+  "protocol": "stremio",
+  "authType": "manifest_url"
+}

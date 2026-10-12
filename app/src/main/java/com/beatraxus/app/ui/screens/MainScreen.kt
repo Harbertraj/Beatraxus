@@ -3,6 +3,11 @@ package com.beatraxus.app.ui.screens
 import android.util.Log
 import androidx.activity.compose.BackHandler
 import com.beatraxus.app.utils.ImageUtils
+import com.beatraxus.app.utils.HomeSectionKeys
+import com.beatraxus.app.utils.byDecade
+import com.beatraxus.app.utils.hiResVault
+import com.beatraxus.app.utils.rediscover
+import com.beatraxus.app.utils.topGenres
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import kotlin.math.sqrt
@@ -4377,6 +4382,18 @@ fun HomeScreen(
         ?: quickPicks.firstOrNull()
         ?: allSongs.firstOrNull()
 
+    // Extra sections under "Browse by Mood" (selection logic lives in utils/HomeSectionLogic.kt)
+    val hiResSongs = remember(allSongs) {
+        hiResVault(allSongs, ::isHiResSong, { it.sampleRateHz }, { it.bitDepth }, { it.title })
+    }
+    val decadeBuckets = remember(allSongs) { byDecade(allSongs, { it.year }) }
+    val genreBuckets = remember(allSongs) { topGenres(allSongs, { it.genre }) }
+    val recentIds = remember(recentlyPlayed) { recentlyPlayed.map { it.id }.toSet() }
+    val epochDay = remember { java.time.LocalDate.now().toEpochDay() }
+    val rediscoverSongs = remember(allSongs, recentIds) {
+        rediscover(allSongs, { it.id }, recentIds, epochDay)
+    }
+
     LazyColumn(
         state = listState,
         modifier = Modifier.fillMaxSize(),
@@ -4551,6 +4568,26 @@ fun HomeScreen(
                                 }
                             }
                         }
+                    }
+                }
+                "HI_RES_VAULT" -> {
+                    if (HomeSectionKeys.HI_RES_VAULT !in uiState.appearance.hiddenHomeSections) {
+                        hiResVaultSection(hiResSongs) { index -> viewModel.playList(hiResSongs, index) }
+                    }
+                }
+                "DECADES" -> {
+                    if (HomeSectionKeys.DECADES !in uiState.appearance.hiddenHomeSections) {
+                        decadesSection(decadeBuckets) { songs -> viewModel.playList(songs, 0) }
+                    }
+                }
+                "GENRES" -> {
+                    if (HomeSectionKeys.GENRES !in uiState.appearance.hiddenHomeSections) {
+                        genresSection(genreBuckets) { songs -> viewModel.playList(songs, 0) }
+                    }
+                }
+                "REDISCOVER" -> {
+                    if (HomeSectionKeys.REDISCOVER !in uiState.appearance.hiddenHomeSections) {
+                        rediscoverSection(rediscoverSongs) { index -> viewModel.playList(rediscoverSongs, index) }
                     }
                 }
                 "MADE_FOR_YOU" -> {

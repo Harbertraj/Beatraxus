@@ -1372,6 +1372,20 @@ fun HomeScreenAppearanceContent(uiState: PlayerUiState, playerViewModel: PlayerV
             checked = uiState.appearance.showYourPlaylists,
             onCheckedChange = { playerViewModel.setShowYourPlaylists(it) }
         )
+        listOf(
+            Triple(com.beatraxus.app.utils.HomeSectionKeys.HI_RES_VAULT, "Hi-Res Vault", "24-bit and high sample-rate tracks with quality badges"),
+            Triple(com.beatraxus.app.utils.HomeSectionKeys.DECADES, "Through the Decades", "Jump into your music decade by decade"),
+            Triple(com.beatraxus.app.utils.HomeSectionKeys.GENRES, "Dive into a Genre", "Your top genres with album-art collages"),
+            Triple(com.beatraxus.app.utils.HomeSectionKeys.REDISCOVER, "Rediscover", "Songs you haven't played lately, refreshed daily")
+        ).forEach { (key, title, subtitle) ->
+            HorizontalDivider(color = Color.White.copy(0.05f))
+            AppearanceToggleRow(
+                title = title,
+                subtitle = subtitle,
+                checked = key !in uiState.appearance.hiddenHomeSections,
+                onCheckedChange = { playerViewModel.setHomeSectionVisible(key, it) }
+            )
+        }
 
         HorizontalDivider(color = Color.White.copy(0.05f))
 
@@ -1528,6 +1542,10 @@ private val homeScreenSectionMeta = mapOf(
     "ACTION_CHIPS" to ("Action Chips" to "Quick shuffle, favorites, and recent buttons"),
     "CLOUD_LIBRARY" to ("Cloud Library" to "Status and counts for cloud accounts"),
     "MOODS" to ("Browse by Mood" to "Mood-based category shortcuts"),
+    "HI_RES_VAULT" to ("Hi-Res Vault" to "24-bit and high sample-rate tracks"),
+    "DECADES" to ("Through the Decades" to "Your music grouped by decade"),
+    "GENRES" to ("Dive into a Genre" to "Top genres with album-art collages"),
+    "REDISCOVER" to ("Rediscover" to "Songs you haven't played lately"),
     "MADE_FOR_YOU" to ("Made For You" to "Personalized mixes and discovery tracks"),
     "LISTEN_AGAIN" to ("Listen Again" to "Frequently played items"),
     "RECENTLY_ADDED" to ("Recently Added" to "Latest additions to your library"),

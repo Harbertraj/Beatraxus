@@ -1,0 +1,7 @@
+{
+  "id": "preset_jellyfin",
+  "displayName": "Jellyfin",
+  "mediaType": "video",
+  "protocol": "jellyfin",
+  "authType": "server_credentials"
+}

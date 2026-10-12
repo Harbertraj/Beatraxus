@@ -1,0 +1,7 @@
+{
+  "id": "preset_archive",
+  "displayName": "Internet Archive",
+  "mediaType": "video",
+  "protocol": "archive_org",
+  "authType": "none"
+}

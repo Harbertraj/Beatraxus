@@ -1,0 +1,7 @@
+{
+  "id": "preset_navidrome",
+  "displayName": "Navidrome / Subsonic",
+  "mediaType": "audio",
+  "protocol": "subsonic",
+  "authType": "server_credentials"
+}
