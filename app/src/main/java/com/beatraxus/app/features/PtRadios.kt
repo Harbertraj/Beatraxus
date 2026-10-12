@@ -37,6 +37,27 @@ object PtRadios {
 
     fun anyOff(context: Context) = !bluetoothOn(context) || !wifiOn(context) || locationOff(context)
 
+    /** Android 12 and older need Location on to start a hotspot (and for the Nearby scan on 11 and older). */
+    fun locationOffForWifi(context: Context): Boolean {
+        if (Build.VERSION.SDK_INT >= 33) return false
+        val lm = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return false
+        return !LocationManagerCompat.isLocationEnabled(lm)
+    }
+
+    /**
+     * The first thing that stops same-place transfer from working right now, in words for the
+     * person, or null when nothing is wrong: missing permission, Location off (Android 12 and
+     * older), Bluetooth off, Wi-Fi off.
+     */
+    fun problem(context: Context): String? = when {
+        !PtNearbyTransfer.hasPermissions(context) ->
+            "Permission missing: allow Nearby devices / Location for Beatraxus"
+        locationOffForWifi(context) -> "Location is off (Android 12 and older need it to find phones nearby)"
+        !bluetoothOn(context) -> "Bluetooth is off"
+        !wifiOn(context) -> "Wi-Fi is off"
+        else -> null
+    }
+
     /** System dialog "Allow Beatraxus to turn on Bluetooth?" (needs BLUETOOTH_CONNECT on Android 12+). */
     fun bluetoothEnableIntent() = Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
 

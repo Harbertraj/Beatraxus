@@ -67,6 +67,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.beatraxus.app.features.PtNearbyTransfer
+import com.beatraxus.app.features.PtRoute
 import com.beatraxus.app.features.PtRadios
 import com.beatraxus.app.features.PtMember
 import com.beatraxus.app.features.PtStatus
@@ -241,6 +242,10 @@ fun PlayTogetherScreen(
                     message = ui.message,
                     nearbyEnabled = ui.nearbyEnabled,
                     nearbyPeers = ui.nearbyPeers,
+                    route = ui.route,
+                    routeProblem = ui.routeProblem,
+                    // what stops same-place transfer right now (permission, Location, Bluetooth, Wi-Fi)
+                    radioProblem = if (ui.nearbyEnabled) PtRadios.problem(context) else null,
                     onNearbyToggle = { on ->
                         if (!on) { nearbyStep = 0; pt.setNearbyEnabled(false, byUser = true) }
                         else {
@@ -469,6 +474,9 @@ private fun RoomCard(
     message: String?,
     nearbyEnabled: Boolean,
     nearbyPeers: Int = 0,
+    route: PtRoute? = null,
+    routeProblem: String? = null,
+    radioProblem: String? = null,
     onNearbyToggle: (Boolean) -> Unit,
     onCopy: () -> Unit,
     onShare: () -> Unit,
@@ -547,9 +555,16 @@ private fun RoomCard(
             } else if (songMissing) {
                 Spacer(Modifier.height(10.dp))
                 Text(
-                    "Getting this song from ${controller ?: "the controller"}" + (if (transferPercent in 0..100) " ($transferPercent%)…" else "…"),
+                    "Getting this song from ${controller ?: "the controller"}" +
+                        (route?.let { " via ${it.label}" } ?: "") +
+                        (if (transferPercent in 0..100) " ($transferPercent%)…" else "…"),
                     color = PtAmber, fontSize = 12.sp, lineHeight = 17.sp
                 )
+            }
+            // why the last route failed and which one is tried next
+            routeProblem?.let {
+                Spacer(Modifier.height(6.dp))
+                Text(it, color = PtAmber.copy(alpha = 0.85f), fontSize = 12.sp, lineHeight = 17.sp)
             }
         }
     }
@@ -563,7 +578,7 @@ private fun RoomCard(
                 SectionLabel("NEARBY (SAME PLACE)")
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    "Turns on Bluetooth and Wi-Fi and connects every phone in the same room, so songs are sent over Bluetooth / Wi-Fi Direct. Works without internet; falls back to online transfer.",
+                    "Turns on Bluetooth and Wi-Fi and connects every phone in the same room, so songs are sent over Bluetooth / Wi-Fi Direct. If that fails, the controller opens its own Wi-Fi network (Android 10+), then the internet is used.",
                     color = Color.White.copy(0.55f), fontSize = 12.sp, lineHeight = 17.sp
                 )
                 if (nearbyEnabled) {
@@ -574,6 +589,14 @@ private fun RoomCard(
                         color = if (nearbyPeers > 0) PtGreen else PtAmber,
                         fontSize = 12.sp
                     )
+                    radioProblem?.let {
+                        Spacer(Modifier.height(4.dp))
+                        Text(it, color = PtAmber, fontSize = 12.sp, lineHeight = 17.sp)
+                    }
+                    route?.let {
+                        Spacer(Modifier.height(4.dp))
+                        Text("Songs arrive via: ${it.label}", color = Color.White.copy(0.6f), fontSize = 12.sp)
+                    }
                 }
             }
             Spacer(Modifier.width(12.dp))

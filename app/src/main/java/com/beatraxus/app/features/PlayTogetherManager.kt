@@ -38,6 +38,7 @@ import okio.BufferedSink
 import okio.source
 import java.util.UUID
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -70,6 +71,10 @@ data class PtUiState(
     val nearbyEnabled: Boolean = false,
     /** Phones currently connected over Nearby (controller: everyone who joined it; others: 0 or 1). */
     val nearbyPeers: Int = 0,
+    /** The route the song transfer in progress (or the last one received) uses. */
+    val route: PtRoute? = null,
+    /** Why a route failed and what is tried next, e.g. "Nearby: Bluetooth is off. Trying Own Wi-Fi…". */
+    val routeProblem: String? = null,
     val message: String? = null,
     /** Positive notice (e.g. "Database connected"), shown in green. */
     val info: String? = null,
@@ -178,6 +183,26 @@ class PlayTogetherManager(
     /** Songs whose file was already searched for an embedded cover. */
     private val artTried = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
+    // ---- own Wi-Fi route: the controller opens a local-only hotspot, phones join it and download ----------
+    private val wifiHost = PtLocalWifiHost(app, scope).also { it.onStopped = { onWifiHostStopped() } }
+    private val wifiClient = PtLocalWifiClient(app, scope)
+    /** Receiver: the routes tried for the song being fetched, and the one running now. */
+    @Volatile private var myOrder: List<PtRoute> = emptyList()
+    @Volatile private var myRoute: PtRoute? = null
+    /** Receiver: the request (sid) whose Wi-Fi credentials were already used, and when its need was posted (server time). */
+    @Volatile private var wifiAttemptSid: String? = null
+    @Volatile private var wifiNeedAt = 0L
+    /** Receiver: when the own-Wi-Fi route last failed; it is skipped for [WIFI_SKIP_MS] so every song does not wait for it again. */
+    @Volatile private var ownWifiFailedAt = -WIFI_SKIP_MS
+    private var wifiWaitJob: Job? = null
+    private var wifiFetchJob: Job? = null
+    /** Controller: Wi-Fi requests already looked at, the room whose credentials are published, and the last hotspot error. */
+    private val wifiHandledSids = java.util.concurrent.CopyOnWriteArraySet<String>()
+    @Volatile private var wifiCredsRoom: String? = null
+    private val wifiBusy = AtomicBoolean(false)
+    @Volatile private var wifiFailure: String? = null
+    @Volatile private var wifiFailedAt = 0L
+
     private val transfer: PtFileTransfer by lazy {
         PtFileTransfer(app, scope) { sid, kind, json ->
             val code = room ?: return@PtFileTransfer
@@ -191,22 +216,10 @@ class PlayTogetherManager(
         }.also { it.listener = transferListener }
     }
 
-    /** Same-place route: tried first, WebRTC (above) takes over when it cannot deliver. */
+    /** Same-place route: tried first; when it cannot deliver, own Wi-Fi and then WebRTC (above) take over. */
     private val nearby: PtNearbyTransfer by lazy {
         PtNearbyTransfer(app, scope, onPeers = { n -> _state.update { it.copy(nearbyPeers = n) } }) { sid ->
-            // Nearby could not deliver: ask over the internet instead.
-            if (sid == mySid) {
-                val sig = mySig
-                if (preloadSig != null && !internetIsCheap()) {
-                    // a song fetched ahead of time is not worth mobile data: give up on it quietly
-                    mySid = null; preloadSig = null
-                    if (sig != null) preloadFailedAt[sig] = SystemClock.elapsedRealtime()
-                } else scope.launch(Dispatchers.IO) {
-                    try {
-                        postNeed(sig ?: return@launch, sid)
-                    } catch (e: CancellationException) { throw e } catch (_: Exception) { }
-                }
-            }
+            onRouteFailed(sid, PtRoute.NEARBY, PtRadios.problem(app) ?: "No phone nearby answered")
         }.also { it.listener = transferListener }
     }
 
@@ -243,13 +256,21 @@ class PlayTogetherManager(
 
         override fun onReceived(sid: String, file: java.io.File) {
             val sig = mySig ?: return
+            val via = myRoute
+            val wasPreload = preloadSig != null
             mySid = null
             preloadSig = null
             preloadFailedAt.remove(sig)
             nearby.cancelRequest()
             transfer.close(sid)
+            wifiWaitJob?.cancel()
+            wifiAttemptSid = null
+            myRoute = null
             receivedFiles[sig] = file
-            _state.update { it.copy(transferPercent = -1, message = null) }
+            _state.update {
+                if (wasPreload) it.copy(transferPercent = -1, message = null)
+                else it.copy(transferPercent = -1, message = null, route = via ?: it.route, routeProblem = null)
+            }
             scope.launch(Dispatchers.IO) {
                 try { room?.let { c -> call("DELETE", "$c/needs/$uid"); call("DELETE", "$c/signal/$sid") } } catch (_: Exception) { }
                 // play it in sync with the room now
@@ -490,11 +511,12 @@ class PlayTogetherManager(
         nearby.stopAll()
         mySid = null; mySig = null; lastNeedAt = 0L; lastProgressAt = 0L; servedSids.clear()
         preloadSig = null; lastPreloadAt = 0L; preloadFailedAt.clear(); artTried.clear()
+        resetWifi()
         room = null
         roomState = null
         _state.update {
             it.copy(
-                transferPercent = -1,
+                transferPercent = -1, route = null, routeProblem = null,
                 status = PtStatus.IDLE, roomCode = null, members = emptyList(), nowPlayingTitle = null,
                 nowPlayingArtist = null, controllerName = null, roomPlaying = false, songMissing = false, streaming = false,
                 message = null, busy = false
@@ -690,11 +712,13 @@ class PlayTogetherManager(
                 nearby.stopAll()
                 mySid = null; mySig = null; lastNeedAt = 0L; lastProgressAt = 0L; servedSids.clear()
                 preloadSig = null; lastPreloadAt = 0L; preloadFailedAt.clear(); artTried.clear()
+                resetWifi()
                 room = null
                 roomState = null
                 java.io.File(app.cacheDir, "pt_recv").deleteRecursively(); receivedFiles.clear()
                 _state.update {
                     it.copy(
+                        route = null, routeProblem = null,
                         status = PtStatus.IDLE, roomCode = null, members = emptyList(), nowPlayingTitle = null,
                         nowPlayingArtist = null, controllerName = null, roomPlaying = false, songMissing = false,
                         streaming = false, transferPercent = -1, message = "The room was closed."
@@ -764,28 +788,120 @@ class PlayTogetherManager(
                 // the room is now on a different song than the one loaded ahead: this one goes first
                 transfer.close(mySid ?: "")
                 nearby.cancelRequest()
+                cancelWifiAttempt()
                 mySid = null; preloadSig = null; lastNeedAt = 0L
             }
         }
-        // Only re-issue when the transfer has stalled: no progress for 25 s since the request.
-        if (mySid != null && now - maxOf(lastNeedAt, lastProgressAt) < 25_000) return
+        // Only re-issue when the transfer has stalled: no progress for 25 s since the request. The own
+        // Wi-Fi route may legitimately wait longer (hotspot start, the system's join dialog).
+        val stallMs = if (myRoute == PtRoute.OWN_WIFI) WIFI_STALL_MS else 25_000L
+        if (mySid != null && now - maxOf(lastNeedAt, lastProgressAt) < stallMs) return
         if (!preload && now - lastNeedAt < 8_000) return
         lastNeedAt = now
         val sid = uid + "_" + UUID.randomUUID().toString().take(6)
         transfer.close(mySid ?: "")
         nearby.cancelRequest()
+        cancelWifiAttempt()
         mySid = sid; mySig = sig
         preloadSig = if (preload) sig else null
-        if (!preload) _state.update { it.copy(transferPercent = 0) }
-        if (nearbyReady()) {
-            // Same place? Try Bluetooth / Wi-Fi Direct first; PtNearbyTransfer calls postNeed()
-            // itself if no controller is found nearby.
-            nearby.requestSong(code, sig, sid, myName.ifBlank { "Guest" }, artFile(sig)) { ext ->
-                java.io.File(app.cacheDir, "pt_recv/$sig.$ext")
+        if (!preload) _state.update { it.copy(transferPercent = 0, routeProblem = null) }
+        // Routes, in order: Nearby (Bluetooth / Wi-Fi Direct), the controller's own Wi-Fi, the internet.
+        // Each one hands over to the next when it fails; a song loaded ahead of time only uses the
+        // own Wi-Fi while this phone is already joined to it, and the internet only when it is cheap.
+        // (Already joined to the controller's Wi-Fi while Nearby is not connected: go straight over Wi-Fi
+        // instead of searching for the controller again for every song of the queue.)
+        val useNearby = nearbyReady() && (nearby.connectedToController || !wifiClient.isJoined)
+        myOrder = PtRoutePlan.order(nearby = useNearby, ownWifi = ownWifiAllowed(preload), internet = true)
+        startRoute(myOrder.first(), code, sig, sid)
+    }
+
+    private fun ownWifiAllowed(preload: Boolean) =
+        Build.VERSION.SDK_INT >= 29 && _state.value.nearbyEnabled && (!preload || wifiClient.isJoined) &&
+            SystemClock.elapsedRealtime() - ownWifiFailedAt >= WIFI_SKIP_MS
+
+    /** Starts [route] for the song [sig] (request [sid]). The next route is started from [onRouteFailed]. */
+    private suspend fun startRoute(route: PtRoute, code: String, sig: String, sid: String) {
+        if (sid != mySid) return
+        myRoute = route
+        lastProgressAt = SystemClock.elapsedRealtime() // a new route gets its own time before the request counts as stalled
+        val preload = preloadSig != null
+        if (!preload) _state.update { it.copy(route = route) }
+        when (route) {
+            PtRoute.NEARBY -> {
+                // Same place? PtNearbyTransfer reports back through onRouteFailed if no controller is found nearby.
+                nearby.requestSong(code, sig, sid, myName.ifBlank { "Guest" }, artFile(sig)) { ext ->
+                    java.io.File(app.cacheDir, "pt_recv/$sig.$ext")
+                }
             }
-        } else {
-            postNeed(sig, sid)
+            PtRoute.OWN_WIFI -> {
+                // Ask the controller to open its Wi-Fi; its answer (rooms/<code>/wifi) is read in handleWifiCreds().
+                wifiAttemptSid = null
+                wifiNeedAt = serverNow()
+                postNeed(sig, sid, wifi = true)
+                wifiWaitJob?.cancel()
+                wifiWaitJob = scope.launch {
+                    delay(PtRoutePlan.CREDENTIALS_TIMEOUT_MS)
+                    if (sid == mySid && myRoute == PtRoute.OWN_WIFI && wifiAttemptSid != sid) {
+                        onRouteFailed(sid, PtRoute.OWN_WIFI, "The controller did not share its Wi-Fi in time")
+                    }
+                }
+            }
+            PtRoute.INTERNET -> {
+                if (preload && !internetIsCheap()) {
+                    // a song fetched ahead of time is not worth mobile data: give up on it quietly
+                    mySid = null; preloadSig = null; myRoute = null
+                    preloadFailedAt[sig] = SystemClock.elapsedRealtime()
+                    return
+                }
+                postNeed(sig, sid)
+            }
         }
+    }
+
+    /** A route could not deliver the song: say why and go on with the next route. */
+    private fun onRouteFailed(sid: String, route: PtRoute, reason: String) {
+        if (sid != mySid || myRoute != route) return
+        val sig = mySig ?: return
+        val next = PtRoutePlan.after(myOrder, route)
+        if (route == PtRoute.OWN_WIFI) ownWifiFailedAt = SystemClock.elapsedRealtime()
+        wifiWaitJob?.cancel()
+        stopWifiFetch()
+        if (preloadSig == null) {
+            val text = "${route.label}: $reason" + (next?.let { ". Trying ${it.label}…" } ?: "")
+            _state.update { it.copy(routeProblem = text) }
+        }
+        if (next == null) {
+            mySid = null; preloadSig = null; myRoute = null
+            preloadFailedAt[sig] = SystemClock.elapsedRealtime()
+            return
+        }
+        scope.launch(Dispatchers.IO) {
+            try {
+                startRoute(next, room ?: return@launch, sig, sid)
+            } catch (e: CancellationException) { throw e } catch (_: Exception) { }
+        }
+    }
+
+    private fun stopWifiFetch() {
+        wifiFetchJob?.cancel(); wifiFetchJob = null
+        wifiClient.abort()
+    }
+
+    /** Forget a running own-Wi-Fi attempt (the request was replaced or the room was left). */
+    private fun cancelWifiAttempt() {
+        wifiWaitJob?.cancel(); wifiWaitJob = null
+        stopWifiFetch()
+        wifiAttemptSid = null
+        myRoute = null
+    }
+
+    /** Leaving / closing the room: drop the attempt, the controller's hotspot and this phone's join. */
+    private fun resetWifi() {
+        cancelWifiAttempt()
+        wifiHandledSids.clear()
+        wifiFailure = null; wifiFailedAt = 0L
+        ownWifiFailedAt = -WIFI_SKIP_MS
+        scope.launch(Dispatchers.IO) { wifiHost.stop(); wifiClient.release() }
     }
 
     // ---- loading the next songs ahead of time ------------------------------------------------------
@@ -796,7 +912,7 @@ class PlayTogetherManager(
         return try { !cm.isActiveNetworkMetered } catch (_: Exception) { false }
     }
 
-    private fun preloadAllowed() = nearby.connectedToController || internetIsCheap()
+    private fun preloadAllowed() = nearby.connectedToController || wifiClient.isJoined || internetIsCheap()
 
     /**
      * Receiver: keeps the next [PtPreloadPlan.COUNT] songs of the controller's queue on this phone,
@@ -846,12 +962,11 @@ class PlayTogetherManager(
     private fun artFile(sig: String) = java.io.File(app.cacheDir, "pt_recv/$sig.jpg")
 
     /** Ask the controller for the song over the internet (WebRTC, signaled through the room). */
-    private suspend fun postNeed(sig: String, sid: String) {
+    private suspend fun postNeed(sig: String, sid: String, wifi: Boolean = false) {
         val code = room ?: return
-        call(
-            "PUT", "$code/needs/$uid",
-            JSONObject().put("sig", sig).put("sid", sid).put("v", 2).put("at", serverValue()).toString()
-        )
+        val need = JSONObject().put("sig", sig).put("sid", sid).put("v", 2).put("at", serverValue())
+        if (wifi) need.put("route", "wifi") // the controller opens its own Wi-Fi instead of starting WebRTC
+        call("PUT", "$code/needs/$uid", need.toString())
     }
 
     /** Both roles: look at `needs` (controller) and `signal` (everyone) in the room snapshot. */
@@ -861,6 +976,8 @@ class PlayTogetherManager(
 
         syncNearbyHost(st)
         syncNearbyLink(st)
+        syncWifiHost(st)
+        handleWifiCreds(o)
 
         // controller: serve fresh requests for the song that is playing now
         if (st != null && st.by == uid) {
@@ -873,7 +990,13 @@ class PlayTogetherManager(
                     val sid = n.optString("sid")
                     val song = servable[n.optString("sig")]
                     if (who == uid || sid.isBlank() || song == null) return@forEach
-                    if (now - n.optLong("at", 0L) > 60_000 || servedSids.contains(sid)) return@forEach
+                    if (now - n.optLong("at", 0L) > 60_000) return@forEach
+                    if (n.optString("route") == "wifi") {
+                        // own Wi-Fi route: open the hotspot and publish it; no WebRTC for this request
+                        if (wifiHandledSids.add(sid)) serveWifi(room ?: return@forEach)
+                        return@forEach
+                    }
+                    if (servedSids.contains(sid)) return@forEach
                     if (transfer.activeSenders() >= MAX_PARALLEL_SENDS) return@forEach
                     servedSids.add(sid)
                     val size = song.fileSizeBytes.takeIf { it > 0 } ?: 0L
@@ -910,15 +1033,107 @@ class PlayTogetherManager(
         val code = room
         if (code == null || st == null || st.by != uid || !nearbyReady()) { nearby.stopAdvertising(); return }
         nearby.startAdvertising(code, myName.ifBlank { "Guest" })
-        nearby.setSources(
-            servables(st).map { (sig, song) ->
-                PtNearbyTransfer.Source(
-                    sig, extOf(song), song.fileSizeBytes.takeIf { it > 0 } ?: 0L,
-                    open = { app.contentResolver.openFileDescriptor(song.uri, "r") },
-                    cover = { PtArt.coverFile(app, song) }
-                )
+        nearby.setSources(buildSources(st))
+    }
+
+    /** The songs this phone hands out as controller (Nearby and own Wi-Fi share the same list). */
+    private fun buildSources(st: RoomState): List<PtNearbyTransfer.Source> =
+        servables(st).map { (sig, song) ->
+            PtNearbyTransfer.Source(
+                sig, extOf(song), song.fileSizeBytes.takeIf { it > 0 } ?: 0L,
+                open = { app.contentResolver.openFileDescriptor(song.uri, "r") },
+                cover = { PtArt.coverFile(app, song) }
+            )
+        }
+
+    // ---- own Wi-Fi route -----------------------------------------------------------------------------
+
+    /** Controller: keep the downloadable songs of the hotspot up to date; switch it off when no longer the controller. */
+    private fun syncWifiHost(st: RoomState?) {
+        if (st == null || st.by != uid) {
+            if (wifiHost.isRunning) scope.launch(Dispatchers.IO) { wifiHost.stop() }
+            return
+        }
+        if (wifiHost.isRunning) wifiHost.setSources(buildSources(st))
+    }
+
+    /**
+     * Controller: a phone asked for the own-Wi-Fi route. Starts the hotspot if needed and publishes
+     * {"ssid","pass","port","token","at"} in rooms/<code>/wifi (or {"err","at"} when it cannot).
+     */
+    private fun serveWifi(code: String) {
+        wifiHost.touch()
+        if (wifiHost.isRunning && wifiCredsRoom == code) return
+        if (!wifiBusy.compareAndSet(false, true)) return
+        scope.launch(Dispatchers.IO) {
+            try {
+                val known = wifiFailure
+                if (known != null && !wifiHost.isRunning && SystemClock.elapsedRealtime() - wifiFailedAt < WIFI_RETRY_MS) {
+                    putWifiError(code, known) // failed a moment ago: tell the phone again instead of retrying at once
+                } else {
+                    val creds = wifiHost.start()
+                    wifiFailure = null
+                    roomState?.let { wifiHost.setSources(buildSources(it)) }
+                    call("PUT", "$code/wifi", creds.toJson().put("at", serverValue()).toString())
+                    wifiCredsRoom = code
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                val why = (e as? PtWifiException)?.reason ?: ("Hotspot error: " + (e.message ?: e.javaClass.simpleName))
+                wifiFailure = why
+                wifiFailedAt = SystemClock.elapsedRealtime()
+                try { putWifiError(code, why) } catch (_: Exception) { }
+            } finally {
+                wifiBusy.set(false)
             }
-        )
+        }
+    }
+
+    private suspend fun putWifiError(code: String, why: String) {
+        call("PUT", "$code/wifi", JSONObject().put("err", why).put("at", serverValue()).toString())
+    }
+
+    /** The hotspot is off again (idle for 2 minutes, room left, or stopped by Android): remove its credentials. */
+    private fun onWifiHostStopped() {
+        val code = wifiCredsRoom ?: return
+        wifiCredsRoom = null
+        scope.launch(Dispatchers.IO + NonCancellable) {
+            try { call("DELETE", "$code/wifi") } catch (_: Exception) { }
+        }
+    }
+
+    /** Receiver: the controller published its Wi-Fi (or why it cannot): join it and download the song. */
+    private fun handleWifiCreds(o: JSONObject) {
+        val sid = mySid ?: return
+        if (myRoute != PtRoute.OWN_WIFI || wifiAttemptSid == sid) return
+        val sig = mySig ?: return
+        val node = o.optJSONObject("wifi") ?: return
+        val err = node.optString("err")
+        if (err.isNotBlank()) {
+            // only an answer given after this request counts (a few seconds of clock slack)
+            if (node.optLong("at", 0L) >= wifiNeedAt - 10_000) onRouteFailed(sid, PtRoute.OWN_WIFI, err)
+            return
+        }
+        val creds = PtWifiCreds.fromJson(node) ?: return
+        wifiAttemptSid = sid
+        wifiWaitJob?.cancel()
+        wifiFetchJob = scope.launch(Dispatchers.IO) {
+            try {
+                val file = wifiClient.fetch(
+                    creds, sig, artFile(sig),
+                    target = { ext -> java.io.File(app.cacheDir, "pt_recv/$sig.$ext") },
+                    onProgress = { pct -> transferListener.onProgress(sid, pct) }
+                )
+                if (sid == mySid) transferListener.onReceived(sid, file)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: PtWifiException) {
+                onRouteFailed(sid, PtRoute.OWN_WIFI, e.reason)
+            } catch (e: Exception) {
+                onRouteFailed(sid, PtRoute.OWN_WIFI, e.message ?: "Wi-Fi transfer failed")
+            }
+        }
     }
 
     /**
@@ -1460,6 +1675,12 @@ class PlayTogetherManager(
         /** Pause between two songs loaded ahead of time, and how long a failed one is left alone. */
         const val PRELOAD_GAP_MS = 1_500L
         const val PRELOAD_RETRY_MS = 60_000L
+        /** After a hotspot error the controller does not retry for this long, it just repeats the error. */
+        const val WIFI_RETRY_MS = 30_000L
+        /** Receiver: after the own-Wi-Fi route failed it is not tried again for this long. */
+        const val WIFI_SKIP_MS = 60_000L
+        /** Receiver: how long a request on the own-Wi-Fi route may go without progress before it is re-issued. */
+        const val WIFI_STALL_MS = PtRoutePlan.CREDENTIALS_TIMEOUT_MS + PtRoutePlan.JOIN_TIMEOUT_MS + 15_000L
     }
 
     private fun randomCode(): String {
