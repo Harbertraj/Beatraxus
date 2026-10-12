@@ -2102,6 +2102,32 @@ class AudioPlaybackService : Service() {
         }
     }
 
+    /**
+     * Play Together: loads [songs] and starts [startIndex] at [positionMs] (decoder opens at that position),
+     * playing or paused. Unlike [playList] there is no fixed delay and no blind seek afterwards.
+     */
+    fun playListAt(songs: List<Song>, startIndex: Int, positionMs: Long, play: Boolean) {
+        playbackJob?.cancel()
+        originalPlaylist = songs
+        playlist = songs
+        currentIndex = if (startIndex in songs.indices) startIndex else 0
+        val song = playlist.getOrNull(currentIndex) ?: return
+        if (com.beatraxus.app.cast.CastManager.isConnected) { playList(songs, startIndex); return }
+        acquireWakeLocks(song)
+        engine.prepare(song, positionMs)
+        updateUpcomingSongs()
+        saveState()
+        if (play) {
+            playbackJob = serviceScope.launch {
+                delay(40) // lets prepare() take the engine lock first
+                if (isActive && requestAudioFocus()) engine.play(song)
+            }
+        }
+    }
+
+    /** True while the player is playing or about to play (set the moment play starts, not when audio is heard). */
+    fun wantsPlaying(): Boolean = engine.playbackStateFlow.value.isPlaying
+
     fun prepareSong(song: Song, position: Long) {
         originalPlaylist = listOf(song)
         playlist = listOf(song)

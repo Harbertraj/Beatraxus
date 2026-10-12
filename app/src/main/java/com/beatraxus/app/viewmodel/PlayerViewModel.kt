@@ -3398,21 +3398,28 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             object : com.beatraxus.app.features.PlayTogetherManager.Host {
                 override fun librarySongs(): List<Song> = allSongs.value
                 override fun currentSong(): Song? = _uiState.value.currentSong
-                override fun isPlaying(): Boolean = _uiState.value.isPlaying
-                override fun positionMs(): Long = _progressMs.value
+                // Read the player itself: the UI copies lag, and a lagging "isPlaying" made play/pause toggles misfire.
+                override fun isPlaying(): Boolean = service?.wantsPlaying() ?: _uiState.value.isPlaying
+                override fun positionMs(): Long = service?.currentPositionMs ?: _progressMs.value
                 override fun queue(): List<Song> = service?.getPlaylist().orEmpty()
 
                 override fun playQueue(songs: List<Song>, index: Int, positionMs: Long, playing: Boolean) {
                     viewModelScope.launch(Dispatchers.Main) {
-                        playList(songs, index)
-                        if (positionMs > 1_500) { delay(700); this@PlayerViewModel.seekTo(positionMs) }
-                        if (!playing) { delay(300); pausePlayback() }
+                        val svc = service
+                        if (svc != null) {
+                            svc.playListAt(songs, index, positionMs.coerceAtLeast(0L), playing)
+                            saveQueueToPrefs(songs, songs, index)
+                        } else {
+                            playList(songs, index)
+                        }
                     }
                 }
 
                 override fun setPlaying(play: Boolean) {
                     viewModelScope.launch(Dispatchers.Main) {
-                        if (_uiState.value.isPlaying != play) togglePlayPause()
+                        // compare with the player's real state, so "play" can never turn into a pause
+                        val now = service?.wantsPlaying() ?: _uiState.value.isPlaying
+                        if (now != play) togglePlayPause()
                     }
                 }
 

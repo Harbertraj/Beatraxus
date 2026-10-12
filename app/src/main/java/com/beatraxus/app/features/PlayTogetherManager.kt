@@ -349,7 +349,9 @@ class PlayTogetherManager(
         val positionMs: Long,
         val updatedAt: Long,
         val song: Entry?,
-        val queue: List<Entry>
+        val queue: List<Entry>,
+        /** True for the controller's periodic position refresh (not a seek by the person): followers only nudge for big errors. */
+        val anchor: Boolean = false
     )
 
     // =========================================================================================
@@ -716,7 +718,7 @@ class PlayTogetherManager(
                 delay(20_000)
                 try {
                     putMember(code)
-                    if (++n % 9 == 0) measureClockOffset(code)
+                    if (++n % 3 == 0) measureClockOffset(code)
                     refresh()
                 } catch (e: CancellationException) {
                     throw e
@@ -750,22 +752,43 @@ class PlayTogetherManager(
                 }
                 val streamEnded = cur != null && cur.id.startsWith(STREAM_PREFIX) &&
                     cur.durationMs > 0 && pos >= cur.durationMs - 1_500
+                var effPlaying = playing
                 if (cur != null && !streamEnded) {
                     try {
                         when {
-                            cur.id != lastId -> if (!matchesRoomSong(cur) || roomState?.playing != playing) publish(cur, playing, pos)
+                            cur.id != lastId -> {
+                                // A new song is first reported as "not playing" for a moment (it is loaded, then started).
+                                // Publishing that would pause everybody, so wait for it to start when it was playing before.
+                                var p = playing
+                                if (!p && (lastPlaying || roomState?.playing == true)) {
+                                    var waited = 0
+                                    while (!p && waited < SONG_CHANGE_SETTLE_MS) { delay(50); waited += 50; p = host.isPlaying() }
+                                }
+                                val now2 = host.currentSong() ?: cur
+                                val applyingRemote = SystemClock.elapsedRealtime() < ignoreLocalUntil
+                                // a follower still loading the room's song is not asking to pause the room
+                                val stillLoading = !p && roomState?.by != uid && matchesRoomSong(now2) && roomState?.playing == true
+                                if (!applyingRemote && !stillLoading && (!matchesRoomSong(now2) || roomState?.playing != p)) publish(now2, p, host.positionMs())
+                                effPlaying = p
+                            }
                             playing != lastPlaying -> publish(cur, playing, pos)
                             else -> {
                                 val expected = if (lastPlaying) lastPos + (now - lastT) else lastPos
                                 if (abs(pos - expected) > CONTROLLER_SEEK_MS) publish(cur, playing, pos)
-                                else if (++tick % DRIFT_EVERY_TICKS == 0) correctDrift(cur, playing, pos)
+                                else {
+                                    tick++
+                                    if (tick % DRIFT_EVERY_TICKS == 0) correctDrift(cur, playing, pos)
+                                    // The controller re-sends its real position every few seconds, so followers
+                                    // stay anchored to what is actually playing (stalls, buffering, output delay).
+                                    else if (playing && roomState?.by == uid && matchesRoomSong(cur) && tick % REANCHOR_EVERY_TICKS == 0) publish(cur, true, pos, anchor = true)
+                                }
                             }
                         }
                     } catch (e: CancellationException) {
                         throw e
                     } catch (_: Exception) { /* next tick retries via the changed state */ }
                 }
-                lastId = cur?.id; lastPlaying = playing; lastPos = pos; lastT = now
+                lastId = cur?.id; lastPlaying = effPlaying; lastPos = pos; lastT = now
             }
         }
     }
@@ -1341,7 +1364,8 @@ class PlayTogetherManager(
             positionMs = o.optLong("positionMs", 0L),
             updatedAt = o.optLong("updatedAt", 0L),
             song = entry(o.optJSONObject("song")),
-            queue = q
+            queue = q,
+            anchor = o.optBoolean("anchor", false)
         )
     }
 
@@ -1374,13 +1398,15 @@ class PlayTogetherManager(
                 ignoreLocalUntil = SystemClock.elapsedRealtime() + 2_500
                 _state.update { it.copy(songMissing = false, streaming = true) }
                 val cur = host.currentSong()
+                var changed = true
                 if (cur?.id != remote.id) {
                     host.playQueue(listOf(remote), 0, target + startLead(st.playing), st.playing)
                 } else {
-                    if (host.isPlaying() != st.playing) host.setPlaying(st.playing)
-                    if (abs(host.positionMs() - target) > DRIFT_SEEK_MS) host.seekTo(target)
+                    changed = false
+                    if (host.isPlaying() != st.playing) { host.setPlaying(st.playing); changed = true }
+                    if (syncSeekIfOff(st, target)) changed = true
                 }
-                if (st.playing) scheduleResync()
+                if (st.playing && changed) scheduleResync()
                 return
             }
             // Nothing to play yet: silence this phone and ask the controller to send the file.
@@ -1398,6 +1424,7 @@ class PlayTogetherManager(
         val target = expectedPosition(st)
         ignoreLocalUntil = SystemClock.elapsedRealtime() + 2_500
         val cur = host.currentSong()
+        var resyncNeeded = false
         if (cur?.id != local.id) {
             // build this phone's queue from the controller's queue (only songs we also have)
             val songs = ArrayList<Song>()
@@ -1410,11 +1437,12 @@ class PlayTogetherManager(
             }
             if (songs.none { it.id == local.id }) { songs.clear(); songs += local; index = 0 }
             host.playQueue(songs, index, target + startLead(st.playing), st.playing)
+            resyncNeeded = true
         } else {
-            if (host.isPlaying() != st.playing) host.setPlaying(st.playing)
-            if (abs(host.positionMs() - target) > DRIFT_SEEK_MS) host.seekTo(target)
+            if (host.isPlaying() != st.playing) { host.setPlaying(st.playing); resyncNeeded = true }
+            if (syncSeekIfOff(st, target)) resyncNeeded = true
         }
-        if (st.playing) scheduleResync()
+        if (st.playing && resyncNeeded) scheduleResync()
     }
 
     /**
@@ -1428,6 +1456,7 @@ class PlayTogetherManager(
     private fun startLead(playing: Boolean): Long {
         if (!playing) return 0L
         leadSampleArmed = true
+        lastSyncSeekAt = 0L
         return startLeadMs
     }
 
@@ -1442,27 +1471,52 @@ class PlayTogetherManager(
         resyncJob = scope.launch(Dispatchers.Default) {
             val start = SystemClock.elapsedRealtime()
             var steady = 0
-            var lastSeek = 0L
-            while (isActive && SystemClock.elapsedRealtime() - start < RESYNC_WINDOW_MS && steady < 3) {
+            var lastSeekAt = 0L
+            var lastSeekTarget = -1L
+            var prevPos = -1L
+            var pausedChecks = 0
+            var kicks = 0
+            while (isActive && SystemClock.elapsedRealtime() - start < RESYNC_WINDOW_MS && steady < 6) {
                 delay(RESYNC_STEP_MS)
                 val st = roomState ?: break
                 if (st.by == uid || !st.playing) break
                 val cur = host.currentSong() ?: continue
-                if (!matchesRoomSong(cur) || !host.isPlaying()) continue // still loading / buffering
-                val now = SystemClock.elapsedRealtime()
-                val target = expectedPosition(st)
-                if (leadSampleArmed) {
-                    // first look after a song start: how far behind (+) or ahead (-) are we? Learn it for next time.
-                    leadSampleArmed = false
-                    val behind = target - host.positionMs()
-                    if (abs(behind) < 3_000) startLeadMs = (startLeadMs + (behind * 0.7f).toLong()).coerceIn(0L, 1_500L)
+                if (!matchesRoomSong(cur)) { prevPos = -1L; continue } // still loading
+                if (!host.isPlaying()) {
+                    prevPos = -1L
+                    // the room plays but this phone is not: start it (a failed/late start must not leave it silent)
+                    if (++pausedChecks >= 4 && kicks < 3) { pausedChecks = 0; kicks++; ignoreLocalUntil = SystemClock.elapsedRealtime() + 1_500; host.setPlaying(true) }
+                    continue
                 }
-                if (abs(host.positionMs() - target) > RESYNC_TOLERANCE_MS) {
-                    if (now - lastSeek > RESYNC_SEEK_GAP_MS) {
-                        lastSeek = now
+                pausedChecks = 0
+                // Only judge the position once audio is really running: right after a start or a seek the
+                // player reports the requested position without moving, and seeking again then only restarts the load.
+                val pos = host.positionMs()
+                val advancing = prevPos >= 0 && pos - prevPos in 20L..1_000L && pos != lastSeekTarget
+                prevPos = pos
+                if (!advancing) continue
+                val now = SystemClock.elapsedRealtime()
+                if (now - lastSeekAt < RESYNC_SETTLE_MS) continue
+                val behind = expectedPosition(st) - pos // + = this phone is late, - = early
+                if (abs(behind) < 4_000) {
+                    // Learn how much a start / seek costs, so the next one lands on the room position instead of behind it.
+                    if (leadSampleArmed) {
+                        leadSampleArmed = false
+                        startLeadMs = (startLeadMs + (behind * 0.7f).toLong()).coerceIn(0L, 2_500L)
+                    } else if (seekSamplePending) {
+                        seekSamplePending = false
+                        seekLeadMs = (seekLeadMs + (behind * 0.8f).toLong()).coerceIn(0L, 2_500L)
+                    }
+                }
+                if (abs(behind) > RESYNC_TOLERANCE_MS) {
+                    if (now - lastSeekAt >= RESYNC_SEEK_GAP_MS) {
+                        lastSeekAt = now
+                        lastSyncSeekAt = now
                         steady = 0
                         ignoreLocalUntil = now + 1_000
-                        host.seekTo(target + RESYNC_SEEK_LEAD_MS) // a seek itself takes a moment to land
+                        lastSeekTarget = expectedPosition(st) + seekLeadMs
+                        seekSamplePending = true
+                        host.seekTo(lastSeekTarget) // a seek takes a while to land: aim ahead by what it cost last time
                     }
                 } else {
                     steady++
@@ -1471,20 +1525,48 @@ class PlayTogetherManager(
         }
     }
 
+    /** How far ahead a correction seek must aim to land on the room position (learned from earlier seeks). */
+    @Volatile private var seekLeadMs = 300L
+    @Volatile private var seekSamplePending = false
+
+    /**
+     * A seek restarts the decoder and fades the audio back in, so seeking to correct small timing errors is
+     * audible as a volume dip. Corrections are therefore rare: at most one per [MIN_SYNC_SEEK_GAP_MS], and the
+     * controller's periodic refresh only moves a follower when it is clearly off.
+     */
+    @Volatile private var lastSyncSeekAt = 0L
+
+    private fun canSyncSeek() = SystemClock.elapsedRealtime() - lastSyncSeekAt >= MIN_SYNC_SEEK_GAP_MS
+
+    /** Applies the room position to a follower already on the right song. True when it seeked. */
+    private fun syncSeekIfOff(st: RoomState, target: Long): Boolean {
+        val err = abs(host.positionMs() - target)
+        if (st.anchor) {
+            if (err <= ANCHOR_SEEK_MS || !canSyncSeek()) return false
+        } else if (err <= DRIFT_SEEK_MS) return false
+        lastSyncSeekAt = SystemClock.elapsedRealtime()
+        seekSamplePending = true
+        host.seekTo(target + seekLeadMs)
+        return true
+    }
+
     private fun correctDrift(cur: Song, playing: Boolean, pos: Long) {
         val st = roomState ?: return
         if (st.by == uid || !st.playing || !playing || !matchesRoomSong(cur)) return
         val target = expectedPosition(st)
-        if (abs(pos - target) > DRIFT_SEEK_MS) {
+        if (abs(pos - target) > DRIFT_SEEK_MS && canSyncSeek()) {
+            lastSyncSeekAt = SystemClock.elapsedRealtime()
             ignoreLocalUntil = SystemClock.elapsedRealtime() + 1_500
-            host.seekTo(target)
+            seekSamplePending = true
+            host.seekTo(target + seekLeadMs)
+            scheduleResync() // watches where the seek lands and fine-tunes it
         }
     }
 
     /** Controller: estimated time a state update needs to reach the server (smoothed half round trip). */
     @Volatile private var uplinkMs = 80L
 
-    private suspend fun publish(song: Song, playing: Boolean, pos0: Long) {
+    private suspend fun publish(song: Song, playing: Boolean, pos0: Long, anchor: Boolean = false) {
         val code = room ?: return
         val q = host.queue()
         // The position was sampled a little while ago; read it again right before sending so the value
@@ -1500,6 +1582,7 @@ class PlayTogetherManager(
             put("playing", playing)
             put("positionMs", pos)
             put("updatedAt", serverValue())
+            if (anchor) put("anchor", true)
             put("song", songJson(song))
             put("queue", JSONArray().also { arr -> window.forEach { arr.put(songJson(it)) } })
         }
@@ -1722,7 +1805,7 @@ class PlayTogetherManager(
     private suspend fun measureClockOffset(code: String) {
         var best: Long? = null
         var bestRtt = Long.MAX_VALUE
-        repeat(3) {
+        repeat(5) {
             val t0 = System.currentTimeMillis()
             call("PUT", "$code/clock/$uid", serverValue().toString())
             val t1 = System.currentTimeMillis()
@@ -1900,14 +1983,23 @@ class PlayTogetherManager(
         const val CONTROLLER_SEEK_MS = 800L
         /** Controller: gentle drift check for followers' reference every this many ticks (~2 s). */
         const val DRIFT_EVERY_TICKS = 20
+        /** Controller: how often (in ticks, ~5 s) the real position is published again while playing. */
+        const val REANCHOR_EVERY_TICKS = 50
+        /** Longest wait for a freshly changed song to report "playing" before the change is published. */
+        const val SONG_CHANGE_SETTLE_MS = 1_200
         /** Follower: a position error bigger than this is corrected with a seek. */
-        const val DRIFT_SEEK_MS = 450L
+        const val DRIFT_SEEK_MS = 150L
+        /** A periodic position refresh moves a follower only when it is off by more than this. */
+        const val ANCHOR_SEEK_MS = 150L
+        /** Minimum time between two timing-correction seeks on a follower (a seek is audible). */
+        const val MIN_SYNC_SEEK_GAP_MS = 3_000L
         const val REFRESH_DEBOUNCE_MS = 25L
-        const val RESYNC_STEP_MS = 200L
-        const val RESYNC_WINDOW_MS = 15_000L
-        const val RESYNC_TOLERANCE_MS = 300L
-        const val RESYNC_SEEK_GAP_MS = 600L
-        const val RESYNC_SEEK_LEAD_MS = 120L
+        const val RESYNC_STEP_MS = 150L
+        /** After a correction seek, wait this long before judging the position again. */
+        const val RESYNC_SETTLE_MS = 700L
+        const val RESYNC_WINDOW_MS = 40_000L
+        const val RESYNC_TOLERANCE_MS = 100L
+        const val RESYNC_SEEK_GAP_MS = 1_500L
         /** Songs loaded ahead of time at the same time. */
         const val MAX_PARALLEL_PRELOADS = 5
         /** A preload with no progress for this long is dropped and started again. */
