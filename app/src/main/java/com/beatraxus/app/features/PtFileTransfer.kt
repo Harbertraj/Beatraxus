@@ -29,9 +29,11 @@ import java.util.concurrent.ConcurrentHashMap
  * the song over a WebRTC data channel.
  *
  * Wire format on the data channel:
- *   1. text   {"size":<bytes>,"ext":"mp3"}
- *   2. binary 16 KB chunks
- *   3. text   "EOF"
+ *   1. text   {"size":<bytes>,"ext":"mp3"}            (+ "art":<bytes> when a cover follows)
+ *   2. binary the cover in 16 KB chunks, exactly "art" bytes (only if the header has "art")
+ *   3. binary the song in 16 KB chunks
+ *   4. text   "EOF"
+ * The cover is only sent to a phone that asked with "v":2, so older apps get the old format.
  */
 class PtFileTransfer(
     context: Context,
@@ -61,6 +63,11 @@ class PtFileTransfer(
         var expected = 0L
         var got = 0L
         var ext = "mp3"
+        /** Receiver: where the cover is saved, and how much of it has come in. */
+        var artFile: File? = null
+        var artExpected = 0L
+        var artGot = 0L
+        var artBuf: java.io.ByteArrayOutputStream? = null
     }
 
     private val sessions = ConcurrentHashMap<String, Session>()
@@ -84,7 +91,7 @@ class PtFileTransfer(
     // ---- sender (controller) -------------------------------------------------------------
 
     /** Controller side: open a connection to the phone behind [sid] and push the file. */
-    fun startSending(sid: String, ext: String, size: Long, open: () -> InputStream?) {
+    fun startSending(sid: String, ext: String, size: Long, cover: File? = null, open: () -> InputStream?) {
         if (sessions.containsKey(sid)) return
         val s = newSession(sid, true) ?: return
         val dc = s.pc.createDataChannel("song", DataChannel.Init().apply { ordered = true })
@@ -94,7 +101,7 @@ class PtFileTransfer(
             override fun onMessage(b: DataChannel.Buffer) {}
             override fun onStateChange() {
                 if (dc.state() == DataChannel.State.OPEN && s.job == null) {
-                    s.job = scope.launch(Dispatchers.IO) { pump(s, dc, ext, size, open) }
+                    s.job = scope.launch(Dispatchers.IO) { pump(s, dc, ext, size, cover, open) }
                 }
             }
         })
@@ -108,10 +115,25 @@ class PtFileTransfer(
         timeout(s, 180_000)
     }
 
-    private suspend fun pump(s: Session, dc: DataChannel, ext: String, size: Long, open: () -> InputStream?) {
+    private suspend fun pump(
+        s: Session, dc: DataChannel, ext: String, size: Long, cover: File?, open: () -> InputStream?
+    ) {
         try {
             val input = open() ?: throw IllegalStateException("cannot read file")
-            dc.send(text(JSONObject().put("size", size).put("ext", ext).toString()))
+            val coverBytes = try { cover?.readBytes()?.takeIf { it.isNotEmpty() } } catch (_: Exception) { null }
+            val header = JSONObject().put("size", size).put("ext", ext)
+            if (coverBytes != null) header.put("art", coverBytes.size)
+            dc.send(text(header.toString()))
+            if (coverBytes != null) {
+                var o = 0
+                while (o < coverBytes.size) {
+                    val n = minOf(CHUNK, coverBytes.size - o)
+                    while (dc.bufferedAmount() > MAX_BUFFERED) delay(15)
+                    if (s.done) return
+                    dc.send(DataChannel.Buffer(ByteBuffer.wrap(coverBytes.copyOfRange(o, o + n)), true))
+                    o += n
+                }
+            }
             input.use {
                 val buf = ByteArray(CHUNK)
                 var sent = 0L
@@ -141,9 +163,10 @@ class PtFileTransfer(
     // ---- receiver (phone without the song) -----------------------------------------------
 
     /** Receiver side: the controller's offer arrived, answer it and save the incoming file. */
-    fun acceptOffer(sid: String, offerJson: String, targetFile: (ext: String) -> File) {
+    fun acceptOffer(sid: String, offerJson: String, artFile: File?, targetFile: (ext: String) -> File) {
         if (sessions.containsKey(sid)) return
         val s = newSession(sid, false) ?: return
+        s.artFile = artFile
         timeout(s, 180_000)
         val o = JSONObject(offerJson)
         s.pc.setRemoteDescription(object : SimpleSdp() {
@@ -189,11 +212,19 @@ class PtFileTransfer(
                             val h = JSONObject(t)
                             s.expected = h.optLong("size")
                             s.ext = ptSafeExt(h.optString("ext", "mp3"))
+                            s.artExpected = h.optLong("art", 0L)
+                            s.artGot = 0L
+                            s.artBuf = if (s.artExpected > 0) java.io.ByteArrayOutputStream() else null
                             val f = (targetFile ?: return).invoke(s.ext)
                             f.parentFile?.mkdirs()
                             s.outFile = f
                             s.out = FileOutputStream(f)
                         }
+                    } else if (s.artGot < s.artExpected) {
+                        // the cover comes first and in its own messages, before any song data
+                        s.artBuf?.write(bytes)
+                        s.artGot += bytes.size
+                        if (s.artGot >= s.artExpected) saveCover(s)
                     } else {
                         s.out?.write(bytes)
                         s.got += bytes.size
@@ -204,6 +235,18 @@ class PtFileTransfer(
                 }
             }
         })
+    }
+
+    private fun saveCover(s: Session) {
+        val f = s.artFile ?: return
+        val buf = s.artBuf ?: return
+        try {
+            f.parentFile?.mkdirs()
+            f.writeBytes(buf.toByteArray())
+        } catch (_: Exception) {
+            f.delete()
+        }
+        s.artBuf = null
     }
 
     // ---- signaling input -----------------------------------------------------------------

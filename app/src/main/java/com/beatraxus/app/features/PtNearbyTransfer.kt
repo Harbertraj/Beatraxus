@@ -27,6 +27,7 @@ import kotlinx.coroutines.launch
 import org.json.JSONObject
 import java.io.File
 import java.io.FileInputStream
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Same-place song transfer for Play Together using Google Nearby Connections
@@ -40,9 +41,13 @@ import java.io.FileInputStream
  * WebRTC path in [PtFileTransfer].
  *
  * Protocol per connection (all BYTES payloads are small JSON):
- *   receiver -> controller   {"req":"<song sig>"}
- *   controller -> receiver   {"size":<bytes>,"ext":"mp3"}   (or {"none":true})
- *   controller -> receiver   FILE payload
+ *   receiver -> controller   {"req":"<song sig>","v":2}     ("v":2 = I can also take the cover)
+ *   controller -> receiver   {"size":<bytes>,"ext":"mp3","sid":<song payload id>,
+ *                             "art":<cover payload id>,"artSize":<bytes>}   (or {"none":true})
+ *   controller -> receiver   FILE payload with the cover (only if the song has one)
+ *   controller -> receiver   FILE payload with the song
+ * The controller can hand out the current song and the ones queued after it (so phones can load
+ * them ahead of time); a request without "v" gets the old reply (no cover) so older apps still work.
  */
 class PtNearbyTransfer(
     context: Context,
@@ -57,10 +62,16 @@ class PtNearbyTransfer(
 
     @Volatile var listener: PtFileTransfer.Listener? = null
 
-    /** What the controller is currently able to hand out. */
-    class Source(val sig: String, val ext: String, val size: Long, val open: () -> ParcelFileDescriptor?)
+    /** A song the controller can hand out. [cover] returns a small JPEG of its album art, if it has one. */
+    class Source(
+        val sig: String,
+        val ext: String,
+        val size: Long,
+        val open: () -> ParcelFileDescriptor?,
+        val cover: () -> File? = { null }
+    )
 
-    @Volatile private var source: Source? = null
+    @Volatile private var sources: Map<String, Source> = emptyMap()
     @Volatile private var serviceId: String? = null
     @Volatile private var advertising = false
 
@@ -68,13 +79,28 @@ class PtNearbyTransfer(
     private val hostEndpoints: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
 
     // ---- receiver state: one standing link to the controller + one song request at a time ----
-    private class Request(val sig: String, val sid: String, val target: (String) -> File) {
+    private class Request(
+        val sig: String,
+        val sid: String,
+        /** Where the cover is saved (null = the caller does not want one). */
+        val artTarget: File?,
+        val target: (String) -> File
+    ) {
         @Volatile var sent = false
         @Volatile var expected = 0L
         @Volatile var ext = "mp3"
+        @Volatile var headerSeen = false
+        @Volatile var artId = 0L
         @Volatile var filePayload: Payload? = null
+        @Volatile var artPayload: Payload? = null
+        /** 0 = still coming (or none), 1 = received, -1 = failed. */
+        @Volatile var artState = 0
         @Volatile var finished = false
         var timeout: Job? = null
+        /** FILE payloads that arrived before the header that says which is which. */
+        val early = ConcurrentHashMap<Long, Payload>()
+        /** Payload ids whose transfer is complete. */
+        val done: MutableSet<Long> = ConcurrentHashMap.newKeySet()
     }
     @Volatile private var request: Request? = null
 
@@ -114,14 +140,14 @@ class PtNearbyTransfer(
         if (!advertising) return
         try { client.stopAdvertising() } catch (_: Exception) { }
         advertising = false
-        source = null
+        sources = emptyMap()
         hostEndpoints.forEach { try { client.disconnectFromEndpoint(it) } catch (_: Exception) { } }
         hostEndpoints.clear()
         publishPeers()
     }
 
-    /** Controller: the file that can be requested right now (null = nothing shareable). */
-    fun setSource(s: Source?) { source = s }
+    /** Controller: the songs that can be requested right now (empty = nothing shareable). */
+    fun setSources(list: List<Source>) { sources = list.associateBy { it.sig } }
 
     private val hostLifecycle = object : ConnectionLifecycleCallback() {
         override fun onConnectionInitiated(endpointId: String, info: ConnectionInfo) {
@@ -138,18 +164,38 @@ class PtNearbyTransfer(
     private val hostPayloads = object : PayloadCallback() {
         override fun onPayloadReceived(endpointId: String, payload: Payload) {
             if (payload.type != Payload.Type.BYTES) return
-            val sig = try { JSONObject(String(payload.asBytes() ?: return)).optString("req") } catch (_: Exception) { return }
-            val src = source
-            if (src == null || src.sig != sig) {
+            val req = try { JSONObject(String(payload.asBytes() ?: return)) } catch (_: Exception) { return }
+            val src = sources[req.optString("req")]
+            if (src == null) {
                 send(endpointId, JSONObject().put("none", true).toString())
                 return
             }
-            val pfd = try { src.open() } catch (_: Exception) { null }
-            if (pfd == null) { send(endpointId, JSONObject().put("none", true).toString()); return }
-            send(endpointId, JSONObject().put("size", src.size).put("ext", src.ext).toString())
-            client.sendPayload(endpointId, Payload.fromFile(pfd))
+            // Building the cover reads and decodes an image: not on the thread Nearby calls us on.
+            val wantsCover = req.optInt("v", 1) >= 2
+            scope.launch(Dispatchers.IO) { serve(endpointId, src, wantsCover) }
         }
         override fun onPayloadTransferUpdate(endpointId: String, update: PayloadTransferUpdate) {}
+    }
+
+    private fun serve(endpointId: String, src: Source, wantsCover: Boolean) {
+        val pfd = try { src.open() } catch (_: Exception) { null }
+        if (pfd == null) { send(endpointId, JSONObject().put("none", true).toString()); return }
+        val songPayload = Payload.fromFile(pfd)
+        var artPayload: Payload? = null
+        var artSize = 0L
+        if (wantsCover) {
+            try {
+                src.cover()?.let { f -> artPayload = Payload.fromFile(f); artSize = f.length() }
+            } catch (_: Exception) { artPayload = null }
+        }
+        val header = JSONObject().put("size", src.size).put("ext", src.ext)
+        if (wantsCover) {
+            header.put("sid", songPayload.id)
+            artPayload?.let { header.put("art", it.id).put("artSize", artSize) }
+        }
+        send(endpointId, header.toString())
+        artPayload?.let { client.sendPayload(endpointId, it) } // the small cover goes first
+        client.sendPayload(endpointId, songPayload)
     }
 
     private fun send(endpointId: String, json: String) {
@@ -256,9 +302,12 @@ class PtNearbyTransfer(
     }
 
     /** Receiver: ask the controller of [room] for the song with signature [sig]. */
-    fun requestSong(room: String, sig: String, sid: String, myName: String, target: (ext: String) -> File) {
+    fun requestSong(
+        room: String, sig: String, sid: String, myName: String,
+        artTarget: File?, target: (ext: String) -> File
+    ) {
         cancelRequest()
-        val req = Request(sig, sid, target)
+        val req = Request(sig, sid, artTarget, target)
         request = req
         // The link is normally up already; if not, give it a short while before using the internet.
         req.timeout = scope.launch {
@@ -279,7 +328,7 @@ class PtNearbyTransfer(
         r.timeout?.cancel()
         // nothing should take longer than this once the request is out
         r.timeout = scope.launch { delay(TRANSFER_TIMEOUT_MS); giveUp(r) }
-        send(ep, JSONObject().put("req", r.sig).toString())
+        send(ep, JSONObject().put("req", r.sig).put("v", 2).toString())
     }
 
     /** Forget the current request; the standing link stays up. */
@@ -289,6 +338,7 @@ class PtNearbyTransfer(
         r.finished = true
         r.timeout?.cancel()
         r.filePayload?.let { try { client.cancelPayload(it.id) } catch (_: Exception) { } }
+        r.artPayload?.let { try { client.cancelPayload(it.id) } catch (_: Exception) { } }
     }
 
     fun stopAll() {
@@ -317,8 +367,15 @@ class PtNearbyTransfer(
                     if (o.optBoolean("none")) { giveUp(r); return }
                     r.expected = o.optLong("size")
                     r.ext = ptSafeExt(o.optString("ext", "mp3"))
+                    r.artId = o.optLong("art", 0L)
+                    r.headerSeen = true
+                    // sort out any file that arrived before this header
+                    r.early.values.forEach { classify(r, it) }
+                    r.early.clear()
+                    if (r.artPayload?.id?.let { it in r.done } == true) r.artState = 1
+                    if (r.filePayload?.id?.let { it in r.done } == true) finish(r)
                 }
-                Payload.Type.FILE -> r.filePayload = payload
+                Payload.Type.FILE -> if (r.headerSeen) classify(r, payload) else r.early[payload.id] = payload
                 else -> {}
             }
         }
@@ -326,17 +383,56 @@ class PtNearbyTransfer(
         override fun onPayloadTransferUpdate(endpointId: String, u: PayloadTransferUpdate) {
             val r = request ?: return
             if (r.finished) return
-            val isFile = r.filePayload?.id == u.payloadId
-            if (!isFile) return
-            when (u.status) {
-                PayloadTransferUpdate.Status.IN_PROGRESS -> {
-                    if (u.totalBytes > 0) listener?.onProgress(r.sid, (u.bytesTransferred * 100 / u.totalBytes).toInt())
+            val isArt = r.artId != 0L && u.payloadId == r.artId
+            val isSong = !isArt && r.filePayload?.id == u.payloadId
+            when {
+                isArt -> when (u.status) {
+                    PayloadTransferUpdate.Status.SUCCESS -> { r.done.add(u.payloadId); r.artState = 1 }
+                    PayloadTransferUpdate.Status.FAILURE, PayloadTransferUpdate.Status.CANCELED -> r.artState = -1
+                    else -> {}
                 }
-                PayloadTransferUpdate.Status.SUCCESS -> finish(r)
-                PayloadTransferUpdate.Status.FAILURE, PayloadTransferUpdate.Status.CANCELED -> giveUp(r)
-                else -> {}
+                isSong -> when (u.status) {
+                    PayloadTransferUpdate.Status.IN_PROGRESS -> {
+                        if (u.totalBytes > 0) listener?.onProgress(r.sid, (u.bytesTransferred * 100 / u.totalBytes).toInt())
+                    }
+                    PayloadTransferUpdate.Status.SUCCESS -> { r.done.add(u.payloadId); finish(r) }
+                    PayloadTransferUpdate.Status.FAILURE, PayloadTransferUpdate.Status.CANCELED -> giveUp(r)
+                    else -> {}
+                }
+                // a file that has not been sorted into song / cover yet (header still to come)
+                u.status == PayloadTransferUpdate.Status.SUCCESS -> r.done.add(u.payloadId)
             }
         }
+    }
+
+    /** A FILE payload is the cover if the header said so, otherwise it is the song. */
+    private fun classify(r: Request, p: Payload) {
+        if (r.artId != 0L && p.id == r.artId) r.artPayload = p else r.filePayload = p
+    }
+
+    /** Copies a received FILE payload into [out]. */
+    private fun copyPayload(payload: Payload, out: File) {
+        out.parentFile?.mkdirs()
+        if (Build.VERSION.SDK_INT >= 29) {
+            val pfd = payload.asFile()?.asParcelFileDescriptor() ?: throw IllegalStateException("no file")
+            ParcelFileDescriptor.AutoCloseInputStream(pfd).use { i -> out.outputStream().use { o -> i.copyTo(o) } }
+        } else {
+            @Suppress("DEPRECATION")
+            val f = payload.asFile()?.asJavaFile() ?: throw IllegalStateException("no file")
+            FileInputStream(f).use { i -> out.outputStream().use { o -> i.copyTo(o) } }
+            f.delete()
+        }
+    }
+
+    /** The cover is small and is sent first, so it is normally here already; give it a moment if not. */
+    private suspend fun saveCover(r: Request) {
+        val target = r.artTarget ?: return
+        if (r.artId == 0L) return // the controller has no cover for this song (or an older app)
+        var waited = 0L
+        while (r.artState == 0 && waited < COVER_WAIT_MS) { delay(50); waited += 50 }
+        val payload = r.artPayload
+        if (r.artState != 1 || payload == null) return
+        try { copyPayload(payload, target) } catch (_: Exception) { target.delete() }
     }
 
     private fun finish(r: Request) {
@@ -344,17 +440,10 @@ class PtNearbyTransfer(
         scope.launch(Dispatchers.IO) {
             val out = r.target(r.ext)
             try {
-                out.parentFile?.mkdirs()
-                if (Build.VERSION.SDK_INT >= 29) {
-                    val pfd = payload.asFile()?.asParcelFileDescriptor() ?: throw IllegalStateException("no file")
-                    ParcelFileDescriptor.AutoCloseInputStream(pfd).use { i -> out.outputStream().use { o -> i.copyTo(o) } }
-                } else {
-                    @Suppress("DEPRECATION")
-                    val f = payload.asFile()?.asJavaFile() ?: throw IllegalStateException("no file")
-                    FileInputStream(f).use { i -> out.outputStream().use { o -> i.copyTo(o) } }
-                    f.delete()
-                }
+                copyPayload(payload, out)
                 if (r.expected > 0 && out.length() != r.expected) throw IllegalStateException("incomplete file")
+                if (r.finished) { out.delete(); return@launch }
+                saveCover(r)
                 if (r.finished) { out.delete(); return@launch }
                 r.finished = true
                 r.timeout?.cancel()
@@ -376,6 +465,7 @@ class PtNearbyTransfer(
         private const val LINK_RETRY_MS = 4_000L
         private const val LINK_QUICK_RETRY_MS = 1_500L
         private const val TRANSFER_TIMEOUT_MS = 180_000L
+        private const val COVER_WAIT_MS = 2_500L
 
         /** Runtime permissions Nearby Connections needs on this Android version. */
         fun requiredPermissions(): Array<String> = buildList {

@@ -1,6 +1,7 @@
 package com.beatraxus.app.features
 
 import android.content.Context
+import android.net.ConnectivityManager
 import android.os.Build
 import android.os.SystemClock
 import android.net.Uri
@@ -168,6 +169,15 @@ class PlayTogetherManager(
     /** Controller: sessions already started, so the same request is not served twice. */
     private val servedSids = java.util.concurrent.CopyOnWriteArraySet<String>()
 
+    // ---- loading the next songs ahead of time (receiver) ----------------------------------------
+    /** Signature of the song being fetched ahead of time (null = the running transfer, if any, is for the current song). */
+    @Volatile private var preloadSig: String? = null
+    @Volatile private var lastPreloadAt = 0L
+    /** Song signature -> when its preload last failed (not retried for [PRELOAD_RETRY_MS]). */
+    private val preloadFailedAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    /** Songs whose file was already searched for an embedded cover. */
+    private val artTried = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
     private val transfer: PtFileTransfer by lazy {
         PtFileTransfer(app, scope) { sid, kind, json ->
             val code = room ?: return@PtFileTransfer
@@ -185,11 +195,17 @@ class PlayTogetherManager(
     private val nearby: PtNearbyTransfer by lazy {
         PtNearbyTransfer(app, scope, onPeers = { n -> _state.update { it.copy(nearbyPeers = n) } }) { sid ->
             // Nearby could not deliver: ask over the internet instead.
-            if (sid == mySid) scope.launch(Dispatchers.IO) {
-                try {
-                    val sig = mySig ?: return@launch
-                    postNeed(sig, sid)
-                } catch (e: CancellationException) { throw e } catch (_: Exception) { }
+            if (sid == mySid) {
+                val sig = mySig
+                if (preloadSig != null && !internetIsCheap()) {
+                    // a song fetched ahead of time is not worth mobile data: give up on it quietly
+                    mySid = null; preloadSig = null
+                    if (sig != null) preloadFailedAt[sig] = SystemClock.elapsedRealtime()
+                } else scope.launch(Dispatchers.IO) {
+                    try {
+                        postNeed(sig ?: return@launch, sid)
+                    } catch (e: CancellationException) { throw e } catch (_: Exception) { }
+                }
             }
         }.also { it.listener = transferListener }
     }
@@ -220,13 +236,16 @@ class PlayTogetherManager(
         override fun onProgress(sid: String, percent: Int) {
             if (sid == mySid) {
                 lastProgressAt = SystemClock.elapsedRealtime()
-                _state.update { it.copy(transferPercent = percent) }
+                // a song that is only being loaded ahead of time does not show as "receiving"
+                if (preloadSig == null) _state.update { it.copy(transferPercent = percent) }
             }
         }
 
         override fun onReceived(sid: String, file: java.io.File) {
             val sig = mySig ?: return
             mySid = null
+            preloadSig = null
+            preloadFailedAt.remove(sig)
             nearby.cancelRequest()
             transfer.close(sid)
             receivedFiles[sig] = file
@@ -236,14 +255,24 @@ class PlayTogetherManager(
                 // play it in sync with the room now
                 lastAppliedAt = 0L
                 roomState?.let { applyRemote(it) }
+                // ...then go on with the next song of the queue
+                roomState?.let { maybePreload(it) }
             }
         }
 
         override fun onFailed(sid: String, reason: String) {
             if (sid == mySid) {
+                val sig = mySig
+                val wasPreload = preloadSig != null
                 mySid = null
-                lastNeedAt = SystemClock.elapsedRealtime() // retry after the 8 s throttle
-                _state.update { it.copy(transferPercent = -1, message = "Song transfer failed ($reason). Retrying…") }
+                preloadSig = null
+                if (wasPreload) {
+                    // loading ahead is best effort: skip this song for a while, no message
+                    if (sig != null) preloadFailedAt[sig] = SystemClock.elapsedRealtime()
+                } else {
+                    lastNeedAt = SystemClock.elapsedRealtime() // retry after the 8 s throttle
+                    _state.update { it.copy(transferPercent = -1, message = "Song transfer failed ($reason). Retrying…") }
+                }
             }
             scope.launch(Dispatchers.IO) {
                 try { room?.let { c -> call("DELETE", "$c/signal/$sid") } } catch (_: Exception) { }
@@ -460,6 +489,7 @@ class PlayTogetherManager(
         transfer.closeAll()
         nearby.stopAll()
         mySid = null; mySig = null; lastNeedAt = 0L; lastProgressAt = 0L; servedSids.clear()
+        preloadSig = null; lastPreloadAt = 0L; preloadFailedAt.clear(); artTried.clear()
         room = null
         roomState = null
         _state.update {
@@ -659,6 +689,7 @@ class PlayTogetherManager(
                 transfer.closeAll()
                 nearby.stopAll()
                 mySid = null; mySig = null; lastNeedAt = 0L; lastProgressAt = 0L; servedSids.clear()
+                preloadSig = null; lastPreloadAt = 0L; preloadFailedAt.clear(); artTried.clear()
                 room = null
                 roomState = null
                 java.io.File(app.cacheDir, "pt_recv").deleteRecursively(); receivedFiles.clear()
@@ -700,6 +731,7 @@ class PlayTogetherManager(
         if (st != null) {
             roomState = st
             applyRemote(st)
+            maybePreload(st)
             if (STORAGE_UPLOAD_ENABLED) shareForRoom(st, members.any { !it.isMe })
         }
         handleSignaling(o, now)
@@ -711,24 +743,44 @@ class PlayTogetherManager(
 
     private fun songSig(e: Entry) = sha(norm(e.title) + "|" + norm(e.artist) + "|" + (e.durationMs / 1000))
 
-    /** Receiver: tell the controller "I need this song". Re-sent at most every 25 s. */
-    private suspend fun requestSong(e: Entry) {
+    /**
+     * Receiver: tell the controller "I need this song". Re-sent at most every 25 s.
+     * [preload] = it is not the song playing now but one of the next ones, fetched ahead of time;
+     * such a request never blocks or delays the song the room is playing.
+     */
+    private suspend fun requestSong(e: Entry, preload: Boolean = false) {
         val code = room ?: return
         val now = SystemClock.elapsedRealtime()
+        val sig = songSig(e)
+        if (!preload) {
+            val loading = preloadSig
+            if (mySid != null && loading != null) {
+                if (loading == sig) {
+                    // the room reached the song that was already on its way: just show its progress
+                    preloadSig = null
+                    _state.update { it.copy(transferPercent = max(it.transferPercent, 0)) }
+                    return
+                }
+                // the room is now on a different song than the one loaded ahead: this one goes first
+                transfer.close(mySid ?: "")
+                nearby.cancelRequest()
+                mySid = null; preloadSig = null; lastNeedAt = 0L
+            }
+        }
         // Only re-issue when the transfer has stalled: no progress for 25 s since the request.
         if (mySid != null && now - maxOf(lastNeedAt, lastProgressAt) < 25_000) return
-        if (now - lastNeedAt < 8_000) return
+        if (!preload && now - lastNeedAt < 8_000) return
         lastNeedAt = now
-        val sig = songSig(e)
         val sid = uid + "_" + UUID.randomUUID().toString().take(6)
         transfer.close(mySid ?: "")
         nearby.cancelRequest()
         mySid = sid; mySig = sig
-        _state.update { it.copy(transferPercent = 0) }
+        preloadSig = if (preload) sig else null
+        if (!preload) _state.update { it.copy(transferPercent = 0) }
         if (nearbyReady()) {
             // Same place? Try Bluetooth / Wi-Fi Direct first; PtNearbyTransfer calls postNeed()
             // itself if no controller is found nearby.
-            nearby.requestSong(code, sig, sid, myName.ifBlank { "Guest" }) { ext ->
+            nearby.requestSong(code, sig, sid, myName.ifBlank { "Guest" }, artFile(sig)) { ext ->
                 java.io.File(app.cacheDir, "pt_recv/$sig.$ext")
             }
         } else {
@@ -736,12 +788,69 @@ class PlayTogetherManager(
         }
     }
 
+    // ---- loading the next songs ahead of time ------------------------------------------------------
+
+    /** Cheap to move 8 songs? On Wi-Fi (not metered) or over a direct link to the controller. */
+    private fun internetIsCheap(): Boolean {
+        val cm = app.getSystemService(ConnectivityManager::class.java) ?: return false
+        return try { !cm.isActiveNetworkMetered } catch (_: Exception) { false }
+    }
+
+    private fun preloadAllowed() = nearby.connectedToController || internetIsCheap()
+
+    /**
+     * Receiver: keeps the next [PtPreloadPlan.COUNT] songs of the controller's queue on this phone,
+     * one at a time, so skipping to the next song never has to wait for a transfer. Songs this phone
+     * already owns are skipped, and files that are no longer near the current song are deleted.
+     */
+    private fun maybePreload(st: RoomState) {
+        if (st.by == uid) return
+        val current = st.song ?: return
+        val curSig = songSig(current)
+        val entryBySig = LinkedHashMap<String, Entry>()
+        st.queue.forEach { entryBySig.putIfAbsent(songSig(it), it) }
+        val queueSigs = st.queue.map { songSig(it) }
+        trimReceived(PtPreloadPlan.keep(queueSigs, curSig))
+
+        if (mySid != null || _state.value.songMissing) return // the song playing now always goes first
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastPreloadAt < PRELOAD_GAP_MS || !preloadAllowed()) return
+        val library = host.librarySongs()
+        val next = PtPreloadPlan.next(PtPreloadPlan.upcoming(queueSigs, curSig)) { sig ->
+            val entry = entryBySig[sig]
+            entry == null ||
+                receivedFiles[sig]?.exists() == true ||
+                findLocal(entry, library) != null ||
+                (preloadFailedAt[sig]?.let { now - it < PRELOAD_RETRY_MS } == true)
+        } ?: return
+        val entry = entryBySig[next] ?: return
+        lastPreloadAt = now
+        scope.launch(Dispatchers.IO) {
+            try { requestSong(entry, preload = true) } catch (e: CancellationException) { throw e } catch (_: Exception) { }
+        }
+    }
+
+    /** Deletes received songs (and their covers) that are not in [keep] any more. */
+    private fun trimReceived(keep: Set<String>) {
+        val iter = receivedFiles.entries.iterator()
+        while (iter.hasNext()) {
+            val (sig, file) = iter.next()
+            if (sig in keep) continue
+            iter.remove()
+            file.delete()
+            artFile(sig).delete()
+            artTried.remove(sig)
+        }
+    }
+
+    private fun artFile(sig: String) = java.io.File(app.cacheDir, "pt_recv/$sig.jpg")
+
     /** Ask the controller for the song over the internet (WebRTC, signaled through the room). */
     private suspend fun postNeed(sig: String, sid: String) {
         val code = room ?: return
         call(
             "PUT", "$code/needs/$uid",
-            JSONObject().put("sig", sig).put("sid", sid).put("at", serverValue()).toString()
+            JSONObject().put("sig", sig).put("sid", sid).put("v", 2).put("at", serverValue()).toString()
         )
     }
 
@@ -755,20 +864,22 @@ class PlayTogetherManager(
 
         // controller: serve fresh requests for the song that is playing now
         if (st != null && st.by == uid) {
-            val entry = st.song
-            val song = host.currentSong()?.takeIf { entry != null && entry.matches(it) }
             val needs = o.optJSONObject("needs")
-            if (entry != null && song != null && isUploadable(song) && needs != null) {
-                val sig = songSig(entry)
+            // the song playing now and the ones queued after it can be requested
+            val servable = servables(st).associate { it.first to it.second }
+            if (servable.isNotEmpty() && needs != null) {
                 needs.keys().forEach { who ->
                     val n = needs.optJSONObject(who) ?: return@forEach
                     val sid = n.optString("sid")
-                    if (who == uid || sid.isBlank() || n.optString("sig") != sig) return@forEach
+                    val song = servable[n.optString("sig")]
+                    if (who == uid || sid.isBlank() || song == null) return@forEach
                     if (now - n.optLong("at", 0L) > 60_000 || servedSids.contains(sid)) return@forEach
                     if (transfer.activeSenders() >= MAX_PARALLEL_SENDS) return@forEach
                     servedSids.add(sid)
                     val size = song.fileSizeBytes.takeIf { it > 0 } ?: 0L
-                    transfer.startSending(sid, extOf(song), size) { app.contentResolver.openInputStream(song.uri) }
+                    // the cover only goes to apps that said they can take it (v >= 2)
+                    val cover = if (n.optInt("v", 1) >= 2) PtArt.coverFile(app, song) else null
+                    transfer.startSending(sid, extOf(song), size, cover) { app.contentResolver.openInputStream(song.uri) }
                 }
             }
         }
@@ -781,7 +892,7 @@ class PlayTogetherManager(
                 if (!transfer.hasSession(sid)) {
                     node.optJSONObject("offer")?.let { offer ->
                         val sig = mySig ?: return@let
-                        transfer.acceptOffer(sid, offer.toString()) { ext ->
+                        transfer.acceptOffer(sid, offer.toString(), artFile(sig)) { ext ->
                             java.io.File(app.cacheDir, "pt_recv/$sig.$ext")
                         }
                     }
@@ -798,16 +909,32 @@ class PlayTogetherManager(
     private fun syncNearbyHost(st: RoomState?) {
         val code = room
         if (code == null || st == null || st.by != uid || !nearbyReady()) { nearby.stopAdvertising(); return }
-        val entry = st.song
-        val song = host.currentSong()?.takeIf { entry != null && entry.matches(it) }
         nearby.startAdvertising(code, myName.ifBlank { "Guest" })
-        nearby.setSource(
-            if (entry != null && song != null && isUploadable(song))
-                PtNearbyTransfer.Source(songSig(entry), extOf(song), song.fileSizeBytes.takeIf { it > 0 } ?: 0L) {
-                    app.contentResolver.openFileDescriptor(song.uri, "r")
-                }
-            else null
+        nearby.setSources(
+            servables(st).map { (sig, song) ->
+                PtNearbyTransfer.Source(
+                    sig, extOf(song), song.fileSizeBytes.takeIf { it > 0 } ?: 0L,
+                    open = { app.contentResolver.openFileDescriptor(song.uri, "r") },
+                    cover = { PtArt.coverFile(app, song) }
+                )
+            }
         )
+    }
+
+    /**
+     * Controller: the songs other phones may request, as (signature, song): the one playing now
+     * (only while it really is the room's song) and the ones queued after it, so phones can load
+     * them ahead of time.
+     */
+    private fun servables(st: RoomState): List<Pair<String, Song>> {
+        val entry = st.song ?: return emptyList()
+        val current = host.currentSong()?.takeIf { entry.matches(it) } ?: return emptyList()
+        val queue = host.queue()
+        val i = queue.indexOfFirst { it.id == current.id }
+        val window = if (i >= 0) queue.subList(i, min(queue.size, i + 1 + PtPreloadPlan.COUNT)) else listOf(current)
+        return window.filter { isUploadable(it) }
+            .map { songSig(Entry(it.title, it.artist, it.album, it.durationMs)) to it }
+            .distinctBy { it.first }
     }
 
     private var linkedController: String? = null
@@ -989,13 +1116,21 @@ class PlayTogetherManager(
     )
 
     /** A song object for a file received from the controller over WebRTC. */
-    private fun receivedSong(e: Entry, f: java.io.File) = Song(
-        id = STREAM_PREFIX + songSig(e),
-        uri = Uri.fromFile(f),
-        title = e.title, artist = e.artist, album = e.album, durationMs = e.durationMs,
-        format = f.extension.uppercase().ifBlank { "MP3" }, sampleRateHz = 44100,
-        fileSizeBytes = f.length(), source = SongSource.WEB
-    )
+    private fun receivedSong(e: Entry, f: java.io.File): Song {
+        val sig = songSig(e)
+        // the controller sent the cover with the song; if not, use a picture embedded in the file
+        val art = artFile(sig)
+        // (looked for once per song: re-reading the tags on every room update would be wasteful)
+        val hasArt = (art.exists() && art.length() > 0) || (artTried.add(sig) && PtArt.extractEmbedded(app, f, art))
+        return Song(
+            id = STREAM_PREFIX + sig,
+            uri = Uri.fromFile(f),
+            title = e.title, artist = e.artist, album = e.album, durationMs = e.durationMs,
+            format = f.extension.uppercase().ifBlank { "MP3" }, sampleRateHz = 44100,
+            fileSizeBytes = f.length(), source = SongSource.WEB,
+            albumArtUri = if (hasArt) Uri.fromFile(art) else null
+        )
+    }
 
     /**
      * Controller: as soon as somebody else is in the room, the current song is uploaded in the
@@ -1322,6 +1457,9 @@ class PlayTogetherManager(
         /** Old path: upload to Firebase Storage (needs the Blaze plan). WebRTC replaces it for free. */
         const val STORAGE_UPLOAD_ENABLED = false
         const val MAX_PARALLEL_SENDS = 4
+        /** Pause between two songs loaded ahead of time, and how long a failed one is left alone. */
+        const val PRELOAD_GAP_MS = 1_500L
+        const val PRELOAD_RETRY_MS = 60_000L
     }
 
     private fun randomCode(): String {
