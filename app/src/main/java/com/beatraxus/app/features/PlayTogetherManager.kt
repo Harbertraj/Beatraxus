@@ -174,8 +174,8 @@ class PlayTogetherManager(
     @Volatile private var lastNeedAt = 0L
     /** Last time the running song transfer reported progress; a live transfer is never restarted. */
     @Volatile private var lastProgressAt = 0L
-    /** True once the transfer of the song playing now has delivered its first bytes (next songs may then start). */
-    @Volatile private var myFirstProgress = false
+    /** Request (session id) -> signature of the song it was made for, so a file is never stored under another song. */
+    private val sidSig = java.util.concurrent.ConcurrentHashMap<String, String>()
     /** Controller: sessions already started, so the same request is not served twice. */
     private val servedSids = java.util.concurrent.CopyOnWriteArraySet<String>()
 
@@ -271,11 +271,6 @@ class PlayTogetherManager(
                 // a song that is only being loaded ahead of time does not show as "receiving"
                 if (preloadSig == null) {
                     _state.update { it.copy(transferPercent = percent) }
-                    if (!myFirstProgress) {
-                        myFirstProgress = true
-                        // the song playing now is on its way: start the next ones in parallel
-                        scope.launch(Dispatchers.IO) { roomState?.let { maybePreload(it) } }
-                    }
                 }
             }
         }
@@ -295,6 +290,16 @@ class PlayTogetherManager(
                 }
                 return
             }
+            if (sid != mySid) {
+                // A transfer for a song this phone no longer waits for: keep the file only under ITS OWN song.
+                val own = sidSig.remove(sid)
+                nearby.cancelRequest(sid)
+                transfer.close(sid)
+                if (own != null) receivedFiles[own] = file else file.delete()
+                scope.launch(Dispatchers.IO) { roomState?.let { applyRemote(it); maybePreload(it) } }
+                return
+            }
+            sidSig.remove(sid)
             val sig = mySig ?: return
             val via = myRoute
             val wasPreload = preloadSig != null
@@ -738,6 +743,8 @@ class PlayTogetherManager(
             var lastPos = host.positionMs()
             var lastT = SystemClock.elapsedRealtime()
             var tick = 0
+            var lastDur = host.currentSong()?.durationMs ?: 0L
+            var lastWasRoomSong = host.currentSong()?.let { matchesRoomSong(it) } == true
             while (isActive) {
                 delay(TICK_MS)
                 val now = SystemClock.elapsedRealtime()
@@ -748,6 +755,8 @@ class PlayTogetherManager(
                 if (now < ignoreLocalUntil) {
                     // we are applying a remote change: don't echo it back
                     lastId = cur?.id; lastPlaying = playing; lastPos = pos; lastT = now
+                    lastDur = cur?.durationMs ?: 0L
+                    lastWasRoomSong = cur != null && matchesRoomSong(cur)
                     continue
                 }
                 val streamEnded = cur != null && cur.id.startsWith(STREAM_PREFIX) &&
@@ -756,6 +765,16 @@ class PlayTogetherManager(
                 if (cur != null && !streamEnded) {
                     try {
                         when {
+                            cur.id != lastId && roomState?.by != uid && roomState?.playing == true &&
+                                lastWasRoomSong && lastDur > 0 && lastPos >= lastDur - 3_000 && !matchesRoomSong(cur) -> {
+                                // This phone reached the end of the room's song a little before the controller and its own
+                                // queue moved on by itself. Hold here: the next song must not start before the room's
+                                // next song, and this phone must not change the room. The controller's change then
+                                // lands on the already loaded song and only has to start it.
+                                ignoreLocalUntil = SystemClock.elapsedRealtime() + 6_000
+                                host.setPlaying(false)
+                                effPlaying = false
+                            }
                             cur.id != lastId -> {
                                 // A new song is first reported as "not playing" for a moment (it is loaded, then started).
                                 // Publishing that would pause everybody, so wait for it to start when it was playing before.
@@ -789,6 +808,8 @@ class PlayTogetherManager(
                     } catch (_: Exception) { /* next tick retries via the changed state */ }
                 }
                 lastId = cur?.id; lastPlaying = effPlaying; lastPos = pos; lastT = now
+                lastDur = cur?.durationMs ?: 0L
+                lastWasRoomSong = cur != null && matchesRoomSong(cur)
             }
         }
     }
@@ -880,6 +901,19 @@ class PlayTogetherManager(
                 }
                 failPreload(running, remember = false) // stalled: ask again as the current song
             }
+            // The room moved on to another song while the previous one was still arriving: the song playing now
+            // goes first, at once, with the whole connection (the other one is fetched again later, in order).
+            val busySid = mySid
+            val busySig = mySig
+            if (busySid != null && busySig != null && busySig != sig && preloadSig == null) {
+                transfer.close(busySid)
+                nearby.cancelRequest(busySid)
+                cancelWifiAttempt()
+                sidSig.remove(busySid)
+                mySid = null; lastNeedAt = 0L
+                try { call("DELETE", "$code/needs/$uid"); call("DELETE", "$code/signal/$busySid") } catch (e: CancellationException) { throw e } catch (_: Exception) { }
+            }
+            preloads.values.toList().forEach { failPreload(it, remember = false) }
             val loading = preloadSig
             if (mySid != null && loading != null) {
                 if (loading == sig) {
@@ -906,7 +940,7 @@ class PlayTogetherManager(
         nearby.cancelRequest(mySid ?: "")
         cancelWifiAttempt()
         mySid = sid; mySig = sig
-        myFirstProgress = false
+        sidSig[sid] = sig
         preloadSig = if (preload) sig else null
         if (!preload) _state.update { it.copy(transferPercent = 0, routeProblem = null) }
         // Routes, in order: Nearby (Bluetooth / Wi-Fi Direct), the controller's own Wi-Fi, the internet.
@@ -1043,9 +1077,8 @@ class PlayTogetherManager(
         // downloads for songs that fell out of the window (queue changed / skipped far ahead) are dropped
         preloads.values.filter { it.sig !in keep }.forEach { failPreload(it, remember = false) }
 
-        // The song playing now goes first: next songs start once its own transfer is flowing (or it is not needed).
-        val currentFlowing = mySid != null && preloadSig == null && myFirstProgress
-        if ((mySid != null || _state.value.songMissing) && !currentFlowing) return
+        // Flow: the song playing now is received completely first; only then the next songs are loaded, one by one.
+        if (mySid != null || _state.value.songMissing) return
         val now = SystemClock.elapsedRealtime()
         sweepStalledPreloads(now)
         if (!preloadAllowed()) return
@@ -2001,7 +2034,7 @@ class PlayTogetherManager(
         const val RESYNC_TOLERANCE_MS = 100L
         const val RESYNC_SEEK_GAP_MS = 1_500L
         /** Songs loaded ahead of time at the same time. */
-        const val MAX_PARALLEL_PRELOADS = 5
+        const val MAX_PARALLEL_PRELOADS = 1
         /** A preload with no progress for this long is dropped and started again. */
         const val PRELOAD_STALL_MS = 30_000L
         const val PRELOAD_GAP_MS = 1_500L
