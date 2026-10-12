@@ -156,7 +156,9 @@ class PlayTogetherManager(
     /** [url] = where other phones can stream this song from when they do not own it. */
     private data class Entry(
         val title: String, val artist: String, val album: String, val durationMs: Long,
-        val url: String = "", val ext: String = ""
+        val url: String = "", val ext: String = "",
+        /** Technical details of the controller's copy, so this phone shows the real bitrate / bit depth / sample rate. */
+        val bitrate: Int = 0, val bitDepth: Int = 0, val sampleRate: Int = 0, val fmt: String = ""
     )
 
     // ---- streaming (controller -> phones that do not have the song) -----------------------
@@ -1384,7 +1386,10 @@ class PlayTogetherManager(
     private fun parseState(o: JSONObject?): RoomState? {
         if (o == null) return null
         fun entry(j: JSONObject?): Entry? = j?.let {
-            Entry(it.optString("t"), it.optString("a"), it.optString("al"), it.optLong("d"), it.optString("u"), it.optString("x"))
+            Entry(
+                it.optString("t"), it.optString("a"), it.optString("al"), it.optLong("d"), it.optString("u"), it.optString("x"),
+                it.optInt("br", 0), it.optInt("bd", 0), it.optInt("sr", 0), it.optString("fm")
+            )
         }
         val q = ArrayList<Entry>()
         o.optJSONArray("queue")?.let { arr ->
@@ -1642,6 +1647,13 @@ class PlayTogetherManager(
         val url = if (s.source == SongSource.WEB && s.uri.scheme?.startsWith("http") == true) s.uri.toString()
         else streamUrls[s.id]
         if (url != null) j.put("u", url).put("x", extOf(s))
+        // real technical details travel with the song, so a phone that receives or streams it shows the same values
+        val br = if (s.bitrate > 0) s.bitrate
+        else if (s.fileSizeBytes > 0 && s.durationMs > 0) ((s.fileSizeBytes * 8 * 1000) / s.durationMs).toInt() else 0
+        if (br > 0) j.put("br", br)
+        if (s.bitDepth > 0) j.put("bd", s.bitDepth)
+        if (s.sampleRateHz > 0) j.put("sr", s.sampleRateHz)
+        if (s.format.isNotBlank()) j.put("fm", s.format)
         return j
     }
 
@@ -1662,9 +1674,29 @@ class PlayTogetherManager(
         id = STREAM_PREFIX + sha(e.url),
         uri = Uri.parse(e.url),
         title = e.title, artist = e.artist, album = e.album, durationMs = e.durationMs,
-        format = e.ext.uppercase().ifBlank { "STREAM" }, sampleRateHz = 44100,
+        format = e.fmt.ifBlank { e.ext.uppercase() }.ifBlank { "STREAM" },
+        sampleRateHz = e.sampleRate.takeIf { it > 0 } ?: 44100,
+        bitDepth = e.bitDepth.takeIf { it > 0 } ?: 16,
+        bitrate = e.bitrate,
         source = SongSource.WEB
     )
+
+    /** Sample rate read from the file itself, for a controller that did not send it. */
+    private fun probeSampleRate(f: java.io.File): Int {
+        val ex = android.media.MediaExtractor()
+        return try {
+            ex.setDataSource(f.absolutePath)
+            var sr = 0
+            for (i in 0 until ex.trackCount) {
+                val fmt = ex.getTrackFormat(i)
+                if ((fmt.getString(android.media.MediaFormat.KEY_MIME) ?: "").startsWith("audio/") &&
+                    fmt.containsKey(android.media.MediaFormat.KEY_SAMPLE_RATE)) {
+                    sr = fmt.getInteger(android.media.MediaFormat.KEY_SAMPLE_RATE); break
+                }
+            }
+            if (sr > 0) sr else 44100
+        } catch (_: Exception) { 44100 } finally { try { ex.release() } catch (_: Exception) { } }
+    }
 
     /** A song object for a file received from the controller over WebRTC. */
     private fun receivedSong(e: Entry, f: java.io.File): Song {
@@ -1677,7 +1709,11 @@ class PlayTogetherManager(
             id = STREAM_PREFIX + sig,
             uri = Uri.fromFile(f),
             title = e.title, artist = e.artist, album = e.album, durationMs = e.durationMs,
-            format = f.extension.uppercase().ifBlank { "MP3" }, sampleRateHz = 44100,
+            format = e.fmt.ifBlank { f.extension.uppercase() }.ifBlank { "MP3" },
+            sampleRateHz = e.sampleRate.takeIf { it > 0 } ?: probeSampleRate(f),
+            bitDepth = e.bitDepth.takeIf { it > 0 } ?: 16,
+            bitrate = e.bitrate.takeIf { it > 0 }
+                ?: if (e.durationMs > 0) ((f.length() * 8 * 1000) / e.durationMs).toInt() else 0,
             fileSizeBytes = f.length(), source = SongSource.WEB,
             albumArtUri = if (hasArt) Uri.fromFile(art) else null
         )
