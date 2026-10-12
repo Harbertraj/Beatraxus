@@ -174,6 +174,8 @@ class PlayTogetherManager(
     @Volatile private var lastNeedAt = 0L
     /** Last time the running song transfer reported progress; a live transfer is never restarted. */
     @Volatile private var lastProgressAt = 0L
+    /** True once the transfer of the song playing now has delivered its first bytes (next songs may then start). */
+    @Volatile private var myFirstProgress = false
     /** Controller: sessions already started, so the same request is not served twice. */
     private val servedSids = java.util.concurrent.CopyOnWriteArraySet<String>()
 
@@ -267,7 +269,14 @@ class PlayTogetherManager(
             if (sid == mySid) {
                 lastProgressAt = SystemClock.elapsedRealtime()
                 // a song that is only being loaded ahead of time does not show as "receiving"
-                if (preloadSig == null) _state.update { it.copy(transferPercent = percent) }
+                if (preloadSig == null) {
+                    _state.update { it.copy(transferPercent = percent) }
+                    if (!myFirstProgress) {
+                        myFirstProgress = true
+                        // the song playing now is on its way: start the next ones in parallel
+                        scope.launch(Dispatchers.IO) { roomState?.let { maybePreload(it) } }
+                    }
+                }
             }
         }
 
@@ -874,6 +883,7 @@ class PlayTogetherManager(
         nearby.cancelRequest(mySid ?: "")
         cancelWifiAttempt()
         mySid = sid; mySig = sig
+        myFirstProgress = false
         preloadSig = if (preload) sig else null
         if (!preload) _state.update { it.copy(transferPercent = 0, routeProblem = null) }
         // Routes, in order: Nearby (Bluetooth / Wi-Fi Direct), the controller's own Wi-Fi, the internet.
@@ -918,12 +928,6 @@ class PlayTogetherManager(
                 }
             }
             PtRoute.INTERNET -> {
-                if (preload && !internetIsCheap()) {
-                    // a song fetched ahead of time is not worth mobile data: give up on it quietly
-                    mySid = null; preloadSig = null; myRoute = null
-                    preloadFailedAt[sig] = SystemClock.elapsedRealtime()
-                    return
-                }
                 postNeed(sig, sid)
             }
         }
@@ -934,7 +938,7 @@ class PlayTogetherManager(
         preloads[sid]?.let { p ->
             if (p.route != route) return
             // Nearby did not deliver: the internet is the only other route for a song loaded ahead
-            if (route == PtRoute.NEARBY && internetIsCheap() && room != null) {
+            if (route == PtRoute.NEARBY && room != null) {
                 p.route = PtRoute.INTERNET
                 p.lastProgressAt = SystemClock.elapsedRealtime()
                 scope.launch(Dispatchers.IO) {
@@ -995,7 +999,8 @@ class PlayTogetherManager(
         return try { !cm.isActiveNetworkMetered } catch (_: Exception) { false }
     }
 
-    private fun preloadAllowed() = nearby.connectedToController || wifiClient.isJoined || internetIsCheap()
+    /** Loading ahead is wanted on any connection: waiting for a transfer at song change is what the person notices. */
+    private fun preloadAllowed() = true
 
     /**
      * Receiver: keeps the next [PtPreloadPlan.COUNT] songs of the controller's queue on this phone,
@@ -1015,7 +1020,9 @@ class PlayTogetherManager(
         // downloads for songs that fell out of the window (queue changed / skipped far ahead) are dropped
         preloads.values.filter { it.sig !in keep }.forEach { failPreload(it, remember = false) }
 
-        if (mySid != null || _state.value.songMissing) return // the song playing now always goes first
+        // The song playing now goes first: next songs start once its own transfer is flowing (or it is not needed).
+        val currentFlowing = mySid != null && preloadSig == null && myFirstProgress
+        if ((mySid != null || _state.value.songMissing) && !currentFlowing) return
         val now = SystemClock.elapsedRealtime()
         sweepStalledPreloads(now)
         if (!preloadAllowed()) return
@@ -1041,8 +1048,7 @@ class PlayTogetherManager(
     private fun startPreload(sig: String) {
         val route = when {
             nearbyReady() && nearby.connectedToController -> PtRoute.NEARBY
-            internetIsCheap() -> PtRoute.INTERNET
-            else -> return
+            else -> PtRoute.INTERNET
         }
         val sid = uid + "_" + UUID.randomUUID().toString().take(6)
         val p = Preload(sig, sid, route, SystemClock.elapsedRealtime())
@@ -1127,7 +1133,11 @@ class PlayTogetherManager(
             // the song playing now and the ones queued after it can be requested
             val servable = servables(st).associate { it.first to it.second }
             if (servable.isNotEmpty() && needs != null) {
-                needs.keys().forEach { who ->
+                val order = servable.keys.toList()
+                // play order: the song playing now is served before the ones queued after it
+                val ordered = needs.keys().asSequence().toList()
+                    .sortedBy { who -> order.indexOf(needs.optJSONObject(who)?.optString("sig")).let { if (it < 0) Int.MAX_VALUE else it } }
+                ordered.forEach { who ->
                     val n = needs.optJSONObject(who) ?: return@forEach
                     val sid = n.optString("sid")
                     val song = servable[n.optString("sig")]
@@ -1139,7 +1149,9 @@ class PlayTogetherManager(
                         return@forEach
                     }
                     if (servedSids.contains(sid)) return@forEach
-                    if (transfer.activeSenders() >= MAX_PARALLEL_SENDS) return@forEach
+                    // the last slots are kept for the song playing now; queued songs wait for a free one
+                    val isCurrent = order.indexOf(n.optString("sig")) == 0
+                    if (transfer.activeSenders() >= (if (isCurrent) MAX_PARALLEL_SENDS else MAX_PARALLEL_SENDS - 3)) return@forEach
                     servedSids.add(sid)
                     val size = song.fileSizeBytes.takeIf { it > 0 } ?: 0L
                     // the cover only goes to apps that said they can take it (v >= 2)
@@ -1363,7 +1375,7 @@ class PlayTogetherManager(
                 _state.update { it.copy(songMissing = false, streaming = true) }
                 val cur = host.currentSong()
                 if (cur?.id != remote.id) {
-                    host.playQueue(listOf(remote), 0, target, st.playing)
+                    host.playQueue(listOf(remote), 0, target + startLead(st.playing), st.playing)
                 } else {
                     if (host.isPlaying() != st.playing) host.setPlaying(st.playing)
                     if (abs(host.positionMs() - target) > DRIFT_SEEK_MS) host.seekTo(target)
@@ -1397,12 +1409,26 @@ class PlayTogetherManager(
                 songs += s
             }
             if (songs.none { it.id == local.id }) { songs.clear(); songs += local; index = 0 }
-            host.playQueue(songs, index, target, st.playing)
+            host.playQueue(songs, index, target + startLead(st.playing), st.playing)
         } else {
             if (host.isPlaying() != st.playing) host.setPlaying(st.playing)
             if (abs(host.positionMs() - target) > DRIFT_SEEK_MS) host.seekTo(target)
         }
         if (st.playing) scheduleResync()
+    }
+
+    /**
+     * Starting a song takes the player a moment, during which the room clock keeps running. The follower
+     * starts that much further into the song, so it lands on the controller's position instead of behind it.
+     * The amount is learned from how far behind the first check after a start finds this phone.
+     */
+    @Volatile private var startLeadMs = 250L
+    @Volatile private var leadSampleArmed = false
+
+    private fun startLead(playing: Boolean): Long {
+        if (!playing) return 0L
+        leadSampleArmed = true
+        return startLeadMs
     }
 
     /**
@@ -1425,6 +1451,12 @@ class PlayTogetherManager(
                 if (!matchesRoomSong(cur) || !host.isPlaying()) continue // still loading / buffering
                 val now = SystemClock.elapsedRealtime()
                 val target = expectedPosition(st)
+                if (leadSampleArmed) {
+                    // first look after a song start: how far behind (+) or ahead (-) are we? Learn it for next time.
+                    leadSampleArmed = false
+                    val behind = target - host.positionMs()
+                    if (abs(behind) < 3_000) startLeadMs = (startLeadMs + (behind * 0.7f).toLong()).coerceIn(0L, 1_500L)
+                }
                 if (abs(host.positionMs() - target) > RESYNC_TOLERANCE_MS) {
                     if (now - lastSeek > RESYNC_SEEK_GAP_MS) {
                         lastSeek = now
@@ -1449,12 +1481,17 @@ class PlayTogetherManager(
         }
     }
 
+    /** Controller: estimated time a state update needs to reach the server (smoothed half round trip). */
+    @Volatile private var uplinkMs = 80L
+
     private suspend fun publish(song: Song, playing: Boolean, pos0: Long) {
         val code = room ?: return
         val q = host.queue()
         // The position was sampled a little while ago; read it again right before sending so the value
         // matches the moment the server stamps (followers add the time since that stamp).
-        val pos = if (playing && host.currentSong()?.id == song.id) host.positionMs() else pos0
+        val sampled = if (playing && host.currentSong()?.id == song.id) host.positionMs() else pos0
+        // the server stamps the state when it arrives, about half a round trip after this moment
+        val pos = if (playing) sampled + uplinkMs else sampled
         val idx = q.indexOfFirst { it.id == song.id }
         val window = if (idx >= 0) q.subList(max(0, idx - 3), min(q.size, idx + 40)) else listOf(song)
         val body = JSONObject().apply {
@@ -1471,7 +1508,9 @@ class PlayTogetherManager(
             uid, myName, playing, pos, serverNow(),
             Entry(song.title, song.artist, song.album, song.durationMs), emptyList()
         )
+        val sentAt = SystemClock.elapsedRealtime()
         call("PUT", "$code/state", body.toString())
+        uplinkMs = ((uplinkMs * 3 + (SystemClock.elapsedRealtime() - sentAt) / 2) / 4).coerceIn(0L, 600L)
         // others are listening: start uploading right away so nobody has to wait for a request
         if (STORAGE_UPLOAD_ENABLED && _state.value.members.any { !it.isMe }) shareSong(song)
         _state.update {
@@ -1852,22 +1891,22 @@ class PlayTogetherManager(
         const val STREAM_PREFIX = "pt_stream_"
         /** Old path: upload to Firebase Storage (needs the Blaze plan). WebRTC replaces it for free. */
         const val STORAGE_UPLOAD_ENABLED = false
-        const val MAX_PARALLEL_SENDS = 8
+        const val MAX_PARALLEL_SENDS = 16
         /** Pause between two songs loaded ahead of time, and how long a failed one is left alone. */
         const val PREF_NEARBY_ON = "nearby_on" // Nearby is off until the person switches it on
         /** Controller: how often the local player is checked for a change to publish. */
-        const val TICK_MS = 250L
+        const val TICK_MS = 100L
         /** Controller: a position jump bigger than this (beyond normal playback) counts as a seek and is published. */
         const val CONTROLLER_SEEK_MS = 800L
         /** Controller: gentle drift check for followers' reference every this many ticks (~2 s). */
-        const val DRIFT_EVERY_TICKS = 8
+        const val DRIFT_EVERY_TICKS = 20
         /** Follower: a position error bigger than this is corrected with a seek. */
         const val DRIFT_SEEK_MS = 450L
         const val REFRESH_DEBOUNCE_MS = 25L
-        const val RESYNC_STEP_MS = 350L
+        const val RESYNC_STEP_MS = 200L
         const val RESYNC_WINDOW_MS = 15_000L
         const val RESYNC_TOLERANCE_MS = 300L
-        const val RESYNC_SEEK_GAP_MS = 900L
+        const val RESYNC_SEEK_GAP_MS = 600L
         const val RESYNC_SEEK_LEAD_MS = 120L
         /** Songs loaded ahead of time at the same time. */
         const val MAX_PARALLEL_PRELOADS = 5
