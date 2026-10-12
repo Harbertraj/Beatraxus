@@ -17,7 +17,7 @@ import java.util.concurrent.ConcurrentHashMap
  * The registry is keyed by the FINAL path of the song (the one the song's uri points to), even when
  * the bytes are written to a ".part" file first.
  */
-internal object PtPartialFiles {
+object PtPartialFiles {
     const val GROWING = 0
     const val COMPLETE = 1
     const val FAILED = -1

@@ -48,7 +48,7 @@ class PtFileTransfer(
         fun onReceived(sid: String, file: File)
         fun onFailed(sid: String, reason: String)
         /** Receiver: more of the song arrived. It may be started now if [PtStreamPlan] says so (default: ignore). */
-        internal fun onPartial(sid: String, entry: PtPartialFiles.Entry) {}
+        fun onPartial(sid: String, entry: PtPartialFiles.Entry) {}
     }
 
     @Volatile var listener: Listener? = null
