@@ -131,6 +131,7 @@ import com.beatraxus.app.model.PlayerUiState
 import com.beatraxus.app.model.SoxrQuality as SoxrQualityEnum
 import com.beatraxus.app.telegram.AuthState
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import com.beatraxus.app.repository.DriveAccount
 import com.beatraxus.app.repository.lyrics.LyricsProviderRegistry
 import com.beatraxus.app.subtitles.api.SubtitleApiClientFactory
@@ -257,12 +258,66 @@ fun SettingsScreen(
     val currentSection = sectionStack.lastOrNull()
     var editingValue by remember { mutableStateOf<EditingValue?>(null) }
 
-    val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
-        uri?.let { playerViewModel.exportSettings(it) }
+    // Backups are always encrypted: the user picks a passphrase first, then the destination file.
+    val backupScope = rememberCoroutineScope()
+    var showExportPassphraseDialog by remember { mutableStateOf(false) }
+    var exportPassphrase by remember { mutableStateOf<CharArray?>(null) }
+    var pendingImportUri by remember { mutableStateOf<android.net.Uri?>(null) }
+    var importPassphraseWrong by remember { mutableStateOf(false) }
+
+    val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
+        val passphrase = exportPassphrase
+        exportPassphrase = null
+        if (uri != null && passphrase != null) playerViewModel.exportSettings(uri, passphrase) else passphrase?.fill('\u0000')
     }
 
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        uri?.let { playerViewModel.importSettings(it) }
+        if (uri != null) {
+            backupScope.launch {
+                if (playerViewModel.isBackupEncrypted(uri)) {
+                    importPassphraseWrong = false
+                    pendingImportUri = uri
+                } else {
+                    // Older, unencrypted backup: no passphrase to ask for.
+                    playerViewModel.importSettings(uri, null)
+                }
+            }
+        }
+    }
+
+    if (showExportPassphraseDialog) {
+        BackupPassphraseDialog(
+            title = "Encrypt backup",
+            message = "Your backup holds account data (Last.fm, Telegram, cloud drives), so it is encrypted. " +
+                "Choose a passphrase of at least ${com.beatraxus.app.repository.BackupCrypto.MIN_PASSPHRASE_LENGTH} characters. " +
+                "There is no way to recover the backup without it.",
+            confirmLabel = "EXPORT",
+            requireConfirmation = true,
+            errorText = null,
+            onConfirm = { passphrase ->
+                showExportPassphraseDialog = false
+                exportPassphrase = passphrase
+                exportLauncher.launch("beatraxus_backup.btxbak")
+            },
+            onDismiss = { showExportPassphraseDialog = false }
+        )
+    }
+
+    pendingImportUri?.let { importUri ->
+        BackupPassphraseDialog(
+            title = "Encrypted backup",
+            message = "Enter the passphrase you chose when you exported this backup.",
+            confirmLabel = "IMPORT",
+            requireConfirmation = false,
+            errorText = if (importPassphraseWrong) "Wrong passphrase, or the file is damaged." else null,
+            onConfirm = { passphrase ->
+                importPassphraseWrong = false
+                playerViewModel.importSettings(importUri, passphrase) { finished ->
+                    if (finished) pendingImportUri = null else importPassphraseWrong = true
+                }
+            },
+            onDismiss = { pendingImportUri = null }
+        )
     }
 
     var lastBackClickTime by remember { mutableStateOf(0L) }
@@ -555,8 +610,8 @@ fun SettingsScreen(
                             "About" -> AboutContent()
                             "Backup & Restore" -> BackupRestoreContent(
                                 playerViewModel = playerViewModel,
-                                onExport = { exportLauncher.launch("beatraxus_backup.json") },
-                                onImport = { importLauncher.launch("application/json") }
+                                onExport = { showExportPassphraseDialog = true },
+                                onImport = { importLauncher.launch("*/*") }
                             )
                         }
                     }
@@ -5730,6 +5785,97 @@ private fun StatChip(label: String, value: String) {
 }
 
 
+/**
+ * Asks for the backup passphrase. With [requireConfirmation] (exporting) the passphrase must be
+ * long enough and typed twice; when importing, a single field is enough.
+ */
+@Composable
+private fun BackupPassphraseDialog(
+    title: String,
+    message: String,
+    confirmLabel: String,
+    requireConfirmation: Boolean,
+    errorText: String?,
+    onConfirm: (CharArray) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var passphrase by remember { mutableStateOf("") }
+    var repeat by remember { mutableStateOf("") }
+    var visible by remember { mutableStateOf(false) }
+    val minLength = com.beatraxus.app.repository.BackupCrypto.MIN_PASSPHRASE_LENGTH
+    val tooShort = requireConfirmation && passphrase.isNotEmpty() && passphrase.length < minLength
+    val mismatch = requireConfirmation && repeat.isNotEmpty() && repeat != passphrase
+    val canConfirm = if (requireConfirmation) passphrase.length >= minLength && passphrase == repeat else passphrase.isNotEmpty()
+    val fieldColors = OutlinedTextFieldDefaults.colors(
+        focusedBorderColor = PremiumAccent,
+        unfocusedBorderColor = Color.White.copy(0.1f),
+        cursorColor = PremiumAccent,
+        focusedTextColor = Color.White,
+        unfocusedTextColor = Color.White
+    )
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Color(0xFF1A1A24),
+        titleContentColor = Color.White,
+        textContentColor = Color.White,
+        title = { Text(title, fontWeight = FontWeight.Bold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(message, fontSize = 12.sp, color = Color.White.copy(0.6f))
+                OutlinedTextField(
+                    value = passphrase,
+                    onValueChange = { passphrase = it },
+                    label = { Text("Passphrase") },
+                    singleLine = true,
+                    visualTransformation = if (visible) VisualTransformation.None else PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Password,
+                        imeAction = if (requireConfirmation) ImeAction.Next else ImeAction.Done
+                    ),
+                    keyboardActions = KeyboardActions(onDone = {
+                        if (canConfirm) onConfirm(passphrase.toCharArray())
+                    }),
+                    isError = tooShort,
+                    supportingText = if (tooShort) ({ Text("At least $minLength characters") }) else null,
+                    colors = fieldColors
+                )
+                if (requireConfirmation) {
+                    OutlinedTextField(
+                        value = repeat,
+                        onValueChange = { repeat = it },
+                        label = { Text("Repeat passphrase") },
+                        singleLine = true,
+                        visualTransformation = if (visible) VisualTransformation.None else PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
+                        keyboardActions = KeyboardActions(onDone = {
+                            if (canConfirm) onConfirm(passphrase.toCharArray())
+                        }),
+                        isError = mismatch,
+                        supportingText = if (mismatch) ({ Text("Passphrases do not match") }) else null,
+                        colors = fieldColors
+                    )
+                }
+                TextButton(onClick = { visible = !visible }) {
+                    Text(if (visible) "HIDE" else "SHOW", color = PremiumAccent)
+                }
+                if (errorText != null) {
+                    Text(errorText, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = canConfirm,
+                onClick = { onConfirm(passphrase.toCharArray()) }
+            ) { Text(confirmLabel, color = if (canConfirm) PremiumAccent else Color.White.copy(0.3f)) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("CANCEL", color = Color.White.copy(0.7f)) }
+        }
+    )
+}
+
 @Composable
 fun BackupRestoreContent(
     playerViewModel: PlayerViewModel,
@@ -5742,14 +5888,14 @@ fun BackupRestoreContent(
     ) {
         SettingMenuItem(
             title = "Export Settings",
-            subtitle = "Save all app settings to a file",
+            subtitle = "Save all app settings to a passphrase-encrypted file",
             icon = Icons.Rounded.Upload,
             iconColor = Color.White,
             onClick = onExport
         )
         SettingMenuItem(
             title = "Import Settings",
-            subtitle = "Restore app settings from a file",
+            subtitle = "Restore settings from an encrypted backup (older plain backups work too)",
             icon = Icons.Rounded.Download,
             iconColor = Color.White,
             onClick = onImport

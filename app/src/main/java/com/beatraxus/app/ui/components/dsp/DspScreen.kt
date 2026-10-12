@@ -86,6 +86,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.beatraxus.app.model.AutoEqProfileSummary
 import com.beatraxus.app.model.ParametricEqBand
 import com.beatraxus.app.model.PlayerUiState
+import com.beatraxus.app.repository.DspPreferences
 import com.beatraxus.app.ui.components.PremiumSwitch
 import com.beatraxus.app.viewmodel.PlayerViewModel
 import kotlinx.coroutines.delay
@@ -225,6 +226,7 @@ fun DspScreen(
     var newPresetName by remember { mutableStateOf("") }
     var showSaveDialog by remember { mutableStateOf(false) }
     var showDevicePicker by remember { mutableStateOf(false) }
+    var showDeviceEq by remember { mutableStateOf(false) }
     var showMenu by remember { mutableStateOf(false) }
     var showAiPopup by remember { mutableStateOf(false) }
     var editingValue by remember { mutableStateOf<EditingValue?>(null) }
@@ -525,7 +527,8 @@ fun DspScreen(
                             onShowMenuChange = { showMenu = it },
                             onShowSavedPresets = { showSavedPresetsSheet = true },
                             onShowAiOptions = { showAiPopup = true },
-                            onShowDevicePicker = { showDevicePicker = true }
+                            onShowDevicePicker = { showDevicePicker = true },
+                            onShowDeviceEq = { showDeviceEq = true }
                         )
 
                         PremiumEqualizerCard(
@@ -1083,6 +1086,14 @@ fun DspScreen(
             )
         }
 
+        if (showDeviceEq) {
+            DeviceEqDialog(
+                uiState = uiState,
+                viewModel = viewModel,
+                onDismiss = { showDeviceEq = false }
+            )
+        }
+
         editingValue?.let { ev ->
             ValueEditDialog(
                 initialValue = ev.value,
@@ -1093,6 +1104,112 @@ fun DspScreen(
             )
         }
     }
+}
+
+/**
+ * Lists every audio output (connected or seen before) and lets the user pick a saved EQ preset for
+ * each one. The preset loads automatically whenever that output becomes active.
+ */
+@Composable
+private fun DeviceEqDialog(
+    uiState: PlayerUiState,
+    viewModel: PlayerViewModel,
+    onDismiss: () -> Unit
+) {
+    val assignments by viewModel.deviceEqAssignments.collectAsStateWithLifecycle(initialValue = emptyMap())
+    var devices by remember { mutableStateOf<List<DspPreferences.OutputDeviceInfo>>(emptyList()) }
+    LaunchedEffect(Unit) { devices = viewModel.assignableDevices() }
+    val presets = uiState.dsp.customEqPresets
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = DspSheetHigh,
+        title = { Text("Device EQ", color = Color.White, fontWeight = FontWeight.Bold) },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    "Pick a saved EQ preset for each output. It loads automatically when that output is used.",
+                    color = Color.White.copy(0.6f),
+                    fontSize = 12.sp
+                )
+                if (presets.isEmpty()) {
+                    Text(
+                        "You have no saved presets yet. Shape the EQ, then use menu → Save Preset, and come back here.",
+                        color = Color.White.copy(0.5f),
+                        fontSize = 13.sp
+                    )
+                }
+                if (devices.isEmpty()) {
+                    Text("No audio outputs found.", color = Color.White.copy(0.5f), fontSize = 13.sp)
+                }
+                devices.forEach { device -> key(device.id) {
+                    var expanded by remember { mutableStateOf(false) }
+                    val assigned = assignments[device.id]
+                    val assignedMissing = assigned != null && presets.none { it.name == assigned }
+                    Box {
+                        Card(
+                            onClick = { if (presets.isNotEmpty() || assigned != null) expanded = true },
+                            colors = CardDefaults.cardColors(containerColor = Color.White.copy(0.05f)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                                Text(
+                                    device.label,
+                                    color = Color.White,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    buildString {
+                                        append(device.typeLabel)
+                                        if (device.active) append(" · in use now")
+                                        else if (!device.connected) append(" · not connected")
+                                    },
+                                    color = Color.White.copy(0.5f),
+                                    fontSize = 11.sp
+                                )
+                                Spacer(Modifier.height(6.dp))
+                                Text(
+                                    when {
+                                        assigned == null -> "No preset (keeps its own settings)"
+                                        assignedMissing -> "$assigned (preset missing)"
+                                        else -> assigned
+                                    },
+                                    color = if (assigned == null || assignedMissing) Color.White.copy(0.5f) else PremiumAccent,
+                                    fontSize = 13.sp
+                                )
+                            }
+                        }
+                        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                            DropdownMenuItem(
+                                text = { Text("None", fontSize = 13.sp) },
+                                onClick = {
+                                    expanded = false
+                                    viewModel.assignEqPresetToDevice(device, null)
+                                }
+                            )
+                            presets.forEach { preset ->
+                                DropdownMenuItem(
+                                    text = { Text(preset.name, fontSize = 13.sp) },
+                                    onClick = {
+                                        expanded = false
+                                        viewModel.assignEqPresetToDevice(device, preset.name)
+                                    }
+                                )
+                            }
+                        }
+                    }
+                } }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("DONE", color = PremiumAccent) }
+        }
+    )
 }
 
 private data class EditingValue(
@@ -2260,7 +2377,8 @@ private fun UnifiedPresetSection(
     onShowMenuChange: (Boolean) -> Unit,
     onShowSavedPresets: () -> Unit,
     onShowAiOptions: () -> Unit,
-    onShowDevicePicker: () -> Unit
+    onShowDevicePicker: () -> Unit,
+    onShowDeviceEq: () -> Unit
 ) {
     val currentGains = uiState.dsp.config.eqBands.map { it.gainDb }
     val activeBuiltIn = presets.find { it.gains == currentGains }?.name
@@ -2367,6 +2485,15 @@ private fun UnifiedPresetSection(
                                 modifier = Modifier.size(16.dp)
                             )
                         },
+                        contentPadding = menuItemPadding
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Device EQ", color = Color.White, fontSize = 12.sp) },
+                        onClick = {
+                            onShowMenuChange(false)
+                            onShowDeviceEq()
+                        },
+                        leadingIcon = { Icon(Icons.Rounded.Devices, null, tint = PremiumAccent, modifier = Modifier.size(16.dp)) },
                         contentPadding = menuItemPadding
                     )
                     DropdownMenuItem(

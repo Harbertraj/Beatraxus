@@ -46,6 +46,7 @@ import com.beatraxus.app.model.AlbumArtTransform
 import com.beatraxus.app.model.AppearanceConfig
 import com.beatraxus.app.model.DvcMode
 import com.beatraxus.app.model.ParametricEqBand
+import com.beatraxus.app.model.EqBandType
 import com.beatraxus.app.model.SavedEqPreset
 import com.beatraxus.app.model.ReplayGainOption
 import com.beatraxus.app.model.ReplayGainSource
@@ -983,6 +984,13 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     ))
                 }
                 service?.updateDspConfig(config)
+            }
+        }
+
+        // Per-device EQ: load the preset assigned to the output that just became active
+        viewModelScope.launch {
+            dspPreferences.deviceIdFlow.distinctUntilChanged().collect { deviceId ->
+                applyAssignedEq(deviceId)
             }
         }
 
@@ -3233,17 +3241,61 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         service?.playFromQueue(songId)
     }
 
-    fun exportSettings(uri: android.net.Uri) {
+    /** Writes an encrypted backup. [passphrase] is wiped once the export finishes. */
+    fun exportSettings(uri: android.net.Uri, passphrase: CharArray) {
         viewModelScope.launch {
-            backupRepository.exportSettings(uri)
-            android.widget.Toast.makeText(getApplication(), "Settings exported successfully", android.widget.Toast.LENGTH_SHORT).show()
+            val app = getApplication<Application>()
+            android.widget.Toast.makeText(app, "Encrypting backup…", android.widget.Toast.LENGTH_SHORT).show()
+            try {
+                backupRepository.exportSettings(uri, passphrase, prefs.getString(KEY_CUSTOM_EQ_PRESETS, null))
+                android.widget.Toast.makeText(app, "Encrypted backup exported", android.widget.Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) {
+                android.widget.Toast.makeText(app, "Export failed: ${e.message ?: "unknown error"}", android.widget.Toast.LENGTH_LONG).show()
+            } finally {
+                passphrase.fill('\u0000')
+            }
         }
     }
 
-    fun importSettings(uri: android.net.Uri) {
+    /** True when the picked backup file needs a passphrase before it can be imported. */
+    suspend fun isBackupEncrypted(uri: android.net.Uri): Boolean =
+        try {
+            backupRepository.isEncrypted(uri)
+        } catch (e: Exception) {
+            false
+        }
+
+    /**
+     * Restores a backup. Pass the passphrase for encrypted files; plain files from older versions
+     * need none. [onResult] gets true on success, false when the passphrase was wrong (so the UI
+     * can ask again). The passphrase is wiped afterwards.
+     */
+    fun importSettings(uri: android.net.Uri, passphrase: CharArray?, onResult: (Boolean) -> Unit = {}) {
         viewModelScope.launch {
-            backupRepository.importSettings(uri)
-            android.widget.Toast.makeText(getApplication(), "Settings imported successfully", android.widget.Toast.LENGTH_SHORT).show()
+            val app = getApplication<Application>()
+            if (passphrase != null) {
+                android.widget.Toast.makeText(app, "Decrypting backup…", android.widget.Toast.LENGTH_SHORT).show()
+            }
+            try {
+                val extras = backupRepository.importSettings(uri, passphrase)
+                extras.customEqPresetsJson?.let { json ->
+                    val imported = parseCustomEqPresets(json)
+                    if (imported.isNotEmpty()) importEqPresets(imported)
+                }
+                android.widget.Toast.makeText(app, "Settings imported successfully", android.widget.Toast.LENGTH_SHORT).show()
+                onResult(true)
+            } catch (e: com.beatraxus.app.repository.BackupCrypto.WrongPassphraseException) {
+                android.widget.Toast.makeText(app, "Wrong passphrase, or the backup file is damaged", android.widget.Toast.LENGTH_LONG).show()
+                onResult(false)
+            } catch (e: com.beatraxus.app.repository.BackupCrypto.InvalidBackupException) {
+                android.widget.Toast.makeText(app, e.message ?: "Not a valid backup file", android.widget.Toast.LENGTH_LONG).show()
+                onResult(true) // nothing to retry with a different passphrase
+            } catch (e: Exception) {
+                android.widget.Toast.makeText(app, "Import failed: ${e.message ?: "unknown error"}", android.widget.Toast.LENGTH_LONG).show()
+                onResult(true)
+            } finally {
+                passphrase?.fill('\u0000')
+            }
         }
     }
 
@@ -3476,6 +3528,51 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun listKnownDevices(): Flow<Set<String>> = dspPreferences.listKnownDeviceIds()
+
+    // ---- Per-device EQ preset assignment ----
+
+    /** deviceId -> saved EQ preset name that loads whenever that output becomes active. */
+    val deviceEqAssignments: Flow<Map<String, String>> = dspPreferences.deviceEqAssignments
+
+    suspend fun assignableDevices(): List<DspPreferences.OutputDeviceInfo> =
+        withContext(Dispatchers.IO) { dspPreferences.assignableDevices() }
+
+    /** Assigns a saved EQ preset to an output device ([presetName] null clears it). */
+    fun assignEqPresetToDevice(device: DspPreferences.OutputDeviceInfo, presetName: String?) {
+        viewModelScope.launch {
+            dspPreferences.setDeviceEqAssignment(device.id, presetName, device.label)
+            // If that output is playing right now, switch to the preset immediately.
+            if (presetName != null && device.id == dspPreferences.getCurrentDeviceId()) {
+                applyAssignedEq(device.id)
+            }
+        }
+    }
+
+    /**
+     * Loads the EQ preset assigned to [deviceId] (if any) into that device's DSP profile. Runs at
+     * startup and whenever the active output changes, so plugging in headphones restores their EQ.
+     * Only EQ bands and preamp are replaced; every other DSP setting of the device is kept.
+     */
+    private suspend fun applyAssignedEq(deviceId: String) {
+        val presetName = dspPreferences.getDeviceEqAssignment(deviceId) ?: return
+        val preset = _uiState.value.dsp.customEqPresets.firstOrNull { it.name == presetName } ?: return
+        val base = dspPreferences.dspConfigForDevice(deviceId).first()
+        if (base.settingsLocked) return
+
+        // A debounced save queued for the previous output would otherwise land on this device.
+        dspSaveJob?.cancel()
+        val updated = base.copy(
+            eqEnabled = true,
+            eqBands = preset.bands,
+            preampDb = preset.preampDb,
+            preampEnabled = true,
+            autoEqEnabled = false,
+            autoEqProfile = null
+        )
+        _uiState.update { it.copy(dsp = it.dsp.copy(config = updated, autoEqError = null)) }
+        service?.updateDspConfig(updated)
+        dspPreferences.saveConfig(updated, deviceId)
+    }
 
     fun getCurrentDeviceId(): String = dspPreferences.getCurrentDeviceId()
 
@@ -3785,6 +3882,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         val updated = _uiState.value.dsp.customEqPresets.filterNot { it.name == name }
         persistCustomEqPresets(updated)
         _uiState.update { it.copy(dsp = it.dsp.copy(customEqPresets = updated)) }
+        viewModelScope.launch { dspPreferences.clearAssignmentsForPreset(name) }
     }
 
     fun renameCustomEqPreset(oldName: String, newName: String) {
@@ -3801,6 +3899,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             val updated = current.sortedBy { it.name.lowercase() }
             persistCustomEqPresets(updated)
             _uiState.update { it.copy(dsp = it.dsp.copy(customEqPresets = updated)) }
+            viewModelScope.launch { dspPreferences.renameAssignedPreset(oldName, trimmed) }
         }
     }
 
@@ -4425,8 +4524,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    private fun loadCustomEqPresets(): List<SavedEqPreset> {
-        val raw = prefs.getString(KEY_CUSTOM_EQ_PRESETS, null) ?: return emptyList()
+    private fun loadCustomEqPresets(): List<SavedEqPreset> =
+        parseCustomEqPresets(prefs.getString(KEY_CUSTOM_EQ_PRESETS, null))
+
+    private fun parseCustomEqPresets(raw: String?): List<SavedEqPreset> {
+        if (raw.isNullOrBlank()) return emptyList()
         return runCatching {
             val array = JSONArray(raw)
             buildList {
@@ -4444,7 +4546,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                                     enabled = band.optBoolean("enabled", true),
                                     frequencyHz = band.optDouble("frequencyHz", 1000.0).toFloat(),
                                     gainDb = band.optDouble("gainDb", 0.0).toFloat(),
-                                    q = band.optDouble("q", 1.0).toFloat()
+                                    q = band.optDouble("q", 1.0).toFloat(),
+                                    type = runCatching {
+                                        EqBandType.valueOf(band.optString("type", EqBandType.PEAKING.name))
+                                    }.getOrDefault(EqBandType.PEAKING)
                                 )
                             )
                         }
@@ -4471,6 +4576,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 bandObject.put("frequencyHz", band.frequencyHz.toDouble())
                 bandObject.put("gainDb", band.gainDb.toDouble())
                 bandObject.put("q", band.q.toDouble())
+                bandObject.put("type", band.type.name)
                 bandsArray.put(bandObject)
             }
             presetObject.put("bands", bandsArray)

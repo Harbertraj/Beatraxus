@@ -511,6 +511,128 @@ class DspPreferences(private val context: Context) {
 
     fun listKnownDeviceIds(): Flow<Set<String>> = dataStore.data.map { it[KNOWN_DEVICE_IDS] ?: emptySet() }
 
+    // ---- Per-device EQ preset assignment (Poweramp-style "output device presets") ----
+
+    /** An audio output the user can assign an EQ preset to. */
+    data class OutputDeviceInfo(
+        val id: String,
+        val label: String,
+        val typeLabel: String,
+        val connected: Boolean,
+        val active: Boolean
+    )
+
+    /** deviceId -> name of the saved EQ preset that should load whenever that device becomes the output. */
+    val deviceEqAssignments: Flow<Map<String, String>> =
+        dataStore.data.map { parseStringMap(it[DEVICE_EQ_ASSIGNMENTS]) }
+
+    suspend fun getDeviceEqAssignment(deviceId: String): String? =
+        parseStringMap(dataStore.data.first()[DEVICE_EQ_ASSIGNMENTS])[deviceId]
+
+    /** Assigns [presetName] to [deviceId], or removes the assignment when [presetName] is null. */
+    suspend fun setDeviceEqAssignment(deviceId: String, presetName: String?, label: String? = null) {
+        dataStore.edit { preferences ->
+            val assignments = parseStringMap(preferences[DEVICE_EQ_ASSIGNMENTS]).toMutableMap()
+            if (presetName == null) assignments.remove(deviceId) else assignments[deviceId] = presetName
+            preferences[DEVICE_EQ_ASSIGNMENTS] = JSONObject(assignments).toString()
+            if (label != null) {
+                val labels = parseStringMap(preferences[DEVICE_LABELS]).toMutableMap()
+                labels[deviceId] = label
+                preferences[DEVICE_LABELS] = JSONObject(labels).toString()
+            }
+        }
+    }
+
+    /** Keeps assignments pointing at the right preset when the user renames it. */
+    suspend fun renameAssignedPreset(oldName: String, newName: String) {
+        dataStore.edit { preferences ->
+            val assignments = parseStringMap(preferences[DEVICE_EQ_ASSIGNMENTS])
+            if (assignments.containsValue(oldName)) {
+                val renamed = assignments.mapValues { if (it.value == oldName) newName else it.value }
+                preferences[DEVICE_EQ_ASSIGNMENTS] = JSONObject(renamed).toString()
+            }
+        }
+    }
+
+    /** Drops every assignment that points at a preset the user deleted. */
+    suspend fun clearAssignmentsForPreset(presetName: String) {
+        dataStore.edit { preferences ->
+            val assignments = parseStringMap(preferences[DEVICE_EQ_ASSIGNMENTS])
+            if (assignments.containsValue(presetName)) {
+                val kept = assignments.filterValues { it != presetName }
+                preferences[DEVICE_EQ_ASSIGNMENTS] = JSONObject(kept).toString()
+            }
+        }
+    }
+
+    /**
+     * Every output the user may want to assign a preset to: outputs connected right now, plus ones
+     * seen before (known DSP profiles or existing assignments) that are currently unplugged.
+     * Labels of connected devices are remembered so they still read nicely once unplugged.
+     */
+    suspend fun assignableDevices(): List<OutputDeviceInfo> {
+        val currentId = getCurrentDeviceId()
+        val connected = audioManager.getDevices(android.media.AudioManager.GET_DEVICES_OUTPUTS)
+            .filter { it.isSink && it.type in ASSIGNABLE_OUTPUT_TYPES }
+            .associateBy { "${it.productName}_${it.type}" }
+
+        val connectedLabels = connected.mapValues { (_, dev) -> outputDeviceLabel(dev) }
+
+        var storedLabels = emptyMap<String, String>()
+        var offlineIds = emptySet<String>()
+        dataStore.edit { preferences ->
+            val labels = parseStringMap(preferences[DEVICE_LABELS]).toMutableMap()
+            val before = labels.toMap()
+            labels.putAll(connectedLabels)
+            if (labels != before) preferences[DEVICE_LABELS] = JSONObject(labels).toString()
+            storedLabels = labels
+            offlineIds = ((preferences[KNOWN_DEVICE_IDS] ?: emptySet()) +
+                parseStringMap(preferences[DEVICE_EQ_ASSIGNMENTS]).keys) - connected.keys
+        }
+
+        val live = connected.map { (id, dev) ->
+            OutputDeviceInfo(id, connectedLabels.getValue(id), outputTypeLabel(dev.type), connected = true, active = id == currentId)
+        }.sortedWith(compareByDescending<OutputDeviceInfo> { it.active }.thenBy { it.label.lowercase() })
+
+        val offline = offlineIds.map { id ->
+            OutputDeviceInfo(
+                id = id,
+                label = storedLabels[id] ?: id.substringBeforeLast("_"),
+                typeLabel = outputTypeLabel(id.substringAfterLast("_").toIntOrNull() ?: -1),
+                connected = false,
+                active = false
+            )
+        }.sortedBy { it.label.lowercase() }
+
+        return live + offline
+    }
+
+    private fun outputDeviceLabel(dev: android.media.AudioDeviceInfo): String =
+        if (dev.type == android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER) {
+            "This Device"
+        } else {
+            dev.productName?.toString()?.takeIf { it.isNotBlank() } ?: outputTypeLabel(dev.type)
+        }
+
+    private fun outputTypeLabel(type: Int): String = when (type) {
+        android.media.AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
+        android.media.AudioDeviceInfo.TYPE_WIRED_HEADSET -> "Wired"
+        android.media.AudioDeviceInfo.TYPE_USB_DEVICE,
+        android.media.AudioDeviceInfo.TYPE_USB_HEADSET -> "USB"
+        android.media.AudioDeviceInfo.TYPE_BLUETOOTH_A2DP -> "Bluetooth"
+        android.media.AudioDeviceInfo.TYPE_HDMI -> "HDMI"
+        android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER -> "Speaker"
+        else -> "Audio output"
+    }
+
+    private fun parseStringMap(json: String?): Map<String, String> {
+        if (json.isNullOrBlank()) return emptyMap()
+        return runCatching {
+            val obj = JSONObject(json)
+            obj.keys().asSequence().associateWith { obj.getString(it) }
+        }.getOrDefault(emptyMap())
+    }
+
     private fun serializeBands(bands: List<ParametricEqBand>): String {
         val array = JSONArray()
         bands.forEach { band ->
@@ -810,5 +932,18 @@ class DspPreferences(private val context: Context) {
         private val HEADPHONE_SIM_PROFILE = stringPreferencesKey("headphone_sim_profile")
         private val CUSTOM_USB_DRIVER = booleanPreferencesKey("custom_usb_driver")
         private val KNOWN_DEVICE_IDS = stringSetPreferencesKey("known_device_ids")
+        private val DEVICE_EQ_ASSIGNMENTS = stringPreferencesKey("device_eq_assignments")
+        private val DEVICE_LABELS = stringPreferencesKey("device_labels")
+
+        /** Output types the per-device EQ list offers; mirrors the ones getCurrentDeviceId() ranks. */
+        private val ASSIGNABLE_OUTPUT_TYPES = setOf(
+            android.media.AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
+            android.media.AudioDeviceInfo.TYPE_WIRED_HEADSET,
+            android.media.AudioDeviceInfo.TYPE_USB_DEVICE,
+            android.media.AudioDeviceInfo.TYPE_USB_HEADSET,
+            android.media.AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
+            android.media.AudioDeviceInfo.TYPE_HDMI,
+            android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
+        )
     }
 }
