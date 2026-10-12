@@ -170,6 +170,11 @@ class PlayTogetherManager(
     // ---- peer-to-peer transfer (controller -> phones that do not have the song) ----------------
     /** Receiver: song signature -> file received from the controller. */
     private val receivedFiles = java.util.concurrent.ConcurrentHashMap<String, java.io.File>()
+    /**
+     * Receiver: song signature -> a song that is still arriving but already plays (see [PtStreamPlan]),
+     * like a cloud song: playback starts after the first seconds, not after the last byte.
+     */
+    private val partialSongs = java.util.concurrent.ConcurrentHashMap<String, PtPartialFiles.Entry>()
     /** Receiver: the session id of the transfer I asked for (null = none in flight). */
     @Volatile private var mySid: String? = null
     @Volatile private var mySig: String? = null
@@ -277,6 +282,11 @@ class PlayTogetherManager(
             }
         }
 
+        override fun onPartial(sid: String, entry: PtPartialFiles.Entry) {
+            val sig = sidSig[sid] ?: preloads[sid]?.sig ?: return
+            maybeStartPartial(sig, entry)
+        }
+
         override fun onReceived(sid: String, file: java.io.File) {
             preloads.remove(sid)?.let { p ->
                 preloadFailedAt.remove(p.sig)
@@ -329,6 +339,7 @@ class PlayTogetherManager(
         }
 
         override fun onFailed(sid: String, reason: String) {
+            (sidSig[sid] ?: preloads[sid]?.sig ?: mySig.takeIf { sid == mySid })?.let { partialSongs.remove(it) }
             preloads[sid]?.let { failPreload(it); return }
             if (sid == mySid) {
                 val sig = mySig
@@ -578,7 +589,7 @@ class PlayTogetherManager(
                 call("DELETE", "$code/members/$me")
                 call("DELETE", "$code/needs/$me")
                 preloadSids.forEach { sid -> try { call("DELETE", "$code/needs/$sid") } catch (_: Exception) { } }
-                java.io.File(app.cacheDir, "pt_recv").deleteRecursively(); receivedFiles.clear()
+                java.io.File(app.cacheDir, "pt_recv").deleteRecursively(); receivedFiles.clear(); partialSongs.clear(); PtPartialFiles.clear()
                 if (others == 0) {
                     deleteUploads()
                     call("DELETE", code) // last one out closes the room
@@ -833,7 +844,7 @@ class PlayTogetherManager(
                 resetWifi()
                 room = null
                 roomState = null
-                java.io.File(app.cacheDir, "pt_recv").deleteRecursively(); receivedFiles.clear()
+                java.io.File(app.cacheDir, "pt_recv").deleteRecursively(); receivedFiles.clear(); partialSongs.clear(); PtPartialFiles.clear()
                 _state.update {
                     it.copy(
                         route = null, routeProblem = null,
@@ -1156,6 +1167,8 @@ class PlayTogetherManager(
             val (sig, file) = iter.next()
             if (sig in keep) continue
             iter.remove()
+            partialSongs.remove(sig)
+            PtPartialFiles.remove(file)
             file.delete()
             artFile(sig).delete()
             artTried.remove(sig)
@@ -1335,7 +1348,8 @@ class PlayTogetherManager(
                 val file = wifiClient.fetch(
                     creds, sig, artFile(sig),
                     target = { ext -> java.io.File(app.cacheDir, "pt_recv/$sig.$ext") },
-                    onProgress = { pct -> transferListener.onProgress(sid, pct) }
+                    onProgress = { pct -> transferListener.onProgress(sid, pct) },
+                    onPartial = { transferListener.onPartial(sid, it) }
                 )
                 if (sid == mySid) transferListener.onReceived(sid, file)
             } catch (e: CancellationException) {
@@ -1429,7 +1443,10 @@ class PlayTogetherManager(
         val local = findLocal(entry, library)
         if (local == null) {
             // 1) a copy already received from the controller, 2) the controller's online URL
-            val remote = receivedFiles[songSig(entry)]?.takeIf { it.exists() }?.let { receivedSong(entry, it) }
+            val sigNow = songSig(entry)
+            val remote = receivedFiles[sigNow]?.takeIf { it.exists() }?.let { receivedSong(entry, it) }
+                // still downloading, but enough is here to play it to the end (see maybeStartPartial)
+                ?: partialSongs[sigNow]?.takeIf { it.state != PtPartialFiles.FAILED }?.let { receivedSong(entry, it.finalFile, it.total) }
                 ?: entry.url.takeIf { it.isNotBlank() }?.let { streamSong(entry) }
             if (remote != null) {
                 val target = expectedPosition(st)
@@ -1699,24 +1716,46 @@ class PlayTogetherManager(
     }
 
     /** A song object for a file received from the controller over WebRTC. */
-    private fun receivedSong(e: Entry, f: java.io.File): Song {
+    private fun receivedSong(e: Entry, f: java.io.File, partialTotal: Long = 0L): Song {
         val sig = songSig(e)
         // the controller sent the cover with the song; if not, use a picture embedded in the file
         val art = artFile(sig)
         // (looked for once per song: re-reading the tags on every room update would be wasteful)
-        val hasArt = (art.exists() && art.length() > 0) || (artTried.add(sig) && PtArt.extractEmbedded(app, f, art))
+        val hasArt = (art.exists() && art.length() > 0) ||
+            (partialTotal <= 0 && artTried.add(sig) && PtArt.extractEmbedded(app, f, art))
+        // a file that is still arriving has its full size already; its tags are not read yet
+        val size = if (partialTotal > 0) partialTotal else f.length()
         return Song(
             id = STREAM_PREFIX + sig,
             uri = Uri.fromFile(f),
             title = e.title, artist = e.artist, album = e.album, durationMs = e.durationMs,
             format = e.fmt.ifBlank { f.extension.uppercase() }.ifBlank { "MP3" },
-            sampleRateHz = e.sampleRate.takeIf { it > 0 } ?: probeSampleRate(f),
+            sampleRateHz = e.sampleRate.takeIf { it > 0 } ?: if (partialTotal > 0) 44100 else probeSampleRate(f),
             bitDepth = e.bitDepth.takeIf { it > 0 } ?: 16,
             bitrate = e.bitrate.takeIf { it > 0 }
-                ?: if (e.durationMs > 0) ((f.length() * 8 * 1000) / e.durationMs).toInt() else 0,
-            fileSizeBytes = f.length(), source = SongSource.WEB,
+                ?: if (e.durationMs > 0) ((size * 8 * 1000) / e.durationMs).toInt() else 0,
+            fileSizeBytes = size, source = SongSource.WEB,
             albumArtUri = if (hasArt) Uri.fromFile(art) else null
         )
+    }
+
+    /**
+     * Receiver: more of the room's song arrived. When the download is far enough ahead of the playback
+     * (see [PtStreamPlan]) the song starts now, in sync with the room, and goes on downloading while it plays.
+     */
+    private fun maybeStartPartial(sig: String, entry: PtPartialFiles.Entry) {
+        if (partialSongs.containsKey(sig)) return
+        if (entry.state != PtPartialFiles.GROWING) return
+        val st = roomState ?: return
+        val roomSong = st.song ?: return
+        if (songSig(roomSong) != sig || !_state.value.songMissing) return
+        if (!PtStreamPlan.streamable(entry.finalFile.extension)) return
+        if (!PtStreamPlan.shouldStart(entry.written, entry.total, roomSong.durationMs, entry.elapsedMs(), expectedPosition(st))) return
+        if (partialSongs.putIfAbsent(sig, entry) != null) return
+        scope.launch(Dispatchers.IO) {
+            lastAppliedAt = 0L
+            roomState?.let { applyRemote(it) }
+        }
     }
 
     /**

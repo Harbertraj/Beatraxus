@@ -20,6 +20,7 @@ import com.google.android.gms.nearby.connection.Payload
 import com.google.android.gms.nearby.connection.PayloadCallback
 import com.google.android.gms.nearby.connection.PayloadTransferUpdate
 import com.google.android.gms.nearby.connection.Strategy
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -97,6 +98,11 @@ class PtNearbyTransfer(
         /** Last time bytes of this request moved (the stall timeout counts from here). */
         @Volatile var lastProgressAt = 0L
         @Volatile var filePayload: Payload? = null
+        /** The controller sends the song as a STREAM (v3): it is written to disk as it arrives and can play early. */
+        @Volatile var streaming = false
+        @Volatile var streamPayload: Payload? = null
+        @Volatile var streamJob: Job? = null
+        @Volatile var streamOut: File? = null
         @Volatile var artPayload: Payload? = null
         /** 0 = still coming (or none), 1 = received, -1 = failed. */
         @Volatile var artState = 0
@@ -111,6 +117,8 @@ class PtNearbyTransfer(
     private val payloadOwner = ConcurrentHashMap<Long, Request>()
     /** FILE payloads / completions that arrived before their header said whose they are. */
     private val strayFiles = ConcurrentHashMap<Long, Payload>()
+    /** STREAM payloads that arrived before their header. */
+    private val strayStreams = ConcurrentHashMap<Long, Payload>()
     private val strayDone: MutableSet<Long> = ConcurrentHashMap.newKeySet()
 
     @Volatile private var linkRoom: String? = null
@@ -180,16 +188,18 @@ class PtNearbyTransfer(
                 return
             }
             // Building the cover reads and decodes an image: not on the thread Nearby calls us on.
-            val wantsCover = req.optInt("v", 1) >= 2
-            scope.launch(Dispatchers.IO) { serve(endpointId, src, wantsCover) }
+            val version = req.optInt("v", 1)
+            val wantsCover = version >= 2
+            // v3 phones can play the song while it arrives, so it goes as a STREAM instead of a FILE
+            scope.launch(Dispatchers.IO) { serve(endpointId, src, wantsCover, version >= 3) }
         }
         override fun onPayloadTransferUpdate(endpointId: String, update: PayloadTransferUpdate) {}
     }
 
-    private fun serve(endpointId: String, src: Source, wantsCover: Boolean) {
+    private fun serve(endpointId: String, src: Source, wantsCover: Boolean, asStream: Boolean = false) {
         val pfd = try { src.open() } catch (_: Exception) { null }
         if (pfd == null) { send(endpointId, JSONObject().put("none", true).toString()); return }
-        val songPayload = Payload.fromFile(pfd)
+        val songPayload = if (asStream) Payload.fromStream(ParcelFileDescriptor.AutoCloseInputStream(pfd)) else Payload.fromFile(pfd)
         var artPayload: Payload? = null
         var artSize = 0L
         if (wantsCover) {
@@ -199,6 +209,7 @@ class PtNearbyTransfer(
         }
         // "req" echoes the signature so a phone with several open requests knows which song this header is for
         val header = JSONObject().put("size", src.size).put("ext", src.ext).put("req", src.sig)
+        if (asStream) header.put("stream", true)
         if (wantsCover) {
             header.put("sid", songPayload.id)
             artPayload?.let { header.put("art", it.id).put("artSize", artSize) }
@@ -343,7 +354,7 @@ class PtNearbyTransfer(
                 if (SystemClock.elapsedRealtime() - r.lastProgressAt > TRANSFER_TIMEOUT_MS) { giveUp(r); break }
             }
         }
-        send(ep, JSONObject().put("req", r.sig).put("v", 2).toString())
+        send(ep, JSONObject().put("req", r.sig).put("v", 3).toString())
     }
 
     /** Forget the request [sid]; the standing link stays up. */
@@ -352,13 +363,16 @@ class PtNearbyTransfer(
         r.finished = true
         r.timeout?.cancel()
         r.filePayload?.let { try { client.cancelPayload(it.id) } catch (_: Exception) { } }
+        r.streamPayload?.let { try { client.cancelPayload(it.id) } catch (_: Exception) { } }
         r.artPayload?.let { try { client.cancelPayload(it.id) } catch (_: Exception) { } }
+        r.streamJob?.cancel()
+        r.streamOut?.let { PtPartialFiles.fail(it); if (r.streamJob?.isCompleted != true) it.delete() }
         forget(r)
     }
 
     fun cancelAllRequests() {
         requests.keys.toList().forEach { cancelRequest(it) }
-        strayFiles.clear(); strayDone.clear()
+        strayFiles.clear(); strayStreams.clear(); strayDone.clear()
     }
 
     /** Drops the payload bookkeeping of a request that is over. */
@@ -366,6 +380,7 @@ class PtNearbyTransfer(
         if (r.songId != 0L) payloadOwner.remove(r.songId, r)
         if (r.artId != 0L) payloadOwner.remove(r.artId, r)
         r.filePayload?.let { payloadOwner.remove(it.id, r); strayDone.remove(it.id) }
+        r.streamPayload?.let { payloadOwner.remove(it.id, r); strayDone.remove(it.id) }
         r.artPayload?.let { payloadOwner.remove(it.id, r); strayDone.remove(it.id) }
     }
 
@@ -399,12 +414,18 @@ class PtNearbyTransfer(
             if (r.artId != 0L && r.artPayload == null) {
                 strayFiles.remove(r.artId)?.let { r.artPayload = it; payloadOwner[it.id] = r }
             }
+            if (r.artPayload?.id?.let { it in strayDone } == true) { r.artState = 1; r.done.add(r.artPayload!!.id) }
+            if (r.streaming) {
+                if (r.streamPayload == null && r.songId != 0L) {
+                    strayStreams.remove(r.songId)?.let { r.streamPayload = it; payloadOwner[it.id] = r; startStreamReader(r, it) }
+                }
+                continue
+            }
             if (r.filePayload == null) {
                 val song = if (r.songId != 0L) strayFiles.remove(r.songId)
                 else strayFiles.keys.firstOrNull { it != r.artId }?.let { strayFiles.remove(it) } // older controller
                 if (song != null) { r.filePayload = song; r.songId = song.id; payloadOwner[song.id] = r }
             }
-            if (r.artPayload?.id?.let { it in strayDone } == true) { r.artState = 1; r.done.add(r.artPayload!!.id) }
             val f = r.filePayload
             if (f != null && f.id in strayDone) { r.done.add(f.id); finish(r) }
         }
@@ -422,6 +443,7 @@ class PtNearbyTransfer(
                     r.ext = ptSafeExt(o.optString("ext", "mp3"))
                     r.artId = o.optLong("art", 0L)
                     r.songId = o.optLong("sid", 0L)
+                    r.streaming = o.optBoolean("stream", false) && r.songId != 0L
                     r.lastProgressAt = SystemClock.elapsedRealtime()
                     if (r.songId != 0L) payloadOwner[r.songId] = r
                     if (r.artId != 0L) payloadOwner[r.artId] = r
@@ -435,6 +457,16 @@ class PtNearbyTransfer(
                         claimStrays()
                     } else {
                         strayFiles[payload.id] = payload
+                        claimStrays()
+                    }
+                }
+                Payload.Type.STREAM -> {
+                    val owner = payloadOwner[payload.id]
+                    if (owner != null && owner.streaming) {
+                        owner.streamPayload = payload
+                        startStreamReader(owner, payload)
+                    } else {
+                        strayStreams[payload.id] = payload
                         claimStrays()
                     }
                 }
@@ -455,6 +487,10 @@ class PtNearbyTransfer(
                 isArt -> when (u.status) {
                     PayloadTransferUpdate.Status.SUCCESS -> { r.done.add(u.payloadId); r.artState = 1 }
                     PayloadTransferUpdate.Status.FAILURE, PayloadTransferUpdate.Status.CANCELED -> r.artState = -1
+                    else -> {}
+                }
+                r.streaming -> when (u.status) {
+                    PayloadTransferUpdate.Status.FAILURE, PayloadTransferUpdate.Status.CANCELED -> giveUp(r)
                     else -> {}
                 }
                 else -> when (u.status) {
@@ -493,6 +529,66 @@ class PtNearbyTransfer(
         val payload = r.artPayload
         if (r.artState != 1 || payload == null) return
         try { copyPayload(payload, target) } catch (_: Exception) { target.delete() }
+    }
+
+    /**
+     * Streaming receive (v3 controller): the bytes are written to the song file as they arrive, so the
+     * phone can start playing before the end (see PtStreamPlan). The song is done when the stream ends.
+     */
+    private fun startStreamReader(r: Request, payload: Payload) {
+        if (r.streamJob != null) return
+        r.streamJob = scope.launch(Dispatchers.IO) {
+            val out = r.target(r.ext)
+            r.streamOut = out
+            out.parentFile?.mkdirs()
+            val entry = if (r.expected > 0) PtPartialFiles.begin(out, r.expected) else null
+            try {
+                val input = payload.asStream()?.asInputStream() ?: throw IllegalStateException("no stream")
+                var got = 0L
+                var lastPct = -1
+                var lastPartialAt = 0L
+                input.use { i ->
+                    out.outputStream().use { o ->
+                        val buf = ByteArray(32 * 1024)
+                        while (true) {
+                            val n = i.read(buf)
+                            if (n < 0) break
+                            if (r.finished) throw CancellationException()
+                            o.write(buf, 0, n)
+                            got += n
+                            r.lastProgressAt = SystemClock.elapsedRealtime()
+                            if (entry != null) {
+                                entry.advance(n)
+                                val now = SystemClock.elapsedRealtime()
+                                if (now - lastPartialAt >= 300L) { lastPartialAt = now; listener?.onPartial(r.sid, entry) }
+                            }
+                            if (r.expected > 0) {
+                                val pct = (got * 100 / r.expected).toInt()
+                                if (pct != lastPct) { lastPct = pct; listener?.onProgress(r.sid, pct) }
+                            }
+                        }
+                    }
+                }
+                if (r.expected > 0 && out.length() != r.expected) throw IllegalStateException("incomplete file")
+                if (r.finished) { entry?.let { PtPartialFiles.fail(out) }; out.delete(); return@launch }
+                saveCover(r)
+                if (r.finished) { PtPartialFiles.fail(out); out.delete(); return@launch }
+                r.finished = true
+                r.timeout?.cancel()
+                PtPartialFiles.complete(out)
+                requests.remove(r.sid)
+                forget(r)
+                listener?.onReceived(r.sid, out)
+            } catch (e: CancellationException) {
+                PtPartialFiles.fail(out)
+                out.delete()
+                throw e
+            } catch (_: Exception) {
+                PtPartialFiles.fail(out)
+                out.delete()
+                giveUp(r)
+            }
+        }
     }
 
     private fun finish(r: Request) {

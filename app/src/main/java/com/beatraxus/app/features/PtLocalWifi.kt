@@ -392,14 +392,15 @@ internal class PtLocalWifiClient(context: Context, private val scope: CoroutineS
         sig: String,
         artTarget: File?,
         target: (ext: String) -> File,
-        onProgress: (Int) -> Unit
+        onProgress: (Int) -> Unit,
+        onPartial: ((PtPartialFiles.Entry) -> Unit)? = null
     ): File {
         if (Build.VERSION.SDK_INT < 29) throw PtWifiException("Joining another Wi-Fi needs Android 10 or newer")
         synchronized(this) { releaseJob?.cancel(); releaseJob = null }
         aborted = false
         try {
             val l = join(creds)
-            val file = withContext(Dispatchers.IO) { download(l, creds, sig, artTarget, target, onProgress) }
+            val file = withContext(Dispatchers.IO) { download(l, creds, sig, artTarget, target, onProgress, onPartial) }
             scheduleRelease()
             return file
         } catch (e: CancellationException) {
@@ -554,7 +555,8 @@ internal class PtLocalWifiClient(context: Context, private val scope: CoroutineS
 
     private fun download(
         l: Link, c: PtWifiCreds, sig: String, artTarget: File?,
-        target: (String) -> File, onProgress: (Int) -> Unit
+        target: (String) -> File, onProgress: (Int) -> Unit,
+        onPartial: ((PtPartialFiles.Entry) -> Unit)? = null
     ): File {
         val base = "http://${l.host}:${c.port}"
         val query = "?t=${c.token}"
@@ -578,7 +580,7 @@ internal class PtLocalWifiClient(context: Context, private val scope: CoroutineS
             }
             val body = r.body ?: throw PtWifiException("The controller sent an empty answer")
             val out = target(ptSafeExt(r.header("X-Ext") ?: "mp3"))
-            save(body, out, onProgress)
+            save(body, out, onProgress, onPartial)
             return out
         }
     }
@@ -589,22 +591,36 @@ internal class PtLocalWifiClient(context: Context, private val scope: CoroutineS
         return call.execute()
     }
 
-    /** Writes [body] to [out] through a ".part" file, so a half file never has the final name. */
-    private fun save(body: ResponseBody, out: File, onProgress: ((Int) -> Unit)?) {
+    /**
+     * Writes [body] to [out] through a ".part" file, so a half file never has the final name.
+     * With [onPartial] the growing file is also registered (see [PtPartialFiles]) so the song can start
+     * playing before the last byte is here; the final name is only taken at the end.
+     */
+    private fun save(
+        body: ResponseBody, out: File, onProgress: ((Int) -> Unit)?,
+        onPartial: ((PtPartialFiles.Entry) -> Unit)? = null
+    ) {
         out.parentFile?.mkdirs()
         val part = File(out.parentFile, out.name + ".part")
         val expected = body.contentLength()
         var got = 0L
+        val entry = if (onPartial != null && expected > 0) PtPartialFiles.begin(out, expected, part) else null
         try {
             body.byteStream().use { input ->
                 part.outputStream().use { output ->
                     val buf = ByteArray(64 * 1024)
                     var lastPct = -1
+                    var lastPartialAt = 0L
                     while (true) {
                         val n = input.read(buf)
                         if (n < 0) break
                         output.write(buf, 0, n)
                         got += n
+                        if (entry != null) {
+                            entry.advance(n)
+                            val now = SystemClock.elapsedRealtime()
+                            if (now - lastPartialAt >= 300L) { lastPartialAt = now; onPartial?.invoke(entry) }
+                        }
                         if (expected > 0 && onProgress != null) {
                             val pct = (got * 100 / expected).toInt()
                             if (pct != lastPct) { lastPct = pct; onProgress(pct) }
@@ -613,9 +629,12 @@ internal class PtLocalWifiClient(context: Context, private val scope: CoroutineS
                 }
             }
             if (got == 0L || (expected > 0 && got != expected)) throw PtWifiException("The file arrived incomplete")
+            // (a reader that already has the .part file open keeps reading it through the rename)
             out.delete()
             if (!part.renameTo(out)) throw PtWifiException("Could not save the file")
+            if (entry != null) PtPartialFiles.complete(out)
         } catch (e: Exception) {
+            if (entry != null) PtPartialFiles.fail(out)
             part.delete()
             throw e
         }

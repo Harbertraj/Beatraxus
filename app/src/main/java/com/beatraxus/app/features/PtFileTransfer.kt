@@ -47,6 +47,8 @@ class PtFileTransfer(
         fun onProgress(sid: String, percent: Int)
         fun onReceived(sid: String, file: File)
         fun onFailed(sid: String, reason: String)
+        /** Receiver: more of the song arrived. It may be started now if [PtStreamPlan] says so (default: ignore). */
+        internal fun onPartial(sid: String, entry: PtPartialFiles.Entry) {}
     }
 
     @Volatile var listener: Listener? = null
@@ -60,6 +62,8 @@ class PtFileTransfer(
         @Volatile var done = false
         var out: FileOutputStream? = null
         var outFile: File? = null
+        var partial: PtPartialFiles.Entry? = null
+        var lastPartialAt = 0L
         var expected = 0L
         var got = 0L
         var ext = "mp3"
@@ -202,8 +206,10 @@ class PtFileTransfer(
                             val f = s.outFile
                             s.done = true
                             if (f != null && (s.expected <= 0 || f.length() == s.expected)) {
+                                PtPartialFiles.complete(f)
                                 listener?.onReceived(s.sid, f)
                             } else {
+                                f?.let { PtPartialFiles.fail(it) }
                                 f?.delete()
                                 listener?.onFailed(s.sid, "incomplete file")
                             }
@@ -219,6 +225,9 @@ class PtFileTransfer(
                             f.parentFile?.mkdirs()
                             s.outFile = f
                             s.out = FileOutputStream(f)
+                            // the song can start playing while it is still arriving (see PtStreamPlan)
+                            s.got = 0L
+                            s.partial = if (s.expected > 0) PtPartialFiles.begin(f, s.expected) else null
                         }
                     } else if (s.artGot < s.artExpected) {
                         // the cover comes first and in its own messages, before any song data
@@ -228,6 +237,14 @@ class PtFileTransfer(
                     } else {
                         s.out?.write(bytes)
                         s.got += bytes.size
+                        s.partial?.let { p ->
+                            p.advance(bytes.size)
+                            val now = android.os.SystemClock.elapsedRealtime()
+                            if (now - s.lastPartialAt >= PARTIAL_EVERY_MS) {
+                                s.lastPartialAt = now
+                                listener?.onPartial(s.sid, p)
+                            }
+                        }
                         if (s.expected > 0) listener?.onProgress(s.sid, (s.got * 100 / s.expected).toInt())
                     }
                 } catch (e: Exception) {
@@ -323,7 +340,7 @@ class PtFileTransfer(
     private fun fail(s: Session, why: String) {
         if (s.done) return
         s.done = true
-        s.outFile?.delete()
+        s.outFile?.let { PtPartialFiles.fail(it); it.delete() }
         listener?.onFailed(s.sid, why)
         close(s.sid)
     }
@@ -349,6 +366,8 @@ class PtFileTransfer(
     private companion object {
         const val CHUNK = 16 * 1024
         const val MAX_BUFFERED = 1L * 1024 * 1024
+        /** How often the manager is told that more of the song arrived (it re-checks if playback may start). */
+        const val PARTIAL_EVERY_MS = 300L
     }
 }
 

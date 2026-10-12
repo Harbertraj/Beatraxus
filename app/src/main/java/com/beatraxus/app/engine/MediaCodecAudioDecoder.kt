@@ -31,7 +31,13 @@ internal class MediaCodecAudioDecoder(
 
         try {
             // 1. Setup Data Source
-            if (request.song.source != SongSource.LOCAL) {
+            // Play Together: a song that is still arriving from the controller is read while it grows
+            // (waits for bytes that are not here yet, like a cloud song), instead of waiting for the whole file.
+            val partialPt = if (request.song.uri.scheme == "file")
+                com.beatraxus.app.features.PtPartialFiles.get(request.song.uri.path) else null
+            if (partialPt != null) {
+                extractor.setDataSource(com.beatraxus.app.features.PtGrowingDataSource(partialPt))
+            } else if (request.song.source != SongSource.LOCAL) {
                 val dataSource = cloudCacheManager.getDataSource(request.song, tdLibManager) { control.isSeekPending() }
                 if (dataSource != null) {
                     try {
@@ -74,7 +80,7 @@ internal class MediaCodecAudioDecoder(
 
             // 2. Select Track with retry
             var track = selectBestAudioTrack(extractor, request.preferredAudioTrackIndex)
-            if (track == null && request.song.source != SongSource.LOCAL) {
+            if (track == null && partialPt == null && request.song.source != SongSource.LOCAL) {
                 control.logWarn("Initial extraction failed, retrying with fresh extractor and direct URL...")
                 extractor.release()
                 extractor = MediaExtractor()
