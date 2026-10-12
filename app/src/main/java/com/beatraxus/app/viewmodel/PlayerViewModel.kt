@@ -294,19 +294,44 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     // On-device videos (MediaStore scan).
     private val _videos = MutableStateFlow<List<com.beatraxus.app.model.Video>>(emptyList())
 
-    // Videos streamed from cloud sources (currently Telegram channels).
+    // Videos streamed from cloud sources: Telegram channels and cloud drives (Drive, Dropbox, OneDrive, Box, Nextcloud).
     private val telegramVideoRepository = com.beatraxus.app.repository.TelegramVideoRepository(application)
+    private val cloudVideoRepository = com.beatraxus.app.repository.CloudVideoRepository(application)
     private val _cloudVideos = MutableStateFlow<List<com.beatraxus.app.model.Video>>(emptyList())
 
-    /** Local + cloud videos. Cloud videos of removed / disabled Telegram channels are left out. */
+    /** Every connected cloud-drive account (enabled or not), as the video library sees them. */
+    private val cloudVideoAccounts: Flow<List<com.beatraxus.app.repository.CloudVideoAccount>> = combine(
+        driveAccountRepository.accounts,
+        dropboxAccountRepository.accounts,
+        onedriveAccountRepository.accounts,
+        boxAccountRepository.accounts,
+        nextcloudAccountRepository.accounts
+    ) { drive, dropbox, onedrive, box, nextcloud ->
+        buildList {
+            drive.forEach { add(com.beatraxus.app.repository.CloudVideoAccount(VideoSource.GDRIVE, it.email, it.enabled)) }
+            dropbox.forEach { add(com.beatraxus.app.repository.CloudVideoAccount(VideoSource.DROPBOX, it.email, it.enabled)) }
+            onedrive.forEach { add(com.beatraxus.app.repository.CloudVideoAccount(VideoSource.ONEDRIVE, it.email, it.enabled)) }
+            box.forEach { add(com.beatraxus.app.repository.CloudVideoAccount(VideoSource.BOX, it.email, it.enabled)) }
+            nextcloud.forEach { add(com.beatraxus.app.repository.CloudVideoAccount(VideoSource.NEXTCLOUD, it.username, it.enabled)) }
+        }
+    }
+
+    /** Local + cloud videos. Cloud videos of removed / disabled Telegram channels and cloud accounts are left out. */
     val allVideos: StateFlow<List<Video>> = combine(
         _videos,
         _cloudVideos,
-        telegramChannelRepository.channels
-    ) { local, cloud, channels ->
+        telegramChannelRepository.channels,
+        cloudVideoAccounts
+    ) { local, cloud, channels, accounts ->
         val enabledTelegram = channels.filter { it.enabled }.map { it.url.trim().removeSuffix("/") }.toSet()
+        val enabledAccounts = accounts.filter { it.enabled }.map { it.id }.toSet()
         local + cloud.filter { v ->
-            v.source != VideoSource.TELEGRAM || v.sourceId == null || v.sourceId in enabledTelegram
+            when (v.source) {
+                VideoSource.LOCAL -> true
+                VideoSource.TELEGRAM -> v.sourceId == null || v.sourceId in enabledTelegram
+                else -> v.sourceId != null &&
+                    com.beatraxus.app.repository.CloudVideoAccount.idOf(v.source, v.sourceId) in enabledAccounts
+            }
         }
     }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
@@ -764,10 +789,48 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         // Trigger video scan on init
         loadVideos()
 
-        // Cloud videos: show the cached Telegram videos immediately, refresh them once Telegram is ready.
+        // Cloud videos: show the cached Telegram + cloud-drive videos immediately, refresh them once the sources are ready.
         viewModelScope.launch(Dispatchers.IO) {
-            val cached = telegramVideoRepository.loadCached()
+            val cached = telegramVideoRepository.loadCached() + cloudVideoRepository.loadCached()
             _cloudVideos.update { current -> if (current.isEmpty()) cached else current }
+        }
+        viewModelScope.launch {
+            cloudVideoAccounts
+                .map { accounts -> accounts.map { it.id }.toSet() }
+                .distinctUntilChanged()
+                .collect { ids ->
+                    // Drop videos of cloud accounts that were removed; disabled ones are only hidden (see allVideos).
+                    var removedAny = false
+                    _cloudVideos.update { current ->
+                        val kept = current.filter { v ->
+                            v.source !in com.beatraxus.app.repository.CloudVideoRepository.CLOUD_SOURCES ||
+                                (v.sourceId != null && com.beatraxus.app.repository.CloudVideoAccount.idOf(v.source, v.sourceId) in ids)
+                        }
+                        removedAny = kept.size != current.size
+                        kept
+                    }
+                    if (removedAny) {
+                        val snapshot = _cloudVideos.value
+                        withContext(Dispatchers.IO) { cloudVideoRepository.saveCached(snapshot) }
+                    }
+                    // A new / re-enabled account may bring new videos.
+                    maybeRefreshCloudVideos(force = true)
+                }
+        }
+        viewModelScope.launch {
+            // The video player learned the real runtime / size of a streamed video: show it in the library too.
+            com.beatraxus.app.repository.CloudVideoMetadataBus.updates.collect { u ->
+                var changed = false
+                _cloudVideos.update { current ->
+                    current.map { v ->
+                        if (v.id == u.videoId && (v.durationMs != u.durationMs || v.resolutionHeight != u.height)) {
+                            changed = true
+                            v.copy(durationMs = u.durationMs, resolutionWidth = u.width, resolutionHeight = u.height)
+                        } else v
+                    }
+                }
+                if (changed) withContext(Dispatchers.IO) { persistCloudVideos() }
+            }
         }
         viewModelScope.launch {
             telegramChannelRepository.channels
@@ -1528,6 +1591,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun refreshVideos() {
         loadVideos()
         refreshTelegramVideos(force = true)
+        refreshCloudVideos(force = true)
     }
 
     /** Called by the source chips. Pass the already-selected source (or null) to show all sources again. */
@@ -1538,9 +1602,31 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private var telegramVideoJob: Job? = null
     private var lastTelegramVideoRefresh = 0L
 
+    /** Saves the Telegram and cloud-drive videos (each repository keeps only its own). Blocking: call off the main thread. */
+    private fun persistCloudVideos() {
+        val snapshot = _cloudVideos.value
+        telegramVideoRepository.saveCached(snapshot)
+        cloudVideoRepository.saveCached(snapshot)
+    }
+
+    /** Replaces a cloud video by its improved version (new thumbnail / runtime found in the background). */
+    private fun applyCloudVideoUpdate(updated: Video) {
+        _cloudVideos.update { current -> current.map { if (it.id == updated.id) updated else it } }
+    }
+
+    /**
+     * Heavy background work (reading a few MB of each video to get a frame / runtime) follows the same
+     * network rule as the cloud metadata sync, so it doesn't use mobile data unless the user allowed it.
+     */
+    private fun heavyVideoWorkAllowed(): Boolean =
+        com.beatraxus.app.util.NetworkUtils.isNetworkAllowed(getApplication<Application>(), _uiState.value.metadataNetworkType)
+
     /**
      * Looks for videos in the enabled Telegram channels and merges them into the cloud library.
      * Silent when Telegram isn't logged in yet (the cached list stays), and throttled unless [force].
+     *
+     * The list shows up right away; thumbnails and runtimes are fetched afterwards (with retries)
+     * and appear one by one.
      */
     fun refreshTelegramVideos(force: Boolean = false) {
         val now = System.currentTimeMillis()
@@ -1552,9 +1638,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         telegramVideoJob = viewModelScope.launch(Dispatchers.IO) {
             val channels = telegramChannelRepository.channels.first().filter { it.enabled }
             val enabledUrls = channels.map { it.url.trim().removeSuffix("/") }
+            val scans = mutableListOf<com.beatraxus.app.repository.TelegramVideoRepository.ChannelScan>()
             for (url in enabledUrls) {
                 val known = _cloudVideos.value.filter { it.source == VideoSource.TELEGRAM && it.sourceId == url }
-                val found = try {
+                val scan = try {
                     telegramVideoRepository.scanChannel(tdLibManager, url, known.associateBy { it.id })
                 } catch (e: CancellationException) {
                     throw e
@@ -1564,9 +1651,76 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 } ?: continue // couldn't read the channel: keep what we already have
 
                 _cloudVideos.update { current ->
-                    current.filterNot { it.source == VideoSource.TELEGRAM && it.sourceId == url } + found
+                    current.filterNot { it.source == VideoSource.TELEGRAM && it.sourceId == url } + scan.videos
                 }
                 telegramVideoRepository.saveCached(_cloudVideos.value)
+                scans.add(scan)
+            }
+
+            try {
+                for (scan in scans) {
+                    telegramVideoRepository.enrich(
+                        tdLib = tdLibManager,
+                        scan = scan,
+                        onUpdated = { applyCloudVideoUpdate(it) },
+                        allowHeavy = heavyVideoWorkAllowed(),
+                        isPlaybackActive = { PlaybackGlobalState.isAnyPlaybackActive.value }
+                    )
+                }
+            } finally {
+                // Keep what was found even when this refresh is cancelled half way.
+                withContext(kotlinx.coroutines.NonCancellable) { persistCloudVideos() }
+            }
+        }
+    }
+
+    private var cloudVideoJob: Job? = null
+    private var lastCloudVideoRefresh = 0L
+
+    /** Cloud-drive videos are only listed while the video library is on screen in Cloud / Combined mode. */
+    private fun maybeRefreshCloudVideos(force: Boolean = false) {
+        val state = _uiState.value
+        if (state.playbackMode != PlaybackMode.VIDEO || state.libraryMode == LibraryMode.LOCAL) return
+        refreshCloudVideos(force)
+    }
+
+    /**
+     * Lists the videos of the connected cloud drives (Google Drive, Dropbox, OneDrive, Box, Nextcloud) and
+     * merges them into the cloud library. Silent on failure (the cached list stays), throttled unless [force].
+     * Thumbnails and runtimes are filled in afterwards.
+     */
+    fun refreshCloudVideos(force: Boolean = false) {
+        val now = System.currentTimeMillis()
+        if (!force && now - lastCloudVideoRefresh < CLOUD_VIDEO_REFRESH_MIN_MS) return
+        lastCloudVideoRefresh = now
+
+        cloudVideoJob?.cancel()
+        cloudVideoJob = viewModelScope.launch(Dispatchers.IO) {
+            val accounts = cloudVideoRepository.connectedAccounts().filter { it.enabled }
+            if (accounts.isEmpty()) return@launch
+
+            val scanned = mutableListOf<Video>()
+            for (account in accounts) {
+                val known = _cloudVideos.value.filter { it.source == account.source && it.sourceId == account.key }
+                val found = cloudVideoRepository.scan(account, known.associateBy { it.id })
+                    ?: continue // couldn't list this account: keep what we already have
+
+                _cloudVideos.update { current ->
+                    current.filterNot { it.source == account.source && it.sourceId == account.key } + found
+                }
+                cloudVideoRepository.saveCached(_cloudVideos.value)
+                scanned.addAll(found)
+            }
+
+            try {
+                cloudVideoRepository.enrich(
+                    videos = scanned,
+                    onUpdated = { applyCloudVideoUpdate(it) },
+                    allowHeavy = heavyVideoWorkAllowed(),
+                    isPlaybackActive = { PlaybackGlobalState.isAnyPlaybackActive.value }
+                )
+            } finally {
+                withContext(kotlinx.coroutines.NonCancellable) { cloudVideoRepository.saveCached(_cloudVideos.value) }
             }
         }
     }
@@ -3516,7 +3670,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             selectedVideoSource = null, // a chip picked in one mode shouldn't silently filter the next
             currentView = if (mode == LibraryMode.ADDONS) LibraryView.ADDONS else it.currentView
         ) }
-        if (mode == LibraryMode.CLOUD || mode == LibraryMode.COMBINED) refreshTelegramVideos()
+        if (mode == LibraryMode.CLOUD || mode == LibraryMode.COMBINED) {
+            refreshTelegramVideos()
+            maybeRefreshCloudVideos()
+        }
     }
 
 
@@ -3535,6 +3692,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         if (mode == com.beatraxus.app.model.PlaybackMode.VIDEO && _videos.value.isEmpty()) {
             loadVideos()
         }
+        if (mode == com.beatraxus.app.model.PlaybackMode.VIDEO) maybeRefreshCloudVideos()
     }
 
     fun setMetadataNetworkType(type: com.beatraxus.app.model.NetworkType) {
@@ -5698,6 +5856,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         const val KEY_OUTPUT_MODE = "output_mode"
         const val KEY_CUSTOM_EQ_PRESETS = "custom_eq_presets"
         const val TELEGRAM_VIDEO_REFRESH_MIN_MS = 60_000L
+        const val CLOUD_VIDEO_REFRESH_MIN_MS = 5 * 60_000L
     }
 
     private fun startSyncDismissTimer() {

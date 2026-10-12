@@ -83,6 +83,22 @@ class DropboxAccountRepository(private val context: Context) {
         }
     }
 
+    /**
+     * A Dropbox client for [email] that refreshes its own access token when it expires
+     * (unlike [getAccessToken], which hands out the token stored at login time).
+     */
+    suspend fun getClient(email: String): DbxClientV2? = withContext(Dispatchers.IO) {
+        try {
+            val credentialJson = encryptedPrefs.getString(email, null) ?: return@withContext null
+            val credential = DbxCredential.Reader.readFully(credentialJson)
+            val config = DbxRequestConfig.newBuilder("Beatraxus").build()
+            DbxClientV2(config, credential)
+        } catch (e: Exception) {
+            android.util.Log.e("DropboxAccountRepo", "Error creating Dropbox client for $email", e)
+            null
+        }
+    }
+
     suspend fun addAccount(account: DropboxAccount, credentialJson: String) {
         encryptedPrefs.edit().putString(account.email, credentialJson).apply()
         context.dropboxDataStore.edit { prefs ->

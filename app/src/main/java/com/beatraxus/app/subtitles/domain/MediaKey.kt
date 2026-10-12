@@ -8,7 +8,9 @@ object MediaKey {
         if (!hash.isNullOrBlank()) {
             return sanitize(hash)
         }
-        val raw = "${video.id}|${video.sizeBytes}|${video.durationMs}"
+        // Streamed videos learn their runtime after they are listed, so it can't be part of their key.
+        val duration = if (video.isCloud) 0L else video.durationMs
+        val raw = "${video.id}|${video.sizeBytes}|$duration"
         val sha1 = sha1Hex(raw)
         return sanitize(sha1)
     }

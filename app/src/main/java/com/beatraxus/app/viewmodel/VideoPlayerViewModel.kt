@@ -349,10 +349,15 @@ class VideoPlayerViewModel(
         val player = ExoPlayer.Builder(context, VideoRenderersFactory(context, tuning))
             .setMediaSourceFactory(
                 androidx.media3.exoplayer.source.DefaultMediaSourceFactory(
-                    // Same as before for every normal Uri; `tgvideo://` Telegram videos are streamed through TDLib.
+                    // Same as before for every normal Uri; `tgvideo://` Telegram videos are streamed through TDLib
+                    // and `cloudvideo://` cloud-drive videos (Drive, Dropbox, OneDrive, Box, Nextcloud) are
+                    // resolved to an authorised https address first.
                     com.beatraxus.app.telegram.TelegramAwareDataSourceFactory(
                         (context.applicationContext as BeatraxusApplication).tdLibManager,
-                        com.beatraxus.app.addons.AddonStreamHeaders.dataSourceFactory(context)
+                        com.beatraxus.app.drive.CloudVideoDataSource.wrap(
+                            context,
+                            com.beatraxus.app.addons.AddonStreamHeaders.dataSourceFactory(context)
+                        )
                     ).also { telegramDataSourceFactory = it }
                 )
             )
@@ -435,6 +440,7 @@ class VideoPlayerViewModel(
                 }
                 if (playbackState == Player.STATE_READY) {
                     _uiState.update { it.copy(duration = player.duration) }
+                    reportStreamedVideoMetadata(player)
                     updateTracks()
                     setupLoudnessEnhancer(player.audioSessionId)
                 } else if (playbackState == Player.STATE_ENDED) {
@@ -549,6 +555,28 @@ class VideoPlayerViewModel(
                 checkBackgroundTasks()
             }
         }
+    }
+
+    /**
+     * Streamed videos (Telegram files, cloud drives) often have no runtime in their listing. Once the
+     * player knows the real one, hand it to the library so the card shows it without another probe.
+     */
+    private fun reportStreamedVideoMetadata(player: ExoPlayer) {
+        val video = _uiState.value.currentVideo ?: return
+        if (!video.isCloud) return
+        val duration = player.duration.takeIf { it != C.TIME_UNSET && it > 0 } ?: return
+        val size = player.videoSize
+        val needsDuration = video.durationMs <= 0L
+        val needsSize = video.resolutionHeight <= 0 && size.height > 0
+        if (!needsDuration && !needsSize) return
+        com.beatraxus.app.repository.CloudVideoMetadataBus.updates.tryEmit(
+            com.beatraxus.app.repository.CloudVideoMetadataBus.Update(
+                videoId = video.id,
+                durationMs = if (needsDuration) duration else video.durationMs,
+                width = if (needsSize) size.width else video.resolutionWidth,
+                height = if (needsSize) size.height else video.resolutionHeight
+            )
+        )
     }
 
     private fun checkBackgroundTasks() {
