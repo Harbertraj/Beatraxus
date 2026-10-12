@@ -10,9 +10,9 @@ class PtPreloadPlanTest {
     private val queue = listOf("a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l")
 
     @Test
-    fun upcomingIsTheEightSongsAfterTheCurrentOne() {
-        assertEquals(listOf("c", "d", "e", "f", "g", "h", "i", "j"), PtPreloadPlan.upcoming(queue, "b"))
-        assertEquals(8, PtPreloadPlan.COUNT)
+    fun upcomingIsTheFiveSongsAfterTheCurrentOne() {
+        assertEquals(listOf("c", "d", "e", "f", "g"), PtPreloadPlan.upcoming(queue, "b"))
+        assertEquals(5, PtPreloadPlan.COUNT)
     }
 
     @Test
@@ -47,9 +47,9 @@ class PtPreloadPlanTest {
     }
 
     @Test
-    fun keepCoversPreviousCurrentAndTheNextEight() {
+    fun keepCoversPreviousCurrentAndTheNextFive() {
         assertEquals(
-            setOf("a", "b", "c", "d", "e", "f", "g", "h", "i", "j"),
+            setOf("a", "b", "c", "d", "e", "f", "g"),
             PtPreloadPlan.keep(queue, "b")
         )
     }
@@ -57,7 +57,7 @@ class PtPreloadPlanTest {
     @Test
     fun keepHasNoPreviousSongAtTheStart() {
         assertEquals(
-            setOf("a", "b", "c", "d", "e", "f", "g", "h", "i"),
+            setOf("a", "b", "c", "d", "e", "f"),
             PtPreloadPlan.keep(queue, "a")
         )
     }
@@ -66,5 +66,20 @@ class PtPreloadPlanTest {
     fun keepAlwaysKeepsTheCurrentSongEvenWhenTheQueueDoesNotListIt() {
         assertEquals(setOf("zzz"), PtPreloadPlan.keep(queue, "zzz"))
         assertTrue(PtPreloadPlan.keep(queue, null).isEmpty())
+    }
+
+    @Test
+    fun missingListsUpToTheLimitInPlayOrder() {
+        val upcoming = PtPreloadPlan.upcoming(queue, "b") // c d e f g
+        assertEquals(listOf("c", "d", "e", "f", "g"), PtPreloadPlan.missing(upcoming, 5) { false })
+        assertEquals(listOf("c", "d"), PtPreloadPlan.missing(upcoming, 2) { false })
+    }
+
+    @Test
+    fun missingSkipsSongsAlreadyThereOrOnTheirWay() {
+        val upcoming = PtPreloadPlan.upcoming(queue, "b")
+        assertEquals(listOf("e", "g"), PtPreloadPlan.missing(upcoming, 5) { it in setOf("c", "d", "f") })
+        assertTrue(PtPreloadPlan.missing(upcoming, 5) { true }.isEmpty())
+        assertTrue(PtPreloadPlan.missing(upcoming, 0) { false }.isEmpty())
     }
 }

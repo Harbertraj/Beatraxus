@@ -161,13 +161,8 @@ fun PlayTogetherScreen(
         }
     }
 
-    // Creating or joining a room switches Nearby on by itself (unless it was turned off by hand):
-    // asks for the permissions, turns Bluetooth and Wi-Fi on, then connects with everyone in the room.
-    LaunchedEffect(ui.roomCode) {
-        if (ui.roomCode != null && nearbyStep == 0 && !pt.nearbyOptedOut &&
-            (!ui.nearbyEnabled || PtRadios.anyOff(context))
-        ) nearbyStep = 1
-    }
+    // Nearby is off by default: it only starts when the person switches it on (permissions -> Bluetooth ->
+    // Wi-Fi -> connect, handled by nearbyStep above).
 
     Box(
         modifier = Modifier

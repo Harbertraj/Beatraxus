@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.ParcelFileDescriptor
+import android.os.SystemClock
 import androidx.core.content.ContextCompat
 import com.google.android.gms.nearby.Nearby
 import com.google.android.gms.nearby.connection.AdvertisingOptions
@@ -78,7 +79,7 @@ class PtNearbyTransfer(
     /** Controller side: phones currently connected to us. */
     private val hostEndpoints: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
 
-    // ---- receiver state: one standing link to the controller + one song request at a time ----
+    // ---- receiver state: one standing link to the controller + several song requests at once ----
     private class Request(
         val sig: String,
         val sid: String,
@@ -91,18 +92,26 @@ class PtNearbyTransfer(
         @Volatile var ext = "mp3"
         @Volatile var headerSeen = false
         @Volatile var artId = 0L
+        /** Payload id of the song file (from the controller's header; 0 for older controllers). */
+        @Volatile var songId = 0L
+        /** Last time bytes of this request moved (the stall timeout counts from here). */
+        @Volatile var lastProgressAt = 0L
         @Volatile var filePayload: Payload? = null
         @Volatile var artPayload: Payload? = null
         /** 0 = still coming (or none), 1 = received, -1 = failed. */
         @Volatile var artState = 0
         @Volatile var finished = false
         var timeout: Job? = null
-        /** FILE payloads that arrived before the header that says which is which. */
-        val early = ConcurrentHashMap<Long, Payload>()
         /** Payload ids whose transfer is complete. */
         val done: MutableSet<Long> = ConcurrentHashMap.newKeySet()
     }
-    @Volatile private var request: Request? = null
+    /** Open requests by session id: the song playing now and the ones loaded ahead run side by side. */
+    private val requests = ConcurrentHashMap<String, Request>()
+    /** Payload id -> the request it belongs to (known once the controller's header arrived). */
+    private val payloadOwner = ConcurrentHashMap<Long, Request>()
+    /** FILE payloads / completions that arrived before their header said whose they are. */
+    private val strayFiles = ConcurrentHashMap<Long, Payload>()
+    private val strayDone: MutableSet<Long> = ConcurrentHashMap.newKeySet()
 
     @Volatile private var linkRoom: String? = null
     @Volatile private var linkName = "Guest"
@@ -188,7 +197,8 @@ class PtNearbyTransfer(
                 src.cover()?.let { f -> artPayload = Payload.fromFile(f); artSize = f.length() }
             } catch (_: Exception) { artPayload = null }
         }
-        val header = JSONObject().put("size", src.size).put("ext", src.ext)
+        // "req" echoes the signature so a phone with several open requests knows which song this header is for
+        val header = JSONObject().put("size", src.size).put("ext", src.ext).put("req", src.sig)
         if (wantsCover) {
             header.put("sid", songPayload.id)
             artPayload?.let { header.put("art", it.id).put("artSize", artSize) }
@@ -289,30 +299,29 @@ class PtNearbyTransfer(
                 linkEndpoint = endpointId
                 retryJob?.cancel(); windowJob?.cancel()
                 publishPeers()
-                request?.let { sendRequest(it) }
+                requests.values.forEach { sendRequest(it) }
             } else linkFailed()
         }
         override fun onDisconnected(endpointId: String) {
             if (endpointId != linkEndpoint) return
             linkEndpoint = null; linkConnecting = false
             publishPeers()
-            request?.let { giveUp(it) } // cut off mid-request: caller falls back to the internet route
+            requests.values.toList().forEach { giveUp(it) } // cut off mid-request: caller falls back to the internet route
             if (linkRoom != null) scheduleRetry(LINK_QUICK_RETRY_MS)
         }
     }
 
-    /** Receiver: ask the controller of [room] for the song with signature [sig]. */
+    /** Receiver: ask the controller of [room] for the song with signature [sig]. Several can be open at once. */
     fun requestSong(
         room: String, sig: String, sid: String, myName: String,
         artTarget: File?, target: (ext: String) -> File
     ) {
-        cancelRequest()
         val req = Request(sig, sid, artTarget, target)
-        request = req
+        requests[sid] = req
         // The link is normally up already; if not, give it a short while before using the internet.
         req.timeout = scope.launch {
             delay(DISCOVERY_TIMEOUT_MS)
-            if (request === req && !req.sent) giveUp(req)
+            if (requests[sid] === req && !req.sent) giveUp(req)
         }
         startLink(room, myName)
         if (linkEndpoint != null) sendRequest(req)
@@ -326,23 +335,42 @@ class PtNearbyTransfer(
             r.sent = true
         }
         r.timeout?.cancel()
-        // nothing should take longer than this once the request is out
-        r.timeout = scope.launch { delay(TRANSFER_TIMEOUT_MS); giveUp(r) }
+        r.lastProgressAt = SystemClock.elapsedRealtime()
+        // With several songs sharing the link a transfer can take long; it only counts as dead when nothing moves.
+        r.timeout = scope.launch {
+            while (!r.finished) {
+                delay(STALL_CHECK_MS)
+                if (SystemClock.elapsedRealtime() - r.lastProgressAt > TRANSFER_TIMEOUT_MS) { giveUp(r); break }
+            }
+        }
         send(ep, JSONObject().put("req", r.sig).put("v", 2).toString())
     }
 
-    /** Forget the current request; the standing link stays up. */
-    fun cancelRequest() {
-        val r = request ?: return
-        request = null
+    /** Forget the request [sid]; the standing link stays up. */
+    fun cancelRequest(sid: String) {
+        val r = requests.remove(sid) ?: return
         r.finished = true
         r.timeout?.cancel()
         r.filePayload?.let { try { client.cancelPayload(it.id) } catch (_: Exception) { } }
         r.artPayload?.let { try { client.cancelPayload(it.id) } catch (_: Exception) { } }
+        forget(r)
+    }
+
+    fun cancelAllRequests() {
+        requests.keys.toList().forEach { cancelRequest(it) }
+        strayFiles.clear(); strayDone.clear()
+    }
+
+    /** Drops the payload bookkeeping of a request that is over. */
+    private fun forget(r: Request) {
+        if (r.songId != 0L) payloadOwner.remove(r.songId, r)
+        if (r.artId != 0L) payloadOwner.remove(r.artId, r)
+        r.filePayload?.let { payloadOwner.remove(it.id, r); strayDone.remove(it.id) }
+        r.artPayload?.let { payloadOwner.remove(it.id, r); strayDone.remove(it.id) }
     }
 
     fun stopAll() {
-        cancelRequest()
+        cancelAllRequests()
         stopLink()
         stopAdvertising()
         try { client.stopAllEndpoints() } catch (_: Exception) { }
@@ -353,61 +381,93 @@ class PtNearbyTransfer(
     private fun giveUp(r: Request) {
         if (r.finished) return
         r.finished = true
-        if (request === r) cancelRequest()
+        cancelRequest(r.sid)
         onUnavailable(r.sid)
+    }
+
+    /** The request a header belongs to: the one it names, else (older controller) the only one still waiting. */
+    private fun requestForHeader(sig: String): Request? {
+        if (sig.isNotEmpty()) return requests.values.firstOrNull { it.sig == sig && !it.headerSeen }
+        val waiting = requests.values.filter { it.sent && !it.headerSeen }
+        return if (waiting.size == 1) waiting[0] else null
+    }
+
+    /** Hands files that arrived early to the request they belong to. */
+    private fun claimStrays() {
+        for (r in requests.values) {
+            if (!r.headerSeen || r.finished) continue
+            if (r.artId != 0L && r.artPayload == null) {
+                strayFiles.remove(r.artId)?.let { r.artPayload = it; payloadOwner[it.id] = r }
+            }
+            if (r.filePayload == null) {
+                val song = if (r.songId != 0L) strayFiles.remove(r.songId)
+                else strayFiles.keys.firstOrNull { it != r.artId }?.let { strayFiles.remove(it) } // older controller
+                if (song != null) { r.filePayload = song; r.songId = song.id; payloadOwner[song.id] = r }
+            }
+            if (r.artPayload?.id?.let { it in strayDone } == true) { r.artState = 1; r.done.add(r.artPayload!!.id) }
+            val f = r.filePayload
+            if (f != null && f.id in strayDone) { r.done.add(f.id); finish(r) }
+        }
     }
 
     private val linkPayloads = object : PayloadCallback() {
         override fun onPayloadReceived(endpointId: String, payload: Payload) {
-            val r = request ?: return
-            if (r.finished) return
             when (payload.type) {
                 Payload.Type.BYTES -> {
                     val o = try { JSONObject(String(payload.asBytes() ?: return)) } catch (_: Exception) { return }
+                    val r = requestForHeader(o.optString("req")) ?: return
+                    if (r.finished) return
                     if (o.optBoolean("none")) { giveUp(r); return }
                     r.expected = o.optLong("size")
                     r.ext = ptSafeExt(o.optString("ext", "mp3"))
                     r.artId = o.optLong("art", 0L)
+                    r.songId = o.optLong("sid", 0L)
+                    r.lastProgressAt = SystemClock.elapsedRealtime()
+                    if (r.songId != 0L) payloadOwner[r.songId] = r
+                    if (r.artId != 0L) payloadOwner[r.artId] = r
                     r.headerSeen = true
-                    // sort out any file that arrived before this header
-                    r.early.values.forEach { classify(r, it) }
-                    r.early.clear()
-                    if (r.artPayload?.id?.let { it in r.done } == true) r.artState = 1
-                    if (r.filePayload?.id?.let { it in r.done } == true) finish(r)
+                    claimStrays()
                 }
-                Payload.Type.FILE -> if (r.headerSeen) classify(r, payload) else r.early[payload.id] = payload
+                Payload.Type.FILE -> {
+                    val owner = payloadOwner[payload.id]
+                    if (owner != null) {
+                        if (payload.id == owner.artId) owner.artPayload = payload else owner.filePayload = payload
+                        claimStrays()
+                    } else {
+                        strayFiles[payload.id] = payload
+                        claimStrays()
+                    }
+                }
                 else -> {}
             }
         }
 
         override fun onPayloadTransferUpdate(endpointId: String, u: PayloadTransferUpdate) {
-            val r = request ?: return
+            val r = payloadOwner[u.payloadId]
+            if (r == null) {
+                // header not seen yet: remember completions so they are not lost
+                if (u.status == PayloadTransferUpdate.Status.SUCCESS) { strayDone.add(u.payloadId); claimStrays() }
+                return
+            }
             if (r.finished) return
             val isArt = r.artId != 0L && u.payloadId == r.artId
-            val isSong = !isArt && r.filePayload?.id == u.payloadId
             when {
                 isArt -> when (u.status) {
                     PayloadTransferUpdate.Status.SUCCESS -> { r.done.add(u.payloadId); r.artState = 1 }
                     PayloadTransferUpdate.Status.FAILURE, PayloadTransferUpdate.Status.CANCELED -> r.artState = -1
                     else -> {}
                 }
-                isSong -> when (u.status) {
+                else -> when (u.status) {
                     PayloadTransferUpdate.Status.IN_PROGRESS -> {
+                        r.lastProgressAt = SystemClock.elapsedRealtime()
                         if (u.totalBytes > 0) listener?.onProgress(r.sid, (u.bytesTransferred * 100 / u.totalBytes).toInt())
                     }
                     PayloadTransferUpdate.Status.SUCCESS -> { r.done.add(u.payloadId); finish(r) }
                     PayloadTransferUpdate.Status.FAILURE, PayloadTransferUpdate.Status.CANCELED -> giveUp(r)
                     else -> {}
                 }
-                // a file that has not been sorted into song / cover yet (header still to come)
-                u.status == PayloadTransferUpdate.Status.SUCCESS -> r.done.add(u.payloadId)
             }
         }
-    }
-
-    /** A FILE payload is the cover if the header said so, otherwise it is the song. */
-    private fun classify(r: Request, p: Payload) {
-        if (r.artId != 0L && p.id == r.artId) r.artPayload = p else r.filePayload = p
     }
 
     /** Copies a received FILE payload into [out]. */
@@ -447,7 +507,8 @@ class PtNearbyTransfer(
                 if (r.finished) { out.delete(); return@launch }
                 r.finished = true
                 r.timeout?.cancel()
-                if (request === r) request = null // done; the link to the controller stays up
+                requests.remove(r.sid) // done; the link to the controller stays up
+                forget(r)
                 listener?.onReceived(r.sid, out)
             } catch (_: Exception) {
                 out.delete()
@@ -466,6 +527,7 @@ class PtNearbyTransfer(
         private const val LINK_QUICK_RETRY_MS = 1_500L
         private const val TRANSFER_TIMEOUT_MS = 180_000L
         private const val COVER_WAIT_MS = 2_500L
+        private const val STALL_CHECK_MS = 5_000L
 
         /** Runtime permissions Nearby Connections needs on this Android version. */
         fun requiredPermissions(): Array<String> = buildList {
