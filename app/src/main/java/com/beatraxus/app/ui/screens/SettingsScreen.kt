@@ -493,7 +493,7 @@ fun SettingsScreen(
                             onClick = { sectionStack.add("Last.fm") }
                         )
                         SettingMenuItem(
-                            title = "Streaming Add-ons",
+                            title = "Add-ons",
                             subtitle = "Manage your streaming plugins",
                             icon = Icons.Rounded.AddLink,
                             iconColor = Color(0xFF00C2A8),

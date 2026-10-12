@@ -93,7 +93,7 @@ fun StreamingAddonsScreen(
                 ),
                 title = {
                     Text(
-                        text = "STREAMING ADD-ONS",
+                        text = "ADD-ONS",
                         color = TextWhite,
                         style = TextStyle(
                             fontWeight = FontWeight.Black,
