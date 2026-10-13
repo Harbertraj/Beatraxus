@@ -55,8 +55,14 @@ fun AddonSignInScreen(
     var isLoading by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
+    // A YouTube key supplied through local.properties needs no typing: connect straight away.
+    val ytKeyBuiltIn = isYt && com.beatraxus.app.BuildConfig.YOUTUBE_API_KEY.isNotBlank()
+
     LaunchedEffect(addon) {
-        if (addon.authType == "none") {
+        if (ytKeyBuiltIn) {
+            val result = addon.login("", "", "")
+            if (result.isSuccess) onSuccess() else errorMessage = result.exceptionOrNull()?.message ?: "YouTube API key was rejected"
+        } else if (addon.authType == "none") {
             val result = addon.login("", "", "")
             if (result.isSuccess) {
                 onSuccess()

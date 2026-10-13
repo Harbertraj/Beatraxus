@@ -73,7 +73,8 @@ class YouTubeAddon(
 
     /** The sign-in screen passes the API key as `password`. */
     override suspend fun login(serverUrl: String, username: String, password: String): Result<AuthToken> {
-        val key = password.trim()
+        // Blank input falls back to the key baked in from local.properties (YOUTUBE_API_KEY).
+        val key = password.trim().ifBlank { BuildConfig.YOUTUBE_API_KEY }
         if (key.isBlank()) return Result.failure(IOException("Enter your YouTube Data API key"))
         _state.value = AddonConnectionState.CONNECTING
         val previous = apiKey
@@ -83,18 +84,37 @@ class YouTubeAddon(
             prefs()?.edit()?.putString(prefsKey, key)?.apply()
             _state.value = AddonConnectionState.CONNECTED
             Result.success(AuthToken(key, "https://www.googleapis.com"))
-        } catch (e: IOException) {
+        } catch (e: Exception) {
             apiKey = previous
             _state.value = if (previous.isNotBlank()) AddonConnectionState.CONNECTED else AddonConnectionState.ERROR
             Result.failure(e)
         }
     }
 
+    @Suppress("DEPRECATION")
+    private fun certSha1(ctx: Context): String? = try {
+        val pm = ctx.packageManager
+        val sig = if (android.os.Build.VERSION.SDK_INT >= 28) {
+            pm.getPackageInfo(ctx.packageName, android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES)
+                .signingInfo?.apkContentsSigners?.firstOrNull()
+        } else {
+            pm.getPackageInfo(ctx.packageName, android.content.pm.PackageManager.GET_SIGNATURES).signatures?.firstOrNull()
+        }
+        sig?.let { java.security.MessageDigest.getInstance("SHA-1").digest(it.toByteArray()).joinToString("") { b -> "%02X".format(b) } }
+    } catch (_: Exception) { null }
+
     private fun enc(s: String) = android.net.Uri.encode(s)
 
     private suspend fun get(path: String, params: Map<String, String>): JSONObject = withContext(Dispatchers.IO) {
         val query = (params + ("key" to apiKey)).entries.joinToString("&") { "${it.key}=${enc(it.value)}" }
-        val req = Request.Builder().url("https://www.googleapis.com/youtube/v3/$path?$query").build()
+        val rb = Request.Builder().url("https://www.googleapis.com/youtube/v3/$path?$query")
+        // Keys restricted to "Android apps" in Google Cloud Console are only accepted when the request
+        // names the app (package + signing-certificate SHA-1); otherwise: "Android client application <empty> are blocked".
+        appContext?.let { ctx ->
+            rb.header("X-Android-Package", ctx.packageName)
+            certSha1(ctx)?.let { rb.header("X-Android-Cert", it) }
+        }
+        val req = rb.build()
         http.newCall(req).execute().use { r ->
             val body = r.body?.string().orEmpty()
             val json = try { JSONObject(body) } catch (_: Exception) { null }

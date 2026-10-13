@@ -15,7 +15,16 @@ object AddonPlaybackHelper {
     ) {
         val streamUrl = addon.streamUrl(item)
         val uri = Uri.parse(streamUrl)
-        if (item.mediaType == "video") {
+        // Internet Archive items are sometimes mis-typed (a "movie" that is only audio): trust the file.
+        val isVideo = if (addon is ArchiveOrgAddon) {
+            val ext = uri.lastPathSegment?.substringAfterLast('.', "")?.lowercase().orEmpty()
+            when (ext) {
+                "mp3", "m4a", "ogg", "opus", "flac", "wav", "aac" -> false
+                "mp4", "m4v", "webm", "mkv", "mov", "mpeg4", "mpg", "avi", "ogv" -> true
+                else -> item.mediaType == "video"
+            }
+        } else item.mediaType == "video"
+        if (isVideo) {
             val video = Video(
                 id = "${addon.id}_${item.id}",
                 uri = uri,
