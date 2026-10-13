@@ -1066,6 +1066,7 @@ fun MainScreen(
                                     ) {
                                         if (isHome) {
                                             // Unique Home Brand Look - BEATRAXUS
+                                            val homeTitleAccent = Color(0xFFD7A6FF) // Ice Lilac
                                             Row(
                                                 verticalAlignment = Alignment.CenterVertically,
                                                 modifier = Modifier.padding(vertical = 4.dp)
@@ -1092,7 +1093,7 @@ fun MainScreen(
                                                         // 1. Planet Atmosphere Glow
                                                         drawCircle(
                                                             brush = Brush.radialGradient(
-                                                                colors = listOf(viewAccentColor.copy(alpha = 0.4f), Color.Transparent),
+                                                                colors = listOf(homeTitleAccent.copy(alpha = 0.4f), Color.Transparent),
                                                                 center = centerPoint,
                                                                 radius = planetRadius * 2.2f
                                                             ),
@@ -1158,11 +1159,11 @@ fun MainScreen(
                                                     text = "RAXUS",
                                                     fontWeight = FontWeight.Black,
                                                     fontSize = 22.sp,
-                                                    color = viewAccentColor,
+                                                    color = homeTitleAccent,
                                                     letterSpacing = 1.sp,
                                                     style = androidx.compose.ui.text.TextStyle(
                                                         shadow = Shadow(
-                                                            color = viewAccentColor.copy(alpha = 0.5f),
+                                                            color = homeTitleAccent.copy(alpha = 0.5f),
                                                             offset = Offset(0f, 0f),
                                                             blurRadius = 12f
                                                         )
