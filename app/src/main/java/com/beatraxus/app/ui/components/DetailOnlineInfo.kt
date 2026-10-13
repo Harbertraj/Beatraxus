@@ -4,7 +4,8 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.drawable.BitmapDrawable
 import android.net.Uri
-import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.Animatable
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -17,7 +18,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
@@ -150,19 +156,37 @@ fun AlbumArtistLine(
 
 // ---------------------------------------------------------------- backdrop colour
 
-/** Dominant colour of the first of [models] that loads, animated; [fallback] while loading / on failure. */
+private object DominantColorCache {
+    private val map = java.util.concurrent.ConcurrentHashMap<String, Color>()
+    fun get(model: Any): Color? = map[model.toString()]
+    fun put(model: Any, color: Color) { map[model.toString()] = color }
+}
+
+/**
+ * Dominant colour of the first of [models] that loads. Returns null until a colour is known, so the
+ * UI can stay hidden instead of flashing a placeholder colour. The first colour is applied instantly;
+ * later changes (e.g. online art replacing local art) animate. [resetKey] must change whenever a
+ * different album / artist is opened. [fallback] is only used if none of the images can be read.
+ */
 @Composable
-fun rememberDominantColor(models: List<Any?>, fallback: Color): State<Color> {
+fun rememberDominantColor(models: List<Any?>, resetKey: Any?, fallback: Color): State<Color?> {
     val ctx = LocalContext.current
-    val target by produceState(initialValue = fallback, models, fallback) {
+    val anim = remember(resetKey) { Animatable(Color.Transparent) }
+    var ready by remember(resetKey) { mutableStateOf(false) }
+    LaunchedEffect(resetKey, models) {
+        if (resetKey == null) return@LaunchedEffect
         for (m in models) {
             if (m == null) continue
-            val c = runCatching { extractDominant(ctx, m) }.getOrNull()
-            if (c != null) { value = c; return@produceState }
+            val c = DominantColorCache.get(m)
+                ?: runCatching { extractDominant(ctx, m) }.getOrNull()?.also { DominantColorCache.put(m, it) }
+            if (c != null) {
+                if (!ready) { anim.snapTo(c); ready = true } else anim.animateTo(c, tween(500))
+                return@LaunchedEffect
+            }
         }
-        value = fallback
+        if (!ready) { anim.snapTo(fallback); ready = true }
     }
-    return animateColorAsState(target, tween(500), label = "detailDominantColor")
+    return remember(resetKey) { derivedStateOf<Color?> { if (ready) anim.value else null } }
 }
 
 private suspend fun extractDominant(ctx: Context, model: Any): Color? {
@@ -200,10 +224,12 @@ private suspend fun extractDominant(ctx: Context, model: Any): Color? {
  */
 @Composable
 fun DetailBackdrop(
-    color: Color,
+    color: Color?,
     scrollPx: () -> Float,
     modifier: Modifier = Modifier
 ) {
+    val appear by animateFloatAsState(if (color != null) 1f else 0f, tween(350), label = "detailBackdropAppear")
+    if (color == null) return
     Box(
         modifier = modifier
             .fillMaxWidth()
@@ -211,7 +237,7 @@ fun DetailBackdrop(
             .graphicsLayer {
                 val s = scrollPx()
                 translationY = -s
-                alpha = (1f - s / (size.height * 0.85f)).coerceIn(0f, 1f)
+                alpha = appear * (1f - s / (size.height * 0.85f)).coerceIn(0f, 1f)
             }
             .background(
                 Brush.verticalGradient(

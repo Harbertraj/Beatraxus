@@ -633,7 +633,11 @@ fun MainScreen(
                 ?: songs.firstNotNullOfOrNull { it.albumArtUri }
         )
     }
-    val detailColor by com.beatraxus.app.ui.components.rememberDominantColor(detailArtModels, viewAccentColor)
+    val detailColor by com.beatraxus.app.ui.components.rememberDominantColor(
+        models = detailArtModels,
+        resetKey = if (isRichDetailView) uiState.currentView to uiState.selectedItemName else null,
+        fallback = viewAccentColor
+    )
 
     val isDetailView = uiState.currentView in listOf(
         LibraryView.ALBUM_DETAIL, LibraryView.ARTIST_DETAIL,
