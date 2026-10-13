@@ -2115,13 +2115,26 @@ class AudioPlaybackService : Service() {
         if (com.beatraxus.app.cast.CastManager.isConnected) { playList(songs, startIndex); return }
         acquireWakeLocks(song)
         engine.prepare(song, positionMs)
-        updateUpcomingSongs()
         saveState()
-        if (play) {
-            playbackJob = serviceScope.launch {
+        playbackJob = serviceScope.launch {
+            if (play) {
                 delay(40) // lets prepare() take the engine lock first
-                if (isActive && requestAudioFocus()) engine.play(song)
+                // Focus can be refused for a moment (another app just stopped, a call just ended). Without a
+                // retry the song stayed loaded but paused, so try a few times before giving up.
+                var granted = false
+                var tries = 0
+                while (isActive && !granted && tries < 4) {
+                    granted = requestAudioFocus()
+                    tries++
+                    if (!granted) delay(150)
+                }
+                if (isActive && granted) engine.play(song)
             }
+            // The next song is queued for gapless playback only once this one has taken over: queuing it
+            // right after prepare() replaced the prepared session, so the song was not ready (or restarted
+            // from 0) instead of opening at the requested position.
+            delay(120)
+            if (isActive) updateUpcomingSongs()
         }
     }
 

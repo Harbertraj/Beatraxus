@@ -838,6 +838,7 @@ class PlayTogetherManager(
                         throw e
                     } catch (_: Exception) { /* next tick retries via the changed state */ }
                 }
+                if (!streamEnded) guardPlayback(cur)
                 lastId = cur?.id; lastPlaying = effPlaying; lastPos = pos; lastT = now
                 lastDur = cur?.durationMs ?: 0L
                 lastWasRoomSong = cur != null && matchesRoomSong(cur)
@@ -1449,12 +1450,13 @@ class PlayTogetherManager(
     }
 
     /** Someone else changed what is playing: do the same here. */
-    private fun applyRemote(st: RoomState) {
+    private fun applyRemote(st: RoomState, force: Boolean = false) {
         if (st.by == uid) return
         val entry = st.song ?: return
         // a stream URL that shows up later (controller finished uploading) must still be applied
         val urlArrived = _state.value.songMissing && entry.url.isNotBlank()
-        if (st.updatedAt != 0L && st.updatedAt <= lastAppliedAt && !urlArrived) return
+        // [force] = load and start the room's song again even though it is already loaded (see guardPlayback)
+        if (!force && st.updatedAt != 0L && st.updatedAt <= lastAppliedAt && !urlArrived) return
         lastAppliedAt = st.updatedAt
 
         val library = host.librarySongs()
@@ -1472,7 +1474,7 @@ class PlayTogetherManager(
                 _state.update { it.copy(songMissing = false, streaming = true) }
                 val cur = host.currentSong()
                 var changed = true
-                if (cur?.id != remote.id) {
+                if (cur?.id != remote.id || force) {
                     loadAndStart(listOf(remote), 0, st, target)
                     changed = false
                 } else {
@@ -1497,7 +1499,7 @@ class PlayTogetherManager(
         ignoreLocalUntil = SystemClock.elapsedRealtime() + 2_500
         val cur = host.currentSong()
         var resyncNeeded = false
-        if (cur?.id != local.id) {
+        if (cur?.id != local.id || force) {
             // build this phone's queue from the controller's queue (only songs we also have)
             val songs = ArrayList<Song>()
             var index = 0
@@ -1580,13 +1582,20 @@ class PlayTogetherManager(
             var learnPrepare = fresh
             var learnSeek = !fresh
             var reseeks = 0
-            val deadline = SystemClock.elapsedRealtime() + GATE_TIMEOUT_MS
+            val gateBegan = SystemClock.elapsedRealtime()
+            val deadline = gateBegan + GATE_TIMEOUT_MS
             while (isActive && SystemClock.elapsedRealtime() < deadline) {
                 delay(GATE_POLL_MS)
                 val st = roomState ?: return@launch
                 if (st.by == uid || !st.playing) return@launch
                 val cur = host.currentSong()
-                if (cur == null || !matchesRoomSong(cur) || !host.isReady()) continue
+                if (cur == null || !matchesRoomSong(cur)) continue
+                if (!host.isReady()) {
+                    // Still decoding. A song that is slow to get ready must not sit paused for the whole gate
+                    // time: after a few seconds press play anyway, the sync watcher closes the gap.
+                    if (SystemClock.elapsedRealtime() - gateBegan < GATE_READY_WAIT_MS) continue
+                    break
+                }
                 val now = SystemClock.elapsedRealtime()
                 if (now - markAt < GATE_SETTLE_MS) continue // a seek / load issued just now has not started yet
 
@@ -1621,6 +1630,47 @@ class PlayTogetherManager(
             }
             // took too long / kept missing: start anyway, the sync watcher closes whatever gap is left
             if (isActive && roomState?.playing == true) pressPlay()
+        }
+    }
+
+    // ---- a follower must not stay paused while the room plays ---------------------------------------------
+    private var guardPausedSince = 0L
+    private var guardKicks = 0
+    private var guardKickAt = 0L
+    private var guardKey = ""
+
+    /**
+     * Follower: the room plays this song and it is loaded here, but the player is paused ("ready to play").
+     * That is never what the room asked for, so after a short grace it is started, and if that does not
+     * help the room's song is reloaded once (see [PtPlayGuard]). Runs on every ticker pass (not while the
+     * start gate owns the player), after the pass has handled a deliberate local pause, which makes this
+     * phone the controller, so nothing is forced on it.
+     */
+    private fun guardPlayback(cur: Song?) {
+        val st = roomState
+        val shouldPlay = cur != null && st != null && st.by != uid && st.playing &&
+            matchesRoomSong(cur) && !_state.value.songMissing
+        val playing = host.isPlaying()
+        val now = SystemClock.elapsedRealtime()
+        if (!shouldPlay || playing) { guardPausedSince = 0L; guardKicks = 0; return }
+        if (st == null) return
+        // another song or another controller: try again (the controller's periodic position updates do not count)
+        val key = st.by + "|" + (st.song?.let { songSig(it) } ?: "")
+        if (guardKey != key) { guardKey = key; guardKicks = 0 }
+        if (guardPausedSince == 0L) guardPausedSince = now
+        when (PtPlayGuard.next(true, false, now - guardPausedSince, now - guardKickAt, guardKicks)) {
+            PtPlayGuard.Action.START -> {
+                guardKicks++; guardKickAt = now
+                ignoreLocalUntil = now + 1_500 // our own start is not a change the room should hear about
+                host.setPlaying(true)
+                scheduleResync()
+            }
+            PtPlayGuard.Action.RELOAD -> {
+                guardKicks++; guardKickAt = now
+                ignoreLocalUntil = now + 2_500
+                applyRemote(st, force = true)
+            }
+            else -> Unit
         }
     }
 
@@ -2257,6 +2307,8 @@ class PlayTogetherManager(
         const val GATE_POLL_MS = 8L
         const val GATE_SETTLE_MS = 60L
         const val GATE_TIMEOUT_MS = 20_000L
+        /** How long the start gate waits for the loaded song to have audio decoded before it presses play anyway. */
+        const val GATE_READY_WAIT_MS = 4_000L
         const val GATE_MAX_RESEEKS = 3
         /** After pressing play, this long before the first position check is used to learn the audio latency. */
         const val LATENCY_LEARN_DELAY_MS = 700L

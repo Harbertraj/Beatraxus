@@ -372,7 +372,13 @@ class AudioEngine(
      * and the position is where it was asked to start.
      */
     fun isPrepared(): Boolean {
-        val session = activeSession ?: return false
+        // A song that was just loaded (prepare) waits in nextSession until play() promotes it; only a song
+        // that is already playing / paused in place is the activeSession. Looking at activeSession alone
+        // reported "not ready" for every freshly loaded song, so followers waited for the start gate's
+        // time-out with the song loaded but paused.
+        val session = activeSession
+            ?: nextSession?.takeIf { nextSong?.id != null && nextSong?.id == currentSong?.id }
+            ?: return false
         if (isSeeking.get() || session.isSeekPending()) return false
         val format = session.pcmFormat ?: return false
         val channels = format.channels.coerceAtLeast(1)
