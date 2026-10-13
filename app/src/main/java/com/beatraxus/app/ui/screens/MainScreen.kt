@@ -9,6 +9,7 @@ import com.beatraxus.app.utils.hiResVault
 import com.beatraxus.app.utils.rediscover
 import com.beatraxus.app.utils.topGenres
 import androidx.compose.animation.*
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.animation.core.*
 import kotlin.math.sqrt
 import kotlinx.coroutines.delay
@@ -657,15 +658,16 @@ fun MainScreen(
 
     val drawerProgress by animateFloatAsState(
         targetValue = if (showDrawer) 1f else 0f,
+        // A touch of give at the end makes the card settle instead of stopping dead.
         animationSpec = spring(
-            dampingRatio = Spring.DampingRatioNoBouncy,
-            stiffness = Spring.StiffnessMedium
+            dampingRatio = 0.84f,
+            stiffness = Spring.StiffnessMediumLow
         ),
         label = "drawerProgress"
     )
 
     val contentRotation = 0f // Removed rotation for uniform spacing
-    val contentCornerRadius = (32f * drawerProgress).dp
+    val contentCornerRadius = (38f * drawerProgress).dp
 
     Box(Modifier.fillMaxSize()) {
         // 1. Static Full-Screen Background - This will be revealed behind the drawer
@@ -690,6 +692,11 @@ fun MainScreen(
                     .graphicsLayer {
                         translationX = -with(density) { 60.dp.toPx() } * (1f - drawerProgress)
                         alpha = (drawerProgress * 1.5f).coerceIn(0f, 1f)
+                        // the menu grows out of the left edge while the page tilts away
+                        val grow = 0.94f + 0.06f * drawerProgress.coerceIn(0f, 1f)
+                        scaleX = grow
+                        scaleY = grow
+                        transformOrigin = TransformOrigin(0f, 0.5f)
                     }
                     .clip(RoundedCornerShape(topEnd = 32.dp, bottomEnd = 32.dp))
             ) {
@@ -733,6 +740,43 @@ fun MainScreen(
             WindowInsets.statusBars.getTop(this) + 16.dp.toPx()
         }
 
+        // Two accent-coloured cards peek out behind the page like a stacked deck.
+        if (drawerProgress > 0f) {
+            val deckShape = RoundedCornerShape(contentCornerRadius.coerceAtLeast(0.dp))
+            for (depth in 1..2) {
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .zIndex(1f)
+                        .graphicsLayer {
+                            val p = drawerProgress
+                            translationX = p * with(density) { (200 - 11 * depth).dp.toPx() }
+                            val targetScale = if (size.height > 0f) {
+                                (1f - (2f * headerTopPaddingPx / size.height)).coerceIn(0.5f, 1f)
+                            } else 0.88f
+                            val s = (1f - ((1f - targetScale) * p)) * (1f - 0.05f * depth * p)
+                            scaleX = s
+                            scaleY = s
+                            rotationY = -(12f + 4f * depth) * p
+                            cameraDistance = 16f * density.density
+                            transformOrigin = TransformOrigin(0f, 0.5f)
+                            alpha = (p * (if (depth == 1) 0.85f else 0.5f)).coerceIn(0f, 1f)
+                        }
+                        .clip(deckShape)
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(viewAccentColor.copy(alpha = 0.42f), viewAccentColor.copy(alpha = 0.10f))
+                            )
+                        )
+                        .border(
+                            1.dp,
+                            Brush.verticalGradient(listOf(Color.White.copy(0.38f), Color.White.copy(0.04f))),
+                            deckShape
+                        )
+                )
+            }
+        }
+
         val needsGraphicsLayer = blurByScan > 0.1f || saturationByScan < 0.99f || alphaByScan < 0.99f
         Box(
             Modifier
@@ -751,10 +795,33 @@ fun MainScreen(
                     scaleY = currentScale
 
                     rotationZ = contentRotation
-                    cameraDistance = 12f * density.density
+                    // the page tilts away from the menu, hinged on its left edge
+                    rotationY = -12f * drawerProgress
+                    cameraDistance = 16f * density.density
                     transformOrigin = TransformOrigin(0f, 0.5f)
                     shape = RoundedCornerShape(contentCornerRadius.coerceAtLeast(0.dp))
                     clip = true
+                }
+                .drawWithContent {
+                    drawContent()
+                    val p = drawerProgress.coerceIn(0f, 1f)
+                    if (p > 0.01f) {
+                        // glassy rim that fades in with the drawer
+                        val r = contentCornerRadius.coerceAtLeast(0.dp).toPx()
+                        drawRoundRect(
+                            brush = Brush.linearGradient(
+                                listOf(
+                                    viewAccentColor.copy(alpha = 0.85f * p),
+                                    Color.White.copy(alpha = 0.22f * p),
+                                    Color.Transparent
+                                ),
+                                start = Offset.Zero,
+                                end = Offset(size.width, size.height * 0.6f)
+                            ),
+                            cornerRadius = androidx.compose.ui.geometry.CornerRadius(r),
+                            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.6.dp.toPx())
+                        )
+                    }
                 }
         ) {
             // Main Content Area Background
@@ -3550,7 +3617,14 @@ fun MainScreen(
                 Box(
                     Modifier
                         .fillMaxSize()
-                        .background(Color.Black.copy(alpha = (drawerProgress * 0.35f).coerceIn(0f, 0.35f)))
+                        .background(
+                            Brush.horizontalGradient(
+                                listOf(
+                                    Color.Black.copy(alpha = (drawerProgress * 0.18f).coerceIn(0f, 0.3f)),
+                                    Color.Black.copy(alpha = (drawerProgress * 0.45f).coerceIn(0f, 0.5f))
+                                )
+                            )
+                        )
                         .clickable(
                             interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
                             indication = null
