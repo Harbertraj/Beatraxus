@@ -252,7 +252,7 @@ data class AppearanceConfig(
     // Home Screen Layout
     val homeScreenSectionsOrder: List<String> = listOf(
         "GREETING", "ACTION_CHIPS", "CLOUD_LIBRARY", "STREAMING_ADDONS", "MOODS",
-        "HI_RES_VAULT", "DECADES", "GENRES", "REDISCOVER",
+        "GENRES", "DECADES", "HI_RES_VAULT", "REDISCOVER",
         "MADE_FOR_YOU", "LISTEN_AGAIN", "RECENTLY_ADDED",
         "YOUR_FAVORITES", "FEATURED_ALBUMS", "ARTISTS_YOU_LOVE", "YOUR_PLAYLISTS"
     ),

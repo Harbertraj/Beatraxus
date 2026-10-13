@@ -14,7 +14,7 @@ object HomeSectionKeys {
     const val REDISCOVER = "REDISCOVER"
 
     /** In the order they appear on the home screen, directly after the MOODS section. */
-    val NEW_SECTIONS = listOf(HI_RES_VAULT, DECADES, GENRES, REDISCOVER)
+    val NEW_SECTIONS = listOf(GENRES, DECADES, HI_RES_VAULT, REDISCOVER)
 
     const val ANCHOR = "MOODS"
 

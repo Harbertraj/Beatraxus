@@ -25,7 +25,7 @@ class HomeSectionKeysTest {
         assertEquals(
             listOf(
                 "GREETING", "ACTION_CHIPS", "CLOUD_LIBRARY", "MOODS",
-                "HI_RES_VAULT", "DECADES", "GENRES", "REDISCOVER",
+                "GENRES", "DECADES", "HI_RES_VAULT", "REDISCOVER",
                 "MADE_FOR_YOU", "LISTEN_AGAIN", "YOUR_PLAYLISTS"
             ),
             HomeSectionKeys.mergeNewSections(legacy)
@@ -41,7 +41,7 @@ class HomeSectionKeysTest {
         // The user dragged MOODS to the very end: the new sections follow it, nothing else moves.
         val custom = listOf("GREETING", "MADE_FOR_YOU", "MOODS")
         assertEquals(
-            listOf("GREETING", "MADE_FOR_YOU", "MOODS", "HI_RES_VAULT", "DECADES", "GENRES", "REDISCOVER"),
+            listOf("GREETING", "MADE_FOR_YOU", "MOODS", "GENRES", "DECADES", "HI_RES_VAULT", "REDISCOVER"),
             HomeSectionKeys.mergeNewSections(custom)
         )
     }
@@ -49,14 +49,14 @@ class HomeSectionKeysTest {
     @Test fun onlyMissingSectionsAreAdded() {
         val partial = listOf("MOODS", "DECADES", "LISTEN_AGAIN")
         assertEquals(
-            listOf("MOODS", "HI_RES_VAULT", "GENRES", "REDISCOVER", "DECADES", "LISTEN_AGAIN"),
+            listOf("MOODS", "GENRES", "HI_RES_VAULT", "REDISCOVER", "DECADES", "LISTEN_AGAIN"),
             HomeSectionKeys.mergeNewSections(partial)
         )
     }
 
     @Test fun withoutAnchorTheyAreAppended() {
         assertEquals(
-            listOf("GREETING", "HI_RES_VAULT", "DECADES", "GENRES", "REDISCOVER"),
+            listOf("GREETING", "GENRES", "DECADES", "HI_RES_VAULT", "REDISCOVER"),
             HomeSectionKeys.mergeNewSections(listOf("GREETING"))
         )
     }

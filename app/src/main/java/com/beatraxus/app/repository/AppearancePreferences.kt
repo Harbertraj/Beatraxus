@@ -107,7 +107,7 @@ class AppearancePreferences(context: Context) {
             homeScreenSectionsOrder = preferences[HOME_SCREEN_SECTIONS_ORDER]?.split(",")?.filter { it.isNotBlank() }
                 ?.let { HomeSectionKeys.mergeNewSections(it) } ?: listOf(
                 "GREETING", "ACTION_CHIPS", "CLOUD_LIBRARY", "MOODS",
-                "HI_RES_VAULT", "DECADES", "GENRES", "REDISCOVER",
+                "GENRES", "DECADES", "HI_RES_VAULT", "REDISCOVER",
                 "MADE_FOR_YOU", "LISTEN_AGAIN", "RECENTLY_ADDED",
                 "YOUR_FAVORITES", "FEATURED_ALBUMS", "ARTISTS_YOU_LOVE", "YOUR_PLAYLISTS"
             ),
