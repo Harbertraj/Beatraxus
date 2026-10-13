@@ -216,7 +216,11 @@ class MainActivity : FragmentActivity() {
         handleIntent(intent)
 
         setContent {
-            BeatraxusTheme {
+            val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+            val currentFontFamily = remember(uiState.appearance.selectedFontId) {
+                com.beatraxus.app.ui.theme.FontRepository.getFontFamily(uiState.appearance.selectedFontId)
+            }
+            BeatraxusTheme(fontFamily = currentFontFamily) {
                 BeatraxusApp(
                     viewModel = viewModel,
                     onRequestPermissions = { action -> requestPermissions(action) }

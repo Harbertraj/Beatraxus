@@ -5915,6 +5915,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun setSelectedFontId(fontId: String) {
+        viewModelScope.launch {
+            appearancePreferences.setSelectedFontId(fontId)
+        }
+    }
+
     fun logoutLastFm() {
         viewModelScope.launch {
             lastFmRepository.logout()

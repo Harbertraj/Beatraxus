@@ -60,6 +60,7 @@ import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.*
+import com.beatraxus.app.ui.theme.FontRepository
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.material3.*
@@ -572,7 +573,7 @@ fun SettingsScreen(
                     } else {
                         when (section) {
                             "Audio" -> AudioContent(uiState, playerViewModel, onEditValue = { editingValue = it })
-                            "Appearance" -> AppearanceContent(sectionStack)
+                            "Appearance" -> AppearanceContent(uiState, sectionStack)
                             "Appearance: Main Interface" -> MainScreenAppearanceContent(uiState, playerViewModel)
                             "Appearance: Now Playing Interface" -> NowPlayingAppearanceContent(uiState, playerViewModel, sectionStack)
                             "Appearance: Seekbar Settings" -> SeekbarSettingsContent(uiState, playerViewModel)
@@ -580,6 +581,7 @@ fun SettingsScreen(
                             "Appearance: Home Screen Layout" -> HomeScreenLayoutContent(uiState, playerViewModel)
                             "Appearance: Settings Interface" -> SettingsScreenAppearanceContent(uiState, playerViewModel)
                             "Appearance: Dual Colour Palette" -> DspPaletteContent(uiState, playerViewModel)
+                            "Appearance: Fonts" -> FontsAppearanceContent(uiState, playerViewModel)
                             "Appearance: Lyrics Database" -> LyricsDatabaseContent(uiState, playerViewModel)
                             "Replay Gain" -> ReplayGainContent(uiState, playerViewModel, onEditValue = { editingValue = it })
                             "Library" -> LibraryContent(uiState, playerViewModel, onShowInfo = { showInfoPopup = true })
@@ -792,7 +794,7 @@ private fun ValueEditDialog(
 }
 
 @Composable
-fun AppearanceContent(sectionStack: SnapshotStateList<String>) {
+fun AppearanceContent(uiState: PlayerUiState, sectionStack: SnapshotStateList<String>) {
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         SettingMenuItem(
             title = "Main Interface",
@@ -829,8 +831,299 @@ fun AppearanceContent(sectionStack: SnapshotStateList<String>) {
             iconColor = PrimaryCyan,
             onClick = { sectionStack.add("Appearance: Dual Colour Palette") }
         )
+        SettingMenuItem(
+            title = "Fonts",
+            subtitle = "Customize app typography (${FontRepository.getFontItem(uiState.appearance.selectedFontId).name})",
+            icon = Icons.Rounded.FontDownload,
+            iconColor = PrimaryCyan,
+            onClick = { sectionStack.add("Appearance: Fonts") }
+        )
     }
 }
+
+@Composable
+fun FontsAppearanceContent(uiState: PlayerUiState, playerViewModel: PlayerViewModel) {
+    val selectedFontId = uiState.appearance.selectedFontId
+    val currentFontItem = remember(selectedFontId) { FontRepository.getFontItem(selectedFontId) }
+    var searchQuery by remember { mutableStateOf("") }
+    var selectedCategory by remember { mutableStateOf("All") }
+
+    val categories = remember {
+        listOf("All", "System", "Sans-Serif", "Display", "Serif", "Handwritten", "Monospace", "Retro")
+    }
+
+    val filteredFonts = remember(searchQuery, selectedCategory) {
+        FontRepository.availableFonts.filter { font ->
+            val matchesCategory = when (selectedCategory) {
+                "All" -> true
+                "System" -> font.category == "System"
+                "Sans-Serif" -> font.category == "Sans-Serif"
+                "Display" -> font.category == "Display"
+                "Serif" -> font.category == "Serif"
+                "Handwritten" -> font.category == "Handwritten"
+                "Monospace" -> font.category == "Monospace"
+                "Retro" -> font.category == "Retro"
+                else -> true
+            }
+            val matchesQuery = searchQuery.isBlank() ||
+                    font.name.contains(searchQuery, ignoreCase = true) ||
+                    font.category.contains(searchQuery, ignoreCase = true) ||
+                    font.description.contains(searchQuery, ignoreCase = true)
+
+            matchesCategory && matchesQuery
+        }
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        // Active Font Preview Card
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(20.dp))
+                .background(
+                    androidx.compose.ui.graphics.Brush.verticalGradient(
+                        listOf(Color(0xFF1E1E2C), Color(0xFF14141F))
+                    )
+                )
+                .border(
+                    1.dp,
+                    androidx.compose.ui.graphics.Brush.horizontalGradient(
+                        listOf(PrimaryCyan.copy(alpha = 0.5f), PremiumAccent.copy(alpha = 0.3f))
+                    ),
+                    RoundedCornerShape(20.dp)
+                )
+                .padding(18.dp)
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(
+                            text = "ACTIVE FONT STYLE",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = PrimaryCyan,
+                            letterSpacing = 1.sp
+                        )
+                        Text(
+                            text = currentFontItem.name,
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White,
+                            fontFamily = currentFontItem.fontFamily
+                        )
+                    }
+
+                    if (selectedFontId != "system") {
+                        TextButton(
+                            onClick = { playerViewModel.setSelectedFontId("system") },
+                            colors = ButtonDefaults.textButtonColors(contentColor = PremiumAccent)
+                        ) {
+                            Icon(Icons.Rounded.Refresh, contentDescription = "Reset", modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("Reset Default", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+
+                HorizontalDivider(color = Color.White.copy(alpha = 0.1f))
+
+                // Live Preview box
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color.Black.copy(alpha = 0.3f))
+                        .padding(14.dp)
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(
+                            text = "The quick brown fox jumps over the lazy dog",
+                            fontSize = 15.sp,
+                            color = Color.White,
+                            fontFamily = currentFontItem.fontFamily
+                        )
+                        Text(
+                            text = "0123456789 • Beatraxus High-Res Audio Player",
+                            fontSize = 13.sp,
+                            color = Color.White.copy(alpha = 0.7f),
+                            fontFamily = currentFontItem.fontFamily
+                        )
+                    }
+                }
+            }
+        }
+
+        // Search Bar
+        OutlinedTextField(
+            value = searchQuery,
+            onValueChange = { searchQuery = it },
+            modifier = Modifier.fillMaxWidth(),
+            placeholder = { Text("Search 57 fonts...", color = Color.White.copy(0.4f), fontSize = 14.sp) },
+            leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null, tint = PrimaryCyan) },
+            trailingIcon = if (searchQuery.isNotEmpty()) {
+                {
+                    IconButton(onClick = { searchQuery = "" }) {
+                        Icon(Icons.Rounded.Clear, contentDescription = "Clear", tint = Color.White.copy(0.6f))
+                    }
+                }
+            } else null,
+            singleLine = true,
+            shape = RoundedCornerShape(14.dp),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = PrimaryCyan,
+                unfocusedBorderColor = Color.White.copy(0.12f),
+                focusedContainerColor = Color(0xFF14141F),
+                unfocusedContainerColor = Color(0xFF14141F),
+                focusedTextColor = Color.White,
+                unfocusedTextColor = Color.White,
+                cursorColor = PrimaryCyan
+            )
+        )
+
+        // Category Filter Chips
+        Row(
+            modifier = Modifier.horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            categories.forEach { cat ->
+                val isCatSelected = selectedCategory == cat
+                FilterChip(
+                    selected = isCatSelected,
+                    onClick = { selectedCategory = cat },
+                    label = {
+                        Text(
+                            text = if (cat == "All") "All (${FontRepository.availableFonts.size})" else cat,
+                            fontSize = 12.sp,
+                            fontWeight = if (isCatSelected) FontWeight.Bold else FontWeight.Normal
+                        )
+                    },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = PrimaryCyan.copy(alpha = 0.25f),
+                        selectedLabelColor = PrimaryCyan,
+                        containerColor = Color(0xFF1A1A26),
+                        labelColor = Color.White.copy(0.7f)
+                    ),
+                    border = FilterChipDefaults.filterChipBorder(
+                        enabled = true,
+                        selected = isCatSelected,
+                        borderColor = Color.White.copy(0.1f),
+                        selectedBorderColor = PrimaryCyan
+                    ),
+                    shape = RoundedCornerShape(10.dp)
+                )
+            }
+        }
+
+        Text(
+            text = "AVAILABLE FONTS (${filteredFonts.size})",
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Bold,
+            color = Color.White.copy(0.5f),
+            letterSpacing = 0.8.sp
+        )
+
+        // Font Cards List
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            filteredFonts.forEach { fontItem ->
+                val isSelected = fontItem.id == selectedFontId
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(
+                            if (isSelected) PrimaryCyan.copy(alpha = 0.12f) else Color(0xFF161622)
+                        )
+                        .border(
+                            1.dp,
+                            if (isSelected) PrimaryCyan else Color.White.copy(alpha = 0.08f),
+                            RoundedCornerShape(16.dp)
+                        )
+                        .clickable {
+                            playerViewModel.setSelectedFontId(fontItem.id)
+                        }
+                        .padding(16.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(14.dp)
+                    ) {
+                        // Radio / Check Indicator
+                        Box(
+                            modifier = Modifier
+                                .size(24.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    if (isSelected) PrimaryCyan else Color.White.copy(0.1f)
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (isSelected) {
+                                Icon(
+                                    Icons.Rounded.Check,
+                                    contentDescription = "Selected",
+                                    tint = Color.Black,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text(
+                                    text = fontItem.name,
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isSelected) PrimaryCyan else Color.White,
+                                    fontFamily = fontItem.fontFamily
+                                )
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(Color.White.copy(0.08f))
+                                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                                ) {
+                                    Text(
+                                        text = fontItem.category,
+                                        fontSize = 10.sp,
+                                        color = Color.White.copy(0.6f)
+                                    )
+                                }
+                            }
+
+                            Text(
+                                text = fontItem.description,
+                                fontSize = 12.sp,
+                                color = Color.White.copy(0.5f)
+                            )
+
+                            // Live preview of this font
+                            Text(
+                                text = "Aa Bb Cc 123 • Beatraxus Music",
+                                fontSize = 14.sp,
+                                color = Color.White.copy(0.85f),
+                                fontFamily = fontItem.fontFamily,
+                                modifier = Modifier.padding(top = 4.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 
 @Composable
 fun MainScreenAppearanceContent(uiState: PlayerUiState, playerViewModel: PlayerViewModel) {

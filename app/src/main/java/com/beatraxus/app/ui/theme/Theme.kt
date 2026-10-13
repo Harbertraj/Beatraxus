@@ -5,9 +5,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.font.FontFamily
 import androidx.core.view.WindowCompat
 
 private val BeatraxusDarkColorScheme = darkColorScheme(
@@ -31,7 +33,10 @@ private val BeatraxusDarkColorScheme = darkColorScheme(
 )
 
 @Composable
-fun BeatraxusTheme(content: @Composable () -> Unit) {
+fun BeatraxusTheme(
+    fontFamily: FontFamily = FontFamily.Default,
+    content: @Composable () -> Unit
+) {
     val view = LocalView.current
     if (!view.isInEditMode) {
         SideEffect {
@@ -44,9 +49,12 @@ fun BeatraxusTheme(content: @Composable () -> Unit) {
             }
         }
     }
+    val typography = remember(fontFamily) {
+        getBeatraxusTypography(fontFamily)
+    }
     MaterialTheme(
         colorScheme = BeatraxusDarkColorScheme,
-        typography  = BeatraxusTypography,
+        typography  = typography,
         content     = content
     )
 }

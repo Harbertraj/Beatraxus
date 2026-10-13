@@ -142,7 +142,8 @@ class AppearancePreferences(context: Context) {
 
             dspPaletteId = preferences[DSP_PALETTE_ID] ?: "solar_flare",
             dspCustomPrimary = preferences[DSP_CUSTOM_PRIMARY] ?: 0xFFFFD60A.toInt(),
-            dspCustomSecondary = preferences[DSP_CUSTOM_SECONDARY] ?: 0xFFFF7A00.toInt()
+            dspCustomSecondary = preferences[DSP_CUSTOM_SECONDARY] ?: 0xFFFF7A00.toInt(),
+            selectedFontId = preferences[SELECTED_FONT_ID] ?: "system"
         )
     }
 
@@ -390,6 +391,10 @@ class AppearancePreferences(context: Context) {
         dataStore.edit { it[ALIGN_LYRICS_BY_SINGER] = align }
     }
 
+    suspend fun setSelectedFontId(fontId: String) {
+        dataStore.edit { it[SELECTED_FONT_ID] = fontId }
+    }
+
     suspend fun resetLyricsProviderOrder() {
         dataStore.edit { preferences ->
             preferences.remove(LYRICS_PROVIDER_ORDER)
@@ -509,5 +514,7 @@ class AppearancePreferences(context: Context) {
         private val DSP_PALETTE_ID = stringPreferencesKey("dsp_palette_id")
         private val DSP_CUSTOM_PRIMARY = intPreferencesKey("dsp_custom_primary")
         private val DSP_CUSTOM_SECONDARY = intPreferencesKey("dsp_custom_secondary")
+
+        private val SELECTED_FONT_ID = stringPreferencesKey("selected_font_id")
     }
 }
