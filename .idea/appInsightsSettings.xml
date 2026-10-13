@@ -9,10 +9,10 @@
             <InsightsFilterSettings>
               <option name="connection">
                 <ConnectionSetting>
-                  <option name="appId" value="PLACEHOLDER" />
-                  <option name="mobileSdkAppId" value="" />
-                  <option name="projectId" value="" />
-                  <option name="projectNumber" value="" />
+                  <option name="appId" value="com.beatraxus.app" />
+                  <option name="mobileSdkAppId" value="1:315086294170:android:ab521a164107f9efd4e323" />
+                  <option name="projectId" value="app-3e4f782c" />
+                  <option name="projectNumber" value="315086294170" />
                 </ConnectionSetting>
               </option>
               <option name="signal" value="SIGNAL_UNSPECIFIED" />

@@ -34,7 +34,7 @@ configure<ApplicationExtension> {
         minSdk = 26
         targetSdk = 36
         versionCode = 8
-        versionName = "3.3.6-stable"
+        versionName = "3.3.7-stable"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

@@ -740,7 +740,7 @@ fun MainScreen(
             WindowInsets.statusBars.getTop(this) + 16.dp.toPx()
         }
 
-        // Two accent-coloured cards peek out behind the page like a stacked deck.
+        // Two translucent black cards, edged in the selected library icon's colour, peek out behind the page.
         if (drawerProgress > 0f) {
             val deckShape = RoundedCornerShape(contentCornerRadius.coerceAtLeast(0.dp))
             for (depth in 1..2) {
@@ -757,20 +757,34 @@ fun MainScreen(
                             val s = (1f - ((1f - targetScale) * p)) * (1f - 0.05f * depth * p)
                             scaleX = s
                             scaleY = s
-                            rotationY = -(12f + 4f * depth) * p
+                            // exactly the page's own tilt: every card is a uniformly scaled copy of the page
+                            // sharing its left hinge, so the edges stay parallel and the corners line up
+                            rotationY = -12f * p
                             cameraDistance = 16f * density.density
                             transformOrigin = TransformOrigin(0f, 0.5f)
-                            alpha = (p * (if (depth == 1) 0.85f else 0.5f)).coerceIn(0f, 1f)
+                            alpha = p.coerceIn(0f, 1f)
                         }
                         .clip(deckShape)
+                        // first layer: medium transparent black, last layer: a deeper transparent black
+                        .background(Color.Black.copy(alpha = if (depth == 1) 0.50f else 0.72f))
+                        // the colour of the selected library icon only tints the layer softly ...
                         .background(
                             Brush.verticalGradient(
-                                listOf(viewAccentColor.copy(alpha = 0.42f), viewAccentColor.copy(alpha = 0.10f))
+                                listOf(
+                                    viewAccentColor.copy(alpha = if (depth == 1) 0.20f else 0.12f),
+                                    Color.Transparent
+                                )
                             )
                         )
+                        // ... and lights its edge
                         .border(
                             1.dp,
-                            Brush.verticalGradient(listOf(Color.White.copy(0.38f), Color.White.copy(0.04f))),
+                            Brush.verticalGradient(
+                                listOf(
+                                    viewAccentColor.copy(alpha = if (depth == 1) 0.85f else 0.55f),
+                                    viewAccentColor.copy(alpha = 0.12f)
+                                )
+                            ),
                             deckShape
                         )
                 )
