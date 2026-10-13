@@ -720,14 +720,16 @@ void main() {
   }
   ivec2 best = ivec2(0);
   float zero = sad(org, best);
+  float amb = 0.0;                              // 1 = several very different vectors fit equally well
   if (zero > 0.015) {
     float bestCost = zero * 0.85 - 0.002;     // must clearly beat zero motion
+    float costs[81];
     for (int dy = -8; dy <= 8; dy += 2) {
       for (int dx = -8; dx <= 8; dx += 2) {
-        if (dx == 0 && dy == 0) continue;
         ivec2 d = ivec2(dx, dy);
         float c = sad(org, d) + 0.0015 * float(abs(dx) + abs(dy));
-        if (c < bestCost) { bestCost = c; best = d; }
+        costs[((dy + 8) / 2) * 9 + (dx + 8) / 2] = c;
+        if ((dx != 0 || dy != 0) && c < bestCost) { bestCost = c; best = d; }
       }
     }
     ivec2 center = best;
@@ -740,9 +742,20 @@ void main() {
           if (c < bestCost) { bestCost = c; best = d; }
         }
       }
+      // Repeating patterns (window blinds, fences, grids, text): a vector one period away matches
+      // almost as well as the true one. If another, clearly different vector is nearly as good, the
+      // match is a guess - flag it so the picture falls back to the real frame there.
+      float farCost = 1.0e9;
+      for (int iy = 0; iy < 9; iy++) {
+        for (int ix = 0; ix < 9; ix++) {
+          ivec2 d = ivec2(ix * 2 - 8, iy * 2 - 8);
+          if (max(abs(d.x - best.x), abs(d.y - best.y)) >= 4) farCost = min(farCost, costs[iy * 9 + ix]);
+        }
+      }
+      if (farCost < bestCost * 1.10 + 0.0015) amb = 1.0;
     }
   }
-  o = vec4((vec2(best) * 8.0 + 128.0) / 255.0, 0.0, 1.0);
+  o = vec4((vec2(best) * 8.0 + 128.0) / 255.0, amb, 1.0);
 }
 """
 
@@ -783,7 +796,8 @@ void main() {
       a[j * 8 + i] = texelFetch(uA, clamp(org + ivec2(i, j), ivec2(0), uHalfSize - 1), 0).r;
     }
   }
-  vec2 coarse = (texelFetch(uCoarse, blk, 0).rg * 255.0 - 128.0) / 8.0;   // luma texels
+  vec4 coarseT = texelFetch(uCoarse, blk, 0);
+  vec2 coarse = (coarseT.rg * 255.0 - 128.0) / 8.0;                        // luma texels
   ivec2 start = ivec2(floor(coarse * 2.0 + 0.5));                          // half-size texels
 
   ivec2 best = ivec2(0);
@@ -800,7 +814,9 @@ void main() {
     }
     if (best != ivec2(0)) bestSad = sad(org, best);
   }
-  o = vec4((vec2(best) * 4.0 + 128.0) / 255.0, clamp(bestSad * 2.0, 0.0, 1.0), 1.0);
+  float res = clamp(bestSad * 2.0, 0.0, 1.0);
+  if (coarseT.b > 0.5) res = max(res, 0.6);     // ambiguous (periodic) match: treat as unreliable
+  o = vec4((vec2(best) * 4.0 + 128.0) / 255.0, res, 1.0);
 }
 """
 
@@ -839,7 +855,13 @@ void main() {
     float tx = vx[i]; vx[i] = vx[mx]; vx[mx] = tx;
     float ty = vy[i]; vy[i] = vy[my]; vy[my] = ty;
   }
-  o = vec4(vx[4] / 255.0, vy[4] / 255.0, 0.5 * (own + worst), 1.0);
+  // Vector disagreement around this block (half-size texels). A clean field is locally uniform;
+  // a noisy one (periodic texture, fast motion past the search range) is not.
+  float dev = 0.0;
+  for (int i = 0; i < 9; i++) dev += abs(vx[i] - vx[4]) + abs(vy[i] - vy[4]);
+  dev = dev / 9.0 / 4.0;
+  float noisy = 0.4 * smoothstep(3.0, 8.0, dev);
+  o = vec4(vx[4] / 255.0, vy[4] / 255.0, clamp(0.5 * (own + worst) + noisy, 0.0, 1.0), 1.0);
 }
 """
 
@@ -880,9 +902,18 @@ void main() {
     // Very bad match (scene cut): show the nearest real frame instead of a dissolve. The choice is the
     // same for the whole picture, only the blend amount varies smoothly with the block residual.
     vec3 nearest = (uAlpha < 0.5) ? pa : pb;
-    plain = mix(plain, nearest, smoothstep(0.14, 0.28, residual));
-    float conf = (1.0 - smoothstep(0.05, 0.12, residual))
-               * (1.0 - smoothstep(0.30, 0.65, length(ca - cb)));
+    // Where the warp is not trusted, show the real frame (identical to the cross-fade in static areas,
+    // but never a ghosted double image on moving ones).
+    plain = nearest;
+    // Trust the warp only when every test agrees:
+    //  - block match error is low,
+    //  - the two warped samples really show the same picture (full-resolution check),
+    //  - the vector is the same where the pixel came from (no tearing at occlusions / streaks),
+    //  - the vector is not at the edge of the search range (true motion may be even faster).
+    float conf = (1.0 - smoothstep(0.035, 0.09, residual))
+               * (1.0 - smoothstep(0.10, 0.26, length(ca - cb)))
+               * (1.0 - smoothstep(1.5, 4.0, length(d - d0)))
+               * (1.0 - smoothstep(12.0, 17.0, max(abs(d.x), abs(d.y))));
     rgb = mix(plain, warped, conf);
   }
   rgb += uGrade.x;
