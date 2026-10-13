@@ -326,7 +326,7 @@ private fun PtField(
         shape = RoundedCornerShape(14.dp),
         keyboardOptions = if (caps) KeyboardOptions(capitalization = KeyboardCapitalization.Characters) else KeyboardOptions.Default,
         textStyle = androidx.compose.ui.text.TextStyle(
-            fontFamily = if (mono) FontFamily.Monospace else FontFamily.Default,
+            fontFamily = if (mono) FontFamily.Monospace else androidx.compose.material3.LocalTextStyle.current.fontFamily,
             fontSize = 15.sp,
             letterSpacing = if (caps) 3.sp else 0.sp
         ),

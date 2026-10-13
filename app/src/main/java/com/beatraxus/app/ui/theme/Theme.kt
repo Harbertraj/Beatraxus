@@ -1,7 +1,9 @@
 package com.beatraxus.app.ui.theme
 
 import android.app.Activity
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ProvideTextStyle
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
@@ -54,7 +56,11 @@ fun BeatraxusTheme(
     }
     MaterialTheme(
         colorScheme = BeatraxusDarkColorScheme,
-        typography  = typography,
-        content     = content
-    )
+        typography  = typography
+    ) {
+        // Make the selected font the base for every Text(), including ones that set only
+        // fontSize/color and ones inside dialogs, sheets and menus, so nothing falls back to
+        // the device system font.
+        ProvideTextStyle(value = LocalTextStyle.current.copy(fontFamily = fontFamily), content = content)
+    }
 }
