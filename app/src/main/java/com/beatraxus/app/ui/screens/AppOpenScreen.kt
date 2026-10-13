@@ -239,7 +239,7 @@ fun AppOpenScreen(onFinished: () -> Unit) {
                         .revealAt(time, startMs = 550f)
                 )
                 Text(
-                    text = "Bit-perfect  ·  USB DAC  ·  Parametric EQ",
+                    text = "Local Music  ·  Cloud Library  ·  Video Player",
                     color = LogoCyan.copy(alpha = 0.7f),
                     fontSize = 10.sp,
                     fontWeight = FontWeight.Normal,
