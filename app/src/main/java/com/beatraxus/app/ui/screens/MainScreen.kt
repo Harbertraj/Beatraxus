@@ -6446,7 +6446,7 @@ fun SlideDrawerMenu(
             ) {
                 item {
                     Text(
-                        if (playbackMode == com.beatraxus.app.model.PlaybackMode.VIDEO) "VIDEO" else "LIBRARY",
+                        if (playbackMode == com.beatraxus.app.model.PlaybackMode.VIDEO) "VIDEO LIBRARY" else "AUDIO LIBRARY",
                         color = Color.White.copy(0.38f),
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Bold,
