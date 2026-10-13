@@ -998,6 +998,14 @@ private fun qualityBadgeStyleLabel(style: com.beatraxus.app.model.QualityBadgeSt
     com.beatraxus.app.model.QualityBadgeStyle.NEON_PULSE -> "Neon Pulse"
 }
 
+private fun albumArtTransformLabel(t: AlbumArtTransform) = when (t) {
+    AlbumArtTransform.NONE -> "None"
+    AlbumArtTransform.SOFT_FADE -> "Soft fade"
+    AlbumArtTransform.SLIDE -> "Slide"
+    AlbumArtTransform.DEPTH -> "Depth"
+    AlbumArtTransform.POP -> "Pop"
+}
+
 @Composable
 fun NowPlayingAppearanceContent(uiState: PlayerUiState, playerViewModel: PlayerViewModel, sectionStack: SnapshotStateList<String>) {
     val isClassic = com.beatraxus.app.utils.DeviceUtils.isClassicDevice()
@@ -1021,7 +1029,7 @@ fun NowPlayingAppearanceContent(uiState: PlayerUiState, playerViewModel: PlayerV
                         colors = ButtonDefaults.textButtonColors(contentColor = PremiumAccent)
                     ) {
                         Text(
-                            uiState.appearance.albumArtTransform.name.lowercase().replaceFirstChar { it.uppercase() },
+                            albumArtTransformLabel(uiState.appearance.albumArtTransform),
                             fontWeight = FontWeight.Bold
                         )
                         Icon(Icons.Rounded.ArrowDropDown, null)
@@ -1035,7 +1043,7 @@ fun NowPlayingAppearanceContent(uiState: PlayerUiState, playerViewModel: PlayerV
                             DropdownMenuItem(
                                 text = {
                                     Text(
-                                        transform.name.lowercase().replaceFirstChar { it.uppercase() },
+                                        albumArtTransformLabel(transform),
                                         color = if (uiState.appearance.albumArtTransform == transform) PremiumAccent else Color.White
                                     )
                                 },
@@ -1090,54 +1098,6 @@ fun NowPlayingAppearanceContent(uiState: PlayerUiState, playerViewModel: PlayerV
                                 onClick = {
                                     playerViewModel.setQualityBadgeStyle(style)
                                     expandedBadgeStyle = false
-                                }
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        HorizontalDivider(color = Color.White.copy(0.05f))
-
-        var expandedIconStyle by remember { mutableStateOf(false) }
-        Column {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("Now Playing Icon Style", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                    Text("Shape of the play/pause/skip control icons", color = Color.White.copy(0.6f), fontSize = 12.sp)
-                }
-                Box {
-                    TextButton(
-                        onClick = { expandedIconStyle = true },
-                        colors = ButtonDefaults.textButtonColors(contentColor = PremiumAccent)
-                    ) {
-                        Text(
-                            uiState.appearance.nowPlayingIconStyle.name.lowercase().replaceFirstChar { it.uppercase() },
-                            fontWeight = FontWeight.Bold
-                        )
-                        Icon(Icons.Rounded.ArrowDropDown, null)
-                    }
-                    DropdownMenu(
-                        expanded = expandedIconStyle,
-                        onDismissRequest = { expandedIconStyle = false },
-                        modifier = Modifier.background(CardSurface)
-                    ) {
-                        com.beatraxus.app.model.NowPlayingIconStyle.entries.forEach { style ->
-                            DropdownMenuItem(
-                                text = {
-                                    Text(
-                                        style.name.lowercase().replaceFirstChar { it.uppercase() },
-                                        color = if (uiState.appearance.nowPlayingIconStyle == style) PremiumAccent else Color.White
-                                    )
-                                },
-                                onClick = {
-                                    playerViewModel.setNowPlayingIconStyle(style)
-                                    expandedIconStyle = false
                                 }
                             )
                         }

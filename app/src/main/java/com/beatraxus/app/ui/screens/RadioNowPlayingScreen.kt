@@ -661,9 +661,7 @@ fun RadioNowPlayingScreen(
                         }
 
                         // ---------- Controls pill (same shape / sizes as the song screen) ----------
-                        val (prevIcon, playIcon, pauseIcon, nextIcon) = remember(appearance.nowPlayingIconStyle) {
-                            transportIconsFor(appearance.nowPlayingIconStyle)
-                        }
+                        val (prevIcon, playIcon, pauseIcon, nextIcon) = remember { transportIcons() }
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()

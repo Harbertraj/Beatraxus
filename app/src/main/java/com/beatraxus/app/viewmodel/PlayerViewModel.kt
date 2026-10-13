@@ -5885,12 +5885,6 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun setNowPlayingIconStyle(style: com.beatraxus.app.model.NowPlayingIconStyle) {
-        viewModelScope.launch {
-            appearancePreferences.setNowPlayingIconStyle(style)
-        }
-    }
-
     fun setHomeScreenSectionsOrder(order: List<String>) {
         viewModelScope.launch {
             appearancePreferences.setHomeScreenSectionsOrder(order)

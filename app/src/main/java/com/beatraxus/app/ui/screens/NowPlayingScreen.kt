@@ -656,104 +656,44 @@ fun NowPlayingScreen(
                                     AnimatedContent(
                                         targetState = song.id to song.albumArtUri,
                                         transitionSpec = {
-                                            val transform = uiState.appearance.albumArtTransform
-                                            when (transform) {
-                                                AlbumArtTransform.FADE -> {
-                                                    fadeIn(tween(600)).togetherWith(fadeOut(tween(600)))
-                                                }
-                                                AlbumArtTransform.SLIDE -> {
-                                                    (slideInHorizontally(tween(600)) { it } + fadeIn(tween(600)))
-                                                        .togetherWith(slideOutHorizontally(tween(600)) { -it } + fadeOut(tween(600)))
-                                                }
-                                                AlbumArtTransform.SCALE -> {
-                                                    (scaleIn(tween(600), 0.8f) + fadeIn(tween(600)))
-                                                        .togetherWith(scaleOut(tween(600), 1.2f) + fadeOut(tween(600)))
-                                                }
-                                                AlbumArtTransform.ROTATE -> {
-                                                    (fadeIn(tween(600)) + scaleIn(tween(600), 0.8f))
-                                                        .togetherWith(fadeOut(tween(600)) + scaleOut(tween(600), 0.8f))
-                                                }
-                                                AlbumArtTransform.FLIP -> {
-                                                    (fadeIn(tween(400)) + scaleIn(tween(400), 0.5f))
-                                                        .togetherWith(fadeOut(tween(400)) + scaleOut(tween(400), 0.5f))
-                                                }
-                                                AlbumArtTransform.ZOOM -> {
-                                                    (scaleIn(tween(600), 1.5f) + fadeIn(tween(600)))
-                                                        .togetherWith(scaleOut(tween(600), 0.5f) + fadeOut(tween(600)))
-                                                }
-                                                AlbumArtTransform.CROSSFADE_BLUR -> {
-                                                    (fadeIn(tween(700)) + scaleIn(tween(700), 1.04f))
-                                                        .togetherWith(fadeOut(tween(700)) + scaleOut(tween(700), 0.96f))
-                                                }
-                                                AlbumArtTransform.VINYL_SPIN -> {
-                                                    (scaleIn(
-                                                        animationSpec = spring(
-                                                            dampingRatio = Spring.DampingRatioMediumBouncy,
-                                                            stiffness = Spring.StiffnessLow
-                                                        ),
-                                                        initialScale = 0.3f
-                                                    ) + fadeIn(tween(500)))
-                                                        .togetherWith(scaleOut(tween(350), 0.3f) + fadeOut(tween(300)))
-                                                }
-                                                AlbumArtTransform.PARALLAX_DEPTH -> {
-                                                    (slideInVertically(tween(650)) { it / 6 } + scaleIn(tween(650), 0.92f) + fadeIn(tween(650)))
-                                                        .togetherWith(slideOutVertically(tween(650)) { -it / 6 } + scaleOut(tween(650), 1.08f) + fadeOut(tween(650)))
-                                                }
-                                                AlbumArtTransform.SHUTTER -> {
-                                                    (expandHorizontally(tween(500), expandFrom = Alignment.CenterHorizontally) { 0 } + fadeIn(tween(300)))
-                                                        .togetherWith(shrinkHorizontally(tween(500), shrinkTowards = Alignment.CenterHorizontally) { 0 } + fadeOut(tween(250)))
-                                                }
-                                                AlbumArtTransform.GLITCH_SHIFT -> {
-                                                    (slideInHorizontally(
-                                                        animationSpec = spring(
-                                                            dampingRatio = Spring.DampingRatioHighBouncy,
-                                                            stiffness = Spring.StiffnessHigh
+                                            when (uiState.appearance.albumArtTransform) {
+                                                // Soft cross-fade; the new art settles in from a hair larger.
+                                                AlbumArtTransform.SOFT_FADE ->
+                                                    (fadeIn(tween(520, easing = LinearOutSlowInEasing)) +
+                                                        scaleIn(tween(620, easing = FastOutSlowInEasing), initialScale = 1.06f))
+                                                        .togetherWith(fadeOut(tween(380)))
+                                                // New art glides in from the right while the old one drifts left.
+                                                AlbumArtTransform.SLIDE ->
+                                                    (slideInHorizontally(tween(520, easing = FastOutSlowInEasing)) { it / 3 } +
+                                                        fadeIn(tween(420)))
+                                                        .togetherWith(
+                                                            slideOutHorizontally(tween(520, easing = FastOutSlowInEasing)) { -it / 3 } +
+                                                                fadeOut(tween(320))
                                                         )
-                                                    ) { it / 12 } + fadeIn(tween(180)))
-                                                        .togetherWith(fadeOut(tween(120)))
-                                                }
-                                                else -> {
-                                                    fadeIn(tween(150)).togetherWith(fadeOut(tween(150)))
-                                                }
+                                                // Depth: old art sinks back, new art rises up from behind.
+                                                AlbumArtTransform.DEPTH ->
+                                                    (scaleIn(tween(560, easing = FastOutSlowInEasing), initialScale = 0.86f) +
+                                                        slideInVertically(tween(560, easing = FastOutSlowInEasing)) { it / 10 } +
+                                                        fadeIn(tween(480)))
+                                                        .togetherWith(
+                                                            scaleOut(tween(480, easing = FastOutSlowInEasing), targetScale = 0.92f) +
+                                                                fadeOut(tween(360))
+                                                        )
+                                                // Pop: new art springs in with a small, soft bounce.
+                                                AlbumArtTransform.POP ->
+                                                    (scaleIn(
+                                                        spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMediumLow),
+                                                        initialScale = 0.82f
+                                                    ) + fadeIn(tween(260)))
+                                                        .togetherWith(fadeOut(tween(220)))
+                                                // None: switch instantly.
+                                                AlbumArtTransform.NONE ->
+                                                    EnterTransition.None.togetherWith(ExitTransition.None)
                                             }
                                         },
                                         label = "albumArtTransition",
                                         modifier = Modifier.fillMaxSize()
                                     ) { (targetId, targetArtUri) ->
-                                        val transform = uiState.appearance.albumArtTransform
-                                        var glitchTick by remember(targetId) { mutableStateOf(0) }
-                                        val blurAnim = remember(targetId) { Animatable(if (transform == AlbumArtTransform.CROSSFADE_BLUR) 20f else 0f) }
-                                        val rotationAnim = remember(targetId) { Animatable(if (transform == AlbumArtTransform.VINYL_SPIN) -35f else 0f) }
-                                        LaunchedEffect(targetId) {
-                                            if (transform == AlbumArtTransform.GLITCH_SHIFT) {
-                                                glitchTick = 1
-                                                kotlinx.coroutines.delay(70)
-                                                glitchTick = 2
-                                                kotlinx.coroutines.delay(60)
-                                                glitchTick = 0
-                                            }
-                                        }
-                                        LaunchedEffect(targetId) {
-                                            if (transform == AlbumArtTransform.CROSSFADE_BLUR) {
-                                                blurAnim.animateTo(0f, animationSpec = tween(700))
-                                            }
-                                        }
-                                        LaunchedEffect(targetId) {
-                                            if (transform == AlbumArtTransform.VINYL_SPIN) {
-                                                rotationAnim.animateTo(
-                                                    0f,
-                                                    animationSpec = spring(
-                                                        dampingRatio = Spring.DampingRatioMediumBouncy,
-                                                        stiffness = Spring.StiffnessLow
-                                                    )
-                                                )
-                                            }
-                                        }
-                                        val glitchOffsetX by animateFloatAsState(
-                                            targetValue = when (glitchTick) { 1 -> 14f; 2 -> -10f; else -> 0f },
-                                            animationSpec = tween(60),
-                                            label = "glitchOffset"
-                                        )
                                         AsyncImage(
                                             model = ImageRequest.Builder(LocalContext.current)
                                                 .data(targetArtUri)
@@ -767,18 +707,7 @@ fun NowPlayingScreen(
                                                 .build(),
                                             contentDescription = null,
                                             modifier = Modifier
-                                                .fillMaxSize()
-                                                .then(
-                                                    if (transform == AlbumArtTransform.CROSSFADE_BLUR)
-                                                        Modifier.blur(blurAnim.value.dp) else Modifier
-                                                )
-                                                .graphicsLayer {
-                                                    when (transform) {
-                                                        AlbumArtTransform.VINYL_SPIN -> rotationZ = rotationAnim.value
-                                                        AlbumArtTransform.GLITCH_SHIFT -> translationX = glitchOffsetX
-                                                        else -> {}
-                                                    }
-                                                },
+                                                .fillMaxSize(),
                                             contentScale = ContentScale.Crop
                                         )
                                     }
@@ -1050,10 +979,7 @@ fun NowPlayingScreen(
                     }
 
                     // Redesigned Controls Pill
-                    val transportIconStyle = uiState.appearance.nowPlayingIconStyle
-                    val (prevIcon, playIcon, pauseIcon, nextIcon) = remember(transportIconStyle) {
-                        transportIconsFor(transportIconStyle)
-                    }
+                    val (prevIcon, playIcon, pauseIcon, nextIcon) = remember { transportIcons() }
 
                     Box(
                         modifier = Modifier
@@ -1312,22 +1238,9 @@ internal data class TransportIconSet(
     val next: androidx.compose.ui.graphics.vector.ImageVector
 )
 
-internal fun transportIconsFor(style: com.beatraxus.app.model.NowPlayingIconStyle): TransportIconSet {
-    return when (style) {
-        com.beatraxus.app.model.NowPlayingIconStyle.FILLED -> TransportIconSet(
-            Icons.Filled.SkipPrevious, Icons.Filled.PlayArrow, Icons.Filled.Pause, Icons.Filled.SkipNext
-        )
-        com.beatraxus.app.model.NowPlayingIconStyle.OUTLINED -> TransportIconSet(
-            Icons.Outlined.SkipPrevious, Icons.Outlined.PlayArrow, Icons.Outlined.Pause, Icons.Outlined.SkipNext
-        )
-        com.beatraxus.app.model.NowPlayingIconStyle.ROUNDED -> TransportIconSet(
-            Icons.Rounded.SkipPrevious, Icons.Rounded.PlayArrow, Icons.Rounded.Pause, Icons.Rounded.SkipNext
-        )
-        com.beatraxus.app.model.NowPlayingIconStyle.SHARP_MINIMAL -> TransportIconSet(
-            Icons.Sharp.SkipPrevious, Icons.Sharp.PlayArrow, Icons.Sharp.Pause, Icons.Sharp.SkipNext
-        )
-    }
-}
+internal fun transportIcons(): TransportIconSet = TransportIconSet(
+    Icons.Filled.SkipPrevious, Icons.Filled.PlayArrow, Icons.Filled.Pause, Icons.Filled.SkipNext
+)
 
 @Composable
 fun AudioQualityBadge(

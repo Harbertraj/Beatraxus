@@ -173,14 +173,9 @@ enum class NowPlayingBackgroundMode { BLACK, SOLID, BLUR }
 /** Layout of the bottom now-playing (mini player) bar. */
 enum class MiniPlayerStyle { PILL, CLASSIC }
 
-enum class AlbumArtTransform {
-    NONE, FADE, SLIDE, SCALE, ROTATE, FLIP, ZOOM,
-    CROSSFADE_BLUR, VINYL_SPIN, PARALLAX_DEPTH, SHUTTER, GLITCH_SHIFT
-}
+enum class AlbumArtTransform { NONE, SOFT_FADE, SLIDE, DEPTH, POP }
 
 enum class QualityBadgeStyle { NONE, GOLDEN_SHIMMER, MINIMAL_OUTLINE, GLASSMORPHIC, NEON_PULSE }
-
-enum class NowPlayingIconStyle { FILLED, OUTLINED, ROUNDED, SHARP_MINIMAL }
 
 enum class SeekbarStyle {
     // Beatraxus exclusive styles
@@ -201,9 +196,8 @@ data class AppearanceConfig(
     val nowPlayingSolidColorDarkness: Float = 0.4f,
     val nowPlayingBlurIntensity: Float = 210f,
     val nowPlayingBlurDarkness: Float = 0.3f,
-    val albumArtTransform: AlbumArtTransform = AlbumArtTransform.NONE,
+    val albumArtTransform: AlbumArtTransform = AlbumArtTransform.SOFT_FADE,
     val qualityBadgeStyle: QualityBadgeStyle = QualityBadgeStyle.GLASSMORPHIC,
-    val nowPlayingIconStyle: NowPlayingIconStyle = NowPlayingIconStyle.FILLED,
 
     val seekbarStyle: SeekbarStyle = SeekbarStyle.BEATRAXUS_MATRIX,
 

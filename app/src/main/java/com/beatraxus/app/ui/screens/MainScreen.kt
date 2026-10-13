@@ -664,7 +664,6 @@ fun MainScreen(
         label = "drawerProgress"
     )
 
-    val contentScale = 1f - (0.18f * drawerProgress)
     val contentRotation = 0f // Removed rotation for uniform spacing
     val contentCornerRadius = (32f * drawerProgress).dp
 
@@ -730,6 +729,10 @@ fun MainScreen(
             }
         }
 
+        val headerTopPaddingPx = with(LocalDensity.current) {
+            WindowInsets.statusBars.getTop(this) + 16.dp.toPx()
+        }
+
         val needsGraphicsLayer = blurByScan > 0.1f || saturationByScan < 0.99f || alphaByScan < 0.99f
         Box(
             Modifier
@@ -737,8 +740,16 @@ fun MainScreen(
                 .zIndex(2f) // Main content is on top
                 .graphicsLayer {
                     translationX = drawerProgress * with(density) { 200.dp.toPx() }
-                    scaleX = contentScale
-                    scaleY = contentScale
+
+                    val targetScale = if (size.height > 0f) {
+                        (1f - (2f * headerTopPaddingPx / size.height)).coerceIn(0.5f, 1f)
+                    } else {
+                        0.88f
+                    }
+                    val currentScale = 1f - ((1f - targetScale) * drawerProgress)
+                    scaleX = currentScale
+                    scaleY = currentScale
+
                     rotationZ = contentRotation
                     cameraDistance = 12f * density.density
                     transformOrigin = TransformOrigin(0f, 0.5f)
@@ -6170,13 +6181,6 @@ fun SlideDrawerMenu(
                                 modifier = Modifier.weight(1f),
                                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
                             )
-                            if (isSelected) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(6.dp)
-                                        .background(item.color, CircleShape)
-                                )
-                            }
                         }
                     }
                 }

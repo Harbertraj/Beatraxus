@@ -9,7 +9,6 @@ import com.beatraxus.app.model.NowPlayingBackgroundMode
 import com.beatraxus.app.model.MiniPlayerStyle
 import com.beatraxus.app.model.AlbumArtTransform
 import com.beatraxus.app.model.QualityBadgeStyle
-import com.beatraxus.app.model.NowPlayingIconStyle
 import com.beatraxus.app.model.SeekbarStyle
 import com.beatraxus.app.repository.lyrics.LyricsProviderRegistry
 import com.beatraxus.app.utils.DeviceUtils
@@ -35,14 +34,12 @@ class AppearancePreferences(context: Context) {
             nowPlayingSolidColorDarkness = preferences[SOLID_COLOR_DARKNESS] ?: 0.4f,
             nowPlayingBlurIntensity = preferences[BLUR_INTENSITY] ?: 210f,
             nowPlayingBlurDarkness = preferences[BLUR_DARKNESS] ?: 0.3f,
-            albumArtTransform = AlbumArtTransform.valueOf(
-                preferences[ALBUM_ART_TRANSFORM] ?: AlbumArtTransform.FADE.name
-            ),
+            // Animations removed in older versions fall back to the soft fade.
+            albumArtTransform = runCatching {
+                AlbumArtTransform.valueOf(preferences[ALBUM_ART_TRANSFORM] ?: AlbumArtTransform.SOFT_FADE.name)
+            }.getOrDefault(AlbumArtTransform.SOFT_FADE),
             qualityBadgeStyle = QualityBadgeStyle.valueOf(
                 preferences[QUALITY_BADGE_STYLE] ?: QualityBadgeStyle.GLASSMORPHIC.name
-            ),
-            nowPlayingIconStyle = NowPlayingIconStyle.valueOf(
-                preferences[NOW_PLAYING_ICON_STYLE] ?: NowPlayingIconStyle.FILLED.name
             ),
             // Removed styles saved by older versions safely fall back to Beatraxus Pulse.
             seekbarStyle = runCatching {
@@ -179,10 +176,6 @@ class AppearancePreferences(context: Context) {
 
     suspend fun setQualityBadgeStyle(style: QualityBadgeStyle) {
         dataStore.edit { it[QUALITY_BADGE_STYLE] = style.name }
-    }
-
-    suspend fun setNowPlayingIconStyle(style: NowPlayingIconStyle) {
-        dataStore.edit { it[NOW_PLAYING_ICON_STYLE] = style.name }
     }
 
     // Home Screen Sections Setters
@@ -456,7 +449,6 @@ class AppearancePreferences(context: Context) {
         private val BLUR_DARKNESS = floatPreferencesKey("blur_darkness")
         private val ALBUM_ART_TRANSFORM = stringPreferencesKey("album_art_transform")
         private val QUALITY_BADGE_STYLE = stringPreferencesKey("quality_badge_style")
-        private val NOW_PLAYING_ICON_STYLE = stringPreferencesKey("now_playing_icon_style")
         private val SEEKBAR_STYLE = stringPreferencesKey("seekbar_style")
 
         // Home Screen Sections
