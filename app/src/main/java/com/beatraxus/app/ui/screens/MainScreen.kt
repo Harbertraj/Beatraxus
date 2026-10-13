@@ -770,12 +770,42 @@ fun MainScreen(
                             alpha = p.coerceIn(0f, 1f)
                         }
                         .clip(deckShape)
-                        // first layer: medium transparent black, last layer: a deeper transparent black
-                        .background(Color.Black.copy(alpha = if (depth == 1) 0.50f else 0.72f))
-                        // Subtle neutral border with no library tint
+                        // Frosted glass sheets: the library accent glows at the top of each sheet
+                        // and melts into near-black at the bottom, so the stack reads as layered
+                        // glass instead of flat grey cards.
+                        .background(
+                            Brush.verticalGradient(
+                                colors = listOf(
+                                    viewAccentColor.copy(alpha = if (depth == 1) 0.34f else 0.20f),
+                                    Color(0xFF0B0B12).copy(alpha = if (depth == 1) 0.74f else 0.86f),
+                                    Color.Black.copy(alpha = if (depth == 1) 0.90f else 0.95f)
+                                )
+                            )
+                        )
+                        .drawWithContent {
+                            drawContent()
+                            // diagonal glass sheen sweeping across the sheet
+                            drawRect(
+                                brush = Brush.linearGradient(
+                                    colorStops = arrayOf(
+                                        0.0f to Color.White.copy(alpha = if (depth == 1) 0.12f else 0.07f),
+                                        0.38f to Color.Transparent,
+                                        1.0f to Color.Transparent
+                                    ),
+                                    start = Offset.Zero,
+                                    end = Offset(size.width, size.height)
+                                )
+                            )
+                        }
+                        // luminous rim: bright accent at the top edge fading to a faint white line
                         .border(
                             1.dp,
-                            Color.White.copy(alpha = if (depth == 1) 0.10f else 0.05f),
+                            Brush.verticalGradient(
+                                listOf(
+                                    viewAccentColor.copy(alpha = if (depth == 1) 0.85f else 0.50f),
+                                    Color.White.copy(alpha = if (depth == 1) 0.10f else 0.05f)
+                                )
+                            ),
                             deckShape
                         )
                 )
@@ -806,26 +836,43 @@ fun MainScreen(
                     transformOrigin = TransformOrigin(0f, 0.5f)
                     shape = RoundedCornerShape(contentCornerRadius.coerceAtLeast(0.dp))
                     clip = true
+                    // the page floats above the glass stack, casting an accent-coloured glow onto it
+                    shadowElevation = with(density) { 28.dp.toPx() } * drawerProgress
+                    ambientShadowColor = viewAccentColor
+                    spotShadowColor = viewAccentColor
                 }
                 .drawWithContent {
                     drawContent()
                     val p = drawerProgress.coerceIn(0f, 1f)
                     if (p > 0.01f) {
-                        // glassy rim that fades in with the drawer: library accent tint on top edge, dark grey tint on bottom edge
                         val r = contentCornerRadius.coerceAtLeast(0.dp).toPx()
+                        // soft reflection across the top of the page, like light on a glass card
+                        drawRect(
+                            brush = Brush.verticalGradient(
+                                colors = listOf(
+                                    Color.White.copy(alpha = 0.10f * p),
+                                    Color.Transparent
+                                ),
+                                startY = 0f,
+                                endY = size.height * 0.22f
+                            ),
+                            size = androidx.compose.ui.geometry.Size(size.width, size.height * 0.22f)
+                        )
+                        // glassy rim that fades in with the drawer: library accent on the top edge,
+                        // a bright white catch-light, and a cool accent return on the bottom edge
                         drawRoundRect(
                             brush = Brush.linearGradient(
                                 colorStops = arrayOf(
-                                    0.0f to viewAccentColor.copy(alpha = 0.85f * p),
-                                    0.25f to Color.White.copy(alpha = 0.22f * p),
-                                    0.55f to Color.Transparent,
-                                    1.0f to Color.DarkGray.copy(alpha = 0.7f * p)
+                                    0.0f to viewAccentColor.copy(alpha = 0.95f * p),
+                                    0.25f to Color.White.copy(alpha = 0.30f * p),
+                                    0.60f to Color.Transparent,
+                                    1.0f to viewAccentColor.copy(alpha = 0.45f * p)
                                 ),
                                 start = Offset.Zero,
                                 end = Offset(size.width, size.height)
                             ),
                             cornerRadius = androidx.compose.ui.geometry.CornerRadius(r),
-                            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.6.dp.toPx())
+                            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.dp.toPx())
                         )
                     }
                 }
@@ -3618,23 +3665,52 @@ fun MainScreen(
             }
             }
 
-            // Dimming overlay when side menu is open
+            // Depth shading when side menu is open: the page stays vivid next to the menu and
+            // falls into shadow toward the far edge, with an accent glow bleeding in from the right.
             if (drawerProgress > 0f) {
                 Box(
                     Modifier
                         .fillMaxSize()
-                        .background(
-                            Brush.horizontalGradient(
-                                listOf(
-                                    Color.Black.copy(alpha = (drawerProgress * 0.18f).coerceIn(0f, 0.3f)),
-                                    Color.Black.copy(alpha = (drawerProgress * 0.45f).coerceIn(0f, 0.5f))
+                        .drawBehind {
+                            val p = drawerProgress.coerceIn(0f, 1f)
+                            drawRect(
+                                Brush.horizontalGradient(
+                                    listOf(
+                                        Color.Black.copy(alpha = 0.04f * p),
+                                        Color.Black.copy(alpha = 0.42f * p)
+                                    )
                                 )
                             )
-                        )
+                            drawRect(
+                                Brush.radialGradient(
+                                    colors = listOf(
+                                        viewAccentColor.copy(alpha = 0.22f * p),
+                                        Color.Transparent
+                                    ),
+                                    center = Offset(size.width, size.height * 0.5f),
+                                    radius = size.height * 0.55f
+                                )
+                            )
+                        }
                         .clickable(
                             interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
                             indication = null
                         ) { showDrawer = false }
+                )
+                // slim accent grip on the right edge: a visual cue that the page can be tapped shut
+                Box(
+                    Modifier
+                        .align(Alignment.CenterEnd)
+                        .padding(end = 10.dp)
+                        .width(4.dp)
+                        .height(56.dp)
+                        .graphicsLayer { alpha = drawerProgress.coerceIn(0f, 1f) * 0.9f }
+                        .clip(RoundedCornerShape(50))
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(viewAccentColor, Color.White.copy(alpha = 0.55f))
+                            )
+                        )
                 )
             }
         }
