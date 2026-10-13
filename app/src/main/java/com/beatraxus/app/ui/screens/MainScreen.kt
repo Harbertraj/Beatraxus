@@ -345,7 +345,7 @@ fun MainScreen(
     }
 
     val targetAccentColor = when (uiState.currentView) {
-        LibraryView.HOME -> Color(0xFF00E676)
+        LibraryView.HOME -> Color(0xFF40C4FF)
         LibraryView.ALL_SONGS -> Color(0xFFFF4081)
         LibraryView.ALBUMS, LibraryView.ALBUM_DETAIL -> Color(0xFFB2FF59)
         LibraryView.ARTISTS, LibraryView.ARTIST_DETAIL -> Color(0xFF7C4DFF)
@@ -354,7 +354,7 @@ fun MainScreen(
         LibraryView.GENRES, LibraryView.GENRE_DETAIL -> Color(0xFFE040FB)
         LibraryView.PLAYLISTS, LibraryView.PLAYLIST_DETAIL -> Color(0xFFFDD835)
         LibraryView.FAVORITES -> Color(0xFFFF4081)
-        LibraryView.RECENTLY_PLAYED -> Color(0xFF40C4FF)
+        LibraryView.RECENTLY_PLAYED -> Color(0xFF00E676)
         LibraryView.RECENTLY_ADDED -> Color(0xFF00E676)
         LibraryView.CLOUD -> Color(0xFF1A73E8)
         LibraryView.RADIO -> Color(0xFF00B8D4)
@@ -365,7 +365,7 @@ fun MainScreen(
         LibraryView.VIDEO_ALL, LibraryView.VIDEO_FOLDER_DETAIL -> Color(0xFF00E5FF)
         LibraryView.VIDEO_FOLDERS -> Color(0xFFFFAB40)
         LibraryView.VIDEO_RECENTLY_ADDED -> Color(0xFF00E676)
-        LibraryView.VIDEO_RECENTLY_PLAYED -> Color(0xFF40C4FF)
+        LibraryView.VIDEO_RECENTLY_PLAYED -> Color(0xFF00E676)
     }
     val viewAccentColor by animateColorAsState(
         targetValue = targetAccentColor,
@@ -6034,16 +6034,16 @@ fun SlideDrawerMenu(
     val menuItems = remember(libraryMode, playbackMode) {
         if (playbackMode == com.beatraxus.app.model.PlaybackMode.VIDEO) {
             listOf(
-                DrawerMenuItem("Home", LibraryView.HOME, Icons.Rounded.Home, Color(0xFF00E676)),
+                DrawerMenuItem("Home", LibraryView.HOME, Icons.Rounded.Home, Color(0xFF40C4FF)),
                 DrawerMenuItem("All Videos", LibraryView.VIDEO_ALL, Icons.Rounded.Movie, Color(0xFF00E5FF)),
                 DrawerMenuItem("Folders", LibraryView.VIDEO_FOLDERS, Icons.Rounded.FolderOpen, Color(0xFFFFAB40)),
                 DrawerMenuItem("Recently Added", LibraryView.VIDEO_RECENTLY_ADDED, Icons.Rounded.VideoLibrary, Color(0xFF00E676)),
-                DrawerMenuItem("Recently Played", LibraryView.VIDEO_RECENTLY_PLAYED, Icons.Rounded.History, Color(0xFF40C4FF)),
+                DrawerMenuItem("Recently Played", LibraryView.VIDEO_RECENTLY_PLAYED, Icons.Rounded.History, Color(0xFF00E676)),
                 DrawerMenuItem("Add-ons", LibraryView.ADDONS, Icons.Rounded.Extension, Color(0xFF00C2A8))
             )
         } else {
             listOf(
-                DrawerMenuItem("Home", LibraryView.HOME, Icons.Rounded.Home, Color(0xFF00E676)),
+                DrawerMenuItem("Home", LibraryView.HOME, Icons.Rounded.Home, Color(0xFF40C4FF)),
                 DrawerMenuItem("Smart Playlists", LibraryView.SMART_PLAYLISTS, Icons.Rounded.AutoAwesome, Color(0xFF7C4DFF)),
                 DrawerMenuItem("All Songs", LibraryView.ALL_SONGS, Icons.Rounded.MusicNote, Color(0xFFFF4081)),
                 DrawerMenuItem("Albums", LibraryView.ALBUMS, Icons.Rounded.Album, Color(0xFFB2FF59)),
@@ -6054,7 +6054,7 @@ fun SlideDrawerMenu(
                 DrawerMenuItem("Playlists", LibraryView.PLAYLISTS, Icons.AutoMirrored.Rounded.PlaylistPlay, Color(0xFFFDD835)),
                 DrawerMenuItem("Favorite Songs", LibraryView.FAVORITES, Icons.Rounded.Favorite, Color(0xFFFF5252)),
                 DrawerMenuItem("Recently Added", LibraryView.RECENTLY_ADDED, Icons.Rounded.NewReleases, Color(0xFF00E676)),
-                DrawerMenuItem("Recently Played", LibraryView.RECENTLY_PLAYED, Icons.Rounded.History, Color(0xFF40C4FF)),
+                DrawerMenuItem("Recently Played", LibraryView.RECENTLY_PLAYED, Icons.Rounded.History, Color(0xFF00E676)),
                 DrawerMenuItem("Radio", LibraryView.RADIO, Icons.Rounded.Radio, Color(0xFF00B8D4)),
                 DrawerMenuItem("SMB / NAS", LibraryView.SMB_NAS, Icons.Rounded.Storage, Color(0xFF546E7A)),
                 DrawerMenuItem("FTP / SFTP", LibraryView.FTP_SFTP, Icons.Rounded.Dns, Color(0xFF8D6E63)),
