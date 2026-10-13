@@ -754,11 +754,16 @@ fun MainScreen(
                             val targetScale = if (size.height > 0f) {
                                 (1f - (2f * headerTopPaddingPx / size.height)).coerceIn(0.5f, 1f)
                             } else 0.88f
-                            val s = (1f - ((1f - targetScale) * p)) * (1f - 0.05f * depth * p)
-                            scaleX = s
-                            scaleY = s
-                            // exactly the page's own tilt: every card is a uniformly scaled copy of the page
-                            // sharing its left hinge, so the edges stay parallel and the corners line up
+                            // Recents-style stack: each layer is SHORTER than the one in front of it
+                            // (page > layer 1 > layer 2) and WIDER than the one in front of it
+                            // (page < layer 1 < layer 2). The left hinge stays fixed, so the extra
+                            // width extends to the right and the stack keeps its parallel edges.
+                            val shrink = if (depth == 1) 0.05f else 0.10f
+                            val grow = if (depth == 1) 0.05f else 0.10f
+                            val pageScale = 1f - ((1f - targetScale) * p)
+                            scaleX = pageScale * (1f + grow * p)
+                            scaleY = pageScale * (1f - shrink * p)
+                            // exactly the page's own tilt and left hinge, so the edges stay parallel
                             rotationY = -12f * p
                             cameraDistance = 16f * density.density
                             transformOrigin = TransformOrigin(0f, 0.5f)
