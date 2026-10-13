@@ -241,6 +241,8 @@ fun PlayTogetherScreen(
                     routeProblem = ui.routeProblem,
                     // what stops same-place transfer right now (permission, Location, Bluetooth, Wi-Fi)
                     radioProblem = if (ui.nearbyEnabled) PtRadios.problem(context) else null,
+                    syncOffsetMs = ui.syncOffsetMs,
+                    onSyncOffset = { pt.setSyncOffsetMs(it) },
                     onNearbyToggle = { on ->
                         if (!on) { nearbyStep = 0; pt.setNearbyEnabled(false, byUser = true) }
                         else {
@@ -472,6 +474,8 @@ private fun RoomCard(
     route: PtRoute? = null,
     routeProblem: String? = null,
     radioProblem: String? = null,
+    syncOffsetMs: Int = 0,
+    onSyncOffset: (Int) -> Unit = {},
     onNearbyToggle: (Boolean) -> Unit,
     onCopy: () -> Unit,
     onShare: () -> Unit,
@@ -601,6 +605,46 @@ private fun RoomCard(
 
     Spacer(Modifier.height(14.dp))
 
+    // ---- sound timing fine-tune ----
+    GlassCard {
+        SectionLabel("SOUND TIMING (THIS PHONE)")
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "Phones are kept in step with the controller automatically. If this phone still sounds a little " +
+                "late next to the others (for example through a Bluetooth speaker), press + to make its sound come sooner; " +
+                "press \u2212 if it is early.",
+            color = Color.White.copy(0.55f), fontSize = 12.sp, lineHeight = 17.sp
+        )
+        Spacer(Modifier.height(10.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            SyncStepButton("\u221210", Modifier.weight(1f)) { onSyncOffset(syncOffsetMs - 10) }
+            SyncStepButton("\u22121", Modifier.weight(1f)) { onSyncOffset(syncOffsetMs - 1) }
+            Text(
+                text = (if (syncOffsetMs > 0) "+$syncOffsetMs" else "$syncOffsetMs") + " ms",
+                color = if (syncOffsetMs != 0) PtAmber else Color.White,
+                fontSize = 15.sp, fontWeight = FontWeight.Black,
+                maxLines = 1, softWrap = false, textAlign = TextAlign.Center,
+                modifier = Modifier.weight(1.3f)
+            )
+            SyncStepButton("+1", Modifier.weight(1f)) { onSyncOffset(syncOffsetMs + 1) }
+            SyncStepButton("+10", Modifier.weight(1f)) { onSyncOffset(syncOffsetMs + 10) }
+        }
+        if (syncOffsetMs != 0) {
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "Reset",
+                color = AccentBlue, fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                modifier = Modifier.clip(RoundedCornerShape(50)).clickable { onSyncOffset(0) }.padding(horizontal = 4.dp, vertical = 2.dp)
+            )
+        }
+    }
+
+    Spacer(Modifier.height(14.dp))
+
     // ---- members ----
     GlassCard {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -689,5 +733,22 @@ private fun SetupCard(problem: String?, onCopyRules: () -> Unit) {
         )
         Spacer(Modifier.height(10.dp))
         GhostButton("Copy rules", Modifier.fillMaxWidth(), onClick = onCopyRules)
+    }
+}
+
+/** One fixed-height pill of the sound-timing row; the label never wraps. */
+@Composable
+private fun SyncStepButton(label: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(12.dp)
+    Box(
+        modifier = modifier
+            .height(40.dp)
+            .clip(shape)
+            .background(Color.White.copy(alpha = 0.08f))
+            .border(1.dp, Color.White.copy(alpha = 0.10f), shape)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(label, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
     }
 }

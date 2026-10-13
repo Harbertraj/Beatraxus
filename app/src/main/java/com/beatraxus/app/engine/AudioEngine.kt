@@ -367,6 +367,41 @@ class AudioEngine(
         return activeSession?.currentRenderedPositionMs() ?: positionMs
     }
 
+    /**
+     * Play Together: true when the prepared (paused) song has decoded audio waiting, so play() is heard at once
+     * and the position is where it was asked to start.
+     */
+    fun isPrepared(): Boolean {
+        val session = activeSession ?: return false
+        if (isSeeking.get() || session.isSeekPending()) return false
+        val format = session.pcmFormat ?: return false
+        val channels = format.channels.coerceAtLeast(1)
+        // ~90 ms of decoded audio is enough for the output to start without an underrun
+        return session.ringBuffer.availableRead() >= (format.sampleRate.coerceAtLeast(8000) * channels * 90L / 1000L).toInt()
+    }
+
+    /**
+     * Play Together: moves what is heard by [driftMs] without a seek, sample-accurately.
+     * driftMs > 0: this phone is late, so that much already-decoded audio is skipped.
+     * driftMs < 0: this phone is early, so silence is inserted. A 4 ms fade-in hides the seam.
+     */
+    fun nudgePosition(driftMs: Long) {
+        engineScope.launch {
+            controlMutex.withLock {
+                val session = activeSession ?: return@withLock
+                if (session.isSeekPending() || isSeeking.get()) return@withLock
+                val format = session.pcmFormat ?: return@withLock
+                val channels = format.channels.coerceAtLeast(1)
+                val rate = format.sampleRate.coerceAtLeast(8000)
+                val bufferedMs = session.ringBuffer.availableRead().toLong() * 1000L / (rate.toLong() * channels)
+                val applied = com.beatraxus.app.features.PtSyncMath.nudgeLimitMs(driftMs, bufferedMs)
+                if (applied == 0L) return@withLock
+                session.adjustBasePositionForDrift(applied)
+                session.triggerFadeIn(4, rate)
+            }
+        }
+    }
+
     fun play(song: Song) {
         engineScope.launch {
             controlMutex.withLock {

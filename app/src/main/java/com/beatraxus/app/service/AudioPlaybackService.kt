@@ -2128,6 +2128,12 @@ class AudioPlaybackService : Service() {
     /** True while the player is playing or about to play (set the moment play starts, not when audio is heard). */
     fun wantsPlaying(): Boolean = engine.playbackStateFlow.value.isPlaying
 
+    /** Play Together: the prepared song has decoded audio waiting (see [AudioEngine.isPrepared]). */
+    fun isEngineReady(): Boolean = engine.isPrepared()
+
+    /** Play Together: sample-accurate position correction without a seek (see [AudioEngine.nudgePosition]). */
+    fun nudgePositionMs(driftMs: Long) = engine.nudgePosition(driftMs)
+
     fun prepareSong(song: Song, position: Long) {
         originalPlaylist = listOf(song)
         playlist = listOf(song)

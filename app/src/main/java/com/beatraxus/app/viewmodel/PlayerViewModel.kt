@@ -3426,6 +3426,14 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 override fun seekTo(ms: Long) {
                     viewModelScope.launch(Dispatchers.Main) { this@PlayerViewModel.seekTo(ms) }
                 }
+
+                override fun isReady(): Boolean = service?.isEngineReady() ?: true
+
+                override fun nudge(driftMs: Long): Boolean {
+                    val svc = service ?: return false
+                    svc.nudgePositionMs(driftMs)
+                    return true
+                }
             }
         )
     }

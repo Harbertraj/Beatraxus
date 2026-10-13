@@ -48,6 +48,8 @@ data class PtMember(val uid: String, val name: String, val isMe: Boolean, val is
 enum class PtStatus { IDLE, CONNECTING, CONNECTED }
 
 data class PtUiState(
+    /** Manual sound-timing correction for this phone in ms (positive: its sound comes sooner). */
+    val syncOffsetMs: Int = 0,
     val configured: Boolean = false,
     /** Why google-services.json could not be used (shown on the screen). */
     val configProblem: String? = null,
@@ -109,6 +111,13 @@ class PlayTogetherManager(
         fun playQueue(songs: List<Song>, index: Int, positionMs: Long, playing: Boolean)
         fun setPlaying(play: Boolean)
         fun seekTo(ms: Long)
+        /** True when the loaded (paused) song has audio decoded and waiting, so play is heard at once. */
+        fun isReady(): Boolean = true
+        /**
+         * Moves the sound by [driftMs] without a seek (positive: skip ahead, negative: pad with silence).
+         * False when the player cannot do that, so the caller seeks instead.
+         */
+        fun nudge(driftMs: Long): Boolean = false
     }
 
     private val app = context.applicationContext
@@ -140,6 +149,7 @@ class PlayTogetherManager(
     private var room: String? = null
     private var myName: String = _state.value.displayName
     private var clockOffsetMs = 0L
+    @Volatile private var clockMeasured = false
     private var roomState: RoomState? = null
     private var lastAppliedAt = 0L
     @Volatile private var ignoreLocalUntil = 0L
@@ -253,6 +263,13 @@ class PlayTogetherManager(
      * [byUser] is true when this comes from the person's own switch tap, which is remembered so a
      * manual "off" is not undone the next time a room is created or joined.
      */
+    /** Fine-tune for a phone whose sound arrives early/late next to the others (e.g. over Bluetooth). */
+    fun setSyncOffsetMs(ms: Int) {
+        val v = ms.coerceIn(-SYNC_OFFSET_LIMIT_MS, SYNC_OFFSET_LIMIT_MS)
+        prefs.edit().putInt(PREF_SYNC_OFFSET, v).apply()
+        _state.update { it.copy(syncOffsetMs = v) }
+    }
+
     fun setNearbyEnabled(on: Boolean, byUser: Boolean = false) {
         if (byUser) prefs.edit().putBoolean("nearby_opt_out", !on).apply()
         val enabled = on && PtNearbyTransfer.hasPermissions(app)
@@ -383,7 +400,7 @@ class PlayTogetherManager(
      */
     private fun loadConfig(): PtUiState {
         val name = prefs.getString("name", null) ?: (Build.MODEL ?: "My phone")
-        val base = PtUiState(displayName = name, nearbyEnabled = prefs.getBoolean(PREF_NEARBY_ON, false) && PtNearbyTransfer.hasPermissions(app))
+        val base = PtUiState(syncOffsetMs = prefs.getInt(PREF_SYNC_OFFSET, 0), displayName = name, nearbyEnabled = prefs.getBoolean(PREF_NEARBY_ON, false) && PtNearbyTransfer.hasPermissions(app))
         val text = try {
             app.assets.open("google-services.json").bufferedReader().use { it.readText() }
         } catch (e: Exception) {
@@ -622,6 +639,7 @@ class PlayTogetherManager(
 
     private fun stopJobs() {
         streamJob?.cancel(); heartbeatJob?.cancel(); tickerJob?.cancel(); refreshJob?.cancel()
+        gateJob?.cancel(); resyncJob?.cancel()
         streamJob = null; heartbeatJob = null; tickerJob = null; refreshJob = null
     }
 
@@ -765,8 +783,8 @@ class PlayTogetherManager(
                 val playing = host.isPlaying()
                 val pos = host.positionMs()
 
-                if (now < ignoreLocalUntil) {
-                    // we are applying a remote change: don't echo it back
+                if (now < ignoreLocalUntil || gateJob?.isActive == true) {
+                    // we are applying a remote change (or waiting for the exact start): don't echo it back
                     lastId = cur?.id; lastPlaying = playing; lastPos = pos; lastT = now
                     lastDur = cur?.durationMs ?: 0L
                     lastWasRoomSong = cur != null && matchesRoomSong(cur)
@@ -1427,7 +1445,7 @@ class PlayTogetherManager(
 
     private fun expectedPosition(st: RoomState): Long {
         val elapsed = if (st.playing) (serverNow() - st.updatedAt).coerceIn(0L, 10 * 60_000L) else 0L
-        return max(0L, st.positionMs + elapsed)
+        return max(0L, st.positionMs + elapsed + _state.value.syncOffsetMs)
     }
 
     /** Someone else changed what is playing: do the same here. */
@@ -1455,13 +1473,12 @@ class PlayTogetherManager(
                 val cur = host.currentSong()
                 var changed = true
                 if (cur?.id != remote.id) {
-                    host.playQueue(listOf(remote), 0, target + startLead(st.playing), st.playing)
-                } else {
+                    loadAndStart(listOf(remote), 0, st, target)
                     changed = false
-                    if (host.isPlaying() != st.playing) { host.setPlaying(st.playing); changed = true }
-                    if (syncSeekIfOff(st, target)) changed = true
+                } else {
+                    changed = syncSameSong(st, target)
                 }
-                if (st.playing && changed) scheduleResync()
+                if (st.playing && (changed || resyncJob?.isActive != true)) scheduleResync()
                 return
             }
             // Nothing to play yet: silence this phone and ask the controller to send the file.
@@ -1491,50 +1508,150 @@ class PlayTogetherManager(
                 songs += s
             }
             if (songs.none { it.id == local.id }) { songs.clear(); songs += local; index = 0 }
-            host.playQueue(songs, index, target + startLead(st.playing), st.playing)
-            resyncNeeded = true
+            loadAndStart(songs, index, st, target)
         } else {
-            if (host.isPlaying() != st.playing) { host.setPlaying(st.playing); resyncNeeded = true }
-            if (syncSeekIfOff(st, target)) resyncNeeded = true
+            resyncNeeded = syncSameSong(st, target)
         }
-        if (st.playing && resyncNeeded) scheduleResync()
+        if (st.playing && (resyncNeeded || resyncJob?.isActive != true)) scheduleResync()
     }
 
+    // =========================================================================================
+    // Exact start + continuous sync
+    // =========================================================================================
+
+    /** Learned: how long a freshly loaded song needs until its audio is ready (measured every start). */
+    @Volatile private var prepareMs = 400L
+    /** Learned: how long a seek needs until the paused song is ready again. */
+    @Volatile private var seekReadyMs = 250L
+    /** Learned: time from pressing play until the sound is actually heard (output buffer, DSP, Bluetooth...). */
+    @Volatile private var audioLatencyMs = 120L
+    @Volatile private var learnLatencyAt = 0L
+    @Volatile private var lastNudgeAt = 0L
+    private var gateJob: Job? = null
+
     /**
-     * Starting a song takes the player a moment, during which the room clock keeps running. The follower
-     * starts that much further into the song, so it lands on the controller's position instead of behind it.
-     * The amount is learned from how far behind the first check after a start finds this phone.
+     * The room is playing a song this phone does not have loaded: load it silently (paused), then press play at
+     * the exact moment the room clock reaches the parked position, so the very first sound already matches the
+     * controller instead of starting somewhere else and jumping afterwards.
      */
-    @Volatile private var startLeadMs = 250L
-    @Volatile private var leadSampleArmed = false
-
-    private fun startLead(playing: Boolean): Long {
-        if (!playing) return 0L
-        leadSampleArmed = true
-        lastSyncSeekAt = 0L
-        return startLeadMs
+    private fun loadAndStart(songs: List<Song>, index: Int, st: RoomState, target: Long) {
+        ignoreLocalUntil = SystemClock.elapsedRealtime() + 2_500
+        if (!st.playing) {
+            gateJob?.cancel()
+            host.playQueue(songs, index, target, false)
+            return
+        }
+        val park = PtSyncMath.parkPosition(target, prepareMs, audioLatencyMs)
+        host.playQueue(songs, index, park, false)
+        startGate(park, SystemClock.elapsedRealtime(), fresh = true)
     }
 
     /**
-     * Loading a song (from the library, a received file, Nearby or an online stream) takes a moment, and
-     * the position was worked out before that. Once this phone really plays, check it against the room
-     * clock every few hundred ms and jump to the right place until it holds, so followers land on the
-     * controller's position instead of staying 1-4 s behind.
+     * Same song is already loaded. Returns true when something was changed (so the sync watcher is re-armed).
+     */
+    private fun syncSameSong(st: RoomState, target: Long): Boolean {
+        val playingHere = host.isPlaying()
+        return when {
+            st.playing && !playingHere -> {
+                // resume / joined mid-song: park exactly and start in time (a running gate keeps its own watch)
+                if (gateJob?.isActive != true) {
+                    val park = PtSyncMath.parkPosition(target, seekReadyMs, audioLatencyMs)
+                    ignoreLocalUntil = SystemClock.elapsedRealtime() + 2_500
+                    host.seekTo(park)
+                    startGate(park, SystemClock.elapsedRealtime(), fresh = false)
+                }
+                true
+            }
+            !st.playing && playingHere -> {
+                gateJob?.cancel()
+                host.setPlaying(false)
+                syncSeekIfOff(st, target)
+                true
+            }
+            else -> syncSeekIfOff(st, target)
+        }
+    }
+
+    private fun startGate(parkedAt: Long, markedAt: Long, fresh: Boolean) {
+        gateJob?.cancel()
+        gateJob = scope.launch(Dispatchers.Default) {
+            var startAt = parkedAt
+            var markAt = markedAt
+            var learnPrepare = fresh
+            var learnSeek = !fresh
+            var reseeks = 0
+            val deadline = SystemClock.elapsedRealtime() + GATE_TIMEOUT_MS
+            while (isActive && SystemClock.elapsedRealtime() < deadline) {
+                delay(GATE_POLL_MS)
+                val st = roomState ?: return@launch
+                if (st.by == uid || !st.playing) return@launch
+                val cur = host.currentSong()
+                if (cur == null || !matchesRoomSong(cur) || !host.isReady()) continue
+                val now = SystemClock.elapsedRealtime()
+                if (now - markAt < GATE_SETTLE_MS) continue // a seek / load issued just now has not started yet
+
+                if (learnPrepare) {
+                    learnPrepare = false
+                    prepareMs = PtSyncMath.learn(prepareMs, now - markAt, 0.5, 80L, 6_000L)
+                } else if (learnSeek) {
+                    learnSeek = false
+                    seekReadyMs = PtSyncMath.learn(seekReadyMs, now - markAt, 0.5, 40L, 3_000L)
+                }
+
+                val wait = PtSyncMath.gateWaitMs(startAt, expectedPosition(st), audioLatencyMs)
+                when (PtSyncMath.gateStep(wait)) {
+                    PtSyncMath.GateStep.RESEEK -> {
+                        if (++reseeks > GATE_MAX_RESEEKS) break
+                        startAt = PtSyncMath.parkPosition(expectedPosition(st), seekReadyMs, audioLatencyMs)
+                        markAt = now
+                        learnSeek = true
+                        ignoreLocalUntil = now + 2_500
+                        host.seekTo(startAt)
+                        continue
+                    }
+                    PtSyncMath.GateStep.WAIT_THEN_START -> {
+                        // sleep most of it, then spin the last few ms for an exact start
+                        if (wait > 25) delay(wait - 20)
+                        while (isActive && PtSyncMath.gateWaitMs(startAt, expectedPosition(st), audioLatencyMs) > 1) delay(1)
+                    }
+                    PtSyncMath.GateStep.START_NOW -> {}
+                }
+                pressPlay()
+                return@launch
+            }
+            // took too long / kept missing: start anyway, the sync watcher closes whatever gap is left
+            if (isActive && roomState?.playing == true) pressPlay()
+        }
+    }
+
+    private fun pressPlay() {
+        val now = SystemClock.elapsedRealtime()
+        ignoreLocalUntil = now + 1_500
+        lastSyncSeekAt = 0L
+        learnLatencyAt = now + LATENCY_LEARN_DELAY_MS
+        host.setPlaying(true)
+        scheduleResync()
+    }
+
+    /**
+     * Keeps this phone on the controller's position for as long as the room plays. Small errors are removed by
+     * trimming / padding a few ms of audio (sample accurate, no seek, no volume dip); only a real jump seeks.
+     * Runs for the whole song: the controller's clock and the output keep drifting apart slowly.
      */
     private fun scheduleResync() {
         resyncJob?.cancel()
         resyncJob = scope.launch(Dispatchers.Default) {
-            val start = SystemClock.elapsedRealtime()
             var steady = 0
             var lastSeekAt = 0L
             var lastSeekTarget = -1L
             var prevPos = -1L
             var pausedChecks = 0
             var kicks = 0
-            while (isActive && SystemClock.elapsedRealtime() - start < RESYNC_WINDOW_MS && steady < 6) {
-                delay(RESYNC_STEP_MS)
+            while (isActive) {
+                delay(if (steady >= STEADY_CHECKS) RESYNC_IDLE_MS else RESYNC_STEP_MS)
                 val st = roomState ?: break
                 if (st.by == uid || !st.playing) break
+                if (gateJob?.isActive == true) { prevPos = -1L; continue } // the start gate owns the player right now
                 val cur = host.currentSong() ?: continue
                 if (!matchesRoomSong(cur)) { prevPos = -1L; continue } // still loading
                 if (!host.isPlaying()) {
@@ -1545,36 +1662,49 @@ class PlayTogetherManager(
                 }
                 pausedChecks = 0
                 // Only judge the position once audio is really running: right after a start or a seek the
-                // player reports the requested position without moving, and seeking again then only restarts the load.
+                // player reports the requested position without moving.
                 val pos = host.positionMs()
                 val advancing = prevPos >= 0 && pos - prevPos in 20L..1_000L && pos != lastSeekTarget
                 prevPos = pos
                 if (!advancing) continue
                 val now = SystemClock.elapsedRealtime()
-                if (now - lastSeekAt < RESYNC_SETTLE_MS) continue
-                val behind = expectedPosition(st) - pos // + = this phone is late, - = early
-                if (abs(behind) < 4_000) {
-                    // Learn how much a start / seek costs, so the next one lands on the room position instead of behind it.
-                    if (leadSampleArmed) {
-                        leadSampleArmed = false
-                        startLeadMs = (startLeadMs + (behind * 0.7f).toLong()).coerceIn(0L, 2_500L)
-                    } else if (seekSamplePending) {
-                        seekSamplePending = false
-                        seekLeadMs = (seekLeadMs + (behind * 0.8f).toLong()).coerceIn(0L, 2_500L)
+                if (now - lastSeekAt < RESYNC_SETTLE_MS || now - lastNudgeAt < NUDGE_SETTLE_MS) continue
+                val err = expectedPosition(st) - pos // + = this phone is late, - = early
+
+                // Learn how long play() really takes to be heard, from the first reading after a start.
+                if (learnLatencyAt != 0L && now >= learnLatencyAt) {
+                    learnLatencyAt = 0L
+                    if (abs(err) < 1_500) audioLatencyMs = PtSyncMath.learn(audioLatencyMs, audioLatencyMs + err, 0.7, 0L, 1_500L)
+                }
+
+                when (PtSyncMath.fixFor(err)) {
+                    PtSyncMath.Fix.NONE -> steady++
+                    PtSyncMath.Fix.NUDGE -> {
+                        steady = 0
+                        if (host.nudge(err)) {
+                            lastNudgeAt = now
+                        } else if (now - lastSeekAt >= RESYNC_SEEK_GAP_MS) {
+                            lastSeekAt = now; lastSyncSeekAt = now
+                            ignoreLocalUntil = now + 1_000
+                            lastSeekTarget = expectedPosition(st) + seekLeadMs
+                            seekSamplePending = true
+                            host.seekTo(lastSeekTarget)
+                        }
+                    }
+                    PtSyncMath.Fix.SEEK -> {
+                        steady = 0
+                        if (now - lastSeekAt >= RESYNC_SEEK_GAP_MS) {
+                            lastSeekAt = now; lastSyncSeekAt = now
+                            ignoreLocalUntil = now + 1_000
+                            lastSeekTarget = expectedPosition(st) + seekLeadMs
+                            seekSamplePending = true
+                            host.seekTo(lastSeekTarget) // a seek takes a while to land: aim ahead by what it cost last time
+                        }
                     }
                 }
-                if (abs(behind) > RESYNC_TOLERANCE_MS) {
-                    if (now - lastSeekAt >= RESYNC_SEEK_GAP_MS) {
-                        lastSeekAt = now
-                        lastSyncSeekAt = now
-                        steady = 0
-                        ignoreLocalUntil = now + 1_000
-                        lastSeekTarget = expectedPosition(st) + seekLeadMs
-                        seekSamplePending = true
-                        host.seekTo(lastSeekTarget) // a seek takes a while to land: aim ahead by what it cost last time
-                    }
-                } else {
-                    steady++
+                if (seekSamplePending && now - lastSeekAt > RESYNC_SETTLE_MS && lastSeekAt != 0L) {
+                    seekSamplePending = false
+                    seekLeadMs = PtSyncMath.learn(seekLeadMs, seekLeadMs + err, 0.8, 0L, 2_500L)
                 }
             }
         }
@@ -1595,7 +1725,16 @@ class PlayTogetherManager(
 
     /** Applies the room position to a follower already on the right song. True when it seeked. */
     private fun syncSeekIfOff(st: RoomState, target: Long): Boolean {
-        val err = abs(host.positionMs() - target)
+        val signed = target - host.positionMs() // + = this phone is late
+        if (st.playing && host.isPlaying() && gateJob?.isActive != true &&
+            PtSyncMath.fixFor(signed) == PtSyncMath.Fix.NUDGE
+        ) {
+            // small error: trim / pad a few ms of audio, no seek, no volume dip
+            val now = SystemClock.elapsedRealtime()
+            if (now - lastNudgeAt >= NUDGE_SETTLE_MS && host.nudge(signed)) lastNudgeAt = now
+            return false
+        }
+        val err = abs(signed)
         if (st.anchor) {
             if (err <= ANCHOR_SEEK_MS || !canSyncSeek()) return false
         } else if (err <= DRIFT_SEEK_MS) return false
@@ -1609,6 +1748,11 @@ class PlayTogetherManager(
         val st = roomState ?: return
         if (st.by == uid || !st.playing || !playing || !matchesRoomSong(cur)) return
         val target = expectedPosition(st)
+        val signed = target - pos
+        if (gateJob?.isActive != true && PtSyncMath.fixFor(signed) == PtSyncMath.Fix.NUDGE) {
+            val now = SystemClock.elapsedRealtime()
+            if (now - lastNudgeAt >= NUDGE_SETTLE_MS && host.nudge(signed)) { lastNudgeAt = now; return }
+        }
         if (abs(pos - target) > DRIFT_SEEK_MS && canSyncSeek()) {
             lastSyncSeekAt = SystemClock.elapsedRealtime()
             ignoreLocalUntil = SystemClock.elapsedRealtime() + 1_500
@@ -1913,7 +2057,7 @@ class PlayTogetherManager(
     private suspend fun measureClockOffset(code: String) {
         var best: Long? = null
         var bestRtt = Long.MAX_VALUE
-        repeat(5) {
+        repeat(if (clockMeasured) 5 else 9) {
             val t0 = System.currentTimeMillis()
             call("PUT", "$code/clock/$uid", serverValue().toString())
             val t1 = System.currentTimeMillis()
@@ -1921,7 +2065,12 @@ class PlayTogetherManager(
             val rtt = t1 - t0
             if (rtt < bestRtt) { bestRtt = rtt; best = server - (t0 + t1) / 2 }
         }
-        best?.let { clockOffsetMs = it }
+        best?.let {
+            // blend with earlier measurements (fast round trips count more) instead of jumping to each new value
+            clockOffsetMs = PtSyncMath.blendClockOffset(if (clockMeasured) clockOffsetMs else null, it, bestRtt)
+            clockMeasured = true
+            if (bestRtt < 2_000) uplinkMs = ((uplinkMs + bestRtt / 2) / 2).coerceIn(2L, 600L)
+        }
     }
 
     private fun urlFor(code: String, sub: String, extra: String = ""): String {
@@ -2102,6 +2251,20 @@ class PlayTogetherManager(
         /** Minimum time between two timing-correction seeks on a follower (a seek is audible). */
         const val MIN_SYNC_SEEK_GAP_MS = 3_000L
         const val REFRESH_DEBOUNCE_MS = 25L
+        const val PREF_SYNC_OFFSET = "sync_offset_ms"
+        const val SYNC_OFFSET_LIMIT_MS = 500
+        /** Start gate: how often readiness is polled, how long it may take, how many repositions are allowed. */
+        const val GATE_POLL_MS = 8L
+        const val GATE_SETTLE_MS = 60L
+        const val GATE_TIMEOUT_MS = 20_000L
+        const val GATE_MAX_RESEEKS = 3
+        /** After pressing play, this long before the first position check is used to learn the audio latency. */
+        const val LATENCY_LEARN_DELAY_MS = 700L
+        /** Sync watcher: consecutive good readings before it relaxes to [RESYNC_IDLE_MS] checks. */
+        const val STEADY_CHECKS = 6
+        const val RESYNC_IDLE_MS = 1_000L
+        /** After a nudge, wait this long before judging the position again. */
+        const val NUDGE_SETTLE_MS = 500L
         const val RESYNC_STEP_MS = 150L
         /** After a correction seek, wait this long before judging the position again. */
         const val RESYNC_SETTLE_MS = 700L
