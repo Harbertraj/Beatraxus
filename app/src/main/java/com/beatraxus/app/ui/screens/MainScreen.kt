@@ -740,7 +740,7 @@ fun MainScreen(
             WindowInsets.statusBars.getTop(this) + 16.dp.toPx()
         }
 
-        // Two translucent black cards, edged in the selected library icon's colour, peek out behind the page.
+        // Two translucent black cards peek out behind the page without library tint.
         if (drawerProgress > 0f) {
             val deckShape = RoundedCornerShape(contentCornerRadius.coerceAtLeast(0.dp))
             for (depth in 1..2) {
@@ -772,24 +772,10 @@ fun MainScreen(
                         .clip(deckShape)
                         // first layer: medium transparent black, last layer: a deeper transparent black
                         .background(Color.Black.copy(alpha = if (depth == 1) 0.50f else 0.72f))
-                        // the colour of the selected library icon only tints the layer softly ...
-                        .background(
-                            Brush.verticalGradient(
-                                listOf(
-                                    viewAccentColor.copy(alpha = if (depth == 1) 0.20f else 0.12f),
-                                    Color.Transparent
-                                )
-                            )
-                        )
-                        // ... and lights its edge
+                        // Subtle neutral border with no library tint
                         .border(
                             1.dp,
-                            Brush.verticalGradient(
-                                listOf(
-                                    viewAccentColor.copy(alpha = if (depth == 1) 0.85f else 0.55f),
-                                    viewAccentColor.copy(alpha = 0.12f)
-                                )
-                            ),
+                            Color.White.copy(alpha = if (depth == 1) 0.10f else 0.05f),
                             deckShape
                         )
                 )
@@ -825,17 +811,18 @@ fun MainScreen(
                     drawContent()
                     val p = drawerProgress.coerceIn(0f, 1f)
                     if (p > 0.01f) {
-                        // glassy rim that fades in with the drawer
+                        // glassy rim that fades in with the drawer: library accent tint on top edge, dark grey tint on bottom edge
                         val r = contentCornerRadius.coerceAtLeast(0.dp).toPx()
                         drawRoundRect(
                             brush = Brush.linearGradient(
-                                listOf(
-                                    viewAccentColor.copy(alpha = 0.85f * p),
-                                    Color.White.copy(alpha = 0.22f * p),
-                                    Color.Transparent
+                                colorStops = arrayOf(
+                                    0.0f to viewAccentColor.copy(alpha = 0.85f * p),
+                                    0.25f to Color.White.copy(alpha = 0.22f * p),
+                                    0.55f to Color.Transparent,
+                                    1.0f to Color.DarkGray.copy(alpha = 0.7f * p)
                                 ),
                                 start = Offset.Zero,
-                                end = Offset(size.width, size.height * 0.6f)
+                                end = Offset(size.width, size.height)
                             ),
                             cornerRadius = androidx.compose.ui.geometry.CornerRadius(r),
                             style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.6.dp.toPx())

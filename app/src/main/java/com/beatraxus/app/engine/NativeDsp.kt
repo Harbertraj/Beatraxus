@@ -264,15 +264,18 @@ class NativeDsp : AutoCloseable {
     suspend fun extractFeatures(context: android.content.Context, uri: android.net.Uri, seconds: Int): AudioFeatures? = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
         if (uri == android.net.Uri.EMPTY || uri.scheme?.startsWith("http") == true) return@withContext null
         
-        // Guard against ALAC files which cause native SIGSEGV due to MediaCodec config failures
+        // A SIGSEGV inside native code cannot be caught by try/catch, so we must never hand the
+        // native extractor a codec it cannot decode safely. Known offenders: ALAC, and E-AC-3/AC-3/
+        // DTS/TrueHD/AC-4 (many devices ship no hardware/software decoder -> null deref in MediaCodec).
         val mimeType = context.contentResolver.getType(uri)
         val extension = uri.path?.substringAfterLast('.', "")?.lowercase()
-        
-        val isAlac = mimeType == "audio/alac" || extension == "alac" || 
-                    isAlacEncoded(context, uri, extension)
 
-        if (isAlac) {
-            android.util.Log.w("NativeDsp", "Skipping feature extraction for ALAC to avoid native crash: $uri")
+        if (mimeType == "audio/alac" || extension == "alac" || extension in UNSAFE_EXTENSIONS) {
+            Log.w("NativeDsp", "Skipping feature extraction for unsafe format (ext=$extension, mime=$mimeType): $uri")
+            return@withContext null
+        }
+        if (!isSafeForNativeDecode(context, uri, extension)) {
+            Log.w("NativeDsp", "Skipping feature extraction: codec not safe/available for native decode: $uri")
             return@withContext null
         }
 
@@ -323,27 +326,44 @@ class NativeDsp : AutoCloseable {
         }
     }
 
-    private fun isAlacEncoded(context: android.content.Context, uri: android.net.Uri, extension: String?): Boolean {
+    /**
+     * Whitelist approach: only allow the native extractor for codecs known to decode cleanly via
+     * the NDK, and only when the device actually has a decoder for the track. Anything else
+     * (ALAC, E-AC-3, AC-3, DTS, TrueHD, AC-4, unknown) is skipped -> caller falls back to heuristics.
+     * DSF is handled natively without MediaCodec, so it is allowed through.
+     */
+    private fun isSafeForNativeDecode(context: android.content.Context, uri: android.net.Uri, extension: String?): Boolean {
+        if (extension == "dsf") return true
         val extractor = android.media.MediaExtractor()
         return try {
             extractor.setDataSource(context, uri, null)
-            var foundAlac = false
+            var safe = false
             for (i in 0 until extractor.trackCount) {
                 val format = extractor.getTrackFormat(i)
-                val mime = format.getString(android.media.MediaFormat.KEY_MIME) ?: ""
-                if (mime.contains("alac", ignoreCase = true)) {
-                    foundAlac = true
-                    break
-                }
+                val mime = (format.getString(android.media.MediaFormat.KEY_MIME) ?: "").lowercase()
+                if (!mime.startsWith("audio/")) continue
+                if (mime !in SAFE_MIME_TYPES) return false
+                val decoder = android.media.MediaCodecList(android.media.MediaCodecList.REGULAR_CODECS)
+                    .findDecoderForFormat(format)
+                safe = decoder != null
+                break
             }
-            foundAlac
-        } catch (e: Exception) {
-            // If extractor fails, check extension as last resort. 
+            safe
+        } catch (e: Throwable) {
+            // If the extractor cannot even open the file, native decode will not work either.
             // Do NOT use MediaMetadataRetriever here as it may crash the process.
-            extension == "alac" || extension == "caf"
+            false
         } finally {
             try { extractor.release() } catch (e: Exception) {}
         }
+    }
+
+    private companion object {
+        val UNSAFE_EXTENSIONS = setOf("alac", "caf", "ac3", "eac3", "ec3", "ec-3", "dts", "dtshd", "thd", "truehd", "ac4")
+        val SAFE_MIME_TYPES = setOf(
+            "audio/mpeg", "audio/mp4a-latm", "audio/flac", "audio/vorbis", "audio/opus",
+            "audio/raw", "audio/x-wav", "audio/amr-wb", "audio/3gpp"
+        )
     }
 
     private external fun nExtractFeatures(fd: Int, seconds: Int): FloatArray?

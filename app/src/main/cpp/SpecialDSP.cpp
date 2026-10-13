@@ -2688,25 +2688,39 @@ JNIEXPORT jfloatArray JNICALL Java_com_beatraxus_app_engine_NativeDsp_nExtractFe
     for (int i = 0; i < AMediaExtractor_getTrackCount(ex); i++) {
         AMediaFormat* format = AMediaExtractor_getTrackFormat(ex, i);
         if (!format) continue;
-        const char* mime;
-        if (AMediaFormat_getString(format, AMEDIAFORMAT_KEY_MIME, &mime)) {
-            if (strncmp(mime, "audio/", 6) == 0) {
-                trackIdx = i;
-                codec = AMediaCodec_createDecoderByType(mime);
-                if (codec) {
-                    media_status_t status = AMediaCodec_configure(codec, format, nullptr, nullptr, 0);
-                    if (status != AMEDIA_OK) {
-                        AMediaCodec_delete(codec);
-                        codec = nullptr;
-                    } else {
-                        AMediaExtractor_selectTrack(ex, i);
-                    }
-                }
+        const char* mime = nullptr;
+        bool found = false;
+        if (AMediaFormat_getString(format, AMEDIAFORMAT_KEY_MIME, &mime) && mime &&
+            strncmp(mime, "audio/", 6) == 0) {
+            // Only decode codecs known to be safe through the NDK. E-AC-3/AC-3/DTS/TrueHD/ALAC
+            // can SIGSEGV inside MediaCodec on devices lacking a decoder. Caller falls back.
+            static const char* kSafe[] = {"audio/mpeg", "audio/mp4a-latm", "audio/flac",
+                                          "audio/vorbis", "audio/opus", "audio/raw",
+                                          "audio/x-wav", "audio/amr-wb", "audio/3gpp"};
+            bool safe = false;
+            for (const char* s : kSafe) if (strcmp(mime, s) == 0) { safe = true; break; }
+            if (!safe) {
+                __android_log_print(ANDROID_LOG_WARN, "NativeDsp", "nExtractFeatures: unsafe mime %s, skipping", mime);
                 AMediaFormat_delete(format);
-                if (codec) break;
+                AMediaExtractor_delete(ex);
+                return nullptr;
+            }
+            trackIdx = i;
+            codec = AMediaCodec_createDecoderByType(mime);
+            if (codec) {
+                media_status_t status = AMediaCodec_configure(codec, format, nullptr, nullptr, 0);
+                if (status != AMEDIA_OK) {
+                    AMediaCodec_delete(codec);
+                    codec = nullptr;
+                } else {
+                    AMediaExtractor_selectTrack(ex, i);
+                    found = true;
+                }
             }
         }
-        if (format) AMediaFormat_delete(format);
+        // Delete the format exactly once (previously deleted twice when codec creation failed).
+        AMediaFormat_delete(format);
+        if (found) break;
     }
 
     if (!codec) {
@@ -2731,15 +2745,26 @@ JNIEXPORT jfloatArray JNICALL Java_com_beatraxus_app_engine_NativeDsp_nExtractFe
         AMediaFormat_delete(format);
     }
 
+    if (sampleRate <= 0) sampleRate = 44100;
+    if (channels <= 0) channels = 2;
+    int32_t pcmEncoding = 2; // ENCODING_PCM_16BIT
+    {
+        AMediaFormat* of = AMediaCodec_getOutputFormat(codec);
+        if (of) { AMediaFormat_getInt32(of, "pcm-encoding", &pcmEncoding); AMediaFormat_delete(of); }
+    }
+
     int64_t maxSamples = (int64_t)seconds * sampleRate * channels;
     if (maxSamples <= 0) maxSamples = 30 * sampleRate * channels;
+    int guard = 0; // bail out instead of spinning forever on a stalled codec
 
-    while (!sawOutputEOS && pcm.size() < maxSamples) {
+    while (!sawOutputEOS && (int64_t)pcm.size() < maxSamples && guard < 20000) {
+        guard++;
         if (!sawInputEOS) {
             ssize_t inputIdx = AMediaCodec_dequeueInputBuffer(codec, 2000);
             if (inputIdx >= 0) {
-                size_t inputSize;
+                size_t inputSize = 0;
                 uint8_t* inputBuf = AMediaCodec_getInputBuffer(codec, inputIdx, &inputSize);
+                if (!inputBuf) break;
                 ssize_t sampleSize = AMediaExtractor_readSampleData(ex, inputBuf, inputSize);
                 if (sampleSize < 0) {
                     AMediaCodec_queueInputBuffer(codec, inputIdx, 0, 0, 0, AMEDIACODEC_BUFFER_FLAG_END_OF_STREAM);
@@ -2757,19 +2782,34 @@ JNIEXPORT jfloatArray JNICALL Java_com_beatraxus_app_engine_NativeDsp_nExtractFe
             if (info.flags & AMEDIACODEC_BUFFER_FLAG_END_OF_STREAM) sawOutputEOS = true;
             size_t outputSize;
             uint8_t* outputBuf = AMediaCodec_getOutputBuffer(codec, outputIdx, &outputSize);
-            int16_t* s16 = (int16_t*)(outputBuf + info.offset);
-            int count = info.size / sizeof(int16_t);
-            for (int i = 0; i < count; i++) pcm.push_back(s16[i] / 32768.0f);
+            if (outputBuf && info.size > 0 && (size_t)(info.offset + info.size) <= outputSize) {
+                if (pcmEncoding == 4) { // ENCODING_PCM_FLOAT
+                    const float* f32 = (const float*)(outputBuf + info.offset);
+                    int count = info.size / sizeof(float);
+                    for (int i = 0; i < count; i++) pcm.push_back(f32[i]);
+                } else {
+                    const int16_t* s16 = (const int16_t*)(outputBuf + info.offset);
+                    int count = info.size / sizeof(int16_t);
+                    for (int i = 0; i < count; i++) pcm.push_back(s16[i] / 32768.0f);
+                }
+            }
             AMediaCodec_releaseOutputBuffer(codec, outputIdx, false);
         } else if (outputIdx == AMEDIACODEC_INFO_OUTPUT_FORMAT_CHANGED) {
             AMediaFormat* newFormat = AMediaCodec_getOutputFormat(codec);
-            AMediaFormat_getInt32(newFormat, AMEDIAFORMAT_KEY_SAMPLE_RATE, &sampleRate);
-            AMediaFormat_getInt32(newFormat, AMEDIAFORMAT_KEY_CHANNEL_COUNT, &channels);
-            AMediaFormat_delete(newFormat);
+            if (newFormat) {
+                AMediaFormat_getInt32(newFormat, AMEDIAFORMAT_KEY_SAMPLE_RATE, &sampleRate);
+                AMediaFormat_getInt32(newFormat, AMEDIAFORMAT_KEY_CHANNEL_COUNT, &channels);
+                AMediaFormat_getInt32(newFormat, "pcm-encoding", &pcmEncoding);
+                AMediaFormat_delete(newFormat);
+                if (sampleRate <= 0) sampleRate = 44100;
+                if (channels <= 0) channels = 2;
+            }
         }
     }
 
     AMediaCodec_stop(codec); AMediaCodec_delete(codec); AMediaExtractor_delete(ex);
+
+    if (pcm.size() < (size_t)channels * 4096) return nullptr; // too little audio to analyse
 
     AudioAnalyzer analyzer(sampleRate);
     AnalysisResults res = analyzer.analyze(pcm.data(), pcm.size() / channels, channels);
