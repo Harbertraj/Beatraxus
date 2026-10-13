@@ -1,6 +1,8 @@
 package com.beatraxus.app.motionboost
 
+import android.app.Activity
 import android.content.Context
+import android.content.ContextWrapper
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -8,6 +10,7 @@ import android.util.Log
 import android.view.Surface
 import android.view.SurfaceHolder
 import android.view.SurfaceView
+import android.view.Window
 import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
 
@@ -33,6 +36,7 @@ class MotionBoostSurfaceView(context: Context) : SurfaceView(context), SurfaceHo
     private var renderer: MotionBoostRenderer? = null
     private var inputSurface: Surface? = null
     private var targetFps = 60
+    private var extreme = false
     private var brightness = 0f
     private var contrast = 1f
     private var saturation = 1f
@@ -48,9 +52,17 @@ class MotionBoostSurfaceView(context: Context) : SurfaceView(context), SurfaceHo
     }
 
     fun setTargetFps(fps: Int) {
+        val changed = fps != targetFps
         targetFps = fps
         renderer?.setTargetFps(fps)
         applyFrameRateHint()
+        if (changed) applyDisplayMode()
+    }
+
+    /** Extreme performance: lighter working resolution + performance hints for the highest FPS. */
+    fun setExtreme(enabled: Boolean) {
+        extreme = enabled
+        renderer?.setExtreme(enabled)
     }
 
     fun setColorGrade(brightness: Float, contrast: Float, saturation: Float) {
@@ -80,9 +92,10 @@ class MotionBoostSurfaceView(context: Context) : SurfaceView(context), SurfaceHo
                 Log.e(TAG, "FPS Booster failed: $message")
                 main.post { if (renderer === created) onError?.invoke(message) }
             }
-        })
+        }, context.applicationContext)
         renderer = created
         created.setTargetFps(targetFps)
+        created.setExtreme(extreme)
         created.setColorGrade(brightness, contrast, saturation)
         player?.let { p ->
             p.addListener(playerListener)
@@ -91,6 +104,7 @@ class MotionBoostSurfaceView(context: Context) : SurfaceView(context), SurfaceHo
         }
         created.start()
         applyFrameRateHint()
+        applyDisplayMode()
     }
 
     override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
@@ -105,6 +119,48 @@ class MotionBoostSurfaceView(context: Context) : SurfaceView(context), SurfaceHo
         inputSurface = null
         renderer?.release()
         renderer = null
+        clearDisplayMode()
+    }
+
+    private fun findWindow(): Window? {
+        var c: Context? = context
+        while (c is ContextWrapper) {
+            if (c is Activity) return c.window
+            c = c.baseContext
+        }
+        return null
+    }
+
+    /**
+     * Makes the panel actually run at the chosen rate. setFrameRate() alone is only a hint, and on a lot of
+     * phones the display stays in a 60 Hz mode, so 90 / 120 FPS ended up showing 60. Requesting the display
+     * mode directly (same resolution, matching refresh rate) fixes that.
+     */
+    private fun applyDisplayMode() {
+        val window = findWindow() ?: return
+        if (targetFps <= 0) return
+        try {
+            val choice = DisplayRefreshRate.preferredMode(context, targetFps) ?: return
+            val lp = window.attributes
+            if (lp.preferredDisplayModeId != choice.modeId) {
+                lp.preferredDisplayModeId = choice.modeId
+                window.attributes = lp
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "preferred display mode failed", t)
+        }
+    }
+
+    private fun clearDisplayMode() {
+        val window = findWindow() ?: return
+        try {
+            val lp = window.attributes
+            if (lp.preferredDisplayModeId != 0) {
+                lp.preferredDisplayModeId = 0
+                window.attributes = lp
+            }
+        } catch (_: Throwable) {
+        }
     }
 
     /** Asks the system to run the panel at (a multiple of) the target rate so frames are paced evenly. */

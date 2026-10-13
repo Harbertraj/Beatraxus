@@ -544,6 +544,7 @@ fun VideoPlayerScreen(
             update = { view ->
                 (view.tag as? MotionBoostSurfaceView)?.apply {
                     setTargetFps(uiState.motionBoostMode.targetFps)
+                    setExtreme(uiState.motionBoostExtreme)
                     setColorGrade(uiState.colorBrightness, uiState.colorContrast, uiState.colorSaturation)
                 }
                 // Apply brightness / contrast / saturation to the video layer.
@@ -2159,7 +2160,11 @@ fun VideoSettingsSheetContent(
 
         // FPS Booster Section
         if (activeSheetType == PlayerSheetType.MOTION_BOOST) {
-            MotionBoostSheetContent(uiState = uiState, onModeSelect = { viewModel.setMotionBoostMode(it) })
+            MotionBoostSheetContent(
+                uiState = uiState,
+                onModeSelect = { viewModel.setMotionBoostMode(it) },
+                onExtremeChange = { viewModel.setMotionBoostExtreme(it) }
+            )
         }
 
         // Sleep Timer Section
@@ -2176,7 +2181,8 @@ fun VideoSettingsSheetContent(
 @Composable
 fun MotionBoostSheetContent(
     uiState: VideoPlayerUiState,
-    onModeSelect: (MotionBoostMode) -> Unit
+    onModeSelect: (MotionBoostMode) -> Unit,
+    onExtremeChange: (Boolean) -> Unit = {}
 ) {
     val mxOrange = Color(0xFFFF8F00)
     val context = LocalContext.current
@@ -2204,10 +2210,51 @@ fun MotionBoostSheetContent(
             val src = uiState.motionBoostSourceFps
             val out = uiState.motionBoostOutputFps
             Text(
-                text = "Source %.0f FPS \u2192 showing %.0f FPS".format(src, out),
+                text = "Source %.0f FPS \u2192 showing %.0f FPS (panel %.0f Hz)"
+                    .format(src, out, DisplayRefreshRate.currentRate(context)),
                 color = mxOrange,
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Medium
+            )
+        }
+
+        // Extreme performance toggle
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(
+                    if (uiState.motionBoostExtreme) mxOrange.copy(alpha = 0.2f)
+                    else Color.White.copy(alpha = 0.06f)
+                )
+                .border(
+                    width = 1.dp,
+                    color = if (uiState.motionBoostExtreme) mxOrange.copy(alpha = 0.8f) else Color.White.copy(alpha = 0.08f),
+                    shape = RoundedCornerShape(12.dp)
+                )
+                .clickable { onExtremeChange(!uiState.motionBoostExtreme) }
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Extreme performance",
+                    color = Color.White,
+                    fontSize = 16.sp,
+                    fontWeight = if (uiState.motionBoostExtreme) FontWeight.Bold else FontWeight.Medium
+                )
+                Text(
+                    text = "Highest FPS and smoothness on heavy videos. Lighter processing, so the picture is a bit softer. " +
+                        "Leave off for original quality.",
+                    color = Color.White.copy(alpha = 0.55f),
+                    fontSize = 12.sp
+                )
+            }
+            Switch(
+                checked = uiState.motionBoostExtreme,
+                onCheckedChange = onExtremeChange,
+                colors = SwitchDefaults.colors(checkedThumbColor = mxOrange, checkedTrackColor = mxOrange.copy(0.4f))
             )
         }
 

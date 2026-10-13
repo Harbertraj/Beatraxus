@@ -67,4 +67,50 @@ class MotionBoostTimingTest {
         assertFalse(MotionBoostMode.ORIGINAL.isEnabled)
         assertTrue(MotionBoostMode.FPS_120.isEnabled)
     }
+
+    @Test
+    fun ninetyFpsOn120HzIsNotRoundedDownTo60() {
+        val vsync = 8_333_333L
+        val interval = (1_000_000_000.0 / 90).toLong()
+        var due = 0L
+        var drawn = 0
+        var v = 1_000_000_000L
+        val end = v + 2_000_000_000L
+        while (v < end) {
+            if (MotionBoostTiming.isDue(v, due, vsync)) {
+                drawn++
+                due = MotionBoostTiming.nextDue(due, v, interval)
+            }
+            v += vsync
+        }
+        assertTrue("drawn=$drawn", drawn in 178..182) // ~90 per second, not ~120 / 60
+    }
+
+    @Test
+    fun hundredTwentyFpsOn120HzDrawsEveryVsync() {
+        val vsync = 8_333_333L
+        var due = 0L
+        var drawn = 0
+        var v = 1_000_000_000L
+        repeat(240) {
+            if (MotionBoostTiming.isDue(v, due, vsync)) {
+                drawn++
+                due = MotionBoostTiming.nextDue(due, v, vsync)
+            }
+            v += vsync
+        }
+        assertEquals(240, drawn)
+    }
+
+    @Test
+    fun picksRefreshRateForTarget() {
+        val modes = listOf(60f, 90f, 120f)
+        assertEquals(90f, MotionBoostTiming.pickRefreshRate(modes, 90))
+        assertEquals(120f, MotionBoostTiming.pickRefreshRate(modes, 120))
+        assertEquals(60f, MotionBoostTiming.pickRefreshRate(modes, 60))
+        assertEquals(90f, MotionBoostTiming.pickRefreshRate(modes, 45))
+        assertEquals(120f, MotionBoostTiming.pickRefreshRate(listOf(60f, 120f), 90))
+        assertEquals(120f, MotionBoostTiming.pickRefreshRate(listOf(60f, 120f), 144))
+        assertEquals(null, MotionBoostTiming.pickRefreshRate(emptyList(), 90))
+    }
 }

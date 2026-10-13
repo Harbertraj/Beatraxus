@@ -1,5 +1,6 @@
 package com.beatraxus.app.motionboost
 
+import android.content.Context
 import android.graphics.SurfaceTexture
 import android.opengl.EGL14
 import android.opengl.EGLConfig
@@ -9,9 +10,11 @@ import android.opengl.EGLExt
 import android.opengl.EGLSurface
 import android.opengl.GLES11Ext
 import android.opengl.GLES30
+import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.Looper
+import android.os.PerformanceHintManager
 import android.os.Process
 import android.util.Log
 import android.view.Choreographer
@@ -41,7 +44,8 @@ import kotlin.math.min
  */
 class MotionBoostRenderer(
     private val outputSurface: Surface,
-    private val callbacks: Callbacks
+    private val callbacks: Callbacks,
+    private val context: Context? = null
 ) {
 
     interface Callbacks {
@@ -63,6 +67,10 @@ class MotionBoostRenderer(
 
     @Volatile private var released = false
     @Volatile private var targetFps = 60
+    /** Extreme performance: lighter working resolution + CPU/GPU performance hints. */
+    @Volatile private var extreme = false
+    private var appliedExtreme = false
+    private var hintSession: PerformanceHintManager.Session? = null
     @Volatile private var brightness = 0f
     @Volatile private var contrast = 1f
     @Volatile private var saturation = 1f
@@ -92,8 +100,10 @@ class MotionBoostRenderer(
     // ---- sizes ----
     private var srcW = 0
     private var srcH = 0
-    private var workW = 0
+    private var workW = 0   // motion-estimation working size
     private var workH = 0
+    private var frameW = 0  // size of the stored frames that are shown on screen
+    private var frameH = 0
     private var lumaW = 0
     private var lumaH = 0
     private var halfW = 0
@@ -112,6 +122,7 @@ class MotionBoostRenderer(
     private var vsyncPeriodNs = 8_333_333L
     private var lastVsyncNs = 0L
     private var lastPresentNs = 0L
+    private var nextDueNs = 0L
 
     // ---- redraw bookkeeping ----
     private var lastDrawnCur: Slot? = null
@@ -145,6 +156,17 @@ class MotionBoostRenderer(
 
     fun setTargetFps(fps: Int) {
         targetFps = fps.coerceIn(1, 240)
+    }
+
+    fun setExtreme(enabled: Boolean) {
+        if (extreme == enabled) return
+        extreme = enabled
+        handler.post {
+            runGuarded("resize failed") {
+                updateHintSession()
+                if (srcW > 0 && srcH > 0) applySourceSize(srcW, srcH)
+            }
+        }
     }
 
     fun setColorGrade(brightness: Float, contrast: Float, saturation: Float) {
@@ -235,6 +257,7 @@ class MotionBoostRenderer(
         inputSurface = s
         callbacks.onInputSurfaceReady(s)
 
+        updateHintSession()
         choreographer = Choreographer.getInstance()
         choreographer?.postFrameCallback(frameCallback)
     }
@@ -242,11 +265,19 @@ class MotionBoostRenderer(
     /** (Re)allocates the frame slots for a new source resolution and resets the frame history. */
     private fun applySourceSize(width: Int, height: Int) {
         if (released || width <= 0 || height <= 0 || eglContext == EGL14.EGL_NO_CONTEXT) return
-        if (width == srcW && height == srcH && slots.isNotEmpty()) return
+        if (width == srcW && height == srcH && slots.isNotEmpty() && appliedExtreme == extreme) return
         srcW = width
         srcH = height
+        appliedExtreme = extreme
 
-        val scale = min(1f, MAX_WORK_EDGE.toFloat() / max(width, height))
+        // Stored frames keep (up to) the source resolution so the picture stays at original quality;
+        // only the motion search runs on a capped size. Extreme trades resolution for speed on both.
+        val frameEdge = if (appliedExtreme) EXTREME_FRAME_EDGE else MAX_FRAME_EDGE
+        val meEdge = if (appliedExtreme) EXTREME_ME_EDGE else MAX_WORK_EDGE
+        val frameScale = min(1f, frameEdge.toFloat() / max(width, height))
+        frameW = max(16, ((width * frameScale).toInt()) and 1.inv())
+        frameH = max(16, ((height * frameScale).toInt()) and 1.inv())
+        val scale = min(1f, meEdge.toFloat() / max(width, height))
         workW = max(16, ((width * scale).toInt()) and 1.inv())
         workH = max(16, ((height * scale).toInt()) and 1.inv())
         // luma + motion grid: multiples of the 4-texel block so uv <-> block lookups are exact
@@ -261,7 +292,7 @@ class MotionBoostRenderer(
         freeSlots()
         slots = Array(SLOT_COUNT) {
             Slot(
-                full = newTexture(workW, workH, GLES30.GL_RGBA8, GLES30.GL_LINEAR),
+                full = newTexture(frameW, frameH, GLES30.GL_RGBA8, GLES30.GL_LINEAR),
                 luma = newTexture(lumaW, lumaH, GLES30.GL_R8, GLES30.GL_LINEAR),
                 half = newTexture(halfW, halfH, GLES30.GL_R8, GLES30.GL_LINEAR)
             )
@@ -328,7 +359,7 @@ class MotionBoostRenderer(
 
     private fun copyFrameInto(slot: Slot) {
         val copy = copyProg!!
-        bindTarget(slot.full, workW, workH)
+        bindTarget(slot.full, frameW, frameH)
         copy.use()
         GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
         GLES30.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, oesTexture)
@@ -433,8 +464,11 @@ class MotionBoostRenderer(
 
         val c = cur ?: return
         val fps = targetFps
-        // Render only when a new output frame is due (e.g. every 2nd vsync for 60 fps on 120 Hz).
-        if (vsyncNs - lastPresentNs < (1_000_000_000.0 / fps * 0.8).toLong()) return
+        val intervalNs = (1_000_000_000.0 / fps).toLong()
+        // Draw only on the vsync nearest to the next output frame's due time. (The old "time since the
+        // last frame" gate rounded 90 FPS on a 120 Hz panel down to 60.)
+        if (!MotionBoostTiming.isDue(vsyncNs, nextDueNs, vsyncPeriodNs)) return
+        val workStartNs = System.nanoTime()
 
         val p = prev
         val sourceFps = if (frameIntervalNs > 0) 1_000_000_000f / frameIntervalNs else 0f
@@ -461,6 +495,8 @@ class MotionBoostRenderer(
             return
         }
         lastPresentNs = vsyncNs
+        nextDueNs = MotionBoostTiming.nextDue(nextDueNs, vsyncNs, intervalNs)
+        reportWorkDuration(System.nanoTime() - workStartNs, intervalNs)
         lastDrawnCur = c
         lastDrawnPrev = p
         lastDrawnAlpha = alpha
@@ -493,6 +529,38 @@ class MotionBoostRenderer(
         GLES30.glUniform2f(ip.loc("uInvHalf"), 1f / halfW, 1f / halfH)
         GLES30.glUniform3f(ip.loc("uGrade"), brightness, contrast, saturation)
         GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
+    }
+
+    /** Extreme mode: tells the system how long a frame took so it can ramp CPU / GPU clocks up in time. */
+    private fun reportWorkDuration(workNs: Long, targetNs: Long) {
+        val session = hintSession ?: return
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
+        try {
+            session.updateTargetWorkDuration(targetNs)
+            session.reportActualWorkDuration(workNs)
+        } catch (t: Throwable) {
+            hintSession = null
+        }
+    }
+
+    private fun updateHintSession() {
+        runCatching {
+            Process.setThreadPriority(
+                thread.threadId,
+                if (extreme) Process.THREAD_PRIORITY_URGENT_DISPLAY else Process.THREAD_PRIORITY_DISPLAY
+            )
+        }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
+        if (!extreme) {
+            runCatching { hintSession?.close() }
+            hintSession = null
+            return
+        }
+        if (hintSession != null) return
+        hintSession = runCatching {
+            val mgr = context?.getSystemService(Context.PERFORMANCE_HINT_SERVICE) as? PerformanceHintManager
+            mgr?.createHintSession(intArrayOf(thread.threadId), 1_000_000_000L / targetFps.coerceAtLeast(1))
+        }.getOrNull()
     }
 
     private fun reportStats(nowNs: Long, sourceFps: Float) {
@@ -545,6 +613,8 @@ class MotionBoostRenderer(
 
     private fun releaseGl() {
         runCatching {
+            runCatching { hintSession?.close() }
+            hintSession = null
             surfaceTexture?.setOnFrameAvailableListener(null)
             inputSurface?.release()
             surfaceTexture?.release()
@@ -624,7 +694,10 @@ class MotionBoostRenderer(
         private const val TAG = "MotionBoost"
         private const val SLOT_COUNT = 3
         private const val BLOCK = 4 // motion block = 4x4 luma texels = 16x16 working pixels
-        private const val MAX_WORK_EDGE = 1920
+        private const val MAX_WORK_EDGE = 1920      // motion search size cap
+        private const val MAX_FRAME_EDGE = 3840     // stored / shown frame cap (original quality up to 4K)
+        private const val EXTREME_FRAME_EDGE = 1280 // Extreme performance
+        private const val EXTREME_ME_EDGE = 960
         private const val MIN_FRAME_NS = 4_000_000L
         private const val MAX_FRAME_NS = 200_000_000L
 

@@ -118,6 +118,8 @@ data class VideoPlayerUiState(
     val audioDelayMs: Int = 0,
     /** FPS Booster target (frame interpolation). Persisted; [MotionBoostMode.ORIGINAL] = off. */
     val motionBoostMode: MotionBoostMode = MotionBoostMode.ORIGINAL,
+    /** Extreme performance for the FPS Booster: lighter processing for the highest, smoothest FPS. Persisted. */
+    val motionBoostExtreme: Boolean = false,
     /** Measured source / presented frame rate while the FPS Booster runs (0 = unknown). */
     val motionBoostSourceFps: Float = 0f,
     val motionBoostOutputFps: Float = 0f,
@@ -212,6 +214,7 @@ class VideoPlayerViewModel(
         motionBoostMode = MotionBoostMode.fromName(
             application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE).getString(PREF_MOTION_BOOST, null)
         ),
+        motionBoostExtreme = application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE).getBoolean(PREF_MOTION_BOOST_EXTREME, false),
         aspectRatio = application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE).getString("video_aspect_ratio", VideoAspectRatio.FIT.name)?.let { name ->
             val mappedName = when (name) {
                 "ORIGINAL" -> "FIT"
@@ -942,6 +945,12 @@ class VideoPlayerViewModel(
         if (mode == _uiState.value.motionBoostMode) return
         prefs.edit().putString(PREF_MOTION_BOOST, mode.name).apply()
         _uiState.update { it.copy(motionBoostMode = mode, motionBoostSourceFps = 0f, motionBoostOutputFps = 0f) }
+    }
+
+    fun setMotionBoostExtreme(enabled: Boolean) {
+        if (enabled == _uiState.value.motionBoostExtreme) return
+        prefs.edit().putBoolean(PREF_MOTION_BOOST_EXTREME, enabled).apply()
+        _uiState.update { it.copy(motionBoostExtreme = enabled) }
     }
 
     fun updateMotionBoostStats(sourceFps: Float, outputFps: Float) {
@@ -1679,6 +1688,7 @@ class VideoPlayerViewModel(
 
 private const val PREF_VIDEO_DECODER_MODE = "video_decoder_mode"
 private const val PREF_MOTION_BOOST = "video_motion_boost"
+private const val PREF_MOTION_BOOST_EXTREME = "video_motion_boost_extreme"
 
 class VideoPlayerViewModelFactory(private val application: Application, private val videoQueue: List<Video>, private val initialVideoId: String) : ViewModelProvider.Factory {
     @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
