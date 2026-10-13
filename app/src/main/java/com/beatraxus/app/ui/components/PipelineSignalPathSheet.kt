@@ -58,6 +58,7 @@ import com.beatraxus.app.ui.utils.DialogBlurBehind
 import com.beatraxus.app.ui.utils.rememberWindowBlurSupported
 import java.util.Locale
 import kotlin.math.abs
+import com.beatraxus.app.ui.theme.appFontFamily
 
 private const val PULSE_PERIOD_MS = 2200     // one slow, calm packet pass per connector
 private val PACKET_TAIL = 16.dp              // length of the fading comet tail
@@ -590,7 +591,7 @@ fun PipelineSignalPathSheet(
                             Text(
                                 text = verdict.summary,
                                 style = MaterialTheme.typography.bodySmall.copy(
-                                    fontFamily = FontFamily.Monospace,
+                                    fontFamily = appFontFamily,
                                     fontSize = 10.5.sp,
                                     lineHeight = 14.sp
                                 ),
@@ -799,7 +800,7 @@ private fun SummaryStat(label: String, value: String, valueColor: Color) {
             text = value,
             style = MaterialTheme.typography.bodySmall.copy(
                 fontWeight = FontWeight.SemiBold,
-                fontFamily = FontFamily.Monospace,
+                fontFamily = appFontFamily,
                 fontSize = 13.sp
             ),
             color = valueColor
@@ -939,7 +940,7 @@ fun CompactStageRow(
                 text = stage.primary,
                 style = MaterialTheme.typography.bodySmall.copy(
                     fontWeight = FontWeight.SemiBold,
-                    fontFamily = FontFamily.Monospace,
+                    fontFamily = appFontFamily,
                     fontSize = 12.sp,
                     lineHeight = 16.sp
                 ),
@@ -970,7 +971,7 @@ fun CompactStageRow(
                         Text(
                             text = value,
                             style = MaterialTheme.typography.bodySmall.copy(
-                                fontFamily = FontFamily.Monospace,
+                                fontFamily = appFontFamily,
                                 fontSize = 11.sp,
                                 textAlign = TextAlign.End
                             ),
@@ -1005,7 +1006,7 @@ fun CompactStageRow(
                     Text(
                         text = wireFormat.formatText,
                         style = MaterialTheme.typography.labelSmall.copy(
-                            fontFamily = FontFamily.Monospace,
+                            fontFamily = appFontFamily,
                             fontSize = 10.sp
                         ),
                         color = Color.White.copy(alpha = 0.75f)

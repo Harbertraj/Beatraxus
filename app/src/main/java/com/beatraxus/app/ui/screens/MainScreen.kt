@@ -132,6 +132,7 @@ import android.graphics.drawable.BitmapDrawable
 import androidx.compose.ui.semantics.Role
 import coil.size.Precision
 import java.util.Calendar
+import com.beatraxus.app.ui.theme.appFontFamily
 
 @Composable
 fun DefaultAlbumArt(modifier: Modifier = Modifier) {
@@ -1342,6 +1343,7 @@ fun MainScreen(
                                                 .weight(1f)
                                                 .focusRequester(searchFocusRequester),
                                             textStyle = androidx.compose.ui.text.TextStyle(
+                                                fontFamily = appFontFamily,
                                                 color = Color.White,
                                                 fontSize = 16.sp,
                                                 fontWeight = FontWeight.Medium

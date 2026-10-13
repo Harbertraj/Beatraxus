@@ -42,6 +42,7 @@ import com.beatraxus.app.addons.MusicServiceAddon
 import com.beatraxus.app.ui.components.glassIconBackground
 import com.beatraxus.app.viewmodel.PlayerViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.beatraxus.app.ui.theme.appFontFamily
 
 private val TextWhite = Color(0xFFF4F6F8)
 
@@ -97,6 +98,7 @@ fun StreamingAddonsScreen(
                         text = "ADD-ONS",
                         color = TextWhite,
                         style = TextStyle(
+                            fontFamily = appFontFamily,
                             fontWeight = FontWeight.Black,
                             fontSize = 16.sp,
                             letterSpacing = 2.sp,
@@ -152,6 +154,7 @@ fun StreamingAddonsScreen(
                     text = "Connect your own media servers and catalogs. Content streams straight from the source into Beatraxus — Beatraxus doesn't host or store any of it. Long-press an add-on to remove it.",
                     color = TextWhite.copy(alpha = 0.55f),
                     style = TextStyle(
+                        fontFamily = appFontFamily,
                         fontSize = 12.sp,
                         lineHeight = 18.sp,
                         fontWeight = FontWeight.Medium
@@ -169,7 +172,7 @@ fun StreamingAddonsScreen(
                         Text(
                             text = "No add-ons yet — tap below to add one.",
                             color = TextWhite.copy(alpha = 0.35f),
-                            style = TextStyle(fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                            style = TextStyle(fontFamily = appFontFamily, fontSize = 14.sp, fontWeight = FontWeight.Medium)
                         )
                     }
                 }
@@ -228,6 +231,7 @@ fun StreamingAddonsScreen(
                             text = "ADD AN ADD-ON",
                             color = TextWhite.copy(alpha = 0.7f),
                             style = TextStyle(
+                                fontFamily = appFontFamily,
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.Black,
                                 letterSpacing = 1.sp
@@ -257,7 +261,7 @@ fun StreamingAddonsScreen(
                     Text(
                         text = "ADD AN ADD-ON",
                         color = TextWhite,
-                        style = TextStyle(fontSize = 16.sp, fontWeight = FontWeight.Black, letterSpacing = 2.sp)
+                        style = TextStyle(fontFamily = appFontFamily, fontSize = 16.sp, fontWeight = FontWeight.Black, letterSpacing = 2.sp)
                     )
 
                     val installedIds = (addedAddons + availableAddons).map { it.id }.toSet()
@@ -460,6 +464,7 @@ fun ServiceCardContent(
                     text = title,
                     color = TextWhite,
                     style = TextStyle(
+                        fontFamily = appFontFamily,
                         fontSize = 17.sp,
                         fontWeight = FontWeight.Bold,
                         letterSpacing = 0.3.sp
@@ -470,6 +475,7 @@ fun ServiceCardContent(
                     text = subtitle,
                     color = TextWhite.copy(alpha = 0.55f),
                     style = TextStyle(
+                        fontFamily = appFontFamily,
                         fontSize = 12.sp,
                         lineHeight = 16.sp,
                         fontWeight = FontWeight.Medium
@@ -488,7 +494,7 @@ fun ServiceCardContent(
                         Text(
                             text = statusText,
                             color = statusColor,
-                            style = TextStyle(fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                            style = TextStyle(fontFamily = appFontFamily, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                         )
                     }
                 }
@@ -511,6 +517,7 @@ fun ServiceCardContent(
                     Text(
                         text = buttonLabel.uppercase(),
                         style = TextStyle(
+                            fontFamily = appFontFamily,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Black,
                             letterSpacing = 1.sp

@@ -32,6 +32,7 @@ import com.beatraxus.app.addons.StremioAddon
 import com.beatraxus.app.addons.SubsonicAddon
 import com.beatraxus.app.ui.components.glassIconBackground
 import kotlinx.coroutines.launch
+import com.beatraxus.app.ui.theme.appFontFamily
 
 private val SheetBg = Color(0xFF121316)
 private val TextWhite = Color(0xFFF4F6F8)
@@ -149,12 +150,12 @@ fun AddonSignInScreen(
                         Text(
                             text = "SIGN IN",
                             color = brand,
-                            style = TextStyle(fontSize = 11.sp, fontWeight = FontWeight.Black, letterSpacing = 2.sp)
+                            style = TextStyle(fontFamily = appFontFamily, fontSize = 11.sp, fontWeight = FontWeight.Black, letterSpacing = 2.sp)
                         )
                         Text(
                             text = addon.displayName,
                             color = TextWhite,
-                            style = TextStyle(fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                            style = TextStyle(fontFamily = appFontFamily, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                         )
                     }
                 }
@@ -162,7 +163,7 @@ fun AddonSignInScreen(
                 Text(
                     text = hint,
                     color = TextWhite.copy(alpha = 0.55f),
-                    style = TextStyle(fontSize = 12.sp, lineHeight = 17.sp, fontWeight = FontWeight.Medium)
+                    style = TextStyle(fontFamily = appFontFamily, fontSize = 12.sp, lineHeight = 17.sp, fontWeight = FontWeight.Medium)
                 )
 
                 errorMessage?.let { msg ->
@@ -177,7 +178,7 @@ fun AddonSignInScreen(
                         Text(
                             text = msg,
                             color = ErrorRed,
-                            style = TextStyle(fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                            style = TextStyle(fontFamily = appFontFamily, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                         )
                     }
                 }
@@ -239,7 +240,7 @@ fun AddonSignInScreen(
                         Text(
                             "CANCEL",
                             color = TextWhite.copy(alpha = 0.7f),
-                            style = TextStyle(fontSize = 12.sp, fontWeight = FontWeight.Black, letterSpacing = 1.sp)
+                            style = TextStyle(fontFamily = appFontFamily, fontSize = 12.sp, fontWeight = FontWeight.Black, letterSpacing = 1.sp)
                         )
                     }
                     Spacer(Modifier.width(8.dp))
@@ -264,7 +265,7 @@ fun AddonSignInScreen(
                         } else {
                             Text(
                                 "SIGN IN",
-                                style = TextStyle(fontSize = 12.sp, fontWeight = FontWeight.Black, letterSpacing = 1.sp)
+                                style = TextStyle(fontFamily = appFontFamily, fontSize = 12.sp, fontWeight = FontWeight.Black, letterSpacing = 1.sp)
                             )
                         }
                     }

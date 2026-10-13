@@ -6,6 +6,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ProvideTextStyle
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
@@ -33,6 +34,18 @@ private val BeatraxusDarkColorScheme = darkColorScheme(
     error               = AccentRed,
     onError             = TextOnAccent
 )
+
+/**
+ * The font family chosen in Settings > Fonts, as seen from the current composition.
+ *
+ * Text() only inherits the ambient text style (and its font) when the caller does not pass a
+ * `style`. A hand-built `TextStyle(...)` replaces it, so it must name the font explicitly:
+ * `TextStyle(fontFamily = appFontFamily, ...)`.
+ */
+val appFontFamily: FontFamily?
+    @Composable
+    @ReadOnlyComposable
+    get() = LocalTextStyle.current.fontFamily
 
 @Composable
 fun BeatraxusTheme(

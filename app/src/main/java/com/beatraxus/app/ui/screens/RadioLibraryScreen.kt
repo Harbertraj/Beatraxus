@@ -70,6 +70,7 @@ import com.beatraxus.app.repository.RadioStationCache
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import com.beatraxus.app.ui.theme.appFontFamily
 
 /** Quick-pick regions. An empty query means the default Tamil list (see [RadioBrowserApi.tamilStations]). */
 private val RadioQuickPicks = listOf(
@@ -202,7 +203,7 @@ private fun RadioSearchField(
             value = query,
             onValueChange = onQueryChange,
             singleLine = true,
-            textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 15.sp),
+            textStyle = androidx.compose.ui.text.TextStyle(fontFamily = appFontFamily, color = Color.White, fontSize = 15.sp),
             cursorBrush = SolidColor(accent),
             modifier = Modifier.weight(1f),
             decorationBox = { inner ->

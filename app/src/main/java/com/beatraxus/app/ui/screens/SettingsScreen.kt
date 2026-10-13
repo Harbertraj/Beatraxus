@@ -145,6 +145,7 @@ import com.beatraxus.app.subtitles.viewmodel.SubtitleViewModel
 import com.beatraxus.app.subtitles.viewmodel.SubtitleViewModelFactory
 import com.beatraxus.app.ui.theme.BgDeep
 import com.beatraxus.app.viewmodel.PlayerViewModel
+import com.beatraxus.app.ui.theme.appFontFamily
 
 private val PremiumAccent = Color(0xFF00C2A8)
 private val PrimaryCyan = Color(0xFF00C2A8)
@@ -425,6 +426,7 @@ fun SettingsScreen(
                             text = displayTitle.uppercase(Locale.getDefault()),
                             color = TextWhite,
                             style = TextStyle(
+                                fontFamily = appFontFamily,
                                 fontWeight = FontWeight.Black,
                                 fontSize = if (currentSection == null) 22.sp else 16.sp,
                                 letterSpacing = 2.sp,
@@ -2081,6 +2083,7 @@ fun SettingMenuItem(
                         text = title,
                         color = TextWhite,
                         style = TextStyle(
+                            fontFamily = appFontFamily,
                             fontSize = titleFontSize,
                             fontWeight = titleFontWeight,
                             letterSpacing = titleLetterSpacing
@@ -2096,6 +2099,7 @@ fun SettingMenuItem(
                     text = subtitle,
                     color = SettingSubtitleColor,
                     style = TextStyle(
+                        fontFamily = appFontFamily,
                         fontSize = 12.sp,
                         lineHeight = 16.sp,
                         fontWeight = FontWeight.Medium
@@ -2654,7 +2658,7 @@ private fun UsbInfoChip(
                 color = if (highlight) PrimaryCyan else TextWhite.copy(0.9f),
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Bold,
-                fontFamily = FontFamily.Monospace
+                fontFamily = appFontFamily
             )
         }
     }
@@ -2829,7 +2833,7 @@ private fun PremiumChip(
             style = TextStyle(
                 fontSize = 12.sp,
                 fontWeight = if (selected) FontWeight.Black else FontWeight.Bold,
-                fontFamily = FontFamily.Monospace,
+                fontFamily = appFontFamily,
                 letterSpacing = 0.5.sp
             ),
             maxLines = 1
@@ -3141,7 +3145,7 @@ private fun SoxrQualityCard(uiState: PlayerUiState, viewModel: PlayerViewModel) 
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Black,
                                 letterSpacing = 0.5.sp,
-                                fontFamily = FontFamily.Monospace
+                                fontFamily = appFontFamily
                             )
                         )
                         Text(
@@ -3154,6 +3158,7 @@ private fun SoxrQualityCard(uiState: PlayerUiState, viewModel: PlayerViewModel) 
                             },
                             color = if (isSelected && canChange) PrimaryCyan.copy(0.6f) else TextWhite.copy(if (canChange) 0.35f else 0.1f),
                             style = TextStyle(
+                                fontFamily = appFontFamily,
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold
                             )
@@ -3355,7 +3360,7 @@ private fun DitherCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Black,
                                 letterSpacing = 0.5.sp,
-                                fontFamily = FontFamily.Monospace
+                                fontFamily = appFontFamily
                             )
                         )
                         Text(
@@ -3367,6 +3372,7 @@ private fun DitherCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
                             },
                             color = if (isSelected && canSelect) PrimaryCyan.copy(0.6f) else TextWhite.copy(if (canSelect) 0.35f else 0.1f),
                             style = TextStyle(
+                                fontFamily = appFontFamily,
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold
                             )
@@ -3868,13 +3874,14 @@ private fun LibraryStatItem(
             style = TextStyle(
                 fontSize = 18.sp,
                 fontWeight = FontWeight.Black,
-                fontFamily = FontFamily.Monospace
+                fontFamily = appFontFamily
             )
         )
         Text(
             text = label,
             color = Color.White.copy(0.45f),
             style = TextStyle(
+                fontFamily = appFontFamily,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Bold,
                 letterSpacing = 0.5.sp
@@ -3915,7 +3922,7 @@ fun LibraryContent(uiState: PlayerUiState, viewModel: PlayerViewModel, onShowInf
                 Text(
                     "Full Rescan Library",
                     color = PremiumAccent,
-                    style = TextStyle(fontWeight = FontWeight.Black, fontSize = 14.sp, letterSpacing = 0.5.sp)
+                    style = TextStyle(fontFamily = appFontFamily, fontWeight = FontWeight.Black, fontSize = 14.sp, letterSpacing = 0.5.sp)
                 )
             }
         }
@@ -3941,7 +3948,7 @@ fun LibraryContent(uiState: PlayerUiState, viewModel: PlayerViewModel, onShowInf
                     Text(
                         "Quick Scan",
                         color = Color.White.copy(0.7f),
-                        style = TextStyle(fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                        style = TextStyle(fontFamily = appFontFamily, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                     )
                 }
             }
@@ -5371,6 +5378,7 @@ fun FeatureCatalogCard() {
                     "APP FEATURE CATALOG",
                     color = Color.White,
                     style = TextStyle(
+                        fontFamily = appFontFamily,
                         fontWeight = FontWeight.Black,
                         fontSize = 14.sp,
                         letterSpacing = 1.2.sp
@@ -5497,6 +5505,7 @@ fun AboutContent() {
                             "BEATRAXUS",
                             color = Color.White,
                             style = TextStyle(
+                                fontFamily = appFontFamily,
                                 fontSize = 18.sp,
                                 fontWeight = FontWeight.Black,
                                 letterSpacing = 2.sp
@@ -5505,7 +5514,7 @@ fun AboutContent() {
                         Text(
                             "Professional Audio Engine",
                             color = Color.White.copy(0.4f),
-                            style = TextStyle(fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                            style = TextStyle(fontFamily = appFontFamily, fontSize = 12.sp, fontWeight = FontWeight.Medium)
                         )
 
                         Spacer(Modifier.height(14.dp))
@@ -5519,6 +5528,7 @@ fun AboutContent() {
                                 "VERSION $versionName",
                                 color = PremiumAccent,
                                 style = TextStyle(
+                                    fontFamily = appFontFamily,
                                     fontSize = 10.sp,
                                     fontWeight = FontWeight.Black,
                                     letterSpacing = 1.sp
@@ -5622,6 +5632,7 @@ fun FullScanPopup(progress: Float, count: Int, albums: Int, artists: Int, onDism
                         "Synchronizing Library",
                         color = Color.White,
                         style = TextStyle(
+                            fontFamily = appFontFamily,
                             fontSize = 20.sp,
                             fontWeight = FontWeight.Black,
                             letterSpacing = 0.5.sp
@@ -5660,7 +5671,7 @@ fun FullScanPopup(progress: Float, count: Int, albums: Int, artists: Int, onDism
                                 style = TextStyle(
                                     fontSize = 18.sp,
                                     fontWeight = FontWeight.Black,
-                                    fontFamily = FontFamily.Monospace
+                                    fontFamily = appFontFamily
                                 )
                             )
                         }
@@ -5672,7 +5683,7 @@ fun FullScanPopup(progress: Float, count: Int, albums: Int, artists: Int, onDism
                         onClick = onDismiss,
                         colors = ButtonDefaults.textButtonColors(contentColor = Color.White.copy(0.4f))
                     ) {
-                        Text("CANCEL SCAN", style = TextStyle(fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp, fontSize = 12.sp))
+                        Text("CANCEL SCAN", style = TextStyle(fontFamily = appFontFamily, fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp, fontSize = 12.sp))
                     }
                 }
             }
@@ -5696,9 +5707,9 @@ fun ScanStatItem(icon: ImageVector, value: String, label: String, color: Color, 
         Text(
             value,
             color = Color.White,
-            style = TextStyle(fontWeight = FontWeight.Black, fontSize = 15.sp, fontFamily = FontFamily.Monospace)
+            style = TextStyle(fontWeight = FontWeight.Black, fontSize = 15.sp, fontFamily = appFontFamily)
         )
-        Text(label, color = Color.White.copy(0.4f), style = TextStyle(fontWeight = FontWeight.Medium, fontSize = 10.sp))
+        Text(label, color = Color.White.copy(0.4f), style = TextStyle(fontFamily = appFontFamily, fontWeight = FontWeight.Medium, fontSize = 10.sp))
     }
 }
 
@@ -5806,6 +5817,7 @@ fun SettingsSection(
                             title.uppercase(),
                             color = TextWhite,
                             style = TextStyle(
+                                fontFamily = appFontFamily,
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.Black,
                                 letterSpacing = 1.2.sp
@@ -5895,7 +5907,7 @@ fun OutputModeButton(
                 fontWeight = if (selected) FontWeight.Black else FontWeight.Bold,
                 fontSize = 12.sp,
                 letterSpacing = 0.5.sp,
-                fontFamily = FontFamily.Monospace
+                fontFamily = appFontFamily
             ),
             maxLines = 1
         )
@@ -5973,6 +5985,7 @@ private fun DspSliderRow(
                 title.uppercase(),
                 color = if (enabled) TextWhite.copy(0.8f) else TextWhite.copy(alpha = 0.2f),
                 style = TextStyle(
+                    fontFamily = appFontFamily,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Black,
                     letterSpacing = 1.sp
@@ -5994,7 +6007,7 @@ private fun DspSliderRow(
                     style = TextStyle(
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Black,
-                        fontFamily = FontFamily.Monospace
+                        fontFamily = appFontFamily
                     )
                 )
             }
@@ -6049,7 +6062,7 @@ private fun StatChip(label: String, value: String) {
                 color = PrimaryCyan,
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Bold,
-                fontFamily = FontFamily.Monospace
+                fontFamily = appFontFamily
             )
         }
     }
@@ -6778,7 +6791,7 @@ fun TelegramCloudContent(
                         cursorColor = Color(0xFF2AABEE)
                     ),
                     singleLine = true,
-                    textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 14.sp)
+                    textStyle = androidx.compose.ui.text.TextStyle(fontFamily = appFontFamily, color = Color.White, fontSize = 14.sp)
                 )
 
                 val error = uiState.telegramSyncErrorMessage

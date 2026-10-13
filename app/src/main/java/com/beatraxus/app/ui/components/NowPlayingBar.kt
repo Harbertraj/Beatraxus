@@ -70,6 +70,7 @@ import com.beatraxus.app.model.NowPlayingBackgroundMode
 import com.beatraxus.app.model.Song
 import com.beatraxus.app.utils.ImageUtils
 import java.util.Locale
+import com.beatraxus.app.ui.theme.appFontFamily
 
 /**
  * Redesigned Now Playing bar (floating glass pill).
@@ -205,7 +206,7 @@ fun NowPlayingBar(
                             fontSize = 14.5.sp,
                             lineHeight = 18.sp,
                             fontWeight = FontWeight.Bold,
-                            style = TightTextStyle,
+                            style = TightTextStyle.copy(fontFamily = appFontFamily),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
@@ -214,7 +215,7 @@ fun NowPlayingBar(
                             color = Color.White.copy(alpha = 0.7f),
                             fontSize = 12.sp,
                             lineHeight = 15.sp,
-                            style = TightTextStyle,
+                            style = TightTextStyle.copy(fontFamily = appFontFamily),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
@@ -228,7 +229,7 @@ fun NowPlayingBar(
                         fontSize = 10.5.sp,
                         lineHeight = 13.sp,
                         fontWeight = FontWeight.SemiBold,
-                        style = TightTextStyle,
+                        style = TightTextStyle.copy(fontFamily = appFontFamily),
                         maxLines = 1
                     )
                 }

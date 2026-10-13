@@ -92,6 +92,7 @@ import com.beatraxus.app.viewmodel.PlayerViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.*
+import com.beatraxus.app.ui.theme.appFontFamily
 
 // Studio DSP dual colour palette. Defaults to Yellow + Orange ("Solar Flare") and follows
 // Settings > Appearance > Dual Colour Palette. All values are derived from two colours and
@@ -869,7 +870,7 @@ fun DspScreen(
                                         .onFocusChanged { isSearchFocused = it.isFocused },
                                     shape = RoundedCornerShape(12.dp),
                                     singleLine = true,
-                                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 13.sp),
+                                    textStyle = androidx.compose.ui.text.TextStyle(fontFamily = appFontFamily, fontSize = 13.sp),
                                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                                     keyboardActions = KeyboardActions(onSearch = {
                                         viewModel.searchAutoEqProfiles()
