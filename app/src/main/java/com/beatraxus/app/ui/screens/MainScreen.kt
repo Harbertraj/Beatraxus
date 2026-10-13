@@ -5917,21 +5917,26 @@ fun SlideDrawerMenu(
             ) {
                 Surface(
                     color = Color.Transparent,
-                    shape = RoundedCornerShape(20.dp),
-                    border = BorderStroke(1.dp, Color.White.copy(0.15f)),
+                    shape = RoundedCornerShape(26.dp),
+                    border = BorderStroke(
+                        1.dp,
+                        Brush.verticalGradient(
+                            listOf(accentColor.copy(0.55f), Color.White.copy(0.06f), accentColor.copy(0.20f))
+                        )
+                    ),
                     modifier = Modifier
                         .fillMaxWidth()
                         .background(
                             brush = Brush.linearGradient(
                                 colors = listOf(
-                                    Color.White.copy(0.12f),
-                                    accentColor.copy(0.15f),
-                                    Color.White.copy(0.12f)
+                                    accentColor.copy(0.22f),
+                                    Color.White.copy(0.05f),
+                                    accentColor.copy(0.12f)
                                 ),
                                 start = Offset(gradientOffset, gradientOffset),
                                 end = Offset(gradientOffset + 500f, gradientOffset + 500f)
                             ),
-                            shape = RoundedCornerShape(20.dp)
+                            shape = RoundedCornerShape(26.dp)
                         )
                 ) {
                     Box(modifier = Modifier.fillMaxWidth()) {
@@ -6003,8 +6008,14 @@ fun SlideDrawerMenu(
                                         scaleY = 0.8f + (0.2f * drawerProgress)
                                         alpha = drawerProgress
                                     }
-                                    .size(48.dp)
-                                    .background(accentColor.copy(0.2f), CircleShape),
+                                    .size(52.dp)
+                                    .background(
+                                        Brush.linearGradient(
+                                            listOf(accentColor.copy(0.38f), accentColor.copy(0.10f))
+                                        ),
+                                        RoundedCornerShape(18.dp)
+                                    )
+                                    .border(1.dp, accentColor.copy(0.45f), RoundedCornerShape(18.dp)),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Icon(
@@ -6019,16 +6030,29 @@ fun SlideDrawerMenu(
                             Text(
                                 if (playbackMode == com.beatraxus.app.model.PlaybackMode.VIDEO) "Video\nLibrary" else "Hello\nAudiophile",
                                 color = Color.White,
-                                fontSize = 24.sp,
-                                fontWeight = FontWeight.Black,
+                                fontSize = 22.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                letterSpacing = 0.4.sp,
                                 textAlign = TextAlign.Center,
-                                lineHeight = 28.sp,
+                                lineHeight = 26.sp,
                                 modifier = Modifier.graphicsLayer {
                                     alpha = drawerProgress.coerceIn(0f, 1f)
                                     translationX = -10f * (1f - drawerProgress)
                                 }
                             )
-                            Spacer(Modifier.height(16.dp))
+                            Spacer(Modifier.height(8.dp))
+                            Box(
+                                modifier = Modifier
+                                    .width(28.dp)
+                                    .height(3.dp)
+                                    .background(
+                                        Brush.horizontalGradient(
+                                            listOf(accentColor.copy(0.2f), accentColor, accentColor.copy(0.2f))
+                                        ),
+                                        CircleShape
+                                    )
+                            )
+                            Spacer(Modifier.height(14.dp))
                             com.beatraxus.app.ui.components.PlaybackModeSelector(
                                 currentMode = playbackMode,
                                 onModeSelected = onSetPlaybackMode,
@@ -6065,6 +6089,16 @@ fun SlideDrawerMenu(
                 contentPadding = PaddingValues(horizontal = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
+                item {
+                    Text(
+                        if (playbackMode == com.beatraxus.app.model.PlaybackMode.VIDEO) "VIDEO" else "LIBRARY",
+                        color = Color.White.copy(0.38f),
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.6.sp,
+                        modifier = Modifier.padding(start = 12.dp, top = 0.dp, bottom = 6.dp)
+                    )
+                }
                 items(menuItems) { item ->
                     val isSelected = currentView == item.view ||
                             (item.view == LibraryView.ALBUMS && currentView == LibraryView.ALBUM_DETAIL) ||
@@ -6075,35 +6109,74 @@ fun SlideDrawerMenu(
                             (item.view == LibraryView.PLAYLISTS && currentView == LibraryView.PLAYLIST_DETAIL) ||
                             (item.view == LibraryView.VIDEO_FOLDERS && currentView == LibraryView.VIDEO_FOLDER_DETAIL)
 
-                    val itemBg = if (isSelected) item.color.copy(0.3f) else Color.White.copy(0.1f)
+                    val rowShape = RoundedCornerShape(16.dp)
+                    val rowBg = if (isSelected) {
+                        Brush.horizontalGradient(listOf(item.color.copy(0.30f), item.color.copy(0.04f)))
+                    } else {
+                        Brush.horizontalGradient(listOf(Color.Transparent, Color.Transparent))
+                    }
 
-                    Surface(
-                        color = itemBg,
-                        shape = RoundedCornerShape(18.dp),
-                        border = if (isSelected) BorderStroke(1.dp, item.color.copy(0.45f)) else null,
+                    Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(56.dp)
-                            .clip(RoundedCornerShape(18.dp))
+                            .height(54.dp)
+                            .clip(rowShape)
+                            .background(rowBg)
                             .clickable { onSelectView(item.view); onClose() }
                     ) {
+                        if (isSelected) {
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.CenterStart)
+                                    .width(3.dp)
+                                    .height(22.dp)
+                                    .background(item.color, RoundedCornerShape(topEnd = 3.dp, bottomEnd = 3.dp))
+                            )
+                        }
                         Row(
-                            modifier = Modifier.padding(horizontal = 16.dp),
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(start = 10.dp, end = 8.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(
-                                item.icon,
-                                null,
-                                modifier = Modifier.size(22.dp),
-                                tint = if (isSelected) Color.White else Color.White.copy(0.7f)
-                            )
-                            Spacer(Modifier.width(16.dp))
+                            Box(
+                                modifier = Modifier
+                                    .size(38.dp)
+                                    .background(
+                                        item.color.copy(if (isSelected) 0.28f else 0.12f),
+                                        RoundedCornerShape(12.dp)
+                                    ),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    item.icon,
+                                    null,
+                                    modifier = Modifier.size(21.dp),
+                                    tint = if (isSelected) Color.White else item.color.copy(0.9f)
+                                )
+                            }
+                            Spacer(Modifier.width(10.dp))
+                            // Long labels (e.g. "Smart Playlists") shrink to fit on one line instead of being cut off.
+                            var labelSize by remember(item.label) { mutableStateOf(15f) }
                             Text(
                                 item.label,
-                                color = if (isSelected) Color.White else Color.White.copy(0.7f),
-                                fontSize = 15.sp,
+                                color = if (isSelected) Color.White else Color.White.copy(0.72f),
+                                fontSize = labelSize.sp,
+                                maxLines = 1,
+                                softWrap = false,
+                                onTextLayout = { r ->
+                                    if (r.didOverflowWidth && labelSize > 10f) labelSize -= 0.5f
+                                },
+                                modifier = Modifier.weight(1f),
                                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
                             )
+                            if (isSelected) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(6.dp)
+                                        .background(item.color, CircleShape)
+                                )
+                            }
                         }
                     }
                 }
@@ -6118,8 +6191,18 @@ fun SlideDrawerMenu(
                         alpha = drawerProgress.coerceIn(0f, 1f)
                         translationY = 10f * (1f - drawerProgress)
                     },
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(1.dp)
+                        .background(
+                            Brush.horizontalGradient(
+                                listOf(Color.Transparent, accentColor.copy(0.45f), Color.Transparent)
+                            )
+                        )
+                )
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     DrawerBottomIconButton(
                         modifier = Modifier.weight(1f),
@@ -6162,16 +6245,19 @@ private fun DrawerBottomIconButton(
 ) {
     Box(
         modifier = modifier
-            .height(52.dp)
-            .clip(RoundedCornerShape(14.dp))
-            .background(Color.White.copy(0.08f))
+            .height(48.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(
+                Brush.verticalGradient(listOf(Color.White.copy(0.12f), Color.White.copy(0.04f)))
+            )
+            .border(1.dp, Color.White.copy(0.10f), RoundedCornerShape(16.dp))
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
         Icon(
             imageVector = icon,
             contentDescription = contentDescription,
-            tint = Color.White.copy(0.7f),
+            tint = Color.White.copy(0.85f),
             modifier = Modifier.size(iconSize)
         )
     }
