@@ -2782,7 +2782,30 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
 
+    // Album the user came from when they tapped the album's artist link (so Back can return to it)
+    private data class AlbumReturn(val album: String?, val previousView: LibraryView?)
+    private var albumReturn: AlbumReturn? = null
+
+    /** Opens [artistName]'s screen from the current album; Back returns to that album. */
+    fun openArtistFromAlbum(artistName: String) {
+        val s = _uiState.value
+        val ret = if (s.currentView == LibraryView.ALBUM_DETAIL) AlbumReturn(s.selectedItemName, s.previousView) else null
+        setLibraryView(LibraryView.ARTIST_DETAIL, artistName)
+        albumReturn = ret
+    }
+
+    /** If the artist screen was opened from an album, goes back to that album and returns true. */
+    fun consumeAlbumReturn(): Boolean {
+        val ret = albumReturn ?: return false
+        albumReturn = null
+        if (_uiState.value.currentView != LibraryView.ARTIST_DETAIL) return false
+        setLibraryView(LibraryView.ALBUM_DETAIL, ret.album)
+        _uiState.update { it.copy(previousView = ret.previousView) }
+        return true
+    }
+
     fun setLibraryView(view: LibraryView, itemName: String? = null) {
+        albumReturn = null
         _uiState.update {
             val isDetailView = view in listOf(
                 LibraryView.ALBUM_DETAIL, LibraryView.ARTIST_DETAIL,

@@ -109,6 +109,11 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import coil.compose.AsyncImage
+import com.beatraxus.app.ui.components.LibraryDetailHeader
+import com.beatraxus.app.ui.components.DetailSectionLabel
+import com.beatraxus.app.ui.components.popularSongsOf
+import com.beatraxus.app.ui.components.detailHeaderItemCount
+import com.beatraxus.app.ui.components.detailSubtitle
 import com.beatraxus.app.ui.screens.library.VideoListItem
 import coil.request.CachePolicy
 import coil.request.ImageRequest
@@ -384,6 +389,7 @@ fun MainScreen(
     val playlists by viewModel.playlists.collectAsStateWithLifecycle()
     val searchResults by viewModel.searchResults.collectAsStateWithLifecycle()
     val favorites by viewModel.favorites.collectAsStateWithLifecycle()
+    val detailRecent by viewModel.homeRecentlyPlayed.collectAsStateWithLifecycle()
     val deleteRequest by viewModel.deleteRequest.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
@@ -603,6 +609,32 @@ fun MainScreen(
         }
     }
 
+    // ---- Album / artist detail: online info, backdrop colour, artist link -------------------------
+    val isRichDetailView = uiState.currentView == LibraryView.ALBUM_DETAIL ||
+        uiState.currentView == LibraryView.ARTIST_DETAIL
+    val isAlbumDetail = uiState.currentView == LibraryView.ALBUM_DETAIL
+    val detailAlbumArtists = remember(songs, isAlbumDetail) {
+        if (isAlbumDetail) com.beatraxus.app.ui.components.albumArtistNames(songs) else emptyList()
+    }
+    val onlineArtist by com.beatraxus.app.ui.components.rememberOnlineArtistInfo(
+        if (uiState.currentView == LibraryView.ARTIST_DETAIL) uiState.selectedItemName else null
+    )
+    val onlineAlbum by com.beatraxus.app.ui.components.rememberOnlineAlbumInfo(
+        if (isAlbumDetail) uiState.selectedItemName else null,
+        detailAlbumArtists.firstOrNull()?.takeIf { !it.equals("Various Artists", ignoreCase = true) }
+    )
+    val detailArtModels: List<Any?> = if (!isRichDetailView) emptyList() else if (isAlbumDetail) {
+        listOf(onlineAlbum?.imageUrl, songs.firstNotNullOfOrNull { it.albumArtUri })
+    } else {
+        val key = com.beatraxus.app.util.ArtistNameUtils.normalizeKey(uiState.selectedItemName.orEmpty())
+        listOf(
+            onlineArtist?.imageUrl,
+            artists.firstOrNull { com.beatraxus.app.util.ArtistNameUtils.normalizeKey(it.first) == key }?.third
+                ?: songs.firstNotNullOfOrNull { it.albumArtUri }
+        )
+    }
+    val detailColor by com.beatraxus.app.ui.components.rememberDominantColor(detailArtModels, viewAccentColor)
+
     val isDetailView = uiState.currentView in listOf(
         LibraryView.ALBUM_DETAIL, LibraryView.ARTIST_DETAIL,
         LibraryView.FOLDER_DETAIL, LibraryView.YEAR_DETAIL, LibraryView.GENRE_DETAIL,
@@ -627,6 +659,9 @@ fun MainScreen(
         } else if (uiState.isSearchActive) {
             viewModel.setSearchActive(false)
         } else if (isDetailView) {
+            // Artist opened from an album's artist link: back returns to that album
+            val returnedToAlbum = uiState.currentView == LibraryView.ARTIST_DETAIL && viewModel.consumeAlbumReturn()
+            if (!returnedToAlbum) {
             val backView = uiState.previousView ?: when(uiState.currentView) {
                 LibraryView.ALBUM_DETAIL -> LibraryView.ALBUMS
                 LibraryView.ARTIST_DETAIL -> LibraryView.ARTISTS
@@ -646,6 +681,7 @@ fun MainScreen(
                 if (uiState.wasSearchingBeforeDetail) {
                     viewModel.setSearchActive(true)
                 }
+            }
             }
         } else if (uiState.currentView != LibraryView.HOME) {
             viewModel.setLibraryView(LibraryView.HOME)
@@ -927,6 +963,26 @@ fun MainScreen(
                     contentWindowInsets = WindowInsets.systemBars
                 ) { paddingValues ->
                     Box(Modifier.fillMaxSize()) {
+                    if (isRichDetailView) {
+                        com.beatraxus.app.ui.components.DetailBackdrop(
+                            color = detailColor,
+                            scrollPx = {
+                                if (isAlbumDetail) {
+                                    if (trackLayoutDensity <= 2) {
+                                        if (albumDetailListState.firstVisibleItemIndex == 0) albumDetailListState.firstVisibleItemScrollOffset.toFloat() else 100000f
+                                    } else {
+                                        if (albumDetailGridState.firstVisibleItemIndex == 0) albumDetailGridState.firstVisibleItemScrollOffset.toFloat() else 100000f
+                                    }
+                                } else {
+                                    if (trackLayoutDensity <= 2) {
+                                        if (artistDetailListState.firstVisibleItemIndex == 0) artistDetailListState.firstVisibleItemScrollOffset.toFloat() else 100000f
+                                    } else {
+                                        if (artistDetailGridState.firstVisibleItemIndex == 0) artistDetailGridState.firstVisibleItemScrollOffset.toFloat() else 100000f
+                                    }
+                                }
+                            }
+                        )
+                    }
                     // Removed full-screen mode transition to align with library navigation style
                         Column(
                             Modifier
@@ -1032,6 +1088,7 @@ fun MainScreen(
                                 }
 
                                 // Centered Title - Unique & Premium
+                                if (!isRichDetailView) {
                                 Box(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -1217,6 +1274,7 @@ fun MainScreen(
                                         }
                                     }
                                 }
+                                } // end !isRichDetailView
 
                                 // Icons on the right (Smart Playlists has its own controls, so no app search icon there)
                                 if (uiState.currentView != LibraryView.SMART_PLAYLISTS) Row(
@@ -1345,31 +1403,8 @@ fun MainScreen(
                                 }
                             }
 
-                            // Action Icons Row
-                            AnimatedVisibility(
-                                // Radio has its own screen without the shuffle / sort / cloud / density strip.
-                                visible = (headerVisible || activeItemsCount <= 8) && uiState.currentView != LibraryView.HOME && uiState.currentView != LibraryView.RADIO,
-                                enter = fadeIn(tween(250)) + expandVertically(tween(250)),
-                                exit = fadeOut(tween(200)) + shrinkVertically(tween(200))
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 8.dp)
-                                ) {
-                                    if (uiState.isMultiSelectMode) {
-                                        MultiSelectActionBar(
-                                            showDelete = uiState.currentView != LibraryView.CLOUD,
-                                            onSelectAll = { viewModel.selectAll() },
-                                            onDelete = { viewModel.deleteSelected() },
-                                            onPlayNext = { viewModel.playNextSelected() },
-                                            onAddToPlaylist = {
-                                                playlistDialogSong = null
-                                                showPlaylistDialog = true
-                                            },
-                                            onShare = { viewModel.shareSelected() }
-                                        )
-                                    } else {
+                            // Shared by the top bar and by the album / artist detail header
+                            val libraryActionStrip: @Composable () -> Unit = {
                                         val canShufflePlay = when (uiState.currentView) {
                                             LibraryView.ALBUMS, LibraryView.ARTISTS, LibraryView.FOLDERS,
                                             LibraryView.YEARS, LibraryView.GENRES, LibraryView.PLAYLISTS,
@@ -1416,6 +1451,74 @@ fun MainScreen(
                                                 )
                                             )
                                         }
+                            }
+
+                            // OTT-style header shared by the album and artist detail screens
+                            val detailHeader: @Composable () -> Unit = {
+                                val libraryArtists = remember(artists) { com.beatraxus.app.ui.components.libraryArtistLookup(artists) }
+                                val localYear = songs.firstOrNull { it.year > 0 }?.year
+                                val onlineMeta: String? = if (isAlbumDetail) {
+                                    listOfNotNull(
+                                        onlineAlbum?.genre,
+                                        if (localYear == null) onlineAlbum?.year?.toString() else null,
+                                        onlineAlbum?.trackCount?.let { "$it tracks" }
+                                    ).joinToString(" • ").ifBlank { null }
+                                } else {
+                                    listOfNotNull(
+                                        onlineArtist?.description?.replaceFirstChar { it.uppercase() },
+                                        onlineArtist?.fans?.let { "${com.beatraxus.app.ui.components.formatCount(it)} fans" }
+                                    ).joinToString(" • ").ifBlank { null }
+                                }
+                                val artistLineContent: (@Composable () -> Unit)? =
+                                    if (isAlbumDetail && detailAlbumArtists.isNotEmpty()) ({
+                                        com.beatraxus.app.ui.components.AlbumArtistLine(
+                                            names = detailAlbumArtists,
+                                            libraryArtists = libraryArtists,
+                                            onArtistClick = { viewModel.openArtistFromAlbum(it) }
+                                        )
+                                    }) else null
+                                com.beatraxus.app.ui.components.LibraryDetailHeader(
+                                    title = uiState.selectedItemName ?: if (isAlbumDetail) "ALBUM" else "ARTIST",
+                                    artModels = detailArtModels,
+                                    isArtist = !isAlbumDetail,
+                                    localMeta = com.beatraxus.app.ui.components.detailSubtitle(songs, isArtist = !isAlbumDetail),
+                                    onlineMeta = onlineMeta,
+                                    about = if (isAlbumDetail) onlineAlbum?.about else onlineArtist?.bio,
+                                    aboutSource = if ((if (isAlbumDetail) onlineAlbum?.about else onlineArtist?.bio) != null) "Wikipedia" else null,
+                                    aboutUrl = if (isAlbumDetail) onlineAlbum?.wikiUrl else onlineArtist?.wikiUrl,
+                                    artistLine = artistLineContent
+                                ) {
+                                    if (!uiState.isMultiSelectMode) libraryActionStrip()
+                                }
+                            }
+
+                            // Action Icons Row
+                            AnimatedVisibility(
+                                // Radio has its own screen without the shuffle / sort / cloud / density strip.
+                                visible = (headerVisible || activeItemsCount <= 8) && uiState.currentView != LibraryView.HOME && uiState.currentView != LibraryView.RADIO &&
+                                    (!isRichDetailView || uiState.isMultiSelectMode),
+                                enter = fadeIn(tween(250)) + expandVertically(tween(250)),
+                                exit = fadeOut(tween(200)) + shrinkVertically(tween(200))
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 8.dp)
+                                ) {
+                                    if (uiState.isMultiSelectMode) {
+                                        MultiSelectActionBar(
+                                            showDelete = uiState.currentView != LibraryView.CLOUD,
+                                            onSelectAll = { viewModel.selectAll() },
+                                            onDelete = { viewModel.deleteSelected() },
+                                            onPlayNext = { viewModel.playNextSelected() },
+                                            onAddToPlaylist = {
+                                                playlistDialogSong = null
+                                                showPlaylistDialog = true
+                                            },
+                                            onShare = { viewModel.shareSelected() }
+                                        )
+                                    } else {
+                                        libraryActionStrip()
                                     }
                                 }
                             }
@@ -1782,6 +1885,8 @@ fun MainScreen(
                                                 }
                                                 LibraryView.ALBUM_DETAIL -> {
                                                     val albumSongs = songs
+                                                    val albumPopular = remember(albumSongs, favorites, detailRecent) { popularSongsOf(albumSongs, favorites, detailRecent) }
+                                                    val albumHeaderCount = detailHeaderItemCount(albumPopular.size)
                                                     val isListView = trackLayoutDensity <= 2
                                                     AnimatedContent(
                                                         targetState = isListView,
@@ -1799,11 +1904,41 @@ fun MainScreen(
                                                                     contentPadding = PaddingValues(
                                                                         top = 8.dp,
                                                                         bottom = paddingValues.calculateBottomPadding() + 120.dp,
-                                                                        end = 32.dp
+                                                                        end = 0.dp
                                                                     )
                                                                 ) {
-                                                                    itemsIndexed(albumSongs, key = { _, song -> song.id }) { index, song ->
-                                                                        Box(Modifier.animateItem()) {
+item(key = "detail_header") {
+detailHeader()
+}
+if (albumPopular.isNotEmpty()) {
+    item(key = "detail_popular_label") { DetailSectionLabel("Popular") }
+    itemsIndexed(albumPopular, key = { _, s -> "pop_" + s.id }) { pIndex, song ->
+        Box(Modifier.padding(end = 28.dp)) {
+SongListItem(
+    song = song,
+    isPlaying = uiState.isPlaying && uiState.currentSong?.id == song.id,
+    trackNumber = pIndex + 1,
+    onClick = {
+        if (uiState.isMultiSelectMode) viewModel.toggleSongSelection(song.id)
+        else viewModel.playSong(song)
+    },
+    isMultiSelectMode = uiState.isMultiSelectMode,
+    isSelected = uiState.selectedIds.contains(song.id),
+    onMoreClick = { selectedSongForOptions = song },
+    onLongClick = {
+        if (!uiState.isMultiSelectMode) {
+            viewModel.setMultiSelectMode(true)
+            viewModel.toggleSongSelection(song.id)
+        }
+    },
+    isCompact = trackLayoutDensity == 2
+)
+        }
+    }
+    item(key = "detail_all_label") { DetailSectionLabel("All songs") }
+}
+itemsIndexed(albumSongs, key = { _, song -> song.id }) { index, song ->
+    Box(Modifier.animateItem().padding(end = 28.dp)) {
                                                                     SongListItem(
                                                                                 song = song,
                                                                                 isPlaying = uiState.isPlaying && uiState.currentSong?.id == song.id,
@@ -1832,22 +1967,24 @@ fun MainScreen(
                                                                     }
                                                                 }
 
-                                                                if (albumSongs.size > 20) {
-                                                                    val songTitles = remember(albumSongs) {
-                                                                        albumSongs.map { it.title }
-                                                                    }
-                                                                    AlphabetScroller(
-                                                                        modifier = Modifier
-                                                                            .align(Alignment.CenterEnd)
-                                                                            .padding(end = 4.dp, top = 20.dp, bottom = 120.dp),
-                                                                        items = songTitles,
-                                                                        onScrollTo = { targetIndex: Int ->
-                                                                            scope.launch {
-                                                                                albumDetailListState.scrollToItem(targetIndex)
-                                                                            }
-                                                                        }
-                                                                    )
-                                                                }
+                                                                val albumShowAz by remember { derivedStateOf { albumDetailListState.firstVisibleItemIndex >= 1 } }
+androidx.compose.animation.AnimatedVisibility(
+    visible = albumSongs.size > 20 && albumShowAz,
+    enter = fadeIn(),
+    exit = fadeOut(),
+    modifier = Modifier
+        .align(Alignment.CenterEnd)
+        .padding(end = 4.dp, top = 20.dp, bottom = 120.dp)
+) {
+    val songTitles = remember(albumSongs) { albumSongs.map { it.title } }
+    AlphabetScroller(
+        items = songTitles,
+        onScrollToTop = { scope.launch { albumDetailListState.scrollToItem(0) } },
+        onScrollTo = { targetIndex: Int ->
+            scope.launch { albumDetailListState.scrollToItem(targetIndex + albumHeaderCount) }
+        }
+    )
+}
                                                             } else {
                                                                 LazyVerticalGrid(
                                                                     state = albumDetailGridState,
@@ -1856,7 +1993,10 @@ fun MainScreen(
                                                                     horizontalArrangement = Arrangement.spacedBy(if (trackLayoutDensity >= 3) 8.dp else 16.dp),
                                                                     verticalArrangement = Arrangement.spacedBy(if (trackLayoutDensity >= 3) 8.dp else 16.dp)
                                                                 ) {
-                                                                    items(albumSongs, key = { it.id }) { song ->
+                                                                    item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }, key = "detail_header") {
+detailHeader()
+}
+items(albumSongs, key = { it.id }) { song ->
                                                                         Box(Modifier.animateItem()) {
                                                                             SongGridItem(
                                                                                 song = song,
@@ -1925,6 +2065,8 @@ fun MainScreen(
                                                 }
                                                 LibraryView.ARTIST_DETAIL -> {
                                                     val artistSongs = songs
+                                                    val artistPopular = remember(artistSongs, favorites, detailRecent) { popularSongsOf(artistSongs, favorites, detailRecent) }
+                                                    val artistHeaderCount = detailHeaderItemCount(artistPopular.size)
                                                     val isListView = trackLayoutDensity <= 2
                                                     AnimatedContent(
                                                         targetState = isListView,
@@ -1942,11 +2084,41 @@ fun MainScreen(
                                                                     contentPadding = PaddingValues(
                                                                         top = 8.dp,
                                                                         bottom = paddingValues.calculateBottomPadding() + 120.dp,
-                                                                        end = 32.dp
+                                                                        end = 0.dp
                                                                     )
                                                                 ) {
-                                                                    itemsIndexed(artistSongs, key = { _, song -> song.id }) { index, song ->
-                                                                        Box(Modifier.animateItem()) {
+item(key = "detail_header") {
+detailHeader()
+}
+if (artistPopular.isNotEmpty()) {
+    item(key = "detail_popular_label") { DetailSectionLabel("Popular") }
+    itemsIndexed(artistPopular, key = { _, s -> "pop_" + s.id }) { pIndex, song ->
+        Box(Modifier.padding(end = 28.dp)) {
+SongListItem(
+    song = song,
+    isPlaying = uiState.isPlaying && uiState.currentSong?.id == song.id,
+    trackNumber = pIndex + 1,
+    onClick = {
+        if (uiState.isMultiSelectMode) viewModel.toggleSongSelection(song.id)
+        else viewModel.playSong(song)
+    },
+    isMultiSelectMode = uiState.isMultiSelectMode,
+    isSelected = uiState.selectedIds.contains(song.id),
+    onMoreClick = { selectedSongForOptions = song },
+    onLongClick = {
+        if (!uiState.isMultiSelectMode) {
+            viewModel.setMultiSelectMode(true)
+            viewModel.toggleSongSelection(song.id)
+        }
+    },
+    isCompact = trackLayoutDensity == 2
+)
+        }
+    }
+    item(key = "detail_all_label") { DetailSectionLabel("All songs") }
+}
+itemsIndexed(artistSongs, key = { _, song -> song.id }) { index, song ->
+    Box(Modifier.animateItem().padding(end = 28.dp)) {
                                                                     SongListItem(
                                                                                 song = song,
                                                                                 isPlaying = uiState.isPlaying && uiState.currentSong?.id == song.id,
@@ -1975,22 +2147,24 @@ fun MainScreen(
                                                                     }
                                                                 }
 
-                                                                if (artistSongs.size > 20) {
-                                                                    val songTitles = remember(artistSongs) {
-                                                                        artistSongs.map { it.title }
-                                                                    }
-                                                                    AlphabetScroller(
-                                                                        modifier = Modifier
-                                                                            .align(Alignment.CenterEnd)
-                                                                            .padding(end = 4.dp, top = 20.dp, bottom = 120.dp),
-                                                                        items = songTitles,
-                                                                        onScrollTo = { targetIndex: Int ->
-                                                                            scope.launch {
-                                                                                artistDetailListState.scrollToItem(targetIndex)
-                                                                            }
-                                                                        }
-                                                                    )
-                                                                }
+                                                                val artistShowAz by remember { derivedStateOf { artistDetailListState.firstVisibleItemIndex >= 1 } }
+androidx.compose.animation.AnimatedVisibility(
+    visible = artistSongs.size > 20 && artistShowAz,
+    enter = fadeIn(),
+    exit = fadeOut(),
+    modifier = Modifier
+        .align(Alignment.CenterEnd)
+        .padding(end = 4.dp, top = 20.dp, bottom = 120.dp)
+) {
+    val songTitles = remember(artistSongs) { artistSongs.map { it.title } }
+    AlphabetScroller(
+        items = songTitles,
+        onScrollToTop = { scope.launch { artistDetailListState.scrollToItem(0) } },
+        onScrollTo = { targetIndex: Int ->
+            scope.launch { artistDetailListState.scrollToItem(targetIndex + artistHeaderCount) }
+        }
+    )
+}
                                                             } else {
                                                                 LazyVerticalGrid(
                                                                     state = artistDetailGridState,
@@ -1999,7 +2173,10 @@ fun MainScreen(
                                                                     horizontalArrangement = Arrangement.spacedBy(if (trackLayoutDensity >= 3) 8.dp else 16.dp),
                                                                     verticalArrangement = Arrangement.spacedBy(if (trackLayoutDensity >= 3) 8.dp else 16.dp)
                                                                 ) {
-                                                                    items(artistSongs, key = { it.id }) { song ->
+                                                                    item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }, key = "detail_header") {
+detailHeader()
+}
+items(artistSongs, key = { it.id }) { song ->
                                                                         Box(Modifier.animateItem()) {
                                                                             SongGridItem(
                                                                                 song = song,
@@ -3125,11 +3302,16 @@ fun MainScreen(
                                                                         LibraryView.ARTIST_DETAIL -> artistDetailGridState
                                                                         else -> null
                                                                     }
+                                                                    val detailScrollOffset = when (uiState.currentView) {
+                                                                        LibraryView.ALBUM_DETAIL, LibraryView.ARTIST_DETAIL ->
+                                                                            if (trackLayoutDensity <= 2) detailHeaderItemCount(popularSongsOf(songs, favorites, detailRecent).size) else 1
+                                                                        else -> 0
+                                                                    }
                                                                     scope.launch {
                                                                         if (trackLayoutDensity <= 2) {
-                                                                            currentState?.scrollToItem(index = index, scrollOffset = -200)
+                                                                            currentState?.scrollToItem(index = index + detailScrollOffset, scrollOffset = -200)
                                                                         } else {
-                                                                            currentGridState?.scrollToItem(index = index, scrollOffset = -200)
+                                                                            currentGridState?.scrollToItem(index = index + detailScrollOffset, scrollOffset = -200)
                                                                         }
                                                                     }
                                                                 }
@@ -5539,8 +5721,11 @@ fun StatItem(icon: androidx.compose.ui.graphics.vector.ImageVector, count: Strin
 fun AlphabetScroller(
     modifier: Modifier = Modifier,
     items: List<String>,
+    onScrollToTop: (() -> Unit)? = null,
     onScrollTo: (Int) -> Unit
 ) {
+    val latestOnScrollTo by androidx.compose.runtime.rememberUpdatedState(onScrollTo)
+    val latestOnScrollToTop by androidx.compose.runtime.rememberUpdatedState(onScrollToTop)
     val alphabet = remember { listOf('↑', '0') + ('A'..'Z').toList() + '#' }
     var currentLetter by remember { mutableStateOf<Char?>(null) }
     var itemHeight by remember { mutableFloatStateOf(0f) }
@@ -5554,6 +5739,12 @@ fun AlphabetScroller(
                 else -> items.indexOfFirst { it.startsWith(letter, ignoreCase = true) }
             }
         }
+    }
+
+    fun dispatchLetter(letter: Char) {
+        val top = latestOnScrollToTop
+        if (letter == '↑' && top != null) top()
+        else alphabetIndices[letter]?.let { if (it != -1) latestOnScrollTo(it) }
     }
 
     Box(
@@ -5577,7 +5768,7 @@ fun AlphabetScroller(
                         if (lastLetter != letter) {
                             lastLetter = letter
                             currentLetter = letter
-                            alphabetIndices[letter]?.let { if (it != -1) onScrollTo(it) }
+                            dispatchLetter(letter)
                         }
                     }
 
@@ -5593,7 +5784,7 @@ fun AlphabetScroller(
                         } else {
                             // When released, perform a final smooth scroll to the exact start of the section
                             currentLetter?.let { letter ->
-                                alphabetIndices[letter]?.let { if (it != -1) onScrollTo(it) }
+                                dispatchLetter(letter)
                             }
                             currentLetter = null
                             break
