@@ -70,7 +70,7 @@ object AddonInstaller {
                 iconFile = json.optString("iconFile", null)
             )
 
-            val validProtocols = listOf("jellyfin", "plex", "emby", "subsonic", "archive_org", "stremio", "youtube")
+            val validProtocols = listOf("jellyfin", "plex", "emby", "subsonic", "archive_org", "stremio")
             if (manifest.protocol !in validProtocols) {
                 throw Exception("Unsupported protocol: ${manifest.protocol}")
             }

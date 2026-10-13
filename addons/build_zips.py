@@ -17,7 +17,7 @@ SRC = ROOT.parent / "app/src/main/java/com/beatraxus/app/addons"
 DIST = ROOT / "dist"
 
 REQUIRED_KEYS = ["id", "displayName", "mediaType", "protocol", "authType"]  # AddonInstaller reads all five
-# authTypes the sign-in screen knows how to handle (StremioAddon/YouTubeAddon are chosen by protocol).
+# authTypes the sign-in screen knows how to handle (StremioAddon is chosen by protocol).
 KNOWN_AUTH = {"none", "server_credentials", "api_key", "manifest_url"}
 NOT_WORKING = {"plex"}  # PlexAddon deliberately refuses to sign in until plex.tv auth exists
 FIXED_DATE = (2026, 10, 12, 0, 0, 0)  # fixed timestamp => byte-identical ZIPs on every build
@@ -68,8 +68,6 @@ def verify_zip(path, valid, factory, max_size, max_entries):
         problems.append(f"authType '{m['authType']}' is not handled by the sign-in screen")
     if m["protocol"] == "archive_org" and m["authType"] != "none":
         problems.append("Internet Archive needs authType 'none' (it signs in automatically)")
-    if m["protocol"] == "youtube" and m["authType"] == "none":
-        problems.append("YouTube needs an API key (authType 'api_key')")
     return problems
 
 

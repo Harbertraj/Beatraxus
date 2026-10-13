@@ -15,15 +15,6 @@ if (localPropertiesFile.exists()) {
     localProperties.load(localPropertiesFile.inputStream())
 }
 
-// java.util.Properties is case-sensitive, so `youtube_api_key=...` was silently ignored.
-// Look keys up case-insensitively and strip stray quotes/whitespace so they can't break BuildConfig.
-fun localProp(name: String, default: String = ""): String {
-    val key = localProperties.stringPropertyNames().firstOrNull { it.equals(name, ignoreCase = true) }
-    return key?.let { localProperties.getProperty(it) }
-        ?.trim()?.trim('"', '\'')?.trim()
-        ?.takeIf { it.isNotEmpty() } ?: default
-}
-
 // Play Together reads its Firebase settings from google-services.json at runtime.
 // Put the file from the Firebase console in this folder (app/google-services.json);
 // it is copied into the app's assets before every build. No Firebase Gradle plugin needed.
@@ -86,11 +77,6 @@ configure<ApplicationExtension> {
 
         val googleWebClientId = localProperties.getProperty("GOOGLE_WEB_CLIENT_ID", "")
         buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", "\"$googleWebClientId\"")
-
-        // Optional: pre-fills the YouTube add-on so it needs no sign-in. A key built into the app can be
-        // extracted from the APK, so restrict it to "YouTube Data API v3" in Google Cloud Console.
-        val youtubeApiKey = localProp("YOUTUBE_API_KEY")
-        buildConfigField("String", "YOUTUBE_API_KEY", "\"$youtubeApiKey\"")
 
         val tmdbApiKey = localProperties.getProperty("TMDB_API_KEY", "")
         buildConfigField("String", "TMDB_API_KEY", "\"$tmdbApiKey\"")

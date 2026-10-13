@@ -5,7 +5,6 @@ import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.Movie
-import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 
@@ -65,16 +64,6 @@ object AddonPresets {
             authType = "manifest_url",
             brandColor = Color(0xFFFF8A00),
             icon = Icons.Default.Movie
-        ),
-        AddonPreset(
-            id = "preset_youtube",
-            displayName = "YouTube",
-            blurb = "Official player, your own free Data API key",
-            mediaType = "video",
-            protocol = "youtube",
-            authType = "api_key",
-            brandColor = Color(0xFFFF0000),
-            icon = Icons.Default.PlayCircle
         ),
         AddonPreset(
             id = "preset_archive",

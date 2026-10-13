@@ -15,6 +15,9 @@ object AddonManager {
 
     private var _allAddons = mutableListOf<MusicServiceAddon>()
 
+    // Ids of add-ons for protocols that no longer exist (the removed YouTube add-on); cleaned up on init.
+    private val legacyRemovedIds = mutableSetOf<String>()
+
     private val _addedIds = MutableStateFlow<Set<String>>(emptySet())
     val addedIds: StateFlow<Set<String>> = _addedIds.asStateFlow()
 
@@ -35,6 +38,10 @@ object AddonManager {
 
         val prefs = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         _addedIds.value = prefs.getStringSet(KEY_ADDED_IDS, emptySet())?.toSet() ?: emptySet()
+        if (legacyRemovedIds.isNotEmpty()) {
+            _addedIds.value = _addedIds.value - legacyRemovedIds
+            persist()
+        }
         refreshLists()
 
         addedAddons.value.forEach { it.connect(appContext) }
@@ -58,6 +65,16 @@ object AddonManager {
                         val authType = json.getString("authType")
                         val protocol = json.getString("protocol")
 
+                        if (protocol == "youtube") {
+                            // The YouTube add-on was removed: delete its files and the saved API key.
+                            legacyRemovedIds += id
+                            appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                                .edit().remove("yt_api_key_$id").apply()
+                            AddonCredentialStore.clear(appContext, id)
+                            dir.deleteRecursively()
+                            continue
+                        }
+
                         val addon = createAddonInstance(id, displayName, protocol, authType)
                         if (addon != null) {
                             _allAddons.add(addon)
@@ -78,7 +95,6 @@ object AddonManager {
             "emby" -> EmbyAddon(id, displayName, authType)
             "archive_org" -> ArchiveOrgAddon(id, displayName, authType)
             "stremio" -> StremioAddon(id, displayName, authType)
-            "youtube" -> YouTubeAddon(id, displayName, authType)
             else -> null
         }
     }

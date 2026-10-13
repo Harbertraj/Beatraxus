@@ -826,13 +826,7 @@ fun BeatraxusApp(
                 val addonId = backStackEntry.arguments?.getString("addonId") ?: return@composable
                 val found = AddonManager.addedAddons.value.find { it.id == addonId }
                 val addon = found as? MediaServerAddon
-                if (found is com.beatraxus.app.addons.YouTubeAddon) {
-                    com.beatraxus.app.ui.screens.YouTubeHomeScreen(
-                        addon = found,
-                        playerViewModel = viewModel,
-                        onBack = { navController.popBackStack() }
-                    )
-                } else if (found is com.beatraxus.app.addons.StremioAddon) {
+                if (found is com.beatraxus.app.addons.StremioAddon) {
                     com.beatraxus.app.ui.screens.OttHomeScreen(
                         addon = found,
                         playerViewModel = viewModel,

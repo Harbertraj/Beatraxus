@@ -30,7 +30,6 @@ import com.beatraxus.app.addons.EmbyAddon
 import com.beatraxus.app.addons.MediaServerAddon
 import com.beatraxus.app.addons.StremioAddon
 import com.beatraxus.app.addons.SubsonicAddon
-import com.beatraxus.app.addons.YouTubeAddon
 import com.beatraxus.app.ui.components.glassIconBackground
 import kotlinx.coroutines.launch
 
@@ -46,7 +45,6 @@ fun AddonSignInScreen(
 ) {
     val coroutineScope = rememberCoroutineScope()
     val isOtt = addon is StremioAddon
-    val isYt = addon is YouTubeAddon
     var serverUrl by remember { mutableStateOf("") }
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
@@ -55,14 +53,8 @@ fun AddonSignInScreen(
     var isLoading by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
-    // A YouTube key supplied through local.properties needs no typing: connect straight away.
-    val ytKeyBuiltIn = isYt && com.beatraxus.app.BuildConfig.YOUTUBE_API_KEY.isNotBlank()
-
     LaunchedEffect(addon) {
-        if (ytKeyBuiltIn) {
-            val result = addon.login("", "", "")
-            if (result.isSuccess) onSuccess() else errorMessage = result.exceptionOrNull()?.message ?: "YouTube API key was rejected"
-        } else if (addon.authType == "none") {
+        if (addon.authType == "none") {
             val result = addon.login("", "", "")
             if (result.isSuccess) {
                 onSuccess()
@@ -80,15 +72,14 @@ fun AddonSignInScreen(
     }
 
     val brand = addon.brandColor
-    val needsCredentials = !isYt && !isOtt && addon.authType == "server_credentials"
-    val needsApiKey = !isYt && !isOtt && addon.authType == "api_key"
+    val needsCredentials = !isOtt && addon.authType == "server_credentials"
+    val needsApiKey = !isOtt && addon.authType == "api_key"
 
     val urlLabel = when {
         isOtt -> "Add-on manifest URL"
         else -> "Server address"
     }
     val hint = when {
-        isYt -> "Uses the official YouTube player. Create a free YouTube Data API v3 key in Google Cloud Console and paste it here."
         isOtt -> "Paste the add-on's manifest link (stremio:// or https://). Only streams with a direct link can play in Beatraxus."
         addon is SubsonicAddon -> "Works with Navidrome, Airsonic, Gonic and other Subsonic servers. Example: music.example.com or 192.168.1.20:4533"
         addon is EmbyAddon -> "Example: 192.168.1.20:8096. Use your Emby username and password."
@@ -96,7 +87,6 @@ fun AddonSignInScreen(
     }
 
     val canSubmit = !isLoading && when {
-        isYt -> apiKey.isNotBlank()
         needsCredentials -> serverUrl.isNotBlank() && username.isNotBlank()
         else -> serverUrl.isNotBlank()
     }
@@ -107,7 +97,6 @@ fun AddonSignInScreen(
             isLoading = true
             errorMessage = null
             val result = when {
-                isYt -> addon.login("", "", apiKey)
                 isOtt -> addon.login(serverUrl, "", "")
                 needsCredentials -> addon.login(serverUrl, username, password)
                 else -> addon.login(serverUrl, "", apiKey) // password param carries the API key
@@ -193,26 +182,15 @@ fun AddonSignInScreen(
                     }
                 }
 
-                if (isYt) {
-                    GlassField(
-                        value = apiKey,
-                        onValueChange = { apiKey = it },
-                        label = "YouTube Data API v3 key",
-                        brand = brand,
-                        imeAction = ImeAction.Done,
-                        onDone = ::submit
-                    )
-                } else {
-                    GlassField(
-                        value = serverUrl,
-                        onValueChange = { serverUrl = it },
-                        label = urlLabel,
-                        brand = brand,
-                        keyboardType = KeyboardType.Uri,
-                        imeAction = if (isOtt) ImeAction.Done else ImeAction.Next,
-                        onDone = ::submit
-                    )
-                }
+                GlassField(
+                    value = serverUrl,
+                    onValueChange = { serverUrl = it },
+                    label = urlLabel,
+                    brand = brand,
+                    keyboardType = KeyboardType.Uri,
+                    imeAction = if (isOtt) ImeAction.Done else ImeAction.Next,
+                    onDone = ::submit
+                )
 
                 if (needsCredentials) {
                     GlassField(
