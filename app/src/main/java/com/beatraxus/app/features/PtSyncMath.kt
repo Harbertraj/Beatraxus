@@ -9,7 +9,7 @@ import kotlin.math.abs
 internal object PtSyncMath {
 
     /** Position errors up to this are left alone (below what the ear can place, and inside clock jitter). */
-    const val DEADBAND_MS = 6L
+    const val DEADBAND_MS = 15L
 
     /** Errors up to this are fixed by trimming / padding a few ms of audio instead of seeking. */
     const val SOFT_MAX_MS = 250L
@@ -19,6 +19,22 @@ internal object PtSyncMath {
 
     /** More than this early means the room position moved (e.g. the controller seeked back): reposition. */
     const val MAX_WAIT_MS = 1_500L
+
+    /** Readings kept to tell a real offset from measurement noise. */
+    const val STABLE_WINDOW = 4
+    /** Readings within this spread of each other count as the same offset. */
+    const val STABLE_SPREAD_MS = 12L
+
+    /**
+     * The offset to correct, or null while the readings still jump around (clock / position jitter).
+     * Correcting noise would trim or pad audio over and over, which is heard as crackle and gaps.
+     */
+    fun stableError(readings: Collection<Long>): Long? {
+        if (readings.size < STABLE_WINDOW) return null
+        val sorted = readings.sorted()
+        if (sorted.last() - sorted.first() > STABLE_SPREAD_MS) return null
+        return sorted[sorted.size / 2]
+    }
 
     enum class Fix { NONE, NUDGE, SEEK }
 

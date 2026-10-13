@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.os.Build
 import android.os.SystemClock
+import android.util.Log
 import android.net.Uri
 import com.beatraxus.app.model.Song
 import com.beatraxus.app.model.SongSource
@@ -1200,6 +1201,7 @@ class PlayTogetherManager(
     private suspend fun postNeed(sig: String, sid: String, wifi: Boolean = false) {
         val code = room ?: return
         val need = JSONObject().put("sig", sig).put("sid", sid).put("v", 2).put("at", serverValue())
+        if (preloads.containsKey(sid)) need.put("pre", true) // background load of a later song
         if (wifi) need.put("route", "wifi") // the controller opens its own Wi-Fi instead of starting WebRTC
         // A request for a song loaded ahead of time gets its own node (named by its session id), so a phone
         // can have several open; the song playing now keeps the old per-phone node.
@@ -1246,7 +1248,9 @@ class PlayTogetherManager(
                     val size = song.fileSizeBytes.takeIf { it > 0 } ?: 0L
                     // the cover only goes to apps that said they can take it (v >= 2)
                     val cover = if (n.optInt("v", 1) >= 2) PtArt.coverFile(app, song) else null
-                    transfer.startSending(sid, extOf(song), size, cover) { app.contentResolver.openInputStream(song.uri) }
+                    // a song asked for ahead of time is sent slowly, so the phone that is playing is not disturbed
+                    val cap = if (n.optBoolean("pre", false)) PRELOAD_MAX_BYTES_PER_SEC else 0L
+                    transfer.startSending(sid, extOf(song), size, cover, cap) { app.contentResolver.openInputStream(song.uri) }
                 }
             }
         }
@@ -1697,6 +1701,7 @@ class PlayTogetherManager(
             var prevPos = -1L
             var pausedChecks = 0
             var kicks = 0
+            val errWindow = ArrayDeque<Long>() // recent readings: a nudge needs a stable error, not one noisy sample
             while (isActive) {
                 delay(if (steady >= STEADY_CHECKS) RESYNC_IDLE_MS else RESYNC_STEP_MS)
                 val st = roomState ?: break
@@ -1728,22 +1733,25 @@ class PlayTogetherManager(
                 }
 
                 when (PtSyncMath.fixFor(err)) {
-                    PtSyncMath.Fix.NONE -> steady++
+                    PtSyncMath.Fix.NONE -> { steady++; errWindow.clear() }
                     PtSyncMath.Fix.NUDGE -> {
-                        steady = 0
-                        if (host.nudge(err)) {
-                            lastNudgeAt = now
-                        } else if (now - lastSeekAt >= RESYNC_SEEK_GAP_MS) {
-                            lastSeekAt = now; lastSyncSeekAt = now
-                            ignoreLocalUntil = now + 1_000
-                            lastSeekTarget = expectedPosition(st) + seekLeadMs
-                            seekSamplePending = true
-                            host.seekTo(lastSeekTarget)
+                        errWindow.addLast(err)
+                        if (errWindow.size > PtSyncMath.STABLE_WINDOW) errWindow.removeFirst()
+                        val stable = PtSyncMath.stableError(errWindow)
+                        if (stable == null) {
+                            steady++ // jitter around the same place, not a real offset: leave the audio alone
+                        } else {
+                            steady = 0
+                            errWindow.clear()
+                            Log.d("PtSync", "nudge ${stable}ms (reading ${err}ms)")
+                            if (host.nudge(stable)) lastNudgeAt = now
                         }
                     }
                     PtSyncMath.Fix.SEEK -> {
                         steady = 0
+                        errWindow.clear()
                         if (now - lastSeekAt >= RESYNC_SEEK_GAP_MS) {
+                            Log.d("PtSync", "resync seek: off by ${err}ms")
                             lastSeekAt = now; lastSyncSeekAt = now
                             ignoreLocalUntil = now + 1_000
                             lastSeekTarget = expectedPosition(st) + seekLeadMs
@@ -1777,7 +1785,7 @@ class PlayTogetherManager(
     private fun syncSeekIfOff(st: RoomState, target: Long): Boolean {
         val signed = target - host.positionMs() // + = this phone is late
         if (st.playing && host.isPlaying() && gateJob?.isActive != true &&
-            PtSyncMath.fixFor(signed) == PtSyncMath.Fix.NUDGE
+            PtSyncMath.fixFor(signed) == PtSyncMath.Fix.NUDGE && abs(signed) >= DIRECT_NUDGE_MIN_MS
         ) {
             // small error: trim / pad a few ms of audio, no seek, no volume dip
             val now = SystemClock.elapsedRealtime()
@@ -1799,7 +1807,7 @@ class PlayTogetherManager(
         if (st.by == uid || !st.playing || !playing || !matchesRoomSong(cur)) return
         val target = expectedPosition(st)
         val signed = target - pos
-        if (gateJob?.isActive != true && PtSyncMath.fixFor(signed) == PtSyncMath.Fix.NUDGE) {
+        if (gateJob?.isActive != true && PtSyncMath.fixFor(signed) == PtSyncMath.Fix.NUDGE && abs(signed) >= DIRECT_NUDGE_MIN_MS) {
             val now = SystemClock.elapsedRealtime()
             if (now - lastNudgeAt >= NUDGE_SETTLE_MS && host.nudge(signed)) { lastNudgeAt = now; return }
         }
@@ -2325,6 +2333,10 @@ class PlayTogetherManager(
         const val RESYNC_SEEK_GAP_MS = 1_500L
         /** Songs loaded ahead of time at the same time. */
         const val MAX_PARALLEL_PRELOADS = 1
+        /** Controller: speed cap for songs a phone loads ahead of time (the song playing now is never capped). */
+        const val PRELOAD_MAX_BYTES_PER_SEC = 1_500_000L
+        /** Follower: a drift correction outside the watcher needs at least this much error (smaller ones are mostly measurement noise). */
+        const val DIRECT_NUDGE_MIN_MS = 40L
         /** A preload with no progress for this long is dropped and started again. */
         const val PRELOAD_STALL_MS = 30_000L
         const val PRELOAD_GAP_MS = 1_500L

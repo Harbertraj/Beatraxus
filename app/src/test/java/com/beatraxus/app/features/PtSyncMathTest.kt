@@ -10,8 +10,8 @@ class PtSyncMathTest {
     @Test
     fun smallErrorsAreIgnoredMediumNudgedLargeSeeked() {
         assertEquals(Fix.NONE, PtSyncMath.fixFor(0))
-        assertEquals(Fix.NONE, PtSyncMath.fixFor(-6))
-        assertEquals(Fix.NUDGE, PtSyncMath.fixFor(7))
+        assertEquals(Fix.NONE, PtSyncMath.fixFor(-15))
+        assertEquals(Fix.NUDGE, PtSyncMath.fixFor(16))
         assertEquals(Fix.NUDGE, PtSyncMath.fixFor(-250))
         assertEquals(Fix.SEEK, PtSyncMath.fixFor(251))
         assertEquals(Fix.SEEK, PtSyncMath.fixFor(-4_000))
@@ -66,5 +66,12 @@ class PtSyncMathTest {
         val slow = PtSyncMath.blendClockOffset(100, 200, 500)
         assertEquals(150L, fast)
         assertEquals(105L, slow)
+    }
+
+    @Test
+    fun noisyReadingsAreNotCorrectedButASteadyOffsetIs() {
+        assertEquals(null, PtSyncMath.stableError(listOf(20L, 55L, -10L, 40L)))
+        assertEquals(null, PtSyncMath.stableError(listOf(30L, 31L, 32L))) // not enough readings yet
+        assertEquals(31L, PtSyncMath.stableError(listOf(30L, 31L, 32L, 36L)))
     }
 }

@@ -61,6 +61,8 @@ class PtFileTransfer(
         val pendingIce = ArrayList<IceCandidate>()
         @Volatile var done = false
         var out: FileOutputStream? = null
+        /** Receiver: one reusable read buffer instead of a new 16 KB array per message (GC churn that competes with playback). */
+        var rx = ByteArray(CHUNK)
         var outFile: File? = null
         var partial: PtPartialFiles.Entry? = null
         var lastPartialAt = 0L
@@ -95,7 +97,11 @@ class PtFileTransfer(
     // ---- sender (controller) -------------------------------------------------------------
 
     /** Controller side: open a connection to the phone behind [sid] and push the file. */
-    fun startSending(sid: String, ext: String, size: Long, cover: File? = null, open: () -> InputStream?) {
+    fun startSending(
+        sid: String, ext: String, size: Long, cover: File? = null,
+        /** > 0 = a song loaded ahead of time: sent at most this many bytes per second, so playback elsewhere is not disturbed. */
+        maxBytesPerSec: Long = 0L, open: () -> InputStream?
+    ) {
         if (sessions.containsKey(sid)) return
         val s = newSession(sid, true) ?: return
         val dc = s.pc.createDataChannel("song", DataChannel.Init().apply { ordered = true })
@@ -105,7 +111,7 @@ class PtFileTransfer(
             override fun onMessage(b: DataChannel.Buffer) {}
             override fun onStateChange() {
                 if (dc.state() == DataChannel.State.OPEN && s.job == null) {
-                    s.job = scope.launch(Dispatchers.IO) { pump(s, dc, ext, size, cover, open) }
+                    s.job = scope.launch(Dispatchers.IO) { pump(s, dc, ext, size, cover, maxBytesPerSec, open) }
                 }
             }
         })
@@ -120,7 +126,7 @@ class PtFileTransfer(
     }
 
     private suspend fun pump(
-        s: Session, dc: DataChannel, ext: String, size: Long, cover: File?, open: () -> InputStream?
+        s: Session, dc: DataChannel, ext: String, size: Long, cover: File?, maxBytesPerSec: Long, open: () -> InputStream?
     ) {
         try {
             val input = open() ?: throw IllegalStateException("cannot read file")
@@ -142,13 +148,19 @@ class PtFileTransfer(
                 val buf = ByteArray(CHUNK)
                 var sent = 0L
                 var lastPct = -1
+                val t0 = System.nanoTime()
                 while (true) {
                     val n = it.read(buf)
                     if (n <= 0) break
                     while (dc.bufferedAmount() > MAX_BUFFERED) delay(15)
                     if (s.done) return
-                    dc.send(DataChannel.Buffer(ByteBuffer.wrap(buf.copyOf(n)), true))
+                    // DataChannel.send copies the bytes itself, so the same array can be reused
+                    dc.send(DataChannel.Buffer(ByteBuffer.wrap(buf, 0, n), true))
                     sent += n
+                    if (maxBytesPerSec > 0) {
+                        val ahead = sent * 1000L / maxBytesPerSec - (System.nanoTime() - t0) / 1_000_000L
+                        if (ahead > 5) delay(ahead)
+                    }
                     val pct = if (size > 0) (sent * 100 / size).toInt() else 0
                     if (pct != lastPct) { lastPct = pct; listener?.onProgress(s.sid, pct) }
                 }
@@ -198,9 +210,12 @@ class PtFileTransfer(
             override fun onStateChange() {}
             override fun onMessage(b: DataChannel.Buffer) {
                 try {
-                    val bytes = ByteArray(b.data.remaining()).also { b.data.get(it) }
+                    val n = b.data.remaining()
+                    if (s.rx.size < n) s.rx = ByteArray(n)
+                    val bytes = s.rx
+                    b.data.get(bytes, 0, n)
                     if (!b.binary) {
-                        val t = String(bytes)
+                        val t = String(bytes, 0, n)
                         if (t == "EOF") {
                             s.out?.close()
                             val f = s.outFile
@@ -231,14 +246,14 @@ class PtFileTransfer(
                         }
                     } else if (s.artGot < s.artExpected) {
                         // the cover comes first and in its own messages, before any song data
-                        s.artBuf?.write(bytes)
-                        s.artGot += bytes.size
+                        s.artBuf?.write(bytes, 0, n)
+                        s.artGot += n
                         if (s.artGot >= s.artExpected) saveCover(s)
                     } else {
-                        s.out?.write(bytes)
-                        s.got += bytes.size
+                        s.out?.write(bytes, 0, n)
+                        s.got += n
                         s.partial?.let { p ->
-                            p.advance(bytes.size)
+                            p.advance(n)
                             val now = android.os.SystemClock.elapsedRealtime()
                             if (now - s.lastPartialAt >= PARTIAL_EVERY_MS) {
                                 s.lastPartialAt = now
