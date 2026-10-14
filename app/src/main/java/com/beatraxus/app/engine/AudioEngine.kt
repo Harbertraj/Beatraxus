@@ -84,7 +84,7 @@ class AudioEngine(
         }
     }.asCoroutineDispatcher()
 
-    private val aiAnalysisDao = database.aiAnalysisDao()
+    private val aiEqStore = com.beatraxus.app.engine.aieq.AiEqStore.getInstance(context)
     private val controlMutex = Mutex()
     private val driveAccountRepository = DriveAccountRepository(context)
 
@@ -791,21 +791,20 @@ class AudioEngine(
     }
 
     /**
-     * Re-reads [songId]'s AI analysis from the database and applies it to the running DSP pipeline.
-     * The pipeline normally only looks the analysis up when a song starts, so without this a song that
-     * gets analysed while it is already playing would keep playing without its AI EQ.
+     * Applies a freshly predicted AI EQ [profile] to the running DSP pipeline if it belongs to the song that is
+     * playing. The pipeline only looks the profile up when a song starts, so a profile that arrives while the song
+     * is already playing has to be pushed in.
      */
-    fun refreshAiAnalysis(songId: String) {
+    fun applyAiEq(profile: com.beatraxus.app.engine.aieq.AiEqProfile) {
         engineScope.launch {
             try {
-                val analysis = aiAnalysisDao.getAnalysisForSong(songId) ?: return@launch
                 val session = activeSession ?: return@launch
-                if (session.song.id != songId) return@launch
+                if (session.song.id != profile.songId) return@launch
                 session.dspLock.writeLock().withLock {
-                    session.dspPipeline.updateAiAnalysis(analysis)
+                    session.dspPipeline.updateAiEq(profile)
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "AI analysis refresh failed for $songId", e)
+                Log.e(TAG, "AI EQ apply failed for ${profile.songId}", e)
             }
         }
     }
@@ -1432,7 +1431,7 @@ class AudioEngine(
 
                     current.updateOutputBitDepth(currentBitDepth)
                     current.updateConfig(dspConfig)
-                    current.updateAiAnalysis(null)
+                    current.updateAiEq(aiEqStore.get(song.id))
                     appliedDspRevision = dspRevision.get()
                     null
                 } else {
@@ -1443,7 +1442,7 @@ class AudioEngine(
                         outputBitDepth = currentBitDepth,
                         config = dspConfig,
                         song = song,
-                        aiAnalysis = null // Don't gate pipeline creation on DB lookup
+                        aiEq = aiEqStore.get(song.id)
                     )
                     dspPipeline = newPipeline
                     appliedDspRevision = dspRevision.get()
@@ -1454,20 +1453,6 @@ class AudioEngine(
             // Release old pipeline outside of lock
             oldPipelineToRelease?.release()
 
-            // 2. Lookup AI analysis in background and update the pipeline when ready
-            engineScope.launch {
-                try {
-                    val aiAnalysis = aiAnalysisDao.getAnalysisForSong(song.id)
-                    dspLock.writeLock().withLock {
-                        // Verify session is still active and same song
-                        if (isActive() && dspPipeline.inputSampleRate == format.sampleRate) {
-                            dspPipeline.updateAiAnalysis(aiAnalysis)
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "AI analysis lookup failed for ${song.id}", e)
-                }
-            }
         }
     }
 

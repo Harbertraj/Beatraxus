@@ -766,9 +766,9 @@ class AudioPlaybackService : Service() {
         engine.updateDspConfig(config)
     }
 
-    /** Applies a freshly stored AI analysis to the song that is playing right now. */
-    fun refreshAiAnalysis(songId: String) {
-        engine.refreshAiAnalysis(songId)
+    /** Applies a freshly predicted AI EQ profile if it is for the song that is playing right now. */
+    fun applyAiEq(profile: com.beatraxus.app.engine.aieq.AiEqProfile) {
+        engine.applyAiEq(profile)
     }
 
     fun setOutputMode(mode: OutputMode) {

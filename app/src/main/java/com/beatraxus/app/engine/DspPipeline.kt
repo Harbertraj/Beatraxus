@@ -2,7 +2,7 @@ package com.beatraxus.app.engine
 
 import android.os.Build
 import android.util.Log
-import com.beatraxus.app.model.AiAnalysisEntity
+import com.beatraxus.app.engine.aieq.AiEqProfile
 import com.beatraxus.app.model.DspConfig
 import com.beatraxus.app.model.ParametricEqBand
 import com.beatraxus.app.model.ReplayGainOption
@@ -27,7 +27,7 @@ internal interface DspProcessor {
     fun process(input: DspProcessResult, channels: Int): DspProcessResult
     fun updateConfig(config: DspConfig) {}
     fun updateOutputBitDepth(bitDepth: Int) {}
-    fun updateAiAnalysis(aiAnalysis: AiAnalysisEntity?) {}
+    fun updateAiEq(profile: AiEqProfile?) {}
     fun flush() {}
     fun release() {}
     fun getLevels(): FloatArray = floatArrayOf(0f, 0f)
@@ -117,8 +117,8 @@ internal class AudioDspPipeline(
         processors.forEach { it.updateOutputBitDepth(bitDepth) }
     }
 
-    fun updateAiAnalysis(aiAnalysis: AiAnalysisEntity?) {
-        processors.forEach { it.updateAiAnalysis(aiAnalysis) }
+    fun updateAiEq(profile: AiEqProfile?) {
+        processors.forEach { it.updateAiEq(profile) }
     }
 
     fun flush() {
@@ -147,12 +147,12 @@ internal class AudioDspPipeline(
             outputBitDepth: Int,
             config: DspConfig,
             song: Song?,
-            aiAnalysis: AiAnalysisEntity? = null
+            aiEq: AiEqProfile? = null
         ): AudioDspPipeline {
             val processors = mutableListOf<DspProcessor>()
             val effectiveInputRate = inputSampleRate.coerceAtLeast(8_000)
 
-            processors += NativeDspProcessor(config, effectiveInputRate, outputSampleRate, channels, outputBitDepth, song, aiAnalysis)
+            processors += NativeDspProcessor(config, effectiveInputRate, outputSampleRate, channels, outputBitDepth, song, aiEq)
 
             return AudioDspPipeline(processors, config, effectiveInputRate, outputSampleRate, channels, song)
         }
@@ -166,10 +166,10 @@ private class NativeDspProcessor(
     private val channels: Int,
     private val outputBitDepth: Int,
     private val song: Song?,
-    aiAnalysis: AiAnalysisEntity? = null
+    aiEq: AiEqProfile? = null
 ) : DspProcessor {
     private var currentConfig = config
-    private var currentAiAnalysis: AiAnalysisEntity? = aiAnalysis
+    private var currentAiEq: AiEqProfile? = aiEq
 
     // Tone smoothing state removed as it is now handled in C++
     private var previousBassEnabled = config.bassEnabled
@@ -386,42 +386,22 @@ private class NativeDspProcessor(
         // Phase 3.4: Hardware Volume
         dsp.setHardwareVolume(cfg.hardwareVolumeEnabled)
 
-        applyEqBands(cfg, dsp, currentAiAnalysis)
+        applyEqBands(cfg, dsp, currentAiEq)
     }
 
-    private fun applyEqBands(config: DspConfig, dsp: NativeDsp, analysis: AiAnalysisEntity? = null) {
+    private fun applyEqBands(config: DspConfig, dsp: NativeDsp, aiProfile: AiEqProfile? = null) {
         val isBP = config.bitPerfectEnabled
         val eqUnbypassed = !isBP || config.bitPerfectUnbypassEq
         val effectiveEqEnabled = config.eqEnabled && eqUnbypassed
 
-        // Handle AI EQ
+        // AI EQ: ten bands predicted for the playing song (flat until its profile arrives).
         val aiEnabled = config.aiEqEnabled && !isBP
         dsp.setAiEqEnabled(aiEnabled)
-        val targetAnalysis = analysis ?: currentAiAnalysis
         if (aiEnabled) {
-            if (targetAnalysis != null) {
-                val bands = listOf(
-                    31.25f to targetAnalysis.eq31,
-                    62.5f to targetAnalysis.eq62,
-                    125f to targetAnalysis.eq125,
-                    250f to targetAnalysis.eq250,
-                    500f to targetAnalysis.eq500,
-                    1000f to targetAnalysis.eq1k,
-                    2000f to targetAnalysis.eq2k,
-                    4000f to targetAnalysis.eq4k,
-                    8000f to targetAnalysis.eq8k,
-                    16000f to targetAnalysis.eq16k
-                )
-                bands.forEachIndexed { index, (freq, gain) ->
-                    dsp.setAiBand(index, freq, gain, 1.41f, 0)
-                }
-            } else {
-                val freqs = floatArrayOf(
-                    31.25f, 62.5f, 125f, 250f, 500f, 1000f, 2000f, 4000f, 8000f, 16000f
-                )
-                freqs.forEachIndexed { index, freq ->
-                    dsp.setAiBand(index, freq, 0f, 1.41f, 0)
-                }
+            val target = aiProfile ?: currentAiEq
+            val freqs = com.beatraxus.app.engine.aieq.AiEqKnowledge.BAND_FREQUENCIES
+            for (index in freqs.indices) {
+                dsp.setAiBand(index, freqs[index], target?.gains?.getOrNull(index) ?: 0f, 1.41f, 0)
             }
         }
 
@@ -518,9 +498,9 @@ private class NativeDspProcessor(
         updateNativeConfig(currentConfig, native)
     }
 
-    override fun updateAiAnalysis(aiAnalysis: AiAnalysisEntity?) {
-        currentAiAnalysis = aiAnalysis
-        applyEqBands(currentConfig, native, currentAiAnalysis)
+    override fun updateAiEq(profile: AiEqProfile?) {
+        currentAiEq = profile
+        applyEqBands(currentConfig, native, currentAiEq)
     }
 
     override fun flush() {

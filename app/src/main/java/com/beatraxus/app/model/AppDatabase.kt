@@ -103,10 +103,9 @@ interface VideoRecentlyPlayedDao {
         PlaylistEntity::class, FavoriteEntity::class, SongEntity::class, RecentlyPlayedEntity::class,
         LyricsEntity::class, FolderEntity::class, VideoFolderEntity::class, AiAnalysisEntity::class, ArtistArtEntity::class,
         SongQualityEntity::class, BookmarkEntity::class, ChapterEntity::class, HighlightEntity::class,
-        LoudnessEntity::class, VideoRecentlyPlayedEntity::class, IntroOutroRange::class, VideoChapterEntity::class,
-        AiEqCorrectionEntity::class
+        LoudnessEntity::class, VideoRecentlyPlayedEntity::class, IntroOutroRange::class, VideoChapterEntity::class
     ],
-    version = 31,
+    version = 32,
     exportSchema = false
 )
 @TypeConverters(Converters::class)
@@ -120,7 +119,6 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun recentlyPlayedDao(): RecentlyPlayedDao
     abstract fun videoRecentlyPlayedDao(): VideoRecentlyPlayedDao
     abstract fun aiAnalysisDao(): AiAnalysisDao
-    abstract fun aiEqCorrectionDao(): AiEqCorrectionDao
     abstract fun artistArtDao(): ArtistArtDao
     abstract fun songQualityDao(): SongQualityDao
     abstract fun bookmarkDao(): BookmarkDao
@@ -131,6 +129,12 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun videoChapterDao(): VideoChapterDao
 
     companion object {
+        /** The old AI EQ "learning" table is gone: AI EQ now keeps its profiles in a JSON cache (engine/aieq). */
+        val MIGRATION_31_32 = object : Migration(31, 32) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("DROP TABLE IF EXISTS ai_eq_corrections")
+            }
+        }
         val MIGRATION_30_31 = object : Migration(30, 31) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE lyrics ADD COLUMN providerId TEXT")

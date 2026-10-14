@@ -53,7 +53,7 @@ class AiAnalysisEngine(
     }
 
     /**
-     * Builds the per-song AI EQ profile and ALWAYS returns one (for any song, local or cloud):
+     * Builds the per-song library analysis (genre, mood, language, loudness...) and ALWAYS returns one (for any song, local or cloud):
      *  1. audio analysis - native extractor, then the app's own decoders (ALAC, Dolby, DTS, ...);
      *  2. if the audio can't be read (cloud/streamed song, broken file, unsupported codec) the in-app online AI
      *     lookups (genre + mood tags) and the song's metadata choose the genre/mood target curve instead.
@@ -173,18 +173,7 @@ class AiAnalysisEngine(
         finalMoods.addAll(communityTags)
         val moodTags = finalMoods.joinToString(",")
 
-        // 5. Adaptive AI EQ profile (a flat measured spectrum makes it follow the genre/mood target curve).
-        val aiEqResult = AiEqCalculator.calculateAiEq(
-            genre = primaryGenre,
-            mood = mood,
-            spectral128 = audioFeatures.spectralData,
-            lufs = audioFeatures.lufs,
-            dr = audioFeatures.dynamicRange,
-            bassScore = audioFeatures.bassScore,
-            midScore = audioFeatures.midScore,
-            trebleScore = audioFeatures.trebleScore
-        )
-        val aiEq = aiEqResult.bandGains
+        // The EQ is no longer part of this analysis: see engine/aieq (AiEqEngine). eq* columns stay 0 (legacy).
 
         return AiAnalysisEntity(
             songId = song.id,
@@ -206,22 +195,14 @@ class AiAnalysisEngine(
             trebleScore = audioFeatures.trebleScore,
             stereoWidth = audioFeatures.stereoWidth,
             tempoBpm = audioFeatures.tempoBpm,
-            eq31 = aiEq[0],
-            eq62 = aiEq[1],
-            eq125 = aiEq[2],
-            eq250 = aiEq[3],
-            eq500 = aiEq[4],
-            eq1k = aiEq[5],
-            eq2k = aiEq[6],
-            eq4k = aiEq[7],
-            eq8k = aiEq[8],
-            eq16k = aiEq[9],
+            eq31 = 0f, eq62 = 0f, eq125 = 0f, eq250 = 0f, eq500 = 0f,
+            eq1k = 0f, eq2k = 0f, eq4k = 0f, eq8k = 0f, eq16k = 0f,
             analysisVersion = if (fromAudio) VERSION_MEASURED else VERSION_ESTIMATED,
             lastAnalyzed = System.currentTimeMillis()
         )
     }
 
-    /** Stand-in for a song whose audio couldn't be measured: a flat spectrum, so only the genre/mood curve applies. */
+    /** Stand-in for a song whose audio couldn't be measured. */
     private fun neutralFeatures() = AudioFeatures(
         lufs = -14f, rms = 0.1f, peak = 0.8f, dynamicRange = 10f,
         bassScore = 0.33f, midScore = 0.33f, trebleScore = 0.33f,

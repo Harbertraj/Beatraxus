@@ -193,16 +193,24 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     var pendingPermissionAction: (() -> Unit)? = null
     private val aiAnalysisChannel = kotlinx.coroutines.channels.Channel<Song>(100, onBufferOverflow = BufferOverflow.DROP_OLDEST)
 
-    // On-demand AI analysis of a single song (AI EQ sheet / AI EQ switched on). Ids of songs being analysed,
-    // and of songs whose analysis finished without a result.
-    private val aiAnalysisInFlight = java.util.Collections.synchronizedSet(HashSet<String>())
-    private val _aiAnalysisBusy = MutableStateFlow<Set<String>>(emptySet())
-    val aiAnalysisBusy: StateFlow<Set<String>> = _aiAnalysisBusy.asStateFlow()
-    private val _aiAnalysisFailed = MutableStateFlow<Set<String>>(emptySet())
-    val aiAnalysisFailed: StateFlow<Set<String>> = _aiAnalysisFailed.asStateFlow()
-    /** Short reason per song id for the last failed analysis, shown under "couldn't be analysed". */
-    private val _aiAnalysisFailReason = MutableStateFlow<Map<String, String>>(emptyMap())
-    val aiAnalysisFailReason: StateFlow<Map<String, String>> = _aiAnalysisFailReason.asStateFlow()
+    // AI EQ: free, offline per-song EQ prediction. Predicts the playing song at once and preloads the next 8
+    // songs of the queue, so every song starts with its own EQ already in place (see engine/aieq).
+    private val aiEqManager by lazy {
+        com.beatraxus.app.engine.aieq.AiEqManager(
+            context = application,
+            scope = viewModelScope,
+            pcmFeatureSource = { song, dsp ->
+                com.beatraxus.app.engine.PcmFeatureExtractor(decoderFactory).extract(song, dsp)
+            },
+            onProfileReady = { profile ->
+                if (profile.songId == _uiState.value.currentSong?.id) service?.applyAiEq(profile)
+            }
+        )
+    }
+    /** Predicted AI EQ profile per song id. */
+    val aiEqProfiles: StateFlow<Map<String, com.beatraxus.app.engine.aieq.AiEqProfile>> get() = aiEqManager.profiles
+    /** Ids of songs whose AI EQ is being predicted right now or is waiting in the preload queue. */
+    val aiEqBusy: StateFlow<Set<String>> get() = aiEqManager.busy
     private val musicBrainzService = com.beatraxus.app.repository.MusicBrainzService() // NEW
     private val yearEnrichmentChannel = kotlinx.coroutines.channels.Channel<Song>(kotlinx.coroutines.channels.Channel.UNLIMITED) // NEW
 
@@ -935,16 +943,24 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
 
-        // AI EQ needs the current song's analysis. The queue above only fills during library scans and
-        // pauses while music plays, so a song you are listening to was never analysed and AI EQ did
-        // nothing for it. Analyse the playing song right away whenever AI EQ is on.
+        // AI EQ: whenever it is on, predict the playing song right away and preload the next 8 queued songs.
         viewModelScope.launch {
             _uiState
-                .map { Triple(it.currentSong?.id, it.dsp.config.aiEqEnabled, it.currentSong) }
-                .distinctUntilChangedBy { it.first to it.second }
-                .collect { (_, enabled, song) ->
-                    if (enabled) enqueueMissingAiAnalysis()
-                    if (enabled && song != null) requestAiAnalysis(song)
+                .map { Triple(it.dsp.config.aiEqEnabled, it.currentSong, it.upcomingSongs) }
+                .distinctUntilChanged { old, new ->
+                    old.first == new.first && old.second?.id == new.second?.id &&
+                        old.third.take(com.beatraxus.app.engine.aieq.AiEqManager.PRELOAD_COUNT).map { it.id } ==
+                        new.third.take(com.beatraxus.app.engine.aieq.AiEqManager.PRELOAD_COUNT).map { it.id }
+                }
+                .collect { (enabled, song, upcoming) ->
+                    if (!enabled) {
+                        aiEqManager.cancelPending()
+                    } else {
+                        aiEqManager.preload(song, upcoming)
+                        // A profile cached earlier is in the audio store already, but push it in case the song
+                        // started before AI EQ was switched on.
+                        song?.id?.let { id -> aiEqManager.cached(id)?.let { service?.applyAiEq(it) } }
+                    }
                 }
         }
 
@@ -4658,20 +4674,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             // Runs the native DSP feature extraction ONCE per song; both the AI
             // entity and the quality entity below are built from this same result
             // so scanning doesn't get twice as slow.
-            var failureReason: String? = null
             val result = try { aiAnalysisEngine.analyzeSong(song) } catch (t: Throwable) {
                 if (t is kotlinx.coroutines.CancellationException) throw t
                 Log.w("PlayerViewModel", "DSP analysis failed for ${song.title}: ${t.message}")
-                failureReason = "Analysis error: ${t.message ?: t.javaClass.simpleName}"
                 null
             }
             val analysis = result?.aiAnalysis
-            if (analysis == null) {
-                val reason = failureReason ?: result?.failureReason
-                if (reason != null) _aiAnalysisFailReason.update { it + (song.id to reason) }
-            } else {
-                _aiAnalysisFailReason.update { it - song.id }
-            }
             if (analysis != null) {
                 aiAnalysisDao.insertAnalysis(analysis)
 
@@ -4757,68 +4765,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    /**
-     * Analyses [song] right now (not behind the library queue, and not paused while music plays) and
-     * applies the result to the running AI EQ. No-op if the song is already analysed or being analysed.
-     * Only local files can be analysed; cloud / streamed songs are skipped by the analysis engine.
-     */
-    fun requestAiAnalysis(song: Song) {
-        if (!aiAnalysisInFlight.add(song.id)) return
-        _aiAnalysisBusy.value = aiAnalysisInFlight.toSet()
-        _aiAnalysisFailed.update { it - song.id }
-        viewModelScope.launch(aiAnalysisDispatcher) {
-            try {
-                val existing = aiAnalysisDao.getAnalysisForSong(song.id)
-                // A profile built from metadata only (audio was unreadable) is retried once per session in case
-                // the audio can be read now; anything measured is final.
-                val upgrade = existing != null &&
-                    existing.analysisVersion == com.beatraxus.app.engine.AiAnalysisEngine.VERSION_ESTIMATED &&
-                    song.source == SongSource.LOCAL && aiUpgradeTried.add(song.id)
-                if (existing != null && !upgrade) return@launch
-                if (song.source == SongSource.LOCAL) analyzeAndStoreQuality(song) else analyzeAiOnly(song)
-                if (aiAnalysisDao.getAnalysisForSong(song.id) != null) {
-                    service?.refreshAiAnalysis(song.id)
-                } else {
-                    _aiAnalysisFailed.update { it + song.id }
-                }
-            } catch (t: Throwable) {
-                if (t is kotlinx.coroutines.CancellationException) throw t
-                Log.e("PlayerViewModel", "AI analysis failed for ${song.title}: ${t.message}", t)
-                _aiAnalysisFailReason.update { it + (song.id to "Analysis error: ${t.message ?: t.javaClass.simpleName}") }
-                _aiAnalysisFailed.update { it + song.id }
-            } finally {
-                aiAnalysisInFlight.remove(song.id)
-                _aiAnalysisBusy.value = aiAnalysisInFlight.toSet()
-            }
-        }
-    }
-
-    private val aiUpgradeTried = java.util.Collections.synchronizedSet(HashSet<String>())
-
-    /** AI EQ profile only (no quality scan): for cloud / streamed songs, which are profiled from their metadata
-     *  and the online lookups instead of their audio. */
-    private suspend fun analyzeAiOnly(song: Song) {
-        val result = aiAnalysisEngine.analyzeSong(song)
-        val analysis = result.aiAnalysis
-        if (analysis == null) {
-            result.failureReason?.let { r -> _aiAnalysisFailReason.update { it + (song.id to r) } }
-            return
-        }
-        _aiAnalysisFailReason.update { it - song.id }
-        aiAnalysisDao.insertAnalysis(analysis)
-    }
-
-    /** Queues every local song that has no AI EQ profile yet; the worker builds them while nothing is playing. */
-    private var aiBackfillQueued = false
-    private fun enqueueMissingAiAnalysis() {
-        if (aiBackfillQueued) return
-        aiBackfillQueued = true
-        viewModelScope.launch(Dispatchers.Default) {
-            val analyzed = aiAnalysisDao.getAllAnalysisFlow().first().map { it.songId }.toSet()
-            _songs.value
-                .filter { it.source == SongSource.LOCAL && it.id !in analyzed }
-                .forEach { aiAnalysisChannel.send(it) }
-        }
+    /** Throws away every predicted AI EQ profile; the playing song and queue are predicted again straight away. */
+    fun resetAiEqPredictions() {
+        aiEqManager.resetAll()
+        val state = _uiState.value
+        if (state.dsp.config.aiEqEnabled) aiEqManager.preload(state.currentSong, state.upcomingSongs)
     }
 
     /** True while an Inspector-triggered analysis for [songId] is running. */

@@ -488,7 +488,13 @@ fun DspScreen(
                             ?: builtInPresets.find { it.gains == currentGains }?.name
                             ?: "Custom"
 
-                        PremiumGraphicCard(uiState, activePresetName, liveFftBars)
+                        val aiProfiles by viewModel.aiEqProfiles.collectAsStateWithLifecycle()
+                        PremiumGraphicCard(
+                            uiState = uiState,
+                            presetName = activePresetName,
+                            aiProfile = uiState.currentSong?.id?.let { aiProfiles[it] },
+                            fftBars = liveFftBars
+                        )
 
                         UnifiedPresetSection(
                             uiState = uiState,
@@ -1283,27 +1289,22 @@ private fun AiOptionsPopup(
     viewModel: PlayerViewModel,
     onDismiss: () -> Unit
 ) {
-    val aiAnalysisMap by viewModel.aiAnalysis.collectAsStateWithLifecycle()
-    val aiBusy by viewModel.aiAnalysisBusy.collectAsStateWithLifecycle()
-    val aiFailed by viewModel.aiAnalysisFailed.collectAsStateWithLifecycle()
-    val aiFailReasons by viewModel.aiAnalysisFailReason.collectAsStateWithLifecycle()
-    val currentSong = uiState.currentSong
-    val currentAnalysis = currentSong?.id?.let { aiAnalysisMap[it] }
+    val aiProfiles by viewModel.aiEqProfiles.collectAsStateWithLifecycle()
+    val config = uiState.dsp.config
+    val enabled = config.aiEqEnabled
+    val bypassed = config.bitPerfectEnabled
+    val song = uiState.currentSong
+    val profile = song?.id?.let { aiProfiles[it] }
+    val nextSongs = uiState.upcomingSongs.take(8)
+    val nextReady = nextSongs.count { aiProfiles.containsKey(it.id) }
+    val predicting = enabled && song != null && profile == null
 
-    // Why there may be nothing to show: still running, failed, or not possible for this kind of song.
-    val analysing = currentSong != null && currentAnalysis == null && currentSong.id in aiBusy
-    val failed = currentSong != null && currentAnalysis == null && !analysing && currentSong.id in aiFailed
-    val placeholder = when {
-        currentSong == null -> "No song playing"
-        analysing -> "Analysing…"
-        failed -> "Analysis failed"
-        else -> "Not analysed yet"
-    }
-
-    val genreText = currentAnalysis?.genre?.takeIf { it.isNotBlank() } ?: placeholder
-    val moodText = currentAnalysis?.mood?.takeIf { it.isNotBlank() } ?: placeholder
-    // This row used to be labelled "EQ Profile" but has always shown the detected language.
-    val languageText = currentAnalysis?.language?.takeIf { it.isNotBlank() } ?: placeholder
+    // The layout is identical whether AI EQ is on or off (only dimmed), so the sheet never changes size.
+    val contentAlpha by animateFloatAsState(if (enabled) 1f else 0.4f, tween(250), label = "aiSheetAlpha")
+    val dash = "—"
+    val genreText = profile?.genre?.takeIf { it.isNotBlank() } ?: if (predicting) "Predicting…" else dash
+    val moodText = profile?.mood?.takeIf { it.isNotBlank() } ?: if (predicting) "Predicting…" else dash
+    val languageText = profile?.language?.takeIf { it.isNotBlank() } ?: if (predicting) "Predicting…" else dash
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -1321,190 +1322,268 @@ private fun AiOptionsPopup(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
                 .navigationBarsPadding()
                 .padding(horizontal = 16.dp)
                 .padding(bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Icon(Icons.Rounded.AutoAwesome, null, tint = PremiumAccent, modifier = Modifier.size(24.dp))
+            // ── Header ───────────────────────────────────────────────────────────────────────────────
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Brush.linearGradient(listOf(PremiumAccent.copy(0.28f), DspViolet.copy(0.22f))))
+                        .border(1.dp, PremiumAccent.copy(0.35f), RoundedCornerShape(12.dp)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Rounded.AutoAwesome, null, tint = PremiumAccent, modifier = Modifier.size(22.dp))
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("AI EQ STUDIO", color = PremiumAccent, fontWeight = FontWeight.Black, fontSize = 18.sp, letterSpacing = 2.sp)
+                    Text("Per-song intelligent EQ", color = Color.White.copy(0.45f), fontSize = 11.sp)
+                }
+                val statusText = when {
+                    !enabled -> "OFF"
+                    bypassed -> "BIT-PERFECT BYPASS"
+                    else -> "ACTIVE"
+                }
+                val statusColor = if (enabled && !bypassed) PremiumAccent else Color.White.copy(0.45f)
                 Text(
-                    "AI EQ STUDIO",
-                    color = PremiumAccent,
+                    statusText,
+                    color = statusColor,
+                    fontSize = 10.sp,
                     fontWeight = FontWeight.Black,
-                    fontSize = 20.sp,
-                    letterSpacing = 2.sp
+                    letterSpacing = 1.sp,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .background(statusColor.copy(alpha = 0.12f))
+                        .padding(horizontal = 10.dp, vertical = 5.dp)
                 )
             }
 
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(20.dp),
-                colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.05f)),
-                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.1f))
+            // ── Enable ───────────────────────────────────────────────────────────────────────────────
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .dspPanel(18.dp)
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Enable AI EQ", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    Text("Real-time intelligent correction", color = Color.White.copy(0.5f), fontSize = 12.sp)
+                }
+                PremiumSwitch(
+                    checked = enabled,
+                    onCheckedChange = { viewModel.setAiEqEnabled(it) },
+                    accentColor = PremiumAccent
+                )
+            }
+
+            Column(
+                modifier = Modifier.graphicsLayer(alpha = contentAlpha),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                // ── Now playing + detected traits ───────────────────────────────────────────────────
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .dspPanel(18.dp)
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    AiSheetLabel("NOW ANALYSING")
+                    Column {
+                        Text(
+                            song?.title?.takeIf { it.isNotBlank() } ?: "No song playing",
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            song?.artist?.takeIf { it.isNotBlank() } ?: dash,
+                            color = Color.White.copy(0.5f),
+                            fontSize = 12.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        AiStatTile("GENRE", genreText, Modifier.weight(1f))
+                        AiStatTile("MOOD", moodText, Modifier.weight(1f))
+                        AiStatTile("LANGUAGE", languageText, Modifier.weight(1f))
+                    }
+                    // fixed-height progress slot so nothing shifts when prediction finishes
+                    Box(modifier = Modifier.fillMaxWidth().height(3.dp)) {
+                        if (predicting) {
+                            LinearProgressIndicator(
+                                modifier = Modifier.fillMaxSize().clip(CircleShape),
+                                color = PremiumAccent,
+                                trackColor = Color.White.copy(0.08f)
+                            )
+                        }
+                    }
+                }
+
+                // ── EQ curve for this song ──────────────────────────────────────────────────────────
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .dspPanel(18.dp)
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("Enable AI EQ", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                            Text("Real-time intelligent correction", color = Color.White.copy(0.5f), fontSize = 12.sp)
-                        }
-                        PremiumSwitch(
-                            checked = uiState.dsp.config.aiEqEnabled,
-                            onCheckedChange = { viewModel.setAiEqEnabled(it) },
-                            accentColor = PremiumAccent
+                        AiSheetLabel("EQ SET ON THIS SONG")
+                        Text(
+                            when {
+                                profile == null -> dash
+                                profile.source == com.beatraxus.app.engine.aieq.AiEqProfile.Source.AUDIO ->
+                                    "MEASURED · ${(profile.confidence * 100).toInt()}%"
+                                else -> "FROM TAGS · ${(profile.confidence * 100).toInt()}%"
+                            },
+                            color = PremiumAccent,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Black,
+                            letterSpacing = 0.5.sp
                         )
                     }
-
-                    if (uiState.dsp.config.aiEqEnabled) {
-                        HorizontalDivider(color = Color.White.copy(0.1f), modifier = Modifier.padding(vertical = 4.dp))
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Text("Genre", color = Color.White.copy(0.4f), fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                Text(genreText, color = PremiumAccent, fontSize = 12.sp, fontWeight = FontWeight.Black)
-                            }
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Text("Mood", color = Color.White.copy(0.4f), fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                Text(moodText, color = PremiumAccent, fontSize = 12.sp, fontWeight = FontWeight.Black)
-                            }
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Text("Language", color = Color.White.copy(0.4f), fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                Text(languageText, color = PremiumAccent, fontSize = 12.sp, fontWeight = FontWeight.Black)
-                            }
-                        }
-
-                        // Progress / explanation while there is no analysis yet
-                        if (currentAnalysis == null && currentSong != null) {
-                            when {
-                                analysing -> Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                ) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(16.dp),
-                                        strokeWidth = 2.dp,
-                                        color = PremiumAccent
-                                    )
-                                    Text(
-                                        "Analysing this song to build its EQ…",
-                                        color = Color.White.copy(0.6f),
-                                        fontSize = 12.sp
-                                    )
-                                }
-                                failed -> Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Text(
-                                        "This song couldn't be analysed." +
-                                            (aiFailReasons[currentSong.id]?.let { "\n$it" } ?: ""),
-                                        color = Color.White.copy(0.5f),
-                                        fontSize = 12.sp,
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                    TextButton(onClick = { viewModel.requestAiAnalysis(currentSong) }) {
-                                        Text("RETRY", color = PremiumAccent, fontWeight = FontWeight.Black, fontSize = 12.sp)
-                                    }
-                                }
-                            }
-                        }
-
-                        // The EQ the AI has set for the song that is playing
-                        if (currentAnalysis != null) {
-                            val bypassed = uiState.dsp.config.bitPerfectEnabled
-                            HorizontalDivider(color = Color.White.copy(0.1f), modifier = Modifier.padding(vertical = 4.dp))
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    "EQ SET ON THIS SONG",
-                                    color = Color.White.copy(0.4f),
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    letterSpacing = 1.sp
-                                )
-                                Text(
-                                    if (bypassed) "BYPASSED · BIT-PERFECT" else "ACTIVE",
-                                    color = if (bypassed) Color.White.copy(0.4f) else PremiumAccent,
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Black
-                                )
-                            }
-                            AiEqBandBars(
-                                gains = listOf(
-                                    currentAnalysis.eq31, currentAnalysis.eq62, currentAnalysis.eq125,
-                                    currentAnalysis.eq250, currentAnalysis.eq500, currentAnalysis.eq1k,
-                                    currentAnalysis.eq2k, currentAnalysis.eq4k, currentAnalysis.eq8k,
-                                    currentAnalysis.eq16k
-                                ),
-                                active = !bypassed
-                            )
-                        }
-                    }
-
-                    HorizontalDivider(color = Color.White.copy(0.05f))
-
-                    Text(
-                        "How it works:",
-                        color = PremiumAccent,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 12.sp
+                    AiEqBandBars(
+                        gains = profile?.gains?.toList() ?: List(10) { 0f },
+                        active = enabled && !bypassed
                     )
-                    Text(
-                        "Our AI analyzes each song's spectral signature (genre, mood, dynamics) to apply a specialized EQ profile that compensates for common recording imbalances, providing a more consistent and immersive listening experience.",
-                        color = Color.White.copy(0.7f),
-                        fontSize = 13.sp,
-                        lineHeight = 18.sp
-                    )
-
-                    Spacer(Modifier.height(4.dp))
-
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(PremiumAccent.copy(alpha = 0.05f))
-                            .padding(12.dp)
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Icon(Icons.Rounded.Info, null, tint = PremiumAccent, modifier = Modifier.size(16.dp))
-                            Text(
-                                "AI corrections are applied on top of your current EQ settings.",
-                                color = Color.White.copy(0.6f),
-                                fontSize = 11.sp
-                            )
-                        }
-                    }
                 }
+
+                // ── Next-8 preload ──────────────────────────────────────────────────────────────────
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .dspPanel(18.dp)
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        AiSheetLabel("NEXT 8 SONGS PRELOADED")
+                        Text(
+                            "$nextReady / ${nextSongs.size}",
+                            color = PremiumAccent,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Black
+                        )
+                    }
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        repeat(8) { i ->
+                            val state = nextSongs.getOrNull(i)
+                            val ready = state != null && aiProfiles.containsKey(state.id)
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(6.dp)
+                                    .clip(CircleShape)
+                                    .background(
+                                        when {
+                                            ready -> PremiumAccent
+                                            state != null -> PremiumAccent.copy(alpha = 0.22f)
+                                            else -> Color.White.copy(alpha = 0.08f)
+                                        }
+                                    )
+                            )
+                        }
+                    }
+                    Text(
+                        "Each upcoming song's EQ is predicted ahead of time, so it starts with its own EQ already in place.",
+                        color = Color.White.copy(0.45f),
+                        fontSize = 11.sp,
+                        lineHeight = 15.sp
+                    )
+                }
+            }
+
+            // ── How it works ─────────────────────────────────────────────────────────────────────────
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(PremiumAccent.copy(alpha = 0.05f))
+                    .padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(Icons.Rounded.Info, null, tint = PremiumAccent, modifier = Modifier.size(15.dp))
+                    Text("How it works", color = PremiumAccent, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                }
+                Text(
+                    "The AI predicts a custom EQ for every song from its genre, mood, language, age and — for files on this device — the real spectrum, loudness and dynamics of the recording. It runs free, on your device. Corrections are applied on top of your current EQ settings.",
+                    color = Color.White.copy(0.65f),
+                    fontSize = 12.sp,
+                    lineHeight = 17.sp
+                )
+            }
+
+            OutlinedButton(
+                onClick = { viewModel.resetAiEqPredictions() },
+                enabled = enabled,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp),
+                border = BorderStroke(1.dp, PremiumAccent.copy(alpha = if (enabled) 0.45f else 0.15f))
+            ) {
+                Text("RE-PREDICT ALL", color = PremiumAccent, fontWeight = FontWeight.Black, fontSize = 12.sp, letterSpacing = 1.sp)
             }
         }
     }
 }
 
-/** The ten AI EQ band gains (31 Hz ... 16 kHz, +/-4 dB range) of the current song, one bar per band. */
+@Composable
+private fun AiSheetLabel(text: String) {
+    Text(
+        text,
+        color = Color.White.copy(0.45f),
+        fontSize = 10.sp,
+        fontWeight = FontWeight.Bold,
+        letterSpacing = 1.5.sp
+    )
+}
+
+@Composable
+private fun AiStatTile(label: String, value: String, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(14.dp))
+            .background(Color.White.copy(alpha = 0.05f))
+            .border(1.dp, Color.White.copy(alpha = 0.07f), RoundedCornerShape(14.dp))
+            .padding(horizontal = 10.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(3.dp)
+    ) {
+        Text(label, color = Color.White.copy(0.4f), fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+        Text(
+            value,
+            color = PremiumAccent,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Black,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+/** The ten AI EQ band gains (31 Hz ... 16 kHz, +/-4.5 dB range) of the current song, one bar per band. */
 @Composable
 private fun AiEqBandBars(gains: List<Float>, active: Boolean) {
     val labels = listOf("31", "62", "125", "250", "500", "1k", "2k", "4k", "8k", "16k")
-    val rangeDb = 4f
+    val rangeDb = 4.5f
     val positive = if (active) PremiumAccent else Color.White.copy(0.35f)
     val negative = if (active) DspViolet else Color.White.copy(0.25f)
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -1588,10 +1667,40 @@ private fun AnalysisDetailsRow(label: String, value: String) {
 }
 
 @Composable
-private fun PremiumGraphicCard(uiState: PlayerUiState, presetName: String, fftBars: FloatArray = FloatArray(0)) {
+private fun PremiumGraphicCard(
+    uiState: PlayerUiState,
+    presetName: String,
+    aiProfile: com.beatraxus.app.engine.aieq.AiEqProfile?,
+    fftBars: FloatArray = FloatArray(0)
+) {
     val config = uiState.dsp.config
-    val displayBands = config.eqBands
-    val displayEnabled = config.eqEnabled
+    // AI EQ runs on top of the manual EQ, so the response shown is manual + AI at every band.
+    val aiActive = config.aiEqEnabled && !config.bitPerfectEnabled
+    val baseBands = if (config.eqEnabled) config.eqBands else config.eqBands.map { it.copy(gainDb = 0f) }
+    val aiGains = aiProfile?.gains ?: FloatArray(0)
+    // Every band glides to its new value whenever the AI EQ changes (new song, re-predict, toggle).
+    val shownGains = baseBands.mapIndexed { i, band ->
+        key(i) {
+            val target = band.gainDb + if (aiActive) com.beatraxus.app.engine.aieq.AiEqKnowledge.gainAt(aiGains, band.frequencyHz) else 0f
+            animateFloatAsState(
+                targetValue = target,
+                animationSpec = tween(durationMillis = 650, easing = FastOutSlowInEasing),
+                label = "graphicBand$i"
+            ).value
+        }
+    }
+    val displayBands = baseBands.mapIndexed { i, band -> band.copy(gainDb = shownGains[i]) }
+    val displayEnabled = config.eqEnabled || aiActive
+
+    val manualName = presetName.takeIf { config.eqEnabled && !it.equals("FLAT", ignoreCase = true) }
+    val titleName = when {
+        !aiActive -> presetName.uppercase()
+        else -> buildString {
+            append("AI EQ")
+            aiProfile?.genre?.takeIf { it.isNotBlank() }?.let { append(" · ").append(it.uppercase()) }
+            manualName?.let { append(" + ").append(it.uppercase()) }
+        }
+    }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -1611,18 +1720,27 @@ private fun PremiumGraphicCard(uiState: PlayerUiState, presetName: String, fftBa
                 fontSize = 10.sp,
                 letterSpacing = 2.sp
             )
-            Text(
-                text = presetName.uppercase(),
-                color = DspViolet,
-                fontWeight = FontWeight.Black,
-                fontSize = 10.sp,
-                textAlign = TextAlign.End,
+            Row(
                 modifier = Modifier
                     .weight(1f)
-                    .padding(start = 24.dp)
-                    .basicMarquee(),
-                maxLines = 1
-            )
+                    .padding(start = 24.dp),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (aiActive) {
+                    Icon(Icons.Rounded.AutoAwesome, null, tint = PremiumAccent, modifier = Modifier.size(11.dp))
+                    Spacer(Modifier.width(4.dp))
+                }
+                Text(
+                    text = titleName,
+                    color = if (aiActive) PremiumAccent else DspViolet,
+                    fontWeight = FontWeight.Black,
+                    fontSize = 10.sp,
+                    textAlign = TextAlign.End,
+                    modifier = Modifier.basicMarquee(),
+                    maxLines = 1
+                )
+            }
         }
         Box(
             modifier = Modifier

@@ -11,7 +11,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** The PCM that feeds AI EQ analysis for formats the native extractor refuses (ALAC, Dolby, ...). */
+/** The PCM that feeds the AI EQ audio measurement for formats the native extractor refuses (ALAC, Dolby, ...). */
 class PcmCollectorTest {
 
     /** The collector never actually suspends, so a bare coroutine start is enough (no coroutines library needed). */
