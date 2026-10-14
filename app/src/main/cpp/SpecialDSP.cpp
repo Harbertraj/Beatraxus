@@ -2635,6 +2635,33 @@ public:
     }
 };
 
+// Flat layout shared by nExtractFeatures and nAnalyzePcm (parsed by parseNativeFeatures):
+// [0..12] lufs, rms, peak, dynamicRange, bass, mid, treble, stereoWidth, tempo, truePeakDb,
+// clippedSamplePct, freqRangeLowHz, freqRangeHighHz; [13] spectralLen; [14] noveltyLen; then spectral, novelty.
+static std::vector<float> flattenAnalysis(const AnalysisResults& res) {
+    int spectralLen = (int)res.spectralData.size();
+    int noveltyLen = (int)res.noveltyVector.size();
+    std::vector<float> data(15 + spectralLen + noveltyLen);
+    data[0] = res.lufs;
+    data[1] = res.rms;
+    data[2] = res.peak;
+    data[3] = res.dynamicRange;
+    data[4] = res.bassScore;
+    data[5] = res.midScore;
+    data[6] = res.trebleScore;
+    data[7] = res.stereoWidth;
+    data[8] = res.tempoBpm;
+    data[9] = res.truePeakDb;
+    data[10] = res.clippedSamplePct;
+    data[11] = res.freqRangeLowHz;
+    data[12] = res.freqRangeHighHz;
+    data[13] = (float)spectralLen;
+    data[14] = (float)noveltyLen;
+    if (spectralLen > 0) memcpy(data.data() + 15, res.spectralData.data(), spectralLen * sizeof(float));
+    if (noveltyLen > 0) memcpy(data.data() + 15 + spectralLen, res.noveltyVector.data(), noveltyLen * sizeof(float));
+    return data;
+}
+
 extern "C" {
 JNIEXPORT jfloatArray JNICALL Java_com_beatraxus_app_engine_NativeDsp_nExtractFeatures(JNIEnv* env, jobject thiz, jint fd, jint seconds) {
     if (fd < 0) return nullptr;
@@ -2814,37 +2841,30 @@ JNIEXPORT jfloatArray JNICALL Java_com_beatraxus_app_engine_NativeDsp_nExtractFe
     AudioAnalyzer analyzer(sampleRate);
     AnalysisResults res = analyzer.analyze(pcm.data(), pcm.size() / channels, channels);
 
-    int spectralLen = res.spectralData.size();
-    int noveltyLen = res.noveltyVector.size();
-    int totalLen = 15 + spectralLen + noveltyLen;
-    jfloatArray result = env->NewFloatArray(totalLen);
+    std::vector<float> data = flattenAnalysis(res);
+    jfloatArray result = env->NewFloatArray((jsize)data.size());
     if (!result) return nullptr;
+    env->SetFloatArrayRegion(result, 0, (jsize)data.size(), data.data());
+    return result;
+}
 
-    std::vector<float> data(totalLen);
-    data[0] = res.lufs;
-    data[1] = res.rms;
-    data[2] = res.peak;
-    data[3] = res.dynamicRange;
-    data[4] = res.bassScore;
-    data[5] = res.midScore;
-    data[6] = res.trebleScore;
-    data[7] = res.stereoWidth;
-    data[8] = res.tempoBpm;
-    data[9] = res.truePeakDb;
-    data[10] = res.clippedSamplePct;
-    data[11] = res.freqRangeLowHz;
-    data[12] = res.freqRangeHighHz;
-    data[13] = (float)spectralLen;
-    data[14] = (float)noveltyLen;
+// Runs the same analysis on PCM that Kotlin decoded itself (ALAC, Dolby, DTS, ... which the MediaCodec
+// path above refuses to touch). `pcm` is interleaved float, `frames` * `channels` samples.
+JNIEXPORT jfloatArray JNICALL Java_com_beatraxus_app_engine_NativeDsp_nAnalyzePcm(JNIEnv* env, jobject thiz, jfloatArray pcm, jint frames, jint sampleRate, jint channels) {
+    if (!pcm || frames <= 0 || channels <= 0 || sampleRate <= 0) return nullptr;
+    if ((int64_t)frames * channels > (int64_t)env->GetArrayLength(pcm)) return nullptr;
+    if (frames < 4096) return nullptr; // too little audio to analyse
 
-    if (spectralLen > 0) {
-        memcpy(data.data() + 15, res.spectralData.data(), spectralLen * sizeof(float));
-    }
-    if (noveltyLen > 0) {
-        memcpy(data.data() + 15 + spectralLen, res.noveltyVector.data(), noveltyLen * sizeof(float));
-    }
+    jfloat* body = env->GetFloatArrayElements(pcm, nullptr);
+    if (!body) return nullptr;
+    AudioAnalyzer analyzer(sampleRate);
+    AnalysisResults res = analyzer.analyze(body, frames, channels);
+    env->ReleaseFloatArrayElements(pcm, body, JNI_ABORT); // read-only: nothing to copy back
 
-    env->SetFloatArrayRegion(result, 0, totalLen, data.data());
+    std::vector<float> data = flattenAnalysis(res);
+    jfloatArray result = env->NewFloatArray((jsize)data.size());
+    if (!result) return nullptr;
+    env->SetFloatArrayRegion(result, 0, (jsize)data.size(), data.data());
     return result;
 }
 

@@ -1,0 +1,7 @@
+{
+  "id": "preset_jamendo",
+  "displayName": "Jamendo Music",
+  "mediaType": "audio",
+  "protocol": "jamendo",
+  "authType": "api_key"
+}

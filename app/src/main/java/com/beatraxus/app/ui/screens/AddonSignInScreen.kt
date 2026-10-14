@@ -27,6 +27,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.beatraxus.app.addons.EmbyAddon
+import com.beatraxus.app.addons.JamendoAddon
 import com.beatraxus.app.addons.MediaServerAddon
 import com.beatraxus.app.addons.StremioAddon
 import com.beatraxus.app.addons.SubsonicAddon
@@ -84,10 +85,12 @@ fun AddonSignInScreen(
         isOtt -> "Paste the add-on's manifest link (stremio:// or https://). Only streams with a direct link can play in Beatraxus."
         addon is SubsonicAddon -> "Works with Navidrome, Airsonic, Gonic and other Subsonic servers. Example: music.example.com or 192.168.1.20:4533"
         addon is EmbyAddon -> "Example: 192.168.1.20:8096. Use your Emby username and password."
+        addon is JamendoAddon -> "Jamendo needs a free client ID. Create a Jamendo developer account at devportal.jamendo.com, add an application, and paste its Client ID here. It is stored encrypted on this device."
         else -> "Example: https://jellyfin.example.com or 192.168.1.20:8096"
     }
 
     val canSubmit = !isLoading && when {
+        needsApiKey -> apiKey.isNotBlank()
         needsCredentials -> serverUrl.isNotBlank() && username.isNotBlank()
         else -> serverUrl.isNotBlank()
     }
@@ -183,15 +186,18 @@ fun AddonSignInScreen(
                     }
                 }
 
-                GlassField(
-                    value = serverUrl,
-                    onValueChange = { serverUrl = it },
-                    label = urlLabel,
-                    brand = brand,
-                    keyboardType = KeyboardType.Uri,
-                    imeAction = if (isOtt) ImeAction.Done else ImeAction.Next,
-                    onDone = ::submit
-                )
+                // API-key add-ons (Jamendo) have no server address to enter.
+                if (!needsApiKey) {
+                    GlassField(
+                        value = serverUrl,
+                        onValueChange = { serverUrl = it },
+                        label = urlLabel,
+                        brand = brand,
+                        keyboardType = KeyboardType.Uri,
+                        imeAction = if (isOtt) ImeAction.Done else ImeAction.Next,
+                        onDone = ::submit
+                    )
+                }
 
                 if (needsCredentials) {
                     GlassField(
@@ -224,7 +230,7 @@ fun AddonSignInScreen(
                     GlassField(
                         value = apiKey,
                         onValueChange = { apiKey = it },
-                        label = "API key",
+                        label = if (addon is JamendoAddon) "Jamendo client ID" else "API key",
                         brand = brand,
                         imeAction = ImeAction.Done,
                         onDone = ::submit

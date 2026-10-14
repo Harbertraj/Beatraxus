@@ -1,33 +1,71 @@
 package com.beatraxus.app.addons
 
 import android.content.Context
-import android.net.Uri
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.withContext
-import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.json.JSONObject
 import java.io.IOException
 
-/** Internet Archive: public-domain films, concerts and music through the official public APIs. */
+/**
+ * Internet Archive: public-domain films, concerts and music through the official public APIs.
+ *
+ * Videos play as one file. Audio uploads are usually whole albums or concerts, so they expand into a real
+ * track list (titles, durations, track order) and play as a queue with next/previous.
+ */
 class ArchiveOrgAddon(
     override val id: String,
     override val displayName: String,
     override val authType: String
-) : MediaServerAddon {
+) : MediaServerAddon, PagedAddon, FilterableAddon {
     override val description: String = "Internet Archive"
     override val brandColor: Color = Color(0xFF8E8E93)
     override val icon: ImageVector = Icons.Default.Archive
     override val capability: AddonCapability = AddonCapability.CONTROL
 
-    /** "all", "video" or "audio" — set by the filter chips on the browse screen. */
-    @Volatile var mediaFilter: String = "all"
+    @Volatile private var type = ArchiveOrgApi.TYPE_ALL
+    @Volatile private var sort = ArchiveOrgApi.SORT_POPULAR
+    @Volatile private var audioQuality = ArchiveOrgApi.QUALITY_STANDARD
+
+    override val filterGroups: List<AddonFilterGroup> = listOf(
+        AddonFilterGroup(
+            id = "type", label = "SHOW", defaultKey = ArchiveOrgApi.TYPE_ALL,
+            options = listOf(
+                AddonFilterOption(ArchiveOrgApi.TYPE_ALL, "All"),
+                AddonFilterOption(ArchiveOrgApi.TYPE_VIDEO, "Videos"),
+                AddonFilterOption(ArchiveOrgApi.TYPE_AUDIO, "Audio")
+            )
+        ),
+        AddonFilterGroup(
+            id = "sort", label = "SORT", defaultKey = ArchiveOrgApi.SORT_POPULAR,
+            options = listOf(
+                AddonFilterOption(ArchiveOrgApi.SORT_POPULAR, "Popular"),
+                AddonFilterOption(ArchiveOrgApi.SORT_TRENDING, "Trending"),
+                AddonFilterOption(ArchiveOrgApi.SORT_NEWEST, "Newest")
+            )
+        ),
+        AddonFilterGroup(
+            id = "audioq", label = "AUDIO", defaultKey = ArchiveOrgApi.QUALITY_STANDARD,
+            options = listOf(
+                AddonFilterOption(ArchiveOrgApi.QUALITY_STANDARD, "MP3 / OGG"),
+                AddonFilterOption(ArchiveOrgApi.QUALITY_LOSSLESS, "Lossless")
+            )
+        )
+    )
+
+    override fun setFilter(groupId: String, optionKey: String) {
+        val group = filterGroups.firstOrNull { it.id == groupId } ?: return
+        if (group.options.none { it.key == optionKey }) return
+        when (groupId) {
+            "type" -> type = optionKey
+            "sort" -> sort = optionKey
+            "audioq" -> audioQuality = optionKey
+        }
+    }
 
     private val _connectionState = MutableStateFlow(AddonConnectionState.NOT_CONNECTED)
     override val connectionState: StateFlow<AddonConnectionState> = _connectionState.asStateFlow()
@@ -50,112 +88,54 @@ class ArchiveOrgAddon(
         return Result.success(AuthToken("", "https://archive.org"))
     }
 
-    override suspend fun browse(path: String?): List<AddonMediaItem> = withContext(Dispatchers.IO) {
+    override suspend fun browse(path: String?): List<AddonMediaItem> =
         if (path == null) {
-            fetch("")
+            page(null, 0).items
         } else {
             listOf(
                 AddonMediaItem(
                     id = path, title = "Selected Item", subtitle = null,
-                    artworkUrl = "https://archive.org/services/img/$path",
+                    artworkUrl = ArchiveOrgApi.artworkUrl(path),
                     mediaType = "audio", durationMs = 0L, directPlayUrl = ""
                 )
             )
         }
-    }
 
-    override suspend fun search(query: String): List<AddonMediaItem> = withContext(Dispatchers.IO) { fetch(query) }
+    override suspend fun search(query: String): List<AddonMediaItem> = page(query, 0).items
 
     /**
      * advancedsearch.php. Errors are thrown (not swallowed) so the screen can show a real
      * "can't reach archive.org" message with a RETRY button instead of an empty list.
      */
-    private fun fetch(text: String): List<AddonMediaItem> {
-        val types = when (mediaFilter) {
-            "video" -> "movies"
-            "audio" -> "audio"
-            else -> "movies OR audio"
-        }
-        val clean = text.replace(Regex("""[+\-&|!(){}\[\]^"~*?:\\/]"""), " ").trim()
-        // Skip borrow-only / restricted items (TV news recordings etc.): they have no downloadable file.
-        val base = "mediatype:($types) AND -access-restricted-item:true AND -collection:(tvnews OR tvarchive)"
-        val q = if (clean.isBlank()) {
-            "$base AND collection:(feature_films OR prelinger OR classic_tv OR opensource_movies OR " +
-                "opensource_audio OR etree OR netlabels OR audio_music OR oldtimeradio)"
-        } else {
-            "($clean) AND $base"
-        }
-        val url = "https://archive.org/advancedsearch.php".toHttpUrl().newBuilder()
-            .addQueryParameter("q", q)
-            .addQueryParameter("fl[]", "identifier")
-            .addQueryParameter("fl[]", "title")
-            .addQueryParameter("fl[]", "mediatype")
-            .addQueryParameter("fl[]", "year")
-            .addQueryParameter("fl[]", "creator")
-            .addQueryParameter("sort[]", "downloads desc")
-            .addQueryParameter("rows", "60")
-            .addQueryParameter("output", "json")
-            .build().toString()
-
-        val docs = JSONObject(AddonHttp.getText(url)).optJSONObject("response")?.optJSONArray("docs")
-            ?: return emptyList()
-        val results = ArrayList<AddonMediaItem>(docs.length())
-        for (i in 0 until docs.length()) {
-            val doc = docs.getJSONObject(i)
-            val identifier = doc.optString("identifier", "")
-            if (identifier.isBlank()) continue
-            val year = doc.optString("year", "")
-            val creator = doc.optJSONArray("creator")?.optString(0) ?: doc.optString("creator", "")
-            results.add(
-                AddonMediaItem(
-                    id = identifier,
-                    title = doc.optString("title", "").ifBlank { identifier },
-                    subtitle = listOf(creator, year).filter { it.isNotBlank() }.joinToString(" · ").ifBlank { null },
-                    artworkUrl = "https://archive.org/services/img/$identifier",
-                    mediaType = if (doc.optString("mediatype") == "movies") "video" else "audio",
-                    durationMs = 0L,
-                    directPlayUrl = ""
-                )
-            )
-        }
-        return results
+    override suspend fun page(query: String?, page: Int): AddonPage {
+        val raw = AddonHttp.getTextCancellable(ArchiveOrgApi.searchUrl(query.orEmpty(), type, sort, page))
+        val parsed = ArchiveOrgApi.parseSearch(raw)
+        return AddonPage(parsed.items, ArchiveOrgApi.hasMore(page, parsed.numFound))
     }
 
-    private val videoExt = listOf("mp4", "m4v", "webm", "mkv", "mov", "mpeg4", "mpg", "avi", "ogv")
-    private val audioExt = listOf("mp3", "m4a", "ogg", "opus", "flac", "wav", "aac")
-
-    override suspend fun streamUrl(item: AddonMediaItem): String = withContext(Dispatchers.IO) {
-        val meta = JSONObject(AddonHttp.getText("https://archive.org/metadata/${Uri.encode(item.id)}"))
-        val files = meta.optJSONArray("files")
-        if (files == null || files.length() == 0) {
-            throw IOException("This item has no downloadable files (it may be restricted or borrow-only)")
+    private suspend fun metadata(itemId: String): JSONObject {
+        val raw = AddonHttp.getTextCancellable(ArchiveOrgApi.metadataUrl(itemId))
+        val meta = try {
+            JSONObject(raw)
+        } catch (_: Exception) {
+            throw IOException("Internet Archive sent a response Beatraxus couldn't read")
         }
+        ArchiveOrgApi.requirePlayable(meta)
+        return meta
+    }
 
-        // Prefer the requested kind, but fall back to the other one: Archive "movies" items are
-        // sometimes audio-only and vice versa.
-        val order = if (item.mediaType == "video") listOf(videoExt, audioExt) else listOf(audioExt, videoExt)
-        for (exts in order) {
-            var best: String? = null
-            var bestScore = Long.MIN_VALUE
-            for (i in 0 until files.length()) {
-                val f = files.getJSONObject(i)
-                val name = f.optString("name")
-                val lower = name.lowercase()
-                val ext = lower.substringAfterLast('.', "")
-                val rank = exts.indexOf(ext)
-                if (rank < 0 || f.optString("private") == "true") continue
-                if (lower.contains("_thumb") || lower.contains("sample") || lower.contains("__ia_thumb")) continue
-                // Format order wins; then derivatives (streamable web copies) over huge originals;
-                // then the larger file (full track/feature rather than a trailer).
-                val derivative = if (f.optString("source") == "derivative") 1L else 0L
-                val size = f.optString("size").toLongOrNull() ?: 0L
-                val score = (exts.size - rank) * 1_000_000_000_000L + derivative * 100_000_000_000L + minOf(size, 99_999_999_999L)
-                if (score > bestScore) { bestScore = score; best = name }
-            }
-            if (best != null) {
-                return@withContext "https://archive.org/download/${Uri.encode(item.id)}/${Uri.encode(best, "/")}"
-            }
-        }
-        throw IOException("No playable audio or video file found for this item")
+    /** Audio uploads become a track list (queue); videos and anything without audio files play as a single item. */
+    override suspend fun tracks(item: AddonMediaItem): List<AddonMediaItem> {
+        if (item.mediaType != "audio" || item.directPlayUrl.isNotBlank()) return emptyList()
+        return ArchiveOrgApi.audioTracks(metadata(item.id), item.id, item.title, audioQuality)
+    }
+
+    override suspend fun streamUrl(item: AddonMediaItem): String {
+        // Track entries produced by tracks() already carry their final URL.
+        if (item.directPlayUrl.isNotBlank()) return item.directPlayUrl
+        val meta = metadata(item.id)
+        val file = ArchiveOrgApi.pickStreamFile(meta, wantVideo = item.mediaType == "video", quality = audioQuality)
+            ?: throw IOException("No playable audio or video file found for this item")
+        return ArchiveOrgApi.downloadUrl(item.id, file)
     }
 }

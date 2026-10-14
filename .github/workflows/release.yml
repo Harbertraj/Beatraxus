@@ -104,6 +104,7 @@ jobs:
           GOOGLE_WEB_CLIENT_ID: ${{ secrets.GOOGLE_WEB_CLIENT_ID }}
           TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
           OPENSUBTITLES_API_KEY: ${{ secrets.OPENSUBTITLES_API_KEY }}
+          JAMENDO_CLIENT_ID: ${{ secrets.JAMENDO_CLIENT_ID }}
         run: |
           # Decode keystore outside repo directory to avoid accidental git tracking or artifact capture
           echo "$KEYSTORE_BASE64" | base64 -d > "$KEYSTORE_PATH"
@@ -126,6 +127,7 @@ jobs:
           printf "GOOGLE_WEB_CLIENT_ID=%s\n" "$GOOGLE_WEB_CLIENT_ID" >> local.properties
           printf "TMDB_API_KEY=%s\n" "$TMDB_API_KEY" >> local.properties
           printf "OPENSUBTITLES_API_KEY=%s\n" "$OPENSUBTITLES_API_KEY" >> local.properties
+          printf "JAMENDO_CLIENT_ID=%s\n" "$JAMENDO_CLIENT_ID" >> local.properties
 
       - name: Build Signed Release APKs
         env:

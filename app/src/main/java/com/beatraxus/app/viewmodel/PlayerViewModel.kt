@@ -159,7 +159,13 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private val songQualityDao = database.songQualityDao()
     private val recentlyPlayedDao = database.recentlyPlayedDao()
     private val videoRecentlyPlayedDao = database.videoRecentlyPlayedDao()
-    private val aiAnalysisEngine = com.beatraxus.app.engine.AiAnalysisEngine(application)
+    // Lazy: it needs decoderFactory (declared below). Songs the native extractor declines (ALAC, Dolby, DTS...)
+    // are decoded with the same decoders playback uses and analysed from that PCM.
+    private val aiAnalysisEngine by lazy {
+        com.beatraxus.app.engine.AiAnalysisEngine(application) { song, dsp ->
+            com.beatraxus.app.engine.PcmFeatureExtractor(decoderFactory).extract(song, dsp)
+        }
+    }
     private val cloudAccountManager = com.beatraxus.app.repository.CloudAccountManager(application, database)
     private val libraryScanner = com.beatraxus.app.repository.LibraryScanner(application, musicRepository, songDao, viewModelScope)
     private val videoScanner = com.beatraxus.app.repository.VideoLibraryScanner(application)
@@ -194,6 +200,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     val aiAnalysisBusy: StateFlow<Set<String>> = _aiAnalysisBusy.asStateFlow()
     private val _aiAnalysisFailed = MutableStateFlow<Set<String>>(emptySet())
     val aiAnalysisFailed: StateFlow<Set<String>> = _aiAnalysisFailed.asStateFlow()
+    /** Short reason per song id for the last failed analysis, shown under "couldn't be analysed". */
+    private val _aiAnalysisFailReason = MutableStateFlow<Map<String, String>>(emptyMap())
+    val aiAnalysisFailReason: StateFlow<Map<String, String>> = _aiAnalysisFailReason.asStateFlow()
     private val musicBrainzService = com.beatraxus.app.repository.MusicBrainzService() // NEW
     private val yearEnrichmentChannel = kotlinx.coroutines.channels.Channel<Song>(kotlinx.coroutines.channels.Channel.UNLIMITED) // NEW
 
@@ -4648,11 +4657,20 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             // Runs the native DSP feature extraction ONCE per song; both the AI
             // entity and the quality entity below are built from this same result
             // so scanning doesn't get twice as slow.
+            var failureReason: String? = null
             val result = try { aiAnalysisEngine.analyzeSong(song) } catch (t: Throwable) {
+                if (t is kotlinx.coroutines.CancellationException) throw t
                 Log.w("PlayerViewModel", "DSP analysis failed for ${song.title}: ${t.message}")
+                failureReason = "Analysis error: ${t.message ?: t.javaClass.simpleName}"
                 null
             }
             val analysis = result?.aiAnalysis
+            if (analysis == null) {
+                val reason = failureReason ?: result?.failureReason
+                if (reason != null) _aiAnalysisFailReason.update { it + (song.id to reason) }
+            } else {
+                _aiAnalysisFailReason.update { it - song.id }
+            }
             if (analysis != null) {
                 aiAnalysisDao.insertAnalysis(analysis)
 

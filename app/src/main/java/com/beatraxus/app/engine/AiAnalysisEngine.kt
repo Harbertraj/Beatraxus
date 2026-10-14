@@ -13,7 +13,16 @@ import kotlinx.coroutines.withContext
 import org.tensorflow.lite.Interpreter
 import org.tensorflow.lite.support.common.FileUtil
 
-class AiAnalysisEngine(private val context: Context) {
+/**
+ * Second chance for songs the native MediaCodec extractor declines (ALAC, Dolby, DTS, ...): returns the same
+ * [AudioFeatures] computed from PCM decoded by the app's own decoders, or null if that fails too.
+ */
+typealias PcmFeatureSource = suspend (song: Song, dsp: NativeDsp) -> AudioFeatures?
+
+class AiAnalysisEngine(
+    private val context: Context,
+    private val pcmFeatureSource: PcmFeatureSource? = null
+) {
     private val TAG = "AiAnalysisEngine"
 
     // Model interpreters
@@ -45,20 +54,40 @@ class AiAnalysisEngine(private val context: Context) {
 
     suspend fun analyzeSong(song: Song): SongAnalysisResult = withContext(Dispatchers.Default) {
         // Skip cloud/telegram songs for AI analysis to avoid native crashes on web URIs.
-        if (song.source != SongSource.LOCAL) return@withContext SongAnalysisResult(null, null)
+        if (song.source != SongSource.LOCAL) {
+            return@withContext SongAnalysisResult(null, null, "Only songs stored on this device can be analysed")
+        }
 
         try {
-            // 1. Extract audio features using native C++ engine (analyzes up to 60s)
-            val features = NativeDsp().use { dsp ->
-                dsp.extractFeatures(context, song.uri, 60)
-            } ?: return@withContext SongAnalysisResult(null, null)
+            // 1. Extract audio features using the native C++ engine (analyzes up to 60s). The MediaCodec path
+            //    declines ALAC / Dolby / DTS and other formats, so those go through the app's own decoders instead.
+            var nativeFeatures: AudioFeatures? = null
+            var features: AudioFeatures? = null
+            NativeDsp().use { dsp ->
+                nativeFeatures = dsp.extractFeatures(context, song.uri, 60)
+                features = nativeFeatures ?: try {
+                    pcmFeatureSource?.invoke(song, dsp)
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (t: Throwable) {
+                    Log.w(TAG, "Decoder-based analysis failed for ${song.title}: ${t.message}")
+                    null
+                }
+            }
+            val audioFeatures = features ?: run {
+                Log.w(TAG, "No audio features for ${song.title} (format=${song.format})")
+                return@withContext SongAnalysisResult(
+                    null, null,
+                    "The audio couldn't be decoded for analysis (format: ${song.format.ifBlank { "unknown" }})"
+                )
+            }
 
             // 2. Genre Classification (TFLite or Heuristic Fallback)
-            val genreResult = runInference(genreInterpreter, features.spectralData)
+            val genreResult = runInference(genreInterpreter, audioFeatures.spectralData)
             var primaryGenre = if (genreResult.isModelInference && genreResult.primaryIndex in GENRES.indices) {
                 GENRES[genreResult.primaryIndex]
             } else {
-                heuristicGenre(features)
+                heuristicGenre(audioFeatures)
             }
 
             // Online AI Enhancement for Accuracy (optional refinement)
@@ -77,7 +106,7 @@ class AiAnalysisEngine(private val context: Context) {
             } else null
 
             // 3. Language Classification
-            val langResult = runInference(languageInterpreter, features.spectralData)
+            val langResult = runInference(languageInterpreter, audioFeatures.spectralData)
             val language = if (langResult.isModelInference && langResult.primaryIndex in LANGUAGES.indices) {
                 LANGUAGES[langResult.primaryIndex]
             } else {
@@ -85,11 +114,11 @@ class AiAnalysisEngine(private val context: Context) {
             }
 
             // 4. Mood Classification
-            val moodResult = runInference(moodInterpreter, features.spectralData)
+            val moodResult = runInference(moodInterpreter, audioFeatures.spectralData)
             val primaryMoodRaw = if (moodResult.isModelInference && moodResult.primaryIndex in MOODS.indices) {
                 MOODS[moodResult.primaryIndex]
             } else {
-                heuristicMood(features)
+                heuristicMood(audioFeatures)
             }
             val mood = mapToUiMood(primaryMoodRaw)
 
@@ -99,7 +128,7 @@ class AiAnalysisEngine(private val context: Context) {
             if (moodResult.isModelInference && moodResult.secondaryConfidence > 0.35f && moodResult.secondaryIndex in MOODS.indices) {
                 finalMoods.add(mapToUiMood(MOODS[moodResult.secondaryIndex]))
             }
-            finalMoods.addAll(bpmMoods(features.tempoBpm))
+            finalMoods.addAll(bpmMoods(audioFeatures.tempoBpm))
             try {
                 finalMoods.addAll(moodApiService.fetchAccurateMoodTags(song.artist, song.title))
             } catch (e: Exception) {
@@ -111,12 +140,12 @@ class AiAnalysisEngine(private val context: Context) {
             val aiEqResult = AiEqCalculator.calculateAiEq(
                 genre = primaryGenre,
                 mood = mood,
-                spectral128 = features.spectralData,
-                lufs = features.lufs,
-                dr = features.dynamicRange,
-                bassScore = features.bassScore,
-                midScore = features.midScore,
-                trebleScore = features.trebleScore
+                spectral128 = audioFeatures.spectralData,
+                lufs = audioFeatures.lufs,
+                dr = audioFeatures.dynamicRange,
+                bassScore = audioFeatures.bassScore,
+                midScore = audioFeatures.midScore,
+                trebleScore = audioFeatures.trebleScore
             )
             val aiEq = aiEqResult.bandGains
 
@@ -131,15 +160,15 @@ class AiAnalysisEngine(private val context: Context) {
                 mood = mood,
                 moodConfidence = if (moodResult.isModelInference) moodResult.primaryConfidence else 0.0f,
                 moodTags = moodTags,
-                lufs = features.lufs,
-                rms = features.rms,
-                peak = features.peak,
-                dynamicRange = features.dynamicRange,
-                bassScore = features.bassScore,
-                midScore = features.midScore,
-                trebleScore = features.trebleScore,
-                stereoWidth = features.stereoWidth,
-                tempoBpm = features.tempoBpm,
+                lufs = audioFeatures.lufs,
+                rms = audioFeatures.rms,
+                peak = audioFeatures.peak,
+                dynamicRange = audioFeatures.dynamicRange,
+                bassScore = audioFeatures.bassScore,
+                midScore = audioFeatures.midScore,
+                trebleScore = audioFeatures.trebleScore,
+                stereoWidth = audioFeatures.stereoWidth,
+                tempoBpm = audioFeatures.tempoBpm,
                 eq31 = aiEq[0],
                 eq62 = aiEq[1],
                 eq125 = aiEq[2],
@@ -153,13 +182,16 @@ class AiAnalysisEngine(private val context: Context) {
                 analysisVersion = 2,
                 lastAnalyzed = System.currentTimeMillis()
             )
-            SongAnalysisResult(entity, features)
+            // `features` stays the NATIVE result only: the quality scorer keys off it and must behave as before.
+            SongAnalysisResult(entity, nativeFeatures)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.e(TAG, "Error analyzing song ${song.title}", e)
-            SongAnalysisResult(null, null)
+            SongAnalysisResult(null, null, "Analysis error: ${e.message ?: e.javaClass.simpleName}")
         } catch (t: Throwable) {
             Log.e(TAG, "Fatal error analyzing song ${song.title}", t)
-            SongAnalysisResult(null, null)
+            SongAnalysisResult(null, null, "Analysis error: ${t.message ?: t.javaClass.simpleName}")
         }
     }
 
@@ -312,5 +344,8 @@ data class AudioFeatures(
  *  can reuse the same native analysis pass instead of extracting features twice. */
 data class SongAnalysisResult(
     val aiAnalysis: AiAnalysisEntity?,
-    val features: AudioFeatures?
+    /** Features from the NATIVE extractor only (null when it declined the file), as the quality scan expects. */
+    val features: AudioFeatures?,
+    /** Short, user-readable reason when [aiAnalysis] is null. */
+    val failureReason: String? = null
 )

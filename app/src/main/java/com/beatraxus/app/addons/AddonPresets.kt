@@ -5,6 +5,7 @@ import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.Movie
+import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 
@@ -68,12 +69,22 @@ object AddonPresets {
         AddonPreset(
             id = "preset_archive",
             displayName = "Internet Archive",
-            blurb = "Public-domain films, concerts and music — no sign-in",
+            blurb = "Public-domain films, concerts and albums — no sign-in",
             mediaType = "video",
             protocol = "archive_org",
             authType = "none",
             brandColor = Color(0xFF8E8E93),
             icon = Icons.Default.Archive
+        ),
+        AddonPreset(
+            id = "preset_jamendo",
+            displayName = "Jamendo Music",
+            blurb = "Free music from independent artists — search by song or artist (needs a free Jamendo client ID)",
+            mediaType = "audio",
+            protocol = "jamendo",
+            authType = "api_key",
+            brandColor = Color(0xFFE5484D),
+            icon = Icons.Default.MusicNote
         )
     )
 }

@@ -294,37 +294,30 @@ class NativeDsp : AutoCloseable {
                 null
             } ?: return@withContext null
             
-            if (rawArr.size < 15) return@withContext null
-            
-            val spectralLen = rawArr[13].toInt()
-            val noveltyLen = rawArr[14].toInt()
-            
-            if (rawArr.size < 15 + spectralLen + noveltyLen) return@withContext null
-            
-            val spectralData = rawArr.copyOfRange(15, 15 + spectralLen)
-            val noveltyVector = if (noveltyLen > 0) rawArr.copyOfRange(15 + spectralLen, 15 + spectralLen + noveltyLen) else null
-            
-            return@withContext AudioFeatures(
-                lufs = rawArr[0],
-                rms = rawArr[1],
-                peak = rawArr[2],
-                dynamicRange = rawArr[3],
-                bassScore = rawArr[4],
-                midScore = rawArr[5],
-                trebleScore = rawArr[6],
-                stereoWidth = rawArr[7],
-                tempoBpm = rawArr[8],
-                spectralData = spectralData,
-                noveltyVector = noveltyVector,
-                truePeakDb = rawArr[9],
-                clippedSamplePct = rawArr[10],
-                freqRangeLowHz = rawArr[11],
-                freqRangeHighHz = rawArr[12]
-            )
+            return@withContext parseNativeFeatures(rawArr)
         } finally {
             try { pfd.close() } catch (e: Exception) {}
         }
     }
+
+    /**
+     * Same analysis as [extractFeatures], but on PCM the caller decoded itself (interleaved float,
+     * [frames] x [channels]). Used for formats the native MediaCodec path refuses to touch (ALAC, Dolby, DTS, ...),
+     * which the app's own decoders play fine.
+     */
+    suspend fun analyzePcm(pcm: FloatArray, frames: Int, sampleRate: Int, channels: Int): AudioFeatures? =
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            if (frames <= 0 || channels <= 0 || sampleRate <= 0 || pcm.size < frames.toLong() * channels) {
+                return@withContext null
+            }
+            val raw = try {
+                nAnalyzePcm(pcm, frames, sampleRate, channels)
+            } catch (t: Throwable) {
+                Log.e("NativeDsp", "Native analysis of decoded PCM failed: ${t.message}")
+                null
+            }
+            parseNativeFeatures(raw)
+        }
 
     /**
      * Whitelist approach: only allow the native extractor for codecs known to decode cleanly via
@@ -367,6 +360,7 @@ class NativeDsp : AutoCloseable {
     }
 
     private external fun nExtractFeatures(fd: Int, seconds: Int): FloatArray?
+    private external fun nAnalyzePcm(pcm: FloatArray, frames: Int, sampleRate: Int, channels: Int): FloatArray?
 
     fun release() {
         lock.writeLock().withLock {
@@ -442,4 +436,30 @@ class NativeDsp : AutoCloseable {
     private external fun nSetSpeed(handle: Long, speed: Float, preservePitch: Boolean)
     private external fun nProcess(handle: Long, data: FloatArray, frames: Int)
     private external fun nProcessResampled(handle: Long, input: FloatArray, inFrames: Int, output: FloatArray, outputCapacityFrames: Int): Int
+}
+
+/** Flat layout written by the native `flattenAnalysis`: 15 header floats, then spectral, then novelty. */
+internal fun parseNativeFeatures(rawArr: FloatArray?): AudioFeatures? {
+    if (rawArr == null || rawArr.size < 15) return null
+    val spectralLen = rawArr[13].toInt()
+    val noveltyLen = rawArr[14].toInt()
+    if (spectralLen < 0 || noveltyLen < 0) return null
+    if (rawArr.size < 15 + spectralLen + noveltyLen) return null
+    return AudioFeatures(
+        lufs = rawArr[0],
+        rms = rawArr[1],
+        peak = rawArr[2],
+        dynamicRange = rawArr[3],
+        bassScore = rawArr[4],
+        midScore = rawArr[5],
+        trebleScore = rawArr[6],
+        stereoWidth = rawArr[7],
+        tempoBpm = rawArr[8],
+        spectralData = rawArr.copyOfRange(15, 15 + spectralLen),
+        noveltyVector = if (noveltyLen > 0) rawArr.copyOfRange(15 + spectralLen, 15 + spectralLen + noveltyLen) else null,
+        truePeakDb = rawArr[9],
+        clippedSamplePct = rawArr[10],
+        freqRangeLowHz = rawArr[11],
+        freqRangeHighHz = rawArr[12]
+    )
 }

@@ -7,11 +7,15 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Movie
@@ -25,6 +29,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -34,18 +39,28 @@ import com.beatraxus.app.addons.AddonHttp
 import com.beatraxus.app.addons.AddonMediaItem
 import com.beatraxus.app.addons.AddonPlaybackHelper
 import com.beatraxus.app.addons.ArchiveOrgAddon
+import com.beatraxus.app.addons.FilterableAddon
+import com.beatraxus.app.addons.JamendoAddon
 import com.beatraxus.app.addons.MediaServerAddon
+import com.beatraxus.app.addons.PagedAddon
 import com.beatraxus.app.model.Song
 import com.beatraxus.app.model.SongSource
 import com.beatraxus.app.model.Video
 import com.beatraxus.app.ui.theme.BgBase
 import com.beatraxus.app.viewmodel.PlayerViewModel
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
 sealed class BrowseState {
     object Loading : BrowseState()
-    data class Success(val items: List<AddonMediaItem>) : BrowseState()
+    data class Success(
+        val items: List<AddonMediaItem>,
+        val hasMore: Boolean = false,
+        val loadingMore: Boolean = false,
+        val page: Int = 0
+    ) : BrowseState()
     data class Error(val message: String) : BrowseState()
 }
 
@@ -62,22 +77,35 @@ fun AddonBrowseScreen(
     var resolvingItemId by remember { mutableStateOf<String?>(null) }
     var streamError by remember { mutableStateOf<String?>(null) }
 
-    var filter by remember { mutableStateOf("all") }
     var loadJob by remember { mutableStateOf<Job?>(null) }
+    var detailItem by remember { mutableStateOf<AddonMediaItem?>(null) }
     val isArchive = addon is ArchiveOrgAddon
+    val paged = addon as? PagedAddon
+    val filterable = addon as? FilterableAddon
+    val uriHandler = LocalUriHandler.current
+
+    // Chip selection per filter group; add-ons without filters simply have none.
+    var filters by remember(addon.id) {
+        mutableStateOf(filterable?.filterGroups?.associate { it.id to it.defaultKey } ?: emptyMap())
+    }
 
     fun loadData(query: String? = null) {
         state = BrowseState.Loading
         loadJob?.cancel() // a slow older request must never overwrite a newer one
         loadJob = coroutineScope.launch {
             try {
-                val results = if (query.isNullOrBlank()) {
-                    addon.browse(null)
+                state = if (paged != null) {
+                    val first = paged.page(query?.takeIf { it.isNotBlank() }, 0)
+                    BrowseState.Success(first.items.distinctBy { it.id }, hasMore = first.hasMore, page = 0)
                 } else {
-                    addon.search(query)
+                    val results = if (query.isNullOrBlank()) {
+                        addon.browse(null)
+                    } else {
+                        addon.search(query)
+                    }
+                    BrowseState.Success(results)
                 }
-                state = BrowseState.Success(results)
-            } catch (e: kotlinx.coroutines.CancellationException) {
+            } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 state = BrowseState.Error("Couldn't load ${addon.displayName}\n${AddonHttp.friendlyMessage(e)}")
@@ -85,9 +113,34 @@ fun AddonBrowseScreen(
         }
     }
 
-    // One effect drives every load (first open, typing, filter change) so nothing is fetched twice.
-    LaunchedEffect(addon.id, searchQuery, filter) {
-        (addon as? ArchiveOrgAddon)?.mediaFilter = filter
+    // Next page, appended below what is already shown (infinite scroll).
+    fun loadMore() {
+        val current = state as? BrowseState.Success ?: return
+        if (paged == null || !current.hasMore || current.loadingMore) return
+        state = current.copy(loadingMore = true)
+        val query = searchQuery
+        loadJob = coroutineScope.launch {
+            try {
+                val next = paged.page(query.takeIf { it.isNotBlank() }, current.page + 1)
+                val known = current.items.mapTo(HashSet()) { it.id }
+                val fresh = next.items.filter { known.add(it.id) }
+                state = BrowseState.Success(
+                    current.items + fresh,
+                    hasMore = next.hasMore && fresh.isNotEmpty(),
+                    page = current.page + 1
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                state = current.copy(loadingMore = false)
+                streamError = AddonHttp.friendlyMessage(e)
+            }
+        }
+    }
+
+    // One effect drives every load (first open, typing, chip change) so nothing is fetched twice.
+    LaunchedEffect(addon.id, searchQuery, filters) {
+        filterable?.let { f -> filters.forEach { (group, option) -> f.setFilter(group, option) } }
         if (searchQuery.isBlank()) {
             loadData(null)
         } else {
@@ -138,16 +191,28 @@ fun AddonBrowseScreen(
             )
         )
 
-        if (isArchive) {
+        filterable?.filterGroups?.forEach { group ->
             LazyRow(
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 2.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                rowItems(listOf("all" to "Popular", "video" to "Videos", "audio" to "Audio")) { (key, label) ->
+                item {
+                    Text(
+                        text = group.label,
+                        color = Color.White.copy(alpha = 0.4f),
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Black,
+                        letterSpacing = 1.sp,
+                        modifier = Modifier.padding(end = 2.dp)
+                    )
+                }
+                rowItems(group.options) { option ->
+                    val selected = filters[group.id] == option.key
                     FilterChip(
-                        selected = filter == key,
-                        onClick = { filter = key },
-                        label = { Text(label, fontSize = 13.sp, fontWeight = FontWeight.SemiBold) },
+                        selected = selected,
+                        onClick = { filters = filters + (group.id to option.key) },
+                        label = { Text(option.label, fontSize = 13.sp, fontWeight = FontWeight.SemiBold) },
                         shape = RoundedCornerShape(50),
                         colors = FilterChipDefaults.filterChipColors(
                             containerColor = Color.White.copy(alpha = 0.06f),
@@ -156,13 +221,23 @@ fun AddonBrowseScreen(
                             selectedLabelColor = Color.Black
                         ),
                         border = FilterChipDefaults.filterChipBorder(
-                            enabled = true, selected = filter == key,
+                            enabled = true, selected = selected,
                             borderColor = Color.White.copy(alpha = 0.12f),
                             selectedBorderColor = Color.Transparent
                         )
                     )
                 }
             }
+        }
+
+        if (addon is JamendoAddon) {
+            // Jamendo's API terms: credit the artists and Jamendo as the provider, link each track to its Jamendo page.
+            Text(
+                text = "Music provided by Jamendo · tap ⓘ on a track for its licence and Jamendo page",
+                color = Color.White.copy(alpha = 0.4f),
+                fontSize = 11.sp,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)
+            )
         }
 
         streamError?.let { errorMsg ->
@@ -219,7 +294,17 @@ fun AddonBrowseScreen(
                             modifier = Modifier.align(Alignment.Center)
                         )
                     } else {
+                        val gridState = rememberLazyGridState()
+                        if (paged != null) {
+                            val total = currentState.items.size
+                            LaunchedEffect(gridState, total, currentState.hasMore) {
+                                snapshotFlow { gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0 }
+                                    .distinctUntilChanged()
+                                    .collect { last -> if (last >= total - 6) loadMore() }
+                            }
+                        }
                         LazyVerticalGrid(
+                            state = gridState,
                             columns = GridCells.Adaptive(minSize = if (isArchive) 150.dp else 108.dp),
                             contentPadding = PaddingValues(16.dp),
                             horizontalArrangement = Arrangement.spacedBy(16.dp),
@@ -231,6 +316,9 @@ fun AddonBrowseScreen(
                                     item = item,
                                     landscapeVideo = isArchive,
                                     isLoading = resolvingItemId == item.id,
+                                    onInfo = if (item.pageUrl != null || item.licenseUrl != null) {
+                                        { detailItem = item }
+                                    } else null,
                                     onClick = {
                                         if (resolvingItemId != null) return@AddonGridItem
                                         resolvingItemId = item.id
@@ -240,8 +328,11 @@ fun AddonBrowseScreen(
                                                 AddonPlaybackHelper.resolveAndPlay(
                                                     addon = addon,
                                                     item = item,
-                                                    playerViewModel = playerViewModel
+                                                    playerViewModel = playerViewModel,
+                                                    browsing = currentState.items
                                                 )
+                                            } catch (e: CancellationException) {
+                                                throw e
                                             } catch (e: Exception) {
                                                 streamError = e.message ?: "Playback failed"
                                             } finally {
@@ -251,11 +342,66 @@ fun AddonBrowseScreen(
                                     }
                                 )
                             }
+                            if (currentState.loadingMore) {
+                                item(span = { GridItemSpan(maxLineSpan) }) {
+                                    Box(
+                                        modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        CircularProgressIndicator(color = Color.White, modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                                    }
+                                }
+                            }
                         }
                     }
                 }
             }
         }
+    }
+
+    // Credits + links for a track: the creator, the provider, its page, and the licence it is published under.
+    detailItem?.let { item ->
+        AlertDialog(
+            onDismissRequest = { detailItem = null },
+            containerColor = Color(0xFF1A1B1F),
+            title = { Text(item.title, color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    item.artist?.let { Text("Artist: $it", color = Color.White.copy(alpha = 0.8f), fontSize = 14.sp) }
+                    item.album?.let { Text("Album: $it", color = Color.White.copy(alpha = 0.8f), fontSize = 14.sp) }
+                    item.durationLabel?.let { Text("Length: $it", color = Color.White.copy(alpha = 0.8f), fontSize = 14.sp) }
+                    Text("Provided by ${addon.displayName}", color = Color.White.copy(alpha = 0.6f), fontSize = 13.sp)
+                    if (item.licenseUrl != null) {
+                        Text(
+                            "Licence: ${item.licenseUrl}",
+                            color = Color.White.copy(alpha = 0.6f), fontSize = 12.sp
+                        )
+                    } else {
+                        Text(
+                            "Licence: see the item's page",
+                            color = Color.White.copy(alpha = 0.6f), fontSize = 12.sp
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Row {
+                    item.licenseUrl?.let { link ->
+                        TextButton(onClick = { runCatching { uriHandler.openUri(link) } }) {
+                            Text("LICENCE", color = Color.White)
+                        }
+                    }
+                    item.pageUrl?.let { link ->
+                        TextButton(onClick = { runCatching { uriHandler.openUri(link) } }) {
+                            Text("OPEN PAGE", color = addon.brandColor)
+                        }
+                    }
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { detailItem = null }) { Text("CLOSE", color = Color.White) }
+            }
+        )
     }
 }
 
@@ -264,6 +410,7 @@ fun AddonGridItem(
     item: AddonMediaItem,
     isLoading: Boolean,
     landscapeVideo: Boolean = false,
+    onInfo: (() -> Unit)? = null,
     onClick: () -> Unit
 ) {
     val isAudio = item.mediaType == "audio"
@@ -299,6 +446,39 @@ fun AddonGridItem(
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize()
             )
+
+            item.durationLabel?.let { label ->
+                Text(
+                    text = label,
+                    color = Color.White,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(6.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(Color.Black.copy(alpha = 0.65f))
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                )
+            }
+            if (onInfo != null) {
+                IconButton(
+                    onClick = onInfo,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(4.dp)
+                        .size(28.dp)
+                        .clip(CircleShape)
+                        .background(Color.Black.copy(alpha = 0.55f))
+                ) {
+                    Icon(
+                        Icons.Default.Info,
+                        contentDescription = "Track info and licence",
+                        tint = Color.White,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
 
             if (isLoading) {
                 Box(

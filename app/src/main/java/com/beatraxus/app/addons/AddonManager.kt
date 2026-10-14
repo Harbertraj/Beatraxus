@@ -94,6 +94,7 @@ object AddonManager {
             "plex" -> PlexAddon(id, displayName, authType)
             "emby" -> EmbyAddon(id, displayName, authType)
             "archive_org" -> ArchiveOrgAddon(id, displayName, authType)
+            "jamendo" -> JamendoAddon(id, displayName, authType)
             "stremio" -> StremioAddon(id, displayName, authType)
             else -> null
         }

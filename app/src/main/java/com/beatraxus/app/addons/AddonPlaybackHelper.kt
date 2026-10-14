@@ -8,26 +8,31 @@ import com.beatraxus.app.viewmodel.PlayerViewModel
 
 object AddonPlaybackHelper {
 
+    /**
+     * Plays [item] through the app's one player. [browsing] is the list the item was tapped in: when its audio
+     * entries can all be played directly, next/previous moves through that list.
+     */
     suspend fun resolveAndPlay(
         addon: MediaServerAddon,
         item: AddonMediaItem,
-        playerViewModel: PlayerViewModel
+        playerViewModel: PlayerViewModel,
+        browsing: List<AddonMediaItem> = emptyList()
     ) {
-        val streamUrl = addon.streamUrl(item)
-        val uri = Uri.parse(streamUrl)
-        // Internet Archive items are sometimes mis-typed (a "movie" that is only audio): trust the file.
-        val isVideo = if (addon is ArchiveOrgAddon) {
-            val ext = uri.lastPathSegment?.substringAfterLast('.', "")?.lowercase().orEmpty()
-            when (ext) {
-                "mp3", "m4a", "ogg", "opus", "flac", "wav", "aac" -> false
-                "mp4", "m4v", "webm", "mkv", "mov", "mpeg4", "mpg", "avi", "ogv" -> true
-                else -> item.mediaType == "video"
+        // An audio upload that is really an album or concert (Internet Archive) plays as its track list.
+        if (item.mediaType == "audio") {
+            val tracks = addon.tracks(item)
+            if (tracks.isNotEmpty()) {
+                playAudio(addon, QueuePlan(tracks, 0), playerViewModel)
+                return
             }
-        } else item.mediaType == "video"
+        }
+
+        val streamUrl = addon.streamUrl(item)
+        val isVideo = isVideoStream(addon is ArchiveOrgAddon, item, streamUrl)
         if (isVideo) {
             val video = Video(
                 id = "${addon.id}_${item.id}",
-                uri = uri,
+                uri = Uri.parse(streamUrl),
                 title = item.title,
                 displayName = item.title,
                 folderPath = "",
@@ -40,18 +45,30 @@ object AddonPlaybackHelper {
             )
             playerViewModel.playVideo(video)
         } else {
-            val song = Song(
-                id = "${addon.id}_${item.id}",
-                title = item.title,
-                artist = item.subtitle ?: addon.displayName,
-                album = addon.displayName,
-                durationMs = item.durationMs,
-                source = SongSource.WEB,
-                uri = uri,
-                format = "unknown",
-                sampleRateHz = 44100
-            )
-            playerViewModel.playSong(song)
+            playAudio(addon, planQueue(item, streamUrl, browsing), playerViewModel)
         }
     }
+
+    private fun playAudio(addon: MediaServerAddon, plan: QueuePlan, playerViewModel: PlayerViewModel) {
+        val songs = plan.items.map { toSong(songSpec(addon.id, addon.displayName, it, it.directPlayUrl)) }
+        if (songs.size == 1) {
+            playerViewModel.playSong(songs[0])
+        } else {
+            playerViewModel.playList(songs, plan.startIndex)
+        }
+    }
+
+    private fun toSong(spec: SongSpec): Song = Song(
+        id = spec.id,
+        title = spec.title,
+        artist = spec.artist,
+        album = spec.album,
+        durationMs = spec.durationMs,
+        source = SongSource.WEB,
+        uri = Uri.parse(spec.url),
+        format = "unknown",
+        sampleRateHz = 44100,
+        albumArtUri = spec.artworkUrl?.let { Uri.parse(it) },
+        trackNumber = spec.trackNumber
+    )
 }

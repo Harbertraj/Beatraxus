@@ -1286,6 +1286,7 @@ private fun AiOptionsPopup(
     val aiAnalysisMap by viewModel.aiAnalysis.collectAsStateWithLifecycle()
     val aiBusy by viewModel.aiAnalysisBusy.collectAsStateWithLifecycle()
     val aiFailed by viewModel.aiAnalysisFailed.collectAsStateWithLifecycle()
+    val aiFailReasons by viewModel.aiAnalysisFailReason.collectAsStateWithLifecycle()
     val currentSong = uiState.currentSong
     val currentAnalysis = currentSong?.id?.let { aiAnalysisMap[it] }
 
@@ -1420,7 +1421,8 @@ private fun AiOptionsPopup(
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
                                     Text(
-                                        "This song couldn't be analysed.",
+                                        "This song couldn't be analysed." +
+                                            (aiFailReasons[currentSong.id]?.let { "\n$it" } ?: ""),
                                         color = Color.White.copy(0.5f),
                                         fontSize = 12.sp,
                                         modifier = Modifier.weight(1f)

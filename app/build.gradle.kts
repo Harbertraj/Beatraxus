@@ -84,6 +84,11 @@ configure<ApplicationExtension> {
         val openSubtitlesApiKey = localProperties.getProperty("OPENSUBTITLES_API_KEY", "")
         buildConfigField("String", "OPENSUBTITLES_API_KEY", "\"$openSubtitlesApiKey\"")
 
+        // Optional: a Jamendo client ID (free, devportal.jamendo.com) built into the app. Leave it out of
+        // local.properties and users enter their own ID when they add the Jamendo add-on.
+        val jamendoClientId = localProperties.getProperty("JAMENDO_CLIENT_ID", "").trim()
+        buildConfigField("String", "JAMENDO_CLIENT_ID", "\"$jamendoClientId\"")
+
         val llmApiKey = localProperties.getProperty("LLM_API_KEY", "")
         val llmEndpoint = localProperties.getProperty("LLM_ENDPOINT", "https://api.openai.com/v1/chat/completions")
         val llmProvider = localProperties.getProperty("LLM_PROVIDER", "openai")
