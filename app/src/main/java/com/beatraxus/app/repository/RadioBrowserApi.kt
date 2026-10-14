@@ -82,6 +82,46 @@ object RadioBrowserApi {
             .take(limit)
     }
 
+    /** Free-text station search on the station name (e.g. an artist or actor name), most popular first. */
+    fun stationsByName(name: String, limit: Int = 60): List<RadioStation> =
+        search("name=${enc(name)}&limit=$limit")
+
+    /** Stations carrying a community tag (e.g. "ilayaraja"), most popular first. */
+    fun stationsByTagLoose(tag: String, limit: Int = 60): List<RadioStation> =
+        search("tag=${enc(tag)}&tagExact=false&limit=$limit")
+
+    /**
+     * Union of name- and tag-based lookups for a list of search terms (artist / actor radios).
+     * Deduplicated and ordered by first appearance, so the best matching term wins.
+     */
+    fun stationsForTerms(terms: List<String>, limit: Int = 60): List<RadioStation> {
+        val out = LinkedHashMap<String, RadioStation>()
+        for (term in terms.take(3)) {
+            val found = runCatching { stationsByName(term, limit) }.getOrDefault(emptyList()) +
+                runCatching { stationsByTagLoose(term, limit) }.getOrDefault(emptyList())
+            found.forEach { out.putIfAbsent(it.id.ifBlank { it.streamUrl }, it) }
+            if (out.size >= limit) break
+        }
+        return out.values.take(limit)
+    }
+
+    private fun enc(v: String) = java.net.URLEncoder.encode(v, "UTF-8")
+
+    private fun search(params: String): List<RadioStation> {
+        for (host in hosts) {
+            try {
+                val url = "$host/json/stations/search?$params&hidebroken=true&order=clickcount&reverse=true"
+                val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+                    requestMethod = "GET"
+                    connectTimeout = 8000; readTimeout = 8000
+                    setRequestProperty("User-Agent", "Beatraxus/1.0")
+                }
+                return parse(conn.inputStream.bufferedReader().readText())
+            } catch (e: Exception) { /* try next mirror */ }
+        }
+        return emptyList()
+    }
+
     fun topStations(limit: Int = 200): List<RadioStation> {
         for (host in hosts) {
             try {
