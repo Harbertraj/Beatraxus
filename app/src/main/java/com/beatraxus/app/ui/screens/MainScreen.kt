@@ -1093,7 +1093,10 @@ fun MainScreen(
                                 }
 
                                 // Centered Title - Unique & Premium
-                                if (!isRichDetailView) {
+                                if (uiState.currentView == LibraryView.RADIO) {
+                                    RadioTopTitle(accent = viewAccentColor)
+                                }
+                                if (!isRichDetailView && uiState.currentView != LibraryView.RADIO) {
                                 Box(
                                     modifier = Modifier
                                         .fillMaxWidth()

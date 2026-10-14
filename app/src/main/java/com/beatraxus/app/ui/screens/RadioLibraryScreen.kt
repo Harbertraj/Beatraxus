@@ -371,22 +371,7 @@ fun RadioLibraryScreen(
         modifier = modifier.fillMaxSize(),
         contentPadding = PaddingValues(bottom = 120.dp)
     ) {
-        item(key = "title") {
-            Column(Modifier.padding(horizontal = 20.dp).padding(top = 8.dp, bottom = 12.dp)) {
-                Text(
-                    "Radio",
-                    color = Color.White,
-                    fontSize = 34.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    letterSpacing = (-0.5).sp
-                )
-                Text(
-                    "Live stations from around the world",
-                    color = Color.White.copy(alpha = 0.5f),
-                    fontSize = 13.sp
-                )
-            }
-        }
+        item(key = "title") { Spacer(Modifier.height(4.dp)) }
         item(key = "search") {
             RadioSearchField(
                 query = query,
@@ -670,43 +655,145 @@ private fun RadioStationCard(
     accent: Color,
     onClick: () -> Unit
 ) {
+    val artShape = RoundedCornerShape(20.dp)
     Column(
         modifier = Modifier
-            .width(132.dp)
-            .clip(RoundedCornerShape(14.dp))
+            .width(140.dp)
+            .clip(RoundedCornerShape(20.dp))
             .clickable(onClick = onClick)
     ) {
-        Box {
-            RadioStationLogo(logoUrl = station.favicon, accent = accent, size = 132.dp, cornerRadius = 14.dp)
-            if (isCurrent) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        .padding(8.dp)
-                        .clip(RoundedCornerShape(50))
-                        .background(Color.Black.copy(alpha = 0.55f))
-                        .padding(horizontal = 8.dp, vertical = 5.dp)
-                ) {
-                    RadioEqBars(color = accent, animate = isPlaying, barCount = 3, barWidth = 3.dp, maxHeight = 12.dp)
+        Box(
+            modifier = Modifier
+                .size(140.dp)
+                .clip(artShape)
+                .border(
+                    width = if (isCurrent) 2.dp else 1.dp,
+                    color = if (isCurrent) accent else Color.White.copy(alpha = 0.10f),
+                    shape = artShape
+                )
+        ) {
+            RadioStationLogo(
+                logoUrl = station.favicon,
+                accent = accent,
+                size = 140.dp,
+                cornerRadius = 20.dp,
+                seed = station.key()
+            )
+            // soft scrim so the play badge stays readable on any artwork
+            Box(
+                Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .height(56.dp)
+                    .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.45f))))
+            )
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(8.dp)
+                    .size(34.dp)
+                    .clip(CircleShape)
+                    .background(if (isCurrent) accent else Color.Black.copy(alpha = 0.55f)),
+                contentAlignment = Alignment.Center
+            ) {
+                if (isPlaying) {
+                    RadioEqBars(color = Color.White, animate = true, barCount = 3, barWidth = 3.dp, maxHeight = 14.dp)
+                } else {
+                    Icon(
+                        imageVector = if (isCurrent) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(22.dp)
+                    )
                 }
             }
         }
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(9.dp))
         Text(
             text = station.name.trim().ifBlank { "Unknown station" },
             color = if (isCurrent) accent else Color.White,
-            fontSize = 13.sp,
+            fontSize = 14.sp,
             fontWeight = FontWeight.SemiBold,
             maxLines = 1,
-            overflow = TextOverflow.Ellipsis
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(horizontal = 2.dp)
         )
         Text(
             text = listOf(station.band, station.country.ifBlank { null }).filterNotNull().joinToString("  ·  "),
             color = Color.White.copy(alpha = 0.5f),
             fontSize = 12.sp,
             maxLines = 1,
-            overflow = TextOverflow.Ellipsis
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(horizontal = 2.dp)
         )
+    }
+}
+
+/**
+ * Compact centred "Radio" title for the top bar row (between the menu and search buttons).
+ * Used instead of the large in-screen header so the content can start higher.
+ */
+@Composable
+fun RadioTopTitle(accent: Color, modifier: Modifier = Modifier) {
+    val pulse by rememberInfiniteTransition(label = "radioLive").animateFloat(
+        initialValue = 0.35f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(900, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "radioLivePulse"
+    )
+    val shape = RoundedCornerShape(28.dp)
+    Row(
+        modifier = modifier
+            .clip(shape)
+            .background(accent.copy(alpha = 0.14f))
+            .border(
+                1.dp,
+                Brush.linearGradient(listOf(accent.copy(alpha = 0.55f), accent.copy(alpha = 0.10f))),
+                shape
+            )
+            .padding(start = 6.dp, end = 16.dp, top = 5.dp, bottom = 5.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(34.dp)
+                .clip(CircleShape)
+                .background(Brush.linearGradient(listOf(accent.copy(alpha = 0.55f), accent.copy(alpha = 0.18f)))),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(Icons.Rounded.Radio, contentDescription = null, tint = Color.White, modifier = Modifier.size(19.dp))
+        }
+        Spacer(Modifier.width(10.dp))
+        Column {
+            Text(
+                "Radio",
+                color = Color.White,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.ExtraBold,
+                letterSpacing = (-0.3).sp,
+                lineHeight = 22.sp
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier
+                        .size(6.dp)
+                        .graphicsLayer { alpha = pulse }
+                        .background(accent, CircleShape)
+                )
+                Spacer(Modifier.width(5.dp))
+                Text(
+                    "LIVE",
+                    color = accent,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.2.sp,
+                    lineHeight = 11.sp
+                )
+            }
+        }
     }
 }
 
@@ -1005,39 +1092,50 @@ internal fun RadioStationRow(
     }
 }
 
-/** Station favicon on a soft tinted tile, falling back to a radio glyph when there is none / it fails. */
+/**
+ * Station artwork. Roughly square logos fill the whole tile edge to edge; wide / tall or transparent
+ * logos sit padded on a vivid per-station gradient. Falls back to a radio glyph on that same gradient
+ * when there is no logo or it fails to load.
+ */
 @Composable
 internal fun RadioStationLogo(
     logoUrl: String?,
     accent: Color,
     size: Dp,
     cornerRadius: Dp,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    seed: String = logoUrl.orEmpty()
 ) {
     var failed by remember(logoUrl) { mutableStateOf(false) }
+    var squareish by remember(logoUrl) { mutableStateOf<Boolean?>(null) }
     val showImage = !logoUrl.isNullOrBlank() && !failed
+    val (c1, c2) = remember(seed) { radioGradient(seed.ifBlank { "radio" }) }
     Box(
         modifier = modifier
             .size(size)
             .clip(RoundedCornerShape(cornerRadius))
-            .background(
-                Brush.linearGradient(listOf(accent.copy(alpha = 0.28f), Color.White.copy(alpha = 0.06f)))
-            ),
+            .background(Brush.linearGradient(listOf(c1.copy(alpha = 0.85f), c2.copy(alpha = 0.85f)))),
         contentAlignment = Alignment.Center
     ) {
         if (showImage) {
             AsyncImage(
                 model = logoUrl,
                 contentDescription = null,
-                contentScale = ContentScale.Fit,
+                contentScale = if (squareish == true) ContentScale.Crop else ContentScale.Fit,
+                onSuccess = { s ->
+                    val sz = s.painter.intrinsicSize
+                    squareish = sz.width > 0f && sz.height > 0f && (sz.width / sz.height) in 0.85f..1.18f
+                },
                 onError = { failed = true },
-                modifier = Modifier.fillMaxSize().padding(size * 0.12f)
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(if (squareish == true) 0.dp else size * 0.14f)
             )
         } else {
             Icon(
                 Icons.Rounded.Radio,
                 contentDescription = null,
-                tint = accent.copy(alpha = 0.9f),
+                tint = Color.White.copy(alpha = 0.92f),
                 modifier = Modifier.size(size * 0.5f)
             )
         }
