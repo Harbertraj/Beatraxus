@@ -48,6 +48,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
@@ -60,6 +61,7 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -474,13 +476,7 @@ fun DspScreen(
                     .padding(paddingValues),
                 verticalAlignment = Alignment.Top
             ) { page ->
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .verticalScroll(rememberScrollState())
-                        .padding(horizontal = 14.dp, vertical = 6.dp),
-                    verticalArrangement = Arrangement.spacedBy(if (page == 0) 10.dp else 8.dp)
-                ) {
+                val pageBody: @Composable ColumnScope.() -> Unit = {
                     if (page == 0) {
                         // Settings text moved to top bar
                         val currentGains = uiState.dsp.config.eqBands.map { it.gainDb }
@@ -533,7 +529,6 @@ fun DspScreen(
                             showMenu = showMenu,
                             onShowMenuChange = { showMenu = it },
                             onShowSavedPresets = { showSavedPresetsSheet = true },
-                            onShowAiOptions = { showAiPopup = true },
                             onShowDevicePicker = { showDevicePicker = true },
                             onShowDeviceEq = { showDeviceEq = true }
                         )
@@ -541,6 +536,7 @@ fun DspScreen(
                         PremiumEqualizerCard(
                             uiState = uiState,
                             viewModel = viewModel,
+                            aiProfile = uiState.currentSong?.id?.let { aiProfiles[it] },
                             onShowPresets = { showPresetsSheet = true },
                             onShowAiOptions = { showAiPopup = true },
                             onEditValue = { editingValue = it }
@@ -552,6 +548,29 @@ fun DspScreen(
                     } else {
                         PremiumSoundStageCard(uiState, viewModel, onEditValue = { editingValue = it })
                     }
+                }
+                if (page < 3) {
+                    // EQ, Master and Reverb always fit the screen: the whole page scales down to the available height.
+                    FitToHeight(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 14.dp, vertical = 6.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(if (page == 0) 10.dp else 8.dp),
+                            content = pageBody
+                        )
+                    }
+                } else {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .verticalScroll(rememberScrollState())
+                            .padding(horizontal = 14.dp, vertical = 6.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        content = pageBody
+                    )
                 }
             }
         }
@@ -1282,6 +1301,42 @@ private fun ValueEditDialog(
     )
 }
 
+/**
+ * Lays [content] out at its natural size and, if it is taller than the space available, scales the whole
+ * thing down uniformly (full width kept) so nothing is cut off and nothing needs to scroll.
+ *
+ * A Measurable may only be measured once per pass, so the scale is settled over a couple of passes: each pass
+ * measures at the current scale's width and then stores the scale the measured height calls for.
+ */
+@Composable
+private fun FitToHeight(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+    var scale by remember { mutableFloatStateOf(1f) }
+    val settle = remember { longArrayOf(0L, 0L) } // [0] = last (width,height) key, [1] = passes spent on it
+    Layout(content = content, modifier = modifier.clipToBounds()) { measurables, constraints ->
+        val maxW = constraints.maxWidth
+        val maxH = constraints.maxHeight
+        val s = scale.coerceIn(0.3f, 1f)
+        val w = (maxW / s).toInt().coerceAtLeast(1)
+        val placeable = measurables.first().measure(
+            Constraints(minWidth = w, maxWidth = w, minHeight = 0, maxHeight = Constraints.Infinity)
+        )
+        val key = maxW.toLong() * 100_000L + maxH.toLong()
+        if (settle[0] != key) { settle[0] = key; settle[1] = 0L }
+        val target = if (placeable.height > 0) (maxH.toFloat() / placeable.height).coerceIn(0.3f, 1f) else 1f
+        if (abs(target - scale) > 0.003f && settle[1] < 6L) {
+            settle[1]++
+            scale = target
+        }
+        layout(maxW, maxH) {
+            placeable.placeWithLayer(0, 0) {
+                scaleX = s
+                scaleY = s
+                transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0f)
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AiOptionsPopup(
@@ -1295,8 +1350,6 @@ private fun AiOptionsPopup(
     val bypassed = config.bitPerfectEnabled
     val song = uiState.currentSong
     val profile = song?.id?.let { aiProfiles[it] }
-    val nextSongs = uiState.upcomingSongs.take(8)
-    val nextReady = nextSongs.count { aiProfiles.containsKey(it.id) }
     val predicting = enabled && song != null && profile == null
 
     // The layout is identical whether AI EQ is on or off (only dimmed), so the sheet never changes size.
@@ -1313,8 +1366,8 @@ private fun AiOptionsPopup(
         dragHandle = {
             Box(
                 modifier = Modifier
-                    .padding(vertical = 12.dp)
-                    .size(36.dp, 4.dp)
+                    .padding(vertical = 8.dp)
+                    .size(32.dp, 3.dp)
                     .background(Color.White.copy(alpha = 0.2f), CircleShape)
             )
         }
@@ -1325,24 +1378,24 @@ private fun AiOptionsPopup(
                 .verticalScroll(rememberScrollState())
                 .navigationBarsPadding()
                 .padding(horizontal = 16.dp)
-                .padding(bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+                .padding(bottom = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             // ── Header ───────────────────────────────────────────────────────────────────────────────
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Box(
                     modifier = Modifier
-                        .size(40.dp)
-                        .clip(RoundedCornerShape(12.dp))
+                        .size(32.dp)
+                        .clip(RoundedCornerShape(10.dp))
                         .background(Brush.linearGradient(listOf(PremiumAccent.copy(0.28f), DspViolet.copy(0.22f))))
-                        .border(1.dp, PremiumAccent.copy(0.35f), RoundedCornerShape(12.dp)),
+                        .border(1.dp, PremiumAccent.copy(0.35f), RoundedCornerShape(10.dp)),
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(Icons.Rounded.AutoAwesome, null, tint = PremiumAccent, modifier = Modifier.size(22.dp))
+                    Icon(Icons.Rounded.AutoAwesome, null, tint = PremiumAccent, modifier = Modifier.size(18.dp))
                 }
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("AI EQ STUDIO", color = PremiumAccent, fontWeight = FontWeight.Black, fontSize = 18.sp, letterSpacing = 2.sp)
-                    Text("Per-song intelligent EQ", color = Color.White.copy(0.45f), fontSize = 11.sp)
+                    Text("AI EQ STUDIO", color = PremiumAccent, fontWeight = FontWeight.Black, fontSize = 15.sp, letterSpacing = 2.sp)
+                    Text("Per-song intelligent EQ", color = Color.White.copy(0.45f), fontSize = 10.sp)
                 }
                 val statusText = when {
                     !enabled -> "OFF"
@@ -1353,13 +1406,13 @@ private fun AiOptionsPopup(
                 Text(
                     statusText,
                     color = statusColor,
-                    fontSize = 10.sp,
+                    fontSize = 9.sp,
                     fontWeight = FontWeight.Black,
                     letterSpacing = 1.sp,
                     modifier = Modifier
                         .clip(RoundedCornerShape(50))
                         .background(statusColor.copy(alpha = 0.12f))
-                        .padding(horizontal = 10.dp, vertical = 5.dp)
+                        .padding(horizontal = 8.dp, vertical = 3.dp)
                 )
             }
 
@@ -1367,14 +1420,14 @@ private fun AiOptionsPopup(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .dspPanel(18.dp)
-                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                    .dspPanel(14.dp)
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("Enable AI EQ", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                    Text("Real-time intelligent correction", color = Color.White.copy(0.5f), fontSize = 12.sp)
+                    Text("Enable AI EQ", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    Text("Real-time intelligent correction", color = Color.White.copy(0.5f), fontSize = 11.sp)
                 }
                 PremiumSwitch(
                     checked = enabled,
@@ -1385,15 +1438,15 @@ private fun AiOptionsPopup(
 
             Column(
                 modifier = Modifier.graphicsLayer(alpha = contentAlpha),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 // ── Now playing + detected traits ───────────────────────────────────────────────────
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .dspPanel(18.dp)
-                        .padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                        .dspPanel(14.dp)
+                        .padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     AiSheetLabel("NOW ANALYSING")
                     Column {
@@ -1401,25 +1454,25 @@ private fun AiOptionsPopup(
                             song?.title?.takeIf { it.isNotBlank() } ?: "No song playing",
                             color = Color.White,
                             fontWeight = FontWeight.Bold,
-                            fontSize = 14.sp,
+                            fontSize = 13.sp,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
                         Text(
                             song?.artist?.takeIf { it.isNotBlank() } ?: dash,
                             color = Color.White.copy(0.5f),
-                            fontSize = 12.sp,
+                            fontSize = 11.sp,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
                     }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         AiStatTile("GENRE", genreText, Modifier.weight(1f))
                         AiStatTile("MOOD", moodText, Modifier.weight(1f))
                         AiStatTile("LANGUAGE", languageText, Modifier.weight(1f))
                     }
                     // fixed-height progress slot so nothing shifts when prediction finishes
-                    Box(modifier = Modifier.fillMaxWidth().height(3.dp)) {
+                    Box(modifier = Modifier.fillMaxWidth().height(2.dp)) {
                         if (predicting) {
                             LinearProgressIndicator(
                                 modifier = Modifier.fillMaxSize().clip(CircleShape),
@@ -1434,9 +1487,9 @@ private fun AiOptionsPopup(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .dspPanel(18.dp)
-                        .padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                        .dspPanel(14.dp)
+                        .padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -1462,85 +1515,39 @@ private fun AiOptionsPopup(
                         active = enabled && !bypassed
                     )
                 }
-
-                // ── Next-8 preload ──────────────────────────────────────────────────────────────────
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .dspPanel(18.dp)
-                        .padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        AiSheetLabel("NEXT 8 SONGS PRELOADED")
-                        Text(
-                            "$nextReady / ${nextSongs.size}",
-                            color = PremiumAccent,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Black
-                        )
-                    }
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        repeat(8) { i ->
-                            val state = nextSongs.getOrNull(i)
-                            val ready = state != null && aiProfiles.containsKey(state.id)
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(6.dp)
-                                    .clip(CircleShape)
-                                    .background(
-                                        when {
-                                            ready -> PremiumAccent
-                                            state != null -> PremiumAccent.copy(alpha = 0.22f)
-                                            else -> Color.White.copy(alpha = 0.08f)
-                                        }
-                                    )
-                            )
-                        }
-                    }
-                    Text(
-                        "Each upcoming song's EQ is predicted ahead of time, so it starts with its own EQ already in place.",
-                        color = Color.White.copy(0.45f),
-                        fontSize = 11.sp,
-                        lineHeight = 15.sp
-                    )
-                }
             }
 
             // ── How it works ─────────────────────────────────────────────────────────────────────────
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(16.dp))
+                    .clip(RoundedCornerShape(14.dp))
                     .background(PremiumAccent.copy(alpha = 0.05f))
-                    .padding(14.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
+                    .border(1.dp, PremiumAccent.copy(alpha = 0.10f), RoundedCornerShape(14.dp))
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Icon(Icons.Rounded.Info, null, tint = PremiumAccent, modifier = Modifier.size(15.dp))
-                    Text("How it works", color = PremiumAccent, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    Icon(Icons.Rounded.Info, null, tint = PremiumAccent, modifier = Modifier.size(13.dp))
+                    Text("How it works", color = PremiumAccent, fontWeight = FontWeight.Bold, fontSize = 11.sp)
                 }
                 Text(
                     "The AI predicts a custom EQ for every song from its genre, mood, language, age and — for files on this device — the real spectrum, loudness and dynamics of the recording. It runs free, on your device. Corrections are applied on top of your current EQ settings.",
-                    color = Color.White.copy(0.65f),
-                    fontSize = 12.sp,
-                    lineHeight = 17.sp
+                    color = Color.White.copy(0.6f),
+                    fontSize = 10.5.sp,
+                    lineHeight = 14.sp
                 )
             }
 
             OutlinedButton(
                 onClick = { viewModel.resetAiEqPredictions() },
                 enabled = enabled,
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier.fillMaxWidth().height(40.dp),
+                contentPadding = PaddingValues(vertical = 0.dp),
+                shape = RoundedCornerShape(12.dp),
                 border = BorderStroke(1.dp, PremiumAccent.copy(alpha = if (enabled) 0.45f else 0.15f))
             ) {
-                Text("RE-PREDICT ALL", color = PremiumAccent, fontWeight = FontWeight.Black, fontSize = 12.sp, letterSpacing = 1.sp)
+                Text("RE-PREDICT ALL", color = PremiumAccent, fontWeight = FontWeight.Black, fontSize = 11.sp, letterSpacing = 1.sp)
             }
         }
     }
@@ -1548,30 +1555,37 @@ private fun AiOptionsPopup(
 
 @Composable
 private fun AiSheetLabel(text: String) {
-    Text(
-        text,
-        color = Color.White.copy(0.45f),
-        fontSize = 10.sp,
-        fontWeight = FontWeight.Bold,
-        letterSpacing = 1.5.sp
-    )
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Box(
+            Modifier
+                .size(3.dp, 10.dp)
+                .background(PremiumAccent.copy(alpha = 0.7f), CircleShape)
+        )
+        Text(
+            text,
+            color = Color.White.copy(0.5f),
+            fontSize = 9.sp,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = 1.5.sp
+        )
+    }
 }
 
 @Composable
 private fun AiStatTile(label: String, value: String, modifier: Modifier = Modifier) {
     Column(
         modifier = modifier
-            .clip(RoundedCornerShape(14.dp))
+            .clip(RoundedCornerShape(10.dp))
             .background(Color.White.copy(alpha = 0.05f))
-            .border(1.dp, Color.White.copy(alpha = 0.07f), RoundedCornerShape(14.dp))
-            .padding(horizontal = 10.dp, vertical = 10.dp),
-        verticalArrangement = Arrangement.spacedBy(3.dp)
+            .border(1.dp, Color.White.copy(alpha = 0.07f), RoundedCornerShape(10.dp))
+            .padding(horizontal = 9.dp, vertical = 6.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp)
     ) {
-        Text(label, color = Color.White.copy(0.4f), fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+        Text(label, color = Color.White.copy(0.4f), fontSize = 8.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
         Text(
             value,
             color = PremiumAccent,
-            fontSize = 12.sp,
+            fontSize = 11.sp,
             fontWeight = FontWeight.Black,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
@@ -1586,9 +1600,9 @@ private fun AiEqBandBars(gains: List<Float>, active: Boolean) {
     val rangeDb = 4.5f
     val positive = if (active) PremiumAccent else Color.White.copy(0.35f)
     val negative = if (active) DspViolet else Color.White.copy(0.25f)
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
         Row(
-            modifier = Modifier.fillMaxWidth().height(96.dp),
+            modifier = Modifier.fillMaxWidth().height(60.dp),
             horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             gains.forEach { gain ->
@@ -1759,6 +1773,7 @@ private fun PremiumGraphicCard(
 private fun PremiumEqualizerCard(
     uiState: PlayerUiState,
     viewModel: PlayerViewModel,
+    aiProfile: com.beatraxus.app.engine.aieq.AiEqProfile?,
     onShowPresets: () -> Unit,
     onShowAiOptions: () -> Unit,
     onEditValue: (EditingValue) -> Unit
@@ -1766,6 +1781,10 @@ private fun PremiumEqualizerCard(
     val config = uiState.dsp.config
     val isLocked = config.settingsLocked
     val isEqBypassed = config.bitPerfectEnabled && !config.bitPerfectUnbypassEq
+    // While AI EQ is on, the faders show the EQ the AI set for this song (they glide when the song changes)
+    // and are hands-off: any touch opens the AI controller instead.
+    val aiActive = config.aiEqEnabled && !config.bitPerfectEnabled
+    val aiGains = aiProfile?.gains ?: FloatArray(0)
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -1848,8 +1867,8 @@ private fun PremiumEqualizerCard(
                 }
             } else {
                 PremiumSwitch(
-                    checked = config.eqEnabled,
-                    onCheckedChange = { viewModel.setEqEnabled(it) },
+                    checked = config.eqEnabled || aiActive,
+                    onCheckedChange = { if (aiActive) onShowAiOptions() else viewModel.setEqEnabled(it) },
                     accentColor = PremiumAccent
                 )
             }
@@ -1859,7 +1878,7 @@ private fun PremiumEqualizerCard(
         PremiumPreampSlider(
             value = config.preampDb,
             onValueChange = { viewModel.setPreampDb(it) },
-            enabled = !isEqBypassed && config.eqEnabled && !isLocked,
+            enabled = !isEqBypassed && (config.eqEnabled || aiActive) && !isLocked,
             onEditValue = {
                 onEditValue(EditingValue("PREAMP", config.preampDb, -15f..15f, viewModel::setPreampDb))
             }
@@ -1872,12 +1891,22 @@ private fun PremiumEqualizerCard(
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             config.eqBands.forEachIndexed { index, band ->
+                val shownBand = if (aiActive) {
+                    val manual = if (config.eqEnabled && band.enabled) band.gainDb else 0f
+                    val ai = com.beatraxus.app.engine.aieq.AiEqKnowledge.gainAt(aiGains, band.frequencyHz)
+                    band.copy(gainDb = (manual + ai).coerceIn(-12f, 12f), enabled = true)
+                } else band
                 PremiumVerticalBand(
-                    band = band,
-                    enabled = config.eqEnabled && !isEqBypassed && !isLocked,
-                    onToggle = { viewModel.setEqBandEnabled(index, it) },
-                    onGainChange = { viewModel.setEqBandGain(index, (it * 10f).roundToInt() / 10f) },
-                    onLongPress = {
+                    band = shownBand,
+                    enabled = if (aiActive) !isEqBypassed else config.eqEnabled && !isEqBypassed && !isLocked,
+                    aiControlled = aiActive,
+                    onToggle = { if (aiActive) onShowAiOptions() else viewModel.setEqBandEnabled(index, it) },
+                    onGainChange = {
+                        if (aiActive) onShowAiOptions()
+                        else viewModel.setEqBandGain(index, (it * 10f).roundToInt() / 10f)
+                    },
+                    onLongPress = if (aiActive) onShowAiOptions else {
+                        {
                         onEditValue(
                             EditingValue(
                                 label = "${band.frequencyHz.toInt()}Hz Band",
@@ -1886,8 +1915,10 @@ private fun PremiumEqualizerCard(
                                 onConfirm = { viewModel.setEqBandGain(index, it) }
                             )
                         )
+                        }
                     },
-                    onFrequencyEdit = {
+                    onFrequencyEdit = if (aiActive) onShowAiOptions else {
+                        {
                         onEditValue(
                             EditingValue(
                                 label = "Band Frequency",
@@ -1896,6 +1927,7 @@ private fun PremiumEqualizerCard(
                                 onConfirm = { viewModel.setEqBandFrequency(index, it) }
                             )
                         )
+                        }
                     }
                 )
             }
@@ -2103,19 +2135,24 @@ private fun PremiumVerticalBand(
     onToggle: (Boolean) -> Unit,
     onGainChange: (Float) -> Unit,
     onLongPress: () -> Unit,
-    onFrequencyEdit: () -> Unit
+    onFrequencyEdit: () -> Unit,
+    aiControlled: Boolean = false
 ) {
     val isActive = enabled && band.enabled
     val gainProgress by animateFloatAsState(
         targetValue = ((band.gainDb + 12f) / 24f).coerceIn(0f, 1f),
-        animationSpec = spring(stiffness = Spring.StiffnessLow),
+        // AI-driven moves glide slowly so a new song's EQ visibly sweeps into place.
+        animationSpec = if (aiControlled) tween(durationMillis = 800, easing = FastOutSlowInEasing)
+        else spring(stiffness = Spring.StiffnessLow),
         label = "gain_anim"
     )
+    // The label follows the animated knob while AI is driving, so number and fader move together.
+    val shownGain = if (aiControlled) gainProgress * 24f - 12f else band.gainDb
 
     val gainColor = when {
         !isActive -> Color.White.copy(0.12f)
-        band.gainDb > 0.1f -> Color(0xFF3CF2A6) // High-end Level Green
-        band.gainDb < -0.1f -> Color(0xFFFF6B88) // Warning Red
+        shownGain > 0.1f -> Color(0xFF3CF2A6) // High-end Level Green
+        shownGain < -0.1f -> Color(0xFFFF6B88) // Warning Red
         else -> PremiumAccent
     }
 
@@ -2125,7 +2162,7 @@ private fun PremiumVerticalBand(
         verticalArrangement = Arrangement.spacedBy(8.dp) // Increased spacing to prevent knob overlap
     ) {
         Text(
-            text = if (band.gainDb >= 0) "+%.1f".format(band.gainDb) else "%.1f".format(band.gainDb),
+            text = if (shownGain >= 0) "+%.1f".format(shownGain) else "%.1f".format(shownGain),
             color = if (isActive) gainColor else Color.White.copy(0.2f),
             fontSize = 11.sp,
             fontWeight = FontWeight.Black,
@@ -2489,7 +2526,6 @@ private fun UnifiedPresetSection(
     showMenu: Boolean,
     onShowMenuChange: (Boolean) -> Unit,
     onShowSavedPresets: () -> Unit,
-    onShowAiOptions: () -> Unit,
     onShowDevicePicker: () -> Unit,
     onShowDeviceEq: () -> Unit
 ) {
@@ -2499,6 +2535,8 @@ private fun UnifiedPresetSection(
         custom.bands.map { it.gainDb } == currentGains
     }?.name
     val isTweak = activeBuiltIn == null && activeCustom == null
+    // While AI EQ drives the equalizer, the selected preset is not what you hear, so its highlight goes gray.
+    val aiDriving = uiState.dsp.config.aiEqEnabled && !uiState.dsp.config.bitPerfectEnabled
 
     Column(
         modifier = Modifier
@@ -2576,15 +2614,6 @@ private fun UnifiedPresetSection(
                         contentPadding = menuItemPadding
                     )
                     DropdownMenuItem(
-                        text = { Text("AI Options", color = Color.White, fontSize = 12.sp) },
-                        onClick = {
-                            onShowMenuChange(false)
-                            onShowAiOptions()
-                        },
-                        leadingIcon = { Icon(Icons.Rounded.AutoAwesome, null, tint = PremiumAccent, modifier = Modifier.size(16.dp)) },
-                        contentPadding = menuItemPadding
-                    )
-                    DropdownMenuItem(
                         text = { Text(if (uiState.dsp.config.settingsLocked) "Unlock Config" else "Lock Config", color = Color.White, fontSize = 12.sp) },
                         onClick = {
                             onShowMenuChange(false)
@@ -2651,18 +2680,36 @@ private fun UnifiedPresetSection(
         ) {
             presets.forEach { preset ->
                 val isActive = activeBuiltIn == preset.name && activeCustom == null
+                val grayActive = isActive && aiDriving
+                val chipBg by animateColorAsState(
+                    when {
+                        grayActive -> Color.White.copy(alpha = 0.14f)
+                        isActive -> PremiumAccent.copy(alpha = 0.18f)
+                        else -> Color.White.copy(alpha = 0.06f)
+                    },
+                    tween(250), label = "presetChipBg"
+                )
                 Card(
                     onClick = { viewModel.setAllEqGains(preset.gains) },
                     shape = RoundedCornerShape(50),
-                    colors = CardDefaults.cardColors(
-                        containerColor = if (isActive) PremiumAccent.copy(alpha = 0.18f) else Color.White.copy(alpha = 0.06f)
-                    ),
-                    border = BorderStroke(1.dp, if (isActive) PremiumAccent.copy(alpha = 0.7f) else Color.White.copy(alpha = 0.1f))
+                    colors = CardDefaults.cardColors(containerColor = chipBg),
+                    border = BorderStroke(
+                        1.dp,
+                        when {
+                            grayActive -> Color.White.copy(alpha = 0.28f)
+                            isActive -> PremiumAccent.copy(alpha = 0.7f)
+                            else -> Color.White.copy(alpha = 0.1f)
+                        }
+                    )
                 ) {
                     Text(
                         preset.name,
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 7.dp),
-                        color = if (isActive) PremiumAccentSoft else Color.White.copy(0.9f),
+                        color = when {
+                            grayActive -> Color.White.copy(0.6f)
+                            isActive -> PremiumAccentSoft
+                            else -> Color.White.copy(0.9f)
+                        },
                         fontWeight = FontWeight.SemiBold,
                         fontSize = 12.sp
                     )

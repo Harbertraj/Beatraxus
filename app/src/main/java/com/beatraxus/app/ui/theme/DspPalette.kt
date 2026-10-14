@@ -52,7 +52,7 @@ data class DspPalette(
         val Verdant = DspPalette("verdant", "Verdant", Color(0xFFA3E635), Color(0xFF10B981))
 
         val presets: List<DspPalette> = listOf(SolarFlare, AuroraDusk, CyberPop, RoseGold, Glacier, Verdant)
-        val default: DspPalette = SolarFlare
+        val default: DspPalette = AuroraDusk
 
         fun custom(primary: Color, secondary: Color) =
             DspPalette(CUSTOM_ID, "Custom Dual", primary, secondary)

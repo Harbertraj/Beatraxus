@@ -140,7 +140,7 @@ class AppearancePreferences(context: Context) {
             lyricsShowAll = preferences[LYRICS_SHOW_ALL] ?: true,
             alignLyricsBySinger = preferences[ALIGN_LYRICS_BY_SINGER] ?: true,
 
-            dspPaletteId = preferences[DSP_PALETTE_ID] ?: "solar_flare",
+            dspPaletteId = preferences[DSP_PALETTE_ID] ?: "aurora_dusk",
             dspCustomPrimary = preferences[DSP_CUSTOM_PRIMARY] ?: 0xFFFFD60A.toInt(),
             dspCustomSecondary = preferences[DSP_CUSTOM_SECONDARY] ?: 0xFFFF7A00.toInt(),
             selectedFontId = preferences[SELECTED_FONT_ID] ?: "system"

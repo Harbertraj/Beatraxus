@@ -264,7 +264,7 @@ data class AppearanceConfig(
     val alignLyricsBySinger: Boolean = true,
 
     // Studio DSP interface dual colour palette
-    val dspPaletteId: String = "solar_flare",
+    val dspPaletteId: String = "aurora_dusk",
     val dspCustomPrimary: Int = 0xFFFFD60A.toInt(),
     val dspCustomSecondary: Int = 0xFFFF7A00.toInt(),
 

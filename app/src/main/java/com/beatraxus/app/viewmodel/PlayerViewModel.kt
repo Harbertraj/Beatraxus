@@ -3896,10 +3896,13 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun setPreampDb(value: Float) = applyDspConfig {
         if (it.settingsLocked) return@applyDspConfig it
         val db = value.coerceIn(-15f, 15f)
-        it.copy(preampDb = db, preampEnabled = true, autoEqProfile = null, autoEqEnabled = false)
+        // AI EQ stays on while the preamp is changed; the preamp simply adds on top of it.
+        val eqOn = it.eqEnabled || it.aiEqEnabled
+        it.copy(preampDb = db, preampEnabled = true, eqEnabled = eqOn, autoEqProfile = null, autoEqEnabled = false)
     }
     fun setEqEnabled(enabled: Boolean) = applyDspConfig {
         if (it.settingsLocked) return@applyDspConfig it
+        eqEnabledByAi = false
         if (enabled) {
             it.copy(eqEnabled = true, preampEnabled = true)
         } else {
@@ -3913,9 +3916,23 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         if (it.settingsLocked) return@applyDspConfig it
         if (enabled) it.copy(autoEqEnabled = true, eqEnabled = true, preampEnabled = true) else it.copy(autoEqEnabled = false)
     }
+    /** True when turning AI EQ on is what switched the equalizer on, so turning AI off can switch it back off. */
+    private var eqEnabledByAi = false
+
     fun setAiEqEnabled(enabled: Boolean) = applyDspConfig {
         if (it.settingsLocked) return@applyDspConfig it
-        it.copy(aiEqEnabled = enabled)
+        if (enabled) {
+            // AI EQ drives the equalizer faders, so the equalizer section is switched on with it.
+            if (!it.eqEnabled) {
+                eqEnabledByAi = true
+                it.copy(aiEqEnabled = true, eqEnabled = true, preampEnabled = true)
+            } else it.copy(aiEqEnabled = true)
+        } else {
+            val restore = eqEnabledByAi && it.eqEnabled
+            eqEnabledByAi = false
+            if (restore) it.copy(aiEqEnabled = false, eqEnabled = false, preampEnabled = false)
+            else it.copy(aiEqEnabled = false)
+        }
     }
     fun saveCustomEqPreset(name: String) {
         val trimmed = name.trim()
