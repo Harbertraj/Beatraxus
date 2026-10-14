@@ -943,6 +943,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 .map { Triple(it.currentSong?.id, it.dsp.config.aiEqEnabled, it.currentSong) }
                 .distinctUntilChangedBy { it.first to it.second }
                 .collect { (_, enabled, song) ->
+                    if (enabled) enqueueMissingAiAnalysis()
                     if (enabled && song != null) requestAiAnalysis(song)
                 }
         }
@@ -4762,26 +4763,61 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
      * Only local files can be analysed; cloud / streamed songs are skipped by the analysis engine.
      */
     fun requestAiAnalysis(song: Song) {
-        if (song.source != SongSource.LOCAL) return
         if (!aiAnalysisInFlight.add(song.id)) return
         _aiAnalysisBusy.value = aiAnalysisInFlight.toSet()
         _aiAnalysisFailed.update { it - song.id }
         viewModelScope.launch(aiAnalysisDispatcher) {
             try {
-                if (aiAnalysisDao.getAnalysisForSong(song.id) != null) return@launch
-                analyzeAndStoreQuality(song)
+                val existing = aiAnalysisDao.getAnalysisForSong(song.id)
+                // A profile built from metadata only (audio was unreadable) is retried once per session in case
+                // the audio can be read now; anything measured is final.
+                val upgrade = existing != null &&
+                    existing.analysisVersion == com.beatraxus.app.engine.AiAnalysisEngine.VERSION_ESTIMATED &&
+                    song.source == SongSource.LOCAL && aiUpgradeTried.add(song.id)
+                if (existing != null && !upgrade) return@launch
+                if (song.source == SongSource.LOCAL) analyzeAndStoreQuality(song) else analyzeAiOnly(song)
                 if (aiAnalysisDao.getAnalysisForSong(song.id) != null) {
                     service?.refreshAiAnalysis(song.id)
                 } else {
                     _aiAnalysisFailed.update { it + song.id }
                 }
             } catch (t: Throwable) {
+                if (t is kotlinx.coroutines.CancellationException) throw t
                 Log.e("PlayerViewModel", "AI analysis failed for ${song.title}: ${t.message}", t)
+                _aiAnalysisFailReason.update { it + (song.id to "Analysis error: ${t.message ?: t.javaClass.simpleName}") }
                 _aiAnalysisFailed.update { it + song.id }
             } finally {
                 aiAnalysisInFlight.remove(song.id)
                 _aiAnalysisBusy.value = aiAnalysisInFlight.toSet()
             }
+        }
+    }
+
+    private val aiUpgradeTried = java.util.Collections.synchronizedSet(HashSet<String>())
+
+    /** AI EQ profile only (no quality scan): for cloud / streamed songs, which are profiled from their metadata
+     *  and the online lookups instead of their audio. */
+    private suspend fun analyzeAiOnly(song: Song) {
+        val result = aiAnalysisEngine.analyzeSong(song)
+        val analysis = result.aiAnalysis
+        if (analysis == null) {
+            result.failureReason?.let { r -> _aiAnalysisFailReason.update { it + (song.id to r) } }
+            return
+        }
+        _aiAnalysisFailReason.update { it - song.id }
+        aiAnalysisDao.insertAnalysis(analysis)
+    }
+
+    /** Queues every local song that has no AI EQ profile yet; the worker builds them while nothing is playing. */
+    private var aiBackfillQueued = false
+    private fun enqueueMissingAiAnalysis() {
+        if (aiBackfillQueued) return
+        aiBackfillQueued = true
+        viewModelScope.launch(Dispatchers.Default) {
+            val analyzed = aiAnalysisDao.getAllAnalysisFlow().first().map { it.songId }.toSet()
+            _songs.value
+                .filter { it.source == SongSource.LOCAL && it.id !in analyzed }
+                .forEach { aiAnalysisChannel.send(it) }
         }
     }
 

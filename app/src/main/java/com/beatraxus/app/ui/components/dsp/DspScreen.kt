@@ -1291,13 +1291,10 @@ private fun AiOptionsPopup(
     val currentAnalysis = currentSong?.id?.let { aiAnalysisMap[it] }
 
     // Why there may be nothing to show: still running, failed, or not possible for this kind of song.
-    val unsupported = currentSong != null && currentAnalysis == null &&
-        currentSong.source != com.beatraxus.app.model.SongSource.LOCAL
     val analysing = currentSong != null && currentAnalysis == null && currentSong.id in aiBusy
     val failed = currentSong != null && currentAnalysis == null && !analysing && currentSong.id in aiFailed
     val placeholder = when {
         currentSong == null -> "No song playing"
-        unsupported -> "Not available"
         analysing -> "Analysing…"
         failed -> "Analysis failed"
         else -> "Not analysed yet"
@@ -1410,11 +1407,6 @@ private fun AiOptionsPopup(
                                         fontSize = 12.sp
                                     )
                                 }
-                                unsupported -> Text(
-                                    "AI EQ needs a local file, so it can't analyse cloud or streamed songs.",
-                                    color = Color.White.copy(0.5f),
-                                    fontSize = 12.sp
-                                )
                                 failed -> Row(
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.SpaceBetween,
