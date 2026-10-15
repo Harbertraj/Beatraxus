@@ -66,6 +66,11 @@ import com.beatraxus.app.model.SongSource
 import com.beatraxus.app.model.parseTelegramChannelName
 import com.beatraxus.app.repository.DriveAccountRepository
 import com.beatraxus.app.engine.AudioSpectrumAnalyzer
+import com.beatraxus.app.engine.smart.LibraryGrouping
+import com.beatraxus.app.engine.smart.SongProfile
+import com.beatraxus.app.engine.smart.SongProfiler
+import com.beatraxus.app.engine.smart.smartProfile
+import com.beatraxus.app.engine.smart.toProfileInput
 import com.beatraxus.app.model.PlayerUiState
 import com.beatraxus.app.model.Song
 import com.beatraxus.app.model.toEntity
@@ -307,6 +312,31 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     private val _songs = MutableStateFlow<List<Song>>(emptyList())
     val allSongs: StateFlow<List<Song>> = _songs.asStateFlow()
+
+    // ---- In-app AI profiles (cleaned genres, sound styles, moods) -------------------------------
+    // Derived from the song's tag + stored analysis whenever either changes; an unchanged song reuses
+    // its last profile, so a big library is not re-scored on every list update.
+    private val profileCache = HashMap<String, Pair<com.beatraxus.app.engine.smart.ProfileInput, SongProfile>>()
+
+    /** songId -> AI profile. Feeds the Genres library, the genre detail lists and the mood tiles. */
+    val songProfiles: StateFlow<Map<String, SongProfile>> = combine(_songs, aiAnalysis) { songs, analysis ->
+        val out = HashMap<String, SongProfile>(songs.size * 2)
+        for (song in songs) {
+            val input = song.toProfileInput(analysis[song.id])
+            val cached = profileCache[song.id]
+            out[song.id] = if (cached != null && cached.first == input) cached.second
+            else SongProfiler.profile(input).also { profileCache[song.id] = input to it }
+        }
+        if (profileCache.size > songs.size * 2 + 64) profileCache.keys.retainAll(out.keys)
+        out
+    }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
+
+    private fun profileFor(song: Song): SongProfile =
+        songProfiles.value[song.id] ?: song.smartProfile(aiAnalysis.value[song.id])
+
+    /** True when [song] belongs to the genre / "✦ style" group called [label]. */
+    private fun inGenreGroup(song: Song, label: String?): Boolean =
+        label != null && profileFor(song).labels.contains(label)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     // On-device videos (MediaStore scan).
@@ -568,10 +598,18 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             })
     }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    val genres = filteredSongsByMode.map { songs ->
-        songs.groupBy { it.genre }
-            .map { (genre, list) -> Triple(genre, "${list.size} songs", list.first().albumArtUri) }
-            .sortedBy { it.first.lowercase() }
+    /**
+     * Genres library: one clean group per genre (tags like "Pop/Rock", "hip hop", "(13)" are merged),
+     * plus the in-app AI's "✦" sound styles. A song shows up in every group it belongs to.
+     */
+    val genres = combine(filteredSongsByMode, songProfiles) { songs, profiles ->
+        LibraryGrouping.byLabels(songs, { profiles[it.id] ?: it.smartProfile(null) }).map { g ->
+            Triple(
+                g.label,
+                "${g.items.size} songs" + if (g.isStyle) " \u00b7 AI" else "",
+                g.items.firstOrNull { it.albumArtUri != null }?.albumArtUri ?: g.items.first().albumArtUri
+            )
+        }
     }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val homeRecentlyPlayed: StateFlow<List<Song>> = combine(allSongs, _recentlyPlayed) { all, ids ->
@@ -698,7 +736,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 val yearStr = if (it.year == 0) "Unknown" else it.year.toString()
                 yearStr == state.selectedItemName
             }
-            LibraryView.GENRE_DETAIL -> all.filter { it.genre == state.selectedItemName }
+            LibraryView.GENRE_DETAIL -> all.filter { inGenreGroup(it, state.selectedItemName) }
             LibraryView.PLAYLISTS -> emptyList()
             LibraryView.PLAYLIST_DETAIL -> {
                 val playlist = pls.find { it.name == state.selectedItemName }
@@ -3045,7 +3083,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                             val yearStr = if (song.year == 0) "Unknown" else song.year.toString()
                             selected.contains(yearStr)
                         }
-                        LibraryView.GENRES -> selected.contains(song.genre)
+                        // Deleting only touches songs whose MAIN genre was selected (never AI styles / side genres).
+                        LibraryView.GENRES -> selected.contains(profileFor(song).primaryGenre)
                         else -> false
                     }
                 }
@@ -3086,7 +3125,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                             val yearStr = if (song.year == 0) "Unknown" else song.year.toString()
                             selected.contains(yearStr)
                         }
-                        LibraryView.GENRES -> selected.contains(song.genre)
+                        LibraryView.GENRES -> profileFor(song).labels.any { it in selected }
                         else -> false
                     }
                 }
@@ -3121,7 +3160,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                             val yearStr = if (song.year == 0) "Unknown" else song.year.toString()
                             selected.contains(yearStr)
                         }
-                        LibraryView.GENRES -> selected.contains(song.genre)
+                        LibraryView.GENRES -> profileFor(song).labels.any { it in selected }
                         else -> false
                     }
                 }
@@ -3189,7 +3228,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                                 val yearStr = if (song.year == 0) "Unknown" else song.year.toString()
                                 selectedIds.contains(yearStr)
                             }
-                            LibraryView.GENRES -> selectedIds.contains(song.genre)
+                            LibraryView.GENRES -> profileFor(song).labels.any { it in selectedIds }
                             else -> false
                         }
                     }.map { it.id }
@@ -4700,8 +4739,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             if (analysis != null) {
                 aiAnalysisDao.insertAnalysis(analysis)
 
-                // If AI found a better genre, update the song in DB and Memory
-                if (analysis.genre.isNotEmpty() && analysis.genre != song.genre) {
+                // The AI only fills a MISSING genre tag; it never overwrites one the user's files already carry
+                // (the library groups by the cleaned-up tag + AI profile anyway, see SongProfiler).
+                if (analysis.genre.isNotEmpty() && analysis.genre != song.genre &&
+                    com.beatraxus.app.engine.smart.GenreTaxonomy.isUnknown(song.genre) &&
+                    !com.beatraxus.app.engine.smart.GenreTaxonomy.isUnknown(analysis.genre)
+                ) {
                     val updatedSong = song.copy(genre = analysis.genre)
                     withContext(Dispatchers.IO) {
                         songDao.insertSong(updatedSong.toEntity())
@@ -4837,7 +4880,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             }
             LibraryView.FOLDER_DETAIL -> modeSongs.filter { it.folder == state.currentFolderPath }
             LibraryView.YEAR_DETAIL -> modeSongs.filter { it.year.toString() == state.selectedItemName }
-            LibraryView.GENRE_DETAIL -> modeSongs.filter { it.genre == state.selectedItemName }
+            LibraryView.GENRE_DETAIL -> modeSongs.filter { inGenreGroup(it, state.selectedItemName) }
             LibraryView.PLAYLIST_DETAIL -> {
                 val playlist = playlists.value.find { it.name == state.selectedItemName }
                 playlist?.songIds?.mapNotNull { id -> allSongsList.find { it.id == id } } ?: emptyList()

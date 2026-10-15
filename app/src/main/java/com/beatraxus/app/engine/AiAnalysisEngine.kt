@@ -6,6 +6,10 @@ import androidx.annotation.Keep
 import com.beatraxus.app.model.AiAnalysisEntity
 import com.beatraxus.app.model.Song
 import com.beatraxus.app.model.SongSource
+import com.beatraxus.app.engine.smart.GenreTaxonomy
+import com.beatraxus.app.engine.smart.LanguageSense
+import com.beatraxus.app.engine.smart.ProfileInput
+import com.beatraxus.app.engine.smart.SongProfiler
 import com.beatraxus.app.repository.GenreApiService
 import com.beatraxus.app.repository.MoodApiService
 import kotlinx.coroutines.Dispatchers
@@ -147,7 +151,7 @@ class AiAnalysisEngine(
         val language = if (langResult.isModelInference && langResult.primaryIndex in LANGUAGES.indices) {
             LANGUAGES[langResult.primaryIndex]
         } else {
-            heuristicLanguage(song)
+            LanguageSense.detect(song.title, song.artist, song.album, song.folder, song.genre) ?: heuristicLanguage(song)
         }
 
         // 4. Mood
@@ -171,19 +175,40 @@ class AiAnalysisEngine(
         }
         if (fromAudio) finalMoods.addAll(bpmMoods(audioFeatures.tempoBpm))
         finalMoods.addAll(communityTags)
-        val moodTags = finalMoods.joinToString(",")
+
+        // 5. In-app AI profile: weighs the song's own tag, online tags, title words, language and the
+        // measured sound together, so one weak guess (a BPM rule, a crude heuristic) cannot decide alone.
+        val profile = SongProfiler.profile(
+            ProfileInput(
+                title = song.title, artist = song.artist, album = song.album, folder = song.folder,
+                tagGenre = song.genre, year = song.year,
+                aiGenre = primaryGenre,
+                aiGenreConfidence = if (genreResult.isModelInference) genreResult.primaryConfidence else 0f,
+                aiSecondaryGenre = secondaryGenre,
+                language = language,
+                moodTags = communityTags,
+                measured = fromAudio,
+                tempoBpm = audioFeatures.tempoBpm, lufs = audioFeatures.lufs, dynamicRange = audioFeatures.dynamicRange,
+                bass = audioFeatures.bassScore, mid = audioFeatures.midScore, treble = audioFeatures.trebleScore,
+                stereoWidth = audioFeatures.stereoWidth
+            )
+        )
+        val finalGenre = profile.genres.firstOrNull()?.takeIf { it != GenreTaxonomy.UNKNOWN } ?: primaryGenre
+        val finalSecondary = profile.genres.getOrNull(1) ?: secondaryGenre
+        val finalMood = profile.moods.firstOrNull() ?: mood
+        val moodTags = (profile.moods.ifEmpty { finalMoods.toList() }).joinToString(",")
 
         // The EQ is no longer part of this analysis: see engine/aieq (AiEqEngine). eq* columns stay 0 (legacy).
 
         return AiAnalysisEntity(
             songId = song.id,
-            genre = primaryGenre,
+            genre = finalGenre,
             genreConfidence = if (genreResult.isModelInference) genreResult.primaryConfidence else 0.0f,
-            secondaryGenre = secondaryGenre,
+            secondaryGenre = finalSecondary,
             secondaryGenreConfidence = if (genreResult.isModelInference && secondaryGenre != null) genreResult.secondaryConfidence else null,
             language = language,
             languageConfidence = if (langResult.isModelInference) langResult.primaryConfidence else 0.0f,
-            mood = mood,
+            mood = finalMood,
             moodConfidence = if (moodResult.isModelInference) moodResult.primaryConfidence else 0.0f,
             moodTags = moodTags,
             lufs = audioFeatures.lufs,

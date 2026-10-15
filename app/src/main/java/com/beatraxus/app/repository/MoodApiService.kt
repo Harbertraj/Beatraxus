@@ -18,7 +18,9 @@ class MoodApiService {
         val STANDARD_MOODS = listOf(
             "Sleep", "Calm", "Focus", "Energetic", "Workout", "Happy", "Sad",
             "Romantic", "Party", "Motivational", "Aggressive", "Meditation",
-            "Emotional", "Epic", "Dark"
+            "Emotional", "Epic", "Dark",
+            "Late Night", "Rainy Day", "Road Trip", "Heartbreak", "Sunrise", "Nostalgia",
+            "Beast Mode", "Dreamy", "Soulful", "Devotional"
         )
 
         // Raw Last.fm tag -> our mood vocabulary. A single tag list can map to MANY moods.
@@ -38,7 +40,17 @@ class MoodApiService {
             "meditation" to "Meditation", "yoga" to "Meditation", "spiritual" to "Meditation", "zen" to "Meditation",
             "emotional" to "Emotional", "moody" to "Emotional", "bittersweet" to "Emotional",
             "epic" to "Epic", "cinematic" to "Epic", "soundtrack" to "Epic", "orchestral" to "Epic",
-            "dark" to "Dark", "gothic" to "Dark", "industrial" to "Dark", "haunting" to "Dark"
+            "dark" to "Dark", "gothic" to "Dark", "industrial" to "Dark", "haunting" to "Dark",
+            "late night" to "Late Night", "night" to "Late Night", "midnight" to "Late Night", "nocturnal" to "Late Night",
+            "rainy day" to "Rainy Day", "rain" to "Rainy Day", "rainy" to "Rainy Day", "autumn" to "Rainy Day",
+            "road trip" to "Road Trip", "driving" to "Road Trip", "roadtrip" to "Road Trip", "summer" to "Road Trip",
+            "heartbreak" to "Heartbreak", "broken heart" to "Heartbreak", "breakup songs" to "Heartbreak",
+            "morning" to "Sunrise", "sunrise" to "Sunrise", "sunny" to "Sunrise",
+            "nostalgia" to "Nostalgia", "nostalgic" to "Nostalgia", "retro" to "Nostalgia", "oldies" to "Nostalgia",
+            "beast mode" to "Beast Mode", "hype" to "Beast Mode", "pump up" to "Beast Mode", "badass" to "Beast Mode",
+            "dreamy" to "Dreamy", "dream pop" to "Dreamy", "ethereal" to "Dreamy", "atmospheric" to "Dreamy", "shoegaze" to "Dreamy",
+            "soulful" to "Soulful", "soul" to "Soulful", "blues" to "Soulful", "ghazal" to "Soulful",
+            "devotional" to "Devotional", "bhajan" to "Devotional", "gospel" to "Devotional", "worship" to "Devotional", "religious" to "Devotional"
         )
 
         private val BLACKLIST = listOf(

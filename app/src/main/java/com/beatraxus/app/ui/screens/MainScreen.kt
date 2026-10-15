@@ -7,7 +7,9 @@ import com.beatraxus.app.utils.HomeSectionKeys
 import com.beatraxus.app.utils.byDecade
 import com.beatraxus.app.utils.hiResVault
 import com.beatraxus.app.utils.rediscover
-import com.beatraxus.app.utils.topGenres
+import com.beatraxus.app.utils.GenreBucket
+import com.beatraxus.app.engine.smart.LibraryGrouping
+import com.beatraxus.app.engine.smart.smartProfile
 import androidx.compose.animation.*
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.animation.core.*
@@ -4660,6 +4662,7 @@ fun HomeScreen(
     val allSongs by viewModel.allSongs.collectAsStateWithLifecycle()
     val favorites by viewModel.favorites.collectAsStateWithLifecycle()
     val aiAnalysis by viewModel.aiAnalysis.collectAsStateWithLifecycle()
+    val songProfiles by viewModel.songProfiles.collectAsStateWithLifecycle()
     val videos by viewModel.modeVideos.collectAsStateWithLifecycle()
     val videoFolders by viewModel.videoFolders.collectAsStateWithLifecycle()
     val isVideoMode = uiState.playbackMode == com.beatraxus.app.model.PlaybackMode.VIDEO
@@ -4682,22 +4685,30 @@ fun HomeScreen(
             MoodData("Meditation", Icons.Rounded.Spa, Color(0xFF00BFA5), listOf("Meditation", "Yoga", "Ambient")),
             MoodData("Emotional", Icons.Rounded.TheaterComedy, Color(0xFF7C4DFF), listOf("Emotional", "Soul")),
             MoodData("Epic", Icons.Rounded.Landscape, Color(0xFFFF6D00), listOf("Epic", "Soundtrack", "Cinematic")),
-            MoodData("Dark", Icons.Rounded.NightsStay, Color(0xFF37474F), listOf("Dark", "Gothic", "Industrial"))
+            MoodData("Dark", Icons.Rounded.NightsStay, Color(0xFF37474F), listOf("Dark", "Gothic", "Industrial")),
+            // New moods created by the in-app AI (see engine/smart/SongProfiler.kt)
+            MoodData("Late Night", Icons.Rounded.DarkMode, Color(0xFF3F51B5), listOf("Late Night", "Night")),
+            MoodData("Rainy Day", Icons.Rounded.WaterDrop, Color(0xFF29B6F6), listOf("Rainy Day", "Rain")),
+            MoodData("Road Trip", Icons.Rounded.DirectionsCar, Color(0xFF26A69A), listOf("Road Trip", "Drive")),
+            MoodData("Heartbreak", Icons.Rounded.SentimentDissatisfied, Color(0xFFEC407A), listOf("Heartbreak", "Breakup")),
+            MoodData("Sunrise", Icons.Rounded.WbSunny, Color(0xFFFFA726), listOf("Sunrise", "Morning")),
+            MoodData("Nostalgia", Icons.Rounded.Album, Color(0xFF8D6E63), listOf("Nostalgia", "Oldies", "Retro")),
+            MoodData("Beast Mode", Icons.Rounded.LocalFireDepartment, Color(0xFFD50000), listOf("Beast Mode")),
+            MoodData("Dreamy", Icons.Rounded.Cloud, Color(0xFF4DD0E1), listOf("Dreamy", "Dream")),
+            MoodData("Soulful", Icons.Rounded.Mic, Color(0xFFAB47BC), listOf("Soulful", "Soul", "Jazz")),
+            MoodData("Devotional", Icons.Rounded.AutoAwesome, Color(0xFFFFCA28), listOf("Devotional", "Bhajan"))
         )
     }
 
-    // Accurate mood matching: prefer AI+BPM+Last.fm moodTags, fall back to
-    // keyword matching only for songs that haven't been analyzed yet.
+    // Mood matching uses the in-app AI profile: measured sound (energy, pace, brightness...) + genre +
+    // title words + online tags, never a single weak signal. Best matches first, shuffled within a tier.
     fun playMood(mood: MoodData) {
-        val moodSongs = allSongs.filter { song ->
-            val tags = aiAnalysis[song.id]?.moodTags
-            if (!tags.isNullOrBlank()) {
-                tags.split(",").any { it.trim().equals(mood.label, ignoreCase = true) }
-            } else {
-                mood.keywords.any { kw -> kw.lowercase() in song.genre.lowercase() || kw.lowercase() in song.title.lowercase() }
-            }
-        }
-        if (moodSongs.isNotEmpty()) viewModel.playList(moodSongs.shuffled(), 0)
+        fun profileOf(song: Song) = songProfiles[song.id] ?: song.smartProfile(aiAnalysis[song.id])
+        val moodSongs = allSongs
+            .filter { song -> profileOf(song).moods.any { it.equals(mood.label, ignoreCase = true) } }
+            .shuffled()
+            .sortedByDescending { ((profileOf(it).moodScores[mood.label] ?: 0f) * 5f).toInt() }
+        if (moodSongs.isNotEmpty()) viewModel.playList(moodSongs, 0)
     }
 
     val calendar = java.util.Calendar.getInstance()
@@ -4738,7 +4749,10 @@ fun HomeScreen(
         hiResVault(allSongs, ::isHiResSong, { it.sampleRateHz }, { it.bitDepth }, { it.title })
     }
     val decadeBuckets = remember(allSongs) { byDecade(allSongs, { it.year }) }
-    val genreBuckets = remember(allSongs) { topGenres(allSongs, { it.genre }) }
+    val genreBuckets = remember(allSongs, songProfiles) {
+        LibraryGrouping.topGroups(allSongs, { songProfiles[it.id] ?: it.smartProfile(null) })
+            .map { GenreBucket(it.label, it.items) }
+    }
     val recentIds = remember(recentlyPlayed) { recentlyPlayed.map { it.id }.toSet() }
     val epochDay = remember { java.time.LocalDate.now().toEpochDay() }
     val rediscoverSongs = remember(allSongs, recentIds) {
