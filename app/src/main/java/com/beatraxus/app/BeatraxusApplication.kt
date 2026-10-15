@@ -1,6 +1,7 @@
 package com.beatraxus.app
 
 import android.app.Application
+import android.util.Log
 import androidx.room.Room
 import com.beatraxus.app.addons.AddonManager
 import com.beatraxus.app.model.AppDatabase
@@ -8,6 +9,9 @@ import com.beatraxus.app.telegram.TdLibManager
 import coil.ImageLoader
 import coil.ImageLoaderFactory
 import coil.decode.VideoFrameDecoder
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 class BeatraxusApplication : Application(), ImageLoaderFactory {
     override fun newImageLoader(): ImageLoader {
@@ -64,7 +68,13 @@ class BeatraxusApplication : Application(), ImageLoaderFactory {
     val smbFolderBrowser by lazy { com.beatraxus.app.network.SmbFolderBrowser() }
     val ftpFolderBrowser by lazy { com.beatraxus.app.network.FtpFolderBrowser() }
 
+    // Released once clearTemporaryCache() has finished (it runs on a background thread, see onCreate).
+    private val cacheCleanupDone = CountDownLatch(1)
+
     val cloudCacheManager by lazy {
+        // The startup cleanup deletes files under cloud_cache; wait (bounded) for it so the cache
+        // manager never starts using files the cleanup is about to delete.
+        cacheCleanupDone.await(5, TimeUnit.SECONDS)
         com.beatraxus.app.drive.CloudCacheManager.getInstance(
             this,
             driveAccountRepository,
@@ -82,14 +92,33 @@ class BeatraxusApplication : Application(), ImageLoaderFactory {
     override fun onCreate() {
         super.onCreate()
 
-        // Initialize AddonManager first
+        // Cheap, and other code assumes it has run, so it stays on the main thread.
         AddonManager.init(this)
 
-        // Clear temporary cloud cache on app start
-        clearTemporaryCache()
-
-        // Initialize TDLib early to ensure it runs once and is ready for use
-        TdLibManager.initialize(this)
+        // Everything below does disk I/O or loads a large native library (TDLib). It used to run
+        // right here on the main thread, which delays the process's first frame and starves the
+        // main thread while MainActivity is already asking for AudioPlaybackService to go
+        // foreground (the cause of the "stuck on open" hangs and of the occasional
+        // "did not call startForeground() in time" crash). Run it on a background thread instead.
+        val startup = Executors.newSingleThreadExecutor { r -> Thread(r, "beatraxus-startup") }
+        startup.execute {
+            // Clear temporary cloud cache on app start
+            try {
+                clearTemporaryCache()
+            } finally {
+                cacheCleanupDone.countDown()
+            }
+        }
+        startup.execute {
+            // Initialize TDLib early to ensure it runs once and is ready for use. getInstance() is
+            // synchronized, so a concurrent first use from the UI thread just waits for it.
+            try {
+                TdLibManager.initialize(this)
+            } catch (t: Throwable) {
+                Log.e("BeatraxusApplication", "TDLib initialization failed", t)
+            }
+        }
+        startup.shutdown() // queued tasks still run; the thread exits afterwards
     }
 
     fun clearTelegramCache() {

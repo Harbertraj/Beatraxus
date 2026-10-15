@@ -13,6 +13,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
+import android.os.SystemClock
 import android.util.Log
 import java.security.MessageDigest
 import androidx.fragment.app.FragmentActivity
@@ -74,6 +75,9 @@ import com.beatraxus.app.ui.theme.BeatraxusTheme
 import com.beatraxus.app.viewmodel.PlayerViewModel
 import com.beatraxus.app.viewmodel.PlayerViewModelFactory
 
+/** Upper bound on how long the system splash screen may wait for the initial library load. */
+private const val SPLASH_MAX_WAIT_MS = 3_000L
+
 class MainActivity : FragmentActivity() {
 
     private val viewModel: PlayerViewModel by viewModels {
@@ -81,6 +85,10 @@ class MainActivity : FragmentActivity() {
     }
 
     private var serviceBound = false
+    // True from a successful bindService() until unbindService(), even before onServiceConnected
+    // fires. Tracking only serviceBound leaked the connection when the activity was stopped before
+    // the service answered (e.g. the user repeatedly re-opening a slow-starting app).
+    private var bindRequested = false
     private lateinit var frameJankMonitor: FrameJankMonitor
 
     private val serviceConnection = object : ServiceConnection {
@@ -194,12 +202,16 @@ class MainActivity : FragmentActivity() {
         // config changes and process-death restores come with a non-null bundle and are left alone.
         if (savedInstanceState == null) AppOpenSplashState.shown = false
         
-        logSigningCertFingerprints() // See Logcat tag "SigningCert" — compare against Google Cloud Console
+        // See Logcat tag "SigningCert" — compare against Google Cloud Console. Runs on a background
+        // thread: it is a PackageManager IPC plus hashing and must not delay the first frame.
+        Thread({ logSigningCertFingerprints() }, "SigningCertLog").start()
         frameJankMonitor = FrameJankMonitor("BeatraxusFrameMonitor")
 
-        // Keep splash screen on until the initial library load is finished
+        // Keep splash screen on until the initial library load is finished, but never longer than
+        // SPLASH_MAX_WAIT_MS: if the load stalls or fails, the app must still open.
+        val splashDeadline = SystemClock.uptimeMillis() + SPLASH_MAX_WAIT_MS
         splashScreen.setKeepOnScreenCondition {
-            viewModel.uiState.value.isLoadingLibrary
+            viewModel.uiState.value.isLoadingLibrary && SystemClock.uptimeMillis() < splashDeadline
         }
 
         // Remove splash screen exit animation so app opens immediately without logo scale/fade animation
@@ -308,24 +320,37 @@ class MainActivity : FragmentActivity() {
     override fun onStop() {
         super.onStop()
         frameJankMonitor.stop()
-        if (serviceBound) {
-            unbindService(serviceConnection)
+        if (bindRequested) {
+            try {
+                unbindService(serviceConnection)
+            } catch (e: IllegalArgumentException) {
+                Log.w("MainActivity", "unbindService: connection was not registered", e)
+            }
+            bindRequested = false
             serviceBound = false
         }
     }
 
     private fun startAudioService() {
         val intent = Intent(this, AudioPlaybackService::class.java)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(intent)
-        } else {
-            startService(intent)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(intent)
+            } else {
+                startService(intent)
+            }
+        } catch (e: Exception) {
+            // e.g. ForegroundServiceStartNotAllowedException when the system decides the app is
+            // not allowed to start a foreground service right now. bindService() below still
+            // creates the service, so the UI keeps working instead of the app crashing.
+            Log.e("MainActivity", "Could not start AudioPlaybackService as a foreground service", e)
         }
     }
 
     private fun bindAudioService() {
+        if (bindRequested) return
         val intent = Intent(this, AudioPlaybackService::class.java)
-        bindService(intent, serviceConnection, BIND_AUTO_CREATE)
+        bindRequested = bindService(intent, serviceConnection, BIND_AUTO_CREATE)
     }
 
     fun requestPermissions(onPermissionGranted: (() -> Unit)? = null) {

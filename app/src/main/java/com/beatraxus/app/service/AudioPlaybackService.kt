@@ -215,7 +215,10 @@ class AudioPlaybackService : Service() {
 
         // Restore shuffle/repeat modes from disk
         val lastShuffle = prefs.getBoolean("last_shuffle_mode", false)
-        val lastRepeat = RepeatMode.valueOf(prefs.getString("last_repeat_mode", RepeatMode.OFF.name) ?: RepeatMode.OFF.name)
+        // A stale value from an older app version must not crash the service (and the app) at launch.
+        val lastRepeat = runCatching {
+            RepeatMode.valueOf(prefs.getString("last_repeat_mode", RepeatMode.OFF.name) ?: RepeatMode.OFF.name)
+        }.getOrDefault(RepeatMode.OFF)
         engine.setShuffleMode(lastShuffle)
         engine.setRepeatMode(lastRepeat)
 
@@ -1623,7 +1626,7 @@ class AudioPlaybackService : Service() {
                                 replayGainAlbumDb = entity.replayGainAlbumDb,
                                 replayGainTrackPeak = entity.replayGainTrackPeak,
                                 replayGainAlbumPeak = entity.replayGainAlbumPeak,
-                                source = SongSource.valueOf(entity.source),
+                                source = runCatching { SongSource.valueOf(entity.source) }.getOrDefault(SongSource.LOCAL),
                                 driveFileId = entity.driveFileId,
                                 driveAccountEmail = entity.driveAccountEmail,
                                 telegramChannelUrl = entity.telegramChannelUrl,

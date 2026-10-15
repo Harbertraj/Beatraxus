@@ -221,6 +221,16 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     private val prefs = application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE)
 
+    /**
+     * Reads an enum stored by name in SharedPreferences. A value written by an older app version
+     * (enum entry since renamed or removed) used to throw IllegalArgumentException from valueOf()
+     * while this ViewModel was being constructed, which crashed the app on every launch until the
+     * app data was cleared. Fall back to the default instead.
+     */
+    private inline fun <reified T : Enum<T>> enumPref(key: String, default: T): T =
+        runCatching { enumValueOf<T>(prefs.getString(key, default.name) ?: default.name) }
+            .getOrDefault(default)
+
     private val prefListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { p, key ->
         when (key) {
             "data_saver_enabled" -> {
@@ -237,7 +247,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             }
             "playback_mode" -> {
                 val modeStr = p.getString(key, com.beatraxus.app.model.PlaybackMode.AUDIO.name)
-                val mode = com.beatraxus.app.model.PlaybackMode.valueOf(modeStr ?: com.beatraxus.app.model.PlaybackMode.AUDIO.name)
+                val mode = runCatching {
+                    com.beatraxus.app.model.PlaybackMode.valueOf(modeStr ?: com.beatraxus.app.model.PlaybackMode.AUDIO.name)
+                }.getOrDefault(com.beatraxus.app.model.PlaybackMode.AUDIO)
                 _uiState.update { it.copy(playbackMode = mode) }
             }
         }
@@ -252,21 +264,18 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         dsp = com.beatraxus.app.model.DspUiState(
             customEqPresets = loadCustomEqPresets()
         ),
-        libraryMode = LibraryMode.valueOf(prefs.getString("library_mode", LibraryMode.LOCAL.name) ?: LibraryMode.LOCAL.name),
-        playbackMode = com.beatraxus.app.model.PlaybackMode.valueOf(prefs.getString("playback_mode", com.beatraxus.app.model.PlaybackMode.AUDIO.name) ?: com.beatraxus.app.model.PlaybackMode.AUDIO.name),
-        metadataNetworkType = NetworkType.valueOf(prefs.getString("metadata_network_type", NetworkType.ASK_MOBILE.name) ?: NetworkType.ASK_MOBILE.name),
+        libraryMode = enumPref("library_mode", LibraryMode.LOCAL),
+        playbackMode = enumPref("playback_mode", com.beatraxus.app.model.PlaybackMode.AUDIO),
+        metadataNetworkType = enumPref("metadata_network_type", NetworkType.ASK_MOBILE),
         dataSaverEnabled = prefs.getBoolean("data_saver_enabled", false),
         artworkEnrichmentEnabled = prefs.getBoolean("artwork_enrichment_enabled", true),
-        syncQuality = SyncQuality.valueOf(prefs.getString("sync_quality", SyncQuality.MEDIUM.name) ?: SyncQuality.MEDIUM.name),
+        syncQuality = enumPref("sync_quality", SyncQuality.MEDIUM),
         backgroundSyncEnabled = prefs.getBoolean("background_sync_enabled", true),
         scrobblingEnabled = prefs.getBoolean("scrobbling_enabled", true),
         gdriveAllowedFormats = prefs.getStringSet("gdrive_allowed_formats", emptySet()) ?: emptySet(),
         telegramAllowedFormats = prefs.getStringSet("telegram_allowed_formats", emptySet()) ?: emptySet(),
         shuffleMode = prefs.getBoolean("last_shuffle_mode", false),
-        repeatMode = com.beatraxus.app.engine.RepeatMode.valueOf(
-            prefs.getString("last_repeat_mode", com.beatraxus.app.engine.RepeatMode.OFF.name)
-                ?: com.beatraxus.app.engine.RepeatMode.OFF.name
-        ).ordinal
+        repeatMode = enumPref("last_repeat_mode", com.beatraxus.app.engine.RepeatMode.OFF).ordinal
     ))
     val uiState: StateFlow<PlayerUiState> = _uiState.asStateFlow()
 
@@ -804,7 +813,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     init {
         prefs.registerOnSharedPreferenceChangeListener(prefListener)
-        FFmpegKitConfig.setLogLevel(Level.AV_LOG_ERROR)
+        // Loading FFmpegKit's native libraries is slow; keep it off the main thread so it can't
+        // hold up the first frame. (runCatching also covers UnsatisfiedLinkError on odd ABIs.)
+        Thread({ runCatching { FFmpegKitConfig.setLogLevel(Level.AV_LOG_ERROR) } }, "FFmpegKitInit").start()
 
         viewModelScope.launch {
             musicRepository.getMusicFoldersFlow().collect { folders ->
@@ -1477,7 +1488,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                             replayGainAlbumDb = entity.replayGainAlbumDb,
                             replayGainTrackPeak = entity.replayGainTrackPeak,
                             replayGainAlbumPeak = entity.replayGainAlbumPeak,
-                            source = SongSource.valueOf(entity.source),
+                            // One row with an unknown source must not abort the whole library load.
+                            source = runCatching { SongSource.valueOf(entity.source) }.getOrDefault(SongSource.LOCAL),
                             driveFileId = entity.driveFileId,
                             driveAccountEmail = entity.driveAccountEmail,
                             dropboxFileId = entity.dropboxFileId,
@@ -1553,9 +1565,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                                 // Wait for service to be ready. 
                                 // We no longer block on TDLib readiness here as TelegramFileDataSource 
                                 // handles its own wait state internally now.
-                                while (service == null) {
-                                    delay(200)
-                                }
+                                if (!awaitService()) return@launch
 
                                 // Ensure currently playing ID is set for cache exclusion BEFORE restore
                                 if (lastIndex in restoredPlaylist.indices) {
@@ -1572,9 +1582,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         // Fallback for older versions that only saved last_song_id
                         dbSongs.find { it.id == lastSongId }?.let { lastSong ->
                             viewModelScope.launch {
-                                while (service == null) {
-                                    delay(200)
-                                }
+                                if (!awaitService()) return@launch
                                 cloudCacheManager.setCurrentlyPlayingId(lastSong.id)
                                 service?.prepareSong(lastSong, lastPos)
                                 _progressMs.value = lastPos
@@ -1583,6 +1591,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     }
 
                     if (cacheWiped) {
+                        // This branch used to return without ever clearing isLoadingLibrary, which
+                        // left the splash screen up forever after the album-art cache was wiped.
+                        _uiState.update { it.copy(isLoadingLibrary = false) }
                         if (_uiState.value.musicFolders.isNotEmpty()) quickScan()
                         return@launch
                     }
@@ -1592,8 +1603,14 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     if (_uiState.value.musicFolders.isNotEmpty()) quickScan()
                     return@launch
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
-                // Ignore initial load errors
+                Log.e(TAG, "loadLibrary failed", e)
+            } finally {
+                // Every exit path (empty library, permission denied, DB error, cancellation) must
+                // release the splash screen, which MainActivity keeps up while this flag is true.
+                _uiState.update { if (it.isLoadingLibrary) it.copy(isLoadingLibrary = false) else it }
             }
 
             // Perform an incremental scan ONLY if DB was empty
@@ -1798,6 +1815,13 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private var service: AudioPlaybackService? = null
+
+    /** Waits for the playback service to bind, giving up after [timeoutMs] instead of spinning forever. */
+    private suspend fun awaitService(timeoutMs: Long = 20_000L): Boolean =
+        kotlinx.coroutines.withTimeoutOrNull(timeoutMs) {
+            while (service == null) delay(200)
+            true
+        } ?: false
 
     fun attachService(svc: AudioPlaybackService) {
         if (service === svc) return
