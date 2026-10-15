@@ -312,6 +312,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     private val _songs = MutableStateFlow<List<Song>>(emptyList())
     val allSongs: StateFlow<List<Song>> = _songs.asStateFlow()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     // ---- In-app AI profiles (cleaned genres, sound styles, moods) -------------------------------
     // Derived from the song's tag + stored analysis whenever either changes; an unchanged song reuses
@@ -337,7 +338,6 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     /** True when [song] belongs to the genre / "✦ style" group called [label]. */
     private fun inGenreGroup(song: Song, label: String?): Boolean =
         label != null && profileFor(song).labels.contains(label)
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     // On-device videos (MediaStore scan).
     private val _videos = MutableStateFlow<List<com.beatraxus.app.model.Video>>(emptyList())
