@@ -1,8 +1,6 @@
 package com.beatraxus.app.ui.screens
 
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -20,6 +18,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithCache
@@ -35,8 +34,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.beatraxus.app.R
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.pow
@@ -61,6 +58,11 @@ private const val ORBIT_INTRO_MS = 800f   // glow + swell ease in over this long
 private const val BEAT_MS = 1000f         // one swell + one new ring per beat
 private const val RING_LIFE_MS = 2400f    // each ring travels outward and fades over this long
 private const val RING_COUNT = 4          // rings spawned at 0.5s, 1.5s, 2.5s, 3.5s
+
+// Frames to let pass (logo held still) before the timeline starts, and the longest single step the
+// clock may take (about two 60 Hz frames) so a hitch never makes the animation jump.
+private const val STARTUP_SETTLE_FRAMES = 3
+private const val MAX_FRAME_STEP_MS = 34f
 
 // Brand colours sampled from the app icon (cyan -> violet -> magenta).
 private val LogoCyan = Color(0xFF22D3FF)
@@ -101,19 +103,31 @@ private fun Modifier.revealAt(
 fun AppOpenScreen(onFinished: () -> Unit) {
     val finished by rememberUpdatedState(onFinished)
 
-    // Elapsed milliseconds since the screen appeared. Linear and time-based: if a frame is late the
-    // animation skips ahead instead of slowing down.
+    // Elapsed animation milliseconds. Frame-driven with a clamped step: if the main thread hitches
+    // (first composition of the main UI, library load, service start) the animation pauses for that
+    // moment and then carries on from the same place, instead of jumping ahead by the whole stall
+    // (which is what made the old wall-clock version look stuck and then skip).
     val clock = remember { Animatable(0f) }
     LaunchedEffect(Unit) {
-        launch {
-            clock.animateTo(
-                targetValue = APP_OPEN_DURATION_MS.toFloat(),
-                animationSpec = tween(APP_OPEN_DURATION_MS, easing = LinearEasing)
-            )
+        // The first frames of the process include the heavy first composition of the main UI that
+        // sits underneath this screen. Let them go by while the logo holds still, so the timeline
+        // starts on a quiet main thread.
+        repeat(STARTUP_SETTLE_FRAMES) { withFrameNanos { } }
+
+        val handoffMs = (APP_OPEN_DURATION_MS - APP_OPEN_EXIT_FADE_MS).toFloat()
+        var last = withFrameNanos { it }
+        var handedOff = false
+        while (clock.value < APP_OPEN_DURATION_MS) {
+            val now = withFrameNanos { it }
+            val dtMs = ((now - last) / 1_000_000f).coerceIn(0f, MAX_FRAME_STEP_MS)
+            last = now
+            clock.snapTo((clock.value + dtMs).coerceAtMost(APP_OPEN_DURATION_MS.toFloat()))
+            if (!handedOff && clock.value >= handoffMs) {
+                handedOff = true
+                // Hand over early enough that the caller's fade-out ends at the end of the timeline.
+                finished()
+            }
         }
-        // Hand over to the caller early enough that its fade-out ends exactly at the 4s mark.
-        delay((APP_OPEN_DURATION_MS - APP_OPEN_EXIT_FADE_MS).toLong())
-        finished()
     }
     val time: () -> Float = { clock.value }
 

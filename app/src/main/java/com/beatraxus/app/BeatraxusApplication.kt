@@ -72,9 +72,9 @@ class BeatraxusApplication : Application(), ImageLoaderFactory {
     private val cacheCleanupDone = CountDownLatch(1)
 
     val cloudCacheManager by lazy {
-        // The startup cleanup deletes files under cloud_cache; wait (bounded) for it so the cache
+        // The startup cleanup deletes files under cloud_cache; wait (briefly, it is only a few file deletes) for it so the cache
         // manager never starts using files the cleanup is about to delete.
-        cacheCleanupDone.await(5, TimeUnit.SECONDS)
+        cacheCleanupDone.await(1, TimeUnit.SECONDS)
         com.beatraxus.app.drive.CloudCacheManager.getInstance(
             this,
             driveAccountRepository,

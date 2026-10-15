@@ -14,6 +14,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
 import android.os.SystemClock
+import android.view.Choreographer
 import android.util.Log
 import java.security.MessageDigest
 import androidx.fragment.app.FragmentActivity
@@ -136,8 +137,16 @@ class MainActivity : FragmentActivity() {
     override fun onStart() {
         super.onStart()
         frameJankMonitor.start()
-        startAudioService()
-        bindAudioService()
+        // AudioPlaybackService.onCreate() runs on the main thread (audio engine, media session, ...).
+        // Doing that during the first frames makes the app-open animation stutter, so start it once
+        // the first frames are on screen. A few frames later is still far inside the system's
+        // 5 s startForeground() window.
+        serviceStartPending = true
+        window.decorView.post {
+            Choreographer.getInstance().postFrameCallback {
+                Choreographer.getInstance().postFrameCallback { startAudioServiceIfNeeded() }
+            }
+        }
         
         viewModel.reloadVideosIfEmpty()
     }
@@ -320,6 +329,7 @@ class MainActivity : FragmentActivity() {
     override fun onStop() {
         super.onStop()
         frameJankMonitor.stop()
+        serviceStartPending = false
         if (bindRequested) {
             try {
                 unbindService(serviceConnection)
@@ -329,6 +339,16 @@ class MainActivity : FragmentActivity() {
             bindRequested = false
             serviceBound = false
         }
+    }
+
+    private var serviceStartPending = false
+
+    private fun startAudioServiceIfNeeded() {
+        if (!serviceStartPending || isFinishing || isDestroyed) return
+        if (!lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) return
+        serviceStartPending = false
+        startAudioService()
+        bindAudioService()
     }
 
     private fun startAudioService() {

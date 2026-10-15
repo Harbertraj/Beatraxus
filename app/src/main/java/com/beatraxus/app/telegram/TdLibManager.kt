@@ -38,7 +38,7 @@ class TdLibManager private constructor(
     private val apiHash: String
 ) {
 
-    private var client: Client? = null
+    @Volatile private var client: Client? = null
     @Volatile private var pendingRestart = false
     private val activeRestartId = java.util.concurrent.atomic.AtomicInteger(0)
     private val managerScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -46,18 +46,30 @@ class TdLibManager private constructor(
     private val _authState = MutableStateFlow<AuthState>(AuthState.NotReady)
     val authState: StateFlow<AuthState> = _authState
 
+    private val starting = java.util.concurrent.atomic.AtomicBoolean(false)
+
     init {
         startClient()
     }
 
+    // Loading libtdjni and creating the native client is slow. It runs on a background thread so
+    // that getInstance() (called from the UI thread by the ViewModel and the service) never blocks
+    // the first frames of the app; send() waits for the client if it is used before it is ready.
     private fun startClient() {
         if (client != null) return
-        Log.d("TDLib", "Starting TDLib client...")
-        try {
-            client = Client.create({ update -> handleUpdate(update) }, null, null)
-        } catch (e: Exception) {
-            Log.e("TDLib", "Failed to create TDLib client: ${e.message}", e)
-            _authState.value = AuthState.Error("Failed to create TDLib client: ${e.message}")
+        if (!starting.compareAndSet(false, true)) return
+        managerScope.launch(Dispatchers.IO) {
+            try {
+                if (client != null) return@launch
+                Log.d("TDLib", "Starting TDLib client...")
+                loadNativeLibrary()
+                client = Client.create({ update -> handleUpdate(update) }, null, null)
+            } catch (t: Throwable) {
+                Log.e("TDLib", "Failed to create TDLib client: ${t.message}", t)
+                _authState.value = AuthState.Error("Failed to create TDLib client: ${t.message}")
+            } finally {
+                starting.set(false)
+            }
         }
     }
 
@@ -208,7 +220,17 @@ class TdLibManager private constructor(
         }
     }
 
-    suspend fun <T : TdApi.Object> send(function: TdApi.Function<T>): T =
+    suspend fun <T : TdApi.Object> send(function: TdApi.Function<T>): T {
+        // The client is created on a background thread (see startClient); give it a moment.
+        var waited = 0
+        while (client == null && starting.get() && waited < 10_000) {
+            delay(25)
+            waited += 25
+        }
+        return sendNow(function)
+    }
+
+    private suspend fun <T : TdApi.Object> sendNow(function: TdApi.Function<T>): T =
         suspendCancellableCoroutine { cont ->
             val c = client ?: run {
                 cont.resumeWithException(RuntimeException("TDLib client is not active"))
@@ -492,7 +514,14 @@ class TdLibManager private constructor(
     }
 
     companion object {
-        init {
+        @Volatile
+        private var nativeLoaded = false
+
+        // Not in a static initializer: class initialization holds a lock, and the UI thread would
+        // block on it while a background thread loads the (large) native library.
+        @Synchronized
+        fun loadNativeLibrary() {
+            if (nativeLoaded) return
             try {
                 System.loadLibrary("tdjni")
                 // Optional: set log level for TDLib
@@ -500,6 +529,7 @@ class TdLibManager private constructor(
             } catch (e: Throwable) {
                 Log.e("TDLib", "Failed to load native library or set log level: ${e.message}")
             }
+            nativeLoaded = true
         }
 
         @Volatile
