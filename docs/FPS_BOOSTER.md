@@ -99,8 +99,11 @@ On the same synthetic ground-truth clips the old engine is no better than plain 
 - Surface destruction: ExoPlayer is detached first, the renderer is released and awaited (500 ms), a new renderer is built on the next `surfaceCreated`.
 - HDR sources are excluded by the planner (the pipeline is 8-bit SDR with no tone mapping). **No HDR support is claimed.**
 
+### Original resolution
+The frame that is stored and shown is always at the video's original resolution (safety cap 3840 px on the long side); the quality presets (and adaptive resolution) only change the size of the *motion-analysis* image (640 / 960 / 1280 px, Minimal 480). Only the adaptive "Minimal" rung, reachable only with Adaptive resolution on, caps the frame at 1280 px.
+
 ### Memory (arithmetic, not measured)
-Three RGBA8 frame slots: 1080p source at Performance (frame cap 1280 px) ≈ 11 MB; at Balanced (1920 px) ≈ 25 MB; Quality (2560 px cap, 1080p source stays 1080p) ≈ 25 MB. Luma pyramids, flow fields (RGBA16F at ¼ resolution) and the cut texture add a few MB.
+Three RGBA8 frame slots plus an output target: 1080p ≈ 8.3 MB per frame (~33 MB for four); 4K (3840×2160) ≈ 33 MB per frame (~130 MB). Luma pyramids, flow fields (RGBA16F at ¼ resolution) and the cut texture add a few MB.
 
 ### GPU cost (op-count estimate, NOT a measurement)
 Counting texture fetches in `flow_search.frag` per fragment and the grid sizes: **≈ 42 M fetches per frame pair at Performance** (≈ 1.0 G/s at 24 pairs/s) and **≈ 160 M per pair at Balanced** (≈ 3.8 G/s). Whether a Mali-G68 sustains these is unknown, which is why Performance is the default and the adaptive controller exists. Likely first optimisations if needed: the `float a[64]` window array is dynamically indexed in the stride-2 path and may spill on mobile GPUs; unrolling to two specialised loops is the first thing to try.

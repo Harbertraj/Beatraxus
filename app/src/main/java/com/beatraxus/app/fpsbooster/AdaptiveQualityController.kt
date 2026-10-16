@@ -64,10 +64,10 @@ class AdaptiveQualityController(
         const val DROP_RATIO = 0.05f
 
         val LADDER: List<QualityLevel> = listOf(
-            QualityLevel("Quality", 1280, 2560, 8, true),
-            QualityLevel("Balanced", 960, 1920, 6, true),
-            QualityLevel("Performance", 640, 1280, 6, false),
-            QualityLevel("Minimal", 480, 960, 6, false)
+            QualityLevel("Quality", 1280, FRAME_EDGE_ORIGINAL, 8, true),
+            QualityLevel("Balanced", 960, FRAME_EDGE_ORIGINAL, 6, true),
+            QualityLevel("Performance", 640, FRAME_EDGE_ORIGINAL, 6, false),
+            QualityLevel("Minimal", 480, 1280, 6, false) // only reachable with adaptive resolution on
         )
 
         fun indexFor(q: BoosterQuality) = when (q) {

@@ -70,6 +70,7 @@ import com.beatraxus.app.engine.smart.LibraryGrouping
 import com.beatraxus.app.engine.smart.SongProfile
 import com.beatraxus.app.engine.smart.SongProfiler
 import com.beatraxus.app.engine.smart.smartProfile
+import com.beatraxus.app.engine.smart.basicProfile
 import com.beatraxus.app.engine.smart.toProfileInput
 import com.beatraxus.app.model.PlayerUiState
 import com.beatraxus.app.model.Song
@@ -343,7 +344,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
 
     private fun profileFor(song: Song): SongProfile =
-        songProfiles.value[song.id] ?: song.smartProfile(aiAnalysis.value[song.id])
+        songProfiles.value[song.id] ?: song.basicProfile()
 
     /** True when [song] belongs to the genre / "✦ style" group called [label]. */
     private fun inGenreGroup(song: Song, label: String?): Boolean =
@@ -613,7 +614,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
      * plus the in-app AI's "✦" sound styles. A song shows up in every group it belongs to.
      */
     val genres = combine(filteredSongsByMode, songProfiles) { songs, profiles ->
-        LibraryGrouping.byLabels(songs, { profiles[it.id] ?: it.smartProfile(null) }).map { g ->
+        LibraryGrouping.byLabels(songs, { profiles[it.id] ?: it.basicProfile() }).map { g ->
             Triple(
                 g.label,
                 "${g.items.size} songs" + if (g.isStyle) " \u00b7 AI" else "",
@@ -973,8 +974,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
         // Start AI Analysis worker
         viewModelScope.launch(aiAnalysisDispatcher) {
-            // Delay AI analysis at startup to prevent blocking the main thread during initial UI render
-            delay(2000)
+            // Delay AI analysis at startup until 5s after moving to main screen
+            awaitUiSettled(5000L)
 
             for (song in aiAnalysisChannel) {
                 // ROOT-CAUSE FIX: don't run heavy work while media is playing.
@@ -1458,15 +1459,15 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     /**
      * The startup library scan is heavy (it opens every changed audio file and decodes embedded
      * art). Starting it while the app-open screen is still animating starved the main thread and
-     * froze the first seconds of the app, so it waits until that screen is gone.
+     * froze the first seconds of the app, so it waits until that screen is gone plus 5 seconds.
      */
-    private suspend fun awaitUiSettled() {
+    private suspend fun awaitUiSettled(delayAfterMainScreenMs: Long = 5000L) {
         var waited = 0L
-        while (!AppOpenSplashState.shown && waited < 7_000L) {
+        while (!AppOpenSplashState.shown && waited < 10_000L) {
             delay(100)
             waited += 100
         }
-        if (waited > 0) delay(400)
+        delay(delayAfterMainScreenMs)
     }
 
     fun loadLibrary() {
@@ -1633,14 +1634,21 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
 
 
-    fun loadVideos(targetFolders: List<String>? = null) {
+    fun loadVideos(targetFolders: List<String>? = null, forceImmediate: Boolean = false) {
         enrichmentJob?.cancel()
 
         enrichmentJob = viewModelScope.launch {
+            if (!forceImmediate) {
+                // Delay startup video scan and thumbnail/HDR extraction until 5 seconds after moving to main screen.
+                awaitUiSettled(5000L)
+            }
+
             _uiState.update { it.copy(isLoadingVideos = true) }
             try {
                 val blocked = musicRepository.getBlockedFolders()
-                val folders = targetFolders ?: videoFolderDao.getActiveFoldersList().map { it.path }
+                val folders = targetFolders ?: withContext(Dispatchers.IO) {
+                    videoFolderDao.getActiveFoldersList().map { it.path }
+                }
 
                 val scannedVideos = videoScanner.scanVideos(folders, blocked)
 
@@ -1691,7 +1699,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     /** Pull-to-refresh for the video library: rescans local folders and re-reads the cloud sources. */
     fun refreshVideos() {
-        loadVideos()
+        loadVideos(forceImmediate = true)
         refreshTelegramVideos(force = true)
         refreshCloudVideos(force = true)
     }
@@ -3476,7 +3484,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 }
                 context.contentResolver.update(video.uri, values, null, null)
                 withContext(Dispatchers.Main) {
-                    loadVideos() // Refresh
+                    loadVideos(forceImmediate = true) // Refresh
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to rename video", e)
@@ -3831,7 +3839,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 triggerVideoFolderPicker = false,
                 blockedFolders = musicRepository.getBlockedFolders()
             ) }
-            loadVideos()
+            loadVideos(forceImmediate = true)
         }
     }
 
@@ -3889,7 +3897,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 blockedFolders = musicRepository.getBlockedFolders()
             ) }
             quickScan()
-            loadVideos()
+            loadVideos(forceImmediate = true)
         }
     }
 
@@ -3927,7 +3935,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         
         // Auto-scan videos if entering video mode and list is empty
         if (mode == com.beatraxus.app.model.PlaybackMode.VIDEO && _videos.value.isEmpty()) {
-            loadVideos()
+            loadVideos(forceImmediate = true)
         }
         if (mode == com.beatraxus.app.model.PlaybackMode.VIDEO) maybeRefreshCloudVideos()
     }
@@ -5159,7 +5167,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         val key = targets.map { it.id }
         if (key.isEmpty() || key == lastPreloadKey) return
         lastPreloadKey = key
+        preloadLyricsJob?.cancel()
         preloadLyricsJob = viewModelScope.launch {
+            awaitUiSettled(5000L)
             lyricsRepository.preloadLyrics(targets)
         }
     }

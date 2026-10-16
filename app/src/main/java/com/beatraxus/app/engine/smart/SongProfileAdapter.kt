@@ -25,3 +25,18 @@ fun Song.toProfileInput(a: AiAnalysisEntity?): ProfileInput {
 }
 
 fun Song.smartProfile(a: AiAnalysisEntity?): SongProfile = SongProfiler.profile(toProfileInput(a))
+
+/** Fast, lightweight profile using only tag genre. Safe for main thread fallback. */
+fun Song.basicProfile(): SongProfile {
+    val canonical = GenreTaxonomy.canonical(genre)
+    val g = if (canonical.isEmpty()) listOf(GenreTaxonomy.UNKNOWN) else canonical
+    return SongProfile(
+        genres = g,
+        styles = emptyList(),
+        moods = emptyList(),
+        moodScores = emptyMap(),
+        language = null,
+        energy = 0.5f,
+        valence = 0.5f
+    )
+}

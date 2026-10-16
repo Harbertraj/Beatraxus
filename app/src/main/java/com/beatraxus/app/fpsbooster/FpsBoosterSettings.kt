@@ -26,6 +26,12 @@ enum class BoosterEngine(val label: String, val description: String) {
 }
 
 /**
+ * Output frame cap. Quality presets only change the (cheap) motion-search size; the frame that is shown is
+ * kept at the video's original resolution (4K cap is a memory safety limit only).
+ */
+const val FRAME_EDGE_ORIGINAL = 3840
+
+/**
  * Quality preset for the optical-flow engine. [workEdge] is the longest side (px) of the luma image used
  * for motion search; [frameEdge] caps the stored/shown frame size; [searchRange] is the integer search
  * radius (px) at the coarsest pyramid level; [subpixel] enables half/quarter-pixel refinement.
@@ -37,9 +43,9 @@ enum class BoosterQuality(
     val searchRange: Int,
     val subpixel: Boolean
 ) {
-    PERFORMANCE("Performance", 640, 1280, 6, false),
-    BALANCED("Balanced", 960, 1920, 6, true),
-    QUALITY("Quality", 1280, 2560, 8, true);
+    PERFORMANCE("Performance", 640, FRAME_EDGE_ORIGINAL, 6, false),
+    BALANCED("Balanced", 960, FRAME_EDGE_ORIGINAL, 6, true),
+    QUALITY("Quality", 1280, FRAME_EDGE_ORIGINAL, 8, true);
 
     companion object {
         fun fromName(name: String?): BoosterQuality = entries.firstOrNull { it.name == name } ?: DEFAULT

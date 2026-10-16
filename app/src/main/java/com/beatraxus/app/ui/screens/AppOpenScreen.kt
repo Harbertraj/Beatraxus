@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.beatraxus.app.R
+import kotlinx.coroutines.delay
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.pow
@@ -43,6 +44,15 @@ import kotlin.math.sin
 object AppOpenSplashState {
     @Volatile
     var shown: Boolean = false
+
+    suspend fun awaitMainScreen(settleMs: Long = 5000L) {
+        var waited = 0L
+        while (!shown && waited < 10_000L) {
+            delay(100)
+            waited += 100
+        }
+        if (settleMs > 0) delay(settleMs)
+    }
 }
 
 /** Total time the app-open screen is on screen, including its closing fade. */
@@ -60,9 +70,9 @@ private const val RING_LIFE_MS = 2400f    // each ring travels outward and fades
 private const val RING_COUNT = 4          // rings spawned at 0.5s, 1.5s, 2.5s, 3.5s
 
 // Frames to let pass (logo held still) before the timeline starts, and the longest single step the
-// clock may take (about two 60 Hz frames) so a hitch never makes the animation jump.
+// clock may take so a hitch never freezes the animation timeline.
 private const val STARTUP_SETTLE_FRAMES = 3
-private const val MAX_FRAME_STEP_MS = 34f
+private const val MAX_FRAME_STEP_MS = 200f
 
 // Brand colours sampled from the app icon (cyan -> violet -> magenta).
 private val LogoCyan = Color(0xFF22D3FF)

@@ -10,6 +10,7 @@ import com.beatraxus.app.utils.rediscover
 import com.beatraxus.app.utils.GenreBucket
 import com.beatraxus.app.engine.smart.LibraryGrouping
 import com.beatraxus.app.engine.smart.smartProfile
+import com.beatraxus.app.engine.smart.basicProfile
 import androidx.compose.animation.*
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.animation.core.*
@@ -4185,23 +4186,6 @@ items(artistSongs, key = { it.id }) { song ->
                 )
             }
         }
-
-        // Minimal app-open screen: only on a cold start (app fully closed), once per process.
-        // It lasts APP_OPEN_DURATION_MS in total; this fade-out is the last APP_OPEN_EXIT_FADE_MS of it.
-        var showAppOpen by remember { mutableStateOf(!AppOpenSplashState.shown) }
-        AnimatedVisibility(
-            visible = showAppOpen,
-            modifier = Modifier.fillMaxSize().zIndex(1000f),
-            enter = EnterTransition.None,
-            exit = fadeOut(tween(APP_OPEN_EXIT_FADE_MS))
-        ) {
-            AppOpenScreen(
-                onFinished = {
-                    AppOpenSplashState.shown = true
-                    showAppOpen = false
-                }
-            )
-        }
     }
 }
 
@@ -4703,7 +4687,7 @@ fun HomeScreen(
     // Mood matching uses the in-app AI profile: measured sound (energy, pace, brightness...) + genre +
     // title words + online tags, never a single weak signal. Best matches first, shuffled within a tier.
     fun playMood(mood: MoodData) {
-        fun profileOf(song: Song) = songProfiles[song.id] ?: song.smartProfile(aiAnalysis[song.id])
+        fun profileOf(song: Song) = songProfiles[song.id] ?: song.basicProfile()
         val moodSongs = allSongs
             .filter { song -> profileOf(song).moods.any { it.equals(mood.label, ignoreCase = true) } }
             .shuffled()
@@ -4750,7 +4734,7 @@ fun HomeScreen(
     }
     val decadeBuckets = remember(allSongs) { byDecade(allSongs, { it.year }) }
     val genreBuckets = remember(allSongs, songProfiles) {
-        LibraryGrouping.topGroups(allSongs, { songProfiles[it.id] ?: it.smartProfile(null) })
+        LibraryGrouping.topGroups(allSongs, { songProfiles[it.id] ?: it.basicProfile() })
             .map { GenreBucket(it.label, it.items) }
     }
     val recentIds = remember(recentlyPlayed) { recentlyPlayed.map { it.id }.toSet() }
