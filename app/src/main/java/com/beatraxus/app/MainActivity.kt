@@ -22,6 +22,8 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.viewModels
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 import androidx.compose.animation.*
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
@@ -31,6 +33,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
@@ -49,6 +54,8 @@ import com.google.api.services.drive.DriveScopes
 import com.beatraxus.app.R
 import com.beatraxus.app.repository.DriveAccount
 import com.beatraxus.app.service.AudioPlaybackService
+import com.beatraxus.app.ui.screens.APP_OPEN_EXIT_FADE_MS
+import com.beatraxus.app.ui.screens.AppOpenScreen
 import com.beatraxus.app.ui.screens.AppOpenSplashState
 import com.beatraxus.app.ui.screens.MainScreen
 import com.beatraxus.app.ui.screens.SettingsScreen
@@ -269,8 +276,12 @@ class MainActivity : FragmentActivity() {
 
         // Start library loading after the first frame is drawn to avoid UI jank on startup
         window.decorView.post {
-            com.beatraxus.app.cast.CastManager.initialize(this@MainActivity) { error ->
-                viewModel.setCastErrorMessage(error)
+            // Cast discovery is heavy: start it once the app-open screen is done.
+            lifecycleScope.launch {
+                AppOpenSplashState.awaitMainScreen(settleMs = 300L)
+                com.beatraxus.app.cast.CastManager.initialize(this@MainActivity) { error ->
+                    viewModel.setCastErrorMessage(error)
+                }
             }
             if (!viewModel.uiState.value.isFirstRun) {
                 // Immediately check permissions and load library to let splash screen dismiss as soon as DB is ready
@@ -653,8 +664,22 @@ fun BeatraxusApp(
         }
     }
 
+    // The first frame must be cheap: the system splash (logo) stays up until it is drawn. Composing the
+    // whole main screen used to happen in that very frame and held the logo for seconds. Now the first
+    // frame only holds the app-open screen, and the main screen is composed right after it appears.
+    // (First run and warm starts skip the animation, so they compose the content immediately.)
+    val playAppOpen = remember { !AppOpenSplashState.shown && !uiState.isFirstRun }
+    var contentReady by remember { mutableStateOf(!playAppOpen) }
+    if (!contentReady) {
+        LaunchedEffect(Unit) {
+            androidx.compose.runtime.withFrameNanos { }   // first frame (app-open screen) is on screen
+            kotlinx.coroutines.delay(250)                 // logo-only phase of the animation
+            contentReady = true
+        }
+    }
+
     Box(Modifier.fillMaxSize()) {
-        NavHost(
+        if (contentReady) NavHost(
             navController = navController,
             startDestination = if (uiState.isFirstRun) "welcome" else Screen.Main.route
         ) {
@@ -986,6 +1011,23 @@ fun BeatraxusApp(
                     onBack = { navController.safePopBack() }
                 )
             }
+        }
+
+        // App-open screen: cold start only, once per process; lasts APP_OPEN_DURATION_MS in total, the
+        // last APP_OPEN_EXIT_FADE_MS of which is this fade-out.
+        var showAppOpen by remember { mutableStateOf(playAppOpen) }
+        AnimatedVisibility(
+            visible = showAppOpen,
+            modifier = Modifier.fillMaxSize().zIndex(1000f),
+            enter = EnterTransition.None,
+            exit = fadeOut(tween(APP_OPEN_EXIT_FADE_MS))
+        ) {
+            AppOpenScreen(
+                onFinished = {
+                    AppOpenSplashState.shown = true
+                    showAppOpen = false
+                }
+            )
         }
     }
 }

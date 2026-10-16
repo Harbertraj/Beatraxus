@@ -118,6 +118,20 @@ class BeatraxusApplication : Application(), ImageLoaderFactory {
                 Log.e("BeatraxusApplication", "TDLib initialization failed", t)
             }
         }
+        startup.execute {
+            // PlayerViewModel is constructed on the main thread before the first frame and touches these
+            // lazies. Building them here (they are thread-safe lazies) means the main thread finds them
+            // ready instead of opening the Room database / creating the cache manager itself.
+            try {
+                cacheCleanupDone.await(2, TimeUnit.SECONDS)
+                cloudCacheManager
+                database.openHelper.writableDatabase // opens the DB and runs any pending migration off the main thread
+                driveAccountRepository; dropboxAccountRepository; onedriveAccountRepository
+                boxAccountRepository; nextcloudAccountRepository; smbConnectionRepository; ftpConnectionRepository
+            } catch (t: Throwable) {
+                Log.w("BeatraxusApplication", "Startup warm-up failed (the UI will build these itself)", t)
+            }
+        }
         startup.shutdown() // queued tasks still run; the thread exits afterwards
     }
 
