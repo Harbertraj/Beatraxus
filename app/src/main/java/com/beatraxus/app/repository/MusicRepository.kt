@@ -30,6 +30,18 @@ import kotlin.math.max
 
 class MusicRepository(private val context: Context) {
 
+    // The library scan opens every changed audio file and decodes its art. It gets its own few
+    // background-priority threads so it can never compete with the UI/render threads (on the shared
+    // IO pool, up to 6 scan workers froze the first seconds of the app).
+    private val scanDispatcher: CoroutineDispatcher by lazy {
+        java.util.concurrent.Executors.newFixedThreadPool(4) { r ->
+            Thread({
+                android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
+                r.run()
+            }, "beatraxus-scan")
+        }.asCoroutineDispatcher()
+    }
+
     private val folderDao = (context.applicationContext as com.beatraxus.app.BeatraxusApplication).database.folderDao()
 
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -42,7 +54,7 @@ class MusicRepository(private val context: Context) {
         seedAlbums: Set<String> = emptySet(),
         seedArtists: Set<String> = emptySet(),
         onProgress: (count: Int, albumCount: Int, artistCount: Int, progress: Float) -> Unit
-    ): List<Song> = withContext(Dispatchers.IO) {
+    ): List<Song> = withContext(scanDispatcher) {
         val albumsSet = seedAlbums.toMutableSet()
         val artistsSet = seedArtists.toMutableSet()
         onProgress(0, albumsSet.size, artistsSet.size, 0f)
@@ -159,7 +171,7 @@ class MusicRepository(private val context: Context) {
         
         // Reduce concurrency to avoid exhausting system codec/file resources.
         // Scaled by CPU cores but capped to avoid hitting Android resource limits.
-        val concurrency = max(2, minOf(6, Runtime.getRuntime().availableProcessors()))
+        val concurrency = 3
 
         rawList.asFlow()
             .flatMapMerge(concurrency = concurrency) { raw ->

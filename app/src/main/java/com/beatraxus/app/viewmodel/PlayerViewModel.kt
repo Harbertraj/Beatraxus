@@ -90,6 +90,7 @@ import com.beatraxus.app.util.ArtistNameUtils
 import com.beatraxus.app.util.PlaybackGlobalState
 import com.beatraxus.app.telegram.AuthState
 import com.beatraxus.app.telegram.TdLibManager
+import com.beatraxus.app.ui.screens.AppOpenSplashState
 import org.drinkless.tdlib.TdApi
 import com.beatraxus.app.service.AudioPlaybackService
 import com.beatraxus.app.cast.CastManager
@@ -1454,6 +1455,20 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         _uiState.update { it.copy(showScanOptions = true) }
     }
 
+    /**
+     * The startup library scan is heavy (it opens every changed audio file and decodes embedded
+     * art). Starting it while the app-open screen is still animating starved the main thread and
+     * froze the first seconds of the app, so it waits until that screen is gone.
+     */
+    private suspend fun awaitUiSettled() {
+        var waited = 0L
+        while (!AppOpenSplashState.shown && waited < 7_000L) {
+            delay(100)
+            waited += 100
+        }
+        if (waited > 0) delay(400)
+    }
+
     fun loadLibrary() {
         if (libraryLoadJob?.isActive == true) return
 
@@ -1532,18 +1547,16 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     }
 
                     // Check if cached album art still exists. If not, we need a refresh.
-                    val cacheWiped = dbSongs.any { song ->
-                        val artUri = song.albumArtUri
-                        if (artUri != null && artUri.scheme == "file") {
-                            val file = File(artUri.path ?: "")
-                            val exists = file.exists()
-                            if (!exists) {
-                                Log.d("PlayerViewModel", "Cache wipe detected for song: ${song.title}")
-                                Log.d("PlayerViewModel", "  - Missing file path: ${artUri.path}")
-                                Log.d("PlayerViewModel", "  - FilesDir: ${getApplication<Application>().filesDir.absolutePath}")
-                            }
-                            !exists
-                        } else false
+                    // File.exists() for every song: keep it off the main thread (this coroutine runs on it).
+                    val cacheWiped = withContext(Dispatchers.IO) {
+                        dbSongs.any { song ->
+                            val artUri = song.albumArtUri
+                            if (artUri != null && artUri.scheme == "file") {
+                                val exists = File(artUri.path ?: "").exists()
+                                if (!exists) Log.d("PlayerViewModel", "Cache wipe detected for song: ${song.title}")
+                                !exists
+                            } else false
+                        }
                     }
 
                     _songs.value = sortedSongs
@@ -1594,13 +1607,13 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         // This branch used to return without ever clearing isLoadingLibrary, which
                         // left the splash screen up forever after the album-art cache was wiped.
                         _uiState.update { it.copy(isLoadingLibrary = false) }
-                        if (_uiState.value.musicFolders.isNotEmpty()) quickScan()
+                        if (_uiState.value.musicFolders.isNotEmpty()) { awaitUiSettled(); quickScan() }
                         return@launch
                     }
 
                     // After loading from DB, we trigger an incremental scan to check for new songs in added folders
                     _uiState.update { it.copy(isLoadingLibrary = false) }
-                    if (_uiState.value.musicFolders.isNotEmpty()) quickScan()
+                    if (_uiState.value.musicFolders.isNotEmpty()) { awaitUiSettled(); quickScan() }
                     return@launch
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
@@ -1614,7 +1627,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             }
 
             // Perform an incremental scan ONLY if DB was empty
-            if (_uiState.value.musicFolders.isNotEmpty()) quickScan()
+            if (_uiState.value.musicFolders.isNotEmpty()) { awaitUiSettled(); quickScan() }
         }
     }
 

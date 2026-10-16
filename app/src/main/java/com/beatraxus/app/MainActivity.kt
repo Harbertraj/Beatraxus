@@ -134,8 +134,33 @@ class MainActivity : FragmentActivity() {
         viewModel.pendingPermissionAction = null
     }
 
+    /**
+     * Ask for the panel's highest refresh rate at the current resolution. Without this many
+     * devices (ColorOS/OxygenOS in particular) keep an app that does not request it at 60 Hz even
+     * on a 120 Hz screen, which made every animation look like it was running on a 60 Hz display.
+     */
+    private fun requestHighestRefreshRate() {
+        try {
+            val d = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) display else @Suppress("DEPRECATION") windowManager.defaultDisplay
+            d ?: return
+            val current = d.mode
+            val best = d.supportedModes
+                .filter { it.physicalWidth == current.physicalWidth && it.physicalHeight == current.physicalHeight }
+                .maxByOrNull { it.refreshRate } ?: return
+            val lp = window.attributes
+            if (lp.preferredDisplayModeId != best.modeId || lp.preferredRefreshRate != best.refreshRate) {
+                lp.preferredDisplayModeId = best.modeId
+                lp.preferredRefreshRate = best.refreshRate
+                window.attributes = lp
+            }
+        } catch (t: Throwable) {
+            Log.w("MainActivity", "Could not request a high refresh rate", t)
+        }
+    }
+
     override fun onStart() {
         super.onStart()
+        requestHighestRefreshRate()
         frameJankMonitor.start()
         // AudioPlaybackService.onCreate() runs on the main thread (audio engine, media session, ...).
         // Doing that during the first frames makes the app-open animation stutter, so start it once
@@ -726,7 +751,7 @@ fun BeatraxusApp(
             ) {
                 com.beatraxus.app.ui.screens.PlayTogetherScreen(
                     viewModel = viewModel,
-                    onBack = { navController.popBackStack() }
+                    onBack = { navController.safePopBack() }
                 )
             }
             composable(
@@ -758,7 +783,7 @@ fun BeatraxusApp(
             ) {
                 SettingsScreen(
                     playerViewModel = viewModel,
-                    onBack    = { navController.popBackStack() },
+                    onBack    = { navController.safePopBack() },
                     onNavigateToDsp = { navController.navigate(Screen.Dsp.route) },
                     onNavigateToStreamingAddons = { navController.navigate(Screen.StreamingAddons.route) },
                     onRequestGDriveAccount = {
@@ -803,7 +828,7 @@ fun BeatraxusApp(
                 DspScreen(
                     viewModel = viewModel,
                     onBack = {
-                        navController.popBackStack()
+                        navController.safePopBack()
                     }
                 )
             }
@@ -836,7 +861,7 @@ fun BeatraxusApp(
             ) {
                 com.beatraxus.app.ui.screens.StreamingAddonsScreen(
                     playerViewModel = viewModel,
-                    onBack = { navController.popBackStack() },
+                    onBack = { navController.safePopBack() },
                     onNavigateToBrowse = { addonId -> navController.navigate("addon_browse/$addonId") }
                 )
             }
@@ -875,16 +900,16 @@ fun BeatraxusApp(
                     com.beatraxus.app.ui.screens.OttHomeScreen(
                         addon = found,
                         playerViewModel = viewModel,
-                        onBack = { navController.popBackStack() }
+                        onBack = { navController.safePopBack() }
                     )
                 } else if (addon != null) {
                     com.beatraxus.app.ui.screens.AddonBrowseScreen(
                         addon = addon,
                         playerViewModel = viewModel,
-                        onBack = { navController.popBackStack() }
+                        onBack = { navController.safePopBack() }
                     )
                 } else {
-                    navController.popBackStack()
+                    navController.safePopBack()
                 }
             }
             composable(
@@ -932,7 +957,7 @@ fun BeatraxusApp(
                             // restores that sheet (already open, no re-animation) when it is re-entered;
                             // MainScreen clears it after consuming.
                         }
-                        navController.popBackStack()
+                        navController.safePopBack()
                     }
                 )
             }
@@ -965,9 +990,17 @@ fun BeatraxusApp(
                 
                 VideoPlayerScreen(
                     viewModel = videoPlayerViewModel,
-                    onBack = { navController.popBackStack() }
+                    onBack = { navController.safePopBack() }
                 )
             }
         }
     }
 }
+
+
+/**
+ * popBackStack() that never pops the last real destination. A fast double tap on a back button
+ * used to pop Main as well, leaving an empty NavHost - a black screen.
+ */
+fun androidx.navigation.NavController.safePopBack(): Boolean =
+    if (previousBackStackEntry != null) popBackStack() else false
