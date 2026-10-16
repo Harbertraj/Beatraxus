@@ -859,10 +859,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
         // Cloud videos: show the cached Telegram + cloud-drive videos immediately, refresh them once the sources are ready.
         viewModelScope.launch(Dispatchers.IO) {
+            AppOpenSplashState.awaitMainScreen(settleMs = 0L)
             val cached = telegramVideoRepository.loadCached() + cloudVideoRepository.loadCached()
             _cloudVideos.update { current -> if (current.isEmpty()) cached else current }
         }
         viewModelScope.launch {
+            awaitUiSettled()
             cloudVideoAccounts
                 .map { accounts -> accounts.map { it.id }.toSet() }
                 .distinctUntilChanged()
@@ -901,6 +903,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
         viewModelScope.launch {
+            awaitUiSettled()
             telegramChannelRepository.channels
                 .map { channels -> channels.map { it.url.trim().removeSuffix("/") }.toSet() }
                 .distinctUntilChanged()
@@ -974,6 +977,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         // Start AI Analysis worker
         viewModelScope.launch(aiAnalysisDispatcher) {
             // Delay AI analysis at startup to prevent blocking the main thread during initial UI render
+            awaitUiSettled()
             delay(2000)
 
             for (song in aiAnalysisChannel) {
@@ -1460,19 +1464,15 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
      * art). Starting it while the app-open screen is still animating starved the main thread and
      * froze the first seconds of the app, so it waits until that screen is gone.
      */
-    private suspend fun awaitUiSettled() {
-        var waited = 0L
-        while (!AppOpenSplashState.shown && waited < 7_000L) {
-            delay(100)
-            waited += 100
-        }
-        if (waited > 0) delay(400)
-    }
+    private suspend fun awaitUiSettled() = AppOpenSplashState.awaitMainScreen()
 
     fun loadLibrary() {
         if (libraryLoadJob?.isActive == true) return
 
         libraryLoadJob = viewModelScope.launch {
+            // Cold start: let the app-open screen play smoothly first; the library fills in once the
+            // main screen is up (no-op when the screen was already shown).
+            awaitUiSettled()
             _uiState.update { it.copy(permissionDenied = false, isLoadingLibrary = true) }
             try {
                 val dbSongs = withContext(Dispatchers.IO) {
@@ -1637,6 +1637,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         enrichmentJob?.cancel()
 
         enrichmentJob = viewModelScope.launch {
+            awaitUiSettled() // the storage scan waits until the app is on its main screen
             _uiState.update { it.copy(isLoadingVideos = true) }
             try {
                 val blocked = musicRepository.getBlockedFolders()

@@ -43,6 +43,21 @@ import kotlin.math.sin
 object AppOpenSplashState {
     @Volatile
     var shown: Boolean = false
+
+    /**
+     * Suspends until the app-open screen has finished (the app is on its main screen), then a short extra
+     * [settleMs]. Heavy start-up work (library scans, TDLib, cloud refreshes) calls this first so it never
+     * competes with the first frames. Capped by [maxWaitMs] so work still runs if the screen never plays
+     * (e.g. the service was started without any UI).
+     */
+    suspend fun awaitMainScreen(maxWaitMs: Long = 7_000L, settleMs: Long = 400L) {
+        var waited = 0L
+        while (!shown && waited < maxWaitMs) {
+            kotlinx.coroutines.delay(100)
+            waited += 100
+        }
+        if (waited > 0) kotlinx.coroutines.delay(settleMs)
+    }
 }
 
 /** Total time the app-open screen is on screen, including its closing fade. */

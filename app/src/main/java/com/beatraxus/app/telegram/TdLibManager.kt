@@ -61,6 +61,9 @@ class TdLibManager private constructor(
         managerScope.launch(Dispatchers.IO) {
             try {
                 if (client != null) return@launch
+                // Loading libtdjni is heavy; let the app-open screen finish first (capped wait).
+                com.beatraxus.app.ui.screens.AppOpenSplashState.awaitMainScreen(settleMs = 0L)
+                if (client != null) return@launch
                 Log.d("TDLib", "Starting TDLib client...")
                 loadNativeLibrary()
                 client = Client.create({ update -> handleUpdate(update) }, null, null)

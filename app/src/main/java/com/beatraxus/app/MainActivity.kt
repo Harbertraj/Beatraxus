@@ -13,7 +13,6 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
-import android.os.SystemClock
 import android.view.Choreographer
 import android.util.Log
 import java.security.MessageDigest
@@ -75,9 +74,6 @@ import com.beatraxus.app.perf.FrameJankMonitor
 import com.beatraxus.app.ui.theme.BeatraxusTheme
 import com.beatraxus.app.viewmodel.PlayerViewModel
 import com.beatraxus.app.viewmodel.PlayerViewModelFactory
-
-/** Upper bound on how long the system splash screen may wait for the initial library load. */
-private const val SPLASH_MAX_WAIT_MS = 3_000L
 
 class MainActivity : FragmentActivity() {
 
@@ -241,12 +237,9 @@ class MainActivity : FragmentActivity() {
         Thread({ logSigningCertFingerprints() }, "SigningCertLog").start()
         frameJankMonitor = FrameJankMonitor("BeatraxusFrameMonitor")
 
-        // Keep splash screen on until the initial library load is finished, but never longer than
-        // SPLASH_MAX_WAIT_MS: if the load stalls or fails, the app must still open.
-        val splashDeadline = SystemClock.uptimeMillis() + SPLASH_MAX_WAIT_MS
-        splashScreen.setKeepOnScreenCondition {
-            viewModel.uiState.value.isLoadingLibrary && SystemClock.uptimeMillis() < splashDeadline
-        }
+        // The system splash is dismissed as soon as the first frame is ready. It used to be held
+        // until the music library had loaded (up to 3 s), which looked like the app was stuck on the
+        // logo. The library now loads in the background after the app-open screen has finished.
 
         // Remove splash screen exit animation so app opens immediately without logo scale/fade animation
         splashScreen.setOnExitAnimationListener { splashProvider ->
