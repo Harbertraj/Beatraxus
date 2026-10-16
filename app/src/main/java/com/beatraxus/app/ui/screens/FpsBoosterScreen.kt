@@ -63,6 +63,18 @@ fun FpsBoosterSheetContent(
             fontSize = 13.sp
         )
 
+        // The booster can only deliver its target if the panel is really running that fast right now.
+        val nowHz = DisplayRefreshRate.currentRate(context)
+        if (plan.active && nowHz + 1f < plan.targetFps) {
+            Text(
+                text = "Display is running at %.0f Hz right now, below the %d FPS target (it can reach %d Hz). ".format(nowHz, plan.targetFps, peakHz) +
+                    "Set the phone's screen refresh rate to High / 120 Hz and turn off battery saver; the system decides, so this is not guaranteed.",
+                color = Color(0xFFFFB74D),
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium
+            )
+        }
+
         // Status: what is actually happening for this video
         val status = when {
             uiState.fpsBoosterSuspended != null -> uiState.fpsBoosterSuspended
@@ -114,11 +126,11 @@ fun FpsBoosterSheetContent(
                 Chip(q.label, s.quality == q) { onSettingsChange(s.copy(quality = q)) }
             }
         }
-        Hint("Higher quality estimates motion on a larger image: smoother results, more GPU and battery.")
+        Hint("Higher quality analyses motion on a larger image: fewer artifacts, more GPU and battery. The picture itself always keeps the original video resolution.")
 
         ToggleRow(
             "Adaptive resolution",
-            "Lowers the processing resolution if the device cannot keep up, and plays normally if it still cannot.",
+            "Off: always uses the video's original resolution and the quality you chose (plays normally if the device cannot keep up). On: may also lower the motion-analysis size when the device is struggling.",
             s.adaptiveResolution
         ) { onSettingsChange(s.copy(adaptiveResolution = it)) }
         ToggleRow(
@@ -149,7 +161,7 @@ fun FpsBoosterSheetContent(
                     StatLine("Dropped frames", stats.droppedFrames.toString())
                     if (stats.engine == BoosterEngine.OPTICAL_FLOW) {
                         StatLine("Processing latency", "%.1f ms / frame pair".format(stats.estimateLatencyMs))
-                        StatLine("Processing size", "${stats.workEdge} px")
+                        StatLine("Motion analysis size", "${stats.workEdge} px")
                         StatLine("Video delay", "%.0f ms".format(stats.addedDelayMs))
                     }
                 }
