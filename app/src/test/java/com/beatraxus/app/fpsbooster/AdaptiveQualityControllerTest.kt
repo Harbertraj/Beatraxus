@@ -1,0 +1,129 @@
+package com.beatraxus.app.fpsbooster
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class AdaptiveQualityControllerTest {
+    private val sec = 1_000_000_000L
+    private fun win(est: Float = 5f, presented: Int = 60, dropped: Int = 0) =
+        WindowStats(sec, 24, presented, 36, dropped, est, est, 2f)
+
+    private fun AdaptiveQualityController.feed(w: WindowStats, thermal: ThermalLevel = ThermalLevel.NONE) =
+        onWindow(w, 24f, 60f, thermal)
+
+    private val overload = win(est = 60f)   // budget at 24 fps = 29 ms
+    private val calm = win(est = 5f)
+
+    @Test fun startsAtTheUsersPreset() {
+        assertEquals(0, AdaptiveQualityController(BoosterQuality.QUALITY, true, false).index)
+        assertEquals(1, AdaptiveQualityController(BoosterQuality.BALANCED, true, false).index)
+        assertEquals(2, AdaptiveQualityController(BoosterQuality.PERFORMANCE, true, false).index)
+        assertEquals(2, AdaptiveQualityController(BoosterQuality.QUALITY, true, true).index)
+    }
+
+    @Test fun ladderMatchesThePresets() {
+        BoosterQuality.entries.forEach { q ->
+            val l = AdaptiveQualityController.LADDER[AdaptiveQualityController.indexFor(q)]
+            assertEquals(q.workEdge, l.workEdge)
+            assertEquals(q.frameEdge, l.frameEdge)
+            assertEquals(q.searchRange, l.searchRange)
+            assertEquals(q.subpixel, l.subpixel)
+        }
+    }
+
+    @Test fun calmWindowsNeverChangeAnything() {
+        val c = AdaptiveQualityController(BoosterQuality.BALANCED, true, false)
+        repeat(50) {
+            val d = c.feed(calm)
+            assertTrue(!d.changed); assertNull(d.fallback)
+        }
+        assertEquals(1, c.index)
+    }
+
+    @Test fun overloadStepsDownAtMostOnceEveryCooldown() {
+        val c = AdaptiveQualityController(BoosterQuality.BALANCED, true, false)
+        c.feed(overload); assertEquals(2, c.index)
+        c.feed(overload); assertEquals(2, c.index)   // cooling down
+        c.feed(overload); assertEquals(3, c.index)
+    }
+
+    @Test fun droppedFramesCountAsOverloadEvenWhenEstimateIsFast() {
+        val c = AdaptiveQualityController(BoosterQuality.BALANCED, true, false)
+        c.feed(win(est = 5f, presented = 50, dropped = 10))
+        assertEquals(2, c.index)
+    }
+
+    @Test fun givesUpAtTheFloor() {
+        val c = AdaptiveQualityController(BoosterQuality.BALANCED, true, false)
+        var fallback: FallbackReason? = null
+        var n = 0
+        while (fallback == null && n < 20) { fallback = c.feed(overload).fallback; n++ }
+        assertEquals(FallbackReason.CANNOT_KEEP_UP, fallback)
+        assertEquals(AdaptiveQualityController.LADDER.lastIndex, c.index)
+        assertTrue("took $n windows", n <= 10)
+    }
+
+    @Test fun withoutAdaptiveItFallsBackInsteadOfLoweringResolution() {
+        val c = AdaptiveQualityController(BoosterQuality.BALANCED, false, false)
+        var fallback: FallbackReason? = null
+        repeat(AdaptiveQualityController.GIVE_UP) { fallback = c.feed(overload).fallback }
+        assertEquals(FallbackReason.CANNOT_KEEP_UP, fallback)
+        assertEquals(1, c.index)
+    }
+
+    @Test fun aSingleBadWindowDoesNotStopTheBooster() {
+        val c = AdaptiveQualityController(BoosterQuality.PERFORMANCE, true, false)
+        assertNull(c.feed(overload).fallback)
+        repeat(10) { assertNull(c.feed(calm).fallback) }
+    }
+
+    @Test fun climbsBackAfterSustainedHeadroom() {
+        val c = AdaptiveQualityController(BoosterQuality.BALANCED, true, false)
+        c.feed(overload); assertEquals(2, c.index)
+        repeat(AdaptiveQualityController.UPGRADE_AFTER - 1) { c.feed(calm); assertEquals(2, c.index) }
+        c.feed(calm)
+        assertEquals(1, c.index)
+        repeat(30) { c.feed(calm) }
+        assertEquals("never above the user's preset", 1, c.index)
+    }
+
+    @Test fun doesNotOscillateAfterAFailedUpgrade() {
+        val c = AdaptiveQualityController(BoosterQuality.BALANCED, true, false)
+        c.feed(overload)
+        repeat(AdaptiveQualityController.UPGRADE_AFTER) { c.feed(calm) }
+        assertEquals(1, c.index)                       // upgraded
+        c.feed(overload); c.feed(overload)              // upgrade did not hold
+        assertEquals(2, c.index)
+        repeat(20) { c.feed(calm) }
+        assertEquals("upgrades are blocked for a while", 2, c.index)
+    }
+
+    @Test fun moderateThermalForcesOneStepDownAndBlocksUpgrades() {
+        val c = AdaptiveQualityController(BoosterQuality.BALANCED, true, false)
+        c.feed(calm, ThermalLevel.MODERATE)
+        assertEquals(2, c.index)
+        repeat(30) { c.feed(calm, ThermalLevel.MODERATE) }
+        assertEquals(2, c.index)
+    }
+
+    @Test fun severeThermalFallsBackImmediately() {
+        val c = AdaptiveQualityController(BoosterQuality.QUALITY, true, false)
+        assertEquals(FallbackReason.THERMAL, c.feed(calm, ThermalLevel.SEVERE).fallback)
+    }
+
+    @Test fun batterySaverNeverRaisesQuality() {
+        val c = AdaptiveQualityController(BoosterQuality.QUALITY, true, true)
+        repeat(60) { c.feed(calm) }
+        assertEquals(2, c.index)
+    }
+
+    @Test fun thermalStatusMapping() {
+        assertEquals(ThermalLevel.NONE, ThermalLevel.fromAndroidStatus(0))
+        assertEquals(ThermalLevel.LIGHT, ThermalLevel.fromAndroidStatus(1))
+        assertEquals(ThermalLevel.MODERATE, ThermalLevel.fromAndroidStatus(2))
+        assertEquals(ThermalLevel.SEVERE, ThermalLevel.fromAndroidStatus(3))
+        assertEquals(ThermalLevel.SEVERE, ThermalLevel.fromAndroidStatus(6))
+    }
+}

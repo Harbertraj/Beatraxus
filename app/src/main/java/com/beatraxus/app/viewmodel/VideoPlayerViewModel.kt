@@ -32,7 +32,15 @@ import com.beatraxus.app.BeatraxusApplication
 import com.beatraxus.app.engine.AudioEngine
 import com.beatraxus.app.engine.AudioFrameUtils
 import com.beatraxus.app.engine.VideoDecoderMode
-import com.beatraxus.app.motionboost.MotionBoostMode
+import com.beatraxus.app.fpsbooster.BoosterPlan
+import com.beatraxus.app.fpsbooster.BoosterStats
+import com.beatraxus.app.fpsbooster.DeviceCaps
+import com.beatraxus.app.fpsbooster.FallbackReason
+import com.beatraxus.app.fpsbooster.FpsBoosterPlanner
+import com.beatraxus.app.fpsbooster.FpsBoosterSettings
+import com.beatraxus.app.fpsbooster.FpsBoosterStore
+import com.beatraxus.app.fpsbooster.GlCapabilityProbe
+import com.beatraxus.app.fpsbooster.SourceInfo
 import com.beatraxus.app.engine.VideoPlaybackTuning
 import com.beatraxus.app.engine.VideoRenderersFactory
 import com.beatraxus.app.engine.VideoRoutePhase
@@ -116,13 +124,16 @@ data class VideoPlayerUiState(
     val videoDecoderMode: VideoDecoderMode = VideoDecoderMode.DEFAULT,
     /** Audio delay for the current video in ms. Positive = audio later than video. Resets per video. */
     val audioDelayMs: Int = 0,
-    /** FPS Booster target (frame interpolation). Persisted; [MotionBoostMode.ORIGINAL] = off. */
-    val motionBoostMode: MotionBoostMode = MotionBoostMode.ORIGINAL,
-    /** Extreme performance for the FPS Booster: lighter processing for the highest, smoothest FPS. Persisted. */
-    val motionBoostExtreme: Boolean = false,
-    /** Measured source / presented frame rate while the FPS Booster runs (0 = unknown). */
-    val motionBoostSourceFps: Float = 0f,
-    val motionBoostOutputFps: Float = 0f,
+    /** FPS Booster user preferences. Persisted. */
+    val fpsBooster: FpsBoosterSettings = FpsBoosterSettings(),
+    /** What the booster will actually do for this video on this device (derived; see [FpsBoosterPlanner]). */
+    val fpsBoosterPlan: BoosterPlan = BoosterPlan.inactive("Off"),
+    /** Live statistics while the booster runs. */
+    val fpsBoosterStats: BoosterStats = BoosterStats(),
+    /** Set when the booster stopped itself this session (device too slow / hot / GPU error). Cleared on the next video. */
+    val fpsBoosterSuspended: String? = null,
+    /** Frame rate declared by the video stream (0 = unknown). */
+    val sourceFps: Float = 0f,
     val isConnectingEngineRoute: Boolean = false,
     val engineRouteError: String? = null
 )
@@ -211,10 +222,7 @@ class VideoPlayerViewModel(
         maxVolume = (application.getSystemService(Context.AUDIO_SERVICE) as AudioManager).getStreamMaxVolume(AudioManager.STREAM_MUSIC),
         isEqEnabled = application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE).getBoolean("video_eq_enabled", false),
         videoDecoderMode = tuning.decoderMode,
-        motionBoostMode = MotionBoostMode.fromName(
-            application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE).getString(PREF_MOTION_BOOST, null)
-        ),
-        motionBoostExtreme = application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE).getBoolean(PREF_MOTION_BOOST_EXTREME, false),
+        fpsBooster = FpsBoosterStore.load(application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE)),
         aspectRatio = application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE).getString("video_aspect_ratio", VideoAspectRatio.FIT.name)?.let { name ->
             val mappedName = when (name) {
                 "ORIGINAL" -> "FIT"
@@ -278,6 +286,32 @@ class VideoPlayerViewModel(
 
         loadCustomPresets()
         loadIntroRange()
+        probeDeviceForFpsBooster()
+    }
+
+    // ---- FPS Booster ----
+
+    @Volatile private var deviceCaps: DeviceCaps? = null
+
+    /** GPU / panel capabilities are probed once, off the main thread; the plan is (re)computed when they arrive. */
+    private fun probeDeviceForFpsBooster() {
+        viewModelScope.launch(Dispatchers.Default) {
+            val caps = runCatching { GlCapabilityProbe.query(getApplication()) }.getOrNull()
+            deviceCaps = caps
+            _uiState.update { withFpsPlan(it) }
+        }
+    }
+
+    /** Re-derives [VideoPlayerUiState.fpsBoosterPlan] from settings + device + video. Returns the same instance if nothing changed. */
+    private fun withFpsPlan(s: VideoPlayerUiState): VideoPlayerUiState {
+        val caps = deviceCaps
+        val plan = when {
+            !s.fpsBooster.isOn -> BoosterPlan.inactive("Off")
+            s.fpsBoosterSuspended != null -> BoosterPlan.inactive(s.fpsBoosterSuspended)
+            caps == null -> BoosterPlan.inactive("Checking device")
+            else -> FpsBoosterPlanner.plan(s.fpsBooster, caps, SourceInfo(s.sourceFps, s.videoSize.width, s.videoSize.height, s.isHdr))
+        }
+        return if (plan == s.fpsBoosterPlan) s else s.copy(fpsBoosterPlan = plan, fpsBoosterStats = BoosterStats())
     }
 
     private fun loadIntroRange() {
@@ -471,11 +505,15 @@ class VideoPlayerViewModel(
             }
 
             override fun onVideoSizeChanged(videoSize: VideoSize) {
-                _uiState.update { it.copy(videoSize = videoSize) }
+                val fps = player.videoFormat?.frameRate?.takeIf { it > 0f } ?: 0f
+                _uiState.update { withFpsPlan(it.copy(videoSize = videoSize, sourceFps = if (fps > 0f) fps else it.sourceFps)) }
             }
 
             override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
                 updateTracks()
+                player.videoFormat?.frameRate?.takeIf { it > 0f }?.let { fps ->
+                    _uiState.update { withFpsPlan(it.copy(sourceFps = fps)) }
+                }
                 
                 if (!isInitialTrackRestorationDone && (pendingAudioTrackIndex != -1 || pendingSubtitleTrackIndex != -1)) {
                     val player = exoPlayer ?: return
@@ -522,10 +560,14 @@ class VideoPlayerViewModel(
         val video = videoQueue.find { it.id == currentId }
         
         _uiState.value.currentVideo?.let { recordVideoPlayed(it) }
-        _uiState.update { it.copy(currentVideo = video, isHdr = video?.isHdr ?: false) }
+        _uiState.update { withFpsPlan(it.copy(currentVideo = video, isHdr = video?.isHdr ?: false)) }
         
         if (video?.id != lastHandledVideoId) {
             lastHandledVideoId = video?.id
+            // A booster that stopped itself on the previous video gets a fresh chance on the next one.
+            if (_uiState.value.fpsBoosterSuspended != null) {
+                _uiState.update { withFpsPlan(it.copy(fpsBoosterSuspended = null)) }
+            }
             // Audio delay is tuned per file, so a new video starts back in sync.
             if (tuning.audioDelayMs != 0) setAudioDelayMs(0)
             video?.let { v ->
@@ -937,30 +979,22 @@ class VideoPlayerViewModel(
 
     fun adjustAudioDelayMs(deltaMs: Int) = setAudioDelayMs(_uiState.value.audioDelayMs + deltaMs)
 
-    /**
-     * FPS Booster: interpolates extra frames (e.g. 24 -> 60 fps). The screen swaps the video output to
-     * the interpolating renderer while a mode other than ORIGINAL is selected. The choice is remembered.
-     */
-    fun setMotionBoostMode(mode: MotionBoostMode) {
-        if (mode == _uiState.value.motionBoostMode) return
-        prefs.edit().putString(PREF_MOTION_BOOST, mode.name).apply()
-        _uiState.update { it.copy(motionBoostMode = mode, motionBoostSourceFps = 0f, motionBoostOutputFps = 0f) }
+    /** Saves new FPS Booster preferences and re-plans. Choosing settings again also lifts a session fallback. */
+    fun setFpsBoosterSettings(settings: FpsBoosterSettings) {
+        if (settings == _uiState.value.fpsBooster) return
+        FpsBoosterStore.save(prefs, settings)
+        _uiState.update { withFpsPlan(it.copy(fpsBooster = settings, fpsBoosterSuspended = null)) }
     }
 
-    fun setMotionBoostExtreme(enabled: Boolean) {
-        if (enabled == _uiState.value.motionBoostExtreme) return
-        prefs.edit().putBoolean(PREF_MOTION_BOOST_EXTREME, enabled).apply()
-        _uiState.update { it.copy(motionBoostExtreme = enabled) }
+    fun updateFpsBoosterStats(stats: BoosterStats) {
+        _uiState.update { it.copy(fpsBoosterStats = stats) }
     }
 
-    fun updateMotionBoostStats(sourceFps: Float, outputFps: Float) {
-        _uiState.update { it.copy(motionBoostSourceFps = sourceFps, motionBoostOutputFps = outputFps) }
-    }
-
-    /** Turns the booster off (and forgets the choice, so it does not fail again next time) when the GL pipeline fails. */
-    fun onMotionBoostFailed() {
-        prefs.edit().putString(PREF_MOTION_BOOST, MotionBoostMode.ORIGINAL.name).apply()
-        _uiState.update { it.copy(motionBoostMode = MotionBoostMode.ORIGINAL, motionBoostSourceFps = 0f, motionBoostOutputFps = 0f) }
+    /** The booster could not keep up / overheated / hit a GPU error: play normally for the rest of this video. */
+    fun onFpsBoosterFallback(reason: FallbackReason) {
+        _uiState.update {
+            withFpsPlan(it.copy(fpsBoosterSuspended = reason.message, fpsBoosterStats = BoosterStats(fallbackReason = reason.message)))
+        }
     }
 
     fun setAspectRatio(ratio: VideoAspectRatio) {
@@ -1687,8 +1721,6 @@ class VideoPlayerViewModel(
 }
 
 private const val PREF_VIDEO_DECODER_MODE = "video_decoder_mode"
-private const val PREF_MOTION_BOOST = "video_motion_boost"
-private const val PREF_MOTION_BOOST_EXTREME = "video_motion_boost_extreme"
 
 class VideoPlayerViewModelFactory(private val application: Application, private val videoQueue: List<Video>, private val initialVideoId: String) : ViewModelProvider.Factory {
     @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)

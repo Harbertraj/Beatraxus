@@ -48,10 +48,12 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.ui.zIndex
 import com.beatraxus.app.ui.utils.RenderEffectHelper
-import com.beatraxus.app.motionboost.DisplayRefreshRate
-import com.beatraxus.app.motionboost.MotionBoostMode
 import com.beatraxus.app.motionboost.MotionBoostSurfaceView
-import com.beatraxus.app.motionboost.MotionBoostTiming
+import com.beatraxus.app.fpsbooster.BoosterEngine
+import com.beatraxus.app.fpsbooster.BoosterQuality
+import com.beatraxus.app.fpsbooster.BoosterStats
+import com.beatraxus.app.fpsbooster.FallbackReason
+import com.beatraxus.app.fpsbooster.FpsBoosterSurfaceView
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
@@ -495,12 +497,15 @@ fun VideoPlayerScreen(
         val gradingActive = uiState.colorBrightness != 0f ||
             uiState.colorContrast != 1f ||
             uiState.colorSaturation != 1f
-        // FPS Booster: video is drawn by MotionBoostSurfaceView (interpolated frames). It does the colour
-        // grading itself, so the TextureView path is not used. HDR streams are not supported (no tone map).
-        val boostActive = uiState.motionBoostMode.isEnabled && !uiState.isHdr
+        // FPS Booster: the video is drawn by FpsBoosterSurfaceView (optical flow) or MotionBoostSurfaceView
+        // (classic engine). Both do the colour grading themselves, so the TextureView path is not used.
+        // HDR streams are excluded by the planner (no tone mapping in the interpolation pipeline).
+        val boostPlan = uiState.fpsBoosterPlan
+        val boostActive = boostPlan.active
+        val boostEngine = boostPlan.engine
         val useTextureSurface = !boostActive && (gradingActive || sheetType == PlayerSheetType.COLOR)
 
-        key(useTextureSurface, boostActive) {
+        key(useTextureSurface, boostActive, boostEngine) {
         AndroidView(
             factory = { ctx ->
                 val pv = when {
@@ -517,14 +522,33 @@ fun VideoPlayerScreen(
                     if (boostActive) {
                         // Same spot PlayerView uses for its own surface: under the subtitle layer.
                         val frame = findViewById<AspectRatioFrameLayout>(androidx.media3.ui.R.id.exo_content_frame)
-                        val boostView = MotionBoostSurfaceView(ctx).apply {
-                            this.player = viewModel.getPlayer()
-                            onStats = { src, out -> viewModel.updateMotionBoostStats(src, out) }
-                            onError = { _ ->
-                                viewModel.onMotionBoostFailed()
-                                android.widget.Toast.makeText(
-                                    ctx, "FPS Booster is not supported on this device", android.widget.Toast.LENGTH_LONG
-                                ).show()
+                        val boostView: android.view.View = if (boostEngine == BoosterEngine.OPTICAL_FLOW) {
+                            FpsBoosterSurfaceView(ctx).apply {
+                                this.player = viewModel.getPlayer()
+                                listener = object : FpsBoosterSurfaceView.Listener {
+                                    override fun onStats(stats: BoosterStats) = viewModel.updateFpsBoosterStats(stats)
+                                    override fun onFallback(reason: FallbackReason, detail: String?) {
+                                        viewModel.onFpsBoosterFallback(reason)
+                                        android.widget.Toast.makeText(ctx, reason.message, android.widget.Toast.LENGTH_LONG).show()
+                                    }
+                                }
+                                configure(boostPlan, uiState.fpsBooster)
+                            }
+                        } else {
+                            MotionBoostSurfaceView(ctx).apply {
+                                this.player = viewModel.getPlayer()
+                                onStats = { src, out ->
+                                    viewModel.updateFpsBoosterStats(
+                                        BoosterStats(
+                                            running = true, engine = BoosterEngine.CLASSIC, sourceFps = src,
+                                            targetFps = boostPlan.targetFps, renderedFps = out
+                                        )
+                                    )
+                                }
+                                onError = { _ ->
+                                    viewModel.onFpsBoosterFallback(FallbackReason.GPU_ERROR)
+                                    android.widget.Toast.makeText(ctx, FallbackReason.GPU_ERROR.message, android.widget.Toast.LENGTH_LONG).show()
+                                }
                             }
                         }
                         frame?.addView(
@@ -542,10 +566,16 @@ fun VideoPlayerScreen(
             },
             onRelease = { it.player = null },
             update = { view ->
-                (view.tag as? MotionBoostSurfaceView)?.apply {
-                    setTargetFps(uiState.motionBoostMode.targetFps)
-                    setExtreme(uiState.motionBoostExtreme)
-                    setColorGrade(uiState.colorBrightness, uiState.colorContrast, uiState.colorSaturation)
+                when (val boostView = view.tag) {
+                    is FpsBoosterSurfaceView -> boostView.apply {
+                        configure(boostPlan, uiState.fpsBooster)
+                        setColorGrade(uiState.colorBrightness, uiState.colorContrast, uiState.colorSaturation)
+                    }
+                    is MotionBoostSurfaceView -> boostView.apply {
+                        setTargetFps(boostPlan.targetFps)
+                        setExtreme(boostPlan.quality == BoosterQuality.PERFORMANCE)
+                        setColorGrade(uiState.colorBrightness, uiState.colorContrast, uiState.colorSaturation)
+                    }
                 }
                 // Apply brightness / contrast / saturation to the video layer.
                 (view.videoSurfaceView as? TextureView)?.setLayerPaint(
@@ -1100,9 +1130,9 @@ fun FloatingControls(
             VpToolButton(Icons.Rounded.Speed, uiState.playbackSpeed != 1.0f, onSpeedClick)
             VpToolButton(
                 Icons.Rounded.Animation,
-                uiState.motionBoostMode.isEnabled,
+                uiState.fpsBoosterPlan.active,
                 onMotionBoostClick,
-                label = if (uiState.motionBoostMode.isEnabled) uiState.motionBoostMode.targetFps.toString() else null
+                label = if (uiState.fpsBoosterPlan.active) uiState.fpsBoosterPlan.targetFps.toString() else null
             )
             VpToolButton(Icons.Rounded.Equalizer, uiState.isEqEnabled, onEqClick)
             VpToolButton(
@@ -2160,10 +2190,9 @@ fun VideoSettingsSheetContent(
 
         // FPS Booster Section
         if (activeSheetType == PlayerSheetType.MOTION_BOOST) {
-            MotionBoostSheetContent(
+            FpsBoosterSheetContent(
                 uiState = uiState,
-                onModeSelect = { viewModel.setMotionBoostMode(it) },
-                onExtremeChange = { viewModel.setMotionBoostExtreme(it) }
+                onSettingsChange = { viewModel.setFpsBoosterSettings(it) }
             )
         }
 
@@ -2177,142 +2206,6 @@ fun VideoSettingsSheetContent(
     }
 }
 
-
-@Composable
-fun MotionBoostSheetContent(
-    uiState: VideoPlayerUiState,
-    onModeSelect: (MotionBoostMode) -> Unit,
-    onExtremeChange: (Boolean) -> Unit = {}
-) {
-    val mxOrange = Color(0xFFFF8F00)
-    val context = LocalContext.current
-    val supportedRates = remember { DisplayRefreshRate.supportedRates(context) }
-    val peakHz = supportedRates.max().toInt()
-    val supportedModes = remember(supportedRates) {
-        MotionBoostMode.entries.associateWith { MotionBoostTiming.isRateSupported(supportedRates, it.targetFps) }
-    }
-
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(
-            text = "Adds in-between frames so low-FPS video looks smoother (e.g. 24 \u2192 60 FPS).",
-            color = Color.White.copy(alpha = 0.7f),
-            fontSize = 13.sp
-        )
-
-        if (uiState.motionBoostMode.isEnabled && uiState.isHdr) {
-            Text(
-                text = "Not available for HDR videos - playing normally.",
-                color = mxOrange,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Medium
-            )
-        } else if (uiState.motionBoostMode.isEnabled && uiState.motionBoostSourceFps > 0f) {
-            val src = uiState.motionBoostSourceFps
-            val out = uiState.motionBoostOutputFps
-            Text(
-                text = "Source %.0f FPS \u2192 showing %.0f FPS (panel %.0f Hz)"
-                    .format(src, out, DisplayRefreshRate.currentRate(context)),
-                color = mxOrange,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Medium
-            )
-        }
-
-        // Extreme performance toggle
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(12.dp))
-                .background(
-                    if (uiState.motionBoostExtreme) mxOrange.copy(alpha = 0.2f)
-                    else Color.White.copy(alpha = 0.06f)
-                )
-                .border(
-                    width = 1.dp,
-                    color = if (uiState.motionBoostExtreme) mxOrange.copy(alpha = 0.8f) else Color.White.copy(alpha = 0.08f),
-                    shape = RoundedCornerShape(12.dp)
-                )
-                .clickable { onExtremeChange(!uiState.motionBoostExtreme) }
-                .padding(horizontal = 14.dp, vertical = 12.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "Extreme performance",
-                    color = Color.White,
-                    fontSize = 16.sp,
-                    fontWeight = if (uiState.motionBoostExtreme) FontWeight.Bold else FontWeight.Medium
-                )
-                Text(
-                    text = "Highest FPS and smoothness on heavy videos. Lighter processing, so the picture is a bit softer. " +
-                        "Leave off for original quality.",
-                    color = Color.White.copy(alpha = 0.55f),
-                    fontSize = 12.sp
-                )
-            }
-            Switch(
-                checked = uiState.motionBoostExtreme,
-                onCheckedChange = onExtremeChange,
-                colors = SwitchDefaults.colors(checkedThumbColor = mxOrange, checkedTrackColor = mxOrange.copy(0.4f))
-            )
-        }
-
-        MotionBoostMode.entries.forEach { mode ->
-            val supported = supportedModes[mode] == true
-            val isSelected = uiState.motionBoostMode == mode
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(
-                        if (isSelected) mxOrange.copy(alpha = 0.2f)
-                        else Color.White.copy(alpha = 0.06f)
-                    )
-                    .border(
-                        width = 1.dp,
-                        color = if (isSelected) mxOrange.copy(alpha = 0.8f) else Color.White.copy(alpha = 0.08f),
-                        shape = RoundedCornerShape(12.dp)
-                    )
-                    .clickable(enabled = supported) { onModeSelect(mode) }
-                    .padding(horizontal = 14.dp, vertical = 12.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column {
-                    Text(
-                        text = mode.label,
-                        color = Color.White.copy(alpha = if (supported) 1f else 0.4f),
-                        fontSize = 16.sp,
-                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
-                    )
-                    if (!supported) {
-                        Text(
-                            text = "Display supports up to $peakHz Hz",
-                            color = Color.White.copy(alpha = 0.4f),
-                            fontSize = 12.sp
-                        )
-                    }
-                }
-                if (isSelected) {
-                    Icon(
-                        imageVector = Icons.Rounded.Check,
-                        contentDescription = "Selected",
-                        tint = mxOrange,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-            }
-        }
-
-        Text(
-            text = "Uses extra GPU and battery. Fast scenes and scene cuts may show small artifacts; " +
-                "it turns itself off for videos that already play at the chosen rate.",
-            color = Color.White.copy(alpha = 0.5f),
-            fontSize = 12.sp
-        )
-    }
-}
 
 @androidx.media3.common.util.UnstableApi
 @Composable
