@@ -94,7 +94,7 @@ On the same synthetic ground-truth clips the old engine is no better than plain 
 
 ### Performance and fallback
 - `AdaptiveQualityController` ladder: Quality 1280 → Balanced 960 → Performance 640 → Minimal 480. Starts at the user's preset, never goes above it; battery saver caps at Performance. Overloaded window (estimate > 70 % of the source interval, or > 5 % dropped, or > 15 % missed output) → one step down (cooldown 2 s). Overloaded for 4 windows at the lowest rung (or at the user's rung when adaptive is off) → **fallback to standard playback**. 10 calm windows → one step back up; a failed upgrade blocks upgrades for 30 s. Moderate thermal status forces one step down; severe → immediate fallback.
-- Pause/seek/stall windows (< 3 source frames) are ignored by the controller.
+- Pause/seek/stall windows (< 3 source frames) are ignored by the controller. So are the first 3 windows of a session and the first 2 after a quality step or a target-FPS change (resource reallocation and re-pacing look like overload for a moment; judging them caused spurious "could not keep up" messages right after changing a setting).
 - GPU failure of any kind (no ES3, no float render targets, shader/link error, incomplete framebuffer, swap failure) → one error callback → the screen drops back to normal playback and shows why. The booster stays off for that video; a new video gets a fresh attempt.
 - Surface destruction: ExoPlayer is detached first, the renderer is released and awaited (500 ms), a new renderer is built on the next `surfaceCreated`.
 - HDR sources are excluded by the planner (the pipeline is 8-bit SDR with no tone mapping). **No HDR support is claimed.**

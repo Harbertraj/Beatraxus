@@ -63,6 +63,7 @@ class FpsBoosterSurfaceView(context: Context) : SurfaceView(context), SurfaceHol
             applied!!.first.quality != plan.quality ||
             applied!!.second.adaptiveResolution != settings.adaptiveResolution ||
             applied!!.second.batterySaver != settings.batterySaver
+        val targetChanged = applied?.first?.targetFps != plan.targetFps
         this.plan = plan
         this.settings = settings
         applied = key
@@ -72,6 +73,8 @@ class FpsBoosterSurfaceView(context: Context) : SurfaceView(context), SurfaceHol
         if (needsNewSession && renderer != null) {
             startManager()
             renderer?.setLevel(manager!!.initialLevel)
+        } else if (targetChanged) {
+            manager?.restartGrace() // output re-pacing is not an overload
         }
     }
 

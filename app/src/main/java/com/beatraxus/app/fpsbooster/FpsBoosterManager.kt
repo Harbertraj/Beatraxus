@@ -31,6 +31,12 @@ class FpsBoosterManager(
     private var thermal = ThermalLevel.NONE
     private var droppedTotal = 0L
     private var finished = false
+    /**
+     * Windows to skip after anything that disturbs the pipeline (new session, target change, quality step).
+     * Reallocating GPU resources and re-pacing output make the next one or two windows look overloaded even
+     * on a healthy device; judging them used to trigger "could not keep up" right after a setting change.
+     */
+    private var graceWindows = START_GRACE_WINDOWS
     private val main = Handler(Looper.getMainLooper())
 
     private val power: PowerManager? = context.applicationContext.getSystemService(Context.POWER_SERVICE) as? PowerManager
@@ -56,12 +62,13 @@ class FpsBoosterManager(
         if (finished) return
         droppedTotal += w.dropped
         // Pause, seek or a stalled source produce almost no frames: that says nothing about load.
-        val evaluate = w.sourceFrames >= 3
+        var evaluate = w.sourceFrames >= 3
+        if (graceWindows > 0) { graceWindows--; evaluate = false }
         var fallback: FallbackReason? = null
         if (evaluate) {
             val expected = FramePacing.achievableFps(plan.targetFps, panelRates).toFloat()
             val d = controller.onWindow(w, sourceFps, expected, thermal)
-            if (d.changed) listener.onQualityLevel(d.level)
+            if (d.changed) { graceWindows = CHANGE_GRACE_WINDOWS; listener.onQualityLevel(d.level) }
             fallback = d.fallback
         }
         listener.onStats(
@@ -87,6 +94,9 @@ class FpsBoosterManager(
         }
     }
 
+    /** Call after a settings change that re-paces or reallocates the pipeline without creating a new manager. */
+    fun restartGrace() { graceWindows = START_GRACE_WINDOWS }
+
     fun release() {
         finished = true
         val pm = power
@@ -97,5 +107,9 @@ class FpsBoosterManager(
         thermalListener = null
     }
 
-    private companion object { const val TAG = "FpsBoosterMgr" }
+    private companion object {
+        const val TAG = "FpsBoosterMgr"
+        const val START_GRACE_WINDOWS = 3
+        const val CHANGE_GRACE_WINDOWS = 2
+    }
 }

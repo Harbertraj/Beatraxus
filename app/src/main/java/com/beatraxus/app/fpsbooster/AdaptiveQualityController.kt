@@ -17,9 +17,9 @@ enum class ThermalLevel {
 
 /** Why the booster stopped and standard playback took over. */
 enum class FallbackReason(val message: String) {
-    CANNOT_KEEP_UP("Device could not keep up: playing normally"),
+    CANNOT_KEEP_UP("Device could not keep up: playing normally. Try a lower Quality or turn on Adaptive resolution"),
     THERMAL("Device is too hot: playing normally"),
-    GPU_ERROR("FPS Booster is not supported on this GPU: playing normally")
+    GPU_ERROR("FPS Booster could not start (GPU error): playing normally")
 }
 
 /** One rung of the quality ladder: the processing sizes the renderer should use. */
