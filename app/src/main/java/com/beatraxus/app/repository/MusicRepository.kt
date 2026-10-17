@@ -53,6 +53,12 @@ class MusicRepository(private val context: Context) {
         // during a quick scan), so the live counts are cumulative instead of per-folder.
         seedAlbums: Set<String> = emptySet(),
         seedArtists: Set<String> = emptySet(),
+        // Songs already in the library. They are NOT re-read (no metadata extraction), so a
+        // quick scan only processes songs that are new.
+        skipIds: Set<String> = emptySet(),
+        // Receives the ids of every song currently present in the scanned folders
+        // (including skipped ones) so callers can detect removed songs.
+        onPresentIds: ((Set<String>) -> Unit)? = null,
         onProgress: (count: Int, albumCount: Int, artistCount: Int, progress: Float) -> Unit
     ): List<Song> = withContext(scanDispatcher) {
         val albumsSet = seedAlbums.toMutableSet()
@@ -162,7 +168,9 @@ class MusicRepository(private val context: Context) {
             }
         }
 
-        val rawList = rawById.values.toList()
+        onPresentIds?.invoke(rawById.keys.mapTo(HashSet()) { it.toString() })
+        val rawList = if (skipIds.isEmpty()) rawById.values.toList()
+            else rawById.values.filter { it.id.toString() !in skipIds }
         if (rawList.isEmpty()) return@withContext emptyList<Song>()
 
         val total = rawList.size

@@ -1608,13 +1608,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         // This branch used to return without ever clearing isLoadingLibrary, which
                         // left the splash screen up forever after the album-art cache was wiped.
                         _uiState.update { it.copy(isLoadingLibrary = false) }
-                        if (_uiState.value.musicFolders.isNotEmpty()) { awaitUiSettled(); quickScan() }
                         return@launch
                     }
 
-                    // After loading from DB, we trigger an incremental scan to check for new songs in added folders
+                    // Loaded from the DB only: scans run solely when the user taps Full/Quick scan.
                     _uiState.update { it.copy(isLoadingLibrary = false) }
-                    if (_uiState.value.musicFolders.isNotEmpty()) { awaitUiSettled(); quickScan() }
                     return@launch
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
@@ -1627,8 +1625,6 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 _uiState.update { if (it.isLoadingLibrary) it.copy(isLoadingLibrary = false) else it }
             }
 
-            // Perform an incremental scan ONLY if DB was empty
-            if (_uiState.value.musicFolders.isNotEmpty()) { awaitUiSettled(); quickScan() }
         }
     }
 
@@ -3824,9 +3820,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 musicFolders = folders,
                 blockedFolders = musicRepository.getBlockedFolders()
             ) }
-            if (!_uiState.value.isFirstRun) {
-                quickScan()
-            }
+            // No automatic scan: the user runs Quick Scan to index the new folder.
         }
     }
 
@@ -3896,7 +3890,6 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 musicFolders = folders,
                 blockedFolders = musicRepository.getBlockedFolders()
             ) }
-            quickScan()
             loadVideos(forceImmediate = true)
         }
     }

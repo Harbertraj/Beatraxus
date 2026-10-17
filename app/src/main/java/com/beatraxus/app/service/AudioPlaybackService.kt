@@ -836,6 +836,62 @@ class AudioPlaybackService : Service() {
                 val folderDao = database.folderDao()
                 val activeFolders = folderDao.getActiveFoldersList()
                 
+                if (!fullScan) {
+                    // QUICK SCAN: only look for NEW songs inside the Music Folders. Songs that are
+                    // already in the library are never re-read.
+                    val currentLocal = currentSongs.filter { it.source == SongSource.LOCAL }
+                    val folderPaths = activeFolders.map { musicRepository.normalizePath(it.path).trimEnd('/') }
+                    fun inMusicFolders(song: Song) = folderPaths.any { song.folder.trimEnd('/') == it || song.folder.startsWith("$it/") }
+
+                    val knownIds = currentLocal.mapTo(HashSet()) { it.id }
+                    var presentIds: Set<String> = emptySet()
+                    val newSongs = if (folderPaths.isEmpty()) emptyList() else musicRepository.scanAudioFiles(
+                        fullScan = false,
+                        excludedPaths = blocked,
+                        skipIds = knownIds,
+                        onPresentIds = { presentIds = it },
+                        seedAlbums = currentLocal.mapTo(HashSet()) { it.album },
+                        seedArtists = currentLocal.mapTo(HashSet()) { it.artist }
+                    ) { count, albums, artists, progress ->
+                        onProgress(progress, currentLocal.size + count, albums, artists)
+                        updateScanningProgress(progress, currentLocal.size + count, false)
+                    }
+
+                    val removedLocalIds = if (folderPaths.isEmpty()) emptySet() else
+                        currentLocal.filter { inMusicFolders(it) && it.id !in presentIds }.mapTo(HashSet()) { it.id }
+                    val hasChanges = newSongs.isNotEmpty() || removedLocalIds.isNotEmpty()
+
+                    if (hasChanges) {
+                        withContext(Dispatchers.IO) {
+                            database.withTransaction {
+                                if (removedLocalIds.isNotEmpty()) songDao.deleteSongsByIds(removedLocalIds.toList())
+                                newSongs.map { it.toEntity() }.chunked(200).forEach { songDao.insertSongs(it) }
+                            }
+                        }
+                    }
+                    activeFolders.forEach { folder ->
+                        val actual = File(musicRepository.normalizePath(folder.path)).lastModified()
+                        folderDao.updateLastModified(folder.path, actual)
+                    }
+
+                    val results = (currentLocal.filter { it.id !in removedLocalIds } + newSongs).distinctBy { it.id }
+                    val message = when {
+                        folderPaths.isEmpty() -> "No music folders added"
+                        newSongs.isNotEmpty() && removedLocalIds.isNotEmpty() -> "Added ${newSongs.size} songs, removed ${removedLocalIds.size}"
+                        newSongs.isNotEmpty() -> "Added ${newSongs.size} new songs"
+                        removedLocalIds.isNotEmpty() -> "Removed ${removedLocalIds.size} missing songs"
+                        else -> "No new songs found"
+                    }
+                    try {
+                        onComplete(results, newSongs, removedLocalIds.toList(), message, hasChanges)
+                    } catch (e: Exception) {
+                        if (e is CancellationException) throw e
+                        Log.e(TAG, "onComplete callback failed", e)
+                    }
+                    updateScanningProgress(1.0f, results.size, true)
+                    return@launch
+                }
+
                 val foldersToScan = mutableListOf<String>()
                 val unchangedFolders = mutableListOf<String>()
                 
@@ -968,26 +1024,23 @@ class AudioPlaybackService : Service() {
                         folderDao.updateLastModified(folder.path, actualLastModified)
                     }
 
-                    // Never auto re-add folders once the user has removed/excluded one.
-                    if (activeFolders.isEmpty() && results.isNotEmpty() && blocked.isEmpty()) {
-                        // Auto-register common music roots to fix "Empty Music Folders" in settings
-                        val discoveredRoots = results.asSequence()
-                            .map { it.folder }
-                            .filter { it.isNotBlank() }
-                            .map { path ->
-                                val parts = path.split("/")
-                                if (parts.size >= 5 && parts[1] == "storage") {
-                                    parts.take(5).joinToString("/")
-                                } else {
-                                    path.substringBeforeLast("/", path)
-                                }
-                            }
-                            .distinct()
-                            .toList()
-
-                        discoveredRoots.forEach { root ->
-                            folderDao.insertFolder(com.beatraxus.app.model.FolderEntity(root))
+                    // Make sure the Music Folders section lists every folder the full scan found
+                    // music in (skipping folders the user excluded and ones already covered).
+                    fun cover(a: String, b: String) = b == a || b.startsWith("$a/")
+                    val known = (activeFolders.map { it.path } + blocked)
+                        .map { musicRepository.normalizePath(it).trimEnd('/') }
+                    val discoveredRoots = results.asSequence()
+                        .map { it.folder.trimEnd('/') }
+                        .filter { it.isNotBlank() }
+                        .map { path ->
+                            val parts = path.split("/")
+                            if (parts.size > 5 && parts[1] == "storage") parts.take(5).joinToString("/") else path
                         }
+                        .distinct()
+                        .filter { root -> known.none { k -> cover(k, root) || cover(root, k) } }
+                        .toList()
+                    discoveredRoots.forEach { root ->
+                        folderDao.insertFolder(com.beatraxus.app.model.FolderEntity(root, lastModified = File(root).lastModified()))
                     }
                 }
 
