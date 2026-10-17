@@ -1314,7 +1314,18 @@ class AudioEngine(
 
             if (activeSession?.sessionId == this.sessionId) {
                 val targetRate = resolveTargetSampleRate(format.sampleRate, dspConfig)
-                val targetBitDepth = if (dspConfig.outputMode == OutputMode.HI_RES) 32 else dspConfig.sampleFormat.bitDepth
+                val isHiRes = dspConfig.outputMode == OutputMode.HI_RES
+                // MTK HiFi: an explicit Sample Format choice wins. On Auto, hand the mixer
+                // 24-bit PCM (what Poweramp's Hi-Res output reports) instead of Float32.
+                // 24-bit packed needs API 31+; if the device rejects it we fall back to Float32
+                // below and remember that for the rest of the app run.
+                val outputFormat = when {
+                    !isHiRes -> dspConfig.sampleFormat
+                    dspConfig.sampleFormat != SampleFormat.AUTO -> dspConfig.sampleFormat
+                    pcm24OutputFailed || android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.S -> SampleFormat.FLOAT_32BIT
+                    else -> SampleFormat.PCM_24BIT
+                }
+                val targetBitDepth = if (isHiRes) outputFormat.bitDepth else dspConfig.sampleFormat.bitDepth
 
                 val outputConfigChanged = targetRate != lastOutputRate || targetBitDepth != lastOutputBitDepth
                 val hardwareConfigChanged = targetRate != output.outputSampleRate() || targetBitDepth != output.outputBitDepth()
@@ -1332,17 +1343,22 @@ class AudioEngine(
 
                 output.setTargetSampleRate(targetRate)
 
-                if (dspConfig.outputMode == OutputMode.HI_RES) {
-                    output.setSampleFormat(SampleFormat.FLOAT_32BIT)
-                } else {
-                    output.setSampleFormat(dspConfig.sampleFormat)
-                }
+                output.setSampleFormat(outputFormat)
 
                 // RECOVERY: Capture the current cumulative position before re-initializing
                 // the output, so we can resume smoothly without a jump.
                 basePositionMs = currentRenderedPositionMs()
 
-                if (!output.init(format.sampleRate, format.channels, format.bitDepth, format.isDoP, resetOffsets = false)) {
+                var outputReady = output.init(format.sampleRate, format.channels, format.bitDepth, format.isDoP, resetOffsets = false)
+                if (!outputReady && isHiRes && outputFormat == SampleFormat.PCM_24BIT && dspConfig.sampleFormat == SampleFormat.AUTO) {
+                    // This device does not accept 24-bit packed PCM: fall back to Float32.
+                    logWarn("24-bit output unavailable, falling back to Float32")
+                    pcm24OutputFailed = true
+                    lastOutputBitDepth = SampleFormat.FLOAT_32BIT.bitDepth
+                    output.setSampleFormat(SampleFormat.FLOAT_32BIT)
+                    outputReady = output.init(format.sampleRate, format.channels, format.bitDepth, format.isDoP, resetOffsets = false)
+                }
+                if (!outputReady) {
                     logWarn("Audio output initialization failed")
                 }
 
@@ -1458,6 +1474,9 @@ class AudioEngine(
 
     private var appliedDspRevision = -1L
 
+    /** Set once the device rejects 24-bit packed PCM in MTK HiFi mode; stays Float32 afterwards. */
+    @Volatile private var pcm24OutputFailed = false
+
     companion object {
         private const val TAG = "AudioEngine"
         private const val RING_BUFFER_SAMPLES = 262_144 // Increased for better pre-fetch
@@ -1551,12 +1570,19 @@ class AudioEngine(
             ResamplerMode.AUTO -> {
                 val nativeRate = AudioTrack.getNativeOutputSampleRate(AudioManager.STREAM_MUSIC)
                 if (config.outputMode == OutputMode.HI_RES) {
-                    // MTK HiFi direct path: honour the source sample rate exactly up to 192kHz.
-                    // Do NOT downsample — the hardware driver handles any DAC-level conversion.
-                    // This is the same policy Poweramp uses: pass native source rate to the DAC.
                     when {
                         inputRate <= 0 -> nativeRate
-                        inputRate <= 384000 -> inputRate   // preserve exact source rate up to 384kHz
+                        // USB Direct negotiates its own rate with the DAC: keep the source rate.
+                        config.usbExclusiveEnabled -> inputRate.coerceAtMost(384000)
+                        // Source rate is BELOW the device mixer rate (e.g. 44.1 kHz FLAC on a
+                        // 48 kHz device). If we handed 44.1 kHz to AudioTrack, the Android mixer
+                        // would resample it with the platform's own SRC (not SoXR, and not
+                        // controlled by the SoXR quality setting). Resample to the mixer rate
+                        // here with SoXR instead, so the system has nothing left to convert.
+                        // This is what Poweramp does (44.1 -> 48 kHz with SoX).
+                        nativeRate > 0 && inputRate < nativeRate -> nativeRate
+                        // At or above the mixer rate: keep the existing pass-through policy.
+                        inputRate <= 384000 -> inputRate
                         else -> 384000                     // hard cap at 384kHz
                     }
                 } else {
