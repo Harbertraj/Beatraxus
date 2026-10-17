@@ -46,8 +46,16 @@ class AiEqEngine(
             )
         }
 
-        // Tempo sharpens the mood when the title gave no hint and the genre is a broad one.
-        val mood = refineMoodWithTempo(inferred, measured?.tempoBpm ?: 0f)
+        // Tempo + key from the audio (BPM from the onset curve, key from the pitch-class profile).
+        val tempo = estimateTempo(features)
+        val key = AiEqMusicAnalysis.estimateKey(features?.chroma)?.takeIf { it.confidence >= MIN_KEY_CONFIDENCE }
+        val music = AiEqKnowledge.MusicTraits(
+            bpm = tempo.bpm, bpmConfidence = tempo.confidence,
+            tonic = key?.tonic ?: 0, minor = key?.minor ?: false, keyConfidence = key?.confidence ?: 0f
+        )
+
+        // Tempo and mode sharpen the mood when the title gave no hint and the genre is a broad one.
+        val mood = refineMood(inferred, tempo, key)
 
         val traits = AiEqKnowledge.FileTraits(
             year = song.year,
@@ -58,7 +66,7 @@ class AiEqEngine(
         )
 
         val gains = try {
-            AiEqKnowledge.buildGains(inferred.copy(mood = mood), traits, measured)
+            AiEqKnowledge.buildGains(inferred.copy(mood = mood), traits, measured, music)
         } catch (t: Throwable) {
             Log.w(TAG, "Gain build failed for ${song.title}: ${t.message}")
             AiEqKnowledge.curveFor("Pop")
@@ -70,18 +78,37 @@ class AiEqEngine(
             mood = mood,
             language = inferred.language,
             gains = gains,
-            confidence = AiEqKnowledge.confidence(inferred, measured != null),
-            source = if (measured != null) AiEqProfile.Source.AUDIO else AiEqProfile.Source.METADATA
+            confidence = AiEqKnowledge.confidence(inferred, measured != null, music),
+            source = if (measured != null) AiEqProfile.Source.AUDIO else AiEqProfile.Source.METADATA,
+            bpm = tempo.bpm,
+            key = key?.label.orEmpty()
         )
     }
 
-    private fun refineMoodWithTempo(inferred: AiEqKnowledge.Inferred, bpm: Float): String {
-        if (bpm <= 0f) return inferred.mood
+    /**
+     * Tempo from the onset curve. When the native analyzer gave no usable curve (or its rate), fall back to its
+     * own coarse tempo - but only with low confidence, and never its 120 BPM "couldn't tell" default.
+     */
+    private fun estimateTempo(f: AudioFeatures?): AiEqMusicAnalysis.Tempo {
+        if (f == null) return AiEqMusicAnalysis.Tempo(0f, 0f)
+        val rate = if (f.noveltyRateHz > 0f) f.noveltyRateHz else DEFAULT_NOVELTY_RATE_HZ
+        val fromCurve = AiEqMusicAnalysis.estimateTempo(f.noveltyVector, rate)
+        if (fromCurve.known) return fromCurve
+        val native = f.tempoBpm
+        return if (native in 60f..200f && native != 120f) AiEqMusicAnalysis.Tempo(native, 0.25f)
+        else AiEqMusicAnalysis.Tempo(0f, 0f)
+    }
+
+    private fun refineMood(inferred: AiEqKnowledge.Inferred, tempo: AiEqMusicAnalysis.Tempo, key: AiEqMusicAnalysis.Key?): String {
+        val bpm = tempo.bpm
+        val mood = inferred.mood
+        if (bpm <= 0f || tempo.confidence < 0.3f) return mood
         // keep a mood that came from the title/genre unless it's just the generic default for a fast/slow track
         return when {
-            bpm >= 135f && inferred.mood in setOf("Happy", "Romantic", "Calm") -> "Energetic"
-            bpm in 1f..70f && inferred.mood in setOf("Happy", "Energetic", "Party") -> "Calm"
-            else -> inferred.mood
+            bpm >= 135f && mood in setOf("Happy", "Romantic", "Calm") -> "Energetic"
+            bpm in 1f..70f && mood in setOf("Happy", "Energetic", "Party") -> "Calm"
+            bpm < 100f && key != null && key.minor && key.confidence >= 0.6f && mood == "Happy" -> "Emotional"
+            else -> mood
         }
     }
 
@@ -108,5 +135,8 @@ class AiEqEngine(
         const val TAG = "AiEqEngine"
         const val ANALYSIS_SECONDS = 30
         const val MEASURE_TIMEOUT_MS = 45_000L
+        const val MIN_KEY_CONFIDENCE = 0.25f
+        /** 44.1 kHz / 2048-sample hop - the native analyzer's novelty rate when it doesn't report one. */
+        const val DEFAULT_NOVELTY_RATE_HZ = 44100f / 2048f
     }
 }

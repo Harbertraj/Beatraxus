@@ -6212,7 +6212,10 @@ fun SlideDrawerMenu(
     onClose: () -> Unit
 ) {
     val infiniteTransition = rememberInfiniteTransition(label = "menuBackground")
-    val gradientOffset by infiniteTransition.animateFloat(
+    // Kept as a State and only read while DRAWING (drawBehind below). Reading it with `by` in the body made the
+    // whole drawer recompose on every frame for as long as it was open, which stole frame time from scrolling
+    // the library list.
+    val gradientOffset = infiniteTransition.animateFloat(
         initialValue = 0f,
         targetValue = 1000f,
         animationSpec = infiniteRepeatable(
@@ -6284,18 +6287,21 @@ fun SlideDrawerMenu(
                     ),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(
-                            brush = Brush.linearGradient(
-                                colors = listOf(
-                                    accentColor.copy(0.22f),
-                                    Color.White.copy(0.05f),
-                                    accentColor.copy(0.12f)
+                        .drawBehind {
+                            val o = gradientOffset.value
+                            drawRoundRect(
+                                brush = Brush.linearGradient(
+                                    colors = listOf(
+                                        accentColor.copy(0.22f),
+                                        Color.White.copy(0.05f),
+                                        accentColor.copy(0.12f)
+                                    ),
+                                    start = Offset(o, o),
+                                    end = Offset(o + 500f, o + 500f)
                                 ),
-                                start = Offset(gradientOffset, gradientOffset),
-                                end = Offset(gradientOffset + 500f, gradientOffset + 500f)
-                            ),
-                            shape = RoundedCornerShape(26.dp)
-                        )
+                                cornerRadius = androidx.compose.ui.geometry.CornerRadius(26.dp.toPx())
+                            )
+                        }
                 ) {
                     Box(modifier = Modifier.fillMaxWidth()) {
                         val hasCastDevices = com.beatraxus.app.cast.CastManager.isConnected ||
@@ -6313,19 +6319,19 @@ fun SlideDrawerMenu(
                         if (isPlaying) {
                             val notesTransition = rememberInfiniteTransition(label = "notes")
 
-                            val note1X by notesTransition.animateFloat(
+                            val note1X = notesTransition.animateFloat(
                                 initialValue = 0.1f, targetValue = 0.9f,
                                 animationSpec = infiniteRepeatable(tween(6000), RepeatMode.Reverse), label = "n1x"
                             )
-                            val note1Y by notesTransition.animateFloat(
+                            val note1Y = notesTransition.animateFloat(
                                 initialValue = 0.2f, targetValue = 0.8f,
                                 animationSpec = infiniteRepeatable(tween(8000), RepeatMode.Reverse), label = "n1y"
                             )
-                            val note2X by notesTransition.animateFloat(
+                            val note2X = notesTransition.animateFloat(
                                 initialValue = 0.8f, targetValue = 0.2f,
                                 animationSpec = infiniteRepeatable(tween(7000), RepeatMode.Reverse), label = "n2x"
                             )
-                            val note2Y by notesTransition.animateFloat(
+                            val note2Y = notesTransition.animateFloat(
                                 initialValue = 0.7f, targetValue = 0.3f,
                                 animationSpec = infiniteRepeatable(tween(9000), RepeatMode.Reverse), label = "n2y"
                             )
@@ -6334,7 +6340,10 @@ fun SlideDrawerMenu(
                                 Icons.Rounded.MusicNote, null,
                                 modifier = Modifier
                                     .align(Alignment.TopStart)
-                                    .offset(x = 180.dp * note1X, y = 100.dp * note1Y)
+                                    .graphicsLayer {
+                                        translationX = 180.dp.toPx() * note1X.value
+                                        translationY = 100.dp.toPx() * note1Y.value
+                                    }
                                     .blur(8.dp)
                                     .size(40.dp),
                                 tint = Color.White.copy(0.2f)
@@ -6343,7 +6352,10 @@ fun SlideDrawerMenu(
                                 Icons.Rounded.Audiotrack, null,
                                 modifier = Modifier
                                     .align(Alignment.TopStart)
-                                    .offset(x = 180.dp * note2X, y = 100.dp * note2Y)
+                                    .graphicsLayer {
+                                        translationX = 180.dp.toPx() * note2X.value
+                                        translationY = 100.dp.toPx() * note2Y.value
+                                    }
                                     .blur(6.dp)
                                     .size(36.dp),
                                 tint = accentColor.copy(0.25f)
@@ -6457,7 +6469,7 @@ fun SlideDrawerMenu(
                         modifier = Modifier.padding(start = 12.dp, top = 0.dp, bottom = 6.dp)
                     )
                 }
-                items(menuItems) { item ->
+                items(menuItems, key = { it.view }) { item ->
                     val isSelected = currentView == item.view ||
                             (item.view == LibraryView.ALBUMS && currentView == LibraryView.ALBUM_DETAIL) ||
                             (item.view == LibraryView.ARTISTS && currentView == LibraryView.ARTIST_DETAIL) ||
@@ -6470,16 +6482,14 @@ fun SlideDrawerMenu(
                     val rowShape = RoundedCornerShape(16.dp)
                     val rowBg = if (isSelected) {
                         Brush.horizontalGradient(listOf(item.color.copy(0.30f), item.color.copy(0.04f)))
-                    } else {
-                        Brush.horizontalGradient(listOf(Color.Transparent, Color.Transparent))
-                    }
+                    } else null
 
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(54.dp)
                             .clip(rowShape)
-                            .background(rowBg)
+                            .then(if (rowBg != null) Modifier.background(rowBg) else Modifier)
                             .clickable { onSelectView(item.view); onClose() }
                     ) {
                         if (isSelected) {

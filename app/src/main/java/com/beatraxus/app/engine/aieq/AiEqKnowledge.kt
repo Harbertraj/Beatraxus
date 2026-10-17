@@ -12,7 +12,7 @@ import kotlin.math.min
  */
 object AiEqKnowledge {
     /** Bump to make every cached profile get re-predicted. */
-    const val ENGINE_VERSION = 1
+    const val ENGINE_VERSION = 2
     const val BAND_COUNT = 10
     const val MAX_GAIN_DB = 4.5f
 
@@ -240,10 +240,57 @@ object AiEqKnowledge {
         val tempoBpm: Float
     )
 
+    /**
+     * Tempo and key of the song (all optional - confidence 0 means "unknown, don't use"). They add a small,
+     * continuous per-song offset on top of genre + mood so two songs of one genre still get different curves.
+     */
+    data class MusicTraits(
+        val bpm: Float = 0f,
+        val bpmConfidence: Float = 0f,
+        val tonic: Int = 0,
+        val minor: Boolean = false,
+        val keyConfidence: Float = 0f
+    )
+
+    /**
+     * Fast tracks get a tighter, punchier low end and more presence; slow ones get warmth and a softer top.
+     * Minor keys lean darker / warmer, major keys brighter. A tonic whose bass fundamental sits right on the
+     * 62 Hz band is not boosted there (a boost would make that one note boom).
+     */
+    fun musicAdjustment(m: MusicTraits): FloatArray {
+        val adj = FloatArray(BAND_COUNT)
+        val tempo = ((m.bpm - 120f) / 50f).coerceIn(-1f, 1f) * m.bpmConfidence.coerceIn(0f, 1f)
+        if (m.bpm > 0f && tempo != 0f) {
+            if (tempo > 0f) {
+                adj[0] -= 0.2f * tempo; adj[1] -= 0.2f * tempo
+                adj[2] += 0.3f * tempo; adj[3] -= 0.3f * tempo
+                adj[6] += 0.15f * tempo; adj[7] += 0.25f * tempo
+            } else {
+                val s = -tempo
+                adj[1] += 0.25f * s; adj[2] += 0.3f * s; adj[3] += 0.2f * s
+                adj[8] -= 0.15f * s; adj[9] -= 0.15f * s
+            }
+        }
+        val k = m.keyConfidence.coerceIn(0f, 1f)
+        if (k > 0f) {
+            if (m.minor) {
+                adj[2] += 0.15f * k; adj[3] += 0.1f * k; adj[8] -= 0.15f * k; adj[9] -= 0.1f * k
+            } else {
+                adj[6] += 0.1f * k; adj[7] += 0.15f * k; adj[8] += 0.15f * k
+            }
+            val d = abs(ln(AiEqMusicAnalysis.tonicBassHz(m.tonic) / BAND_FREQUENCIES[1]) / ln(2f)) // 0 .. ~0.5 octave
+            val proximity = (1f - d / 0.25f).coerceIn(0f, 1f)
+            adj[1] -= 0.3f * k * proximity
+            adj[2] -= 0.15f * k * proximity
+        }
+        for (i in adj.indices) adj[i] = adj[i].coerceIn(-0.6f, 0.6f)
+        return adj
+    }
+
     fun curveFor(curveKey: String): FloatArray = (CURVES[curveKey] ?: CURVES.getValue("Pop")).copyOf()
     fun moodOffsetFor(mood: String): FloatArray = (MOOD_OFFSETS[mood] ?: FloatArray(BAND_COUNT)).copyOf()
 
-    fun buildGains(inferred: Inferred, traits: FileTraits, measured: Measured?): FloatArray {
+    fun buildGains(inferred: Inferred, traits: FileTraits, measured: Measured?, music: MusicTraits? = null): FloatArray {
         val genre = curveFor(inferred.curveKey)
         val mood = moodOffsetFor(inferred.mood)
         val g = FloatArray(BAND_COUNT) { genre[it] * 0.9f + mood[it] * 0.6f }
@@ -261,6 +308,11 @@ object AiEqKnowledge {
             if (measured.dynamicRangeDb in 1f..7f) { g[6] -= 0.3f; g[7] -= 0.5f; g[8] -= 0.4f }
             if (measured.lufs > -9f) { g[0] -= 0.4f; g[1] -= 0.4f }
             if (measured.dynamicRangeDb > 16f) { g[2] += 0.2f; g[9] += 0.2f }
+        }
+
+        if (music != null) {
+            val adj = musicAdjustment(music)
+            for (i in 0 until BAND_COUNT) g[i] += adj[i]
         }
 
         // Low-bitrate lossy files have little or no air: boosting it only raises the codec noise.
@@ -325,11 +377,16 @@ object AiEqKnowledge {
         return FloatArray(BAND_COUNT) { (20f * log10(max(energies[it], 1e-6f) / avg)).coerceIn(-30f, 30f) }
     }
 
-    fun confidence(inferred: Inferred, measured: Boolean): Float = when {
-        measured && inferred.known -> 0.9f
-        measured -> 0.8f
-        inferred.known -> 0.6f
-        else -> 0.35f
+    fun confidence(inferred: Inferred, measured: Boolean, music: MusicTraits? = null): Float {
+        val base = when {
+            measured && inferred.known -> 0.9f
+            measured -> 0.8f
+            inferred.known -> 0.6f
+            else -> 0.35f
+        }
+        // Reliable tempo AND key agree with the measured spectrum -> a little more trust.
+        val bonus = if (measured && music != null && music.bpmConfidence >= 0.5f && music.keyConfidence >= 0.5f) 0.05f else 0f
+        return min(0.95f, base + bonus)
     }
 
     /** AI EQ gain at any frequency: log-frequency interpolation between the ten bands (flat beyond the ends). */

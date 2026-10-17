@@ -445,6 +445,11 @@ internal fun parseNativeFeatures(rawArr: FloatArray?): AudioFeatures? {
     val noveltyLen = rawArr[14].toInt()
     if (spectralLen < 0 || noveltyLen < 0) return null
     if (rawArr.size < 15 + spectralLen + noveltyLen) return null
+    // Optional trailing extras: 12 chroma values + novelty rate (absent in older / DSF layouts).
+    val extrasStart = 15 + spectralLen + noveltyLen
+    val hasExtras = rawArr.size >= extrasStart + 13
+    val chroma = if (hasExtras) rawArr.copyOfRange(extrasStart, extrasStart + 12).takeIf { c -> c.any { it > 0f } } else null
+    val noveltyRate = if (hasExtras) rawArr[extrasStart + 12] else 0f
     return AudioFeatures(
         lufs = rawArr[0],
         rms = rawArr[1],
@@ -460,6 +465,8 @@ internal fun parseNativeFeatures(rawArr: FloatArray?): AudioFeatures? {
         truePeakDb = rawArr[9],
         clippedSamplePct = rawArr[10],
         freqRangeLowHz = rawArr[11],
-        freqRangeHighHz = rawArr[12]
+        freqRangeHighHz = rawArr[12],
+        chroma = chroma,
+        noveltyRateHz = noveltyRate
     )
 }
