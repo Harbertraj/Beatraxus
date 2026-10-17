@@ -15,6 +15,10 @@ data class AiEqProfile(
     /** 0..1 - how much evidence the prediction is based on (audio measured > tags > guess). */
     val confidence: Float,
     val source: Source,
+    /** Estimated tempo in BPM; 0 when it could not be measured reliably. */
+    val bpm: Float = 0f,
+    /** Estimated musical key such as "A minor"; empty when unknown. */
+    val key: String = "",
     val version: Int = AiEqKnowledge.ENGINE_VERSION,
     val createdAt: Long = System.currentTimeMillis()
 ) {
@@ -27,6 +31,7 @@ data class AiEqProfile(
     override fun equals(other: Any?): Boolean =
         other is AiEqProfile && songId == other.songId && genre == other.genre && mood == other.mood &&
             language == other.language && gains.contentEquals(other.gains) && source == other.source &&
+            bpm == other.bpm && key == other.key &&
             version == other.version
 
     override fun hashCode(): Int {

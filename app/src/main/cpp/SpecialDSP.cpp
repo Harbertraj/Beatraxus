@@ -2445,6 +2445,10 @@ struct AnalysisResults {
     float clippedSamplePct; // % of samples at or above ~-0.18 dBFS (0.0-100.0)
     float freqRangeLowHz;   // lowest frequency with meaningful energy
     float freqRangeHighHz;  // highest frequency with meaningful energy
+    // Musical-key support: 12 pitch-class energies (C..B), sums to 1 (all zero when unavailable).
+    float chroma[12];
+    // Rate of the novelty vector in values per second (sampleRate / FFT hop).
+    float noveltyRateHz;
 };
 
 class AudioAnalyzer {
@@ -2490,6 +2494,7 @@ public:
 
         std::vector<double> flux;
         double lastEnergy = 0;
+        double chromaSum[12] = {0};
 
         for (int f = 0; f < frames; f++) {
             float l = buffer[f * channels];
@@ -2535,14 +2540,33 @@ public:
                 kiss_fft(fft, in.data(), out.data());
 
                 double currentEnergy = 0;
+                double frameChroma[12] = {0};
+                double frameChromaTotal = 0;
                 for (int i = 0; i < fftSize / 2; i++) {
                     double freq = (double)i * sampleRate / fftSize;
                     double mag = std::abs(out[i]);
                     currentEnergy += mag;
                     magSum[i] += mag;
+                    // Pitch-class (chroma) accumulation over 260 Hz - 4.2 kHz, where one FFT bin is
+                    // narrower than ~1.4 semitones. The bin is split between its two nearest pitch classes.
+                    if (freq >= 260.0 && freq <= 4200.0) {
+                        double w = std::sqrt(mag);
+                        double pitch = 12.0 * std::log2(freq / 440.0) + 69.0;
+                        double pitchFloor = std::floor(pitch);
+                        double frac = pitch - pitchFloor;
+                        int pc0 = ((int)pitchFloor % 12 + 12) % 12;
+                        int pc1 = (pc0 + 1) % 12;
+                        frameChroma[pc0] += w * (1.0 - frac);
+                        frameChroma[pc1] += w * frac;
+                        frameChromaTotal += w;
+                    }
                     if (freq < 250) bassEnergy += mag;
                     else if (freq < 4000) midEnergy += mag;
                     else trebleEnergy += mag;
+                }
+                // Normalise per frame so loud passages don't dominate the key estimate.
+                if (frameChromaTotal > 1e-9) {
+                    for (int c = 0; c < 12; c++) chromaSum[c] += frameChroma[c] / frameChromaTotal;
                 }
                 flux.push_back(std::max(0.0, currentEnergy - lastEnergy));
                 res.noveltyVector.push_back((float)std::max(0.0, currentEnergy - lastEnergy));
@@ -2591,6 +2615,13 @@ public:
         double meanSqR = lufsSum[1] / frames;
         // Channel weighting: G_i = 1.0 for L, R
         res.lufs = (float)(-0.691 + 10.0 * std::log10(meanSqL + meanSqR + 1e-10));
+
+        res.noveltyRateHz = (float)(sampleRate / fftSize);
+        {
+            double chromaTotal = 0;
+            for (int c = 0; c < 12; c++) chromaTotal += chromaSum[c];
+            for (int c = 0; c < 12; c++) res.chroma[c] = chromaTotal > 1e-9 ? (float)(chromaSum[c] / chromaTotal) : 0.0f;
+        }
 
         if (fftCount > 0) {
             double total = bassEnergy + midEnergy + trebleEnergy + 1e-10;
@@ -2641,7 +2672,8 @@ public:
 static std::vector<float> flattenAnalysis(const AnalysisResults& res) {
     int spectralLen = (int)res.spectralData.size();
     int noveltyLen = (int)res.noveltyVector.size();
-    std::vector<float> data(15 + spectralLen + noveltyLen);
+    // Trailing extras (ignored by older parsers): 12 chroma values + novelty rate.
+    std::vector<float> data(15 + spectralLen + noveltyLen + 13);
     data[0] = res.lufs;
     data[1] = res.rms;
     data[2] = res.peak;
@@ -2659,6 +2691,8 @@ static std::vector<float> flattenAnalysis(const AnalysisResults& res) {
     data[14] = (float)noveltyLen;
     if (spectralLen > 0) memcpy(data.data() + 15, res.spectralData.data(), spectralLen * sizeof(float));
     if (noveltyLen > 0) memcpy(data.data() + 15 + spectralLen, res.noveltyVector.data(), noveltyLen * sizeof(float));
+    for (int c = 0; c < 12; c++) data[15 + spectralLen + noveltyLen + c] = res.chroma[c];
+    data[15 + spectralLen + noveltyLen + 12] = res.noveltyRateHz;
     return data;
 }
 

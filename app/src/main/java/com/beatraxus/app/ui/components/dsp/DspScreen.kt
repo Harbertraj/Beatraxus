@@ -1358,6 +1358,8 @@ private fun AiOptionsPopup(
     val genreText = profile?.genre?.takeIf { it.isNotBlank() } ?: if (predicting) "Predicting…" else dash
     val moodText = profile?.mood?.takeIf { it.isNotBlank() } ?: if (predicting) "Predicting…" else dash
     val languageText = profile?.language?.takeIf { it.isNotBlank() } ?: if (predicting) "Predicting…" else dash
+    val bpmText = profile?.bpm?.takeIf { it > 0f }?.let { "${it.toInt()} BPM" } ?: if (predicting) "Predicting…" else dash
+    val keyText = profile?.key?.takeIf { it.isNotBlank() } ?: if (predicting) "Predicting…" else dash
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -1470,6 +1472,10 @@ private fun AiOptionsPopup(
                         AiStatTile("GENRE", genreText, Modifier.weight(1f))
                         AiStatTile("MOOD", moodText, Modifier.weight(1f))
                         AiStatTile("LANGUAGE", languageText, Modifier.weight(1f))
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        AiStatTile("TEMPO", bpmText, Modifier.weight(1f))
+                        AiStatTile("KEY", keyText, Modifier.weight(1f))
                     }
                     // fixed-height progress slot so nothing shifts when prediction finishes
                     Box(modifier = Modifier.fillMaxWidth().height(2.dp)) {

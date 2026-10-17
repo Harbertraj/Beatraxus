@@ -82,6 +82,7 @@ class AiEqStore private constructor(private val file: File) {
         put("id", p.songId); put("genre", p.genre); put("mood", p.mood); put("lang", p.language)
         put("gains", JSONArray().also { a -> p.gains.forEach { a.put(it.toDouble()) } })
         put("conf", p.confidence.toDouble()); put("src", p.source.name); put("ver", p.version); put("at", p.createdAt)
+        put("bpm", p.bpm.toDouble()); put("key", p.key)
     }
 
     private fun fromJson(o: JSONObject): AiEqProfile? = try {
@@ -94,6 +95,8 @@ class AiEqStore private constructor(private val file: File) {
             gains = FloatArray(AiEqKnowledge.BAND_COUNT) { g.getDouble(it).toFloat() },
             confidence = o.optDouble("conf", 0.5).toFloat(),
             source = runCatching { AiEqProfile.Source.valueOf(o.optString("src", "METADATA")) }.getOrDefault(AiEqProfile.Source.METADATA),
+            bpm = o.optDouble("bpm", 0.0).toFloat(),
+            key = o.optString("key", ""),
             version = o.optInt("ver", 0),
             createdAt = o.optLong("at", 0L)
         )

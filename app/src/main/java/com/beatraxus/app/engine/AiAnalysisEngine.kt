@@ -412,7 +412,11 @@ data class AudioFeatures(
     val truePeakDb: Float,
     val clippedSamplePct: Float,
     val freqRangeLowHz: Float,
-    val freqRangeHighHz: Float
+    val freqRangeHighHz: Float,
+    /** 12 pitch-class energies (C..B) for key detection; null when the extractor didn't provide them. */
+    val chroma: FloatArray? = null,
+    /** Values per second of [noveltyVector] (sampleRate / FFT hop); 0 when unknown. */
+    val noveltyRateHz: Float = 0f
 )
 
 /** Result of [AiAnalysisEngine.analyzeSong], bundling the AI entity with the raw
