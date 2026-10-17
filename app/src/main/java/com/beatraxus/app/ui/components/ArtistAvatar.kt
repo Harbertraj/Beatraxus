@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -23,24 +24,28 @@ import androidx.compose.ui.unit.sp
  * Legal note: entirely on-device, no third-party images, no network calls,
  * no publicity/personality rights concerns.
  */
+private val INITIALS_SPLIT = Regex("\\s+")
+
 @Composable
 fun ArtistAvatar(
     name: String,
     modifier: Modifier = Modifier
 ) {
-    // Up to two initials: first letter of each whitespace-separated word
-    val initials = name.trim()
-        .split(Regex("\\s+"))
-        .mapNotNull { it.firstOrNull()?.uppercaseChar() }
-        .take(2)
-        .joinToString("")
-        .ifEmpty { "?" }
-
-    // Deterministic hue — same artist name always maps to the same color
-    val hue = (name.hashCode().and(0xFFFFFF) % 360).let {
-        if (it < 0) it + 360 else it  // hashCode() can be negative
-    }.toFloat()
-    val bgColor = Color.hsv(hue, 0.45f, 0.45f)
+    // Computed once per name (a Regex was compiled on every recomposition of every tile while scrolling).
+    val (initials, bgColor) = remember(name) {
+        // Up to two initials: first letter of each whitespace-separated word
+        val ini = name.trim()
+            .split(INITIALS_SPLIT)
+            .mapNotNull { it.firstOrNull()?.uppercaseChar() }
+            .take(2)
+            .joinToString("")
+            .ifEmpty { "?" }
+        // Deterministic hue — same artist name always maps to the same color
+        val h = (name.hashCode().and(0xFFFFFF) % 360).let {
+            if (it < 0) it + 360 else it  // hashCode() can be negative
+        }.toFloat()
+        ini to Color.hsv(h, 0.45f, 0.45f)
+    }
 
     Box(
         modifier = modifier.background(bgColor, RoundedCornerShape(16.dp)),

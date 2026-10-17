@@ -580,6 +580,8 @@ fun MainScreen(
     var showDrawer by rememberSaveable { mutableStateOf(false) }
 
     var categoryGridColumns by rememberSaveable { mutableIntStateOf(2) }
+    // Cover size shared by every tile (and the prefetcher) of the category grids; see ui/components/LibraryArt.kt
+    val tileArtPx = com.beatraxus.app.ui.components.rememberTileArtPx(categoryGridColumns.coerceIn(1, 5))
     var trackLayoutDensity by rememberSaveable { mutableIntStateOf(1) }
     var videoLayoutDensity by rememberSaveable { mutableIntStateOf(1) }
 
@@ -1861,6 +1863,11 @@ fun MainScreen(
                                                 LibraryView.ALBUMS -> {
                                                     val isGridView = trackLayoutDensity <= 2 // In this view, zoom affects item size but not layout type, OR we can implement something similar
                                                     Box(Modifier.fillMaxSize()) {
+                                                        com.beatraxus.app.ui.components.PrefetchTileArt(
+                                                            state = albumsGridState,
+                                                            uris = remember(albums) { albums.map { it.third } },
+                                                            sizePx = tileArtPx
+                                                        )
                                                         LazyVerticalGrid(
                                                             state = albumsGridState,
                                                             columns = GridCells.Fixed(categoryGridColumns.coerceIn(1, 5)),
@@ -1871,6 +1878,7 @@ fun MainScreen(
                                                             items(albums, key = { it.first + it.second }) { album ->
                                                                 Box(Modifier.animateItem()) {
                                                                     LibraryGridItem(
+                                                                        artSizePx = tileArtPx,
                                                                         title = album.first,
                                                                         subtitle = album.second,
                                                                         artUri = album.third,
@@ -2040,6 +2048,11 @@ items(albumSongs, key = { it.id }) { song ->
                                                 }
                                                 LibraryView.ARTISTS -> {
                                                     Box(Modifier.fillMaxSize()) {
+                                                        com.beatraxus.app.ui.components.PrefetchTileArt(
+                                                            state = artistsGridState,
+                                                            uris = remember(artists) { artists.map { it.third } },
+                                                            sizePx = tileArtPx
+                                                        )
                                                         LazyVerticalGrid(
                                                             state = artistsGridState,
                                                             columns = GridCells.Fixed(categoryGridColumns.coerceIn(1, 5)),
@@ -2050,6 +2063,7 @@ items(albumSongs, key = { it.id }) { song ->
                                                             items(artists, key = { it.first }) { artist ->
                                                                 Box(Modifier.animateItem()) {
                                                                     LibraryGridItem(
+                                                                        artSizePx = tileArtPx,
                                                                         title = artist.first,
                                                                         subtitle = artist.second,
                                                                         artUri = artist.third,
@@ -2219,6 +2233,11 @@ items(artistSongs, key = { it.id }) { song ->
                                                     }
                                                 }
                                                 LibraryView.FOLDERS -> {
+                                                    com.beatraxus.app.ui.components.PrefetchTileArt(
+                                                        state = foldersGridState,
+                                                        uris = remember(folders) { folders.map { it.third } },
+                                                        sizePx = tileArtPx
+                                                    )
                                                     LazyVerticalGrid(
                                                         state = foldersGridState,
                                                         columns = GridCells.Fixed(categoryGridColumns.coerceIn(1, 5)),
@@ -2229,6 +2248,7 @@ items(artistSongs, key = { it.id }) { song ->
                                                         items(folders, key = { it.first }) { folder ->
                                                             Box(Modifier.animateItem()) {
                                                                 LibraryGridItem(
+                                                                    artSizePx = tileArtPx,
                                                                     title = folder.second,
                                                                     subtitle = folder.first,
                                                                     artUri = folder.third,
@@ -2360,6 +2380,11 @@ items(artistSongs, key = { it.id }) { song ->
                                                     }
                                                 }
                                                 LibraryView.YEARS -> {
+                                                    com.beatraxus.app.ui.components.PrefetchTileArt(
+                                                        state = yearsGridState,
+                                                        uris = remember(years) { years.map { it.third } },
+                                                        sizePx = tileArtPx
+                                                    )
                                                     LazyVerticalGrid(
                                                         state = yearsGridState,
                                                         columns = GridCells.Fixed(categoryGridColumns.coerceIn(1, 5)),
@@ -2370,6 +2395,7 @@ items(artistSongs, key = { it.id }) { song ->
                                                         items(years, key = { it.first }) { year ->
                                                             Box(Modifier.animateItem()) {
                                                                 LibraryGridItem(
+                                                                    artSizePx = tileArtPx,
                                                                     title = year.first,
                                                                     subtitle = year.second,
                                                                     artUri = year.third,
@@ -2697,7 +2723,11 @@ items(artistSongs, key = { it.id }) { song ->
                                                 LibraryView.PLAYLIST_DETAIL -> {
                                                     val playlistName = uiState.selectedItemName
                                                     val playlist = playlists.find { it.name == playlistName }
-                                                    val playlistSongs = songs.filter { playlist?.songIds?.contains(it.id) == true }
+                                                    // remembered + hashed: this used to scan the whole playlist for every song on every recomposition
+                                                    val playlistSongs = remember(songs, playlist) {
+                                                        val ids = playlist?.songIds?.toHashSet()
+                                                        if (ids == null) emptyList() else songs.filter { it.id in ids }
+                                                    }
                                                     val isListView = trackLayoutDensity <= 2
                                                     AnimatedContent(
                                                         targetState = isListView,
@@ -5933,9 +5963,12 @@ fun LibraryGridItem(
     isSelected: Boolean = false,
     isMultiSelectMode: Boolean = false,
     isArtistTile: Boolean = false,
+    /** Decode size for the cover (see rememberTileArtPx); 0 lets Coil size it from the layout. */
+    artSizePx: Int = 0,
     onClick: () -> Unit,
     onLongClick: () -> Unit = {}
 ) {
+    val tileShape = remember { RoundedCornerShape(16.dp) }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -5943,25 +5976,29 @@ fun LibraryGridItem(
                 onClick = onClick,
                 onLongClick = onLongClick
             )
-            .graphicsLayer {}
     ) {
-        Surface(
+        // A plain clipped Box instead of Surface: no extra elevation/semantics layer per tile.
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(1f)
-                .graphicsLayer {
-                    clip = true
-                    shape = RoundedCornerShape(16.dp)
-                },
-            color = Color.White.copy(0.15f)
+                .clip(tileShape)
+                .background(Color.White.copy(0.15f))
         ) {
             if (isArtistTile && artUri == null) {
                 // No embedded album art — show a deterministic initials avatar instead
                 ArtistAvatar(name = title, modifier = Modifier.fillMaxSize())
+            } else if (artSizePx > 0) {
+                com.beatraxus.app.ui.components.TileArtImage(
+                    uri = artUri,
+                    sizePx = artSizePx,
+                    modifier = Modifier.fillMaxSize()
+                )
             } else {
                 AsyncImage(
                     model = artUri,
                     contentDescription = null,
+                    modifier = Modifier.fillMaxSize(),
                     contentScale = ContentScale.Crop
                 )
             }
