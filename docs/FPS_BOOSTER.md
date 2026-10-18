@@ -92,6 +92,23 @@ On the same synthetic ground-truth clips the old engine is no better than plain 
 - *Processing latency* is measured by `glFinish()` around the motion estimate on **every 4th pair** (stalls only the booster's own GL thread). It is wall-clock GPU+CPU time, not a GPU-timer query.
 - A 24→60 conversion shows a decoded frame only every 5th output frame, so **48 of 60 output frames are synthesised** (80 %); 24→30 and 24→48 are 80 % and 50 %. (`FramePacing.generatedShare`.)
 
+### Device test (first run) and recommended settings
+
+Opening the booster sheet for the first time runs a ~3 s CPU + GPU test (`BoosterBenchmarkRunner`) and applies
+the result (`BoosterRecommender`); it can be repeated with "Test again". Playback pauses while it runs.
+
+- GPU: the real `flow_search.frag` motion search, forward + backward, over the pyramid of each quality preset
+  (640 / 960 / 1280 px, 16:9), then one 1080p warp-style output pass. The numbers are ms per frame pair and ms per
+  output frame on this device; the GPU score is motion-search throughput (1000 points = 10 ms per megapixel of
+  analysed image).
+- CPU: a 0.45 s multi-threaded float loop (informational, plus a cap at 60 FPS for very slow CPUs).
+- Recommendation: the best quality whose pair time fits half a 30 FPS source interval (16.7 ms), then the highest
+  target the panel can pace evenly with 30 pair estimations + one warp per displayed frame under 650 ms of GPU
+  time per second. If even Performance does not fit, or the GPU cannot render float textures, Classic is chosen.
+  The thresholds are conservative engineering estimates, not calibrated on a device farm.
+- The result is stored (`fpsb_bench`); a skipped first run is not started again automatically.
+- Quality presets are greyed out when the Classic engine is selected (they only apply to Optical flow).
+
 ### Performance and fallback
 - `AdaptiveQualityController` ladder: Quality 1280 → Balanced 960 → Performance 640 → Minimal 480. Starts at the user's preset, never goes above it; battery saver caps at Performance. Overloaded window (estimate > 70 % of the source interval, or > 5 % dropped, or > 15 % missed output) → one step down (cooldown 2 s). Overloaded for 4 windows at the lowest rung (or at the user's rung when adaptive is off) → **fallback to standard playback**. 10 calm windows → one step back up; a failed upgrade blocks upgrades for 30 s. Moderate thermal status forces one step down; severe → immediate fallback.
 - Pause/seek/stall windows (< 3 source frames) are ignored by the controller. So are the first 3 windows of a session and the first 2 after a quality step or a target-FPS change (resource reallocation and re-pacing look like overload for a moment; judging them caused spurious "could not keep up" messages right after changing a setting).

@@ -12,10 +12,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -25,6 +27,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.beatraxus.app.fpsbooster.BenchmarkState
 import com.beatraxus.app.fpsbooster.BoosterEngine
 import com.beatraxus.app.fpsbooster.BoosterMode
 import com.beatraxus.app.fpsbooster.BoosterQuality
@@ -47,7 +50,9 @@ private val Orange = Color(0xFFFF8F00)
 @Composable
 fun FpsBoosterSheetContent(
     uiState: VideoPlayerUiState,
-    onSettingsChange: (FpsBoosterSettings) -> Unit
+    onSettingsChange: (FpsBoosterSettings) -> Unit,
+    onRunBenchmark: () -> Unit = {},
+    onSkipBenchmark: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val panelRates = remember { DisplayRefreshRate.supportedRates(context) }
@@ -55,6 +60,14 @@ fun FpsBoosterSheetContent(
     val s = uiState.fpsBooster
     val plan = uiState.fpsBoosterPlan
     val stats = uiState.fpsBoosterStats
+    val bench = uiState.fpsBoosterBenchmark
+    // The Quality presets only exist for Optical flow; Classic has a single fixed pipeline.
+    val classicEngine = s.engine == BoosterEngine.CLASSIC || (plan.active && plan.engine == BoosterEngine.CLASSIC)
+
+    // First time the booster sheet is opened: measure the device once and pick settings it can sustain.
+    LaunchedEffect(Unit) {
+        if (bench is BenchmarkState.Idle && !uiState.fpsBoosterBenchmarkSkipped) onRunBenchmark()
+    }
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(
@@ -62,6 +75,8 @@ fun FpsBoosterSheetContent(
             color = Color.White.copy(alpha = 0.7f),
             fontSize = 13.sp
         )
+
+        DeviceTestCard(bench, onRunBenchmark, onSkipBenchmark)
 
         // The booster can only deliver its target if the panel is really running that fast right now.
         val nowHz = DisplayRefreshRate.currentRate(context)
@@ -123,10 +138,13 @@ fun FpsBoosterSheetContent(
         SectionLabel("Quality")
         ChipRow {
             BoosterQuality.entries.forEach { q ->
-                Chip(q.label, s.quality == q) { onSettingsChange(s.copy(quality = q)) }
+                Chip(q.label, s.quality == q && !classicEngine, enabled = !classicEngine) { onSettingsChange(s.copy(quality = q)) }
             }
         }
-        Hint("Higher quality analyses motion on a larger image: fewer artifacts, more GPU and battery. The picture itself always keeps the original video resolution.")
+        Hint(
+            if (classicEngine) "Quality presets apply to the Optical flow engine only. The Classic engine has no quality levels."
+            else "Higher quality analyses motion on a larger image: fewer artifacts, more GPU and battery. The picture itself always keeps the original video resolution."
+        )
 
         ToggleRow(
             "Adaptive resolution",
@@ -174,6 +192,53 @@ fun FpsBoosterSheetContent(
                 "Not available for HDR videos. Turns itself off for videos already at the chosen rate."
         )
         Spacer(Modifier.height(4.dp))
+    }
+}
+
+/** First-run / re-runnable CPU + GPU test with its result and the settings it chose. */
+@Composable
+private fun DeviceTestCard(state: BenchmarkState, onRun: () -> Unit, onSkip: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color.White.copy(alpha = 0.06f))
+            .border(1.dp, Orange.copy(alpha = 0.35f), RoundedCornerShape(12.dp))
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        when (state) {
+            is BenchmarkState.Running -> {
+                Text("Testing your device…", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                LinearProgressIndicator(
+                    progress = { state.progress.coerceIn(0f, 1f) },
+                    modifier = Modifier.fillMaxWidth(),
+                    color = Orange,
+                    trackColor = Color.White.copy(alpha = 0.1f)
+                )
+                Text("${state.stage}. Playback pauses for a few seconds.", color = Color.White.copy(alpha = 0.6f), fontSize = 12.sp)
+                Chip("Skip", false) { onSkip() }
+            }
+            is BenchmarkState.Done -> {
+                val r = state.result
+                Text("Device test", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                StatLine("CPU score", "${r.cpuScore}  ·  ${r.cores} cores")
+                StatLine("GPU score", if (r.gpuScore > 0) r.gpuScore.toString() else "Optical flow not supported")
+                StatLine("Device class", state.recommendation.tier.label)
+                Text(state.recommendation.summary, color = Orange, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                Hint("These options were applied. You can still change them below.")
+                Chip("Test again", false) { onRun() }
+            }
+            is BenchmarkState.Failed -> {
+                Text(state.message, color = Color(0xFFFFB74D), fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                Chip("Try again", false) { onRun() }
+            }
+            BenchmarkState.Idle -> {
+                Text("Device test", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                Hint("Measures your CPU and GPU once and picks the engine, quality and FPS target your phone can keep up with.")
+                Chip("Run device test", false) { onRun() }
+            }
+        }
     }
 }
 
