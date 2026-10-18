@@ -2192,7 +2192,9 @@ fun VideoSettingsSheetContent(
         if (activeSheetType == PlayerSheetType.MOTION_BOOST) {
             FpsBoosterSheetContent(
                 uiState = uiState,
-                onSettingsChange = { viewModel.setFpsBoosterSettings(it) }
+                onSettingsChange = { viewModel.setFpsBoosterSettings(it) },
+                onRunBenchmark = { viewModel.startFpsBoosterBenchmark() },
+                onSkipBenchmark = { viewModel.skipFpsBoosterBenchmark() }
             )
         }
 

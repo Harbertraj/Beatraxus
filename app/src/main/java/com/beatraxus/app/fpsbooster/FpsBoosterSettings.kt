@@ -128,4 +128,8 @@ object FpsBoosterPrefs {
     const val BATTERY = "fpsb_battery"
     const val SHOW_STATS = "fpsb_stats"
     const val MIGRATED = "fpsb_migrated_v1"
+    /** Stored [BenchmarkResult] (see [BenchmarkResult.toStored]). */
+    const val BENCH = "fpsb_bench"
+    /** The user dismissed the first-run device test; do not start it automatically again. */
+    const val BENCH_SKIPPED = "fpsb_bench_skipped"
 }

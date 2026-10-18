@@ -38,4 +38,17 @@ object FpsBoosterStore {
             .putBoolean(FpsBoosterPrefs.SHOW_STATS, s.showStats)
             .apply()
     }
+
+    fun loadBenchmark(prefs: SharedPreferences): BenchmarkResult? =
+        BenchmarkResult.fromStored(prefs.getString(FpsBoosterPrefs.BENCH, null))
+
+    fun saveBenchmark(prefs: SharedPreferences, r: BenchmarkResult) {
+        prefs.edit().putString(FpsBoosterPrefs.BENCH, r.toStored()).remove(FpsBoosterPrefs.BENCH_SKIPPED).apply()
+    }
+
+    fun isBenchmarkSkipped(prefs: SharedPreferences) = prefs.getBoolean(FpsBoosterPrefs.BENCH_SKIPPED, false)
+
+    fun setBenchmarkSkipped(prefs: SharedPreferences) {
+        prefs.edit().putBoolean(FpsBoosterPrefs.BENCH_SKIPPED, true).apply()
+    }
 }

@@ -32,7 +32,10 @@ import com.beatraxus.app.BeatraxusApplication
 import com.beatraxus.app.engine.AudioEngine
 import com.beatraxus.app.engine.AudioFrameUtils
 import com.beatraxus.app.engine.VideoDecoderMode
+import com.beatraxus.app.fpsbooster.BenchmarkState
+import com.beatraxus.app.fpsbooster.BoosterBenchmarkRunner
 import com.beatraxus.app.fpsbooster.BoosterPlan
+import com.beatraxus.app.fpsbooster.BoosterRecommender
 import com.beatraxus.app.fpsbooster.BoosterStats
 import com.beatraxus.app.fpsbooster.DeviceCaps
 import com.beatraxus.app.fpsbooster.FallbackReason
@@ -41,6 +44,7 @@ import com.beatraxus.app.fpsbooster.FpsBoosterSettings
 import com.beatraxus.app.fpsbooster.FpsBoosterStore
 import com.beatraxus.app.fpsbooster.GlCapabilityProbe
 import com.beatraxus.app.fpsbooster.SourceInfo
+import com.beatraxus.app.motionboost.DisplayRefreshRate
 import com.beatraxus.app.engine.VideoPlaybackTuning
 import com.beatraxus.app.engine.VideoRenderersFactory
 import com.beatraxus.app.engine.VideoRoutePhase
@@ -132,6 +136,10 @@ data class VideoPlayerUiState(
     val fpsBoosterStats: BoosterStats = BoosterStats(),
     /** Set when the booster stopped itself this session (device too slow / hot / GPU error). Cleared on the next video. */
     val fpsBoosterSuspended: String? = null,
+    /** One-time CPU/GPU device test behind the recommended booster settings. */
+    val fpsBoosterBenchmark: BenchmarkState = BenchmarkState.Idle,
+    /** The user dismissed the first-run test, so the sheet must not start it on its own again. */
+    val fpsBoosterBenchmarkSkipped: Boolean = false,
     /** Frame rate declared by the video stream (0 = unknown). */
     val sourceFps: Float = 0f,
     val isConnectingEngineRoute: Boolean = false,
@@ -223,6 +231,12 @@ class VideoPlayerViewModel(
         isEqEnabled = application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE).getBoolean("video_eq_enabled", false),
         videoDecoderMode = tuning.decoderMode,
         fpsBooster = FpsBoosterStore.load(application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE)),
+        // A result from an earlier run is shown again instead of testing every time. Read synchronously so the
+        // sheet never mistakes "not loaded yet" for "never tested" and starts the test a second time.
+        fpsBoosterBenchmark = FpsBoosterStore.loadBenchmark(application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE))
+            ?.let { BenchmarkState.Done(it, BoosterRecommender.recommend(it, DisplayRefreshRate.supportedRates(application))) }
+            ?: BenchmarkState.Idle,
+        fpsBoosterBenchmarkSkipped = FpsBoosterStore.isBenchmarkSkipped(application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE)),
         aspectRatio = application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE).getString("video_aspect_ratio", VideoAspectRatio.FIT.name)?.let { name ->
             val mappedName = when (name) {
                 "ORIGINAL" -> "FIT"
@@ -299,7 +313,62 @@ class VideoPlayerViewModel(
             val caps = runCatching { GlCapabilityProbe.query(getApplication()) }.getOrNull()
             deviceCaps = caps
             _uiState.update { withFpsPlan(it) }
+
         }
+    }
+
+    private var benchmarkJob: Job? = null
+
+    /**
+     * Runs the CPU + GPU device test (about 3 s), stores the result and applies the recommended engine,
+     * quality and target FPS. Playback is paused meanwhile so the video does not disturb the GPU timings.
+     */
+    fun startFpsBoosterBenchmark() {
+        if (benchmarkJob?.isActive == true) return
+        val wasPlaying = exoPlayer?.isPlaying == true
+        if (wasPlaying) exoPlayer?.pause()
+        _uiState.update { it.copy(fpsBoosterBenchmark = BenchmarkState.Running(0f, "Starting")) }
+        benchmarkJob = viewModelScope.launch(Dispatchers.Default) {
+            try {
+                val result = BoosterBenchmarkRunner.run(
+                    getApplication(),
+                    isCancelled = { !isActive },
+                    onProgress = { f, label ->
+                        _uiState.update { st ->
+                            if (st.fpsBoosterBenchmark is BenchmarkState.Running) st.copy(fpsBoosterBenchmark = BenchmarkState.Running(f, label)) else st
+                        }
+                    }
+                )
+                FpsBoosterStore.saveBenchmark(prefs, result)
+                val rec = BoosterRecommender.recommend(result, DisplayRefreshRate.supportedRates(getApplication()))
+                _uiState.update {
+                    withFpsPlan(it.copy(
+                        fpsBooster = rec.applyTo(it.fpsBooster),
+                        fpsBoosterSuspended = null,
+                        fpsBoosterBenchmark = BenchmarkState.Done(result, rec),
+                        fpsBoosterBenchmarkSkipped = false
+                    ))
+                }
+                FpsBoosterStore.save(prefs, _uiState.value.fpsBooster)
+            } catch (e: CancellationException) {
+                _uiState.update { it.copy(fpsBoosterBenchmark = BenchmarkState.Idle) }
+                throw e
+            } catch (e: InterruptedException) {
+                _uiState.update { it.copy(fpsBoosterBenchmark = BenchmarkState.Idle) }
+            } catch (t: Throwable) {
+                Log.w("VideoPlayerViewModel", "FPS booster device test failed", t)
+                _uiState.update { it.copy(fpsBoosterBenchmark = BenchmarkState.Failed("The device test could not finish. You can still choose settings by hand.")) }
+            } finally {
+                if (wasPlaying) withContext(NonCancellable + Dispatchers.Main) { exoPlayer?.play() }
+            }
+        }
+    }
+
+    /** Stops a running test. A first-run test that is skipped is not started again automatically. */
+    fun skipFpsBoosterBenchmark() {
+        benchmarkJob?.cancel()
+        FpsBoosterStore.setBenchmarkSkipped(prefs)
+        _uiState.update { it.copy(fpsBoosterBenchmarkSkipped = true, fpsBoosterBenchmark = BenchmarkState.Idle) }
     }
 
     /** Re-derives [VideoPlayerUiState.fpsBoosterPlan] from settings + device + video. Returns the same instance if nothing changed. */
