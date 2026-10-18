@@ -2986,6 +2986,30 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         Log.d(TAG, "Navigating to video player: ${video.title} from list of ${finalQueue.size} at index $index")
     }
 
+    /**
+     * Opens the video player on a Live TV channel. The channels around the tapped one become the player's queue, so
+     * next / previous in the player zap between them.
+     */
+    fun playLiveChannels(channels: List<com.beatraxus.app.livetv.LiveChannel>, startIndex: Int) {
+        val queue = com.beatraxus.app.livetv.LiveTvPlayback.queue(channels, startIndex) ?: return
+
+        if (_uiState.value.isPlaying) {
+            service?.togglePlayPause()
+        }
+
+        _uiState.update { it.copy(
+            activeVideoQueue = queue.videos,
+            navigateToVideoPlayer = queue.startVideoId
+        ) }
+
+        prefs.edit().apply {
+            putBoolean("bg_video_active", false)
+            apply()
+        }
+
+        Log.d(TAG, "Navigating to live channel ${queue.startVideoId} (queue of ${queue.videos.size})")
+    }
+
     fun consumeVideoNavigation() {
         _uiState.update { it.copy(navigateToVideoPlayer = null) }
     }

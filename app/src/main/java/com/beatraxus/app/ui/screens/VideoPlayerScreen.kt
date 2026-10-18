@@ -731,7 +731,8 @@ fun VideoPlayerScreen(
 
                     // Top Bar
                     PlayerTopBar(
-                        title = uiState.currentVideo?.title ?: "",
+                        title = (if (uiState.currentVideo?.source == com.beatraxus.app.model.VideoSource.LIVE_TV) "\u25CF LIVE  " else "") +
+                            (uiState.currentVideo?.title ?: ""),
                         isHdr = uiState.isHdr,
                         sleepTimerRemainingMs = uiState.sleepTimerRemainingMs,
                         decoderLabel = uiState.videoDecoderMode.label,

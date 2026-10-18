@@ -375,6 +375,7 @@ fun MainScreen(
         LibraryView.VIDEO_FOLDERS -> Color(0xFFFFAB40)
         LibraryView.VIDEO_RECENTLY_ADDED -> Color(0xFF00E676)
         LibraryView.VIDEO_RECENTLY_PLAYED -> Color(0xFF00E676)
+        LibraryView.LIVE_TV -> Color(0xFFFF3B5C)
     }
     val viewAccentColor by animateColorAsState(
         targetValue = targetAccentColor,
@@ -1044,6 +1045,7 @@ fun MainScreen(
                                     LibraryView.VIDEO_FOLDER_DETAIL -> uiState.selectedItemName ?: "VIDEO FOLDER"
                                     LibraryView.VIDEO_RECENTLY_ADDED -> "RECENTLY ADDED"
                                     LibraryView.VIDEO_RECENTLY_PLAYED -> "RECENTLY PLAYED"
+                                    LibraryView.LIVE_TV -> "LIVE TV"
                                 }
                                 val titleIcon = when (uiState.currentView) {
                                     LibraryView.HOME -> Icons.Rounded.Home
@@ -1074,6 +1076,7 @@ fun MainScreen(
                                     LibraryView.VIDEO_FOLDER_DETAIL -> Icons.Rounded.Folder
                                     LibraryView.VIDEO_RECENTLY_ADDED -> Icons.Rounded.VideoLibrary
                                     LibraryView.VIDEO_RECENTLY_PLAYED -> Icons.Rounded.History
+                                    LibraryView.LIVE_TV -> Icons.Rounded.LiveTv
                                 }
 
                                 // Menu icon on the left
@@ -1288,7 +1291,7 @@ fun MainScreen(
                                 } // end !isRichDetailView
 
                                 // Icons on the right (Smart Playlists has its own controls, so no app search icon there)
-                                if (uiState.currentView != LibraryView.SMART_PLAYLISTS) Row(
+                                if (uiState.currentView != LibraryView.SMART_PLAYLISTS && uiState.currentView != LibraryView.LIVE_TV) Row(
                                     modifier = Modifier.align(Alignment.CenterEnd).wrapContentSize(),
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -1508,6 +1511,7 @@ fun MainScreen(
                             AnimatedVisibility(
                                 // Radio has its own screen without the shuffle / sort / cloud / density strip.
                                 visible = (headerVisible || activeItemsCount <= 8) && uiState.currentView != LibraryView.HOME && uiState.currentView != LibraryView.RADIO &&
+                                    uiState.currentView != LibraryView.LIVE_TV &&
                                     (!isRichDetailView || uiState.isMultiSelectMode),
                                 enter = fadeIn(tween(250)) + expandVertically(tween(250)),
                                 exit = fadeOut(tween(200)) + shrinkVertically(tween(200))
@@ -3080,6 +3084,12 @@ items(artistSongs, key = { it.id }) { song ->
                                                         accent = viewAccentColor,
                                                         onStationClick = { station -> viewModel.playSong(station.toSong()) },
                                                         favoriteIds = favorites
+                                                    )
+                                                }
+                                                LibraryView.LIVE_TV -> {
+                                                    com.beatraxus.app.livetv.LiveTvScreen(
+                                                        accent = viewAccentColor,
+                                                        onPlay = { channels, index -> viewModel.playLiveChannels(channels, index) }
                                                     )
                                                 }
                                                 else -> {
@@ -6233,6 +6243,7 @@ fun SlideDrawerMenu(
                 DrawerMenuItem("Folders", LibraryView.VIDEO_FOLDERS, Icons.Rounded.FolderOpen, Color(0xFFFFAB40)),
                 DrawerMenuItem("Recently Added", LibraryView.VIDEO_RECENTLY_ADDED, Icons.Rounded.VideoLibrary, Color(0xFF00E676)),
                 DrawerMenuItem("Recently Played", LibraryView.VIDEO_RECENTLY_PLAYED, Icons.Rounded.History, Color(0xFF00E676)),
+                DrawerMenuItem("Live TV", LibraryView.LIVE_TV, Icons.Rounded.LiveTv, Color(0xFFFF3B5C)),
                 DrawerMenuItem("Add-ons", LibraryView.ADDONS, Icons.Rounded.Extension, Color(0xFF00C2A8))
             )
         } else {

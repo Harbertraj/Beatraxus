@@ -121,6 +121,15 @@ fun LazyListScope.videoHomeItems(
         }
     }
 
+    // ── Live TV (available in every library mode, so it sits above the cloud gate) ───
+    item(key = "VIDEO_LIVE_TV") {
+        com.beatraxus.app.livetv.LiveTvBanner(
+            onClick = { viewModel.setLibraryView(LibraryView.LIVE_TV) },
+            modifier = Modifier.padding(horizontal = 16.dp)
+        )
+        Spacer(Modifier.height(16.dp))
+    }
+
     // ── Cloud / Combined: connect cloud videos ───────────────────────────
     // Only offer the full connect panel while nothing is connected; afterwards the library's source chips take over.
     if (libMode != com.beatraxus.app.model.LibraryMode.LOCAL) {

@@ -2,8 +2,11 @@ package com.beatraxus.app.model
 
 import android.net.Uri
 
-/** Where a video lives. LOCAL = on-device (MediaStore); everything else is a cloud source. */
-enum class VideoSource { LOCAL, TELEGRAM, GDRIVE, ONEDRIVE, DROPBOX, BOX, NEXTCLOUD }
+/**
+ * Where a video lives. LOCAL = on-device (MediaStore); everything else is streamed. LIVE_TV marks an IPTV channel
+ * (see the livetv package): it is streamed like a cloud video, never scanned, and never saved to watch history.
+ */
+enum class VideoSource { LOCAL, TELEGRAM, GDRIVE, ONEDRIVE, DROPBOX, BOX, NEXTCLOUD, LIVE_TV }
 
 data class Video(
     val id: String,

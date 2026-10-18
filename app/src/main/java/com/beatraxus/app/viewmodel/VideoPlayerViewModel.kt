@@ -384,6 +384,8 @@ class VideoPlayerViewModel(
     }
 
     private fun loadIntroRange() {
+        // A queue of channels has no intros to find.
+        if (videoQueue.firstOrNull()?.source == com.beatraxus.app.model.VideoSource.LIVE_TV) return
         val folder = videoQueue.firstOrNull()?.folderPath ?: return
         viewModelScope.launch(Dispatchers.IO) {
             val range = introOutroDao.getRangeForFolder(folder)
@@ -474,7 +476,14 @@ class VideoPlayerViewModel(
             .apply {
                 setVideoScalingMode(C.VIDEO_SCALING_MODE_SCALE_TO_FIT)
                 repeatMode = Player.REPEAT_MODE_OFF
-                setMediaItems(videoQueue.map { v -> MediaItem.Builder().setUri(v.uri).setMediaId(v.id).build() })
+                setMediaItems(videoQueue.map { v ->
+                    MediaItem.Builder().setUri(v.uri).setMediaId(v.id).apply {
+                        // Live TV channels: some playlists are served from addresses without a .m3u8 extension.
+                        if (v.source == com.beatraxus.app.model.VideoSource.LIVE_TV) {
+                            com.beatraxus.app.livetv.LiveTvPlayback.mimeTypeFor(v.uri)?.let { setMimeType(it) }
+                        }
+                    }.build()
+                })
                 
                 viewModelScope.launch(Dispatchers.IO) {
                     val recentlyPlayed = videoRecentlyPlayedDao.getRecentlyPlayedByVideoId(video.id)
@@ -560,6 +569,24 @@ class VideoPlayerViewModel(
 
             override fun onAudioSessionIdChanged(audioSessionId: Int) {
                 setupLoudnessEnhancer(audioSessionId)
+            }
+
+            override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                // Only Live TV gets special handling; every other video behaves exactly as before.
+                val live = _uiState.value.currentVideo
+                    ?.takeIf { it.source == com.beatraxus.app.model.VideoSource.LIVE_TV } ?: return
+                if (error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW) {
+                    // Fell behind the live window of an HLS stream: jump back to the live edge.
+                    player.seekToDefaultPosition()
+                    player.prepare()
+                    return
+                }
+                Log.w(TAG, "Live channel ${live.title} failed: ${error.errorCodeName}")
+                android.widget.Toast.makeText(
+                    context,
+                    "${live.title} isn't available right now. Try another channel.",
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
             }
 
             override fun onPositionDiscontinuity(old: Player.PositionInfo, new: Player.PositionInfo, reason: Int) {
