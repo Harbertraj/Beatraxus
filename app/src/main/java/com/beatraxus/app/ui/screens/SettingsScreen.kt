@@ -583,6 +583,7 @@ fun SettingsScreen(
                             "Appearance: Home Screen Layout" -> HomeScreenLayoutContent(uiState, playerViewModel)
                             "Appearance: Settings Interface" -> SettingsScreenAppearanceContent(uiState, playerViewModel)
                             "Appearance: Dual Colour Palette" -> DspPaletteContent(uiState, playerViewModel)
+                            "Appearance: Surround Screen" -> SurroundAppearanceContent(uiState, playerViewModel)
                             "Appearance: Fonts" -> FontsAppearanceContent(uiState, playerViewModel)
                             "Appearance: Lyrics Database" -> LyricsDatabaseContent(uiState, playerViewModel)
                             "Replay Gain" -> ReplayGainContent(uiState, playerViewModel, onEditValue = { editingValue = it })
@@ -832,6 +833,13 @@ fun AppearanceContent(uiState: PlayerUiState, sectionStack: SnapshotStateList<St
             icon = Icons.Rounded.ColorLens,
             iconColor = PrimaryCyan,
             onClick = { sectionStack.add("Appearance: Dual Colour Palette") }
+        )
+        SettingMenuItem(
+            title = "Surround Screen",
+            subtitle = "Stage theme, speaker colours, beams, visualizer",
+            icon = Icons.Rounded.SurroundSound,
+            iconColor = PrimaryCyan,
+            onClick = { sectionStack.add("Appearance: Surround Screen") }
         )
         SettingMenuItem(
             title = "Fonts",

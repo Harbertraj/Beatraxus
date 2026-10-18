@@ -134,95 +134,119 @@ fun DspPaletteContent(uiState: PlayerUiState, playerViewModel: PlayerViewModel) 
             )
         }
 
-        SurroundAppearanceSection(appearance, playerViewModel, activePalette)
     }
 }
 
-/** Studio DSP > 5.1/7.1 screen look: room, visualizer, speaker icons / labels and speaker colours. */
+/**
+ * Settings > Appearance > Surround Screen. Everything here is read live by the Studio DSP > Surround page
+ * ([com.beatraxus.app.ui.components.dsp.PremiumSurroundCard]); the preview below shows the result immediately.
+ */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun SurroundAppearanceSection(
-    appearance: com.beatraxus.app.model.AppearanceConfig,
-    vm: PlayerViewModel,
-    palette: DspPalette
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        SectionLabel("5.1 / 7.1 SCREEN")
+fun SurroundAppearanceContent(uiState: PlayerUiState, vm: PlayerViewModel) {
+    val appearance = uiState.appearance
+    val palette = DspPalette.from(appearance)
+    val accent = if (appearance.surroundColorGlow != 0) Color(appearance.surroundColorGlow) else palette.primary
 
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(20.dp))
-                .background(Color.Black.copy(0.18f))
-                .border(0.8.dp, Color.White.copy(0.10f), RoundedCornerShape(20.dp))
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
-        ) {
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        Text(
+            text = "Surround Screen",
+            color = Color.White,
+            fontSize = 20.sp,
+            fontWeight = FontWeight.Black,
+            modifier = Modifier.padding(horizontal = 4.dp)
+        )
+        Text(
+            text = "Change how Studio DSP > Surround looks. Changes show in the preview and on the Surround page straight away.",
+            color = SettingSubtitleColor,
+            fontSize = 12.sp,
+            lineHeight = 18.sp,
+            modifier = Modifier.padding(horizontal = 4.dp)
+        )
+
+        // Live preview (all eight speakers on)
+        com.beatraxus.app.ui.components.dsp.SurroundStagePreview(appearance)
+
+        SectionLabel("STAGE")
+        SettingsCard {
             Text("Room theme", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
             ChoiceRow(
                 options = listOf("dark" to "Dark", "studio" to "Studio", "living" to "Living Room"),
                 selected = appearance.surroundRoomTheme,
-                accent = palette.primary,
+                accent = accent,
                 onSelect = vm::setSurroundRoomTheme
             )
+            ToggleRow("Speaker icons", "Draw cabinets instead of plain dots", appearance.surroundShowSpeakerIcons, accent, vm::setSurroundShowSpeakerIcons)
+            ToggleRow("Labels", "L, C, R, SL, SR, BL, BR, SW under each speaker", appearance.surroundShowLabels, accent, vm::setSurroundShowLabels)
+            ToggleRow("Sound beams", "Light beam from each active speaker to you", appearance.surroundShowBeams, accent, vm::setSurroundShowBeams)
+            ToggleRow("Animations", "Moving waves and pulses. Off saves battery", appearance.surroundAnimated, accent, vm::setSurroundAnimated)
+        }
 
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Visualizer", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                PremiumSwitch(
-                    checked = appearance.surroundVisualizerEnabled,
-                    onCheckedChange = vm::setSurroundVisualizerEnabled,
-                    accentColor = palette.primary
-                )
-            }
+        SectionLabel("VISUALIZER")
+        SettingsCard {
+            ToggleRow("Visualizer", "Loudness graphic under the listener", appearance.surroundVisualizerEnabled, accent, vm::setSurroundVisualizerEnabled)
             if (appearance.surroundVisualizerEnabled) {
                 ChoiceRow(
                     options = listOf("wave" to "Wave", "spectrum" to "Spectrum", "circle" to "Circle"),
                     selected = appearance.surroundVisualizerStyle,
-                    accent = palette.primary,
+                    accent = accent,
                     onSelect = vm::setSurroundVisualizerStyle
-                )
-            }
-
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Speaker icons", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                PremiumSwitch(
-                    checked = appearance.surroundShowSpeakerIcons,
-                    onCheckedChange = vm::setSurroundShowSpeakerIcons,
-                    accentColor = palette.primary
-                )
-            }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Labels", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                PremiumSwitch(
-                    checked = appearance.surroundShowLabels,
-                    onCheckedChange = vm::setSurroundShowLabels,
-                    accentColor = palette.primary
                 )
             }
         }
 
-        SectionLabel("SPEAKER COLORS")
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(20.dp))
-                .background(Color.Black.copy(0.18f))
-                .border(0.8.dp, Color.White.copy(0.10f), RoundedCornerShape(20.dp))
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
-        ) {
+        SectionLabel("COLOURS")
+        SettingsCard {
+            SpeakerColorRow("Accent / room glow", "glow", appearance.surroundColorGlow, palette.primary, vm)
             SpeakerColorRow("Front speakers", "front", appearance.surroundColorFront, palette.primary, vm)
             SpeakerColorRow("Surround speakers", "surround", appearance.surroundColorSurround, palette.secondary, vm)
             SpeakerColorRow("Rear speakers", "rear", appearance.surroundColorRear, palette.tertiary, vm)
             SpeakerColorRow("Subwoofer", "sub", appearance.surroundColorSub, palette.secondary, vm)
-            SpeakerColorRow("Room glow", "glow", appearance.surroundColorGlow, palette.primary, vm)
             Text(
-                text = "The first swatch follows the dual colour palette above.",
+                text = "Auto follows the Studio DSP dual colour palette. The accent colour also tints the switch, buttons and panels on the Surround page.",
                 color = SettingSubtitleColor,
                 fontSize = 11.sp,
                 lineHeight = 16.sp
             )
         }
+
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp))
+                .background(Color.White.copy(0.05f))
+                .border(1.dp, Color.White.copy(0.12f), RoundedCornerShape(16.dp))
+                .clickable { vm.resetSurroundAppearance() }
+                .padding(vertical = 13.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text("Reset to default look", color = Color.White.copy(0.8f), fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@Composable
+private fun SettingsCard(content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(20.dp))
+            .background(Color.Black.copy(0.18f))
+            .border(0.8.dp, Color.White.copy(0.10f), RoundedCornerShape(20.dp))
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+        content = content
+    )
+}
+
+@Composable
+private fun ToggleRow(title: String, subtitle: String, checked: Boolean, accent: Color, onChange: (Boolean) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            Text(subtitle, color = SettingSubtitleColor, fontSize = 11.sp, lineHeight = 15.sp)
+        }
+        PremiumSwitch(checked = checked, onCheckedChange = onChange, accentColor = accent)
     }
 }
 

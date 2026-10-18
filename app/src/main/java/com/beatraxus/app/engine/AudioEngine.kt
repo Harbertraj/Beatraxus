@@ -1416,7 +1416,9 @@ class AudioEngine(
                 if (outChannels > format.channels && output.maxOutputChannels() < outChannels) {
                     // The device is not really multichannel, so the platform mixer folds the stream down. Direct
                     // hi-res rates (up to 192 kHz) make no sense on that path and may be refused for 6/8 channels.
-                    targetRate = minOf(targetRate, SURROUND_MIXER_RATE_CAP)
+                    // Resampler "Auto" keeps 96 kHz (and anything below) untouched; other modes keep the 48 kHz cap.
+                    val cap = if (dspConfig.resamplerMode == ResamplerMode.AUTO) SURROUND_MIXER_RATE_CAP_AUTO else SURROUND_MIXER_RATE_CAP
+                    targetRate = minOf(targetRate, cap)
                 }
                 val targetBitDepth = if (dspConfig.outputMode == OutputMode.HI_RES) 32 else dspConfig.sampleFormat.bitDepth
 
@@ -1584,6 +1586,11 @@ class AudioEngine(
         private const val OUTPUT_RECONFIG_SKIP_MS = 0L
         /** Highest output rate used when 5.1/7.1 is rendered through the platform mixer (device not truly multichannel). */
         private const val SURROUND_MIXER_RATE_CAP = 48_000
+        /** Same cap when the resampler is on Auto: 96 kHz files are never downgraded. */
+        private const val SURROUND_MIXER_RATE_CAP_AUTO = 96_000
+        /** Resampler Auto keeps sources in this range (88.2 .. 96 kHz) at their own rate. */
+        private const val HIRES_PASSTHROUGH_MIN = 88_200
+        private const val HIRES_PASSTHROUGH_MAX = 96_000
         private const val LIVE_STATS_INTERVAL_MS = 500L
 
         private fun framesToMs(frames: Long, sampleRate: Int): Long {
@@ -1702,7 +1709,10 @@ class AudioEngine(
                     // or the mixer already runs at that rate). Otherwise Android's built-in mixer
                     // resampler would convert it (e.g. 44.1k -> 48k), which is noticeably worse than
                     // our own SoX resampler, so convert to the hardware rate here instead.
-                    if (sourceRate == nativeRate || config.usbExclusiveEnabled || directPlaybackSupported(sourceRate)) sourceRate
+                    // 88.2 / 96 kHz sources are always passed through untouched in Auto: the direct-playback probe
+                    // is unreliable for USB DACs behind the mixer and used to push them down to the 48 kHz native rate.
+                    if (sourceRate == nativeRate || sourceRate in HIRES_PASSTHROUGH_MIN..HIRES_PASSTHROUGH_MAX ||
+                        config.usbExclusiveEnabled || directPlaybackSupported(sourceRate)) sourceRate
                     else nativeRate
                 } else {
                     // AAudio path: use hardware native rate to avoid Android SRC.

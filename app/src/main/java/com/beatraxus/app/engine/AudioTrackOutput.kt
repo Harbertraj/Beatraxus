@@ -959,6 +959,11 @@ class AudioTrackOutput(
         val device = preferredDevice ?: resolvePreferredOutputDevice()
         val isBluetooth = device?.type in BLUETOOTH_TYPES
         if (isBluetooth) return BLUETOOTH_RATE_CANDIDATES.minByOrNull { abs(it - requestedRate) } ?: 48_000
+        // 5.1/7.1 through the platform mixer: direct-rate probing for 6/8 channels often reports only 48 kHz even
+        // though the mixer accepts 96 kHz, so keep the requested rate (up to 96 kHz) instead of downgrading it.
+        if (channels > 2 && requestedRate in 1..96_000) return requestedRate
+        // 88.2 / 96 kHz requests (resampler Auto passes them through) are never lowered to another probed direct rate.
+        if (requestedRate in 88_200..96_000) return requestedRate
         if (selectedMode == OutputMode.HI_RES) {
             val directRates = detectDirectRates(channels).sortedDescending()
             if (directRates.isNotEmpty()) {

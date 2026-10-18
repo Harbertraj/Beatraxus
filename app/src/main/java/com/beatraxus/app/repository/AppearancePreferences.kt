@@ -153,6 +153,8 @@ class AppearancePreferences(context: Context) {
             surroundColorRear = preferences[SURROUND_COLOR_REAR] ?: 0,
             surroundColorSub = preferences[SURROUND_COLOR_SUB] ?: 0,
             surroundColorGlow = preferences[SURROUND_COLOR_GLOW] ?: 0,
+            surroundShowBeams = preferences[SURROUND_SHOW_BEAMS] ?: true,
+            surroundAnimated = preferences[SURROUND_ANIMATED] ?: true,
             selectedFontId = preferences[SELECTED_FONT_ID] ?: "system"
         )
     }
@@ -162,6 +164,20 @@ class AppearancePreferences(context: Context) {
     suspend fun setSurroundVisualizerStyle(id: String) { dataStore.edit { it[SURROUND_VISUALIZER_STYLE] = id } }
     suspend fun setSurroundShowSpeakerIcons(v: Boolean) { dataStore.edit { it[SURROUND_SHOW_ICONS] = v } }
     suspend fun setSurroundShowLabels(v: Boolean) { dataStore.edit { it[SURROUND_SHOW_LABELS] = v } }
+
+    suspend fun setSurroundShowBeams(v: Boolean) { dataStore.edit { it[SURROUND_SHOW_BEAMS] = v } }
+    suspend fun setSurroundAnimated(v: Boolean) { dataStore.edit { it[SURROUND_ANIMATED] = v } }
+
+    /** Back to the default look of the Surround screen. */
+    suspend fun resetSurroundAppearance() {
+        dataStore.edit {
+            listOf(
+                SURROUND_ROOM_THEME, SURROUND_VISUALIZER_ENABLED, SURROUND_VISUALIZER_STYLE, SURROUND_SHOW_ICONS,
+                SURROUND_SHOW_LABELS, SURROUND_COLOR_FRONT, SURROUND_COLOR_SURROUND, SURROUND_COLOR_REAR,
+                SURROUND_COLOR_SUB, SURROUND_COLOR_GLOW, SURROUND_SHOW_BEAMS, SURROUND_ANIMATED
+            ).forEach { key -> it.remove(key) }
+        }
+    }
 
     /** [group]: front | surround | rear | sub | glow. [argb] 0 = follow the palette. */
     suspend fun setSurroundColor(group: String, argb: Int) {
@@ -555,6 +571,8 @@ class AppearancePreferences(context: Context) {
         private val SURROUND_COLOR_REAR = intPreferencesKey("surround_color_rear")
         private val SURROUND_COLOR_SUB = intPreferencesKey("surround_color_sub")
         private val SURROUND_COLOR_GLOW = intPreferencesKey("surround_color_glow")
+        private val SURROUND_SHOW_BEAMS = booleanPreferencesKey("surround_show_beams")
+        private val SURROUND_ANIMATED = booleanPreferencesKey("surround_animated")
 
         private val SELECTED_FONT_ID = stringPreferencesKey("selected_font_id")
     }

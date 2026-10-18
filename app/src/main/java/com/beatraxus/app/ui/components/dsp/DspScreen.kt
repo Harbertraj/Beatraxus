@@ -144,7 +144,7 @@ private fun DspTabBar(
     onSelect: (Int) -> Unit
 ) {
     val icons = listOf(Icons.Rounded.GraphicEq, Icons.Rounded.Speaker, Icons.Rounded.AutoAwesome, Icons.Rounded.Waves, Icons.Rounded.SurroundSound)
-    val labels = listOf("EQ", "5.1/7.1", "MASTER", "REVERB", "SPATIAL")
+    val labels = listOf("EQ", "SURROUND", "MASTER", "REVERB", "SPATIAL")
     Column(modifier = modifier) {
         Row(modifier = Modifier.fillMaxWidth()) {
             labels.forEachIndexed { i, label ->
@@ -406,7 +406,7 @@ fun DspScreen(
                 )
         )
 
-        // Pages: 0 EQ, 1 5.1/7.1 surround, 2 Master, 3 Reverb, 4 Spatial
+        // Pages: 0 EQ, 1 Surround, 2 Master, 3 Reverb, 4 Spatial
         val pagerState = rememberPagerState(pageCount = { 5 })
         val pageScope = rememberCoroutineScope()
 

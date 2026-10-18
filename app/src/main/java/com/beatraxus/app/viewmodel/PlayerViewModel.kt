@@ -5908,6 +5908,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun setSurroundVisualizerStyle(id: String) { viewModelScope.launch { appearancePreferences.setSurroundVisualizerStyle(id) } }
     fun setSurroundShowSpeakerIcons(v: Boolean) { viewModelScope.launch { appearancePreferences.setSurroundShowSpeakerIcons(v) } }
     fun setSurroundShowLabels(v: Boolean) { viewModelScope.launch { appearancePreferences.setSurroundShowLabels(v) } }
+    fun setSurroundShowBeams(v: Boolean) { viewModelScope.launch { appearancePreferences.setSurroundShowBeams(v) } }
+    fun setSurroundAnimated(v: Boolean) { viewModelScope.launch { appearancePreferences.setSurroundAnimated(v) } }
+    fun resetSurroundAppearance() { viewModelScope.launch { appearancePreferences.resetSurroundAppearance() } }
     fun setSurroundColor(group: String, argb: Int) { viewModelScope.launch { appearancePreferences.setSurroundColor(group, argb) } }
 
     fun setSettingsBlurDarkness(value: Float) {
