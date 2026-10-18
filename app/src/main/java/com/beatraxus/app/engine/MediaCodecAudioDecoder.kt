@@ -112,7 +112,22 @@ internal class MediaCodecAudioDecoder(
                 return@withContext DecodeResult.Failed("Decoder creation failed: ${e.message}")
             }
 
-            codec.configure(track.format, null, null, 0)
+            // Android decoders output 16-bit PCM unless told otherwise, which threw away the low bits
+            // of 24-bit FLAC and added 16-bit rounding noise to every lossy decode before the DSP
+            // even ran. Ask for float output; decoders that cannot do it still report what they
+            // really produce in their output format, which is handled below.
+            val wantFloat = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N
+            if (wantFloat) track.format.setInteger(MediaFormat.KEY_PCM_ENCODING, AudioFormat.ENCODING_PCM_FLOAT)
+            try {
+                codec.configure(track.format, null, null, 0)
+            } catch (e: Exception) {
+                if (!wantFloat) throw e
+                Log.w(TAG, "Decoder rejected float output for ${track.mime}; falling back to 16-bit", e)
+                try { codec.release() } catch (_: Exception) {}
+                track.format.setInteger(MediaFormat.KEY_PCM_ENCODING, AudioFormat.ENCODING_PCM_16BIT)
+                codec = MediaCodec.createDecoderByType(track.mime)
+                codec.configure(track.format, null, null, 0)
+            }
             codec.start()
 
             // Explicitly seek to requested position (even if 0) to ensure extractor is at the right start
@@ -179,7 +194,7 @@ internal class MediaCodecAudioDecoder(
                         PcmAudioFormat(
                             sampleRate = newFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE),
                             channels = currentChannels,
-                            bitDepth = resolveBitDepth(newFormat),
+                            bitDepth = resolveBitDepth(newFormat, track.format),
                             codec = track.mime
                         )
                     )
@@ -227,7 +242,7 @@ internal class MediaCodecAudioDecoder(
                             PcmAudioFormat(
                                 sampleRate = newFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE),
                                 channels = currentChannels,
-                                bitDepth = resolveBitDepth(newFormat),
+                                bitDepth = resolveBitDepth(newFormat, track.format),
                                 codec = track.mime
                             )
                         )
@@ -320,7 +335,15 @@ internal class MediaCodecAudioDecoder(
         }
     }
 
-    private fun resolveBitDepth(format: MediaFormat): Int {
+    private fun resolveBitDepth(format: MediaFormat, sourceFormat: MediaFormat? = null): Int {
+        // Float output is only a container for the decoded samples; keep reporting the file's own depth.
+        if (sourceFormat != null && sourceFormat.containsKey("bits-per-sample")) {
+            return sourceFormat.getInteger("bits-per-sample")
+        }
+        if (sourceFormat != null && format.containsKey(MediaFormat.KEY_PCM_ENCODING) &&
+            format.getInteger(MediaFormat.KEY_PCM_ENCODING) == AudioFormat.ENCODING_PCM_FLOAT) {
+            return 16 // depth unknown: report what we reported before float output (no false "hi-res")
+        }
         return when {
             format.containsKey("bits-per-sample") -> format.getInteger("bits-per-sample")
             format.containsKey(MediaFormat.KEY_PCM_ENCODING) -> when (format.getInteger(MediaFormat.KEY_PCM_ENCODING)) {

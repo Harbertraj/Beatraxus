@@ -1576,6 +1576,23 @@ class AudioEngine(
 
     fun getLevels(): FloatArray = activeSession?.dspPipeline?.getLevels() ?: floatArrayOf(0f, 0f)
 
+    private fun directPlaybackSupported(rate: Int): Boolean {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.Q) return false
+        return runCatching {
+            AudioTrack.isDirectPlaybackSupported(
+                android.media.AudioFormat.Builder()
+                    .setEncoding(android.media.AudioFormat.ENCODING_PCM_FLOAT)
+                    .setSampleRate(rate)
+                    .setChannelMask(android.media.AudioFormat.CHANNEL_OUT_STEREO)
+                    .build(),
+                android.media.AudioAttributes.Builder()
+                    .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC)
+                    .build()
+            )
+        }.getOrDefault(false)
+    }
+
     private fun resolveTargetSampleRate(inputRate: Int, config: DspConfig): Int {
         // Bit-Perfect: always pass source rate unchanged, unless resampler is unbypassed
         if (config.bitPerfectEnabled && !config.bitPerfectUnbypassResample) return inputRate
@@ -1587,11 +1604,17 @@ class AudioEngine(
                     // MTK HiFi direct path: honour the source sample rate exactly up to 192kHz.
                     // Do NOT downsample — the hardware driver handles any DAC-level conversion.
                     // This is the same policy Poweramp uses: pass native source rate to the DAC.
-                    when {
+                    val sourceRate = when {
                         inputRate <= 0 -> nativeRate
                         inputRate <= 384000 -> inputRate   // preserve exact source rate up to 384kHz
                         else -> 384000                     // hard cap at 384kHz
                     }
+                    // Keep the source rate only when the device can really play it directly (USB DAC,
+                    // or the mixer already runs at that rate). Otherwise Android's built-in mixer
+                    // resampler would convert it (e.g. 44.1k -> 48k), which is noticeably worse than
+                    // our own SoX resampler, so convert to the hardware rate here instead.
+                    if (sourceRate == nativeRate || config.usbExclusiveEnabled || directPlaybackSupported(sourceRate)) sourceRate
+                    else nativeRate
                 } else {
                     // AAudio path: use hardware native rate to avoid Android SRC.
                     // For hi-res sources, the DSP resampler handles conversion to nativeRate.

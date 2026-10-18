@@ -172,11 +172,13 @@ public:
                 double input = static_cast<double>(data[idx]);
 
                 if (type == 2) {
-                    double original = input;                    // save before shaping
+                    // Error-feedback noise shaping. The fed-back error must be this stage's own
+                    // quantisation error (quantized - dithered); feeding back the total error made the
+                    // filter recursive (pole at -0.9) and boosted high-frequency noise by ~20 dB.
                     input += -0.9 * lastDitherErr[c];           // apply 1st-order shaping
                     double dithered = input + noise * scale;
                     double quantized = std::floor(dithered / scale + 0.5) * scale;
-                    lastDitherErr[c] = quantized - original;    // error vs true original
+                    lastDitherErr[c] = quantized - dithered;
                     data[idx] = static_cast<T>(quantized);
                 } else if (type == 3) {
                     double hpNoise = noise - 0.5 * lastNoise[c];
