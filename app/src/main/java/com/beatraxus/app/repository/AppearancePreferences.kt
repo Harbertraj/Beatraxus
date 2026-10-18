@@ -143,8 +143,37 @@ class AppearancePreferences(context: Context) {
             dspPaletteId = preferences[DSP_PALETTE_ID] ?: "aurora_dusk",
             dspCustomPrimary = preferences[DSP_CUSTOM_PRIMARY] ?: 0xFFFFD60A.toInt(),
             dspCustomSecondary = preferences[DSP_CUSTOM_SECONDARY] ?: 0xFFFF7A00.toInt(),
+            surroundRoomTheme = preferences[SURROUND_ROOM_THEME] ?: "dark",
+            surroundVisualizerEnabled = preferences[SURROUND_VISUALIZER_ENABLED] ?: true,
+            surroundVisualizerStyle = preferences[SURROUND_VISUALIZER_STYLE] ?: "wave",
+            surroundShowSpeakerIcons = preferences[SURROUND_SHOW_ICONS] ?: true,
+            surroundShowLabels = preferences[SURROUND_SHOW_LABELS] ?: true,
+            surroundColorFront = preferences[SURROUND_COLOR_FRONT] ?: 0,
+            surroundColorSurround = preferences[SURROUND_COLOR_SURROUND] ?: 0,
+            surroundColorRear = preferences[SURROUND_COLOR_REAR] ?: 0,
+            surroundColorSub = preferences[SURROUND_COLOR_SUB] ?: 0,
+            surroundColorGlow = preferences[SURROUND_COLOR_GLOW] ?: 0,
             selectedFontId = preferences[SELECTED_FONT_ID] ?: "system"
         )
+    }
+
+    suspend fun setSurroundRoomTheme(id: String) { dataStore.edit { it[SURROUND_ROOM_THEME] = id } }
+    suspend fun setSurroundVisualizerEnabled(v: Boolean) { dataStore.edit { it[SURROUND_VISUALIZER_ENABLED] = v } }
+    suspend fun setSurroundVisualizerStyle(id: String) { dataStore.edit { it[SURROUND_VISUALIZER_STYLE] = id } }
+    suspend fun setSurroundShowSpeakerIcons(v: Boolean) { dataStore.edit { it[SURROUND_SHOW_ICONS] = v } }
+    suspend fun setSurroundShowLabels(v: Boolean) { dataStore.edit { it[SURROUND_SHOW_LABELS] = v } }
+
+    /** [group]: front | surround | rear | sub | glow. [argb] 0 = follow the palette. */
+    suspend fun setSurroundColor(group: String, argb: Int) {
+        val key = when (group) {
+            "front" -> SURROUND_COLOR_FRONT
+            "surround" -> SURROUND_COLOR_SURROUND
+            "rear" -> SURROUND_COLOR_REAR
+            "sub" -> SURROUND_COLOR_SUB
+            "glow" -> SURROUND_COLOR_GLOW
+            else -> return
+        }
+        dataStore.edit { it[key] = argb }
     }
 
     suspend fun setNowPlayingBackgroundMode(mode: NowPlayingBackgroundMode) {
@@ -514,6 +543,18 @@ class AppearancePreferences(context: Context) {
         private val DSP_PALETTE_ID = stringPreferencesKey("dsp_palette_id")
         private val DSP_CUSTOM_PRIMARY = intPreferencesKey("dsp_custom_primary")
         private val DSP_CUSTOM_SECONDARY = intPreferencesKey("dsp_custom_secondary")
+
+        // Studio DSP > 5.1/7.1 screen
+        private val SURROUND_ROOM_THEME = stringPreferencesKey("surround_room_theme")
+        private val SURROUND_VISUALIZER_ENABLED = booleanPreferencesKey("surround_visualizer_enabled")
+        private val SURROUND_VISUALIZER_STYLE = stringPreferencesKey("surround_visualizer_style")
+        private val SURROUND_SHOW_ICONS = booleanPreferencesKey("surround_show_icons")
+        private val SURROUND_SHOW_LABELS = booleanPreferencesKey("surround_show_labels")
+        private val SURROUND_COLOR_FRONT = intPreferencesKey("surround_color_front")
+        private val SURROUND_COLOR_SURROUND = intPreferencesKey("surround_color_surround")
+        private val SURROUND_COLOR_REAR = intPreferencesKey("surround_color_rear")
+        private val SURROUND_COLOR_SUB = intPreferencesKey("surround_color_sub")
+        private val SURROUND_COLOR_GLOW = intPreferencesKey("surround_color_glow")
 
         private val SELECTED_FONT_ID = stringPreferencesKey("selected_font_id")
     }

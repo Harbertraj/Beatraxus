@@ -346,7 +346,18 @@ data class DspConfig(
     val customUsbDriverEnabled: Boolean = false,
 
     // Phase 4.2: A/B Bypass
-    val bypassAll: Boolean = false
+    val bypassAll: Boolean = false,
+
+    // 5.1 / 7.1 Surround Simulator (Studio DSP > 5.1/7.1). Off by default: output is untouched.
+    val surroundEnabled: Boolean = false,
+    val surroundLayout: SurroundLayout = SurroundLayout.FIVE_ONE,
+    val surroundMode: SurroundMode = SurroundMode.MOVIE,
+    /** dB trim per speaker in [SurroundChannel] order: L R C SL SR BL BR SW. */
+    val surroundChannelTrimsDb: List<Float> = DEFAULT_SURROUND_TRIMS_DB,
+    val surroundActivePreset: String = "Default",
+    /** Trims saved into the user slot ("Custom 1"); null = slot empty. */
+    val surroundCustomTrimsDb: List<Float>? = null,
+    val surroundCustomMode: SurroundMode = SurroundMode.CUSTOM
 ) {
     fun activeEffects(): List<String> = buildList {
         if (outputMode == OutputMode.HI_RES) add("MTK HiFi")
@@ -377,6 +388,15 @@ data class DspConfig(
         if (headphoneSimulationEnabled) add("Sim")
         if (bitPerfectEnabled) add("Bit-Perfect")
         if (monoEnabled) add("Mono")
+        if (surroundEnabled && !bypassAll && !bitPerfectEnabled && surroundLayout != SurroundLayout.STEREO) {
+            add(
+                when (surroundLayout) {
+                    SurroundLayout.SEVEN_ONE -> "7.1 Surround"
+                    SurroundLayout.FIVE_ONE -> "5.1 Surround"
+                    else -> "Surround"
+                }
+            )
+        }
         if (float64Enabled) add("Float64")
         if (limiterEnabled) add("Limiter")
         if (noHeadroomGainEnabled) add("No Headroom Gain")
@@ -395,7 +415,11 @@ data class DspUiState(
     val currentLatencyFrames: Int = 0,
     val currentDitherType: String = "None",
     val currentEqMode: String = "IIR",
-    val activeOutputDeviceLabel: String = "This Device"
+    val activeOutputDeviceLabel: String = "This Device",
+    /** Channel count the audio output is really opened with right now (2 = stereo, 6 = 5.1, 8 = 7.1). */
+    val surroundOutputChannels: Int = 2,
+    /** True when the surround simulator is switched on but the output device refused a multichannel stream. */
+    val surroundFallbackActive: Boolean = false
 )
 
 fun defaultEqBands(): List<ParametricEqBand> {

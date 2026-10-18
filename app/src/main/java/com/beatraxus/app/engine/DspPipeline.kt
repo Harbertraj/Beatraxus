@@ -9,6 +9,7 @@ import com.beatraxus.app.model.ReplayGainOption
 import com.beatraxus.app.model.ReplayGainSource
 import com.beatraxus.app.model.Song
 import com.beatraxus.app.model.SpatialUiMode
+import com.beatraxus.app.model.tuning
 import com.beatraxus.app.model.Audio3DSpeakerPosition
 import com.beatraxus.app.model.SoundStageNodePosition
 import kotlin.math.abs
@@ -20,7 +21,12 @@ internal data class DspProcessResult(
     val sampleCount: Int,
     val sampleRate: Int,
     val intData: IntArray? = null,
-    val isDoP: Boolean = false
+    val isDoP: Boolean = false,
+    /**
+     * Interleaved channel count of [data]. 0 means "same as the channel count that was fed in"; it is only
+     * set (6 or 8) by the surround stage, which widens a stereo stream.
+     */
+    val channels: Int = 0
 )
 
 internal interface DspProcessor {
@@ -49,7 +55,60 @@ internal class AudioDspPipeline(
     private var dopBuffer: IntArray? = null
     private var alternateMarker = false
 
-    fun process(data: FloatArray, sampleCount: Int, channels: Int, sampleRate: Int): DspProcessResult {
+    // --- 5.1 / 7.1 surround stage (last stage, after the whole native chain) ---------------------------------
+    // 0 = off: process() output is exactly what the chain produced. 6 / 8 = upmix stereo to that many channels.
+    // Set by the engine after it has opened the output with the same channel count (see AudioEngine.configure).
+    @Volatile private var surroundOutChannels = 0
+    private var surroundUpmixer: SurroundUpmixer? = null
+    private var surroundBuffer = FloatArray(0)
+    @Volatile private var surroundConfig: DspConfig = config
+
+    /** Channel count this pipeline currently produces: 6 / 8 while the surround stage is on, else the input count. */
+    val outputChannels: Int get() = surroundOutChannels.takeIf { it > 2 } ?: channels
+
+    /**
+     * Turns the surround stage on for [outChannels] = 6 (5.1) or 8 (7.1), or off for anything else.
+     * Only stereo / mono sources can be upmixed; a multichannel source keeps its own layout.
+     */
+    fun setSurroundChannels(outChannels: Int) {
+        val valid = (outChannels == 6 || outChannels == 8) && channels in 1..2
+        if (!valid) {
+            surroundOutChannels = 0
+            return
+        }
+        val upmixer = surroundUpmixer ?: SurroundUpmixer(outputSampleRate).also { surroundUpmixer = it }
+        val cfg = surroundConfig
+        upmixer.configure(outChannels, cfg.surroundMode.tuning(), cfg.surroundChannelTrimsDb)
+        surroundOutChannels = outChannels
+    }
+
+    /** Cheap per-batch check: (re)configures the surround stage only when [outChannels] differs from the current one. */
+    fun syncSurroundChannels(outChannels: Int) {
+        val wanted = if (outChannels == 6 || outChannels == 8) outChannels else 0
+        if (wanted != surroundOutChannels) setSurroundChannels(wanted)
+    }
+
+    private fun applySurround(base: DspProcessResult, inChannels: Int): DspProcessResult {
+        val outCh = surroundOutChannels
+        val upmixer = surroundUpmixer
+        if (outCh <= 2 || upmixer == null || base.isDoP || inChannels !in 1..2) return base
+
+        val frames = base.sampleCount / inChannels
+        val needed = frames * outCh
+        if (surroundBuffer.size < needed) surroundBuffer = FloatArray(needed + needed / 4)
+        upmixer.process(base.data, inChannels, frames, surroundBuffer)
+        return DspProcessResult(
+            data = surroundBuffer,
+            sampleCount = needed,
+            sampleRate = base.sampleRate,
+            channels = outCh
+        )
+    }
+
+    fun process(data: FloatArray, sampleCount: Int, channels: Int, sampleRate: Int): DspProcessResult =
+        applySurround(processChain(data, sampleCount, channels, sampleRate), channels)
+
+    private fun processChain(data: FloatArray, sampleCount: Int, channels: Int, sampleRate: Int): DspProcessResult {
         if (isDoP) {
             // Bit-perfect DoP routing: bypass all processing
             val frames = sampleCount / channels
@@ -111,6 +170,13 @@ internal class AudioDspPipeline(
 
     fun updateConfig(config: DspConfig) {
         processors.forEach { it.updateConfig(config) }
+        // Surround matrix / trims follow live slider changes; the layout itself (6 vs 8 ch) is only ever
+        // changed through setSurroundChannels() after the output has been re-opened.
+        surroundConfig = config
+        val outCh = surroundOutChannels
+        if (outCh > 2) {
+            surroundUpmixer?.configure(outCh, config.surroundMode.tuning(), config.surroundChannelTrimsDb)
+        }
     }
 
     fun updateOutputBitDepth(bitDepth: Int) {
@@ -123,10 +189,12 @@ internal class AudioDspPipeline(
 
     fun flush() {
         processors.forEach { it.flush() }
+        surroundUpmixer?.reset()
     }
 
     fun release() {
         processors.forEach { it.release() }
+        surroundOutChannels = 0
     }
 
     fun getLevels(): FloatArray = processors.find { it is NativeDspProcessor }?.getLevels() ?: floatArrayOf(0f, 0f)

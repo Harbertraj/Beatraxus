@@ -852,6 +852,16 @@ class AudioTrackOutput(
 
     override fun outputDeviceLabel(): String = lifecycleLock.readLock().withLock { outputDeviceName }
 
+    override fun outputChannelCount(): Int = lifecycleLock.readLock().withLock { channels }
+
+    override fun maxOutputChannels(): Int = try {
+        val device = resolvePreferredOutputDevice()
+        // An empty list means the platform does not know (typical for Bluetooth): treat as stereo.
+        device?.channelCounts?.maxOrNull()?.coerceAtLeast(2) ?: 2
+    } catch (_: Exception) {
+        2
+    }
+
     override fun estimatedLatencyMs(): Int {
         val (rate, pos, written) = lifecycleLock.readLock().withLock {
             val r = sampleRate

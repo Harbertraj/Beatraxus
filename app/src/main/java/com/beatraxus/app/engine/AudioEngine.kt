@@ -14,6 +14,8 @@ import com.beatraxus.app.model.OutputMode
 import com.beatraxus.app.model.ResamplerMode
 import com.beatraxus.app.model.SampleFormat
 import com.beatraxus.app.model.Song
+import com.beatraxus.app.model.SurroundLayout
+import com.beatraxus.app.model.resolveSurroundOutputChannels
 import com.beatraxus.app.model.SongSource
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -886,12 +888,24 @@ class AudioEngine(
 
         publishDspState()
 
+        // 5.1/7.1 Surround Simulator: enabling/disabling it, switching 5.1 <-> 7.1, or anything that forces it
+        // off (Bit-Perfect, A/B bypass) changes the channel count the output must be opened with.
+        // A "device refused 6/8 channels" verdict only holds for the exact settings that were refused.
+        if (oldConfig.surroundEnabled != config.surroundEnabled || oldConfig.surroundLayout != config.surroundLayout) {
+            surroundRejectedChannels = 0
+        }
+        val surroundFormat = activeSession?.pcmFormat
+        val surroundChanged = surroundFormat != null &&
+                surroundTargetChannels(oldConfig, surroundFormat, currentSong) !=
+                surroundTargetChannels(config, surroundFormat, currentSong)
+
         val structuralChange = oldTargetRate != newTargetRate ||
                 oldConfig.sampleFormat != config.sampleFormat ||
                 outputModeChanged ||
                 usbExclusiveChanged ||
                 bitPerfectChanged ||
-                oldConfig.dvcEnabled != config.dvcEnabled
+                oldConfig.dvcEnabled != config.dvcEnabled ||
+                surroundChanged
 
         dspRevision.incrementAndGet()
 
@@ -899,6 +913,36 @@ class AudioEngine(
             reconfigureOutput()
         }
     }
+
+    /**
+     * Channel count the output should be opened with for [config]: 6 (5.1) or 8 (7.1) while the surround
+     * simulator upmixes this stream, otherwise exactly the source's own channel count (= behaviour before the
+     * simulator existed). Honours a previous "output refused this width" verdict.
+     */
+    private fun surroundTargetChannels(config: DspConfig, format: PcmAudioFormat, song: Song?): Int {
+        val wanted = resolveSurroundOutputChannels(
+            config = config,
+            sourceChannels = format.channels,
+            isDoP = format.isDoP,
+            isVideoRoute = song?.id?.startsWith("video_route:") == true,
+            // Only the "Auto" layout needs to know what the device can do; skip the query otherwise.
+            deviceMaxChannels = if (config.surroundEnabled && config.surroundLayout == SurroundLayout.AUTO) {
+                output.maxOutputChannels()
+            } else {
+                2
+            }
+        )
+        return if (wanted != format.channels && wanted == surroundRejectedChannels) format.channels else wanted
+    }
+
+    /** 6 / 8 when the output is open wider than a mono/stereo source (the surround stage must upmix), else 0. */
+    private fun surroundChannelsForOutput(format: PcmAudioFormat): Int {
+        val deviceChannels = output.outputChannelCount()
+        return if (deviceChannels > 2 && format.channels in 1..2 && !format.isDoP) deviceChannels else 0
+    }
+
+    /** Width the output refused while the surround simulator was on (0 = none). Reset when the user changes it. */
+    @Volatile private var surroundRejectedChannels = 0
 
     private fun startSessionInternal(song: Song, startPositionMs: Long) {
         val sessionId = currentSessionId.incrementAndGet()
@@ -1032,23 +1076,42 @@ class AudioEngine(
                         }
                     }
 
+                    // 5.1/7.1 Surround Simulator: the output is the source of truth for the channel layout.
+                    // Whatever session is playing (current, pre-loaded gapless next, rebuilt after a rate
+                    // change) follows it here, so pipeline and output can never stay out of step.
+                    targetSession.dspPipeline.syncSurroundChannels(surroundChannelsForOutput(format))
+
                     targetSession.dspPipeline.process(localBuffer, sampleCount, format.channels, format.sampleRate)
                 }
 
-                val frames = processed.sampleCount / format.channels
+                // The surround stage widens a stereo stream to 6/8 channels; every other path keeps the source layout.
+                val outChannels = if (processed.channels > 0) processed.channels else format.channels
+
+                // Output and pipeline change layout in two separate steps (see PlaybackSession.configure). In the
+                // few milliseconds they disagree, drop this batch rather than write N-channel audio into an
+                // M-channel track. Plain stereo/multichannel playback never takes this branch.
+                val deviceChannels = output.outputChannelCount()
+                if (deviceChannels > 0 && outChannels != deviceChannels &&
+                    (processed.channels > 0 || deviceChannels != format.channels)
+                ) {
+                    delay(2)
+                    continue
+                }
+
+                val frames = processed.sampleCount / outChannels
                 var writtenFramesTotal = 0
 
                 while (writtenFramesTotal < frames && engineScope.isActive && activeSession?.sessionId == targetSessionId && isSessionPlaying(targetSession)) {
                     val written = if (processed.isDoP && processed.intData != null) {
                         output.writeInt(
                             data = processed.intData,
-                            offsetInSamples = writtenFramesTotal * format.channels,
+                            offsetInSamples = writtenFramesTotal * outChannels,
                             frameCount = frames - writtenFramesTotal
                         )
                     } else {
                         output.write(
                             data = processed.data,
-                            offsetInSamples = writtenFramesTotal * format.channels,
+                            offsetInSamples = writtenFramesTotal * outChannels,
                             frameCount = frames - writtenFramesTotal
                         )
                     }
@@ -1136,6 +1199,7 @@ class AudioEngine(
         private var startFrameOffset = output.playbackPositionFrames()
         private var lastOutputRate = 0
         private var lastOutputBitDepth = 0
+        private var lastOutputChannels = 0
         @Volatile
         private var hasOutputStarted = false
         val dspLock = ReentrantReadWriteLock()
@@ -1346,11 +1410,20 @@ class AudioEngine(
             pcmFormat = format
 
             if (activeSession?.sessionId == this.sessionId) {
-                val targetRate = resolveTargetSampleRate(format.sampleRate, dspConfig)
+                // 5.1/7.1 Surround Simulator: 6 / 8 while it upmixes this stream, else the source's own count.
+                var outChannels = surroundTargetChannels(dspConfig, format, song)
+                var targetRate = resolveTargetSampleRate(format.sampleRate, dspConfig)
+                if (outChannels > format.channels && output.maxOutputChannels() < outChannels) {
+                    // The device is not really multichannel, so the platform mixer folds the stream down. Direct
+                    // hi-res rates (up to 192 kHz) make no sense on that path and may be refused for 6/8 channels.
+                    targetRate = minOf(targetRate, SURROUND_MIXER_RATE_CAP)
+                }
                 val targetBitDepth = if (dspConfig.outputMode == OutputMode.HI_RES) 32 else dspConfig.sampleFormat.bitDepth
 
-                val outputConfigChanged = targetRate != lastOutputRate || targetBitDepth != lastOutputBitDepth
-                val hardwareConfigChanged = targetRate != output.outputSampleRate() || targetBitDepth != output.outputBitDepth()
+                val outputConfigChanged = targetRate != lastOutputRate || targetBitDepth != lastOutputBitDepth ||
+                        outChannels != lastOutputChannels
+                val hardwareConfigChanged = targetRate != output.outputSampleRate() || targetBitDepth != output.outputBitDepth() ||
+                        (output.outputChannelCount() > 0 && outChannels != output.outputChannelCount())
 
                 if (hasOutputStarted && (formatChanged || outputConfigChanged)) {
                     ringBuffer.clear()
@@ -1375,9 +1448,21 @@ class AudioEngine(
                 // the output, so we can resume smoothly without a jump.
                 basePositionMs = currentRenderedPositionMs()
 
-                if (!output.init(format.sampleRate, format.channels, format.bitDepth, format.isDoP, resetOffsets = false)) {
+                var outputReady = output.init(format.sampleRate, outChannels, format.bitDepth, format.isDoP, resetOffsets = false)
+                if (!outputReady && outChannels != format.channels) {
+                    // The device refused the 5.1/7.1 stream: stay on the source layout (plain stereo) instead of
+                    // going silent. The verdict is remembered until the user changes the surround settings.
+                    logWarn("Output refused a $outChannels-channel stream, falling back to ${format.channels} channels")
+                    surroundRejectedChannels = outChannels
+                    outChannels = format.channels
+                    lastOutputRate = resolveTargetSampleRate(format.sampleRate, dspConfig)
+                    output.setTargetSampleRate(lastOutputRate)
+                    outputReady = output.init(format.sampleRate, outChannels, format.bitDepth, format.isDoP, resetOffsets = false)
+                }
+                if (!outputReady) {
                     logWarn("Audio output initialization failed")
                 }
+                lastOutputChannels = outChannels
 
                 // Hardware position was just updated/continued by init(resetOffsets=false),
                 // so we reset our base frame offset to the "new" start position.
@@ -1497,6 +1582,8 @@ class AudioEngine(
         private const val RENDER_BATCH_SAMPLES = 1_024
         private const val NO_SEEK_PENDING = -1L
         private const val OUTPUT_RECONFIG_SKIP_MS = 0L
+        /** Highest output rate used when 5.1/7.1 is rendered through the platform mixer (device not truly multichannel). */
+        private const val SURROUND_MIXER_RATE_CAP = 48_000
         private const val LIVE_STATS_INTERVAL_MS = 500L
 
         private fun framesToMs(frames: Long, sampleRate: Int): Long {
@@ -1560,6 +1647,8 @@ class AudioEngine(
                 headroomDb = activeSession?.dspPipeline?.getHeadroomDb()?.takeIf { it != 0f } ?: state.headroomDb,
                 latencyFrames = (output.queuedLatencyFrames() + (activeSession?.dspPipeline?.getLatencyFrames() ?: 0)),
                 underrunCount = output.underrunCount(),
+                outputChannels = output.outputChannelCount().takeIf { it > 0 } ?: (format?.channels ?: state.outputChannels),
+                surroundFallback = currentConfig.surroundEnabled && surroundRejectedChannels != 0,
                 ditherType = currentConfig.ditherType.displayName,
                 eqMode = if (currentConfig.eqPhaseMode == com.beatraxus.app.model.EqPhaseMode.LINEAR_PHASE) "Linear Phase" else "IIR",
                 pipelineSummary = buildPipelineSummary(

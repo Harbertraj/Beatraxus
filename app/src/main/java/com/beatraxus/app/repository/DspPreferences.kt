@@ -209,7 +209,20 @@ class DspPreferences(private val context: Context) {
             hardwareVolumeEnabled = pref(HARDWARE_VOLUME, false),
             headphoneSimulationEnabled = pref(HEADPHONE_SIM_ENABLED, false),
             headphoneSimulationProfile = deserializeAutoEqProfile(prefNullable(HEADPHONE_SIM_PROFILE)),
-            customUsbDriverEnabled = pref(CUSTOM_USB_DRIVER, false)
+            customUsbDriverEnabled = pref(CUSTOM_USB_DRIVER, false),
+            surroundEnabled = pref(SURROUND_ENABLED, false),
+            surroundLayout = runCatching {
+                SurroundLayout.valueOf(prefNullable(SURROUND_LAYOUT) ?: SurroundLayout.FIVE_ONE.name)
+            }.getOrDefault(SurroundLayout.FIVE_ONE),
+            surroundMode = runCatching {
+                SurroundMode.valueOf(prefNullable(SURROUND_MODE) ?: SurroundMode.MOVIE.name)
+            }.getOrDefault(SurroundMode.MOVIE),
+            surroundChannelTrimsDb = deserializeSurroundTrims(prefNullable(SURROUND_TRIMS)) ?: DEFAULT_SURROUND_TRIMS_DB,
+            surroundActivePreset = pref(SURROUND_ACTIVE_PRESET, "Default"),
+            surroundCustomTrimsDb = deserializeSurroundTrims(prefNullable(SURROUND_CUSTOM_TRIMS)),
+            surroundCustomMode = runCatching {
+                SurroundMode.valueOf(prefNullable(SURROUND_CUSTOM_MODE) ?: SurroundMode.CUSTOM.name)
+            }.getOrDefault(SurroundMode.CUSTOM)
         )
     }
 
@@ -340,6 +353,13 @@ class DspPreferences(private val context: Context) {
             set(HEADPHONE_SIM_ENABLED, config.headphoneSimulationEnabled)
             set(HEADPHONE_SIM_PROFILE, serializeAutoEqProfile(config.headphoneSimulationProfile))
             set(CUSTOM_USB_DRIVER, config.customUsbDriverEnabled)
+            set(SURROUND_ENABLED, config.surroundEnabled)
+            set(SURROUND_LAYOUT, config.surroundLayout.name)
+            set(SURROUND_MODE, config.surroundMode.name)
+            set(SURROUND_TRIMS, serializeSurroundTrims(config.surroundChannelTrimsDb))
+            set(SURROUND_ACTIVE_PRESET, config.surroundActivePreset)
+            set(SURROUND_CUSTOM_TRIMS, serializeSurroundTrims(config.surroundCustomTrimsDb))
+            set(SURROUND_CUSTOM_MODE, config.surroundCustomMode.name)
         }
     }
 
@@ -505,6 +525,13 @@ class DspPreferences(private val context: Context) {
                 set(HEADPHONE_SIM_ENABLED, config.headphoneSimulationEnabled)
                 set(HEADPHONE_SIM_PROFILE, serializeAutoEqProfile(config.headphoneSimulationProfile))
                 set(CUSTOM_USB_DRIVER, config.customUsbDriverEnabled)
+                set(SURROUND_ENABLED, config.surroundEnabled)
+                set(SURROUND_LAYOUT, config.surroundLayout.name)
+                set(SURROUND_MODE, config.surroundMode.name)
+                set(SURROUND_TRIMS, serializeSurroundTrims(config.surroundChannelTrimsDb))
+                set(SURROUND_ACTIVE_PRESET, config.surroundActivePreset)
+                set(SURROUND_CUSTOM_TRIMS, serializeSurroundTrims(config.surroundCustomTrimsDb))
+                set(SURROUND_CUSTOM_MODE, config.surroundCustomMode.name)
             }
         }
     }
@@ -793,6 +820,17 @@ class DspPreferences(private val context: Context) {
         }.getOrDefault(emptyList())
     }
 
+    /** Comma separated dB values; null is stored as "" and read back as null. */
+    private fun serializeSurroundTrims(trims: List<Float>?): String =
+        trims?.let { sanitizeSurroundTrims(it).joinToString(",") } ?: ""
+
+    private fun deserializeSurroundTrims(raw: String?): List<Float>? {
+        if (raw.isNullOrBlank()) return null
+        val values = raw.split(',').mapNotNull { it.trim().toFloatOrNull() }
+        if (values.isEmpty()) return null
+        return sanitizeSurroundTrims(values)
+    }
+
     private fun serializeAudio3DPresets(presets: List<Audio3DStagePreset>): String {
         val arr = JSONArray()
         presets.forEach { p ->
@@ -889,6 +927,13 @@ class DspPreferences(private val context: Context) {
         private val AUDIO3D_ROOM_REFLECTIONS = floatPreferencesKey("audio3d_room_reflections")
         private val AUDIO3D_SPEAKER_POSITIONS = stringPreferencesKey("audio3d_speaker_positions")
         private val AUDIO3D_PRESETS = stringPreferencesKey("audio3d_presets")
+        private val SURROUND_ENABLED = booleanPreferencesKey("surround_enabled")
+        private val SURROUND_LAYOUT = stringPreferencesKey("surround_layout")
+        private val SURROUND_MODE = stringPreferencesKey("surround_mode")
+        private val SURROUND_TRIMS = stringPreferencesKey("surround_trims_db")
+        private val SURROUND_ACTIVE_PRESET = stringPreferencesKey("surround_active_preset")
+        private val SURROUND_CUSTOM_TRIMS = stringPreferencesKey("surround_custom_trims_db")
+        private val SURROUND_CUSTOM_MODE = stringPreferencesKey("surround_custom_mode")
         private val REVERB_ENABLED = booleanPreferencesKey("reverb_enabled")
         private val REVERB_AMOUNT = floatPreferencesKey("reverb_amount")
         private val REVERB_PRESET = stringPreferencesKey("reverb_preset")

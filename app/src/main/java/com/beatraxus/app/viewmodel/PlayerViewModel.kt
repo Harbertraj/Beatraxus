@@ -1875,7 +1875,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                                 currentHeadroomDb = audioState.headroomDb,
                                 currentLatencyFrames = audioState.latencyFrames,
                                 currentDitherType = audioState.ditherType,
-                                currentEqMode = audioState.eqMode
+                                currentEqMode = audioState.eqMode,
+                                surroundOutputChannels = audioState.outputChannels,
+                                surroundFallbackActive = audioState.surroundFallback
                             )
                         )
                     }
@@ -4287,6 +4289,61 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun setAudio3DStageEnabled(enabled: Boolean) = applyDspConfig { it.copy(audio3DStageEnabled = enabled) }
 
+    // ── 5.1 / 7.1 Surround Simulator ────────────────────────────────────────────────────────────────────
+    /** Master switch. Off = the output is exactly what it was before the simulator existed. */
+    fun setSurroundEnabled(enabled: Boolean) = applyDspConfig { it.copy(surroundEnabled = enabled) }
+
+    /** Stereo / 5.1 / 7.1 / Auto. Choosing a layout other than Stereo does not switch the master toggle on. */
+    fun setSurroundLayout(layout: com.beatraxus.app.model.SurroundLayout) =
+        applyDspConfig { it.copy(surroundLayout = layout) }
+
+    fun setSurroundMode(mode: com.beatraxus.app.model.SurroundMode) =
+        applyDspConfig { it.copy(surroundMode = mode) }
+
+    /** One speaker's level trim in dB (index = [com.beatraxus.app.model.SurroundChannel] ordinal). */
+    fun setSurroundChannelTrim(index: Int, db: Float) = applyDspConfig { cfg ->
+        if (index !in 0 until com.beatraxus.app.model.DEFAULT_SURROUND_TRIMS_DB.size) return@applyDspConfig cfg
+        val trims = com.beatraxus.app.model.sanitizeSurroundTrims(cfg.surroundChannelTrimsDb).toMutableList()
+        trims[index] = db.coerceIn(com.beatraxus.app.model.SURROUND_TRIM_MIN_DB, com.beatraxus.app.model.SURROUND_TRIM_MAX_DB)
+        // Moving a slider turns whatever preset was active into an unsaved mix (no preset highlighted).
+        cfg.copy(surroundChannelTrimsDb = trims, surroundActivePreset = "")
+    }
+
+    fun resetSurroundTrims() = applyDspConfig {
+        it.copy(
+            surroundChannelTrimsDb = com.beatraxus.app.model.DEFAULT_SURROUND_TRIMS_DB,
+            surroundActivePreset = "Default"
+        )
+    }
+
+    fun applySurroundPreset(name: String) = applyDspConfig { cfg ->
+        if (name == com.beatraxus.app.model.SURROUND_CUSTOM_PRESET_NAME) {
+            val saved = cfg.surroundCustomTrimsDb ?: return@applyDspConfig cfg
+            cfg.copy(
+                surroundChannelTrimsDb = saved,
+                surroundMode = cfg.surroundCustomMode,
+                surroundActivePreset = name
+            )
+        } else {
+            val preset = com.beatraxus.app.model.BUILT_IN_SURROUND_PRESETS.firstOrNull { it.name == name }
+                ?: return@applyDspConfig cfg
+            cfg.copy(
+                surroundChannelTrimsDb = preset.trimsDb,
+                surroundMode = preset.mode,
+                surroundActivePreset = name
+            )
+        }
+    }
+
+    /** Stores the current trims + mode in the user slot ("Custom 1"). */
+    fun saveSurroundCustomPreset() = applyDspConfig {
+        it.copy(
+            surroundCustomTrimsDb = com.beatraxus.app.model.sanitizeSurroundTrims(it.surroundChannelTrimsDb),
+            surroundCustomMode = it.surroundMode,
+            surroundActivePreset = com.beatraxus.app.model.SURROUND_CUSTOM_PRESET_NAME
+        )
+    }
+
     fun setAudio3DWidth(value: Float) = applyDspConfig { it.copy(audio3DWidth = value.coerceIn(0f, 2f)) }
     fun setAudio3DDepth(value: Float) = applyDspConfig { it.copy(audio3DDepth = value.coerceIn(0f, 1f)) }
     fun setAudio3DHeight(value: Float) = applyDspConfig { it.copy(audio3DHeight = value.coerceIn(-1f, 1f)) }
@@ -5844,6 +5901,14 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun setDspCustomColors(primary: Int, secondary: Int) {
         viewModelScope.launch { appearancePreferences.setDspCustomColors(primary, secondary) }
     }
+
+    // Studio DSP > 5.1/7.1 screen appearance ("Customize UI")
+    fun setSurroundRoomTheme(id: String) { viewModelScope.launch { appearancePreferences.setSurroundRoomTheme(id) } }
+    fun setSurroundVisualizerEnabled(v: Boolean) { viewModelScope.launch { appearancePreferences.setSurroundVisualizerEnabled(v) } }
+    fun setSurroundVisualizerStyle(id: String) { viewModelScope.launch { appearancePreferences.setSurroundVisualizerStyle(id) } }
+    fun setSurroundShowSpeakerIcons(v: Boolean) { viewModelScope.launch { appearancePreferences.setSurroundShowSpeakerIcons(v) } }
+    fun setSurroundShowLabels(v: Boolean) { viewModelScope.launch { appearancePreferences.setSurroundShowLabels(v) } }
+    fun setSurroundColor(group: String, argb: Int) { viewModelScope.launch { appearancePreferences.setSurroundColor(group, argb) } }
 
     fun setSettingsBlurDarkness(value: Float) {
         viewModelScope.launch {

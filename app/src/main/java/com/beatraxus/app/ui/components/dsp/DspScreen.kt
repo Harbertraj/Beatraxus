@@ -143,8 +143,8 @@ private fun DspTabBar(
     modifier: Modifier = Modifier,
     onSelect: (Int) -> Unit
 ) {
-    val icons = listOf(Icons.Rounded.GraphicEq, Icons.Rounded.AutoAwesome, Icons.Rounded.Waves, Icons.Rounded.SurroundSound)
-    val labels = listOf("EQ", "MASTER", "REVERB", "SPATIAL")
+    val icons = listOf(Icons.Rounded.GraphicEq, Icons.Rounded.Speaker, Icons.Rounded.AutoAwesome, Icons.Rounded.Waves, Icons.Rounded.SurroundSound)
+    val labels = listOf("EQ", "5.1/7.1", "MASTER", "REVERB", "SPATIAL")
     Column(modifier = modifier) {
         Row(modifier = Modifier.fillMaxWidth()) {
             labels.forEachIndexed { i, label ->
@@ -406,7 +406,8 @@ fun DspScreen(
                 )
         )
 
-        val pagerState = rememberPagerState(pageCount = { 4 })
+        // Pages: 0 EQ, 1 5.1/7.1 surround, 2 Master, 3 Reverb, 4 Spatial
+        val pagerState = rememberPagerState(pageCount = { 5 })
         val pageScope = rememberCoroutineScope()
 
         Scaffold(
@@ -542,14 +543,16 @@ fun DspScreen(
                             onEditValue = { editingValue = it }
                         )
                     } else if (page == 1) {
-                        PremiumMasteringCard(uiState, viewModel, onEditValue = { editingValue = it })
+                        PremiumSurroundCard(uiState, viewModel)
                     } else if (page == 2) {
+                        PremiumMasteringCard(uiState, viewModel, onEditValue = { editingValue = it })
+                    } else if (page == 3) {
                         PremiumReverbCard(uiState, viewModel, onEditValue = { editingValue = it })
                     } else {
                         PremiumSoundStageCard(uiState, viewModel, onEditValue = { editingValue = it })
                     }
                 }
-                if (page < 3) {
+                if (page == 0 || page == 2 || page == 3) {
                     // EQ, Master and Reverb always fit the screen: the whole page scales down to the available height.
                     FitToHeight(
                         modifier = Modifier

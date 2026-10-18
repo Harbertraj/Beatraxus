@@ -27,6 +27,16 @@ interface AudioOutput {
     fun estimatedLatencyMs(): Int
     /** Frames written to the device but not yet played (real output-buffer latency). */
     fun queuedLatencyFrames(): Int = 0
+    /**
+     * Widest channel layout the active output device reports (2 = stereo only). Used by the 5.1/7.1
+     * Surround Simulator's "Auto" layout. Devices that do not report their channel counts count as stereo.
+     */
+    fun maxOutputChannels(): Int = 2
+    /**
+     * Channel count the output is open with right now (0 = unknown). The engine compares this with the channel
+     * count of the audio it is about to write, so a stream is never fed to a track of a different width.
+     */
+    fun outputChannelCount(): Int = 0
     /** Underruns (XRuns) since the current track started. Never negative. */
     fun underrunCount(): Int = 0
     /** Restart the underrun counter from zero (new song). */

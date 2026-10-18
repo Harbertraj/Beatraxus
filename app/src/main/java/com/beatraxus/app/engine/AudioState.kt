@@ -24,7 +24,11 @@ data class AudioState(
     val latencyFrames: Int = 0,
     val ditherType: String = "None",
     val eqMode: String = "IIR",
-    val pipelineSummary: String = ""
+    val pipelineSummary: String = "",
+    /** Channel count the output is really open with (2 = stereo, 6 = 5.1, 8 = 7.1). */
+    val outputChannels: Int = 2,
+    /** The surround simulator is on but the output device refused a multichannel stream. */
+    val surroundFallback: Boolean = false
 )
 
 data class PlaybackState(

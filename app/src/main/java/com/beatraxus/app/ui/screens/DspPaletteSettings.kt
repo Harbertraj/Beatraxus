@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.text.KeyboardOptions
 import com.beatraxus.app.model.PlayerUiState
+import com.beatraxus.app.ui.components.PremiumSwitch
 import com.beatraxus.app.ui.theme.DspPalette
 import com.beatraxus.app.viewmodel.PlayerViewModel
 
@@ -131,6 +132,154 @@ fun DspPaletteContent(uiState: PlayerUiState, playerViewModel: PlayerViewModel) 
                 fontSize = 11.sp,
                 lineHeight = 16.sp
             )
+        }
+
+        SurroundAppearanceSection(appearance, playerViewModel, activePalette)
+    }
+}
+
+/** Studio DSP > 5.1/7.1 screen look: room, visualizer, speaker icons / labels and speaker colours. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun SurroundAppearanceSection(
+    appearance: com.beatraxus.app.model.AppearanceConfig,
+    vm: PlayerViewModel,
+    palette: DspPalette
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        SectionLabel("5.1 / 7.1 SCREEN")
+
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(20.dp))
+                .background(Color.Black.copy(0.18f))
+                .border(0.8.dp, Color.White.copy(0.10f), RoundedCornerShape(20.dp))
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Text("Room theme", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            ChoiceRow(
+                options = listOf("dark" to "Dark", "studio" to "Studio", "living" to "Living Room"),
+                selected = appearance.surroundRoomTheme,
+                accent = palette.primary,
+                onSelect = vm::setSurroundRoomTheme
+            )
+
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Visualizer", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                PremiumSwitch(
+                    checked = appearance.surroundVisualizerEnabled,
+                    onCheckedChange = vm::setSurroundVisualizerEnabled,
+                    accentColor = palette.primary
+                )
+            }
+            if (appearance.surroundVisualizerEnabled) {
+                ChoiceRow(
+                    options = listOf("wave" to "Wave", "spectrum" to "Spectrum", "circle" to "Circle"),
+                    selected = appearance.surroundVisualizerStyle,
+                    accent = palette.primary,
+                    onSelect = vm::setSurroundVisualizerStyle
+                )
+            }
+
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Speaker icons", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                PremiumSwitch(
+                    checked = appearance.surroundShowSpeakerIcons,
+                    onCheckedChange = vm::setSurroundShowSpeakerIcons,
+                    accentColor = palette.primary
+                )
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Labels", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                PremiumSwitch(
+                    checked = appearance.surroundShowLabels,
+                    onCheckedChange = vm::setSurroundShowLabels,
+                    accentColor = palette.primary
+                )
+            }
+        }
+
+        SectionLabel("SPEAKER COLORS")
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(20.dp))
+                .background(Color.Black.copy(0.18f))
+                .border(0.8.dp, Color.White.copy(0.10f), RoundedCornerShape(20.dp))
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            SpeakerColorRow("Front speakers", "front", appearance.surroundColorFront, palette.primary, vm)
+            SpeakerColorRow("Surround speakers", "surround", appearance.surroundColorSurround, palette.secondary, vm)
+            SpeakerColorRow("Rear speakers", "rear", appearance.surroundColorRear, palette.tertiary, vm)
+            SpeakerColorRow("Subwoofer", "sub", appearance.surroundColorSub, palette.secondary, vm)
+            SpeakerColorRow("Room glow", "glow", appearance.surroundColorGlow, palette.primary, vm)
+            Text(
+                text = "The first swatch follows the dual colour palette above.",
+                color = SettingSubtitleColor,
+                fontSize = 11.sp,
+                lineHeight = 16.sp
+            )
+        }
+    }
+}
+
+private val SurroundSwatches = listOf(
+    0xFF22D3EE, 0xFF8B5CF6, 0xFFFF7A00, 0xFF3B82F6, 0xFF3CF2C0, 0xFFFF6B9A, 0xFFFFD60A
+).map { it.toInt() }
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun SpeakerColorRow(label: String, group: String, current: Int, paletteColor: Color, vm: PlayerViewModel) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(label, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            // 0 = follow the palette
+            Swatch(paletteColor, selected = current == 0, label = "Auto") { vm.setSurroundColor(group, 0) }
+            SurroundSwatches.forEach { argb ->
+                Swatch(Color(argb), selected = current == argb, label = null) { vm.setSurroundColor(group, argb) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun Swatch(color: Color, selected: Boolean, label: String?, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .size(30.dp)
+            .clip(CircleShape)
+            .background(color)
+            .border(if (selected) 2.5.dp else 1.dp, if (selected) Color.White else Color.White.copy(0.25f), CircleShape)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        if (label != null) {
+            Text(label, color = Color.Black.copy(0.75f), fontSize = 8.sp, fontWeight = FontWeight.Black)
+        }
+    }
+}
+
+@Composable
+private fun ChoiceRow(options: List<Pair<String, String>>, selected: String, accent: Color, onSelect: (String) -> Unit) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+        options.forEach { (id, name) ->
+            val isSel = id == selected
+            val shape = RoundedCornerShape(14.dp)
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(shape)
+                    .background(if (isSel) accent.copy(0.16f) else Color.White.copy(0.05f))
+                    .border(if (isSel) 1.5.dp else 1.dp, if (isSel) accent else Color.White.copy(0.12f), shape)
+                    .clickable { onSelect(id) }
+                    .padding(vertical = 11.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(name, color = Color.White.copy(if (isSel) 1f else 0.7f), fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+            }
         }
     }
 }

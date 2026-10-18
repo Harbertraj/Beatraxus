@@ -268,6 +268,18 @@ data class AppearanceConfig(
     val dspCustomPrimary: Int = 0xFFFFD60A.toInt(),
     val dspCustomSecondary: Int = 0xFFFF7A00.toInt(),
 
+    // Studio DSP > 5.1/7.1 screen ("Customize UI"). A colour of 0 means "follow the dual palette".
+    val surroundRoomTheme: String = "dark",          // dark | studio | living
+    val surroundVisualizerEnabled: Boolean = true,
+    val surroundVisualizerStyle: String = "wave",    // wave | spectrum | circle
+    val surroundShowSpeakerIcons: Boolean = true,
+    val surroundShowLabels: Boolean = true,
+    val surroundColorFront: Int = 0,
+    val surroundColorSurround: Int = 0,
+    val surroundColorRear: Int = 0,
+    val surroundColorSub: Int = 0,
+    val surroundColorGlow: Int = 0,
+
     // Fonts
     val selectedFontId: String = "system"
 )
