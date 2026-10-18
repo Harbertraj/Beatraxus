@@ -37,8 +37,13 @@ import kotlin.math.min
  * tools/fpsbooster_harness/new_engine.py: keep the two in sync.
  *
  * Resource policy
- *  - Exactly [SLOT_COUNT] frame slots exist (bounded queue). A new decoded frame overwrites the oldest slot
- *    that is not part of the current pair, so a slow GPU drops source frames instead of queueing unboundedly.
+ *  - Exactly [SLOT_COUNT] frame slots exist (bounded queue, ordered by timestamp). A new decoded frame takes a
+ *    free slot; when none is free the oldest queued frame is dropped, so a slow GPU drops source frames
+ *    instead of queueing unboundedly. Each slot also owns the flow fields of the pair (previous frame -> this
+ *    frame), so the pair being shown is never overwritten while the next one is estimated.
+ *  - Motion is estimated when a frame ARRIVES (between vsyncs), not on the vsync that needs it, so the
+ *    estimate never delays a presented frame. The pair to show is chosen by content time ([FrameSelection]),
+ *    so frames that arrive early just wait in the queue ([HoldController] keeps the delay stable).
  *  - All textures are allocated once per (source size, quality level) and reused for every frame.
  *  - A seek, pause, long gap or new clip breaks the pair ([MotionBoostTiming.isContinuous]); nothing is
  *    interpolated across it and the stale flow is discarded.
@@ -62,8 +67,10 @@ class OpticalFlowRenderer(
         fun onError(reason: FallbackReason, message: String)
     }
 
-    private class Slot(val full: Int, val luma: IntArray) {
+    private class Slot(val full: Int, val luma: IntArray, val fw: Int, val bw: Int, val cut: Int) {
         var tsNs: Long = 0L
+        /** fw / bw / cut hold the flow from the previous queued frame to this one. */
+        var hasFlow: Boolean = false
     }
 
     private val thread = HandlerThread("FpsBooster-GL", Process.THREAD_PRIORITY_DISPLAY).also { it.start() }
@@ -97,10 +104,9 @@ class OpticalFlowRenderer(
     private var interpProg: Prog? = null
 
     private var slots: Array<Slot> = emptyArray()
+    private val queue = ArrayList<Slot>(SLOT_COUNT)        // decoded frames, ascending timestamp
+    private val freeSlots = ArrayList<Slot>(SLOT_COUNT)
     private var flowTex: Array<Array<IntArray>> = emptyArray()   // [direction 0=fw 1=bw][level] -> ping/pong
-    private var finalFw = 0
-    private var finalBw = 0
-    private var cutTex = 0
 
     // ---- sizes ----
     private var srcW = 0
@@ -113,24 +119,41 @@ class OpticalFlowRenderer(
     private var gridH = IntArray(0)
 
     // ---- frame history ----
-    private var cur: Slot? = null
-    private var prev: Slot? = null
-    private var flowFor: Slot? = null
     private var pendingFrame = false
     private val texMatrix = FloatArray(16)
     private var frameIntervalNs = 0L
-    private var leadNs = 20_000_000L
+    private val holdCtl = HoldController()
     private var vsyncPeriodNs = 8_333_333L
     private var lastVsyncNs = 0L
     private var nextDueNs = 0L
-    private var lastDrawnCur: Slot? = null
-    private var lastDrawnPrev: Slot? = null
+    private var lastDrawnA: Slot? = null
+    private var lastDrawnB: Slot? = null
+    private var lastDrawnTsA = 0L
+    private var lastDrawnTsB = 0L
     private var lastDrawnAlpha = -1f
+    private var lastDrawnWarp = false
     private var lastHoldNs = 0L
+
+    // Non-blocking GPU cost sampling of the motion estimate (a glFinish here stalls the vsync callback).
+    private var fence = 0L
+    private var fenceStartNs = 0L
 
     // ---- stats ----
     private val acc = StatsAccumulator()
     private var estimateCount = 0
+    private val fencePoll = object : Runnable {
+        override fun run() {
+            if (released || fence == 0L) return
+            when (GLES30.glClientWaitSync(fence, 0, 0L)) {
+                GLES30.GL_ALREADY_SIGNALED, GLES30.GL_CONDITION_SATISFIED -> {
+                    acc.onEstimateMs((System.nanoTime() - fenceStartNs) / 1e6f)
+                    GLES30.glDeleteSync(fence); fence = 0L
+                }
+                GLES30.GL_WAIT_FAILED -> { GLES30.glDeleteSync(fence); fence = 0L }
+                else -> handler.postDelayed(this, 1L)
+            }
+        }
+    }
 
     private var choreographer: Choreographer? = null
     private val frameCallback = object : Choreographer.FrameCallback {
@@ -288,23 +311,24 @@ class OpticalFlowRenderer(
         slots = Array(SLOT_COUNT) {
             Slot(
                 full = newTexture(frameW, frameH, GLES30.GL_RGBA8),
-                luma = IntArray(n) { l -> newTexture(levelW[l], levelH[l], GLES30.GL_R8) }
+                luma = IntArray(n) { l -> newTexture(levelW[l], levelH[l], GLES30.GL_R8) },
+                fw = newTexture(gridW[0], gridH[0], GLES30.GL_RGBA16F),
+                bw = newTexture(gridW[0], gridH[0], GLES30.GL_RGBA16F),
+                cut = newTexture(1, 1, GLES30.GL_RGBA16F)
             )
         }
         flowTex = Array(2) { Array(n) { l -> IntArray(2) { newTexture(gridW[l], gridH[l], GLES30.GL_RGBA16F) } } }
-        finalFw = newTexture(gridW[0], gridH[0], GLES30.GL_RGBA16F)
-        finalBw = newTexture(gridW[0], gridH[0], GLES30.GL_RGBA16F)
-        cutTex = newTexture(1, 1, GLES30.GL_RGBA16F)
+        queue.clear(); freeSlots.clear(); freeSlots.addAll(slots)
+        holdCtl.reset()
 
         // Some GPUs advertise the extension but still reject RGBA16F attachments: verify once, loudly.
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, fbo)
-        GLES30.glFramebufferTexture2D(GLES30.GL_FRAMEBUFFER, GLES30.GL_COLOR_ATTACHMENT0, GLES30.GL_TEXTURE_2D, finalFw, 0)
+        GLES30.glFramebufferTexture2D(GLES30.GL_FRAMEBUFFER, GLES30.GL_COLOR_ATTACHMENT0, GLES30.GL_TEXTURE_2D, slots[0].fw, 0)
         check(GLES30.glCheckFramebufferStatus(GLES30.GL_FRAMEBUFFER) == GLES30.GL_FRAMEBUFFER_COMPLETE) {
             "RGBA16F framebuffer incomplete"
         }
 
-        cur = null; prev = null; flowFor = null
-        lastDrawnCur = null; lastDrawnPrev = null
+        lastDrawnA = null; lastDrawnB = null
         dirty = true
         acc.reset()
         if (pendingFrame) { pendingFrame = false; onFrameAvailable() }
@@ -331,24 +355,43 @@ class OpticalFlowRenderer(
         // A codec that did not stamp a render time gives a value that is not on our clock: use arrival time.
         if (abs(ts - now) > 2_000_000_000L) ts = now
 
-        val slot = slots.first { it !== cur && it !== prev }
+        val slot = acquireSlot()
         uploadFrame(slot)
         slot.tsNs = ts
+        slot.hasFlow = false
         acc.onSourceFrame()
 
-        val c = cur
-        if (c != null && MotionBoostTiming.isContinuous(c.tsNs, ts)) {
-            val interval = ts - c.tsNs
-            if (interval in MIN_FRAME_NS..MAX_FRAME_NS) {
-                frameIntervalNs = if (frameIntervalNs == 0L) interval else (frameIntervalNs * 7 + interval) / 8
+        val last = queue.lastOrNull()
+        val gap = if (last != null) ts - last.tsNs else 0L
+        val continuous = last != null && MotionBoostTiming.isContinuous(last.tsNs, ts) &&
+            !FramePacing.isGap(gap, frameIntervalNs)
+        if (continuous) {
+            if (gap in MIN_FRAME_NS..MAX_FRAME_NS) {
+                frameIntervalNs = if (frameIntervalNs == 0L) gap else (frameIntervalNs * 7 + gap) / 8
             }
-            prev = c
+            holdCtl.onFrame(ts - now)
         } else {
-            prev = null          // seek / pause / new clip: never interpolate across it
-            flowFor = null
+            // seek / pause / new clip: never interpolate across it
+            while (queue.isNotEmpty()) freeSlots.add(queue.removeAt(0))
+            holdCtl.reset()
         }
-        cur = slot
-        leadNs = (leadNs * 7 + (ts - now).coerceIn(-50_000_000L, 200_000_000L)) / 8
+        queue.add(slot)
+
+        if (continuous && wantsInterpolation()) {
+            estimateMotion(last!!, slot)
+            GLES30.glFlush()          // let the GPU start now instead of at the next swap
+        }
+    }
+
+    private fun wantsInterpolation(): Boolean {
+        val sourceFps = if (frameIntervalNs > 0) 1_000_000_000f / frameIntervalNs else 0f
+        return !MotionBoostTiming.shouldBypass(sourceFps, targetFps)
+    }
+
+    /** A free slot, or the oldest queued frame when every slot is in use (a slow GPU drops source frames). */
+    private fun acquireSlot(): Slot {
+        if (freeSlots.isEmpty()) freeSlots.add(queue.removeAt(0))
+        return freeSlots.removeAt(freeSlots.size - 1)
     }
 
     /** OES frame -> slot.full (RGBA8), then luma level 0 at work size, then the pyramid. */
@@ -423,11 +466,15 @@ class OpticalFlowRenderer(
         return result
     }
 
+    /** Estimates the motion between consecutive frames [a] -> [b]; the result lives in [b]'s flow textures. */
     private fun estimateMotion(a: Slot, b: Slot) {
+        // Sample the GPU latency of every 4th estimate without stalling this thread (see fencePoll).
+        val sample = fence == 0L && (estimateCount++ and 3) == 0
+        val t0 = System.nanoTime()
         val fw = flowDirection(0, a, b)
         val bw = flowDirection(1, b, a)
         val cons = consProg!!
-        for ((dst, self, other) in listOf(Triple(finalFw, fw, bw), Triple(finalBw, bw, fw))) {
+        for ((dst, self, other) in listOf(Triple(b.fw, fw, bw), Triple(b.bw, bw, fw))) {
             bindTarget(dst, gridW[0], gridH[0])
             cons.use()
             tex(0, cons, "uSelf", self); tex(1, cons, "uOther", other)
@@ -436,14 +483,20 @@ class OpticalFlowRenderer(
         }
         val n = levelW.size
         val cut = cutProg!!
-        bindTarget(cutTex, 1, 1)
+        bindTarget(b.cut, 1, 1)
         cut.use()
         tex(0, cut, "uFlow", flowTex[0][n - 1][1])
         GLES30.glUniform2i(cut.loc("uGrid"), gridW[n - 1], gridH[n - 1])
         GLES30.glUniform1f(cut.loc("uMeanThresh"), CUT_MEAN)
         GLES30.glUniform1f(cut.loc("uPoorThresh"), CUT_POOR)
         GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
-        flowFor = b
+        b.hasFlow = true
+        if (sample) {
+            fence = GLES30.glFenceSync(GLES30.GL_SYNC_GPU_COMMANDS_COMPLETE, 0)
+            fenceStartNs = t0
+            GLES30.glFlush()
+            handler.postDelayed(fencePoll, 1L)
+        }
     }
 
     // =====================================================================
@@ -458,24 +511,37 @@ class OpticalFlowRenderer(
         lastVsyncNs = vsyncNs
         emitWindow(vsyncNs)
 
-        val c = cur ?: return
+        if (queue.isEmpty()) return
         val fps = targetFps
         val intervalNs = FramePacing.intervalNs(fps)
         if (!MotionBoostTiming.isDue(vsyncNs, nextDueNs, vsyncPeriodNs)) return
 
-        val p = prev
-        val sourceFps = if (frameIntervalNs > 0) 1_000_000_000f / frameIntervalNs else 0f
-        val interpolate = p != null && !MotionBoostTiming.shouldBypass(sourceFps, fps)
-
+        val newest = queue.last()
+        var a = newest
+        var b = newest
         var alpha = 1f
+        var warp = false
         var hold = 0L
-        if (interpolate) {
-            hold = MotionBoostTiming.holdNs(frameIntervalNs, leadNs, vsyncPeriodNs)
-            alpha = MotionBoostTiming.alpha(FramePacing.contentTimeNs(vsyncNs, vsyncPeriodNs, hold), p.tsNs, c.tsNs)
+        if (queue.size >= 2 && wantsInterpolation()) {
+            hold = holdCtl.update(frameIntervalNs, vsyncPeriodNs)
+            val content = FramePacing.contentTimeNs(vsyncNs, vsyncPeriodNs, hold)
+            val pick = FrameSelection.pick(queue.size, { queue[it].tsNs }, content)
+            a = queue[pick.a]; b = queue[pick.b]; alpha = pick.alpha
+            // frames older than the pair are no longer needed
+            for (i in 0 until pick.a) freeSlots.add(queue.removeAt(0))
+            if (a !== b) {
+                if (!b.hasFlow) estimateMotion(a, b)         // rare: interpolation switched on after b arrived
+                warp = true
+            }
+        } else {
+            // Not interpolating (source already at target rate, or only one frame): newest frame, lowest latency.
+            while (queue.size > 1) freeSlots.add(queue.removeAt(0))
         }
         lastHoldNs = hold
 
-        if (!dirty && c === lastDrawnCur && p === lastDrawnPrev && alpha == lastDrawnAlpha) {
+        if (!dirty && a === lastDrawnA && b === lastDrawnB && a.tsNs == lastDrawnTsA && b.tsNs == lastDrawnTsB &&
+            alpha == lastDrawnAlpha && warp == lastDrawnWarp
+        ) {
             // paused / nothing new: leave the last presented frame; do not count the idle time as missed output
             nextDueNs = vsyncNs + intervalNs
             return
@@ -487,27 +553,17 @@ class OpticalFlowRenderer(
         }
 
         val workStart = System.nanoTime()
-        if (interpolate && flowFor !== c) {
-            // Sample the true GPU+CPU cost of a motion estimate on every 4th pair (glFinish stalls only this thread).
-            val sample = (estimateCount++ and 3) == 0
-            val t0 = System.nanoTime()
-            estimateMotion(p, c)
-            if (sample) {
-                GLES30.glFinish()
-                acc.onEstimateMs((System.nanoTime() - t0) / 1e6f)
-            }
-        }
-
-        drawOutput(a = if (interpolate) p else c, b = c, alpha = alpha, warp = interpolate)
+        drawOutput(a = a, b = b, alpha = alpha, warp = warp)
         if (!EGL14.eglSwapBuffers(eglDisplay, eglSurface)) {
             fail(FallbackReason.GPU_ERROR, "eglSwapBuffers failed (0x${Integer.toHexString(EGL14.eglGetError())})", null)
             return
         }
         acc.onDrawMs((System.nanoTime() - workStart) / 1e6f)
         nextDueNs = MotionBoostTiming.nextDue(nextDueNs, vsyncNs, intervalNs)
-        lastDrawnCur = c; lastDrawnPrev = p; lastDrawnAlpha = alpha
+        lastDrawnA = a; lastDrawnB = b; lastDrawnTsA = a.tsNs; lastDrawnTsB = b.tsNs
+        lastDrawnAlpha = alpha; lastDrawnWarp = warp
         dirty = false
-        acc.onPresented(generatedFrame = interpolate && alpha > 0.02f && alpha < 0.98f)
+        acc.onPresented(generatedFrame = warp && alpha > 0.02f && alpha < 0.98f)
     }
 
     private fun emitWindow(nowNs: Long) {
@@ -527,7 +583,7 @@ class OpticalFlowRenderer(
         val ip = interpProg!!
         ip.use()
         tex(0, ip, "uA", a.full); tex(1, ip, "uB", b.full)
-        tex(2, ip, "uFw", finalFw); tex(3, ip, "uBw", finalBw); tex(4, ip, "uCut", cutTex)
+        tex(2, ip, "uFw", b.fw); tex(3, ip, "uBw", b.bw); tex(4, ip, "uCut", b.cut)
         GLES30.glUniform1f(ip.loc("uT"), if (warp) alpha else 1f)
         GLES30.glUniform1i(ip.loc("uWarp"), if (warp) 1 else 0)
         GLES30.glUniform2f(ip.loc("uWork"), levelW[0].toFloat(), levelH[0].toFloat())
@@ -568,14 +624,12 @@ class OpticalFlowRenderer(
 
     private fun freeResources() {
         val ids = ArrayList<Int>()
-        slots.forEach { s -> ids.add(s.full); s.luma.forEach { ids.add(it) } }
+        slots.forEach { sl -> ids.add(sl.full); sl.luma.forEach { ids.add(it) }; ids.add(sl.fw); ids.add(sl.bw); ids.add(sl.cut) }
         flowTex.forEach { dir -> dir.forEach { pair -> pair.forEach { ids.add(it) } } }
-        if (finalFw != 0) ids.add(finalFw)
-        if (finalBw != 0) ids.add(finalBw)
-        if (cutTex != 0) ids.add(cutTex)
         if (ids.isNotEmpty()) GLES30.glDeleteTextures(ids.size, ids.toIntArray(), 0)
+        if (fence != 0L) { GLES30.glDeleteSync(fence); fence = 0L }
         slots = emptyArray(); flowTex = emptyArray()
-        finalFw = 0; finalBw = 0; cutTex = 0
+        queue.clear(); freeSlots.clear()
     }
 
     private fun releaseGl() {
@@ -649,7 +703,7 @@ class OpticalFlowRenderer(
 
     companion object {
         private const val TAG = "FpsBoosterGL"
-        private const val SLOT_COUNT = 3          // bounded frame queue: previous, current, one being filled
+        private const val SLOT_COUNT = 4          // bounded frame queue: the shown pair plus up to two frames that arrived early
         private const val PITCH = 4               // flow block pitch (matches flow_search.frag)
         private const val COARSEST_EDGE = 128     // stop building pyramid levels below this size
         private const val MAX_LEVELS = 5

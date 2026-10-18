@@ -19,6 +19,16 @@ object FramePacing {
         val generated: Boolean get() = interpolated && alpha in GENERATED_MIN..GENERATED_MAX
     }
 
+    /**
+     * True when the gap to a new source frame is far longer than the running frame interval: a pause or stall
+     * that is shorter than [MotionBoostTiming.DISCONTINUITY_NS] (e.g. a 300 ms pause), across which nothing
+     * must be interpolated or the picture would morph between two unrelated moments.
+     */
+    fun isGap(gapNs: Long, smoothedIntervalNs: Long): Boolean =
+        smoothedIntervalNs > 0L && gapNs > GAP_MIN_NS && gapNs > smoothedIntervalNs * 5 / 2
+
+    private const val GAP_MIN_NS = 80_000_000L
+
     fun intervalNs(fps: Int): Long = (1_000_000_000.0 / fps.coerceAtLeast(1)).toLong()
 
     /**

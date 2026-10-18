@@ -26,8 +26,37 @@ uniform float uConsHi;       // ... and above which it is rejected
 in vec2 vUv;
 out vec4 o;
 
-vec4 fw(vec2 uv) { return texture(uFw, uv * uFlowUv); }
-vec4 bw(vec2 uv) { return texture(uBw, uv * uFlowUv); }
+// Bilinear fetch of a flow field with the VECTOR weighted by how trustworthy each of the 4 neighbouring blocks
+// is. Plain bilinear blends the vectors of two different objects at a motion edge into a third vector that
+// matches neither (smeared / warped edges). Here an occluded or badly matched neighbour barely contributes to
+// the vector; cost (.b) and inconsistency (.a) stay plain bilinear so an untrusted neighbour still lowers the
+// confidence of the result.
+vec4 flowAt(sampler2D s, vec2 uv) {
+  vec2 sz = vec2(textureSize(s, 0));
+  vec2 g = uv * uFlowUv * sz - 0.5;
+  vec2 gi = floor(g);
+  vec2 f = g - gi;
+  ivec2 i0 = ivec2(gi);
+  ivec2 hi = ivec2(sz) - 1;
+  vec4 t00 = texelFetch(s, clamp(i0, ivec2(0), hi), 0);
+  vec4 t10 = texelFetch(s, clamp(i0 + ivec2(1, 0), ivec2(0), hi), 0);
+  vec4 t01 = texelFetch(s, clamp(i0 + ivec2(0, 1), ivec2(0), hi), 0);
+  vec4 t11 = texelFetch(s, clamp(i0 + ivec2(1, 1), ivec2(0), hi), 0);
+  float w00 = (1.0 - f.x) * (1.0 - f.y);
+  float w10 = f.x * (1.0 - f.y);
+  float w01 = (1.0 - f.x) * f.y;
+  float w11 = f.x * f.y;
+  float k00 = w00 * (0.05 + 1.0 - smoothstep(uConsLo, uConsHi, t00.a));
+  float k10 = w10 * (0.05 + 1.0 - smoothstep(uConsLo, uConsHi, t10.a));
+  float k01 = w01 * (0.05 + 1.0 - smoothstep(uConsLo, uConsHi, t01.a));
+  float k11 = w11 * (0.05 + 1.0 - smoothstep(uConsLo, uConsHi, t11.a));
+  vec2 v = (t00.xy * k00 + t10.xy * k10 + t01.xy * k01 + t11.xy * k11) / (k00 + k10 + k01 + k11);
+  vec4 plain = t00 * w00 + t10 * w10 + t01 * w01 + t11 * w11;
+  return vec4(v, plain.z, plain.w);
+}
+
+vec4 fw(vec2 uv) { return flowAt(uFw, uv); }
+vec4 bw(vec2 uv) { return flowAt(uBw, uv); }
 
 float lum(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
 
@@ -65,6 +94,9 @@ void main() {
     vec3 warped = (wf * wFw + wb * wBw) / max(wsum, 1e-4);
     // both warps agreeing is stronger evidence than one
     float conf = clamp(max(wf, wb) + 0.25 * min(wf, wb), 0.0, 1.0);
+    // A half-trusted warp blended over the nearest frame is a visible double image (ghost): make the
+    // transition decisive so a pixel is either motion-compensated or a clean real frame.
+    conf = smoothstep(0.25, 0.60, conf);
     rgb = mix(nearest, warped, conf);
   }
 
