@@ -177,6 +177,9 @@ private class NativeDspProcessor(
     private var previousAirEnabled = config.airEnabled
     private var isFirstConfig = true
 
+    // Config last fully applied to the native engine (null = must apply everything).
+    private var lastAppliedConfig: DspConfig? = null
+
     private val native = NativeDsp().also { dsp ->
         dsp.init(inputSampleRate.toFloat(), channels, outputSampleRate)
         if (inputSampleRate != outputSampleRate) {
@@ -191,6 +194,16 @@ private class NativeDspProcessor(
     }
 
     private fun updateNativeConfig(cfg: DspConfig, dsp: NativeDsp) {
+        // A Spatial slider drag changes only Spatial fields. Re-sending the whole config (all EQ,
+        // AI EQ and simulation bands, limiter, dither, ...) on every tick is wasted work on the
+        // audio thread, so push just the Spatial section in that case.
+        val prev = lastAppliedConfig
+        if (prev != null && prev != cfg && isSpatialOnlyChange(prev, cfg)) {
+            applySpatialSection(cfg, dsp)
+            lastAppliedConfig = cfg
+            return
+        }
+        lastAppliedConfig = cfg
         val isBP = cfg.bitPerfectEnabled
 
         dsp.setPreamp(if (isBP) 0f else cfg.preampDb)
@@ -255,6 +268,66 @@ private class NativeDspProcessor(
             if (!isBP && cfg.stereoExpansionEnabled) cfg.stereoWidth else 1f
         )
 
+        applySpatialSection(cfg, dsp)
+
+        data class ReverbParams(val type: Int, val room: Float, val damp: Float, val width: Float, val delay: Float)
+        val namedPreset = com.beatraxus.app.model.REVERB_NAMED_PRESETS[cfg.reverbPreset]
+        val params = if (namedPreset != null) {
+            ReverbParams(namedPreset.type, namedPreset.room, namedPreset.damping, namedPreset.width, namedPreset.predelayMs)
+        } else {
+            // Custom / FLAT: the native reverb has a single room-size (feedback) parameter, so the
+            // SIZE and DECAY knobs are blended into it. Previously only DECAY was sent and SIZE was dead.
+            val room = ((cfg.reverbDecay + cfg.reverbRoomSize) * 0.5f).coerceIn(0f, 1f)
+            ReverbParams(0, room, cfg.reverbDamping, cfg.reverbWidth, cfg.reverbPredelayMs)
+        }
+
+        val reverbUnbypassed = !isBP || cfg.bitPerfectUnbypassReverb
+        if (!cfg.reverbEnabled || !reverbUnbypassed) {
+            dsp.setReverb(0.0f)
+            dsp.muteReverb()
+            dsp.setReverbType(params.type)
+            dsp.setReverbParams(params.room, params.damp)
+            dsp.setReverbWidth(params.width)
+            dsp.setReverbPredelay(params.delay)
+            dsp.setReverbMixBalance(0.62f) // neutral, so a disabled reverb never touches the dry signal
+        } else {
+            dsp.setReverb(cfg.reverbAmount)
+            dsp.setReverbMixBalance(cfg.reverbPredelayMix)
+            dsp.setReverbType(params.type)
+            dsp.setReverbParams(params.room, params.damp)
+            dsp.setReverbWidth(params.width)
+            dsp.setReverbPredelay(params.delay)
+        }
+
+        val limiterUnbypassed = !isBP || cfg.bitPerfectUnbypassLimiter
+        dsp.setSoftLimiter(cfg.softLimiterEnabled && limiterUnbypassed)
+        dsp.setLimiter(cfg.limiterEnabled && limiterUnbypassed)
+        dsp.setLimiterParams(cfg.limiterThresholdDb, cfg.limiterAttackMs, cfg.limiterReleaseMs)
+        dsp.setLimiterHardMode(cfg.limiterHardModeEnabled)
+
+        val ditherUnbypassed = !isBP || cfg.bitPerfectUnbypassDithering
+        val shouldDither = cfg.ditherEnabled && ditherUnbypassed &&
+            cfg.ditherType != com.beatraxus.app.model.DitherType.NONE &&
+            outputBitDepth < 32
+        dsp.setDither(shouldDither, outputBitDepth)
+        dsp.setDitherType(cfg.ditherType.nativeValue)
+
+        // Phase 2.1: Speed
+        dsp.setSpeed(cfg.playbackSpeed, cfg.preservePitch)
+        
+        // Phase 2.7: Headroom
+        dsp.setHeadroomManagement(cfg.headroomManagementEnabled)
+        dsp.setNoHeadroomGain(cfg.noHeadroomGainEnabled)
+
+        // Phase 3.4: Hardware Volume
+        dsp.setHardwareVolume(cfg.hardwareVolumeEnabled)
+
+        applyEqBands(cfg, dsp, currentAiEq)
+    }
+
+    /** Everything the Spatial / Sound Stage tab controls. Safe to call on its own. */
+    private fun applySpatialSection(cfg: DspConfig, dsp: NativeDsp) {
+        val isBP = cfg.bitPerfectEnabled
         if (channels > 2) {
             Log.d("VideoAudioRouting", "Multichannel audio path ($channels ch). Bypassing stereo-only DSP features (Crossfeed, 3D Spatial). NO DOWNMIX APPLIED.")
             dsp.setCrossfeed(false, 0f)
@@ -333,60 +406,33 @@ private class NativeDspProcessor(
         val effectiveWidth = if (cfg.soundStageEnabled) cfg.soundStageWidth else cfg.spatialStageWidth
         dsp.setSoundStageWidth(effectiveWidth)
         dsp.setSoundStageCenterLock(cfg.soundStageCenterLock)
+    }
 
-        data class ReverbParams(val type: Int, val room: Float, val damp: Float, val width: Float, val delay: Float)
-        val namedPreset = com.beatraxus.app.model.REVERB_NAMED_PRESETS[cfg.reverbPreset]
-        val params = if (namedPreset != null) {
-            ReverbParams(namedPreset.type, namedPreset.room, namedPreset.damping, namedPreset.width, namedPreset.predelayMs)
-        } else {
-            // Custom / FLAT: the native reverb has a single room-size (feedback) parameter, so the
-            // SIZE and DECAY knobs are blended into it. Previously only DECAY was sent and SIZE was dead.
-            val room = ((cfg.reverbDecay + cfg.reverbRoomSize) * 0.5f).coerceIn(0f, 1f)
-            ReverbParams(0, room, cfg.reverbDamping, cfg.reverbWidth, cfg.reverbPredelayMs)
-        }
-
-        val reverbUnbypassed = !isBP || cfg.bitPerfectUnbypassReverb
-        if (!cfg.reverbEnabled || !reverbUnbypassed) {
-            dsp.setReverb(0.0f)
-            dsp.muteReverb()
-            dsp.setReverbType(params.type)
-            dsp.setReverbParams(params.room, params.damp)
-            dsp.setReverbWidth(params.width)
-            dsp.setReverbPredelay(params.delay)
-            dsp.setReverbMixBalance(0.62f) // neutral, so a disabled reverb never touches the dry signal
-        } else {
-            dsp.setReverb(cfg.reverbAmount)
-            dsp.setReverbMixBalance(cfg.reverbPredelayMix)
-            dsp.setReverbType(params.type)
-            dsp.setReverbParams(params.room, params.damp)
-            dsp.setReverbWidth(params.width)
-            dsp.setReverbPredelay(params.delay)
-        }
-
-        val limiterUnbypassed = !isBP || cfg.bitPerfectUnbypassLimiter
-        dsp.setSoftLimiter(cfg.softLimiterEnabled && limiterUnbypassed)
-        dsp.setLimiter(cfg.limiterEnabled && limiterUnbypassed)
-        dsp.setLimiterParams(cfg.limiterThresholdDb, cfg.limiterAttackMs, cfg.limiterReleaseMs)
-        dsp.setLimiterHardMode(cfg.limiterHardModeEnabled)
-
-        val ditherUnbypassed = !isBP || cfg.bitPerfectUnbypassDithering
-        val shouldDither = cfg.ditherEnabled && ditherUnbypassed &&
-            cfg.ditherType != com.beatraxus.app.model.DitherType.NONE &&
-            outputBitDepth < 32
-        dsp.setDither(shouldDither, outputBitDepth)
-        dsp.setDitherType(cfg.ditherType.nativeValue)
-
-        // Phase 2.1: Speed
-        dsp.setSpeed(cfg.playbackSpeed, cfg.preservePitch)
-        
-        // Phase 2.7: Headroom
-        dsp.setHeadroomManagement(cfg.headroomManagementEnabled)
-        dsp.setNoHeadroomGain(cfg.noHeadroomGainEnabled)
-
-        // Phase 3.4: Hardware Volume
-        dsp.setHardwareVolume(cfg.hardwareVolumeEnabled)
-
-        applyEqBands(cfg, dsp, currentAiEq)
+    /** True when [cfg] differs from [prev] ONLY in Spatial / Sound Stage fields. */
+    private fun isSpatialOnlyChange(prev: DspConfig, cfg: DspConfig): Boolean {
+        return cfg.copy(
+            spatialAudioEnabled = prev.spatialAudioEnabled,
+            soundStageEnabled = prev.soundStageEnabled,
+            spatialTouchEnabled = prev.spatialTouchEnabled,
+            spatialAudioIntensity = prev.spatialAudioIntensity,
+            soundStageSelectedNode = prev.soundStageSelectedNode,
+            soundStageNodePositions = prev.soundStageNodePositions,
+            soundStageWidth = prev.soundStageWidth,
+            spatialStageWidth = prev.spatialStageWidth,
+            soundStageCenterLock = prev.soundStageCenterLock,
+            hrtfMode = prev.hrtfMode,
+            spatialUiMode = prev.spatialUiMode,
+            soundStagePresets = prev.soundStagePresets,
+            audio3DStageEnabled = prev.audio3DStageEnabled,
+            audio3DWidth = prev.audio3DWidth,
+            audio3DDepth = prev.audio3DDepth,
+            audio3DHeight = prev.audio3DHeight,
+            audio3DDistance = prev.audio3DDistance,
+            audio3DCenterFocus = prev.audio3DCenterFocus,
+            audio3DRoomReflections = prev.audio3DRoomReflections,
+            audio3DSpeakerPositions = prev.audio3DSpeakerPositions,
+            audio3DPresets = prev.audio3DPresets
+        ) == prev
     }
 
     private fun applyEqBands(config: DspConfig, dsp: NativeDsp, aiProfile: AiEqProfile? = null) {
@@ -504,6 +550,7 @@ private class NativeDspProcessor(
     }
 
     override fun flush() {
+        lastAppliedConfig = null
         native.init(inputSampleRate.toFloat(), channels, outputSampleRate)
         if (inputSampleRate != outputSampleRate) {
             native.initResampler(inputSampleRate.toFloat(), channels, outputSampleRate.toFloat())

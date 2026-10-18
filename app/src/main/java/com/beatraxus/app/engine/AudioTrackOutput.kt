@@ -761,16 +761,26 @@ class AudioTrackOutput(
         }
     }
 
+    // Last position successfully read. When the lifecycle lock is held by a writer (every DSP
+    // settings change takes it briefly) we return this instead of 0, otherwise the UI clock
+    // snaps back to the song's start position for a frame and the progress bar flickers.
+    @Volatile private var lastPositionFrames = 0L
+
     override fun playbackPositionFrames(): Long {
         if (lifecycleLock.readLock().tryLock()) {
             try {
-                if (usingMmap) return mmapOutput?.playbackPositionFrames() ?: 0L
-                return (getAbsolutePlaybackHeadPositionInternal() - playbackHeadOffset).coerceAtLeast(0L)
+                val pos = if (usingMmap) {
+                    mmapOutput?.playbackPositionFrames() ?: 0L
+                } else {
+                    (getAbsolutePlaybackHeadPositionInternal() - playbackHeadOffset).coerceAtLeast(0L)
+                }
+                lastPositionFrames = pos
+                return pos
             } finally {
                 lifecycleLock.readLock().unlock()
             }
         }
-        return 0L 
+        return lastPositionFrames
     }
 
     override fun totalFramesWritten(): Long {

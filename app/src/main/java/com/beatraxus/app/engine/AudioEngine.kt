@@ -809,6 +809,13 @@ class AudioEngine(
         }
     }
 
+    // Last values pushed to the output layer (null = never pushed, so the first call pushes all).
+    private var pushedDvc: Triple<Boolean, String, Float>? = null
+    private var pushedDither: Pair<Boolean, Int>? = null
+    private var pushedRoute: Pair<Boolean, Boolean>? = null
+    private var pushedBuffer: List<Int>? = null
+    private var pushedMmap: Pair<Boolean, Int>? = null
+
     fun updateDspConfig(config: DspConfig) {
         val oldConfig = dspConfig
         val sourceSampleRate = currentSong?.sampleRateHz ?: 44100
@@ -816,32 +823,55 @@ class AudioEngine(
         dspConfig = config
         val newTargetRate = resolveTargetSampleRate(sourceSampleRate, config)
 
-        output.setDvcState(
-            enabled = config.dvcEnabled,
-            mode = config.dvcMode.name,
-            level = config.dvcLevel
-        )
+        // Each output setter takes the output's write lock. Only push a group when its value
+        // actually changed: a Spatial slider drag fires this function many times a second, and
+        // holding that lock makes position reads fail and blocks the UI thread.
+        val dvcKey = Triple(config.dvcEnabled, config.dvcMode.name, config.dvcLevel)
+        if (dvcKey != pushedDvc) {
+            pushedDvc = dvcKey
+            output.setDvcState(
+                enabled = config.dvcEnabled,
+                mode = config.dvcMode.name,
+                level = config.dvcLevel
+            )
+        }
 
-        output.setDitherState(
-            enabled = config.ditherEnabled && config.ditherType != com.beatraxus.app.model.DitherType.NONE,
-            type = config.ditherType.nativeValue
-        )
+        val ditherKey = (config.ditherEnabled && config.ditherType != com.beatraxus.app.model.DitherType.NONE) to
+            config.ditherType.nativeValue
+        if (ditherKey != pushedDither) {
+            pushedDither = ditherKey
+            output.setDitherState(enabled = ditherKey.first, type = ditherKey.second)
+        }
 
-        // Forward USB Exclusive Mode to output layer
-        output.setUsbExclusiveMode(config.usbExclusiveEnabled)
-        output.setBitPerfectMode(config.bitPerfectEnabled)
+        // Forward USB Exclusive Mode / Bit-Perfect to output layer
+        val routeKey = config.usbExclusiveEnabled to config.bitPerfectEnabled
+        if (routeKey != pushedRoute) {
+            pushedRoute = routeKey
+            output.setUsbExclusiveMode(config.usbExclusiveEnabled)
+            output.setBitPerfectMode(config.bitPerfectEnabled)
+        }
 
-        output.setBufferConfig(
-            bufferFrames = (config.outputBufferMs * sourceSampleRate) / 1000,
-            bufferCount = config.outputBufferCount.coerceIn(2, 4),
-            postFadeFrames = (config.postFadeBufferMs * sourceSampleRate) / 1000
+        val bufferKey = listOf(
+            (config.outputBufferMs * sourceSampleRate) / 1000,
+            config.outputBufferCount.coerceIn(2, 4),
+            (config.postFadeBufferMs * sourceSampleRate) / 1000
         )
+        if (bufferKey != pushedBuffer) {
+            pushedBuffer = bufferKey
+            output.setBufferConfig(
+                bufferFrames = bufferKey[0],
+                bufferCount = bufferKey[1],
+                postFadeFrames = bufferKey[2]
+            )
+        }
 
         // Forward MMAP Exclusive Mode
-        output.setMmapExclusiveMode(
-            enabled = config.outputMode == OutputMode.MMAP_EXCLUSIVE,
-            requestedBufferFrames = (config.outputBufferMs * sourceSampleRate) / 1000
-        )
+        val mmapKey = (config.outputMode == OutputMode.MMAP_EXCLUSIVE) to
+            ((config.outputBufferMs * sourceSampleRate) / 1000)
+        if (mmapKey != pushedMmap) {
+            pushedMmap = mmapKey
+            output.setMmapExclusiveMode(enabled = mmapKey.first, requestedBufferFrames = mmapKey.second)
+        }
 
         val outputModeChanged = oldConfig.outputMode != config.outputMode
         val usbExclusiveChanged = oldConfig.usbExclusiveEnabled != config.usbExclusiveEnabled
@@ -1289,7 +1319,10 @@ class AudioEngine(
                 return basePositionMs
             }
             
-            return basePositionMs + framesToMs(framesSinceStart, sampleRate)
+            val position = basePositionMs + framesToMs(framesSinceStart, sampleRate)
+            // Never report a position past the end of the track.
+            val duration = song.durationMs
+            return if (duration > 0L) position.coerceAtMost(duration) else position
         }
 
         suspend fun requestOutputRestart() {
@@ -1314,18 +1347,7 @@ class AudioEngine(
 
             if (activeSession?.sessionId == this.sessionId) {
                 val targetRate = resolveTargetSampleRate(format.sampleRate, dspConfig)
-                val isHiRes = dspConfig.outputMode == OutputMode.HI_RES
-                // MTK HiFi: an explicit Sample Format choice wins. On Auto, hand the mixer
-                // 24-bit PCM (what Poweramp's Hi-Res output reports) instead of Float32.
-                // 24-bit packed needs API 31+; if the device rejects it we fall back to Float32
-                // below and remember that for the rest of the app run.
-                val outputFormat = when {
-                    !isHiRes -> dspConfig.sampleFormat
-                    dspConfig.sampleFormat != SampleFormat.AUTO -> dspConfig.sampleFormat
-                    pcm24OutputFailed || android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.S -> SampleFormat.FLOAT_32BIT
-                    else -> SampleFormat.PCM_24BIT
-                }
-                val targetBitDepth = if (isHiRes) outputFormat.bitDepth else dspConfig.sampleFormat.bitDepth
+                val targetBitDepth = if (dspConfig.outputMode == OutputMode.HI_RES) 32 else dspConfig.sampleFormat.bitDepth
 
                 val outputConfigChanged = targetRate != lastOutputRate || targetBitDepth != lastOutputBitDepth
                 val hardwareConfigChanged = targetRate != output.outputSampleRate() || targetBitDepth != output.outputBitDepth()
@@ -1343,22 +1365,17 @@ class AudioEngine(
 
                 output.setTargetSampleRate(targetRate)
 
-                output.setSampleFormat(outputFormat)
+                if (dspConfig.outputMode == OutputMode.HI_RES) {
+                    output.setSampleFormat(SampleFormat.FLOAT_32BIT)
+                } else {
+                    output.setSampleFormat(dspConfig.sampleFormat)
+                }
 
                 // RECOVERY: Capture the current cumulative position before re-initializing
                 // the output, so we can resume smoothly without a jump.
                 basePositionMs = currentRenderedPositionMs()
 
-                var outputReady = output.init(format.sampleRate, format.channels, format.bitDepth, format.isDoP, resetOffsets = false)
-                if (!outputReady && isHiRes && outputFormat == SampleFormat.PCM_24BIT && dspConfig.sampleFormat == SampleFormat.AUTO) {
-                    // This device does not accept 24-bit packed PCM: fall back to Float32.
-                    logWarn("24-bit output unavailable, falling back to Float32")
-                    pcm24OutputFailed = true
-                    lastOutputBitDepth = SampleFormat.FLOAT_32BIT.bitDepth
-                    output.setSampleFormat(SampleFormat.FLOAT_32BIT)
-                    outputReady = output.init(format.sampleRate, format.channels, format.bitDepth, format.isDoP, resetOffsets = false)
-                }
-                if (!outputReady) {
+                if (!output.init(format.sampleRate, format.channels, format.bitDepth, format.isDoP, resetOffsets = false)) {
                     logWarn("Audio output initialization failed")
                 }
 
@@ -1474,9 +1491,6 @@ class AudioEngine(
 
     private var appliedDspRevision = -1L
 
-    /** Set once the device rejects 24-bit packed PCM in MTK HiFi mode; stays Float32 afterwards. */
-    @Volatile private var pcm24OutputFailed = false
-
     companion object {
         private const val TAG = "AudioEngine"
         private const val RING_BUFFER_SAMPLES = 262_144 // Increased for better pre-fetch
@@ -1570,19 +1584,12 @@ class AudioEngine(
             ResamplerMode.AUTO -> {
                 val nativeRate = AudioTrack.getNativeOutputSampleRate(AudioManager.STREAM_MUSIC)
                 if (config.outputMode == OutputMode.HI_RES) {
+                    // MTK HiFi direct path: honour the source sample rate exactly up to 192kHz.
+                    // Do NOT downsample — the hardware driver handles any DAC-level conversion.
+                    // This is the same policy Poweramp uses: pass native source rate to the DAC.
                     when {
                         inputRate <= 0 -> nativeRate
-                        // USB Direct negotiates its own rate with the DAC: keep the source rate.
-                        config.usbExclusiveEnabled -> inputRate.coerceAtMost(384000)
-                        // Source rate is BELOW the device mixer rate (e.g. 44.1 kHz FLAC on a
-                        // 48 kHz device). If we handed 44.1 kHz to AudioTrack, the Android mixer
-                        // would resample it with the platform's own SRC (not SoXR, and not
-                        // controlled by the SoXR quality setting). Resample to the mixer rate
-                        // here with SoXR instead, so the system has nothing left to convert.
-                        // This is what Poweramp does (44.1 -> 48 kHz with SoX).
-                        nativeRate > 0 && inputRate < nativeRate -> nativeRate
-                        // At or above the mixer rate: keep the existing pass-through policy.
-                        inputRate <= 384000 -> inputRate
+                        inputRate <= 384000 -> inputRate   // preserve exact source rate up to 384kHz
                         else -> 384000                     // hard cap at 384kHz
                     }
                 } else {
