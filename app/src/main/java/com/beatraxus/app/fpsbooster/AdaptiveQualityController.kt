@@ -17,6 +17,7 @@ enum class ThermalLevel {
 
 /** Why the booster stopped and standard playback took over. */
 enum class FallbackReason(val message: String) {
+    /** No longer produced by [AdaptiveQualityController]: the booster keeps running when the device is loaded. */
     CANNOT_KEEP_UP("Device could not keep up: playing normally. Try a lower Quality or turn on Adaptive resolution"),
     THERMAL("Device is too hot: playing normally"),
     GPU_ERROR("FPS Booster could not start (GPU error): playing normally")
@@ -43,9 +44,9 @@ data class QualityDecision(val level: QualityLevel, val changed: Boolean, val fa
  *    above it. Battery saver starts (and stays capped) at PERFORMANCE.
  *  - A window is *overloaded* when the motion estimate takes longer than the budget (a share of the source
  *    frame interval), or the presenter dropped more than 5 % of its output frames.
- *  - Overload steps down one rung (at most once per [COOLDOWN] windows). Overload on the lowest rung for
- *    [GIVE_UP] windows in a row falls back to standard playback (when adaptive resolution is off, the
- *    same applies at the user's rung).
+ *  - Overload steps down one rung (at most once per [COOLDOWN] windows) when adaptive resolution is on. The
+ *    booster is NEVER switched off because of load: at the lowest rung (or with adaptive resolution off) it
+ *    keeps running and the presenter simply drops what it cannot produce. Only a severe thermal state stops it.
  *  - Sustained headroom ([UPGRADE_AFTER] calm windows, thermals normal, battery saver off) steps back up;
  *    an overload shortly after an upgrade blocks further upgrades for a while (no oscillation).
  *  - Moderate thermal status forces at least one step down and blocks upgrades; severe status falls back at once.
@@ -57,7 +58,6 @@ class AdaptiveQualityController(
 ) {
     companion object {
         const val COOLDOWN = 2
-        const val GIVE_UP = 4
         const val UPGRADE_AFTER = 10
         const val UPGRADE_BLOCK = 30
         const val BUDGET_SHARE = 0.7f
@@ -83,7 +83,6 @@ class AdaptiveQualityController(
         private set
     val level: QualityLevel get() = LADDER[index]
 
-    private var overloadStreak = 0
     private var calmStreak = 0
     private var sinceChange = COOLDOWN
     private var upgradeBlock = 0
@@ -110,7 +109,6 @@ class AdaptiveQualityController(
         val overloaded = w.avgEstimateMs > budgetMs || dropRatio > DROP_RATIO || missRatio > 0.15f
         val calm = !overloaded && w.avgEstimateMs < budgetMs * 0.45f && dropRatio == 0f && missRatio < 0.03f
 
-        overloadStreak = if (overloaded) overloadStreak + 1 else 0
         calmStreak = if (calm) calmStreak + 1 else 0
 
         var changed = false
@@ -136,13 +134,9 @@ class AdaptiveQualityController(
         if (index != before) {
             changed = true
             sinceChange = 0
-            if (index > before) { overloadStreak = 0; lastChangeWasUpgrade = false }
+            if (index > before) lastChangeWasUpgrade = false
         }
 
-        val atFloor = !adaptive || index == LADDER.lastIndex
-        if (overloaded && atFloor && overloadStreak >= GIVE_UP) {
-            return QualityDecision(level, changed, FallbackReason.CANNOT_KEEP_UP)
-        }
         return QualityDecision(level, changed, null)
     }
 }

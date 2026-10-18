@@ -69,6 +69,23 @@ fun FpsBoosterSheetContent(
         if (bench is BenchmarkState.Idle && !uiState.fpsBoosterBenchmarkSkipped) onRunBenchmark()
     }
 
+    // First use: the device test is the only thing shown. The moment it finishes the state becomes Done and the
+    // same sheet switches to the booster options (no need to close and reopen it).
+    val firstRunTest = bench is BenchmarkState.Running ||
+        (bench is BenchmarkState.Idle && !uiState.fpsBoosterBenchmarkSkipped)
+    if (firstRunTest) {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(
+                text = "Setting up FPS Booster for your device. This only happens once.",
+                color = Color.White.copy(alpha = 0.7f),
+                fontSize = 13.sp
+            )
+            DeviceTestCard(bench, onRunBenchmark, onSkipBenchmark)
+            Spacer(Modifier.height(4.dp))
+        }
+        return
+    }
+
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(
             text = "Generates in-between frames from motion estimation so low-FPS video (e.g. 24 FPS films) looks smoother.",
@@ -76,7 +93,8 @@ fun FpsBoosterSheetContent(
             fontSize = 13.sp
         )
 
-        DeviceTestCard(bench, onRunBenchmark, onSkipBenchmark)
+        // Only a failed test is shown next to the options (so it can be retried); a finished or skipped test is hidden.
+        if (bench is BenchmarkState.Failed) DeviceTestCard(bench, onRunBenchmark, onSkipBenchmark)
 
         // The booster can only deliver its target if the panel is really running that fast right now.
         val nowHz = DisplayRefreshRate.currentRate(context)
@@ -148,7 +166,7 @@ fun FpsBoosterSheetContent(
 
         ToggleRow(
             "Adaptive resolution",
-            "Off: always uses the video's original resolution and the quality you chose (plays normally if the device cannot keep up). On: may also lower the motion-analysis size when the device is struggling.",
+            "Off: always uses the quality you chose. On: may lower the motion-analysis size when the device is struggling. The booster stays on either way.",
             s.adaptiveResolution
         ) { onSettingsChange(s.copy(adaptiveResolution = it)) }
         ToggleRow(
@@ -189,7 +207,7 @@ fun FpsBoosterSheetContent(
 
         Hint(
             "Uses extra GPU and battery. Fast scenes and scene cuts can show small artifacts. " +
-                "Not available for HDR videos. Turns itself off for videos already at the chosen rate."
+                "Not available for HDR videos. Does nothing for videos already at the chosen rate."
         )
         Spacer(Modifier.height(4.dp))
     }

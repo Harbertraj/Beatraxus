@@ -55,22 +55,21 @@ class AdaptiveQualityControllerTest {
         assertEquals(2, c.index)
     }
 
-    @Test fun givesUpAtTheFloor() {
+    @Test fun neverSwitchesOffBecauseOfLoad() {
         val c = AdaptiveQualityController(BoosterQuality.BALANCED, true, false)
-        var fallback: FallbackReason? = null
-        var n = 0
-        while (fallback == null && n < 20) { fallback = c.feed(overload).fallback; n++ }
-        assertEquals(FallbackReason.CANNOT_KEEP_UP, fallback)
-        assertEquals(AdaptiveQualityController.LADDER.lastIndex, c.index)
-        assertTrue("took $n windows", n <= 10)
+        repeat(60) { assertNull(c.feed(overload).fallback) }
+        assertEquals("keeps running at the lowest rung", AdaptiveQualityController.LADDER.lastIndex, c.index)
     }
 
-    @Test fun withoutAdaptiveItFallsBackInsteadOfLoweringResolution() {
+    @Test fun withoutAdaptiveItKeepsRunningAtTheChosenQuality() {
         val c = AdaptiveQualityController(BoosterQuality.BALANCED, false, false)
-        var fallback: FallbackReason? = null
-        repeat(AdaptiveQualityController.GIVE_UP) { fallback = c.feed(overload).fallback }
-        assertEquals(FallbackReason.CANNOT_KEEP_UP, fallback)
+        repeat(30) { assertNull(c.feed(overload).fallback) }
         assertEquals(1, c.index)
+    }
+
+    @Test fun sixtyFpsSourceOverloadStillDoesNotFallBack() {
+        val c = AdaptiveQualityController(BoosterQuality.QUALITY, true, false)
+        repeat(40) { assertNull(c.onWindow(win(est = 30f, presented = 70), 60f, 120f, ThermalLevel.NONE).fallback) }
     }
 
     @Test fun aSingleBadWindowDoesNotStopTheBooster() {

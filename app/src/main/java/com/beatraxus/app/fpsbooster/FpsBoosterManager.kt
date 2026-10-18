@@ -6,6 +6,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
 import android.util.Log
+import com.beatraxus.app.motionboost.DisplayRefreshRate
 
 /**
  * Lifecycle + policy glue for one running booster session. Main thread only.
@@ -27,6 +28,7 @@ class FpsBoosterManager(
         fun onFallback(reason: FallbackReason)
     }
 
+    private val appContext = context.applicationContext
     private val controller = AdaptiveQualityController(plan.quality, settings.adaptiveResolution, settings.batterySaver)
     private var thermal = ThermalLevel.NONE
     private var droppedTotal = 0L
@@ -66,7 +68,12 @@ class FpsBoosterManager(
         if (graceWindows > 0) { graceWindows--; evaluate = false }
         var fallback: FallbackReason? = null
         if (evaluate) {
-            val expected = FramePacing.achievableFps(plan.targetFps, panelRates).toFloat()
+            // The presenter can never show more frames than the panel is refreshing right now (the system may be
+            // running 60 Hz while the target is 120): that is not GPU overload and must not be judged as such.
+            val expected = minOf(
+                FramePacing.achievableFps(plan.targetFps, panelRates).toFloat(),
+                DisplayRefreshRate.currentRate(appContext)
+            )
             val d = controller.onWindow(w, sourceFps, expected, thermal)
             if (d.changed) { graceWindows = CHANGE_GRACE_WINDOWS; listener.onQualityLevel(d.level) }
             fallback = d.fallback
