@@ -3983,7 +3983,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         if (enabled) {
             it.copy(eqEnabled = true, preampEnabled = true)
         } else {
-            it.copy(eqEnabled = false, preampEnabled = false, autoEqEnabled = false, autoEqProfile = null)
+            // Switching the equalizer off switches AI EQ off with it.
+            it.copy(eqEnabled = false, aiEqEnabled = false, preampEnabled = false, autoEqEnabled = false, autoEqProfile = null)
         }
     }
     fun setEqPhaseMode(mode: com.beatraxus.app.model.EqPhaseMode) = applyDspConfig {

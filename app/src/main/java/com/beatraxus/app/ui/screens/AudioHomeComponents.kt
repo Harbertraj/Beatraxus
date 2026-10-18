@@ -152,12 +152,16 @@ fun AudioGreetingHeader(
             )
         }
         Spacer(Modifier.height(6.dp))
+        // White fading into the time-of-day accent, so it matches the greeting line above it.
         Text(
             text = name,
-            color = Color.White,
-            fontSize = 34.sp,
-            fontWeight = FontWeight.Black,
-            letterSpacing = (-1).sp
+            style = androidx.compose.ui.text.TextStyle(
+                brush = androidx.compose.ui.graphics.Brush.horizontalGradient(listOf(Color.White, accent)),
+                fontSize = 32.sp,
+                fontWeight = FontWeight.Black,
+                letterSpacing = (-1).sp
+            ),
+            maxLines = 1
         )
         Spacer(Modifier.height(12.dp))
         Row(

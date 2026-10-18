@@ -438,10 +438,11 @@ private class NativeDspProcessor(
     private fun applyEqBands(config: DspConfig, dsp: NativeDsp, aiProfile: AiEqProfile? = null) {
         val isBP = config.bitPerfectEnabled
         val eqUnbypassed = !isBP || config.bitPerfectUnbypassEq
-        val effectiveEqEnabled = config.eqEnabled && eqUnbypassed
-
         // AI EQ: ten bands predicted for the playing song (flat until its profile arrives).
         val aiEnabled = config.aiEqEnabled && !isBP
+        // While AI EQ is on it is the only equalizer that runs: the selected preset / custom bands
+        // (and a headphone AutoEQ profile) stay stored but are not applied.
+        val effectiveEqEnabled = config.eqEnabled && eqUnbypassed && !aiEnabled
         dsp.setAiEqEnabled(aiEnabled)
         if (aiEnabled) {
             val target = aiProfile ?: currentAiEq
@@ -501,7 +502,7 @@ private class NativeDspProcessor(
 
         dsp.setPreamp(totalPreamp)
 
-        if (!config.eqEnabled) {
+        if (!config.eqEnabled || aiEnabled) {
             repeat(32) { i -> dsp.setBand(i, 1000f, 0f, 1f, 0) }
             return
         }

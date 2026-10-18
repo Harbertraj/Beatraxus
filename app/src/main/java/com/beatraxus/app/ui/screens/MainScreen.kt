@@ -4719,7 +4719,7 @@ fun HomeScreen(
         else -> listOf(Color(0xFF5E5CE6).copy(0.18f), Color(0xFF131B2A).copy(0.08f))
     }
 
-    val deviceName = "Audiophile"
+    val deviceName = "Welcome back"
 
     // Audio-mode home helpers (hero card + header stats)
     val totalLibraryDurationMs = remember(allSongs) { allSongs.sumOf { it.durationMs } }
