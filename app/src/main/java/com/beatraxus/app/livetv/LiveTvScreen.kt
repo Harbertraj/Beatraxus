@@ -1,5 +1,7 @@
 package com.beatraxus.app.livetv
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
@@ -50,6 +52,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
+import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
@@ -117,6 +120,9 @@ fun LiveTvScreen(
     val favoriteIds = state.favoriteIds
     val focus = LocalFocusManager.current
     var playlistInput by remember { mutableStateOf("") }
+    val pickFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) viewModel.importPlaylistFile(uri)
+    }
 
     val infinite = rememberInfiniteTransition(label = "liveTv")
     val pulse = infinite.animateFloat(
@@ -154,7 +160,7 @@ fun LiveTvScreen(
                 LiveHero(
                     title = state.selectedFilter?.let { "${it.emoji}  ${it.label}" } ?: "Playlists",
                     subtitle = when {
-                        state.filters.isEmpty() -> "Paste an M3U link to get started"
+                        state.filters.isEmpty() -> "Add a link or an M3U file to get started"
                         state.isLoading -> "Opening playlist…"
                         else -> "${"%,d".format(state.channels.size)} channels"
                     },
@@ -186,7 +192,8 @@ fun LiveTvScreen(
                             playlistInput = ""
                             focus.clearFocus()
                         }
-                    }
+                    },
+                    onPickFile = { pickFile.launch(arrayOf("*/*")) }
                 )
             }
 
@@ -210,6 +217,23 @@ fun LiveTvScreen(
                                 .padding(horizontal = 4.dp, vertical = 4.dp)
                         )
                     }
+                }
+            }
+
+            if (state.tabs.size > 1) {
+                item(key = "tabs", span = { GridItemSpan(maxLineSpan) }) {
+                    LiveSourceTabs(tabs = state.tabs, selected = state.tab, accent = accent, onSelect = viewModel::selectTab)
+                }
+            }
+
+            if (state.facets.isNotEmpty()) {
+                item(key = "facets", span = { GridItemSpan(maxLineSpan) }) {
+                    LiveFilterRow(
+                        filters = state.facets,
+                        selectedCode = state.facet,
+                        accent = accent,
+                        onSelect = viewModel::selectFacet
+                    )
                 }
             }
 
@@ -246,7 +270,7 @@ fun LiveTvScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        if (state.query.isBlank()) "All channels" else "Results",
+                        if (state.query.isNotBlank()) "Results" else state.selectedFacet?.label ?: "All channels",
                         color = Color.White,
                         fontSize = 17.sp,
                         fontWeight = FontWeight.Bold
@@ -273,7 +297,7 @@ fun LiveTvScreen(
                 state.filters.isEmpty() -> item(key = "noPlaylist", span = { GridItemSpan(maxLineSpan) }) {
                     StatusMessage(
                         icon = { Icon(Icons.Rounded.Search, null, tint = Color.White.copy(alpha = 0.4f), modifier = Modifier.size(44.dp)) },
-                        message = "Paste the link of an M3U playlist above. Beatraxus doesn't include or provide any channels.",
+                        message = "Paste a playlist or stream link above, or open an M3U file. Beatraxus doesn't include or provide any channels.",
                         actionLabel = null,
                         accent = accent,
                         onAction = {}
@@ -481,7 +505,8 @@ private fun PlaylistField(
     error: String?,
     accent: Color,
     onValueChange: (String) -> Unit,
-    onAdd: () -> Unit
+    onAdd: () -> Unit,
+    onPickFile: () -> Unit
 ) {
     val shape = RoundedCornerShape(16.dp)
     Column {
@@ -507,7 +532,7 @@ private fun PlaylistField(
                 decorationBox = { inner ->
                     Box(contentAlignment = Alignment.CenterStart) {
                         if (value.isEmpty()) {
-                            Text("Paste an M3U playlist link", color = Color.White.copy(alpha = 0.38f), fontSize = 15.sp)
+                            Text("Paste a playlist or stream link", color = Color.White.copy(alpha = 0.38f), fontSize = 15.sp)
                         }
                         inner()
                     }
@@ -525,6 +550,19 @@ private fun PlaylistField(
                 Text("Add", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
             }
         }
+        Row(
+            modifier = Modifier
+                .padding(top = 8.dp)
+                .clip(RoundedCornerShape(50))
+                .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(50))
+                .clickable(onClick = onPickFile)
+                .padding(horizontal = 12.dp, vertical = 7.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(Icons.Rounded.FolderOpen, null, tint = Color.White.copy(alpha = 0.7f), modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(6.dp))
+            Text("Open an M3U file", color = Color.White.copy(alpha = 0.75f), fontSize = 12.sp, fontWeight = FontWeight.Medium)
+        }
         if (error != null) {
             Text(
                 error,
@@ -532,6 +570,56 @@ private fun PlaylistField(
                 fontSize = 12.sp,
                 modifier = Modifier.padding(start = 6.dp, top = 6.dp)
             )
+        }
+    }
+}
+
+/** The ways to narrow a playlist (categories, countries), with a highlight that slides to the chosen tab. */
+@Composable
+private fun LiveSourceTabs(tabs: List<LiveTvTab>, selected: LiveTvTab?, accent: Color, onSelect: (LiveTvTab) -> Unit) {
+    val outer = RoundedCornerShape(22.dp)
+    BoxWithConstraints(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(44.dp)
+            .clip(outer)
+            .background(Color.White.copy(alpha = 0.06f))
+            .border(1.dp, Color.White.copy(alpha = 0.08f), outer)
+    ) {
+        val tabWidth = maxWidth / tabs.size
+        val offset by animateDpAsState(
+            targetValue = tabWidth * tabs.indexOf(selected).coerceAtLeast(0),
+            animationSpec = spring(dampingRatio = Spring.DampingRatioLowBouncy, stiffness = Spring.StiffnessMediumLow),
+            label = "tabOffset"
+        )
+        Box(
+            Modifier
+                .offset(x = offset)
+                .width(tabWidth)
+                .fillMaxHeight()
+                .padding(3.dp)
+                .clip(RoundedCornerShape(19.dp))
+                .background(Brush.horizontalGradient(listOf(accent, accent.copy(alpha = 0.72f))))
+        )
+        Row(Modifier.fillMaxSize()) {
+            tabs.forEach { tab ->
+                val active = tab == selected
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .clip(outer)
+                        .clickable { onSelect(tab) },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        tab.label,
+                        color = if (active) Color.White else Color.White.copy(alpha = 0.62f),
+                        fontSize = 13.sp,
+                        fontWeight = if (active) FontWeight.Bold else FontWeight.Medium
+                    )
+                }
+            }
         }
     }
 }
@@ -918,7 +1006,7 @@ fun LiveTvBanner(onClick: () -> Unit, modifier: Modifier = Modifier) {
             )
             Spacer(Modifier.height(4.dp))
             Text(
-                "Paste a playlist link and watch your channels here",
+                "Paste a link or open an M3U file and watch here",
                 color = Color.White.copy(alpha = 0.6f),
                 fontSize = 12.sp,
                 lineHeight = 16.sp

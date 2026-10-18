@@ -76,15 +76,23 @@ fun LiveChannel.toVideo(): Video = Video(
     sourceId = group.ifBlank { null }
 )
 
+/** What a playlist's channels can be narrowed by; only the ones the playlist really offers are shown. */
+enum class LiveTvTab(val label: String) {
+    CATEGORY("Categories"),
+    COUNTRY("Countries")
+}
+
+internal fun shortHash(text: String): String =
+    java.security.MessageDigest.getInstance("SHA-256").digest(text.toByteArray())
+        .take(8).joinToString("") { "%02x".format(it) }
+
 /** One selectable chip (a country, category or language) and the playlist code behind it. */
 data class LiveFilter(val code: String, val label: String, val emoji: String)
 
-/** What the repository loads: one M3U playlist address the user added. */
+/** What the repository loads: a playlist link the user added, or `file:` + path of an M3U file they imported. */
 data class LiveSource(val url: String) {
     /** File name for the cached copy of this playlist. */
-    val cacheKey: String
-        get() = java.security.MessageDigest.getInstance("SHA-256").digest(url.toByteArray())
-            .take(8).joinToString("") { "%02x".format(it) }
+    val cacheKey: String get() = shortHash(url)
 }
 
 /** A playlist the user added by pasting its address. The app ships with none. */

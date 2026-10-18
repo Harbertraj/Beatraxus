@@ -46,6 +46,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -122,12 +123,16 @@ fun LazyListScope.videoHomeItems(
     }
 
     // ── Live TV (available in every library mode, so it sits above the cloud gate) ───
+    // Only drawn once the user has added a playlist; the drawer's "Playlists" entry is where the first one is added.
     item(key = "VIDEO_LIVE_TV") {
-        com.beatraxus.app.livetv.LiveTvBanner(
-            onClick = { viewModel.setLibraryView(LibraryView.LIVE_TV) },
-            modifier = Modifier.padding(horizontal = 16.dp)
-        )
-        Spacer(Modifier.height(16.dp))
+        val hasPlaylists by com.beatraxus.app.livetv.LiveTvStore.hasPlaylists.collectAsStateWithLifecycle()
+        if (hasPlaylists) {
+            com.beatraxus.app.livetv.LiveTvBanner(
+                onClick = { viewModel.setLibraryView(LibraryView.LIVE_TV) },
+                modifier = Modifier.padding(horizontal = 16.dp)
+            )
+            Spacer(Modifier.height(16.dp))
+        }
     }
 
     // ── Cloud / Combined: connect cloud videos ───────────────────────────

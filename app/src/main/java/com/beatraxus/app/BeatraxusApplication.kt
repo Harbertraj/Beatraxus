@@ -94,6 +94,7 @@ class BeatraxusApplication : Application(), ImageLoaderFactory {
 
         // Cheap, and other code assumes it has run, so it stays on the main thread.
         AddonManager.init(this)
+        com.beatraxus.app.livetv.LiveTvStore.init(this)
 
         // Everything below does disk I/O or loads a large native library (TDLib). It used to run
         // right here on the main thread, which delays the process's first frame and starves the
