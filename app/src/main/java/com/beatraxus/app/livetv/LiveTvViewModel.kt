@@ -11,14 +11,15 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 data class LiveTvUiState(
-    val tab: LiveTvTab = LiveTvTab.COUNTRY,
+    /** The playlists the user added, as chips (code = playlist address). Empty until the user pastes one. */
     val filters: List<LiveFilter> = emptyList(),
     val selectedCode: String = "",
     val query: String = "",
     val channels: List<LiveChannel> = emptyList(),
-    val isLoading: Boolean = true,
+    val isLoading: Boolean = false,
     val isRefreshing: Boolean = false,
     val error: String? = null,
+    val inputError: String? = null,
     val favorites: List<LiveChannel> = emptyList(),
     val recents: List<LiveChannel> = emptyList()
 ) {
@@ -35,46 +36,85 @@ data class LiveTvUiState(
         }
 }
 
+private fun SavedPlaylist.toFilter() = LiveFilter(code = url, label = name, emoji = "📄")
+
 /**
- * State holder for the Live TV screen. Kept apart from PlayerViewModel on purpose: it only deals with the channel
- * catalogue, playback goes through PlayerViewModel.playLiveChannels() into the normal video player.
+ * State holder for the playlist screen. Kept apart from PlayerViewModel on purpose: it only deals with the user's
+ * playlists and their channels, playback goes through PlayerViewModel.playLiveChannels() into the normal video player.
  */
 class LiveTvViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository = LiveTvRepository(application)
 
-    /** Last chip picked per tab, so switching tabs back and forth keeps each tab's choice. */
-    private val chosen = HashMap<LiveTvTab, String>()
-
-    private val _state = MutableStateFlow(
-        LiveTvUiState(
-            tab = LiveTvTab.COUNTRY,
-            filters = LiveTvCatalog.filters(LiveTvTab.COUNTRY),
-            selectedCode = LiveTvCatalog.defaultCode(LiveTvTab.COUNTRY),
-            favorites = repository.favorites(),
-            recents = repository.recents()
-        )
-    )
+    private val _state = MutableStateFlow(initialState())
     val state: StateFlow<LiveTvUiState> = _state.asStateFlow()
 
     private var loadJob: Job? = null
 
     init {
-        load(force = false, keepList = false)
+        if (_state.value.selectedCode.isNotEmpty()) load(force = false, keepList = false)
     }
 
-    fun selectTab(tab: LiveTvTab) {
-        if (tab == _state.value.tab) return
-        chosen[_state.value.tab] = _state.value.selectedCode
-        val code = chosen[tab] ?: LiveTvCatalog.defaultCode(tab)
-        _state.update { it.copy(tab = tab, filters = LiveTvCatalog.filters(tab), selectedCode = code, query = "") }
-        load(force = false, keepList = false)
+    private fun initialState(): LiveTvUiState {
+        val playlists = repository.playlists()
+        val saved = repository.selectedUrl()
+        val selected = playlists.firstOrNull { it.url == saved }?.url ?: playlists.firstOrNull()?.url.orEmpty()
+        return LiveTvUiState(
+            filters = playlists.map { it.toFilter() },
+            selectedCode = selected,
+            isLoading = selected.isNotEmpty(),
+            favorites = repository.favorites(),
+            recents = repository.recents()
+        )
+    }
+
+    /** Adds the pasted playlist address and opens it. Returns false (and shows why) when it isn't a usable link. */
+    fun addPlaylist(raw: String): Boolean {
+        val url = cleanPlaylistUrl(raw)
+        if (url == null) {
+            _state.update { it.copy(inputError = "Paste a full link that starts with https:// (or http://)") }
+            return false
+        }
+        val playlists = repository.addPlaylist(SavedPlaylist(url, playlistLabel(url)))
+        repository.setSelectedUrl(url)
+        _state.update {
+            it.copy(filters = playlists.map { p -> p.toFilter() }, selectedCode = url, query = "", inputError = null)
+        }
+        load(force = true, keepList = false)
+        return true
+    }
+
+    fun clearInputError() {
+        if (_state.value.inputError != null) _state.update { it.copy(inputError = null) }
     }
 
     fun selectFilter(code: String) {
         if (code == _state.value.selectedCode) return
+        repository.setSelectedUrl(code)
         _state.update { it.copy(selectedCode = code, query = "") }
         load(force = false, keepList = false)
+    }
+
+    /** Removes the selected playlist (and its cached copy) and falls back to another one, if any. */
+    fun removeSelected() {
+        val url = _state.value.selectedCode
+        if (url.isEmpty()) return
+        val playlists = repository.removePlaylist(url)
+        val next = playlists.firstOrNull()?.url.orEmpty()
+        repository.setSelectedUrl(next.ifEmpty { null })
+        loadJob?.cancel()
+        _state.update {
+            it.copy(
+                filters = playlists.map { p -> p.toFilter() },
+                selectedCode = next,
+                query = "",
+                channels = emptyList(),
+                isLoading = false,
+                isRefreshing = false,
+                error = null
+            )
+        }
+        if (next.isNotEmpty()) load(force = false, keepList = false)
     }
 
     fun setQuery(query: String) = _state.update { it.copy(query = query) }
@@ -101,8 +141,11 @@ class LiveTvViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun load(force: Boolean, keepList: Boolean) {
         loadJob?.cancel()
-        val s = _state.value
-        val source = LiveSource(s.tab, s.selectedCode)
+        val url = _state.value.selectedCode
+        if (url.isEmpty()) {
+            _state.update { it.copy(isLoading = false, isRefreshing = false, channels = emptyList(), error = null) }
+            return
+        }
         _state.update {
             it.copy(
                 isLoading = !keepList,
@@ -112,10 +155,9 @@ class LiveTvViewModel(application: Application) : AndroidViewModel(application) 
             )
         }
         loadJob = viewModelScope.launch {
-            val result = repository.load(source, forceRefresh = force)
-            // The user may have switched chips while this was loading.
-            val now = _state.value
-            if (now.tab != source.tab || now.selectedCode != source.code) return@launch
+            val result = repository.load(LiveSource(url), forceRefresh = force)
+            // The user may have switched playlists while this was loading.
+            if (_state.value.selectedCode != url) return@launch
             result.fold(
                 onSuccess = { list ->
                     _state.update { it.copy(channels = list, isLoading = false, isRefreshing = false, error = null) }
@@ -126,7 +168,7 @@ class LiveTvViewModel(application: Application) : AndroidViewModel(application) 
                             isLoading = false,
                             isRefreshing = false,
                             error = if (it.channels.isEmpty()) {
-                                "Couldn't load channels. Check your connection and try again."
+                                "Couldn't open this playlist. Check the link and your connection, then try again."
                             } else null
                         )
                     }

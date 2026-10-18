@@ -3,7 +3,7 @@ package com.beatraxus.app.livetv
 import java.util.Locale
 
 /**
- * Parses the iptv-org M3U playlists:
+ * Parses standard M3U playlists:
  *
  * ```
  * #EXTINF:-1 tvg-id="BBCNews.uk@SD" tvg-logo="https://..." group-title="News",BBC News (720p) [Not 24/7]

@@ -1045,7 +1045,7 @@ fun MainScreen(
                                     LibraryView.VIDEO_FOLDER_DETAIL -> uiState.selectedItemName ?: "VIDEO FOLDER"
                                     LibraryView.VIDEO_RECENTLY_ADDED -> "RECENTLY ADDED"
                                     LibraryView.VIDEO_RECENTLY_PLAYED -> "RECENTLY PLAYED"
-                                    LibraryView.LIVE_TV -> "LIVE TV"
+                                    LibraryView.LIVE_TV -> "PLAYLISTS"
                                 }
                                 val titleIcon = when (uiState.currentView) {
                                     LibraryView.HOME -> Icons.Rounded.Home
@@ -6243,7 +6243,7 @@ fun SlideDrawerMenu(
                 DrawerMenuItem("Folders", LibraryView.VIDEO_FOLDERS, Icons.Rounded.FolderOpen, Color(0xFFFFAB40)),
                 DrawerMenuItem("Recently Added", LibraryView.VIDEO_RECENTLY_ADDED, Icons.Rounded.VideoLibrary, Color(0xFF00E676)),
                 DrawerMenuItem("Recently Played", LibraryView.VIDEO_RECENTLY_PLAYED, Icons.Rounded.History, Color(0xFF00E676)),
-                DrawerMenuItem("Live TV", LibraryView.LIVE_TV, Icons.Rounded.LiveTv, Color(0xFFFF3B5C)),
+                DrawerMenuItem("Playlists", LibraryView.LIVE_TV, Icons.Rounded.LiveTv, Color(0xFFFF3B5C)),
                 DrawerMenuItem("Add-ons", LibraryView.ADDONS, Icons.Rounded.Extension, Color(0xFF00C2A8))
             )
         } else {

@@ -13,10 +13,11 @@ import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 /**
- * Loads iptv-org playlists and keeps the user's favourite / recently watched channels.
+ * Loads the M3U playlists the user added (the app ships with none) and keeps their favourite / recently watched
+ * channels.
  *
- * Playlists are cached on disk for [CACHE_TTL_MS]; when the network is down a stale copy is still used, so Live TV
- * opens instantly and keeps working offline for the channel list (the streams themselves obviously need a network).
+ * Playlists are cached on disk for [CACHE_TTL_MS]; when the network is down a stale copy is still used, so the channel
+ * list opens instantly and keeps working offline (the streams themselves obviously need a network).
  */
 class LiveTvRepository(context: Context) {
 
@@ -27,7 +28,7 @@ class LiveTvRepository(context: Context) {
     private val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(12, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
-        .callTimeout(60, TimeUnit.SECONDS)
+        .callTimeout(90, TimeUnit.SECONDS)
         .build()
 
     private val memory = object : LinkedHashMap<String, List<LiveChannel>>(8, 0.75f, true) {
@@ -48,18 +49,23 @@ class LiveTvRepository(context: Context) {
                 val request = Request.Builder().url(source.url).header("Accept", "*/*").build()
                 client.newCall(request).execute().use { response ->
                     if (!response.isSuccessful) throw IOException("Server answered ${response.code}")
-                    val body = response.body?.string().orEmpty()
-                    if (!body.trimStart().startsWith("#EXTM3U")) throw IOException("Not a playlist")
+                    val body = response.body ?: throw IOException("Empty answer")
+                    if (body.contentLength() > MAX_PLAYLIST_BYTES) throw IOException("Playlist is too large")
+                    val text = body.string()
+                    if (text.length > MAX_PLAYLIST_BYTES) throw IOException("Playlist is too large")
+                    if (!text.trimStart().startsWith("#EXTM3U")) throw IOException("Not a playlist")
+                    val channels = M3uParser.parse(text)
+                    if (channels.isEmpty()) throw IOException("No channels in this playlist")
                     val tmp = File(cacheDir, "${source.cacheKey}.tmp")
-                    tmp.writeText(body)
+                    tmp.writeText(text)
                     if (!tmp.renameTo(file)) {
-                        file.writeText(body)
+                        file.writeText(text)
                         tmp.delete()
                     }
-                    Result.success(remember(source, M3uParser.parse(body)))
+                    Result.success(remember(source, channels))
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "Playlist ${source.url} failed: ${e.message}")
+                Log.w(TAG, "Playlist ${source.cacheKey} failed: ${e.message}")
                 // A stale copy beats an error screen.
                 val stale = if (file.exists()) parseFile(file) else null
                 if (stale != null) Result.success(remember(source, stale)) else Result.failure(e)
@@ -76,6 +82,46 @@ class LiveTvRepository(context: Context) {
     } catch (e: Exception) {
         Log.w(TAG, "Cached playlist ${file.name} unreadable: ${e.message}")
         null
+    }
+
+    // ── The user's playlists ────────────────────────────────────────────────
+
+    fun playlists(): List<SavedPlaylist> = try {
+        val array = JSONArray(prefs.getString(KEY_PLAYLISTS, "[]"))
+        (0 until array.length()).mapNotNull { i ->
+            val o = array.optJSONObject(i) ?: return@mapNotNull null
+            val url = o.optString("url")
+            if (url.isBlank()) null else SavedPlaylist(url, o.optString("name").ifBlank { playlistLabel(url) })
+        }
+    } catch (e: Exception) {
+        emptyList()
+    }
+
+    fun addPlaylist(playlist: SavedPlaylist): List<SavedPlaylist> {
+        val updated = (playlists().filter { it.url != playlist.url } + playlist).takeLast(MAX_PLAYLISTS)
+        writePlaylists(updated)
+        return updated
+    }
+
+    fun removePlaylist(url: String): List<SavedPlaylist> {
+        val updated = playlists().filter { it.url != url }
+        writePlaylists(updated)
+        File(cacheDir, "${LiveSource(url).cacheKey}.m3u").delete()
+        synchronized(memory) { memory.remove(LiveSource(url).cacheKey) }
+        if (selectedUrl() == url) setSelectedUrl(null)
+        return updated
+    }
+
+    fun selectedUrl(): String? = prefs.getString(KEY_SELECTED, null)
+
+    fun setSelectedUrl(url: String?) {
+        prefs.edit().apply { if (url == null) remove(KEY_SELECTED) else putString(KEY_SELECTED, url) }.apply()
+    }
+
+    private fun writePlaylists(list: List<SavedPlaylist>) {
+        val array = JSONArray()
+        list.forEach { array.put(JSONObject().put("url", it.url).put("name", it.name)) }
+        prefs.edit().putString(KEY_PLAYLISTS, array.toString()).apply()
     }
 
     // ── Favourites & recents ────────────────────────────────────────────────
@@ -149,8 +195,12 @@ class LiveTvRepository(context: Context) {
         const val TAG = "LiveTvRepo"
         const val CACHE_TTL_MS = 6L * 60 * 60 * 1000
         const val MEMORY_LISTS = 6
+        const val MAX_PLAYLISTS = 30
+        const val MAX_PLAYLIST_BYTES = 60L * 1024 * 1024
         const val MAX_FAVORITES = 200
         const val MAX_RECENTS = 20
+        const val KEY_PLAYLISTS = "playlists"
+        const val KEY_SELECTED = "selected_playlist"
         const val KEY_FAVORITES = "favorites"
         const val KEY_RECENTS = "recents"
     }

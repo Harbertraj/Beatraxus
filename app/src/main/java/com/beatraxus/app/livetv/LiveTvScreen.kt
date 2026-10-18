@@ -83,6 +83,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -97,8 +98,9 @@ private val LiveCyan = Color(0xFF00E5FF)
 private val CardInk = Color(0xFF14161D)
 
 /**
- * Live TV browser for video mode: pick a country, category or language and tap a channel to watch it in the normal
- * video player (previous / next there then zap between the channels of the list you opened).
+ * Playlist browser for video mode: paste the link of an M3U playlist you own or may use, pick it, and tap a channel
+ * to watch it in the normal video player (previous / next there then zap between the channels of the list you opened).
+ * The app ships with no playlists.
  *
  * [onPlay] receives the list the channel was tapped in and its index in that list.
  */
@@ -114,6 +116,7 @@ fun LiveTvScreen(
     val visible = state.visibleChannels
     val favoriteIds = state.favoriteIds
     val focus = LocalFocusManager.current
+    var playlistInput by remember { mutableStateOf("") }
 
     val infinite = rememberInfiniteTransition(label = "liveTv")
     val pulse = infinite.animateFloat(
@@ -149,10 +152,11 @@ fun LiveTvScreen(
         ) {
             item(key = "hero", span = { GridItemSpan(maxLineSpan) }) {
                 LiveHero(
-                    title = state.selectedFilter?.let { "${it.emoji}  ${it.label}" } ?: "Live TV",
+                    title = state.selectedFilter?.let { "${it.emoji}  ${it.label}" } ?: "Playlists",
                     subtitle = when {
-                        state.isLoading -> "Tuning in…"
-                        else -> "${"%,d".format(state.channels.size)} channels on the dial"
+                        state.filters.isEmpty() -> "Paste an M3U link to get started"
+                        state.isLoading -> "Opening playlist…"
+                        else -> "${"%,d".format(state.channels.size)} channels"
                     },
                     accent = accent,
                     pulse = pulse
@@ -168,17 +172,45 @@ fun LiveTvScreen(
                 )
             }
 
-            item(key = "tabs", span = { GridItemSpan(maxLineSpan) }) {
-                LiveSourceTabs(selected = state.tab, accent = accent, onSelect = viewModel::selectTab)
+            item(key = "playlistField", span = { GridItemSpan(maxLineSpan) }) {
+                PlaylistField(
+                    value = playlistInput,
+                    error = state.inputError,
+                    accent = accent,
+                    onValueChange = {
+                        playlistInput = it
+                        viewModel.clearInputError()
+                    },
+                    onAdd = {
+                        if (viewModel.addPlaylist(playlistInput)) {
+                            playlistInput = ""
+                            focus.clearFocus()
+                        }
+                    }
+                )
             }
 
-            item(key = "filters", span = { GridItemSpan(maxLineSpan) }) {
-                LiveFilterRow(
-                    filters = state.filters,
-                    selectedCode = state.selectedCode,
-                    accent = accent,
-                    onSelect = viewModel::selectFilter
-                )
+            if (state.filters.isNotEmpty()) {
+                item(key = "filters", span = { GridItemSpan(maxLineSpan) }) {
+                    Column {
+                        LiveFilterRow(
+                            filters = state.filters,
+                            selectedCode = state.selectedCode,
+                            accent = accent,
+                            onSelect = viewModel::selectFilter
+                        )
+                        Text(
+                            "Remove this playlist",
+                            color = Color.White.copy(alpha = 0.5f),
+                            fontSize = 12.sp,
+                            modifier = Modifier
+                                .padding(top = 8.dp, start = 4.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { viewModel.removeSelected() }
+                                .padding(horizontal = 4.dp, vertical = 4.dp)
+                        )
+                    }
+                }
             }
 
             if (state.query.isBlank() && state.favorites.isNotEmpty()) {
@@ -238,6 +270,16 @@ fun LiveTvScreen(
                     }
                 }
 
+                state.filters.isEmpty() -> item(key = "noPlaylist", span = { GridItemSpan(maxLineSpan) }) {
+                    StatusMessage(
+                        icon = { Icon(Icons.Rounded.Search, null, tint = Color.White.copy(alpha = 0.4f), modifier = Modifier.size(44.dp)) },
+                        message = "Paste the link of an M3U playlist above. Beatraxus doesn't include or provide any channels.",
+                        actionLabel = null,
+                        accent = accent,
+                        onAction = {}
+                    )
+                }
+
                 state.error != null -> item(key = "error", span = { GridItemSpan(maxLineSpan) }) {
                     StatusMessage(
                         icon = { Icon(Icons.Rounded.WifiOff, null, tint = Color.White.copy(alpha = 0.4f), modifier = Modifier.size(44.dp)) },
@@ -272,7 +314,7 @@ fun LiveTvScreen(
                     }
                     item(key = "footer", span = { GridItemSpan(maxLineSpan) }) {
                         Text(
-                            "Channels come from the public iptv-org directory. Some streams may be offline or limited to certain regions.",
+                            "Beatraxus doesn't provide or host any channels. Only add playlists you have the right to use. Some streams may be offline or limited to certain regions.",
                             color = Color.White.copy(alpha = 0.32f),
                             fontSize = 11.sp,
                             lineHeight = 15.sp,
@@ -432,53 +474,64 @@ private fun LiveSearchField(query: String, accent: Color, onQueryChange: (String
     }
 }
 
-/** Countries / Categories / Languages, with a highlight that slides to the chosen tab. */
+/** Where the user pastes an M3U playlist link; [error] explains a rejected link. */
 @Composable
-private fun LiveSourceTabs(selected: LiveTvTab, accent: Color, onSelect: (LiveTvTab) -> Unit) {
-    val tabs = LiveTvTab.entries
-    val outer = RoundedCornerShape(22.dp)
-    BoxWithConstraints(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(44.dp)
-            .clip(outer)
-            .background(Color.White.copy(alpha = 0.06f))
-            .border(1.dp, Color.White.copy(alpha = 0.08f), outer)
-    ) {
-        val tabWidth = maxWidth / tabs.size
-        val offset by animateDpAsState(
-            targetValue = tabWidth * tabs.indexOf(selected),
-            animationSpec = spring(dampingRatio = Spring.DampingRatioLowBouncy, stiffness = Spring.StiffnessMediumLow),
-            label = "tabOffset"
-        )
-        Box(
-            Modifier
-                .offset(x = offset)
-                .width(tabWidth)
-                .fillMaxHeight()
-                .padding(3.dp)
-                .clip(RoundedCornerShape(19.dp))
-                .background(Brush.horizontalGradient(listOf(accent, accent.copy(alpha = 0.72f))))
-        )
-        Row(Modifier.fillMaxSize()) {
-            tabs.forEach { tab ->
-                val active = tab == selected
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxHeight()
-                        .clip(outer)
-                        .clickable { onSelect(tab) },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        tab.label,
-                        color = if (active) Color.White else Color.White.copy(alpha = 0.62f),
-                        fontSize = 13.sp,
-                        fontWeight = if (active) FontWeight.Bold else FontWeight.Medium
-                    )
+private fun PlaylistField(
+    value: String,
+    error: String?,
+    accent: Color,
+    onValueChange: (String) -> Unit,
+    onAdd: () -> Unit
+) {
+    val shape = RoundedCornerShape(16.dp)
+    Column {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(48.dp)
+                .clip(shape)
+                .background(Color.White.copy(alpha = 0.07f))
+                .border(1.dp, Color.White.copy(alpha = 0.09f), shape)
+                .padding(start = 14.dp, end = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            BasicTextField(
+                value = value,
+                onValueChange = onValueChange,
+                singleLine = true,
+                textStyle = TextStyle(color = Color.White, fontSize = 15.sp),
+                cursorBrush = SolidColor(accent),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { onAdd() }),
+                modifier = Modifier.weight(1f),
+                decorationBox = { inner ->
+                    Box(contentAlignment = Alignment.CenterStart) {
+                        if (value.isEmpty()) {
+                            Text("Paste an M3U playlist link", color = Color.White.copy(alpha = 0.38f), fontSize = 15.sp)
+                        }
+                        inner()
+                    }
                 }
+            )
+            Spacer(Modifier.width(8.dp))
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(accent)
+                    .clickable(onClick = onAdd)
+                    .padding(horizontal = 16.dp, vertical = 9.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("Add", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
             }
+        }
+        if (error != null) {
+            Text(
+                error,
+                color = Color(0xFFFF8A80),
+                fontSize = 12.sp,
+                modifier = Modifier.padding(start = 6.dp, top = 6.dp)
+            )
         }
     }
 }
@@ -829,7 +882,7 @@ private fun StatusMessage(
 // Entry banner for the video home
 // ═══════════════════════════════════════════════════════════════════════
 
-/** Featured "Live TV" banner for the video-mode home screen. */
+/** Featured playlists banner for the video-mode home screen. */
 @Composable
 fun LiveTvBanner(onClick: () -> Unit, modifier: Modifier = Modifier) {
     val infinite = rememberInfiniteTransition(label = "liveBanner")
@@ -853,11 +906,11 @@ fun LiveTvBanner(onClick: () -> Unit, modifier: Modifier = Modifier) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 LiveDot(LiveRed, pulse, 8.dp)
                 Spacer(Modifier.width(7.dp))
-                Text("LIVE TV", color = LiveRed, fontSize = 11.sp, fontWeight = FontWeight.Black, letterSpacing = 3.sp)
+                Text("PLAYLISTS", color = LiveRed, fontSize = 11.sp, fontWeight = FontWeight.Black, letterSpacing = 3.sp)
             }
             Spacer(Modifier.height(6.dp))
             Text(
-                "Watch channels from around the world",
+                "Play your own M3U playlists",
                 color = Color.White,
                 fontSize = 18.sp,
                 lineHeight = 22.sp,
@@ -865,7 +918,7 @@ fun LiveTvBanner(onClick: () -> Unit, modifier: Modifier = Modifier) {
             )
             Spacer(Modifier.height(4.dp))
             Text(
-                "News, sports, movies, music and more — free, in one tap",
+                "Paste a playlist link and watch your channels here",
                 color = Color.White.copy(alpha = 0.6f),
                 fontSize = 12.sp,
                 lineHeight = 16.sp
