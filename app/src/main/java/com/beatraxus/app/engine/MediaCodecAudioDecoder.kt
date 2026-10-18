@@ -116,7 +116,11 @@ internal class MediaCodecAudioDecoder(
             // of 24-bit FLAC and added 16-bit rounding noise to every lossy decode before the DSP
             // even ran. Ask for float output; decoders that cannot do it still report what they
             // really produce in their output format, which is handled below.
-            val wantFloat = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N
+            // Not for FLAC: several vendor FLAC decoders accept the float request but still emit
+            // 16-bit (or report float while writing integers), which plays as silence. FLAC is decoded
+            // by FFmpeg instead (see DecoderFactory), so this path only keeps the old 16-bit output.
+            val wantFloat = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N &&
+                !track.mime.contains("flac", ignoreCase = true)
             if (wantFloat) track.format.setInteger(MediaFormat.KEY_PCM_ENCODING, AudioFormat.ENCODING_PCM_FLOAT)
             try {
                 codec.configure(track.format, null, null, 0)

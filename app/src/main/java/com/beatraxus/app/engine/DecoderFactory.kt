@@ -116,10 +116,12 @@ internal class DecoderFactory(
 
         // 2. Local routing
         // For local files, FFmpeg is often more stable for ALAC and WAV (especially with seeking).
-        if (isAlac || isM4A || isWav || isDolbyOrDts || isDsd || format == "audio") {
+        // Local FLAC goes through FFmpeg too: it decodes straight to 32-bit float (full 24-bit hi-res
+        // resolution) and does not depend on each vendor's MediaCodec FLAC decoder.
+        if (isFlac || isAlac || isM4A || isWav || isDolbyOrDts || isDsd || format == "audio") {
             // Check if it's actually ALAC inside M4A container
             val probedMime = if (isM4A) probeAudioMime(song) else null
-            if (isAlac || isWav || isDolbyOrDts || isDsd || probedMime?.contains("alac", ignoreCase = true) == true) {
+            if (isFlac || isAlac || isWav || isDolbyOrDts || isDsd || probedMime?.contains("alac", ignoreCase = true) == true) {
                 Log.i(TAG, "Routing to FFmpeg (Local Lossless): ${song.title} [format=$format]")
                 return ffmpegAlacDecoder
             }

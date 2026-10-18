@@ -83,7 +83,7 @@ class PresentationClockTest {
         var t = 1L
         while (t < 124 * ms) {
             val p = pick(ts, t)
-            val content = ts[p.a] + p.alpha * (ts[p.b] - ts[p.a])
+            val content = ts[p.a] + p.alpha.toDouble() * (ts[p.b] - ts[p.a])
             if (prev >= 0) assertTrue("content time must advance smoothly", abs(content - t) < 100.0)   // ns; alpha is a Float
             prev = content
             t += 3 * ms
