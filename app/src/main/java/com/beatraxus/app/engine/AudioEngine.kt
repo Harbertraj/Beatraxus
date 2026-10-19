@@ -1653,6 +1653,23 @@ class AudioEngine(
         private const val AUTO_BASE_RATE = 48_000
         private const val LIVE_STATS_INTERVAL_MS = 500L
 
+        /**
+         * Resampler "Auto" on a Bluetooth route.
+         *
+         *  - up to 48 kHz (44.1, 48 ...)      -> 48 kHz
+         *  - 88.2 .. 96 kHz                   -> untouched, whatever the headset reports (Android reports an
+         *                                        unreliable list for A2DP sinks, so it must not pull 96 kHz down)
+         *  - above 96 kHz                     -> untouched, unless the headset reports a lower maximum, then that
+         *                                        maximum (never below 48 kHz)
+         *
+         * @param maxRateHz highest rate the headset takes, 0 when unknown.
+         */
+        internal fun autoBluetoothTargetRate(inputRate: Int, maxRateHz: Int): Int {
+            if (inputRate < HIRES_PASSTHROUGH_MIN) return AUTO_BASE_RATE
+            if (inputRate <= HIRES_PASSTHROUGH_MAX) return inputRate
+            return if (maxRateHz <= 0 || inputRate <= maxRateHz) inputRate else maxOf(maxRateHz, AUTO_BASE_RATE)
+        }
+
         private fun framesToMs(frames: Long, sampleRate: Int): Long {
             if (sampleRate <= 0) return 0L
             return (frames * 1000L) / sampleRate
@@ -1758,17 +1775,21 @@ class AudioEngine(
     }
 
     /**
-     * Resampler "Auto": the target rate follows the output device that is connected right now.
+     * Resampler "Auto": the target rate follows the output device that is connected right now, with the same
+     * rule on every route:
      *
-     *  - Bluetooth headset: every source is converted to the highest rate the headset accepts (a 48 kHz / 16-bit
-     *    A2DP headset gets 48 kHz for 44.1, 48 and 96 kHz files alike), so the link never has to resample again.
-     *  - USB DAC / wired IEM / anything else: nothing is limited. Sources up to 48 kHz are converted to 48 kHz
-     *    (44.1 -> 48); higher rates (88.2 / 96 kHz and up) stay untouched (96 -> 96).
+     *  - 44.1 kHz (and anything up to 48 kHz) -> 48 kHz
+     *  - 48 kHz -> 48 kHz
+     *  - 88.2 / 96 kHz and higher stay untouched (96 -> 96)
+     *
+     * Bluetooth used to be converted to the highest rate the headset reports, so a 44.1 kHz file played at 96 kHz
+     * on an LDAC / LE Audio headset even though Auto was selected. It now follows the rule above (see
+     * [autoBluetoothTargetRate]); the headset's maximum only limits rates it cannot carry.
      */
     private fun resolveAutoTargetRate(inputRate: Int, config: DspConfig): Int {
         val route = output.routeRateInfo()
         if (route.bluetooth) {
-            return route.maxRateHz.takeIf { it > 0 } ?: AUTO_BASE_RATE
+            return autoBluetoothTargetRate(inputRate, route.maxRateHz)
         }
 
         val nativeRate = AudioTrack.getNativeOutputSampleRate(AudioManager.STREAM_MUSIC)

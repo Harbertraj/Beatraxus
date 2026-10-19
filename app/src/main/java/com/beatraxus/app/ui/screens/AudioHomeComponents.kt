@@ -193,40 +193,49 @@ fun AudioGreetingHeader(
         if (totalDurationMs > 0) {
             Spacer(Modifier.height(4.dp))
             Text(
-                text = "${formatTotalDuration(totalDurationMs)} of music in your library",
-                color = Color.White.copy(alpha = 0.55f),
-                fontSize = 12.sp
+                text = "${formatTotalDuration(totalDurationMs)} of music",
+                color = Color.White.copy(alpha = 0.70f),
+                fontSize = 13.sp
             )
         }
         Spacer(Modifier.height(14.dp))
-        // one quiet strip instead of a row of differently coloured pills
+        // one quiet strip: a clear number with its word under it, e.g. "1,284" / "songs"
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(18.dp))
-                .background(Color.Black.copy(alpha = 0.28f))
-                .padding(vertical = 10.dp),
+                .background(Color.Black.copy(alpha = 0.32f))
+                .padding(vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            GreetingStat(songCount, "songs", Modifier.weight(1f))
+            GreetingStat(songCount, "song", "songs", Modifier.weight(1f))
             GreetingStatDivider()
-            GreetingStat(favoriteCount, "liked", Modifier.weight(1f))
+            GreetingStat(favoriteCount, "liked", "liked", Modifier.weight(1f))
             GreetingStatDivider()
-            GreetingStat(albumCount, "albums", Modifier.weight(1f))
+            GreetingStat(albumCount, "album", "albums", Modifier.weight(1f))
             GreetingStatDivider()
-            GreetingStat(artistCount, "artists", Modifier.weight(1f))
+            GreetingStat(artistCount, "artist", "artists", Modifier.weight(1f))
         }
     }
 }
 
+/** Number on top, its word below (singular for exactly 1). The word is always shown and easy to read. */
 @Composable
-private fun GreetingStat(value: Int, label: String, modifier: Modifier = Modifier) {
+private fun GreetingStat(value: Int, singular: String, plural: String, modifier: Modifier = Modifier) {
     Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
         Text(
             String.format(Locale.US, "%,d", value),
-            color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold, maxLines = 1
+            color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 1
         )
-        Text(label, color = Color.White.copy(alpha = 0.55f), fontSize = 11.sp, maxLines = 1)
+        Spacer(Modifier.height(1.dp))
+        Text(
+            if (value == 1) singular else plural,
+            color = Color.White.copy(alpha = 0.80f),
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+            softWrap = false
+        )
     }
 }
 
