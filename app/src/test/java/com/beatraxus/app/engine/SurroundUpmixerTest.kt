@@ -4,6 +4,9 @@ import com.beatraxus.app.model.DEFAULT_SURROUND_TRIMS_DB
 import com.beatraxus.app.model.DspConfig
 import com.beatraxus.app.model.SurroundLayout
 import com.beatraxus.app.model.SurroundMode
+import com.beatraxus.app.model.SurroundStage
+import com.beatraxus.app.model.resolveSurroundStage
+import com.beatraxus.app.model.toSurroundEngineConfig
 import com.beatraxus.app.model.resolveSurroundOutputChannels
 import com.beatraxus.app.model.sanitizeSurroundTrims
 import com.beatraxus.app.model.tuning
@@ -187,9 +190,8 @@ class SurroundUpmixerTest {
         config: DspConfig,
         source: Int = 2,
         dop: Boolean = false,
-        video: Boolean = false,
         device: Int = 2
-    ) = resolveSurroundOutputChannels(config, source, dop, video, device)
+    ) = resolveSurroundOutputChannels(config, source, dop, device)
 
     @Test
     fun toggleOffLeavesChannelCountUntouched() {
@@ -222,11 +224,63 @@ class SurroundUpmixerTest {
         assertEquals(2, resolve(on.copy(bitPerfectEnabled = true)))
         assertEquals(2, resolve(on.copy(bypassAll = true)))
         assertEquals(2, resolve(on, dop = true))
-        assertEquals(2, resolve(on, video = true))
         // already multichannel sources keep their own layout
         assertEquals(6, resolve(on.copy(surroundLayout = SurroundLayout.SEVEN_ONE), source = 6))
         assertEquals(8, resolve(on, source = 8))
         assertFalse(resolve(on) == 2)
+    }
+
+    @Test
+    fun stageIsDiscreteForRealMultichannelAndUpmixForStereo() {
+        val on = DspConfig(surroundEnabled = true)
+        assertEquals(SurroundStage.UPMIX, resolveSurroundStage(on, 2, false, 6))
+        assertEquals(SurroundStage.OFF, resolveSurroundStage(on, 2, false, 2))
+        assertEquals(SurroundStage.DISCRETE, resolveSurroundStage(on, 6, false, 6))
+        assertEquals(SurroundStage.DISCRETE, resolveSurroundStage(on, 8, false, 8))
+        assertEquals(SurroundStage.OFF, resolveSurroundStage(on, 6, false, 2))
+        assertEquals(SurroundStage.OFF, resolveSurroundStage(on.copy(bypassAll = true), 6, false, 6))
+    }
+
+    @Test
+    fun surroundEngineConfigIsNeutralButKeepsOutputSettings() {
+        val user = DspConfig(
+            eqEnabled = true, reverbEnabled = true, limiterEnabled = true, bitPerfectEnabled = true,
+            surroundEnabled = false, surroundLayout = SurroundLayout.STEREO, ditherEnabled = true
+        )
+        val cfg = user.toSurroundEngineConfig()
+        assertFalse(cfg.eqEnabled)
+        assertFalse(cfg.reverbEnabled)
+        assertFalse(cfg.limiterEnabled)
+        assertFalse(cfg.bitPerfectEnabled)
+        assertTrue(cfg.surroundEnabled)
+        assertEquals(SurroundLayout.FIVE_ONE, cfg.surroundLayout)
+        assertTrue(cfg.ditherEnabled)
+        assertEquals(6, resolveSurroundOutputChannels(cfg, 2, false, 2))
+    }
+
+    @Test
+    fun discreteTrimmerLeavesDefaultTrimsUntouched() {
+        val t = SurroundTrimmer(rate)
+        t.configure(6, DEFAULT_SURROUND_TRIMS_DB)
+        val data = FloatArray(6 * 100) { (it % 7) / 10f - 0.3f }
+        val copy = data.copyOf()
+        t.process(data, 100)
+        assertTrue(data.contentEquals(copy))
+    }
+
+    @Test
+    fun discreteTrimmerScalesOnlyTheTrimmedSpeaker() {
+        val t = SurroundTrimmer(rate)
+        // centre 6 dB above Default; everything else at Default
+        val trims = DEFAULT_SURROUND_TRIMS_DB.toMutableList().also { it[2] = it[2] + 6f }
+        t.configure(6, trims)
+        val frames = 4800
+        val data = FloatArray(6 * frames) { 0.1f }
+        t.process(data, frames)
+        val last = (frames - 1) * 6
+        assertEquals(0.1f, data[last], 1e-6f)            // FL untouched
+        assertEquals(0.1f, data[last + 3], 1e-6f)        // LFE untouched
+        assertEquals(0.1f * 1.9953f, data[last + 2], 1e-3f) // FC +6 dB
     }
 
     @Test

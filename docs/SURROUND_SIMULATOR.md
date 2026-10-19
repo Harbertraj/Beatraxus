@@ -19,7 +19,7 @@ Everything before the upmixer (EQ, reverb, spatial, limiter) therefore still sha
 
 `resolveSurroundOutputChannels()` (model/SurroundModels.kt) is the single rule. It returns the source's own channel
 count unless: the toggle is on, layout is 5.1 / 7.1 / Auto, and none of these apply: Bit-Perfect, A/B bypass, DSD (DoP),
-video soundtrack, or an already multichannel source.
+or an already multichannel source (see Video player below).
 
 * `AudioEngine.configure()` opens the output with that count (`AudioTrackOutput.init(channels)` already supported 6 / 8).
 * `AudioEngine.renderLoop()` syncs the pipeline to the channel count the output is really open with, so the two cannot
@@ -45,3 +45,21 @@ video soundtrack, or an already multichannel source.
 | Persistence | `repository/DspPreferences.kt` (per output device), `repository/AppearancePreferences.kt` |
 | UI | `ui/components/dsp/SurroundScreen.kt`, `ui/components/dsp/DspScreen.kt`, `ui/screens/DspPaletteSettings.kt` |
 | Tests | `test/.../engine/SurroundUpmixerTest.kt` |
+
+## Video player
+
+A video soundtrack takes part when it is routed through the Audio Engine. Two mutually exclusive switches live in the
+player's **Audio** sheet:
+
+* **Connect to audio mode** - the whole Studio DSP chain, including the surround simulator if it is enabled there.
+* **5.1 engine** - the surround simulator only. Every Studio DSP effect is neutral (`DspConfig.toSurroundEngineConfig()`),
+  output settings (resampler, format, DVC, USB, buffers, dither) are kept, and surround is forced on (Stereo layout
+  becomes 5.1). Turning one switch on turns the other off; the 5.1 engine row is hidden while audio mode is on.
+
+A **surround icon** appears in the top bar only while the engine reports the simulator is really in the pipeline
+(`AudioState.surroundActive`). Its sheet edits the same settings as Studio DSP (layout, mode, presets, channel levels).
+The first time the icon ever appears it pulses with a "New" label (shown once, stored in `video_surround_icon_hint_seen`).
+
+Real 5.1 / 7.1 soundtracks (`SurroundStage.DISCRETE`) are never re-synthesised: FFmpeg decodes all channels,
+they stay on their own speakers, and the levels are applied relative to the Default preset by `SurroundTrimmer`,
+so untouched levels leave the audio bit-for-bit unchanged. Stereo soundtracks use `SurroundStage.UPMIX`.

@@ -281,6 +281,8 @@ data class AppearanceConfig(
     val surroundColorGlow: Int = 0,               // also the accent of the whole Surround screen
     val surroundShowBeams: Boolean = true,
     val surroundAnimated: Boolean = true,
+    val surroundShowArcs: Boolean = true,            // sound arcs radiating from active speakers
+    val surroundShowScreen: Boolean = true,          // screen bar and sweet-spot halo
 
     // Fonts
     val selectedFontId: String = "system"

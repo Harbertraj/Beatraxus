@@ -15,7 +15,10 @@ import com.beatraxus.app.model.ResamplerMode
 import com.beatraxus.app.model.SampleFormat
 import com.beatraxus.app.model.Song
 import com.beatraxus.app.model.SurroundLayout
+import com.beatraxus.app.model.SurroundStage
 import com.beatraxus.app.model.resolveSurroundOutputChannels
+import com.beatraxus.app.model.resolveSurroundStage
+import com.beatraxus.app.model.toSurroundEngineConfig
 import com.beatraxus.app.model.SongSource
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -64,7 +67,12 @@ data class VideoRouteState(
     val positionMs: Long = 0L,
     val error: String? = null,
     val firstFrameRendered: Boolean = false,
-    val firstFrameTimestampMs: Long = 0L
+    val firstFrameTimestampMs: Long = 0L,
+    /**
+     * True for the "5.1 engine" route: the soundtrack goes through the surround simulator only (no Studio DSP
+     * effects). False for the "Connect to audio mode" route, which runs the whole Studio DSP chain.
+     */
+    val surroundEngine: Boolean = false
 ) {
     val isActive: Boolean get() = phase == VideoRoutePhase.ACTIVE || phase == VideoRoutePhase.STARTING
 }
@@ -140,9 +148,13 @@ class AudioEngine(
         startPositionMs: Long,
         startPlaying: Boolean,
         title: String,
-        codecMime: String? = null
+        codecMime: String? = null,
+        surroundEngine: Boolean = false
     ) {
-        Log.d("VideoAudioRouting", "playVideoAudio requested: uri=$uri, audioTrackIndex=$audioTrackIndex, title=$title")
+        Log.d("VideoAudioRouting", "playVideoAudio requested: uri=$uri, audioTrackIndex=$audioTrackIndex, title=$title, surroundEngine=$surroundEngine")
+        // Whatever the previous stream (a song, the other video route) said about surround is stale for this one;
+        // the real answer is published once the output is open (see publishDspState).
+        _audioStateFlow.update { it.copy(surroundActive = false, surroundDiscrete = false) }
         _videoRouteStateFlow.update {
             VideoRouteState(
                 phase = VideoRoutePhase.STARTING,
@@ -151,7 +163,8 @@ class AudioEngine(
                 title = title,
                 isPlaying = startPlaying,
                 positionMs = startPositionMs,
-                error = null
+                error = null,
+                surroundEngine = surroundEngine
             )
         }
 
@@ -164,6 +177,8 @@ class AudioEngine(
                 }
 
                 stopVideoAudioInternal(emitIdle = false)
+                // Must be set before the session (and its DSP pipeline) is created: they read the effective config.
+                setSurroundEngineRoute(surroundEngine)
 
             val mappedFormat = when (codecMime) {
                 MimeTypes.AUDIO_AC3 -> "ac3"
@@ -249,6 +264,7 @@ class AudioEngine(
             }
             videoSession = null
         }
+        setSurroundEngineRoute(false)
         if (emitIdle) {
             _videoRouteStateFlow.update { VideoRouteState(phase = VideoRoutePhase.IDLE) }
             Log.d("VideoAudioRouting", "Video route state -> IDLE")
@@ -340,7 +356,31 @@ class AudioEngine(
 
     @Volatile private var positionMs: Long = 0L
     private val isReleased = AtomicBoolean(false)
-    @Volatile private var dspConfig: DspConfig = DspConfig()
+    /** The settings the user saved in Studio DSP, untouched. */
+    @Volatile private var userDspConfig: DspConfig = DspConfig()
+
+    /** True while a video soundtrack runs through the "5.1 engine" (surround simulator only, no DSP effects). */
+    @Volatile private var surroundEngineRoute = false
+    private var surroundEngineConfigCache: Pair<DspConfig, DspConfig>? = null
+
+    /**
+     * The settings the audio path really runs with: the user's own, except on the 5.1-engine route where every
+     * effect is neutral and the surround simulator is forced on (see [toSurroundEngineConfig]).
+     */
+    private val dspConfig: DspConfig
+        get() {
+            val user = userDspConfig
+            if (!surroundEngineRoute) return user
+            val cached = surroundEngineConfigCache
+            if (cached != null && cached.first === user) return cached.second
+            return user.toSurroundEngineConfig().also { surroundEngineConfigCache = user to it }
+        }
+
+    private fun setSurroundEngineRoute(enabled: Boolean) {
+        if (surroundEngineRoute == enabled) return
+        surroundEngineRoute = enabled
+        dspRevision.incrementAndGet()
+    }
     private val dspRevision = AtomicLong(0L)
     private val isSeeking = AtomicBoolean(false)
     private val userIntentPlaying = AtomicBoolean(false)
@@ -421,6 +461,8 @@ class AudioEngine(
                     nextSession = null
                     currentSong = song
                     nextSong = null
+                    // A seek that was pending on the previous song must not freeze this song's runtime.
+                    isSeeking.set(false)
 
                     // Use write-cursor (totalFramesWritten) as the reference for live-track continuation,
                     // so the counter only starts once the new song's first written sample is rendered.
@@ -517,6 +559,9 @@ class AudioEngine(
                 if (activeSession?.song?.id != song.id) {
                     activeSession?.stop()
                     activeSession = null
+                    // The old session's pending seek dies with it; otherwise currentPositionMs() keeps
+                    // returning the previous song's position.
+                    isSeeking.set(false)
                 }
 
                 currentSong = song
@@ -568,6 +613,7 @@ class AudioEngine(
                     val newSessionId = activeSession?.sessionId ?: 0L
                     nextSession = null
                     nextSong = null
+                    isSeeking.set(false)
 
                     // Use write-cursor (totalFramesWritten) as the reference for live-track continuation,
                     // so the counter only starts once the new song's first written sample is rendered.
@@ -778,11 +824,14 @@ class AudioEngine(
 
     private suspend fun performReconfigureOutput() {
         controlMutex.withLock {
-            val song = currentSong ?: return@withLock
             val session = activeSession
             if (session != null && session.isActive() && session.pcmFormat != null) {
+                // Also covers a video soundtrack routed through the engine (currentSong stays null for it).
                 session.requestOutputRestart()
-            } else if (_playbackStateFlow.value.isPlaying) {
+                return@withLock
+            }
+            val song = currentSong ?: return@withLock
+            if (_playbackStateFlow.value.isPlaying) {
                 // Restart from current position without artificial skip
                 val resumePositionMs = currentPositionMs() + OUTPUT_RECONFIG_SKIP_MS
                 startSessionInternal(song, resumePositionMs)
@@ -818,11 +867,13 @@ class AudioEngine(
     private var pushedBuffer: List<Int>? = null
     private var pushedMmap: Pair<Boolean, Int>? = null
 
-    fun updateDspConfig(config: DspConfig) {
+    fun updateDspConfig(userConfig: DspConfig) {
         val oldConfig = dspConfig
-        val sourceSampleRate = currentSong?.sampleRateHz ?: 44100
+        val sourceSampleRate = currentSong?.sampleRateHz ?: activeSession?.pcmFormat?.sampleRate ?: 44100
         val oldTargetRate = resolveTargetSampleRate(sourceSampleRate, oldConfig)
-        dspConfig = config
+        userDspConfig = userConfig
+        // Everything below works with what the audio path really runs with (differs on the 5.1-engine route).
+        val config = dspConfig
         val newTargetRate = resolveTargetSampleRate(sourceSampleRate, config)
 
         // Each output setter takes the output's write lock. Only push a group when its value
@@ -896,8 +947,8 @@ class AudioEngine(
         }
         val surroundFormat = activeSession?.pcmFormat
         val surroundChanged = surroundFormat != null &&
-                surroundTargetChannels(oldConfig, surroundFormat, currentSong) !=
-                surroundTargetChannels(config, surroundFormat, currentSong)
+                surroundTargetChannels(oldConfig, surroundFormat) !=
+                surroundTargetChannels(config, surroundFormat)
 
         val structuralChange = oldTargetRate != newTargetRate ||
                 oldConfig.sampleFormat != config.sampleFormat ||
@@ -919,12 +970,11 @@ class AudioEngine(
      * simulator upmixes this stream, otherwise exactly the source's own channel count (= behaviour before the
      * simulator existed). Honours a previous "output refused this width" verdict.
      */
-    private fun surroundTargetChannels(config: DspConfig, format: PcmAudioFormat, song: Song?): Int {
+    private fun surroundTargetChannels(config: DspConfig, format: PcmAudioFormat): Int {
         val wanted = resolveSurroundOutputChannels(
             config = config,
             sourceChannels = format.channels,
             isDoP = format.isDoP,
-            isVideoRoute = song?.id?.startsWith("video_route:") == true,
             // Only the "Auto" layout needs to know what the device can do; skip the query otherwise.
             deviceMaxChannels = if (config.surroundEnabled && config.surroundLayout == SurroundLayout.AUTO) {
                 output.maxOutputChannels()
@@ -940,6 +990,13 @@ class AudioEngine(
         val deviceChannels = output.outputChannelCount()
         return if (deviceChannels > 2 && format.channels in 1..2 && !format.isDoP) deviceChannels else 0
     }
+
+    /**
+     * True when the source already is a real 5.1 / 7.1 mix that the surround stage must keep discrete (only trims
+     * apply). Mirrors [surroundChannelsForOutput] for the multichannel case.
+     */
+    private fun discreteSurroundForOutput(format: PcmAudioFormat): Boolean =
+        resolveSurroundStage(dspConfig, format.channels, format.isDoP, output.outputChannelCount()) == SurroundStage.DISCRETE
 
     /** Width the output refused while the surround simulator was on (0 = none). Reset when the user changes it. */
     @Volatile private var surroundRejectedChannels = 0
@@ -1080,6 +1137,7 @@ class AudioEngine(
                     // Whatever session is playing (current, pre-loaded gapless next, rebuilt after a rate
                     // change) follows it here, so pipeline and output can never stay out of step.
                     targetSession.dspPipeline.syncSurroundChannels(surroundChannelsForOutput(format))
+                    targetSession.dspPipeline.syncDiscreteTrims(discreteSurroundForOutput(format))
 
                     targetSession.dspPipeline.process(localBuffer, sampleCount, format.channels, format.sampleRate)
                 }
@@ -1411,7 +1469,7 @@ class AudioEngine(
 
             if (activeSession?.sessionId == this.sessionId) {
                 // 5.1/7.1 Surround Simulator: 6 / 8 while it upmixes this stream, else the source's own count.
-                var outChannels = surroundTargetChannels(dspConfig, format, song)
+                var outChannels = surroundTargetChannels(dspConfig, format)
                 var targetRate = resolveTargetSampleRate(format.sampleRate, dspConfig)
                 if (outChannels > format.channels && output.maxOutputChannels() < outChannels) {
                     // The device is not really multichannel, so the platform mixer folds the stream down. Direct
@@ -1637,6 +1695,11 @@ class AudioEngine(
         val outputSampleRate = output.outputSampleRate().takeIf { it > 0 }
             ?: resolveTargetSampleRate(sourceSampleRate, dspConfig)
         val currentConfig = dspConfig
+        val surroundStage = if (format != null) {
+            resolveSurroundStage(currentConfig, format.channels, format.isDoP, output.outputChannelCount())
+        } else {
+            SurroundStage.OFF
+        }
         _audioStateFlow.update { state ->
             val codec = if (!format?.codec.isNullOrBlank()) normalizeCodec(format!!.codec!!) else state.codec
             state.copy(
@@ -1658,6 +1721,9 @@ class AudioEngine(
                 underrunCount = output.underrunCount(),
                 outputChannels = output.outputChannelCount().takeIf { it > 0 } ?: (format?.channels ?: state.outputChannels),
                 surroundFallback = currentConfig.surroundEnabled && surroundRejectedChannels != 0,
+                sourceChannels = format?.channels ?: state.sourceChannels,
+                surroundActive = surroundStage != SurroundStage.OFF,
+                surroundDiscrete = surroundStage == SurroundStage.DISCRETE,
                 ditherType = currentConfig.ditherType.displayName,
                 eqMode = if (currentConfig.eqPhaseMode == com.beatraxus.app.model.EqPhaseMode.LINEAR_PHASE) "Linear Phase" else "IIR",
                 pipelineSummary = buildPipelineSummary(

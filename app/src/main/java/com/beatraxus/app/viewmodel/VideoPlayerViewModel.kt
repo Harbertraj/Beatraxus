@@ -49,8 +49,17 @@ import com.beatraxus.app.engine.VideoPlaybackTuning
 import com.beatraxus.app.engine.VideoRenderersFactory
 import com.beatraxus.app.engine.VideoRoutePhase
 import com.beatraxus.app.service.VideoAudioBridge
+import com.beatraxus.app.model.DEFAULT_SURROUND_TRIMS_DB
+import com.beatraxus.app.model.DspConfig
+import com.beatraxus.app.model.SURROUND_CUSTOM_PRESET_NAME
+import com.beatraxus.app.model.SurroundLayout
+import com.beatraxus.app.model.SurroundMode
 import com.beatraxus.app.model.Video
 import com.beatraxus.app.model.SavedEqPreset
+import com.beatraxus.app.model.sanitizeSurroundTrims
+import com.beatraxus.app.model.withSurroundPreset
+import com.beatraxus.app.model.withSurroundTrim
+import com.beatraxus.app.model.withSurroundTrimsReset
 import com.beatraxus.app.model.VideoRecentlyPlayedEntity
 import com.beatraxus.app.colorgrade.ColorGradeEffect
 import com.beatraxus.app.subtitles.data.SubtitleCache
@@ -63,6 +72,9 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.first
 import java.io.File
@@ -143,7 +155,43 @@ data class VideoPlayerUiState(
     /** Frame rate declared by the video stream (0 = unknown). */
     val sourceFps: Float = 0f,
     val isConnectingEngineRoute: Boolean = false,
-    val engineRouteError: String? = null
+    val engineRouteError: String? = null,
+    /**
+     * With [routeAudioToEngine]: true = the "5.1 engine" route (surround simulator only, no Studio DSP effects),
+     * false = the "Connect to audio mode" route (whole Studio DSP chain).
+     */
+    val surroundEngineRoute: Boolean = false,
+    /** The Audio Engine confirms that the surround simulator is really in this video's signal path. Drives the top icon. */
+    val surroundActive: Boolean = false,
+    /** The soundtrack is a real 5.1 / 7.1 mix: its discrete channels are kept, nothing is upmixed. */
+    val surroundDiscrete: Boolean = false,
+    /** Channel count of the soundtrack that reaches the engine (0 = unknown). */
+    val surroundSourceChannels: Int = 0,
+    /** Channel count the output device is really opened with (2 = stereo, 6 = 5.1, 8 = 7.1). */
+    val surroundOutputChannels: Int = 2,
+    /** The output device refused a multichannel stream, so the soundtrack plays in its own layout. */
+    val surroundFallback: Boolean = false,
+    val surroundSettings: VideoSurroundSettings = VideoSurroundSettings(),
+    /** The surround icon just appeared for the first time ever: show the "new" hint on it. */
+    val showSurroundHint: Boolean = false
+)
+
+/** The part of the Studio DSP surround settings the video player's surround sheet edits. */
+data class VideoSurroundSettings(
+    val layout: SurroundLayout = SurroundLayout.FIVE_ONE,
+    val mode: SurroundMode = SurroundMode.MOVIE,
+    /** Eight values in order L R C SL SR BL BR SW. */
+    val trimsDb: List<Float> = DEFAULT_SURROUND_TRIMS_DB,
+    val activePreset: String = "Default",
+    val customPresetSaved: Boolean = false
+)
+
+private fun DspConfig.toVideoSurroundSettings() = VideoSurroundSettings(
+    layout = surroundLayout,
+    mode = surroundMode,
+    trimsDb = sanitizeSurroundTrims(surroundChannelTrimsDb),
+    activePreset = surroundActivePreset,
+    customPresetSaved = surroundCustomTrimsDb != null
 )
 
 enum class SleepTimerMode(val label: String) {
@@ -290,6 +338,13 @@ class VideoPlayerViewModel(
     private var savedAudioTrackOverride: TrackSelectionOverride? = null
     private var savedAudioTrackIndex: Int = -1
 
+    // Surround simulator (5.1 engine / audio mode)
+    private var surroundStateJob: Job? = null
+    @Volatile private var latestDspConfig: DspConfig = DspConfig()
+    // Own scope: a trim change made just before leaving the player must still reach the disk.
+    private val surroundSaveScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var surroundSaveJob: Job? = null
+
     init {
         application.registerReceiver(volumeReceiver, IntentFilter("android.media.VOLUME_CHANGED_ACTION"))
 
@@ -301,6 +356,7 @@ class VideoPlayerViewModel(
         loadCustomPresets()
         loadIntroRange()
         probeDeviceForFpsBooster()
+        observeSurroundSettings()
     }
 
     // ---- FPS Booster ----
@@ -1129,30 +1185,76 @@ class VideoPlayerViewModel(
         }
     }
 
-    fun setRouteAudioToEngine(enabled: Boolean) {
-        if (enabled == _uiState.value.routeAudioToEngine && !_uiState.value.isConnectingEngineRoute) return
+    /**
+     * "Connect to audio mode" switch: routes the soundtrack through the Audio Engine with the whole Studio DSP chain.
+     * Turning it ON while the 5.1 engine is active switches over to this mode; turning it OFF always stops routing.
+     */
+    fun setRouteAudioToEngine(enabled: Boolean) = setEngineRoute(enabled, surroundEngine = false)
+
+    /**
+     * "5.1 engine" switch: routes the soundtrack through the Audio Engine with the surround simulator only (no Studio
+     * DSP effects). Turning it ON while audio mode is active switches over to this mode; turning it OFF only has an
+     * effect while the 5.1 engine itself is the active route.
+     */
+    fun setSurroundEngine(enabled: Boolean) = setEngineRoute(enabled, surroundEngine = true)
+
+    private fun setEngineRoute(enabled: Boolean, surroundEngine: Boolean) {
+        val current = _uiState.value
+        if (enabled) {
+            if (current.routeAudioToEngine && !current.isConnectingEngineRoute && current.surroundEngineRoute == surroundEngine) return
+        } else {
+            if (!current.routeAudioToEngine && !current.isConnectingEngineRoute) return
+            // The 5.1 engine switch was turned off while audio mode is the running route: nothing to stop.
+            if (surroundEngine && !current.surroundEngineRoute) return
+        }
 
         if (enabled) {
-            if (_uiState.value.currentVideo?.isCloud == true) {
+            if (current.currentVideo?.isCloud == true) {
                 _uiState.update { it.copy(engineRouteError = "Audio Engine routing isn't available for cloud videos", isConnectingEngineRoute = false) }
                 return
             }
-            if (_uiState.value.availableAudioTracks.isEmpty()) {
+            if (current.availableAudioTracks.isEmpty()) {
                 _uiState.update { it.copy(engineRouteError = "No audio tracks available to route", isConnectingEngineRoute = false) }
                 return
             }
-            if (_uiState.value.playbackSpeed != 1.0f) {
+            if (current.playbackSpeed != 1.0f) {
                 _uiState.update { it.copy(engineRouteError = "Audio Engine routing requires 1.0x playback speed", isConnectingEngineRoute = false) }
                 return
             }
 
-            _uiState.update { it.copy(isConnectingEngineRoute = true, engineRouteError = null) }
+            if (current.routeAudioToEngine) {
+                // Already routed: only the flavour changes (audio mode <-> 5.1 engine), so restart the route with it.
+                val engine = VideoAudioBridge.getAudioEngine()
+                if (engine == null) {
+                    _uiState.update { it.copy(engineRouteError = "Audio Engine is not running") }
+                    return
+                }
+                _uiState.update {
+                    it.copy(
+                        surroundEngineRoute = surroundEngine,
+                        surroundActive = false,
+                        surroundDiscrete = false,
+                        engineRouteError = null
+                    )
+                }
+                startEngineRouting(engine)
+                return
+            }
+
+            _uiState.update { it.copy(isConnectingEngineRoute = true, surroundEngineRoute = surroundEngine, engineRouteError = null) }
 
             viewModelScope.launch {
                 val context = getApplication<Application>()
                 val engine = VideoAudioBridge.awaitAudioEngine(context, timeoutMs = 3000L)
                 if (engine == null) {
-                    _uiState.update { it.copy(routeAudioToEngine = false, isConnectingEngineRoute = false, engineRouteError = "Audio Engine is not running") }
+                    _uiState.update {
+                        it.copy(
+                            routeAudioToEngine = false,
+                            isConnectingEngineRoute = false,
+                            surroundEngineRoute = false,
+                            engineRouteError = "Audio Engine is not running"
+                        )
+                    }
                     return@launch
                 }
 
@@ -1160,18 +1262,121 @@ class VideoPlayerViewModel(
                 startEngineRouting(engine)
             }
         } else {
-            _uiState.update { it.copy(routeAudioToEngine = false, isConnectingEngineRoute = false, engineRouteError = null) }
+            _uiState.update {
+                it.copy(
+                    routeAudioToEngine = false,
+                    isConnectingEngineRoute = false,
+                    engineRouteError = null,
+                    surroundEngineRoute = false,
+                    surroundActive = false,
+                    surroundDiscrete = false,
+                    surroundSourceChannels = 0,
+                    surroundOutputChannels = 2,
+                    surroundFallback = false
+                )
+            }
             stopEngineRouting(restoreExoAudio = true)
         }
     }
 
+    // ---- Surround simulator (video player sheet) ----
+
+    /** Keeps [VideoPlayerUiState.surroundSettings] in step with the Studio DSP settings the sheet edits. */
+    private fun observeSurroundSettings() {
+        viewModelScope.launch {
+            dspPreferences.dspConfig.collect { config ->
+                latestDspConfig = config
+                val settings = config.toVideoSurroundSettings()
+                _uiState.update { if (it.surroundSettings == settings) it else it.copy(surroundSettings = settings) }
+            }
+        }
+    }
+
+    /**
+     * Mirrors what the engine really does with the soundtrack: surround in the path or not, real 5.1 or upmixed, and
+     * how wide the output is. The top icon only exists while the engine says the simulator is in the pipeline.
+     */
+    private fun observeSurroundState(engine: AudioEngine) {
+        surroundStateJob?.cancel()
+        surroundStateJob = viewModelScope.launch {
+            combine(engine.audioStateFlow, engine.videoRouteStateFlow) { audio, route ->
+                SurroundLive(
+                    active = route.isActive && audio.surroundActive,
+                    discrete = audio.surroundDiscrete,
+                    sourceChannels = audio.sourceChannels,
+                    outputChannels = audio.outputChannels,
+                    fallback = audio.surroundFallback
+                )
+            }.distinctUntilChanged().collect { live ->
+                _uiState.update {
+                    if (!it.routeAudioToEngine) it else it.copy(
+                        surroundActive = live.active,
+                        surroundDiscrete = live.discrete && live.active,
+                        surroundSourceChannels = live.sourceChannels,
+                        surroundOutputChannels = live.outputChannels,
+                        surroundFallback = live.fallback
+                    )
+                }
+                if (live.active && !prefs.getBoolean(PREF_SURROUND_HINT_SEEN, false)) {
+                    _uiState.update { it.copy(showSurroundHint = true) }
+                }
+            }
+        }
+    }
+
+    private data class SurroundLive(
+        val active: Boolean,
+        val discrete: Boolean,
+        val sourceChannels: Int,
+        val outputChannels: Int,
+        val fallback: Boolean
+    )
+
+    /** The surround icon was on screen long enough (or tapped): the "new" hint never shows again. */
+    fun onSurroundHintShown() {
+        prefs.edit().putBoolean(PREF_SURROUND_HINT_SEEN, true).apply()
+        _uiState.update { it.copy(showSurroundHint = false) }
+    }
+
+    private fun applySurroundConfig(transform: (DspConfig) -> DspConfig) {
+        val updated = transform(latestDspConfig)
+        if (updated == latestDspConfig) return
+        latestDspConfig = updated
+        _uiState.update { it.copy(surroundSettings = updated.toVideoSurroundSettings()) }
+        // Live: the engine picks it up immediately; the saved copy follows after a short debounce.
+        VideoAudioBridge.getAudioEngine()?.updateDspConfig(updated)
+        surroundSaveJob?.cancel()
+        surroundSaveJob = surroundSaveScope.launch {
+            delay(500)
+            dspPreferences.saveConfig(updated, dspPreferences.getCurrentDeviceId())
+        }
+    }
+
+    fun setSurroundLayout(layout: SurroundLayout) = applySurroundConfig { it.copy(surroundLayout = layout) }
+
+    fun setSurroundMode(mode: SurroundMode) = applySurroundConfig { it.copy(surroundMode = mode) }
+
+    fun setSurroundChannelTrim(index: Int, db: Float) = applySurroundConfig { it.withSurroundTrim(index, db) }
+
+    fun resetSurroundTrims() = applySurroundConfig { it.withSurroundTrimsReset() }
+
+    fun applySurroundPreset(name: String) = applySurroundConfig { it.withSurroundPreset(name) }
+
+    fun saveSurroundCustomPreset() = applySurroundConfig {
+        it.copy(
+            surroundCustomTrimsDb = sanitizeSurroundTrims(it.surroundChannelTrimsDb),
+            surroundCustomMode = it.surroundMode,
+            surroundActivePreset = SURROUND_CUSTOM_PRESET_NAME
+        )
+    }
+
     private fun startEngineRouting(engine: AudioEngine) {
         val player = exoPlayer ?: run {
-            _uiState.update { it.copy(routeAudioToEngine = false, isConnectingEngineRoute = false) }
+            _uiState.update { it.copy(routeAudioToEngine = false, isConnectingEngineRoute = false, surroundEngineRoute = false) }
             return
         }
         val video = _uiState.value.currentVideo ?: run {
-            _uiState.update { it.copy(routeAudioToEngine = false, isConnectingEngineRoute = false) }
+            _uiState.update { it.copy(routeAudioToEngine = false, isConnectingEngineRoute = false, surroundEngineRoute = false) }
             return
         }
 
@@ -1217,8 +1422,10 @@ class VideoPlayerViewModel(
             startPositionMs = currentPosMs,
             startPlaying = wasPlaying,
             title = video.title,
-            codecMime = selectedTrackInfo?.format
+            codecMime = selectedTrackInfo?.format,
+            surroundEngine = _uiState.value.surroundEngineRoute
         )
+        observeSurroundState(engine)
 
         videoAudioStateObservationJob?.cancel()
         videoAudioStateObservationJob = viewModelScope.launch {
@@ -1279,6 +1486,8 @@ class VideoPlayerViewModel(
     }
 
     private fun stopEngineRouting(restoreExoAudio: Boolean = true) {
+        surroundStateJob?.cancel()
+        surroundStateJob = null
         videoAudioSyncJob?.cancel()
         videoAudioSyncJob = null
         videoAudioStateObservationJob?.cancel()
@@ -1817,6 +2026,7 @@ class VideoPlayerViewModel(
 }
 
 private const val PREF_VIDEO_DECODER_MODE = "video_decoder_mode"
+private const val PREF_SURROUND_HINT_SEEN = "video_surround_icon_hint_seen"
 
 class VideoPlayerViewModelFactory(private val application: Application, private val videoQueue: List<Video>, private val initialVideoId: String) : ViewModelProvider.Factory {
     @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)

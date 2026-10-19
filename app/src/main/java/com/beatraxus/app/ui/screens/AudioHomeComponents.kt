@@ -125,58 +125,114 @@ fun AudioGreetingHeader(
     favoriteCount: Int,
     albumCount: Int,
     artistCount: Int,
-    totalDurationMs: Long
+    totalDurationMs: Long,
+    /** Second colour of the time-of-day pair; the header glows from [accent] into this one. */
+    accent2: Color = accent
 ) {
+    val frame = RoundedCornerShape(26.dp)
     Column(
         Modifier
             .fillMaxWidth()
-            .padding(start = 20.dp, end = 20.dp, top = 14.dp, bottom = 14.dp)
+            .padding(horizontal = 16.dp, vertical = 10.dp)
+            .clip(frame)
+            // two soft lights in the time-of-day colours over the page, so the header has a mood of its own
+            .background(Color.White.copy(alpha = 0.035f))
+            .drawBehind {
+                drawRect(
+                    Brush.radialGradient(
+                        listOf(accent.copy(alpha = 0.30f), Color.Transparent),
+                        center = Offset(size.width * 0.05f, 0f),
+                        radius = size.width * 0.85f
+                    )
+                )
+                drawRect(
+                    Brush.radialGradient(
+                        listOf(accent2.copy(alpha = 0.22f), Color.Transparent),
+                        center = Offset(size.width, size.height),
+                        radius = size.width * 0.8f
+                    )
+                )
+            }
+            .border(
+                1.dp,
+                Brush.linearGradient(listOf(accent.copy(alpha = 0.45f), Color.White.copy(alpha = 0.05f), accent2.copy(alpha = 0.35f))),
+                frame
+            )
+            .padding(horizontal = 18.dp, vertical = 16.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = greeting.lowercase(Locale.US).replaceFirstChar { it.uppercase() },
+                    color = Color.White.copy(alpha = 0.72f),
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = name,
+                    color = Color.White,
+                    fontSize = 30.sp,
+                    fontWeight = FontWeight.Black,
+                    letterSpacing = (-0.8).sp,
+                    maxLines = 1
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            // time-of-day badge: a glowing disc in the two accent colours
             Box(
                 Modifier
-                    .size(26.dp)
-                    .background(accent.copy(alpha = 0.16f), CircleShape)
-                    .border(1.dp, accent.copy(alpha = 0.35f), CircleShape),
+                    .size(52.dp)
+                    .background(Brush.linearGradient(listOf(accent.copy(alpha = 0.95f), accent2.copy(alpha = 0.95f))), CircleShape)
+                    .border(1.dp, Color.White.copy(alpha = 0.35f), CircleShape),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(greetingIcon, null, tint = accent, modifier = Modifier.size(15.dp))
+                Icon(greetingIcon, null, tint = Color.White, modifier = Modifier.size(26.dp))
             }
-            Spacer(Modifier.width(10.dp))
+        }
+        if (totalDurationMs > 0) {
+            Spacer(Modifier.height(4.dp))
             Text(
-                text = greeting.uppercase(Locale.US),
-                color = accent,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Black,
-                letterSpacing = 3.sp
+                text = "${formatTotalDuration(totalDurationMs)} of music in your library",
+                color = Color.White.copy(alpha = 0.55f),
+                fontSize = 12.sp
             )
         }
-        Spacer(Modifier.height(6.dp))
-        // White fading into the time-of-day accent, so it matches the greeting line above it.
-        Text(
-            text = name,
-            style = androidx.compose.ui.text.TextStyle(
-                brush = androidx.compose.ui.graphics.Brush.horizontalGradient(listOf(Color.White, accent)),
-                fontSize = 32.sp,
-                fontWeight = FontWeight.Black,
-                letterSpacing = (-1).sp
-            ),
-            maxLines = 1
-        )
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(14.dp))
+        // one quiet strip instead of a row of differently coloured pills
         Row(
-            modifier = Modifier.horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(18.dp))
+                .background(Color.Black.copy(alpha = 0.28f))
+                .padding(vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            AudioStatPill(Icons.Rounded.MusicNote, "$songCount songs", AudioPink)
-            AudioStatPill(Icons.Rounded.Favorite, "$favoriteCount liked", Color(0xFFFF5E62))
-            AudioStatPill(Icons.Rounded.Album, "$albumCount albums", AudioViolet)
-            AudioStatPill(Icons.Rounded.Person, "$artistCount artists", AudioCyan)
-            if (totalDurationMs > 0) {
-                AudioStatPill(Icons.Rounded.Schedule, formatTotalDuration(totalDurationMs), AudioAmber)
-            }
+            GreetingStat(songCount, "songs", Modifier.weight(1f))
+            GreetingStatDivider()
+            GreetingStat(favoriteCount, "liked", Modifier.weight(1f))
+            GreetingStatDivider()
+            GreetingStat(albumCount, "albums", Modifier.weight(1f))
+            GreetingStatDivider()
+            GreetingStat(artistCount, "artists", Modifier.weight(1f))
         }
     }
+}
+
+@Composable
+private fun GreetingStat(value: Int, label: String, modifier: Modifier = Modifier) {
+    Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            String.format(Locale.US, "%,d", value),
+            color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold, maxLines = 1
+        )
+        Text(label, color = Color.White.copy(alpha = 0.55f), fontSize = 11.sp, maxLines = 1)
+    }
+}
+
+@Composable
+private fun GreetingStatDivider() {
+    Box(Modifier.width(1.dp).height(24.dp).background(Color.White.copy(alpha = 0.10f)))
 }
 
 @Composable

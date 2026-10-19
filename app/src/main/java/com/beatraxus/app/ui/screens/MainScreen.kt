@@ -705,10 +705,32 @@ fun MainScreen(
         targetValue = if (showDrawer) 1f else 0f,
         // A touch of give at the end makes the card settle instead of stopping dead.
         animationSpec = spring(
-            dampingRatio = 0.84f,
-            stiffness = Spring.StiffnessMediumLow
+            dampingRatio = 0.9f,
+            stiffness = 260f
         ),
         label = "drawerProgress"
+    )
+    // The glass layers behind the page trail it with softer springs, so the stack fans out
+    // with parallax instead of moving as one rigid block.
+    val deckProgress1 by animateFloatAsState(
+        targetValue = if (showDrawer) 1f else 0f,
+        animationSpec = spring(dampingRatio = 0.88f, stiffness = 190f),
+        label = "deckProgress1"
+    )
+    val deckProgress2 by animateFloatAsState(
+        targetValue = if (showDrawer) 1f else 0f,
+        animationSpec = spring(dampingRatio = 0.88f, stiffness = 140f),
+        label = "deckProgress2"
+    )
+    // Menu items appear a beat after the page starts sliding and leave first on close.
+    val menuProgress by animateFloatAsState(
+        targetValue = if (showDrawer) 1f else 0f,
+        animationSpec = if (showDrawer) {
+            tween(durationMillis = 380, delayMillis = 90, easing = FastOutSlowInEasing)
+        } else {
+            tween(durationMillis = 160, easing = FastOutLinearInEasing)
+        },
+        label = "menuProgress"
     )
 
     val contentRotation = 0f // Removed rotation for uniform spacing
@@ -727,7 +749,7 @@ fun MainScreen(
         )
 
         // Slide drawer (Reveals the background behind it)
-        if (drawerProgress > 0f) {
+        if (drawerProgress > 0f || menuProgress > 0.001f) {
             Box(
                 Modifier
                     .width(180.dp)
@@ -750,7 +772,7 @@ fun MainScreen(
                     libraryMode = uiState.libraryMode,
                     playbackMode = uiState.playbackMode,
                     accentColor = viewAccentColor,
-                    drawerProgress = drawerProgress,
+                    drawerProgress = menuProgress,
                     isPlaying = uiState.isPlaying,
                     onSelectView = { view ->
                         viewModel.setLibraryView(view)
@@ -786,7 +808,7 @@ fun MainScreen(
         }
 
         // Two translucent black cards peek out behind the page without library tint.
-        if (drawerProgress > 0f) {
+        if (drawerProgress > 0f || deckProgress1 > 0.001f || deckProgress2 > 0.001f) {
             val deckShape = RoundedCornerShape(contentCornerRadius.coerceAtLeast(0.dp))
             for (depth in 1..2) {
                 Box(
@@ -794,7 +816,7 @@ fun MainScreen(
                         .fillMaxSize()
                         .zIndex(1f)
                         .graphicsLayer {
-                            val p = drawerProgress
+                            val p = (if (depth == 1) deckProgress1 else deckProgress2).coerceAtLeast(0f)
                             translationX = p * with(density) { (200 - 11 * depth).dp.toPx() }
                             val targetScale = if (size.height > 0f) {
                                 (1f - (2f * headerTopPaddingPx / size.height)).coerceIn(0.5f, 1f)
@@ -4722,11 +4744,13 @@ fun HomeScreen(
         else -> Icons.Rounded.NightsStay
     }
 
-    val greetingColors = when (hour) {
-        in 5..11 -> listOf(Color(0xFF00F2FF).copy(0.15f), Color(0xFF0066FF).copy(0.05f))
-        in 12..16 -> listOf(Color(0xFFFFD60A).copy(0.15f), Color(0xFFFF9F0A).copy(0.05f))
-        in 17..20 -> listOf(Color(0xFFFF5E62).copy(0.15f), Color(0xFFB91D73).copy(0.05f))
-        else -> listOf(Color(0xFF5E5CE6).copy(0.18f), Color(0xFF131B2A).copy(0.08f))
+    // Two-tone palette per time of day (accent, second colour): dawn gold into peach, midday sky into
+    // blue, dusk coral into magenta, night indigo into violet.
+    val greetingPair = when (hour) {
+        in 5..11 -> Color(0xFFFFB347) to Color(0xFFFF6F91)
+        in 12..16 -> Color(0xFF38BDF8) to Color(0xFF6366F1)
+        in 17..20 -> Color(0xFFFF6B6B) to Color(0xFFC026D3)
+        else -> Color(0xFF7C83FF) to Color(0xFF9B5CFF)
     }
 
     val deviceName = "Welcome back"
@@ -4780,7 +4804,8 @@ fun HomeScreen(
                             AudioGreetingHeader(
                                 greeting = greeting,
                                 greetingIcon = greetingIcon,
-                                accent = greetingColors[0].copy(alpha = 1f),
+                                accent = greetingPair.first,
+                                accent2 = greetingPair.second,
                                 name = deviceName,
                                 songCount = allSongs.size,
                                 favoriteCount = favorites.size,

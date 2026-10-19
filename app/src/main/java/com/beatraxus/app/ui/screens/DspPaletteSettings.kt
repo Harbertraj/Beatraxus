@@ -176,10 +176,12 @@ fun SurroundAppearanceContent(uiState: PlayerUiState, vm: PlayerViewModel) {
                 accent = accent,
                 onSelect = vm::setSurroundRoomTheme
             )
-            ToggleRow("Speaker icons", "Draw cabinets instead of plain dots", appearance.surroundShowSpeakerIcons, accent, vm::setSurroundShowSpeakerIcons)
+            ToggleRow("Speaker icons", "Draw speaker cabinets with a driver instead of plain dots", appearance.surroundShowSpeakerIcons, accent, vm::setSurroundShowSpeakerIcons)
             ToggleRow("Labels", "L, C, R, SL, SR, BL, BR, SW under each speaker", appearance.surroundShowLabels, accent, vm::setSurroundShowLabels)
-            ToggleRow("Sound beams", "Light beam from each active speaker to you", appearance.surroundShowBeams, accent, vm::setSurroundShowBeams)
-            ToggleRow("Animations", "Moving waves and pulses. Off saves battery", appearance.surroundAnimated, accent, vm::setSurroundAnimated)
+            ToggleRow("Sound cones", "Soft cone of sound from each active speaker to you", appearance.surroundShowBeams, accent, vm::setSurroundShowBeams)
+            ToggleRow("Sound arcs", "Arcs that radiate from active speakers and move with the music", appearance.surroundShowArcs, accent, vm::setSurroundShowArcs)
+            ToggleRow("Screen and listener", "Screen bar at the front and the sweet-spot halo around you", appearance.surroundShowScreen, accent, vm::setSurroundShowScreen)
+            ToggleRow("Animations", "Moving arcs, halo and screen glow. Off saves battery", appearance.surroundAnimated, accent, vm::setSurroundAnimated)
         }
 
         SectionLabel("VISUALIZER")

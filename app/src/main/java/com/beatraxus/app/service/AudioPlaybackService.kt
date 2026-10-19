@@ -714,6 +714,12 @@ class AudioPlaybackService : Service() {
         }
     }
 
+    /** True when a song is loaded and the user has it paused (not playing, not stopped with an empty engine). */
+    private fun isUserPaused(): Boolean {
+        val st = engine.playbackStateFlow.value
+        return st.currentSong != null && !st.isPlaying
+    }
+
     fun next(isAutoAdvance: Boolean = false) {
         performTrackChange(1, isAutoAdvance)
     }
@@ -742,9 +748,12 @@ class AudioPlaybackService : Service() {
             return
         }
 
+        // Skipping while paused loads the new song paused; auto-advance always continues playing.
+        val stayPaused = !isAutoAdvance && isUserPaused()
         acquireWakeLocks(nextSong)
         engine.prepare(nextSong)
         saveState()
+        if (stayPaused) return
 
         playbackJob = serviceScope.launch {
             if (!isAutoAdvance) {
@@ -2010,9 +2019,12 @@ class AudioPlaybackService : Service() {
             playbackJob?.cancel()
             currentIndex = index
             val song = playlist[currentIndex]
+            // Picking a song while paused only loads it; it plays when the user presses Play.
+            val stayPaused = isUserPaused()
 
             engine.prepare(song)
             saveState()
+            if (stayPaused) return
 
             playbackJob = serviceScope.launch {
                 delay(150)

@@ -5912,6 +5912,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun setSurroundShowLabels(v: Boolean) { viewModelScope.launch { appearancePreferences.setSurroundShowLabels(v) } }
     fun setSurroundShowBeams(v: Boolean) { viewModelScope.launch { appearancePreferences.setSurroundShowBeams(v) } }
     fun setSurroundAnimated(v: Boolean) { viewModelScope.launch { appearancePreferences.setSurroundAnimated(v) } }
+    fun setSurroundShowArcs(v: Boolean) { viewModelScope.launch { appearancePreferences.setSurroundShowArcs(v) } }
+    fun setSurroundShowScreen(v: Boolean) { viewModelScope.launch { appearancePreferences.setSurroundShowScreen(v) } }
     fun resetSurroundAppearance() { viewModelScope.launch { appearancePreferences.resetSurroundAppearance() } }
     fun setSurroundColor(group: String, argb: Int) { viewModelScope.launch { appearancePreferences.setSurroundColor(group, argb) } }
 

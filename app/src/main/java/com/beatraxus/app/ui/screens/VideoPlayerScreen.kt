@@ -118,7 +118,7 @@ enum class GestureType {
 }
 
 enum class PlayerSheetType {
-    NONE, AUDIO, SUBTITLE, SPEED, ALL, EQUALIZER, SLEEP_TIMER, COLOR, AUDIO_DELAY, MOTION_BOOST
+    NONE, AUDIO, SUBTITLE, SPEED, ALL, EQUALIZER, SLEEP_TIMER, COLOR, AUDIO_DELAY, MOTION_BOOST, SURROUND
 }
 
 @UnstableApi
@@ -164,6 +164,12 @@ fun VideoPlayerScreen(
 
     var controlsVisible by remember { mutableStateOf(true) }
     var sheetType by remember { mutableStateOf(PlayerSheetType.NONE) }
+    // The surround icon (and its sheet) exist only while the simulator is really in this video's signal path:
+    // 5.1 engine on, or audio mode on with the surround simulator enabled in Studio DSP.
+    val showSurroundIcon = uiState.routeAudioToEngine && uiState.surroundActive
+    LaunchedEffect(showSurroundIcon) {
+        if (!showSurroundIcon && sheetType == PlayerSheetType.SURROUND) sheetType = PlayerSheetType.NONE
+    }
 
     val appContext = context.applicationContext as Application
     val api = remember { SubtitleApiClientFactory.createApi() }
@@ -750,6 +756,13 @@ fun VideoPlayerScreen(
                         onAudioClick = { sheetType = PlayerSheetType.AUDIO },
                         onAudioDelayClick = { sheetType = PlayerSheetType.AUDIO_DELAY },
                         onSubtitleClick = { sheetType = PlayerSheetType.SUBTITLE },
+                        showSurroundIcon = showSurroundIcon,
+                        showSurroundHint = showSurroundIcon && uiState.showSurroundHint,
+                        onSurroundClick = {
+                            viewModel.onSurroundHintShown()
+                            sheetType = PlayerSheetType.SURROUND
+                        },
+                        onSurroundHintShown = { viewModel.onSurroundHintShown() },
                         modifier = Modifier.align(Alignment.TopCenter)
                     )
 
@@ -1278,8 +1291,21 @@ fun PlayerTopBar(
     onAudioClick: () -> Unit,
     onAudioDelayClick: () -> Unit,
     onSubtitleClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    /** The surround simulator is in the video's signal path: show its control icon. */
+    showSurroundIcon: Boolean = false,
+    /** First time the icon appears: pulse it and label it so the user notices it. */
+    showSurroundHint: Boolean = false,
+    onSurroundClick: () -> Unit = {},
+    onSurroundHintShown: () -> Unit = {}
 ) {
+    // Counted only while the bar is on screen: if the controls hide first, the hint is kept for next time.
+    LaunchedEffect(showSurroundHint) {
+        if (showSurroundHint) {
+            delay(6000)
+            onSurroundHintShown()
+        }
+    }
     Box(
         modifier = modifier
             .fillMaxWidth()
@@ -1397,9 +1423,82 @@ fun PlayerTopBar(
                     )
                 }
             }
+            if (showSurroundIcon) {
+                Spacer(Modifier.width(8.dp))
+                SurroundTopIcon(showHint = showSurroundHint, onClick = onSurroundClick)
+            }
             Spacer(Modifier.width(8.dp))
             VpGlassButton(onClick = onSubtitleClick, size = 42.dp) {
                 Icon(Icons.Rounded.Subtitles, null, tint = Color.White, modifier = Modifier.size(21.dp))
+            }
+        }
+    }
+}
+
+/**
+ * Opens the surround simulator sheet. While [showHint] is true (first appearance only) a ring pulses around the
+ * button and a small label says what it is.
+ */
+@Composable
+private fun SurroundTopIcon(showHint: Boolean, onClick: () -> Unit) {
+    Box(contentAlignment = Alignment.Center) {
+        if (showHint) {
+            val transition = rememberInfiniteTransition(label = "surroundHint")
+            val pulse by transition.animateFloat(
+                initialValue = 0f,
+                targetValue = 1f,
+                animationSpec = infiniteRepeatable(tween(1300, easing = LinearOutSlowInEasing), RepeatMode.Restart),
+                label = "surroundHintPulse"
+            )
+            Box(
+                modifier = Modifier
+                    .size(42.dp)
+                    .graphicsLayer {
+                        val scale = 1f + 0.55f * pulse
+                        scaleX = scale
+                        scaleY = scale
+                        alpha = 0.85f * (1f - pulse)
+                    }
+                    .border(2.dp, VpAmberSoft, CircleShape)
+            )
+        }
+        VpGlassButton(onClick = onClick, size = 42.dp, active = true) {
+            Icon(
+                Icons.Rounded.SurroundSound,
+                "Surround simulator",
+                tint = Color.White,
+                modifier = Modifier.size(22.dp)
+            )
+            if (showHint) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(top = 3.dp, end = 3.dp)
+                        .size(10.dp)
+                        .clip(CircleShape)
+                        .background(Color(0xFFFF5252))
+                        .border(1.dp, Color.White, CircleShape)
+                )
+            }
+        }
+        if (showHint) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .offset(y = 40.dp)
+                    .wrapContentSize(unbounded = true)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Brush.horizontalGradient(listOf(VpAmberSoft, VpAmber)))
+                    .padding(horizontal = 10.dp, vertical = 5.dp)
+            ) {
+                Text(
+                    "New · Surround controls",
+                    color = Color.Black,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    maxLines = 1,
+                    softWrap = false
+                )
             }
         }
     }
@@ -1758,6 +1857,7 @@ fun VideoSettingsSheetContent(
             PlayerSheetType.EQUALIZER -> "Premium Equalizer"
             PlayerSheetType.SLEEP_TIMER -> "Sleep Timer"
             PlayerSheetType.COLOR -> "Color Grading"
+            PlayerSheetType.SURROUND -> "Surround Simulator"
             else -> "Settings"
         }
         
@@ -1792,8 +1892,13 @@ fun VideoSettingsSheetContent(
         }
 
         if (activeSheetType == PlayerSheetType.AUDIO) {
-            // "Connect to audio mode" toggle sits on its own line, below the title
+            // Two mutually exclusive routes through the Audio Engine. Turning one on switches the other off.
             val canRoute = uiState.availableAudioTracks.isNotEmpty() && uiState.playbackSpeed == 1.0f && !uiState.isConnectingEngineRoute
+            val routedOrConnecting = uiState.routeAudioToEngine || uiState.isConnectingEngineRoute
+            val audioModeOn = routedOrConnecting && !uiState.surroundEngineRoute
+            val surroundEngineOn = routedOrConnecting && uiState.surroundEngineRoute
+
+            // "Connect to audio mode" toggle sits on its own line, below the title
             Row(
                 modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -1807,7 +1912,7 @@ fun VideoSettingsSheetContent(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f)
                 )
-                if (uiState.isConnectingEngineRoute) {
+                if (uiState.isConnectingEngineRoute && !uiState.surroundEngineRoute) {
                     CircularProgressIndicator(
                         modifier = Modifier.size(18.dp),
                         color = mxOrange,
@@ -1816,7 +1921,7 @@ fun VideoSettingsSheetContent(
                     Spacer(Modifier.width(8.dp))
                 }
                 Switch(
-                    checked = uiState.routeAudioToEngine || uiState.isConnectingEngineRoute,
+                    checked = audioModeOn,
                     enabled = canRoute,
                     onCheckedChange = { viewModel.setRouteAudioToEngine(it) },
                     colors = SwitchDefaults.colors(
@@ -1827,6 +1932,45 @@ fun VideoSettingsSheetContent(
                     )
                 )
             }
+
+            // "5.1 engine": the soundtrack leaves the normal path and goes through the surround simulator only.
+            // Hidden while audio mode is on (audio mode already carries the simulator when it is enabled in DSP Studio).
+            if (!audioModeOn) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "5.1 engine",
+                        color = Color.White,
+                        fontSize = 14.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                    if (uiState.isConnectingEngineRoute && uiState.surroundEngineRoute) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            color = mxOrange,
+                            strokeWidth = 2.dp
+                        )
+                        Spacer(Modifier.width(8.dp))
+                    }
+                    Switch(
+                        checked = surroundEngineOn,
+                        enabled = canRoute,
+                        onCheckedChange = { viewModel.setSurroundEngine(it) },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = mxOrange,
+                            checkedTrackColor = mxOrange.copy(0.4f),
+                            disabledCheckedThumbColor = mxOrange.copy(0.4f),
+                            disabledUncheckedThumbColor = Color.Gray.copy(0.4f)
+                        )
+                    )
+                }
+            }
+
             if (uiState.isConnectingEngineRoute) {
                 Text(
                     text = "Connecting to Audio Engine...",
@@ -1837,12 +1981,24 @@ fun VideoSettingsSheetContent(
                 )
             } else if (uiState.routeAudioToEngine) {
                 Text(
-                    text = "Audio is playing through the Audio Engine (DSP / Hi-Res)",
+                    text = if (uiState.surroundEngineRoute) {
+                        "Audio is playing through the 5.1 engine (surround simulator only)"
+                    } else {
+                        "Audio is playing through the Audio Engine (DSP / Hi-Res)"
+                    },
                     color = mxOrange,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Medium,
                     modifier = Modifier.padding(top = 4.dp)
                 )
+                if (uiState.surroundFallback) {
+                    Text(
+                        text = "This output refused a multichannel stream, so the sound plays in the track's own layout",
+                        color = Color.Gray,
+                        fontSize = 12.sp,
+                        modifier = Modifier.padding(top = 2.dp)
+                    )
+                }
             } else if (uiState.playbackSpeed != 1.0f) {
                 Text(
                     text = "Audio Engine routing requires 1.0x playback speed",
@@ -1968,7 +2124,11 @@ fun VideoSettingsSheetContent(
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = "Audio track connected with DSP Studio (Audio mode)",
+                            text = if (uiState.surroundEngineRoute) {
+                                "Audio track connected with the 5.1 engine (surround simulator)"
+                            } else {
+                                "Audio track connected with DSP Studio (Audio mode)"
+                            },
                             color = Color.White,
                             fontSize = 16.sp,
                             fontWeight = FontWeight.Bold,
@@ -1983,6 +2143,19 @@ fun VideoSettingsSheetContent(
         // Color Grading Section
         if (activeSheetType == PlayerSheetType.COLOR) {
             ColorGradingSection(uiState, viewModel)
+        }
+
+        // Surround Simulator Section
+        if (activeSheetType == PlayerSheetType.SURROUND) {
+            VideoSurroundSection(
+                uiState = uiState,
+                onLayout = { viewModel.setSurroundLayout(it) },
+                onMode = { viewModel.setSurroundMode(it) },
+                onPreset = { viewModel.applySurroundPreset(it) },
+                onTrim = { index, db -> viewModel.setSurroundChannelTrim(index, db) },
+                onResetTrims = { viewModel.resetSurroundTrims() },
+                onSaveCustom = { viewModel.saveSurroundCustomPreset() }
+            )
         }
 
         // HDR Tone Mapping Toggle

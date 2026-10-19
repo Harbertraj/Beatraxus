@@ -143,28 +143,67 @@ private fun DspTabBar(
     modifier: Modifier = Modifier,
     onSelect: (Int) -> Unit
 ) {
-    val icons = listOf(Icons.Rounded.GraphicEq, Icons.Rounded.Speaker, Icons.Rounded.AutoAwesome, Icons.Rounded.Waves, Icons.Rounded.SurroundSound)
+    // Signal-path order: EQ -> Surround -> Master -> Reverb -> Spatial. Surround carries the surround-sound icon,
+    // Spatial a 3D one, so the two pages are no longer mixed up.
+    val icons = listOf(Icons.Rounded.GraphicEq, Icons.Rounded.SurroundSound, Icons.Rounded.AutoAwesome, Icons.Rounded.Waves, Icons.Rounded.ThreeDRotation)
     val labels = listOf("EQ", "SURROUND", "MASTER", "REVERB", "SPATIAL")
+    val current = pagerState.currentPage
+    val railIdle = Color.White.copy(alpha = 0.12f)
+    val railLit = PremiumAccent.copy(alpha = 0.55f)
     Column(modifier = modifier) {
+        // Pipeline style: one stage node per page, joined by a rail that lights up along the path to the open page.
         Row(modifier = Modifier.fillMaxWidth()) {
             labels.forEachIndexed { i, label ->
-                val selected = pagerState.currentPage == i
+                val selected = current == i
                 val tint by animateColorAsState(
-                    if (selected) PremiumAccent else Color.White.copy(alpha = 0.42f),
+                    if (selected) PremiumAccent else Color.White.copy(alpha = 0.45f),
                     label = "tab_tint"
+                )
+                val nodeFill by animateColorAsState(
+                    if (selected) PremiumAccent.copy(alpha = 0.18f) else Color.White.copy(alpha = 0.05f),
+                    label = "tab_fill"
+                )
+                val nodeRim by animateColorAsState(
+                    if (selected) PremiumAccent.copy(alpha = 0.85f) else Color.White.copy(alpha = 0.14f),
+                    label = "tab_rim"
                 )
                 Column(
                     modifier = Modifier
                         .weight(1f)
-                        .clip(RoundedCornerShape(10.dp))
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = null
                         ) { onSelect(i) }
-                        .padding(vertical = 5.dp),
+                        .padding(top = 3.dp, bottom = 4.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Icon(icons[i], contentDescription = label, tint = tint, modifier = Modifier.size(17.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth().height(20.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(1.dp)
+                                .background(if (i == 0) Color.Transparent else if (i <= current) railLit else railIdle)
+                        )
+                        Box(
+                            modifier = Modifier
+                                .size(20.dp)
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(nodeFill)
+                                .border(1.dp, nodeRim, RoundedCornerShape(6.dp)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(icons[i], contentDescription = label, tint = tint, modifier = Modifier.size(13.dp))
+                        }
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(1.dp)
+                                .background(if (i == labels.lastIndex) Color.Transparent else if (i < current) railLit else railIdle)
+                        )
+                    }
                     Spacer(Modifier.height(2.dp))
                     Text(
                         text = label,

@@ -329,9 +329,10 @@ private fun channelColor(channel: SurroundChannel, look: AppearanceConfig): Colo
 }
 
 /**
- * Top-down "radar" stage: the listener sits in the middle of concentric range rings and every speaker is
- * placed on its real angle (C 0°, L/R ±32°, SL/SR ±90°, BL/BR ±148°). Speakers that receive sound glow,
- * radiate waves and send a beam to the listener; speakers without a signal stay dark.
+ * Room floor plan, seen from above: the screen sits at the front, the listener in the middle, and every speaker
+ * on its real angle (C 0°, L/R ±32°, SL/SR ±90°, BL/BR ±148°). A speaker that receives sound is filled with its
+ * colour, sends a soft cone of sound towards the listener and radiates arcs that breathe with the music; a
+ * speaker without a signal stays a dark, quiet cabinet.
  */
 @Composable
 private fun SurroundStageView(
@@ -362,14 +363,15 @@ private fun SurroundStageView(
         }
     }
     val levelProvider = LocalLiveAudioLevel.current
+    val shape = RoundedCornerShape(26.dp)
 
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxWidth()
             .aspectRatio(1.02f)
-            .clip(RoundedCornerShape(20.dp))
-            .background(Color.Black.copy(0.35f))
-            .border(1.dp, Brush.verticalGradient(listOf(glow.copy(0.45f), glow.copy(0.10f))), RoundedCornerShape(20.dp))
+            .clip(shape)
+            .background(Color(0xFF07090D))
+            .border(1.dp, Brush.verticalGradient(listOf(glow.copy(0.40f), Color.White.copy(0.05f))), shape)
     ) {
         val wPx = constraints.maxWidth.toFloat()
         val hPx = constraints.maxHeight.toFloat()
@@ -384,7 +386,7 @@ private fun SurroundStageView(
         }
 
         Canvas(modifier = Modifier.fillMaxWidth().aspectRatio(1.02f)) {
-            val u = density
+            val k = density / 2.6f
             val t = frame / 1_000_000_000f
             val live = levelProvider?.invoke()
             val level = when {
@@ -394,62 +396,77 @@ private fun SurroundStageView(
             }
             val me = Offset(cx, cy)
 
-            // Backdrop
-            drawRect(Brush.radialGradient(listOf(bgInner, bgOuter, Color.Black.copy(0.92f)), me, wPx * 0.78f))
+            // Room floor: a lit pool of the room theme, fading to black at the walls
+            drawRect(Brush.radialGradient(listOf(bgInner.copy(0.85f), bgOuter, Color(0xFF07090D)), me, wPx * 0.72f))
 
-            // Range rings (the outer one is dashed) and the front-stage arc
-            for (k in 1..3) {
-                val f = k / 3f
-                drawOval(
-                    glow.copy(if (k == 3) 0.26f else 0.09f),
-                    Offset(cx - rx * f, cy - ry * f), Size(rx * 2f * f, ry * 2f * f),
-                    style = Stroke(1.1f * u / 2.6f + 0.6f, pathEffect = if (k == 3) PathEffect.dashPathEffect(floatArrayOf(7f * u / 2.6f, 9f * u / 2.6f)) else null)
+            // Seating zone and the ring the speakers stand on (dashed)
+            drawOval(
+                Brush.radialGradient(listOf(glow.copy(0.16f + 0.08f * level), Color.Transparent), me, rx * 0.62f),
+                Offset(cx - rx * 0.62f, cy - ry * 0.62f), Size(rx * 1.24f, ry * 1.24f)
+            )
+            drawOval(
+                glow.copy(0.20f), Offset(cx - rx, cy - ry), Size(rx * 2f, ry * 2f),
+                style = Stroke(1.2f * k + 0.4f, pathEffect = PathEffect.dashPathEffect(floatArrayOf(3f * k, 7f * k)))
+            )
+
+            // Screen at the front of the room; it lights the floor below it while something plays
+            if (look.surroundShowScreen) {
+            val screenW = wPx * 0.36f
+            val screenH = 6f * k
+            val screenTop = hPx * 0.075f
+            if (isPlaying) {
+                drawRect(
+                    Brush.verticalGradient(listOf(glow.copy(0.20f * (0.5f + level)), Color.Transparent), screenTop, screenTop + hPx * 0.2f),
+                    Offset(cx - screenW * 0.62f, screenTop), Size(screenW * 1.24f, hPx * 0.2f)
                 )
             }
-            drawArc(
-                glow.copy(0.40f), 232f, 76f, false,
-                Offset(cx - rx * 1.14f, cy - ry * 1.14f), Size(rx * 2.28f, ry * 2.28f),
-                style = Stroke(2.4f * u / 2.6f + 0.6f)
+            drawRoundRect(
+                Color.White.copy(if (isPlaying) 0.75f else 0.28f),
+                Offset(cx - screenW / 2f, screenTop), Size(screenW, screenH), CornerRadius(screenH / 2f)
             )
-            // Spokes from the listener to every speaker position
-            SPEAKER_SPOTS.forEach { drawLine(glow.copy(0.07f), me, spotPos(it), 1f) }
-
-            // Listener: pulsing halo + top-down head
-            val anyActive = channels > 0
-            if (anyActive) {
-                val phase = if (look.surroundAnimated) (t * 0.6f) % 1f else 0.35f
-                drawCircle(glow.copy((1f - phase) * 0.30f * (0.4f + level)), (16f + phase * 36f) * u / 2.6f, me, style = Stroke(1.6f))
             }
-            drawCircle(Brush.radialGradient(listOf(glow.copy(0.28f + 0.22f * level), Color.Transparent), me, wPx * 0.17f), wPx * 0.17f, me)
-            drawCircle(Color(0xFF0F151D), 9f * u / 2.6f, me)
-            drawCircle(glow.copy(0.85f), 9f * u / 2.6f, me, style = Stroke(1.8f))
-            drawCircle(glow.copy(0.85f), 2.6f * u / 2.6f, Offset(cx - 11.5f * u / 2.6f, cy), style = Stroke(1.5f))
-            drawCircle(glow.copy(0.85f), 2.6f * u / 2.6f, Offset(cx + 11.5f * u / 2.6f, cy), style = Stroke(1.5f))
-            drawLine(glow.copy(0.85f), Offset(cx, cy - 9f * u / 2.6f), Offset(cx, cy - 14f * u / 2.6f), 2f)
+
+            // Listener: a soft sweet-spot halo and a top-down head that faces the screen
+            val phase = if (look.surroundAnimated) (t * 0.6f) % 1f else 0.35f
+            if (look.surroundShowScreen) drawCircle(glow.copy((1f - phase) * 0.26f * (0.4f + level)), (14f + phase * 30f) * k, me, style = Stroke(1.4f))
+            drawCircle(Color(0xFF10161F), 10f * k, me)
+            drawCircle(glow.copy(0.9f), 10f * k, me, style = Stroke(1.8f * k))
+            drawLine(glow.copy(0.9f), Offset(cx, cy - 10f * k), Offset(cx, cy - 15f * k), 2f * k)
 
             // Visualizer (decorative, driven by the live loudness)
             if (look.surroundVisualizerEnabled && channels > 2) {
-                drawVisualizer(look.surroundVisualizerStyle, glow, Offset(cx, cy + 6f * u / 2.6f), wPx * 0.55f, level, t)
+                drawVisualizer(look.surroundVisualizerStyle, glow, Offset(cx, cy + 6f * k), wPx * 0.55f, level, t)
             }
 
-            // Speakers: beams first so the bodies sit on top
-            val k = u / 2.6f
-            SPEAKER_SPOTS.forEachIndexed { i, spot ->
-                val playing = isChannelActive(spot.channel, channels)
-                if (!playing || !look.surroundShowBeams) return@forEachIndexed
-                val c = channelColor(spot.channel, look)
-                val at = spotPos(spot)
-                val dx = me.x - at.x
-                val dy = me.y - at.y
-                val len = sqrt(dx * dx + dy * dy).coerceAtLeast(1f)
-                val ux = dx / len
-                val uy = dy / len
-                val from = Offset(at.x + ux * 20f * k, at.y + uy * 20f * k)
-                val to = Offset(me.x - ux * 22f * k, me.y - uy * 22f * k)
-                drawLine(Brush.linearGradient(listOf(c.copy(0.55f), c.copy(0f)), from, to), from, to, 2.2f * k)
-                val travel = (t * 0.9f + i * 0.17f) % 1f
-                drawCircle(c.copy((1f - travel) * 0.95f), 2.6f * k, Offset(from.x + (to.x - from.x) * travel, from.y + (to.y - from.y) * travel))
+            // Sound cones first so the cabinets sit on top
+            if (look.surroundShowBeams) {
+                SPEAKER_SPOTS.forEach { spot ->
+                    if (!isChannelActive(spot.channel, channels)) return@forEach
+                    val c = channelColor(spot.channel, look)
+                    val at = spotPos(spot)
+                    val dx = me.x - at.x
+                    val dy = me.y - at.y
+                    val len = sqrt(dx * dx + dy * dy).coerceAtLeast(1f)
+                    val ux = dx / len
+                    val uy = dy / len
+                    // wedge: narrow at the speaker, wide at the listener
+                    val px = -uy
+                    val py = ux
+                    val spread = 26f * k
+                    val cone = Path().apply {
+                        moveTo(at.x + ux * 14f * k, at.y + uy * 14f * k)
+                        lineTo(me.x + px * spread, me.y + py * spread)
+                        lineTo(me.x - px * spread, me.y - py * spread)
+                        close()
+                    }
+                    val i = spot.channel.ordinal
+                    val gain = 10f.pow(trimsDb[i] / 20f).coerceIn(0.25f, 2.5f)
+                    val a = (0.10f + 0.16f * level) * (0.7f + 0.3f * gain.coerceAtMost(1.6f))
+                    drawPath(cone, Brush.linearGradient(listOf(c.copy(a * 1.6f), c.copy(0f)), at, me))
+                }
             }
+
+            // Speakers
             SPEAKER_SPOTS.forEachIndexed { i, spot ->
                 val index = spot.channel.ordinal
                 val playing = isChannelActive(spot.channel, channels)
@@ -459,11 +476,17 @@ private fun SurroundStageView(
                 val energy = if (playing) (0.25f + 0.75f * level) * (0.6f + 0.4f * gainFactor.coerceAtMost(1.6f)) else 0f
 
                 if (playing) {
-                    drawCircle(Brush.radialGradient(listOf(c.copy(0.32f * (0.5f + energy)), Color.Transparent), at, 36f * k), 36f * k, at)
-                    for (ring in 0..1) {
-                        val phase = if (look.surroundAnimated) (t * 0.75f + i * 0.21f + ring * 0.5f) % 1f else 0.2f + ring * 0.35f
-                        val r = (14f + phase * (20f + 16f * energy)) * k
-                        drawCircle(c.copy((1f - phase) * 0.55f), r, at, style = Stroke(1.5f))
+                    drawCircle(Brush.radialGradient(listOf(c.copy(0.30f * (0.5f + energy)), Color.Transparent), at, 34f * k), 34f * k, at)
+                    // three sound arcs that face the listener and drift outwards
+                    val dir = Math.toDegrees(kotlin.math.atan2(me.y - at.y, me.x - at.x).toDouble()).toFloat()
+                    if (look.surroundShowArcs) for (ring in 0..2) {
+                        val ph = if (look.surroundAnimated) (t * 0.8f + i * 0.19f + ring / 3f) % 1f else 0.15f + ring * 0.3f
+                        val r = (15f + ph * (14f + 12f * energy)) * k
+                        drawArc(
+                            c.copy((1f - ph) * 0.65f), dir - 38f, 76f, false,
+                            Offset(at.x - r, at.y - r), Size(r * 2f, r * 2f),
+                            style = Stroke(1.6f * k, cap = androidx.compose.ui.graphics.StrokeCap.Round)
+                        )
                     }
                 }
                 drawSpeaker(spot.channel, at, k, spot.angleDeg, if (playing) c else Color(0xFF59606B), playing, look.surroundShowSpeakerIcons)
@@ -477,35 +500,38 @@ private fun SurroundStageView(
                 Text(
                     text = spot.channel.label,
                     color = if (playing) Color.White else Color.White.copy(0.32f),
-                    fontSize = 10.sp, fontWeight = FontWeight.Black, textAlign = TextAlign.Center,
+                    fontSize = 10.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center,
                     modifier = Modifier
-                        .width(30.dp)
-                        .offset { IntOffset((at.x - 15.dp.toPx()).roundToInt(), (at.y + 15.dp.toPx()).roundToInt()) }
+                        .width(28.dp)
+                        .offset { IntOffset((at.x - 14.dp.toPx()).roundToInt(), (at.y + 17.dp.toPx()).roundToInt()) }
+                        .clip(RoundedCornerShape(50))
+                        .background(Color.Black.copy(if (playing) 0.45f else 0.25f))
+                        .padding(vertical = 1.dp)
                 )
             }
         }
 
-        // Corner chips
-        Text(
-            statusText,
-            color = statusColor, fontSize = 9.sp, fontWeight = FontWeight.Black, letterSpacing = 1.sp,
+        // Status pill: a dot in the state colour and a plain-language label
+        Row(
             modifier = Modifier
                 .align(Alignment.TopStart)
-                .padding(10.dp)
+                .padding(12.dp)
                 .clip(RoundedCornerShape(50))
-                .background(Color.Black.copy(0.35f))
-                .border(1.dp, statusColor.copy(0.7f), RoundedCornerShape(50))
-                .padding(horizontal = 10.dp, vertical = 4.dp)
-        )
-        Text(
-            "TOP VIEW",
-            color = Color.White.copy(0.35f), fontSize = 8.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.4.sp,
-            modifier = Modifier.align(Alignment.TopEnd).padding(14.dp)
-        )
+                .background(Color.Black.copy(0.40f))
+                .padding(start = 8.dp, end = 11.dp, top = 5.dp, bottom = 5.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(Modifier.size(7.dp).clip(CircleShape).background(statusColor))
+            Spacer(Modifier.width(6.dp))
+            Text(
+                statusText.lowercase().replaceFirstChar { it.uppercase() },
+                color = statusColor, fontSize = 11.sp, fontWeight = FontWeight.SemiBold
+            )
+        }
     }
 }
 
-/** One dot per speaker: lit (in the speaker's colour) when it receives sound, dark when it does not. */
+/** One tile per speaker: lit in the speaker's colour when it receives sound, dark when it does not. */
 @Composable
 private fun ActiveChannelStrip(channels: Int, look: AppearanceConfig) {
     val order = listOf(
@@ -513,36 +539,41 @@ private fun ActiveChannelStrip(channels: Int, look: AppearanceConfig) {
         SurroundChannel.SR, SurroundChannel.BL, SurroundChannel.BR, SurroundChannel.SW
     )
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
-            .background(Color.Black.copy(0.22f))
-            .border(1.dp, Color.White.copy(0.07f), RoundedCornerShape(14.dp))
-            .padding(horizontal = 8.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         order.forEach { channel ->
             val on = isChannelActive(channel, channels)
             val c = channelColor(channel, look)
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            val tile = RoundedCornerShape(10.dp)
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(tile)
+                    .background(if (on) c.copy(0.14f) else Color.White.copy(0.04f))
+                    .padding(top = 6.dp, bottom = 6.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
                 Box(
                     Modifier
-                        .size(7.dp)
+                        .width(14.dp)
+                        .height(3.dp)
                         .clip(CircleShape)
                         .background(if (on) c else Color.White.copy(0.14f))
                 )
+                Spacer(Modifier.height(5.dp))
                 Text(
                     channel.label,
                     color = if (on) Color.White else Color.White.copy(0.30f),
-                    fontSize = 10.sp, fontWeight = FontWeight.Black
+                    fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1
                 )
             }
         }
     }
 }
 
-/** Top-down speaker: cabinet with a bright baffle edge that faces the listener ([angleDeg] rotates it into place). */
+/** Top-down speaker: a cabinet with a driver cone, turned towards the listener ([angleDeg] rotates it into place). */
 private fun DrawScope.drawSpeaker(
     channel: SurroundChannel, c: Offset, k: Float, angleDeg: Float, color: Color, playing: Boolean, detailed: Boolean
 ) {
@@ -552,20 +583,25 @@ private fun DrawScope.drawSpeaker(
     }
     if (channel == SurroundChannel.SW) {
         val s = 26f * k
-        drawRoundRect(Color(0xFF14101E), Offset(c.x - s / 2, c.y - s / 2), Size(s, s), CornerRadius(7f * k))
-        drawRoundRect(color, Offset(c.x - s / 2, c.y - s / 2), Size(s, s), CornerRadius(7f * k), style = Stroke(1.8f * k))
-        drawCircle(color.copy(0.85f), s * 0.30f, c, style = Stroke(1.6f * k))
-        drawCircle(color, s * 0.10f, c)
+        val tl = Offset(c.x - s / 2, c.y - s / 2)
+        drawRoundRect(Color(0xFF0E1118), tl, Size(s, s), CornerRadius(8f * k))
+        drawRoundRect(color.copy(if (playing) 0.9f else 0.7f), tl, Size(s, s), CornerRadius(8f * k), style = Stroke(1.6f * k))
+        drawCircle(color.copy(if (playing) 0.30f else 0.12f), s * 0.34f, c)
+        drawCircle(color, s * 0.34f, c, style = Stroke(1.4f * k))
+        drawCircle(color, s * 0.11f, c)
         return
     }
-    val w = 24f * k
-    val h = 15f * k
+    val w = 22f * k
+    val h = 16f * k
     rotate(angleDeg, c) {
-        drawRoundRect(Color(0xFF111821), Offset(c.x - w / 2, c.y - h / 2), Size(w, h), CornerRadius(4f * k))
-        drawRoundRect(color, Offset(c.x - w / 2, c.y - h / 2), Size(w, h), CornerRadius(4f * k), style = Stroke(1.6f * k))
-        // Baffle edge facing the listener (unrotated: the bottom side)
-        drawRoundRect(color, Offset(c.x - w / 2 + 3f * k, c.y + h / 2 - 4.2f * k), Size(w - 6f * k, 2.6f * k), CornerRadius(1.3f * k))
-        drawCircle(color.copy(if (playing) 0.9f else 0.6f), 3.3f * k, Offset(c.x, c.y - 0.8f * k), style = Stroke(1.4f * k))
+        val tl = Offset(c.x - w / 2, c.y - h / 2)
+        drawRoundRect(Color(0xFF0E1118), tl, Size(w, h), CornerRadius(5f * k))
+        drawRoundRect(color.copy(if (playing) 0.9f else 0.7f), tl, Size(w, h), CornerRadius(5f * k), style = Stroke(1.5f * k))
+        // driver cone on the baffle that faces the listener (unrotated: the bottom half)
+        val dc = Offset(c.x, c.y + 1.5f * k)
+        drawCircle(color.copy(if (playing) 0.30f else 0.10f), 4.6f * k, dc)
+        drawCircle(color, 4.6f * k, dc, style = Stroke(1.2f * k))
+        drawCircle(color, 1.5f * k, dc)
     }
 }
 

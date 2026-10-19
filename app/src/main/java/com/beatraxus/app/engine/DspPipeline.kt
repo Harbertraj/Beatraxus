@@ -63,6 +63,11 @@ internal class AudioDspPipeline(
     private var surroundBuffer = FloatArray(0)
     @Volatile private var surroundConfig: DspConfig = config
 
+    // Real 5.1 / 7.1 source (e.g. a video soundtrack with a multichannel track): channels stay discrete, only the
+    // per-speaker trims apply (relative to the Default preset, so untouched trims change nothing).
+    @Volatile private var discreteActive = false
+    private var surroundTrimmer: SurroundTrimmer? = null
+
     /** Channel count this pipeline currently produces: 6 / 8 while the surround stage is on, else the input count. */
     val outputChannels: Int get() = surroundOutChannels.takeIf { it > 2 } ?: channels
 
@@ -88,7 +93,31 @@ internal class AudioDspPipeline(
         if (wanted != surroundOutChannels) setSurroundChannels(wanted)
     }
 
+    /**
+     * Turns the discrete 5.1 / 7.1 trim stage on or off. Only valid when this pipeline's own input already is a
+     * 6 / 8 channel stream; anything else keeps it off.
+     */
+    fun setDiscreteTrims(enabled: Boolean) {
+        val valid = enabled && (channels == 6 || channels == 8)
+        if (!valid) {
+            discreteActive = false
+            return
+        }
+        val trimmer = surroundTrimmer ?: SurroundTrimmer(outputSampleRate).also { surroundTrimmer = it }
+        trimmer.configure(channels, surroundConfig.surroundChannelTrimsDb)
+        discreteActive = true
+    }
+
+    /** Cheap per-batch check, like [syncSurroundChannels]: only reconfigures when the wanted state differs. */
+    fun syncDiscreteTrims(enabled: Boolean) {
+        if (enabled != discreteActive) setDiscreteTrims(enabled)
+    }
+
     private fun applySurround(base: DspProcessResult, inChannels: Int): DspProcessResult {
+        if (discreteActive && inChannels == channels && !base.isDoP) {
+            surroundTrimmer?.process(base.data, base.sampleCount / inChannels)
+            return base
+        }
         val outCh = surroundOutChannels
         val upmixer = surroundUpmixer
         if (outCh <= 2 || upmixer == null || base.isDoP || inChannels !in 1..2) return base
@@ -177,6 +206,9 @@ internal class AudioDspPipeline(
         if (outCh > 2) {
             surroundUpmixer?.configure(outCh, config.surroundMode.tuning(), config.surroundChannelTrimsDb)
         }
+        if (discreteActive) {
+            surroundTrimmer?.configure(channels, config.surroundChannelTrimsDb)
+        }
     }
 
     fun updateOutputBitDepth(bitDepth: Int) {
@@ -195,6 +227,7 @@ internal class AudioDspPipeline(
     fun release() {
         processors.forEach { it.release() }
         surroundOutChannels = 0
+        discreteActive = false
     }
 
     fun getLevels(): FloatArray = processors.find { it is NativeDspProcessor }?.getLevels() ?: floatArrayOf(0f, 0f)

@@ -1,8 +1,11 @@
 package com.beatraxus.app.engine
 
+import com.beatraxus.app.model.DEFAULT_SURROUND_TRIMS_DB
 import com.beatraxus.app.model.SurroundTuning
+import com.beatraxus.app.model.discreteChannelTrimIndex
 import com.beatraxus.app.model.sanitizeSurroundTrims
 import kotlin.math.PI
+import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.exp
 import kotlin.math.pow
@@ -240,5 +243,80 @@ internal class SurroundUpmixer(sampleRate: Int) {
         private const val SMOOTH_SECONDS = 0.012
         private const val MAX_DELAY_SECONDS = 0.06
         private const val AMBIENCE_LOWPASS_HZ = 7_000.0
+    }
+}
+
+/**
+ * Per-speaker trims for a stream that already is a real 5.1 / 7.1 mix (see [com.beatraxus.app.model.SurroundStage.DISCRETE]).
+ *
+ * Nothing is re-synthesised: every channel stays on its own position. The trims are applied relative to the
+ * "Default" preset ([DEFAULT_SURROUND_TRIMS_DB]), so with the default trims the audio passes through untouched
+ * (the fast path returns without writing a single sample). Pure Kotlin, allocation-free in [process].
+ */
+internal class SurroundTrimmer(sampleRate: Int) {
+
+    private val sr: Double = sampleRate.coerceAtLeast(8_000).toDouble()
+    private val smoothing: Float = (1.0 - exp(-1.0 / (SMOOTH_SECONDS * sr))).toFloat()
+    private val currentGain = FloatArray(CHANNELS_UI) { 1f }
+    private val targetGain = FloatArray(CHANNELS_UI) { 1f }
+    private var map: IntArray = discreteChannelTrimIndex(6)!!
+    private var configured = false
+
+    var channels: Int = 6
+        private set
+
+    /** @param channels 6 (5.1) or 8 (7.1), @param trimsDb eight values in UI order L R C SL SR BL BR SW */
+    fun configure(channels: Int, trimsDb: List<Float>) {
+        val newMap = requireNotNull(discreteChannelTrimIndex(channels)) { "Unsupported discrete channel count: $channels" }
+        this.channels = channels
+        map = newMap
+        val trims = sanitizeSurroundTrims(trimsDb)
+        for (i in 0 until CHANNELS_UI) {
+            targetGain[i] = 10.0.pow((trims[i] - DEFAULT_SURROUND_TRIMS_DB[i]) / 20.0).toFloat()
+        }
+        if (!configured) {
+            targetGain.copyInto(currentGain)
+            configured = true
+        }
+    }
+
+    /** Scales [frames] interleaved frames of [data] in place. */
+    fun process(data: FloatArray, frames: Int) {
+        if (!configured || frames <= 0) return
+        val ch = channels
+        val positions = map
+
+        var settled = true
+        var unity = true
+        for (g in 0 until CHANNELS_UI) {
+            if (currentGain[g] != targetGain[g]) settled = false
+            if (currentGain[g] != 1f) unity = false
+        }
+        if (settled && unity) return
+
+        for (f in 0 until frames) {
+            if (!settled) {
+                var allDone = true
+                for (g in 0 until CHANNELS_UI) {
+                    val t = targetGain[g]
+                    var c = currentGain[g]
+                    c += smoothing * (t - c)
+                    if (abs(t - c) < SNAP) c = t else allDone = false
+                    currentGain[g] = c
+                }
+                settled = allDone
+            }
+            val base = f * ch
+            for (c in 0 until ch) {
+                val v = data[base + c] * currentGain[positions[c]]
+                data[base + c] = if (v > 1f) 1f else if (v < -1f) -1f else v
+            }
+        }
+    }
+
+    private companion object {
+        const val CHANNELS_UI = 8
+        const val SMOOTH_SECONDS = 0.012
+        const val SNAP = 1e-6f
     }
 }

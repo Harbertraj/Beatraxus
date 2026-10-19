@@ -28,7 +28,13 @@ data class AudioState(
     /** Channel count the output is really open with (2 = stereo, 6 = 5.1, 8 = 7.1). */
     val outputChannels: Int = 2,
     /** The surround simulator is on but the output device refused a multichannel stream. */
-    val surroundFallback: Boolean = false
+    val surroundFallback: Boolean = false,
+    /** Channel count of the decoded source (2 = stereo, 6 = 5.1, 8 = 7.1). */
+    val sourceChannels: Int = 2,
+    /** The surround stage is really in the signal path: it upmixes a stereo source or trims a real 5.1 / 7.1 one. */
+    val surroundActive: Boolean = false,
+    /** The source already is a real 5.1 / 7.1 mix; its discrete channels are kept (only trims apply). */
+    val surroundDiscrete: Boolean = false
 )
 
 data class PlaybackState(
