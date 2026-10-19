@@ -166,16 +166,16 @@ fun PremiumSurroundCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
 
             // ── Layout buttons: Stereo / 5.1 / 7.1 / Auto ─────────────────────────────────────────────────
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                LayoutButton("Stereo", Icons.Rounded.Headphones, config.surroundLayout == SurroundLayout.STEREO, Modifier.weight(1f)) {
+                LayoutButton("Stereo", Icons.Rounded.Headphones, config.surroundLayout == SurroundLayout.STEREO, accent, Modifier.weight(1f)) {
                     viewModel.setSurroundLayout(SurroundLayout.STEREO)
                 }
-                LayoutButton("5.1", Icons.Rounded.SurroundSound, config.surroundLayout == SurroundLayout.FIVE_ONE, Modifier.weight(1f)) {
+                LayoutButton("5.1", Icons.Rounded.SurroundSound, config.surroundLayout == SurroundLayout.FIVE_ONE, accent, Modifier.weight(1f)) {
                     viewModel.setSurroundLayout(SurroundLayout.FIVE_ONE)
                 }
-                LayoutButton("7.1", Icons.Rounded.SurroundSound, config.surroundLayout == SurroundLayout.SEVEN_ONE, Modifier.weight(1f)) {
+                LayoutButton("7.1", Icons.Rounded.SurroundSound, config.surroundLayout == SurroundLayout.SEVEN_ONE, accent, Modifier.weight(1f)) {
                     viewModel.setSurroundLayout(SurroundLayout.SEVEN_ONE)
                 }
-                LayoutButton("Auto", Icons.Rounded.AutoMode, config.surroundLayout == SurroundLayout.AUTO, Modifier.weight(1f)) {
+                LayoutButton("Auto", Icons.Rounded.AutoMode, config.surroundLayout == SurroundLayout.AUTO, accent, Modifier.weight(1f)) {
                     viewModel.setSurroundLayout(SurroundLayout.AUTO)
                 }
             }
@@ -269,6 +269,7 @@ fun PremiumSurroundCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
                                 name = name,
                                 selected = config.surroundActivePreset == name,
                                 enabled = available,
+                                accent = accent,
                                 modifier = Modifier.weight(1f)
                             ) { viewModel.applySurroundPreset(name) }
                         }
