@@ -71,6 +71,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -126,122 +127,80 @@ fun AudioGreetingHeader(
     albumCount: Int,
     artistCount: Int,
     totalDurationMs: Long,
-    /** Second colour of the time-of-day pair; the header glows from [accent] into this one. */
+    /** Second colour of the time-of-day pair; the title shimmers from a light tint of [accent] into this one. */
     accent2: Color = accent
 ) {
-    val frame = RoundedCornerShape(26.dp)
     Column(
         Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 10.dp)
-            .clip(frame)
-            // two soft lights in the time-of-day colours over the page, so the header has a mood of its own
-            .background(Color.White.copy(alpha = 0.035f))
-            .drawBehind {
-                drawRect(
-                    Brush.radialGradient(
-                        listOf(accent.copy(alpha = 0.30f), Color.Transparent),
-                        center = Offset(size.width * 0.05f, 0f),
-                        radius = size.width * 0.85f
-                    )
-                )
-                drawRect(
-                    Brush.radialGradient(
-                        listOf(accent2.copy(alpha = 0.22f), Color.Transparent),
-                        center = Offset(size.width, size.height),
-                        radius = size.width * 0.8f
-                    )
-                )
-            }
-            .border(
-                1.dp,
-                Brush.linearGradient(listOf(accent.copy(alpha = 0.45f), Color.White.copy(alpha = 0.05f), accent2.copy(alpha = 0.35f))),
-                frame
-            )
-            .padding(horizontal = 18.dp, vertical = 16.dp)
+            .padding(start = 20.dp, end = 20.dp, top = 14.dp, bottom = 14.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(
-                    text = greeting.lowercase(Locale.US).replaceFirstChar { it.uppercase() },
-                    color = Color.White.copy(alpha = 0.72f),
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Medium
-                )
-                Spacer(Modifier.height(2.dp))
-                Text(
-                    text = name,
-                    color = Color.White,
-                    fontSize = 30.sp,
-                    fontWeight = FontWeight.Black,
-                    letterSpacing = (-0.8).sp,
-                    maxLines = 1
-                )
-            }
-            Spacer(Modifier.width(12.dp))
-            // time-of-day badge: a glowing disc in the two accent colours
             Box(
                 Modifier
-                    .size(52.dp)
-                    .background(Brush.linearGradient(listOf(accent.copy(alpha = 0.95f), accent2.copy(alpha = 0.95f))), CircleShape)
-                    .border(1.dp, Color.White.copy(alpha = 0.35f), CircleShape),
+                    .size(26.dp)
+                    .background(accent.copy(alpha = 0.16f), CircleShape)
+                    .border(1.dp, accent.copy(alpha = 0.35f), CircleShape),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(greetingIcon, null, tint = Color.White, modifier = Modifier.size(26.dp))
+                Icon(greetingIcon, null, tint = accent, modifier = Modifier.size(15.dp))
             }
-        }
-        if (totalDurationMs > 0) {
-            Spacer(Modifier.height(4.dp))
+            Spacer(Modifier.width(10.dp))
             Text(
-                text = "${formatTotalDuration(totalDurationMs)} of music",
-                color = Color.White.copy(alpha = 0.70f),
-                fontSize = 13.sp
+                text = greeting.uppercase(Locale.US),
+                color = accent,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Black,
+                letterSpacing = 3.sp
             )
         }
-        Spacer(Modifier.height(14.dp))
-        // one quiet strip: a clear number with its word under it, e.g. "1,284" / "songs"
+        Spacer(Modifier.height(6.dp))
+        // "Welcome" in clean white, "back" in a fresh green gradient with a soft green glow.
+        val firstWord = name.substringBefore(' ')
+        val rest = name.substringAfter(' ', "")
+        val greenBright = Color(0xFF69F0AE)
+        val greenDeep = Color(0xFF00E676)
+        Text(
+            text = androidx.compose.ui.text.buildAnnotatedString {
+                withStyle(androidx.compose.ui.text.SpanStyle(color = Color.White)) {
+                    append(firstWord)
+                    if (rest.isNotEmpty()) append(",")
+                }
+                if (rest.isNotEmpty()) {
+                    append(" ")
+                    withStyle(
+                        androidx.compose.ui.text.SpanStyle(
+                            brush = Brush.horizontalGradient(listOf(greenBright, greenDeep))
+                        )
+                    ) { append(rest) }
+                }
+            },
+            style = androidx.compose.ui.text.TextStyle(
+                fontSize = 34.sp,
+                fontWeight = FontWeight.ExtraBold,
+                letterSpacing = (-1).sp,
+                shadow = androidx.compose.ui.graphics.Shadow(
+                    color = greenDeep.copy(alpha = 0.35f),
+                    offset = Offset(0f, 3f),
+                    blurRadius = 22f
+                )
+            ),
+            maxLines = 1
+        )
+        Spacer(Modifier.height(12.dp))
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(18.dp))
-                .background(Color.Black.copy(alpha = 0.32f))
-                .padding(vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically
+            modifier = Modifier.horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            GreetingStat(songCount, "song", "songs", Modifier.weight(1f))
-            GreetingStatDivider()
-            GreetingStat(favoriteCount, "liked", "liked", Modifier.weight(1f))
-            GreetingStatDivider()
-            GreetingStat(albumCount, "album", "albums", Modifier.weight(1f))
-            GreetingStatDivider()
-            GreetingStat(artistCount, "artist", "artists", Modifier.weight(1f))
+            AudioStatPill(Icons.Rounded.MusicNote, "$songCount songs", AudioPink)
+            AudioStatPill(Icons.Rounded.Favorite, "$favoriteCount liked", Color(0xFFFF5E62))
+            AudioStatPill(Icons.Rounded.Album, "$albumCount albums", AudioViolet)
+            AudioStatPill(Icons.Rounded.Person, "$artistCount artists", AudioCyan)
+            if (totalDurationMs > 0) {
+                AudioStatPill(Icons.Rounded.Schedule, formatTotalDuration(totalDurationMs), AudioAmber)
+            }
         }
     }
-}
-
-/** Number on top, its word below (singular for exactly 1). The word is always shown and easy to read. */
-@Composable
-private fun GreetingStat(value: Int, singular: String, plural: String, modifier: Modifier = Modifier) {
-    Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(
-            String.format(Locale.US, "%,d", value),
-            color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 1
-        )
-        Spacer(Modifier.height(1.dp))
-        Text(
-            if (value == 1) singular else plural,
-            color = Color.White.copy(alpha = 0.80f),
-            fontSize = 13.sp,
-            fontWeight = FontWeight.Medium,
-            maxLines = 1,
-            softWrap = false
-        )
-    }
-}
-
-@Composable
-private fun GreetingStatDivider() {
-    Box(Modifier.width(1.dp).height(24.dp).background(Color.White.copy(alpha = 0.10f)))
 }
 
 @Composable
