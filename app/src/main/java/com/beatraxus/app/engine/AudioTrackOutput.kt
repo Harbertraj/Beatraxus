@@ -1015,7 +1015,7 @@ class AudioTrackOutput(
      */
     private fun detectDeviceMaxInput(device: AudioDeviceInfo?): Pair<Int, Int> {
         if (device == null) return 0 to 0
-        val reportedDepth = device.encodings.mapNotNull { enc ->
+        val reportedDepth = device.encodings.asList().mapNotNull { enc ->
             when (enc) {
                 AudioFormat.ENCODING_PCM_16BIT -> 16
                 AudioFormat.ENCODING_PCM_24BIT_PACKED -> 24

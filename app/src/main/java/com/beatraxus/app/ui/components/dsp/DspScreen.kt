@@ -145,7 +145,7 @@ private fun DspTabBar(
 ) {
     // Signal-path order: EQ -> Surround -> Master -> Reverb -> Spatial. Surround carries the surround-sound icon,
     // Spatial a 3D one, so the two pages are no longer mixed up.
-    val icons = listOf(Icons.Rounded.GraphicEq, Icons.Rounded.SurroundSound, Icons.Rounded.AutoAwesome, Icons.Rounded.Waves, Icons.Rounded.ThreeDRotation)
+    val icons = listOf(Icons.Rounded.GraphicEq, Icons.Rounded.SurroundSound, Icons.Rounded.AutoAwesome, Icons.Rounded.Waves, Icons.Rounded.ViewInAr)
     val labels = listOf("EQ", "SURROUND", "MASTER", "REVERB", "SPATIAL")
     val current = pagerState.currentPage
     val railIdle = Color.White.copy(alpha = 0.12f)
