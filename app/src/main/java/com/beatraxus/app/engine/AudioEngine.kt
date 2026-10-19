@@ -1591,6 +1591,8 @@ class AudioEngine(
         /** Resampler Auto keeps sources in this range (88.2 .. 96 kHz) at their own rate. */
         private const val HIRES_PASSTHROUGH_MIN = 88_200
         private const val HIRES_PASSTHROUGH_MAX = 96_000
+        /** Resampler Auto: sources up to this rate are converted to it (44.1 -> 48); Bluetooth fallback when no max is known. */
+        private const val AUTO_BASE_RATE = 48_000
         private const val LIVE_STATS_INTERVAL_MS = 500L
 
         private fun framesToMs(frames: Long, sampleRate: Int): Long {
@@ -1689,37 +1691,56 @@ class AudioEngine(
         }.getOrDefault(false)
     }
 
+    /**
+     * Resampler "Auto": the target rate follows the output device that is connected right now.
+     *
+     *  - Bluetooth headset: every source is converted to the highest rate the headset accepts (a 48 kHz / 16-bit
+     *    A2DP headset gets 48 kHz for 44.1, 48 and 96 kHz files alike), so the link never has to resample again.
+     *  - USB DAC / wired IEM / anything else: nothing is limited. Sources up to 48 kHz are converted to 48 kHz
+     *    (44.1 -> 48); higher rates (88.2 / 96 kHz and up) stay untouched (96 -> 96).
+     */
+    private fun resolveAutoTargetRate(inputRate: Int, config: DspConfig): Int {
+        val route = output.routeRateInfo()
+        if (route.bluetooth) {
+            return route.maxRateHz.takeIf { it > 0 } ?: AUTO_BASE_RATE
+        }
+
+        val nativeRate = AudioTrack.getNativeOutputSampleRate(AudioManager.STREAM_MUSIC)
+        if (config.outputMode != OutputMode.HI_RES) {
+            // AAudio path: use hardware native rate to avoid Android SRC.
+            // For hi-res sources, the DSP resampler handles conversion to nativeRate.
+            return nativeRate
+        }
+
+        // MTK HiFi direct path: honour the source sample rate exactly up to 192kHz.
+        // Do NOT downsample — the hardware driver handles any DAC-level conversion.
+        // This is the same policy Poweramp uses: pass native source rate to the DAC.
+        val sourceRate = when {
+            inputRate <= 0 -> return nativeRate
+            inputRate <= 384000 -> inputRate   // preserve exact source rate up to 384kHz
+            else -> 384000                     // hard cap at 384kHz
+        }
+        // USB Exclusive talks to the DAC directly, so the source rate is always kept.
+        if (config.usbExclusiveEnabled) return sourceRate
+        // 44.1 kHz (and anything lower) goes to 48 kHz.
+        if (sourceRate <= AUTO_BASE_RATE) return AUTO_BASE_RATE
+
+        // Above 48 kHz: keep the source rate when the device can really play it (it reports it, the mixer already
+        // runs at it, or the direct-playback probe says so). Otherwise Android's built-in mixer resampler would
+        // convert it, which is noticeably worse than our own SoX resampler, so convert to the hardware rate here.
+        // 88.2 / 96 kHz sources are always passed through untouched in Auto: the direct-playback probe
+        // is unreliable for USB DACs behind the mixer and used to push them down to the 48 kHz native rate.
+        return if (sourceRate == nativeRate || sourceRate in HIRES_PASSTHROUGH_MIN..HIRES_PASSTHROUGH_MAX ||
+            (route.maxRateHz > 0 && sourceRate <= route.maxRateHz) || directPlaybackSupported(sourceRate)) sourceRate
+        else nativeRate
+    }
+
     private fun resolveTargetSampleRate(inputRate: Int, config: DspConfig): Int {
         // Bit-Perfect: always pass source rate unchanged, unless resampler is unbypassed
         if (config.bitPerfectEnabled && !config.bitPerfectUnbypassResample) return inputRate
 
         return when (config.resamplerMode) {
-            ResamplerMode.AUTO -> {
-                val nativeRate = AudioTrack.getNativeOutputSampleRate(AudioManager.STREAM_MUSIC)
-                if (config.outputMode == OutputMode.HI_RES) {
-                    // MTK HiFi direct path: honour the source sample rate exactly up to 192kHz.
-                    // Do NOT downsample — the hardware driver handles any DAC-level conversion.
-                    // This is the same policy Poweramp uses: pass native source rate to the DAC.
-                    val sourceRate = when {
-                        inputRate <= 0 -> nativeRate
-                        inputRate <= 384000 -> inputRate   // preserve exact source rate up to 384kHz
-                        else -> 384000                     // hard cap at 384kHz
-                    }
-                    // Keep the source rate only when the device can really play it directly (USB DAC,
-                    // or the mixer already runs at that rate). Otherwise Android's built-in mixer
-                    // resampler would convert it (e.g. 44.1k -> 48k), which is noticeably worse than
-                    // our own SoX resampler, so convert to the hardware rate here instead.
-                    // 88.2 / 96 kHz sources are always passed through untouched in Auto: the direct-playback probe
-                    // is unreliable for USB DACs behind the mixer and used to push them down to the 48 kHz native rate.
-                    if (sourceRate == nativeRate || sourceRate in HIRES_PASSTHROUGH_MIN..HIRES_PASSTHROUGH_MAX ||
-                        config.usbExclusiveEnabled || directPlaybackSupported(sourceRate)) sourceRate
-                    else nativeRate
-                } else {
-                    // AAudio path: use hardware native rate to avoid Android SRC.
-                    // For hi-res sources, the DSP resampler handles conversion to nativeRate.
-                    nativeRate
-                }
-            }
+            ResamplerMode.AUTO -> resolveAutoTargetRate(inputRate, config)
             ResamplerMode.SR_44100  -> 44100
             ResamplerMode.SR_48000  -> 48000
             ResamplerMode.SR_88200  -> 88200

@@ -37,6 +37,13 @@ interface AudioOutput {
      * count of the audio it is about to write, so a stream is never fed to a track of a different width.
      */
     fun outputChannelCount(): Int = 0
+    /**
+     * Sample-rate facts about the output device that is connected right now. Cheap to call; it is refreshed
+     * whenever the route changes (device connect/disconnect, output init).
+     * Used by resampler "Auto" to follow the device: a Bluetooth headset is matched to its maximum rate,
+     * while a USB DAC / wired IEM is not limited at all.
+     */
+    fun routeRateInfo(): RouteRateInfo = RouteRateInfo()
     /** Underruns (XRuns) since the current track started. Never negative. */
     fun underrunCount(): Int = 0
     /** Restart the underrun counter from zero (new song). */
@@ -58,4 +65,12 @@ interface AudioOutput {
     fun captureLiveWindow(): LiveCapture?
 
     data class LiveCapture(val samples: FloatArray, val channels: Int)
+
+    /**
+     * @property bluetooth true when the active route is a Bluetooth (A2DP / LE Audio) headset or speaker.
+     * @property maxRateHz highest sample rate the device accepts. For Bluetooth it is never below 48 kHz (every
+     * A2DP sink must support 44.1 and 48 kHz, even when Android only reports the rate currently in use).
+     * For USB devices it is the highest rate the device reports. 0 = the device does not report a limit.
+     */
+    data class RouteRateInfo(val bluetooth: Boolean = false, val maxRateHz: Int = 0)
 }

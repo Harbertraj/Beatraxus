@@ -1995,7 +1995,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                             hiResDirectSupported = routeState.hiResDirectSupported,
                             hiResCapabilitySummary = routeState.capabilitySummary,
                             usbExclusiveActive = routeState.usbExclusiveActive,
-                            usbDeviceName = routeState.usbDeviceName
+                            usbDeviceName = routeState.usbDeviceName,
+                            outputMaxSampleRate = routeState.deviceMaxSampleRate,
+                            outputMaxBitDepth = routeState.deviceMaxBitDepth
                         )
                     }
                 }

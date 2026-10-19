@@ -53,6 +53,7 @@ import com.beatraxus.app.model.DspUiState
 import com.beatraxus.app.model.EqPhaseMode
 import com.beatraxus.app.model.PlayerUiState
 import com.beatraxus.app.model.Song
+import com.beatraxus.app.model.formatDeviceMaxInput
 import com.beatraxus.app.model.SongSource
 import com.beatraxus.app.ui.utils.DialogBlurBehind
 import com.beatraxus.app.ui.utils.rememberWindowBlurSupported
@@ -369,13 +370,17 @@ fun buildPipelineStages(song: Song, uiState: PlayerUiState): PipelineResult {
 
     // 7. DEVICE
     val deviceName = uiState.dsp.activeOutputDeviceLabel.ifBlank { uiState.outputDevice }
+    val deviceMaxInput = formatDeviceMaxInput(uiState.outputMaxSampleRate, uiState.outputMaxBitDepth)
     stages.add(
         PipelineStage(
             id = "device",
             title = "Output Device",
-            primary = deviceName,
+            primary = if (deviceMaxInput.isNotBlank()) "$deviceName · Max $deviceMaxInput" else deviceName,
             details = buildList {
                 add("Device Name" to deviceName)
+                if (deviceMaxInput.isNotBlank()) {
+                    add("Device Max Input" to deviceMaxInput)
+                }
                 if (uiState.usbDeviceName.isNotBlank()) {
                     add("USB Exclusive DAC" to uiState.usbDeviceName)
                 }
@@ -1066,6 +1071,7 @@ fun PreviewProcessedMp3() {
         bitDepth = 16, outputBitDepth = 24, pipelineOutputPath = "AAudio",
         pipelineResamplerEnabled = true, pipelineResamplerType = "SoXR",
         outputDevice = "Bluetooth Headphones",
+        outputMaxSampleRate = 48000, outputMaxBitDepth = 16,
         dsp = DspUiState(
             config = DspConfig(eqEnabled = true, limiterEnabled = true, dvcEnabled = true),
             currentHeadroomDb = -3.5f, currentLatencyFrames = 1024, currentDitherType = "TPDF"

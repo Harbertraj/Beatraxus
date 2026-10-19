@@ -457,6 +457,21 @@ fun DspScreen(
                                 overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.padding(top = 2.dp)
                             )
+                            val deviceMaxInput = com.beatraxus.app.model.formatDeviceMaxInput(
+                                uiState.outputMaxSampleRate, uiState.outputMaxBitDepth
+                            )
+                            if (deviceMaxInput.isNotBlank()) {
+                                Text(
+                                    text = "Device max input: $deviceMaxInput",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Color.White.copy(0.55f),
+                                    fontSize = 9.sp,
+                                    letterSpacing = 0.6.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.padding(top = 1.dp)
+                                )
+                            }
                         }
                     }
                     DspTabBar(

@@ -358,6 +358,20 @@ enum class CloudProvider {
     GDRIVE, TELEGRAM, DROPBOX, ONEDRIVE, BOX, NEXTCLOUD
 }
 
+/**
+ * Short label for the highest input a connected output device takes, e.g. "16-bit / 48 kHz" or "24-bit / 192 kHz".
+ * Unknown parts are left out; returns "" when nothing is known.
+ */
+fun formatDeviceMaxInput(maxSampleRate: Int, maxBitDepth: Int): String {
+    val rate = when {
+        maxSampleRate <= 0 -> null
+        maxSampleRate % 1000 == 0 -> "${maxSampleRate / 1000} kHz"
+        else -> String.format(java.util.Locale.US, "%.1f kHz", maxSampleRate / 1000f)
+    }
+    val depth = if (maxBitDepth > 0) "$maxBitDepth-bit" else null
+    return listOfNotNull(depth, rate).joinToString(" / ")
+}
+
 data class PlayerUiState(
     val currentSong: Song? = null,
     val isPlaying: Boolean = false,
@@ -372,6 +386,9 @@ data class PlayerUiState(
     val hiResCapabilitySummary: String = "Direct hi-res not available on this route",
     val usbExclusiveActive: Boolean = false,
     val usbDeviceName: String = "",
+    /** Highest sample rate / bit depth the connected output device takes as input (0 = unknown). */
+    val outputMaxSampleRate: Int = 0,
+    val outputMaxBitDepth: Int = 0,
     val isLoadingLibrary: Boolean = false,
     val isScanning: Boolean = false,
     val isFullScanning: Boolean = false,
@@ -549,6 +566,8 @@ data class PlayerUiState(
                 hiResCapabilitySummary == other.hiResCapabilitySummary &&
                 usbExclusiveActive == other.usbExclusiveActive &&
                 usbDeviceName == other.usbDeviceName &&
+                outputMaxSampleRate == other.outputMaxSampleRate &&
+                outputMaxBitDepth == other.outputMaxBitDepth &&
                 isLoadingLibrary == other.isLoadingLibrary &&
                 isScanning == other.isScanning &&
                 isFullScanning == other.isFullScanning &&
@@ -698,6 +717,8 @@ data class PlayerUiState(
         result = 31 * result + hiResCapabilitySummary.hashCode()
         result = 31 * result + usbExclusiveActive.hashCode()
         result = 31 * result + usbDeviceName.hashCode()
+        result = 31 * result + outputMaxSampleRate
+        result = 31 * result + outputMaxBitDepth
         result = 31 * result + isLoadingLibrary.hashCode()
         result = 31 * result + isScanning.hashCode()
         result = 31 * result + isFullScanning.hashCode()

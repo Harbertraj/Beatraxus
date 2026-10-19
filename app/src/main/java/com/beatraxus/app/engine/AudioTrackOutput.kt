@@ -170,6 +170,7 @@ class AudioTrackOutput(
         lifecycleLock.writeLock().withLock {
             if (usbExclusiveEnabled == enabled) return
             usbExclusiveEnabled = enabled
+            cachedRouteInfo = null
             Log.d(TAG, "USB Exclusive Mode: $enabled")
         }
     }
@@ -223,6 +224,7 @@ class AudioTrackOutput(
 
         val device = resolvePreferredOutputDevice()
         preferredDevice = device
+        cachedRouteInfo = buildRouteRateInfo(device)
         outputDeviceName = deviceTypeLabel(device)
         supportedDirectRates = detectDirectRates(2)
         val maxDirectRate = supportedDirectRates.maxOrNull() ?: 48_000
@@ -249,6 +251,8 @@ class AudioTrackOutput(
             usbDepths = emptyList()
         }
 
+        val (deviceMaxRate, deviceMaxDepth) = detectDeviceMaxInput(device)
+
         val summary = when {
             usbActive -> "USB Direct: $usbName — ${usbRates.joinToString("/") { "${it / 1000}k" }} Hz"
             hiResSupported -> "MTK HiFi / Direct PCM available on $outputDeviceName"
@@ -266,6 +270,8 @@ class AudioTrackOutput(
             hiResDirectSupported = hiResSupported,
             capabilitySummary = summary,
             maxSupportedSampleRate = maxDirectRate,
+            deviceMaxSampleRate = deviceMaxRate,
+            deviceMaxBitDepth = deviceMaxDepth,
             usbExclusiveActive = usbActive,
             usbDeviceName = usbName,
             usbSupportedRates = usbRates,
@@ -328,6 +334,12 @@ class AudioTrackOutput(
             isUsbExclusiveActive -> resolveUsbSampleRate(
                 requested = if (targetSampleRate > 0) targetSampleRate else sampleRate,
                 device = usbDev
+            )
+            // A Bluetooth headset is matched to its own maximum rate (e.g. 48 kHz) instead of whatever rate the
+            // phone's mixer happens to run at, which on some phones drops everything to 44.1 kHz.
+            resolvedActiveMode == OutputMode.AAUDIO && preferredDevice?.type in BLUETOOTH_TYPES -> resolveBluetoothRate(
+                requested = if (targetSampleRate > 0) targetSampleRate else sampleRate,
+                device = preferredDevice
             )
             resolvedActiveMode == OutputMode.AAUDIO -> getHardwareSampleRate()
             else -> resolveSupportedSampleRate(if (targetSampleRate > 0) targetSampleRate else sampleRate, channels)
@@ -958,7 +970,7 @@ class AudioTrackOutput(
     private fun resolveSupportedSampleRate(requestedRate: Int, channels: Int): Int {
         val device = preferredDevice ?: resolvePreferredOutputDevice()
         val isBluetooth = device?.type in BLUETOOTH_TYPES
-        if (isBluetooth) return BLUETOOTH_RATE_CANDIDATES.minByOrNull { abs(it - requestedRate) } ?: 48_000
+        if (isBluetooth) return resolveBluetoothRate(requestedRate, device)
         // 5.1/7.1 through the platform mixer: direct-rate probing for 6/8 channels often reports only 48 kHz even
         // though the mixer accepts 96 kHz, so keep the requested rate (up to 96 kHz) instead of downgrading it.
         if (channels > 2 && requestedRate in 1..96_000) return requestedRate
@@ -974,6 +986,68 @@ class AudioTrackOutput(
         }
         return requestedRate
     }
+
+    /**
+     * Highest rate the Bluetooth device takes. Android often reports an empty list (or only the rate currently in
+     * use, e.g. 44.1 kHz) for A2DP sinks, but every A2DP sink must accept 44.1 and 48 kHz, so 48 kHz is the floor.
+     * A device that reports more (LDAC / aptX HD / LE Audio) is honoured up to [BLUETOOTH_RATE_CAP].
+     */
+    private fun bluetoothMaxRate(device: AudioDeviceInfo?): Int {
+        val reportedMax = device?.sampleRates?.maxOrNull() ?: 0
+        return reportedMax.coerceIn(BLUETOOTH_MIN_MAX_RATE, BLUETOOTH_RATE_CAP)
+    }
+
+    /** Rate to open the track at for a Bluetooth device: the request when the device takes it, else the closest rate it takes. */
+    private fun resolveBluetoothRate(requested: Int, device: AudioDeviceInfo?): Int {
+        val max = bluetoothMaxRate(device)
+        val reported = device?.sampleRates?.filter { it in BLUETOOTH_RATE_CANDIDATES.first()..max }.orEmpty()
+        val candidates = (BLUETOOTH_RATE_CANDIDATES + reported).filter { it <= max }.distinct()
+        if (requested in candidates) return requested
+        return candidates.minByOrNull { abs(it - requested) } ?: BLUETOOTH_MIN_MAX_RATE
+    }
+
+    /**
+     * Highest (sample rate, bit depth) the connected device takes as input, for display. 0 = unknown.
+     * Bluetooth: the rate is [bluetoothMaxRate]; Android rarely reports a depth for A2DP, and the A2DP baseline
+     * codecs (SBC / AAC) are 16-bit, so 16 is shown unless the device reports more.
+     * Other devices: the rates / encodings the device reports; when it reports no rate, the highest rate the
+     * direct-playback probe found.
+     */
+    private fun detectDeviceMaxInput(device: AudioDeviceInfo?): Pair<Int, Int> {
+        if (device == null) return 0 to 0
+        val reportedDepth = device.encodings.mapNotNull { enc ->
+            when (enc) {
+                AudioFormat.ENCODING_PCM_16BIT -> 16
+                AudioFormat.ENCODING_PCM_24BIT_PACKED -> 24
+                AudioFormat.ENCODING_PCM_32BIT, AudioFormat.ENCODING_PCM_FLOAT -> 32
+                else -> null
+            }
+        }.maxOrNull() ?: 0
+        return if (device.type in BLUETOOTH_TYPES) {
+            bluetoothMaxRate(device) to (reportedDepth.takeIf { it > 0 } ?: 16)
+        } else {
+            val rate = device.sampleRates.maxOrNull()?.takeIf { it > 0 } ?: supportedDirectRates.maxOrNull() ?: 0
+            rate to reportedDepth
+        }
+    }
+
+    /**
+     * Route info is cached because the engine asks for it on every DSP config change (slider drags fire that many
+     * times a second) and listing audio devices is a heavy call. The cache is rebuilt whenever the route is
+     * refreshed: on a device connect/disconnect, on every output init, and when USB Exclusive is toggled.
+     */
+    @Volatile private var cachedRouteInfo: AudioOutput.RouteRateInfo? = null
+
+    private fun buildRouteRateInfo(device: AudioDeviceInfo?): AudioOutput.RouteRateInfo = when (device?.type) {
+        null -> AudioOutput.RouteRateInfo()
+        in BLUETOOTH_TYPES -> AudioOutput.RouteRateInfo(bluetooth = true, maxRateHz = bluetoothMaxRate(device))
+        AudioDeviceInfo.TYPE_USB_DEVICE, AudioDeviceInfo.TYPE_USB_HEADSET ->
+            AudioOutput.RouteRateInfo(bluetooth = false, maxRateHz = device?.sampleRates?.maxOrNull() ?: 0)
+        else -> AudioOutput.RouteRateInfo()
+    }
+
+    override fun routeRateInfo(): AudioOutput.RouteRateInfo =
+        cachedRouteInfo ?: buildRouteRateInfo(resolvePreferredOutputDevice()).also { cachedRouteInfo = it }
 
     private fun detectDirectRates(channels: Int): List<Int> {
         val channelMask = when (channels) {
@@ -1113,6 +1187,10 @@ class AudioTrackOutput(
         private const val PCM_24_MAX = 8_388_607f
         private val DIRECT_RATE_CANDIDATES = listOf(44_100, 48_000, 88_200, 96_000, 176_400, 192_000, 352_800, 384_000)
         private val BLUETOOTH_RATE_CANDIDATES = listOf(44_100, 48_000)
+        /** Floor for a Bluetooth device's maximum rate: 44.1 and 48 kHz are mandatory for every A2DP sink. */
+        private const val BLUETOOTH_MIN_MAX_RATE = 48_000
+        /** Ceiling for a Bluetooth device's maximum rate (LDAC / aptX HD / LE Audio top out at 96 kHz). */
+        private const val BLUETOOTH_RATE_CAP = 96_000
         private val BLUETOOTH_TYPES = setOf(AudioDeviceInfo.TYPE_BLUETOOTH_A2DP, AudioDeviceInfo.TYPE_BLE_HEADSET, AudioDeviceInfo.TYPE_BLE_SPEAKER, AudioDeviceInfo.TYPE_BLE_BROADCAST)
         private val WIRED_TYPES = setOf(AudioDeviceInfo.TYPE_WIRED_HEADPHONES, AudioDeviceInfo.TYPE_WIRED_HEADSET, AudioDeviceInfo.TYPE_LINE_ANALOG, AudioDeviceInfo.TYPE_LINE_DIGITAL)
     }

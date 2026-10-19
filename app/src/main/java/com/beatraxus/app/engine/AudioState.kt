@@ -50,6 +50,10 @@ data class OutputRouteState(
     val hiResDirectSupported: Boolean = false,
     val capabilitySummary: String = "Direct playback unavailable on this route",
     val maxSupportedSampleRate: Int = 48_000,
+    /** Highest sample rate the connected output device takes as input (0 = unknown). */
+    val deviceMaxSampleRate: Int = 0,
+    /** Highest bit depth the connected output device takes as input (0 = unknown). */
+    val deviceMaxBitDepth: Int = 0,
     val usbExclusiveActive: Boolean = false,
     val usbDeviceName: String = "",
     val usbSupportedRates: List<Int> = emptyList(),
