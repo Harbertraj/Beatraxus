@@ -903,6 +903,39 @@ class MusicRepository(private val context: Context) {
         }
     }
 
+    /** Excluded folders that were removed from the VIDEO folders list (so un-excluding restores them there). */
+    fun getBlockedVideoFolders(): Set<String> {
+        val prefs = context.getSharedPreferences("beatraxus", Context.MODE_PRIVATE)
+        val json = prefs.getString("blocked_video_folders", null) ?: return emptySet()
+        return try {
+            val array = org.json.JSONArray(json)
+            List(array.length()) { array.getString(it) }.toSet()
+        } catch (e: Exception) {
+            emptySet()
+        }
+    }
+
+    fun markBlockedVideoFolder(path: String) {
+        saveBlockedVideoFolders(getBlockedVideoFolders() + normalizePath(path))
+    }
+
+    /** Returns true if [path] was a blocked video folder (and forgets that mark). */
+    fun consumeBlockedVideoFolder(path: String): Boolean {
+        val normalized = normalizePath(path)
+        val current = getBlockedVideoFolders()
+        val hit = current.filter { it == normalized || it == path }
+        if (hit.isEmpty()) return false
+        saveBlockedVideoFolders(current - hit.toSet())
+        return true
+    }
+
+    private fun saveBlockedVideoFolders(folders: Set<String>) {
+        val prefs = context.getSharedPreferences("beatraxus", Context.MODE_PRIVATE)
+        val array = org.json.JSONArray()
+        folders.forEach { array.put(it) }
+        prefs.edit().putString("blocked_video_folders", array.toString()).apply()
+    }
+
     private fun saveBlockedFolders(folders: List<String>) {
         val prefs = context.getSharedPreferences("beatraxus", Context.MODE_PRIVATE)
         val array = org.json.JSONArray()

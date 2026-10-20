@@ -3856,6 +3856,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             val resolved = musicRepository.resolveUriToPath(uri) ?: uri
             musicRepository.removeBlockedFolder(resolved)
+            musicRepository.consumeBlockedVideoFolder(resolved)
             videoFolderDao.insertFolder(com.beatraxus.app.model.VideoFolderEntity(resolved))
             _uiState.update { it.copy(
                 triggerVideoFolderPicker = false,
@@ -3898,6 +3899,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             videoFolderDao.deleteFolder(path)
             musicRepository.addBlockedFolder(path)
+            musicRepository.markBlockedVideoFolder(path)
             
             // Instant removal from UI state
             _videos.update { vids -> vids.filterNot { it.folderPath.startsWith(path) } }
@@ -3912,7 +3914,14 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun unblockMusicFolder(path: String) {
         viewModelScope.launch {
+            val wasVideoFolder = musicRepository.consumeBlockedVideoFolder(path)
             musicRepository.removeBlockedFolder(path)
+            // Put the folder back where it came from: Video Folders for a video folder, Music Folders otherwise.
+            if (wasVideoFolder) {
+                videoFolderDao.insertFolder(com.beatraxus.app.model.VideoFolderEntity(path))
+            } else {
+                musicRepository.addMusicFolder(path)
+            }
             val folders = musicRepository.getMusicFolders()
             _uiState.update { it.copy(
                 musicFolders = folders,

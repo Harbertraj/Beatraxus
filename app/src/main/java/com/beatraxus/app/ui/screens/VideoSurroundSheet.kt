@@ -16,6 +16,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -36,6 +38,7 @@ import com.beatraxus.app.model.SURROUND_TRIM_MIN_DB
 import com.beatraxus.app.model.SurroundChannel
 import com.beatraxus.app.model.SurroundLayout
 import com.beatraxus.app.model.SurroundMode
+import com.beatraxus.app.ui.components.dsp.SurroundStageCard
 import com.beatraxus.app.viewmodel.VideoPlayerUiState
 import kotlin.math.roundToInt
 
@@ -71,7 +74,7 @@ internal fun VideoSurroundSection(
         // ── Status ─────────────────────────────────────────────────────────────────────────────────────
         SurroundCard {
             Text(
-                text = if (uiState.surroundEngineRoute) "5.1 ENGINE" else "AUDIO MODE · DSP STUDIO",
+                text = if (uiState.surroundEngineRoute) "5.1/7.1 ENGINE" else "AUDIO MODE · DSP STUDIO",
                 color = SurroundAmber,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Black,
@@ -88,6 +91,14 @@ internal fun VideoSurroundSection(
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Medium
             )
+            if (!uiState.surroundEngineRoute && !uiState.surroundActive) {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = "The surround simulator is off in DSP Studio, so these settings take effect once it is enabled there.",
+                    color = SurroundAmberSoft,
+                    fontSize = 11.sp
+                )
+            }
             Spacer(Modifier.height(4.dp))
             Text(
                 text = "Phone speakers, headphones and Bluetooth play this folded down to stereo. " +
@@ -97,17 +108,47 @@ internal fun VideoSurroundSection(
             )
         }
 
+        // ── Speaker preview: speakers move closer / further as their level changes ────────────────────
+        val previewChannels = if (sevenOne) 8 else 6
+        SurroundStageCard(
+            channels = if (uiState.surroundActive || uiState.surroundEngineRoute) previewChannels else 2,
+            trimsDb = settings.trimsDb,
+            isPlaying = uiState.isPlaying,
+            statusText = if (sevenOne) "7.1" else "5.1"
+        )
+
         // ── Layout + mode (stereo upmix only) ─────────────────────────────────────────────────────────
         if (!discrete) {
             SurroundLabel("LAYOUT")
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf(SurroundLayout.FIVE_ONE, SurroundLayout.SEVEN_ONE, SurroundLayout.AUTO).forEach { layout ->
-                    SurroundChip(
-                        label = layout.displayName,
-                        selected = shownLayout == layout,
-                        onClick = { onLayout(layout) }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                val isSevenOne = shownLayout == SurroundLayout.SEVEN_ONE
+                Text(
+                    "5.1",
+                    color = if (!isSevenOne) SurroundAmberSoft else Color.White.copy(0.5f),
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Switch(
+                    checked = isSevenOne,
+                    onCheckedChange = { onLayout(if (it) SurroundLayout.SEVEN_ONE else SurroundLayout.FIVE_ONE) },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = SurroundAmber,
+                        checkedTrackColor = SurroundAmber.copy(0.4f),
+                        uncheckedThumbColor = SurroundAmber,
+                        uncheckedTrackColor = SurroundAmber.copy(0.25f),
+                        uncheckedBorderColor = SurroundAmber.copy(0.5f)
                     )
-                }
+                )
+                Text(
+                    "7.1",
+                    color = if (isSevenOne) SurroundAmberSoft else Color.White.copy(0.5f),
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold
+                )
             }
 
             SurroundLabel("MODE")

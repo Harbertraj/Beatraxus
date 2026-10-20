@@ -171,9 +171,7 @@ data class VideoPlayerUiState(
     val surroundOutputChannels: Int = 2,
     /** The output device refused a multichannel stream, so the soundtrack plays in its own layout. */
     val surroundFallback: Boolean = false,
-    val surroundSettings: VideoSurroundSettings = VideoSurroundSettings(),
-    /** The surround icon just appeared for the first time ever: show the "new" hint on it. */
-    val showSurroundHint: Boolean = false
+    val surroundSettings: VideoSurroundSettings = VideoSurroundSettings()
 )
 
 /** The part of the Studio DSP surround settings the video player's surround sheet edits. */
@@ -1317,9 +1315,6 @@ class VideoPlayerViewModel(
                         surroundFallback = live.fallback
                     )
                 }
-                if (live.active && !prefs.getBoolean(PREF_SURROUND_HINT_SEEN, false)) {
-                    _uiState.update { it.copy(showSurroundHint = true) }
-                }
             }
         }
     }
@@ -1331,12 +1326,6 @@ class VideoPlayerViewModel(
         val outputChannels: Int,
         val fallback: Boolean
     )
-
-    /** The surround icon was on screen long enough (or tapped): the "new" hint never shows again. */
-    fun onSurroundHintShown() {
-        prefs.edit().putBoolean(PREF_SURROUND_HINT_SEEN, true).apply()
-        _uiState.update { it.copy(showSurroundHint = false) }
-    }
 
     private fun applySurroundConfig(transform: (DspConfig) -> DspConfig) {
         val updated = transform(latestDspConfig)
@@ -2026,7 +2015,6 @@ class VideoPlayerViewModel(
 }
 
 private const val PREF_VIDEO_DECODER_MODE = "video_decoder_mode"
-private const val PREF_SURROUND_HINT_SEEN = "video_surround_icon_hint_seen"
 
 class VideoPlayerViewModelFactory(private val application: Application, private val videoQueue: List<Video>, private val initialVideoId: String) : ViewModelProvider.Factory {
     @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)

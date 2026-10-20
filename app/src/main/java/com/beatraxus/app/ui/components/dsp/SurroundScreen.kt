@@ -74,6 +74,7 @@ import com.beatraxus.app.ui.components.PremiumSwitch
 import com.beatraxus.app.ui.theme.DspPaletteState
 import com.beatraxus.app.ui.utils.LocalLiveAudioLevel
 import com.beatraxus.app.viewmodel.PlayerViewModel
+import androidx.compose.runtime.collectAsState
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
@@ -307,6 +308,38 @@ private val SPEAKER_SPOTS = listOf(
     SpeakerSpot(SurroundChannel.BR, 148f, 1f)
 )
 
+/**
+ * Distance of a speaker from the listener as a share of the ring, for its level trim in dB:
+ * 0 dB = on the ring, +12 dB = 38% closer, -12 dB = 15% further out (kept inside the room).
+ */
+internal fun speakerDistanceFactor(trimDb: Float): Float {
+    val t = trimDb.coerceIn(SURROUND_TRIM_MIN_DB, SURROUND_TRIM_MAX_DB) / SURROUND_TRIM_MAX_DB
+    return if (t >= 0f) 1f - 0.38f * t else 1f - 0.15f * t
+}
+
+/**
+ * The same room view for other screens (the video player's surround sheet). Uses the user's Surround Screen
+ * appearance settings and the level trims shown in the sheet.
+ */
+@Composable
+fun SurroundStageCard(
+    channels: Int,
+    trimsDb: List<Float>,
+    isPlaying: Boolean,
+    statusText: String,
+    modifier: Modifier = Modifier
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val look by remember { com.beatraxus.app.repository.AppearancePreferences(context).appearanceConfig }
+        .collectAsState(initial = AppearanceConfig())
+    Box(modifier = modifier) {
+        SurroundStageView(
+            channels, sanitizeSurroundTrims(trimsDb), look, isPlaying,
+            statusText, surroundAccent(look)
+        )
+    }
+}
+
 /** Accent of the Surround screen: the user's "Room glow" colour, else the dual palette's primary. */
 private fun surroundAccent(look: AppearanceConfig): Color =
     if (look.surroundColorGlow != 0) Color(look.surroundColorGlow) else DspPaletteState.current.primary
@@ -380,9 +413,12 @@ private fun SurroundStageView(
         val rx = wPx * 0.385f
         val ry = hPx * 0.335f
 
+        // A louder speaker stands closer to the listener, a quieter one further away, so every level change
+        // (slider or preset) visibly moves its speaker.
         fun spotPos(spot: SpeakerSpot): Offset {
             val a = spot.angleDeg * PI.toFloat() / 180f
-            return Offset(cx + sin(a) * rx * spot.radius, cy - cos(a) * ry * spot.radius)
+            val r = spot.radius * speakerDistanceFactor(trimsDb.getOrElse(spot.channel.ordinal) { 0f })
+            return Offset(cx + sin(a) * rx * r, cy - cos(a) * ry * r)
         }
 
         Canvas(modifier = Modifier.fillMaxWidth().aspectRatio(1.02f)) {

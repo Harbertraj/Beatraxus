@@ -164,9 +164,9 @@ fun VideoPlayerScreen(
 
     var controlsVisible by remember { mutableStateOf(true) }
     var sheetType by remember { mutableStateOf(PlayerSheetType.NONE) }
-    // The surround icon (and its sheet) exist only while the simulator is really in this video's signal path:
-    // 5.1 engine on, or audio mode on with the surround simulator enabled in Studio DSP.
-    val showSurroundIcon = uiState.routeAudioToEngine && uiState.surroundActive
+    // The surround icon (and its sheet) show whenever the soundtrack goes through the Audio Engine:
+    // 5.1/7.1 engine on, or "Connect to audio mode" on.
+    val showSurroundIcon = uiState.routeAudioToEngine
     LaunchedEffect(showSurroundIcon) {
         if (!showSurroundIcon && sheetType == PlayerSheetType.SURROUND) sheetType = PlayerSheetType.NONE
     }
@@ -757,12 +757,7 @@ fun VideoPlayerScreen(
                         onAudioDelayClick = { sheetType = PlayerSheetType.AUDIO_DELAY },
                         onSubtitleClick = { sheetType = PlayerSheetType.SUBTITLE },
                         showSurroundIcon = showSurroundIcon,
-                        showSurroundHint = showSurroundIcon && uiState.showSurroundHint,
-                        onSurroundClick = {
-                            viewModel.onSurroundHintShown()
-                            sheetType = PlayerSheetType.SURROUND
-                        },
-                        onSurroundHintShown = { viewModel.onSurroundHintShown() },
+                        onSurroundClick = { sheetType = PlayerSheetType.SURROUND },
                         modifier = Modifier.align(Alignment.TopCenter)
                     )
 
@@ -1294,18 +1289,8 @@ fun PlayerTopBar(
     modifier: Modifier = Modifier,
     /** The surround simulator is in the video's signal path: show its control icon. */
     showSurroundIcon: Boolean = false,
-    /** First time the icon appears: pulse it and label it so the user notices it. */
-    showSurroundHint: Boolean = false,
-    onSurroundClick: () -> Unit = {},
-    onSurroundHintShown: () -> Unit = {}
+    onSurroundClick: () -> Unit = {}
 ) {
-    // Counted only while the bar is on screen: if the controls hide first, the hint is kept for next time.
-    LaunchedEffect(showSurroundHint) {
-        if (showSurroundHint) {
-            delay(6000)
-            onSurroundHintShown()
-        }
-    }
     Box(
         modifier = modifier
             .fillMaxWidth()
@@ -1425,7 +1410,7 @@ fun PlayerTopBar(
             }
             if (showSurroundIcon) {
                 Spacer(Modifier.width(8.dp))
-                SurroundTopIcon(showHint = showSurroundHint, onClick = onSurroundClick)
+                SurroundTopIcon(onClick = onSurroundClick)
             }
             Spacer(Modifier.width(8.dp))
             VpGlassButton(onClick = onSubtitleClick, size = 42.dp) {
@@ -1435,72 +1420,16 @@ fun PlayerTopBar(
     }
 }
 
-/**
- * Opens the surround simulator sheet. While [showHint] is true (first appearance only) a ring pulses around the
- * button and a small label says what it is.
- */
+/** Opens the surround simulator sheet. */
 @Composable
-private fun SurroundTopIcon(showHint: Boolean, onClick: () -> Unit) {
-    Box(contentAlignment = Alignment.Center) {
-        if (showHint) {
-            val transition = rememberInfiniteTransition(label = "surroundHint")
-            val pulse by transition.animateFloat(
-                initialValue = 0f,
-                targetValue = 1f,
-                animationSpec = infiniteRepeatable(tween(1300, easing = LinearOutSlowInEasing), RepeatMode.Restart),
-                label = "surroundHintPulse"
-            )
-            Box(
-                modifier = Modifier
-                    .size(42.dp)
-                    .graphicsLayer {
-                        val scale = 1f + 0.55f * pulse
-                        scaleX = scale
-                        scaleY = scale
-                        alpha = 0.85f * (1f - pulse)
-                    }
-                    .border(2.dp, VpAmberSoft, CircleShape)
-            )
-        }
-        VpGlassButton(onClick = onClick, size = 42.dp, active = true) {
-            Icon(
-                Icons.Rounded.SurroundSound,
-                "Surround simulator",
-                tint = Color.White,
-                modifier = Modifier.size(22.dp)
-            )
-            if (showHint) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(top = 3.dp, end = 3.dp)
-                        .size(10.dp)
-                        .clip(CircleShape)
-                        .background(Color(0xFFFF5252))
-                        .border(1.dp, Color.White, CircleShape)
-                )
-            }
-        }
-        if (showHint) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .offset(y = 40.dp)
-                    .wrapContentSize(unbounded = true)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(Brush.horizontalGradient(listOf(VpAmberSoft, VpAmber)))
-                    .padding(horizontal = 10.dp, vertical = 5.dp)
-            ) {
-                Text(
-                    "New · Surround controls",
-                    color = Color.Black,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    maxLines = 1,
-                    softWrap = false
-                )
-            }
-        }
+private fun SurroundTopIcon(onClick: () -> Unit) {
+    VpGlassButton(onClick = onClick, size = 42.dp, active = true) {
+        Icon(
+            Icons.Rounded.SurroundSound,
+            "Surround simulator",
+            tint = Color.White,
+            modifier = Modifier.size(22.dp)
+        )
     }
 }
 
@@ -1933,7 +1862,7 @@ fun VideoSettingsSheetContent(
                 )
             }
 
-            // "5.1 engine": the soundtrack leaves the normal path and goes through the surround simulator only.
+            // "5.1/7.1 engine": the soundtrack leaves the normal path and goes through the surround simulator only.
             // Hidden while audio mode is on (audio mode already carries the simulator when it is enabled in DSP Studio).
             if (!audioModeOn) {
                 Row(
@@ -1942,7 +1871,7 @@ fun VideoSettingsSheetContent(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text(
-                        text = "5.1 engine",
+                        text = "5.1/7.1 engine",
                         color = Color.White,
                         fontSize = 14.sp,
                         maxLines = 1,
@@ -1982,7 +1911,7 @@ fun VideoSettingsSheetContent(
             } else if (uiState.routeAudioToEngine) {
                 Text(
                     text = if (uiState.surroundEngineRoute) {
-                        "Audio is playing through the 5.1 engine (surround simulator only)"
+                        "Audio is playing through the 5.1/7.1 engine (surround simulator only)"
                     } else {
                         "Audio is playing through the Audio Engine (DSP / Hi-Res)"
                     },
@@ -2125,7 +2054,7 @@ fun VideoSettingsSheetContent(
                     ) {
                         Text(
                             text = if (uiState.surroundEngineRoute) {
-                                "Audio track connected with the 5.1 engine (surround simulator)"
+                                "Audio track connected with the 5.1/7.1 engine (surround simulator)"
                             } else {
                                 "Audio track connected with DSP Studio (Audio mode)"
                             },
