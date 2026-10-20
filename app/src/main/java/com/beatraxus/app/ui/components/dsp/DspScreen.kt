@@ -121,6 +121,112 @@ private val DspMetalLow get() = Pal.metalLow
 private val EqLineStart = Color.White
 private val EqLineEnd = Color.White
 
+/**
+ * "Stage is live" colour. Deliberately a fixed neon signal green that is used ONLY by the pipeline header
+ * (title + page tabs) - no other control on the Studio DSP pages uses it.
+ */
+private val DspSignalOn = Color(0xFF39FF88)
+
+/**
+ * Title with an audio-pipeline motif: SOURCE node -> line -> stage ticks -> line -> TITLE -> line -> stage ticks
+ * -> line -> OUTPUT node. A soft pulse travels along the lines like signal flowing through the chain; the pulse and
+ * the end nodes light up in the signal colour as soon as any stage is on.
+ */
+@Composable
+private fun DspPipelineTitle(
+    title: String,
+    liveStages: Int,
+    modifier: Modifier = Modifier
+) {
+    val flow = rememberInfiniteTransition(label = "pipe_flow")
+    val t by flow.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(2600, easing = LinearEasing)),
+        label = "pipe_t"
+    )
+    val anyLive = liveStages > 0
+    val idleLine = Color.White.copy(alpha = 0.16f)
+    val idleNode = Color.White.copy(alpha = 0.34f)
+    val lit = DspSignalOn
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        @Composable
+        fun RowScope.Rail(mirror: Boolean) {
+            Canvas(
+                modifier = Modifier
+                    .weight(1f)
+                    .height(16.dp)
+            ) {
+                val w = size.width
+                val cy = size.height / 2f
+                val dpPx = 1.dp.toPx()
+                val nodeR = 3.2f * dpPx
+                // End node (outer side) and inner junction (towards title)
+                val outerX = if (mirror) w - nodeR else nodeR
+                val innerX = if (mirror) nodeR else w - nodeR
+                val lineY = cy
+                // Base line with a small gap before each node
+                val a = minOf(outerX, innerX) + nodeR + 2f * dpPx
+                val b = maxOf(outerX, innerX) - nodeR - 2f * dpPx
+                if (b > a) {
+                    drawLine(idleLine, Offset(a, lineY), Offset(b, lineY), strokeWidth = 1.2f * dpPx, cap = StrokeCap.Round)
+                    // Lit overlay while live
+                    if (anyLive) {
+                        drawLine(lit.copy(alpha = 0.28f), Offset(a, lineY), Offset(b, lineY), strokeWidth = 1.2f * dpPx, cap = StrokeCap.Round)
+                    }
+                    // Stage ticks: small bars crossing the line, like inserts on a signal chain
+                    val ticks = 3
+                    for (k in 1..ticks) {
+                        val f = k / (ticks + 1f)
+                        val tx = a + (b - a) * f
+                        val tall = if (k == 2) 5.5f else 3.5f
+                        drawLine(
+                            if (anyLive) lit.copy(alpha = 0.55f) else idleLine,
+                            Offset(tx, lineY - tall * dpPx), Offset(tx, lineY + tall * dpPx),
+                            strokeWidth = 1.2f * dpPx, cap = StrokeCap.Round
+                        )
+                    }
+                    // Travelling pulse (only while a stage is live)
+                    if (anyLive) {
+                        val progress = if (mirror) (t + 0.5f) % 1f else t
+                        val px = a + (b - a) * progress
+                        drawCircle(
+                            brush = Brush.radialGradient(
+                                listOf(lit, lit.copy(alpha = 0.25f), Color.Transparent),
+                                center = Offset(px, lineY), radius = 7f * dpPx
+                            ),
+                            radius = 7f * dpPx, center = Offset(px, lineY)
+                        )
+                    }
+                }
+                // Outer end node: ring (SOURCE / OUTPUT)
+                drawCircle(if (anyLive) lit else idleNode, nodeR, Offset(outerX, cy), style = Stroke(1.4f * dpPx))
+                drawCircle(if (anyLive) lit.copy(alpha = 0.9f) else idleNode.copy(alpha = 0.5f), nodeR * 0.42f, Offset(outerX, cy))
+                // Inner junction: small diamond next to the title
+                val d = 2.6f * dpPx
+                val path = androidx.compose.ui.graphics.Path().apply {
+                    moveTo(innerX, cy - d); lineTo(innerX + d, cy); lineTo(innerX, cy + d); lineTo(innerX - d, cy); close()
+                }
+                drawPath(path, if (anyLive) lit else idleNode)
+            }
+        }
+        Rail(mirror = false)
+        Text(
+            text = title,
+            color = Color.White,
+            fontWeight = FontWeight.Black,
+            letterSpacing = 4.sp,
+            style = MaterialTheme.typography.titleLarge,
+            maxLines = 1,
+            modifier = Modifier.padding(horizontal = 8.dp)
+        )
+        Rail(mirror = true)
+    }
+}
+
 /** Shared glass panel used by every DSP card: sheen, aurora rim and rounded corners. */
 private fun Modifier.dspPanel(radius: androidx.compose.ui.unit.Dp = 22.dp): Modifier = this
     .clip(RoundedCornerShape(radius))
@@ -140,6 +246,7 @@ private fun Modifier.dspPanel(radius: androidx.compose.ui.unit.Dp = 22.dp): Modi
 @Composable
 private fun DspTabBar(
     pagerState: androidx.compose.foundation.pager.PagerState,
+    active: List<Boolean>,
     modifier: Modifier = Modifier,
     onSelect: (Int) -> Unit
 ) {
@@ -149,24 +256,35 @@ private fun DspTabBar(
     val labels = listOf("EQ", "SURROUND", "MASTER", "REVERB", "SPATIAL")
     val current = pagerState.currentPage
     val railIdle = Color.White.copy(alpha = 0.12f)
-    val railLit = PremiumAccent.copy(alpha = 0.55f)
     Column(modifier = modifier) {
-        // Pipeline style: one stage node per page, joined by a rail that lights up along the path to the open page.
+        // Pipeline style: one stage node per page. A node lights up in the dedicated "signal" colour only while
+        // something on that page is switched ON; a rail segment lights up when both stages it joins are live.
+        // The page you are viewing is marked in white (never in the signal colour).
         Row(modifier = Modifier.fillMaxWidth()) {
             labels.forEachIndexed { i, label ->
                 val selected = current == i
+                val on = active.getOrElse(i) { false }
                 val tint by animateColorAsState(
-                    if (selected) PremiumAccent else Color.White.copy(alpha = 0.45f),
+                    when {
+                        on -> DspSignalOn
+                        selected -> Color.White
+                        else -> Color.White.copy(alpha = 0.40f)
+                    },
                     label = "tab_tint"
                 )
                 val nodeFill by animateColorAsState(
-                    if (selected) PremiumAccent.copy(alpha = 0.18f) else Color.White.copy(alpha = 0.05f),
+                    if (on) DspSignalOn.copy(alpha = 0.20f)
+                    else if (selected) Color.White.copy(alpha = 0.10f) else Color.White.copy(alpha = 0.04f),
                     label = "tab_fill"
                 )
                 val nodeRim by animateColorAsState(
-                    if (selected) PremiumAccent.copy(alpha = 0.85f) else Color.White.copy(alpha = 0.14f),
+                    if (on) DspSignalOn.copy(alpha = 0.90f)
+                    else if (selected) Color.White.copy(alpha = 0.55f) else Color.White.copy(alpha = 0.14f),
                     label = "tab_rim"
                 )
+                val leftLit = i > 0 && on && active.getOrElse(i - 1) { false }
+                val rightLit = i < labels.lastIndex && on && active.getOrElse(i + 1) { false }
+                val railLitL = DspSignalOn.copy(alpha = 0.75f)
                 Column(
                     modifier = Modifier
                         .weight(1f)
@@ -185,11 +303,12 @@ private fun DspTabBar(
                             modifier = Modifier
                                 .weight(1f)
                                 .height(1.dp)
-                                .background(if (i == 0) Color.Transparent else if (i <= current) railLit else railIdle)
+                                .background(if (i == 0) Color.Transparent else if (leftLit) railLitL else railIdle)
                         )
                         Box(
                             modifier = Modifier
                                 .size(20.dp)
+                                .then(if (on) Modifier.shadow(6.dp, RoundedCornerShape(6.dp), ambientColor = DspSignalOn, spotColor = DspSignalOn) else Modifier)
                                 .clip(RoundedCornerShape(6.dp))
                                 .background(nodeFill)
                                 .border(1.dp, nodeRim, RoundedCornerShape(6.dp)),
@@ -201,7 +320,7 @@ private fun DspTabBar(
                             modifier = Modifier
                                 .weight(1f)
                                 .height(1.dp)
-                                .background(if (i == labels.lastIndex) Color.Transparent else if (i < current) railLit else railIdle)
+                                .background(if (i == labels.lastIndex) Color.Transparent else if (rightLit) railLitL else railIdle)
                         )
                     }
                     Spacer(Modifier.height(2.dp))
@@ -209,7 +328,7 @@ private fun DspTabBar(
                         text = label,
                         color = tint,
                         fontSize = 8.5.sp,
-                        fontWeight = if (selected) FontWeight.Black else FontWeight.Bold,
+                        fontWeight = if (selected || on) FontWeight.Black else FontWeight.Bold,
                         letterSpacing = 1.1.sp,
                         maxLines = 1
                     )
@@ -237,7 +356,7 @@ private fun DspTabBar(
             )
             drawRoundRect(
                 brush = Brush.horizontalGradient(
-                    colors = listOf(PremiumAccent, DspViolet, DspPink),
+                    colors = listOf(Color.White.copy(0.35f), Color.White, Color.White.copy(0.35f)),
                     startX = startX,
                     endX = startX + tabW
                 ),
@@ -448,6 +567,18 @@ fun DspScreen(
         // Pages: 0 EQ, 1 Surround, 2 Master, 3 Reverb, 4 Spatial
         val pagerState = rememberPagerState(pageCount = { 5 })
         val pageScope = rememberCoroutineScope()
+        // A stage is "live" when something on its page is switched on (and the whole chain isn't bypassed).
+        val stageActive = remember(uiState.dsp.config) {
+            val c = uiState.dsp.config
+            val on = !c.bypassAll
+            listOf(
+                on && (c.eqEnabled || c.autoEqEnabled || c.aiEqEnabled),
+                on && c.surroundEnabled,
+                on && (c.bassEnabled || c.trebleEnabled || c.airEnabled || c.balanceEnabled || c.stereoExpansionEnabled),
+                on && c.reverbEnabled,
+                on && (c.spatialAudioEnabled || c.soundStageEnabled || c.audio3DStageEnabled)
+            )
+        }
 
         Scaffold(
             containerColor = Color.Transparent,
@@ -475,16 +606,12 @@ fun DspScreen(
                             Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back", tint = Color.White, modifier = Modifier.size(20.dp))
                         }
                         Column(
-                            modifier = Modifier.padding(horizontal = 48.dp),
+                            modifier = Modifier.padding(horizontal = 44.dp),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
-                            Text(
-                                text = "STUDIO DSP",
-                                color = Color.White,
-                                fontWeight = FontWeight.Black,
-                                letterSpacing = 4.sp,
-                                style = MaterialTheme.typography.titleLarge,
-                                maxLines = 1
+                            DspPipelineTitle(
+                                title = "STUDIO DSP",
+                                liveStages = stageActive.count { it }
                             )
                             Text(
                                 text = "Settings for: ${uiState.dsp.activeOutputDeviceLabel}",
@@ -515,6 +642,7 @@ fun DspScreen(
                     }
                     DspTabBar(
                         pagerState = pagerState,
+                        active = stageActive,
                         modifier = Modifier
                             .padding(top = 8.dp)
                             .widthIn(max = 340.dp)

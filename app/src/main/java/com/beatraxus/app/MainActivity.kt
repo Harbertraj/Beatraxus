@@ -730,16 +730,21 @@ fun BeatraxusApp(
                     }
                 },
                 exitTransition = {
+                    // Settings opens from the left, so Main gives way towards the right.
+                    val toSettings = targetState.destination.route == Screen.Settings.route
                     fadeOut(tween(400, easing = FastOutSlowInEasing)) +
                             slideOutOfContainer(
-                                towards = AnimatedContentTransitionScope.SlideDirection.Start,
+                                towards = if (toSettings) AnimatedContentTransitionScope.SlideDirection.End
+                                          else AnimatedContentTransitionScope.SlideDirection.Start,
                                 animationSpec = tween(400, easing = FastOutSlowInEasing)
                             )
                 },
                 popEnterTransition = {
+                    val fromSettings = initialState.destination.route == Screen.Settings.route
                     fadeIn(tween(400, easing = FastOutSlowInEasing)) +
                             slideIntoContainer(
-                                towards = AnimatedContentTransitionScope.SlideDirection.End,
+                                towards = if (fromSettings) AnimatedContentTransitionScope.SlideDirection.Start
+                                          else AnimatedContentTransitionScope.SlideDirection.End,
                                 animationSpec = tween(400, easing = FastOutSlowInEasing)
                             )
                 }
@@ -788,8 +793,9 @@ fun BeatraxusApp(
             composable(
                 Screen.Settings.route,
                 enterTransition = {
+                    // Opens from the LEFT edge
                     slideIntoContainer(
-                        towards = AnimatedContentTransitionScope.SlideDirection.Start,
+                        towards = AnimatedContentTransitionScope.SlideDirection.End,
                         animationSpec = tween(400, easing = FastOutSlowInEasing)
                     ) + fadeIn(tween(400))
                 },
@@ -806,8 +812,9 @@ fun BeatraxusApp(
                     ) + fadeIn(tween(400))
                 },
                 popExitTransition = {
+                    // Closes back out through the LEFT edge
                     slideOutOfContainer(
-                        towards = AnimatedContentTransitionScope.SlideDirection.End,
+                        towards = AnimatedContentTransitionScope.SlideDirection.Start,
                         animationSpec = tween(400, easing = FastOutSlowInEasing)
                     ) + fadeOut(tween(400))
                 }
