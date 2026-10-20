@@ -167,21 +167,24 @@ private fun PipelineRail(state: DspStageState, visible: Boolean, modifier: Modif
     }
 }
 
-/** Shared glass panel used by every DSP card: sheen, aurora rim and rounded corners. */
-private fun Modifier.dspPanel(radius: androidx.compose.ui.unit.Dp = 22.dp): Modifier = this
+/**
+ * Shared glass panel used by every DSP card. Same recipe as the Settings cards (SettingsSection):
+ * dark neutral glass, hairline rim that only whispers the palette accent, soft top tint.
+ */
+private fun Modifier.dspPanel(radius: androidx.compose.ui.unit.Dp = 24.dp): Modifier = this
     .clip(RoundedCornerShape(radius))
-    .background(PremiumSurface.copy(alpha = 0.66f))
-    .background(Brush.verticalGradient(listOf(Color.White.copy(0.075f), Color.White.copy(0.012f))))
+    .background(Color(0xFF111216).copy(alpha = 0.70f))
+    .background(Brush.verticalGradient(listOf(PremiumAccent.copy(alpha = 0.05f), Color.Transparent)))
     .border(
-        1.dp,
-        Brush.linearGradient(listOf(PremiumAccent.copy(0.42f), Color.White.copy(0.06f), DspViolet.copy(0.32f))),
+        0.8.dp,
+        Brush.linearGradient(listOf(PremiumAccent.copy(alpha = 0.20f), Color.White.copy(alpha = 0.04f), Color.White.copy(alpha = 0.08f))),
         RoundedCornerShape(radius)
     )
 
 
 /**
- * Top page switcher. Flat tab row (icon + label always visible) with a single amber bar that
- * slides continuously with the pager swipe - replaces the old tiny capsule of icons.
+ * Top page switcher. One stage node per page joined by pipeline lines (ON = orange, OFF = dim, BYPASS = dashed),
+ * with larger nodes and 10sp labels so it reads like the rest of the app. A white bar slides with the pager swipe.
  */
 @Composable
 private fun DspTabBar(
@@ -190,15 +193,10 @@ private fun DspTabBar(
     modifier: Modifier = Modifier,
     onSelect: (Int) -> Unit
 ) {
-    // Signal-path order: EQ -> Surround -> Master -> Reverb -> Spatial. Surround carries the surround-sound icon,
-    // Spatial a 3D one, so the two pages are no longer mixed up.
     val icons = listOf(Icons.Rounded.GraphicEq, Icons.Rounded.SurroundSound, Icons.Rounded.AutoAwesome, Icons.Rounded.Waves, Icons.Rounded.ViewInAr)
     val labels = listOf("EQ", "SURROUND", "MASTER", "REVERB", "SPATIAL")
     val current = pagerState.currentPage
     Column(modifier = modifier) {
-        // Pipeline style: one stage node per page, joined by lines that read like the signal path preview.
-        // ON = orange node and solid orange line, OFF = dim node and thin line, BYPASS = dim node and dashed line.
-        // The page you are viewing is marked in white (never in the signal colour).
         Row(modifier = Modifier.fillMaxWidth()) {
             labels.forEachIndexed { i, label ->
                 val selected = current == i
@@ -209,14 +207,14 @@ private fun DspTabBar(
                     when {
                         on -> DspSignalOn
                         selected -> Color.White
-                        bypassed -> Color.White.copy(alpha = 0.32f)
-                        else -> Color.White.copy(alpha = 0.40f)
+                        bypassed -> Color.White.copy(alpha = 0.40f)
+                        else -> Color.White.copy(alpha = 0.55f)
                     },
                     label = "tab_tint"
                 )
                 val nodeFill by animateColorAsState(
                     if (on) DspSignalOn.copy(alpha = 0.20f)
-                    else if (selected) Color.White.copy(alpha = 0.10f) else Color.White.copy(alpha = 0.04f),
+                    else if (selected) Color.White.copy(alpha = 0.10f) else Color.White.copy(alpha = 0.05f),
                     label = "tab_fill"
                 )
                 val nodeRim by animateColorAsState(
@@ -230,44 +228,45 @@ private fun DspTabBar(
                 Column(
                     modifier = Modifier
                         .weight(1f)
+                        .heightIn(min = 48.dp)
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = null
                         ) { onSelect(i) }
-                        .padding(top = 3.dp, bottom = 4.dp),
+                        .padding(top = 4.dp, bottom = 4.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Row(
-                        modifier = Modifier.fillMaxWidth().height(20.dp),
+                        modifier = Modifier.fillMaxWidth().height(28.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         PipelineRail(leftState, visible = i > 0, modifier = Modifier.weight(1f))
                         Box(
                             modifier = Modifier
-                                .size(20.dp)
-                                .then(if (on) Modifier.shadow(6.dp, RoundedCornerShape(6.dp), ambientColor = DspSignalOn, spotColor = DspSignalOn) else Modifier)
-                                .clip(RoundedCornerShape(6.dp))
+                                .size(28.dp)
+                                .then(if (on) Modifier.shadow(6.dp, RoundedCornerShape(9.dp), ambientColor = DspSignalOn, spotColor = DspSignalOn) else Modifier)
+                                .clip(RoundedCornerShape(9.dp))
                                 .background(nodeFill)
-                                .border(1.dp, nodeRim, RoundedCornerShape(6.dp)),
+                                .border(1.dp, nodeRim, RoundedCornerShape(9.dp)),
                             contentAlignment = Alignment.Center
                         ) {
-                            Icon(icons[i], contentDescription = label, tint = tint, modifier = Modifier.size(13.dp))
+                            Icon(icons[i], contentDescription = label, tint = tint, modifier = Modifier.size(17.dp))
                         }
                         PipelineRail(rightState, visible = i < labels.lastIndex, modifier = Modifier.weight(1f))
                     }
-                    Spacer(Modifier.height(2.dp))
+                    Spacer(Modifier.height(3.dp))
                     Text(
                         text = label,
                         color = tint,
-                        fontSize = 8.5.sp,
+                        fontSize = 10.sp,
                         fontWeight = if (selected || on) FontWeight.Black else FontWeight.Bold,
-                        letterSpacing = 1.1.sp,
+                        letterSpacing = 0.6.sp,
                         maxLines = 1
                     )
                 }
             }
         }
-        Spacer(Modifier.height(3.dp))
+        Spacer(Modifier.height(2.dp))
         val tabCount = labels.size
         val pagePos: Float = (pagerState.currentPage + pagerState.currentPageOffsetFraction)
             .coerceIn(0f, (tabCount - 1).toFloat())
@@ -463,22 +462,15 @@ fun DspScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(
-                Brush.verticalGradient(
-                    listOf(
-                        DspBgTop,
-                        DspBgBottom
-                    )
-                )
-            )
+            .background(Brush.verticalGradient(listOf(Color(0xFF0A0A0C), Color.Black)))
     ) {
-        // Ember glows (amber top-left, coral bottom-right)
+        // Faint palette glows only - the base stays neutral black so the screen sits with Settings, Library, Now Playing.
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(
                     Brush.radialGradient(
-                        colors = listOf(PremiumAccent.copy(alpha = 0.11f), Color.Transparent),
+                        colors = listOf(PremiumAccent.copy(alpha = 0.05f), Color.Transparent),
                         center = Offset(80f, 60f),
                         radius = 1300f
                     )
@@ -489,7 +481,7 @@ fun DspScreen(
                 .fillMaxSize()
                 .background(
                     Brush.radialGradient(
-                        colors = listOf(DspViolet.copy(alpha = 0.12f), Color.Transparent),
+                        colors = listOf(DspViolet.copy(alpha = 0.05f), Color.Transparent),
                         center = Offset(1050f, 2300f),
                         radius = 1500f
                     )
@@ -525,72 +517,81 @@ fun DspScreen(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .background(Color(0xFF0A0A0C).copy(alpha = 0.55f))
                         .windowInsetsPadding(WindowInsets.statusBars)
-                        .padding(horizontal = 12.dp, vertical = 4.dp),
+                        .padding(bottom = 6.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    // Same bar as Settings: glass back button on the left, centred black title.
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 56.dp)
+                            .padding(horizontal = 16.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
                         Box(
                             modifier = Modifier
                                 .align(Alignment.CenterStart)
                                 .size(38.dp)
                                 .clip(CircleShape)
-                                .background(Brush.verticalGradient(listOf(Color.White.copy(0.14f), Color.White.copy(0.04f))))
-                                .border(1.dp, Color.White.copy(0.18f), CircleShape)
+                                .background(Color.White.copy(alpha = 0.05f), CircleShape)
+                                .border(1.dp, Color.White.copy(alpha = 0.10f), CircleShape)
                                 .clickable(onClick = safeBack),
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back", tint = Color.White, modifier = Modifier.size(20.dp))
                         }
                         Column(
-                            modifier = Modifier.padding(horizontal = 44.dp),
+                            modifier = Modifier.padding(horizontal = 52.dp),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             Text(
                                 text = "STUDIO DSP",
-                                color = Color.White,
-                                fontWeight = FontWeight.Black,
-                                letterSpacing = 4.sp,
-                                style = MaterialTheme.typography.titleLarge,
+                                color = Color(0xFFF4F6F8),
+                                style = androidx.compose.ui.text.TextStyle(
+                                    fontFamily = appFontFamily,
+                                    fontWeight = FontWeight.Black,
+                                    fontSize = 20.sp,
+                                    letterSpacing = 2.sp,
+                                    textAlign = TextAlign.Center
+                                ),
                                 maxLines = 1
-                            )
-                            Text(
-                                text = "Settings for: ${uiState.dsp.activeOutputDeviceLabel}",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = Color.White.copy(0.55f),
-                                fontSize = 9.sp,
-                                letterSpacing = 0.6.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.padding(top = 2.dp)
                             )
                             val deviceMaxInput = com.beatraxus.app.model.formatDeviceMaxInput(
                                 uiState.outputMaxSampleRate, uiState.outputMaxBitDepth
                             )
-                            if (deviceMaxInput.isNotBlank()) {
-                                Text(
-                                    text = "Device max input: $deviceMaxInput",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = Color.White.copy(0.55f),
-                                    fontSize = 9.sp,
-                                    letterSpacing = 0.6.sp,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.padding(top = 1.dp)
-                                )
+                            val subtitle = buildString {
+                                append(uiState.dsp.activeOutputDeviceLabel)
+                                if (deviceMaxInput.isNotBlank()) append("  \u2022  Max $deviceMaxInput")
                             }
+                            Text(
+                                text = subtitle,
+                                color = Color.White.copy(alpha = 0.60f),
+                                fontSize = 11.sp,
+                                letterSpacing = 0.3.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
                         }
                     }
                     DspTabBar(
                         pagerState = pagerState,
                         states = stageStates,
                         modifier = Modifier
-                            .padding(top = 8.dp)
-                            .widthIn(max = 340.dp)
+                            .padding(horizontal = 16.dp)
+                            .widthIn(max = 400.dp)
                             .fillMaxWidth(),
                         onSelect = { i -> pageScope.launch { pagerState.animateScrollToPage(i) } }
                     )
                 }
+                // Hairline under the bar, same accent fade as Settings.
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(1.dp)
+                        .background(Brush.horizontalGradient(listOf(Color.Transparent, PremiumAccent.copy(alpha = 0.55f), Color.Transparent)))
+                )
             }
         ) { paddingValues ->
             HorizontalPager(
@@ -676,25 +677,36 @@ fun DspScreen(
                     }
                 }
                 if (page == 0 || page == 2 || page == 3) {
-                    // EQ, Master and Reverb always fit the screen: the whole page scales down to the available height.
-                    FitToHeight(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(horizontal = 14.dp, vertical = 6.dp)
-                    ) {
-                        Column(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalArrangement = Arrangement.spacedBy(if (page == 0) 10.dp else 8.dp),
-                            content = pageBody
-                        )
+                    // EQ, Master and Reverb scale down a little to fit (never below 85%, so text stays readable);
+                    // anything taller than that scrolls instead of shrinking into tiny text.
+                    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                        val viewportPx = constraints.maxHeight
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .verticalScroll(rememberScrollState())
+                        ) {
+                            FitToHeight(
+                                viewportHeightPx = viewportPx,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 8.dp)
+                            ) {
+                                Column(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalArrangement = Arrangement.spacedBy(if (page == 0) 12.dp else 10.dp),
+                                    content = pageBody
+                                )
+                            }
+                        }
                     }
                 } else {
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
                             .verticalScroll(rememberScrollState())
-                            .padding(horizontal = 14.dp, vertical = 6.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
                         content = pageBody
                     )
                 }
@@ -1427,33 +1439,37 @@ private fun ValueEditDialog(
     )
 }
 
+private const val MIN_FIT_SCALE = 0.85f
+
 /**
- * Lays [content] out at its natural size and, if it is taller than the space available, scales the whole
- * thing down uniformly (full width kept) so nothing is cut off and nothing needs to scroll.
+ * Lays [content] out at its natural size and, if it is taller than the viewport, scales it down uniformly
+ * (full width kept) - but never below [MIN_FIT_SCALE]. If it is still taller, the parent vertical scroll takes over.
+ * Must be placed inside a verticalScroll; [viewportHeightPx] is the visible height of that scroll area.
  *
  * A Measurable may only be measured once per pass, so the scale is settled over a couple of passes: each pass
  * measures at the current scale's width and then stores the scale the measured height calls for.
  */
 @Composable
-private fun FitToHeight(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+private fun FitToHeight(viewportHeightPx: Int, modifier: Modifier = Modifier, content: @Composable () -> Unit) {
     var scale by remember { mutableFloatStateOf(1f) }
     val settle = remember { longArrayOf(0L, 0L) } // [0] = last (width,height) key, [1] = passes spent on it
     Layout(content = content, modifier = modifier.clipToBounds()) { measurables, constraints ->
         val maxW = constraints.maxWidth
-        val maxH = constraints.maxHeight
-        val s = scale.coerceIn(0.3f, 1f)
+        val availH = (viewportHeightPx - 16.dp.roundToPx()).coerceAtLeast(1) // minus the 8dp top/bottom page padding
+        val s = scale.coerceIn(MIN_FIT_SCALE, 1f)
         val w = (maxW / s).toInt().coerceAtLeast(1)
         val placeable = measurables.first().measure(
             Constraints(minWidth = w, maxWidth = w, minHeight = 0, maxHeight = Constraints.Infinity)
         )
-        val key = maxW.toLong() * 100_000L + maxH.toLong()
+        val key = maxW.toLong() * 100_000L + availH
         if (settle[0] != key) { settle[0] = key; settle[1] = 0L }
-        val target = if (placeable.height > 0) (maxH.toFloat() / placeable.height).coerceIn(0.3f, 1f) else 1f
+        val target = if (placeable.height > 0) (availH.toFloat() / placeable.height).coerceIn(MIN_FIT_SCALE, 1f) else 1f
         if (abs(target - scale) > 0.003f && settle[1] < 6L) {
             settle[1]++
             scale = target
         }
-        layout(maxW, maxH) {
+        val scaledH = (placeable.height * s).toInt()
+        layout(maxW, maxOf(scaledH, availH)) {
             placeable.placeWithLayer(0, 0) {
                 scaleX = s
                 scaleY = s
