@@ -47,7 +47,7 @@ private val SurroundAmberSoft = Color(0xFFFFB347)
 
 /**
  * Surround simulator controls inside the video player. Same settings as Studio DSP > 5.1 / 7.1 (they are shared),
- * shown only while the simulator is really in this video's signal path.
+ * reachable at any time from the always-visible top icon.
  *
  * A soundtrack that already is a real 5.1 / 7.1 mix keeps its discrete channels: layout and mode do nothing for it
  * (they only shape the stereo upmix), so they are hidden, and the levels are shown relative to the Default preset.
@@ -65,8 +65,9 @@ internal fun VideoSurroundSection(
     onSaveCustom: () -> Unit
 ) {
     val settings = uiState.surroundSettings
-    // The simulator is in the signal path only on the 5.1/7.1 engine route; audio mode skips it.
-    val simulatorOn = uiState.surroundEngineRoute
+    // The simulator switch. With "Connect to audio mode" it adds the simulator to the DSP pipeline (ON) or skips it
+    // (OFF); without audio mode ON runs the soundtrack through the simulator alone.
+    val simulatorOn = uiState.surroundSimulatorEnabled
     val discrete = uiState.surroundDiscrete
     val layout = settings.layout
     // What Auto resolves to for this soundtrack: a real 5.1 / 7.1 mix keeps its own layout, a stereo one stays stereo.
@@ -132,7 +133,11 @@ internal fun VideoSurroundSection(
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    text = "The simulator is off, so the soundtrack plays in its own layout.",
+                    text = if (uiState.routeAudioToEngine) {
+                        "The simulator is off, so it is skipped in the audio track pipeline."
+                    } else {
+                        "The simulator is off, so the soundtrack plays in its own layout."
+                    },
                     color = Color.White,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Medium

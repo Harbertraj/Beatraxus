@@ -149,9 +149,11 @@ class AudioEngine(
         startPlaying: Boolean,
         title: String,
         codecMime: String? = null,
-        surroundEngine: Boolean = false
+        surroundEngine: Boolean = false,
+        /** "Connect to audio mode" only: add the surround simulator to the DSP pipeline (false = skip it). */
+        surroundInPipeline: Boolean = false
     ) {
-        Log.d("VideoAudioRouting", "playVideoAudio requested: uri=$uri, audioTrackIndex=$audioTrackIndex, title=$title, surroundEngine=$surroundEngine")
+        Log.d("VideoAudioRouting", "playVideoAudio requested: uri=$uri, audioTrackIndex=$audioTrackIndex, title=$title, surroundEngine=$surroundEngine, surroundInPipeline=$surroundInPipeline")
         // Whatever the previous stream (a song, the other video route) said about surround is stale for this one;
         // the real answer is published once the output is open (see publishDspState).
         _audioStateFlow.update { it.copy(surroundActive = false, surroundDiscrete = false) }
@@ -179,6 +181,7 @@ class AudioEngine(
                 stopVideoAudioInternal(emitIdle = false)
                 // Must be set before the session (and its DSP pipeline) is created: they read the effective config.
                 setSurroundEngineRoute(surroundEngine)
+                videoSurroundInPipeline = surroundInPipeline
                 setVideoAudioRoute(true)
 
             val mappedFormat = when (codecMime) {
@@ -266,6 +269,7 @@ class AudioEngine(
             videoSession = null
         }
         setSurroundEngineRoute(false)
+        videoSurroundInPipeline = false
         setVideoAudioRoute(false)
         if (emitIdle) {
             _videoRouteStateFlow.update { VideoRouteState(phase = VideoRoutePhase.IDLE) }
@@ -377,19 +381,44 @@ class AudioEngine(
                 if (cached != null && cached.first === user) return cached.second
                 return user.toSurroundEngineConfig().also { surroundEngineConfigCache = user to it }
             }
-            // "Connect to audio mode" (video route without the 5.1/7.1 engine): the surround simulator skips this
-            // pipeline whatever Studio DSP has it set to; only the 5.1/7.1 engine route runs it.
-            if (videoAudioRoute && user.surroundEnabled) {
+            // "Connect to audio mode" (video route without the 5.1/7.1 engine): the whole Studio DSP chain runs. The
+            // surround simulator joins this pipeline only while the video player's simulator is ON; when it is OFF the
+            // stage is skipped whatever Studio DSP has it set to.
+            if (videoAudioRoute) {
+                val wantSurround = videoSurroundInPipeline
+                // For a video soundtrack "Auto" follows the track (see [toSurroundEngineConfig]), so it resolves to Stereo.
+                val layout = if (user.surroundLayout == SurroundLayout.AUTO) SurroundLayout.STEREO else user.surroundLayout
+                if (user.surroundEnabled == wantSurround && (!wantSurround || user.surroundLayout == layout)) return user
                 val cached = videoAudioConfigCache
-                if (cached != null && cached.first === user) return cached.second
-                return user.copy(surroundEnabled = false).also { videoAudioConfigCache = user to it }
+                if (cached != null && cached.user === user && cached.surround == wantSurround) return cached.effective
+                return user.copy(
+                    surroundEnabled = wantSurround,
+                    surroundLayout = if (wantSurround) layout else user.surroundLayout
+                ).also { videoAudioConfigCache = VideoAudioConfigCache(user, wantSurround, it) }
             }
             return user
         }
 
     /** True while a video soundtrack is routed through the engine (either route). */
     @Volatile private var videoAudioRoute = false
-    private var videoAudioConfigCache: Pair<DspConfig, DspConfig>? = null
+
+    /** "Connect to audio mode" only: the video player's surround simulator is ON, so its stage joins the DSP pipeline. */
+    @Volatile private var videoSurroundInPipeline = false
+    private class VideoAudioConfigCache(val user: DspConfig, val surround: Boolean, val effective: DspConfig)
+    private var videoAudioConfigCache: VideoAudioConfigCache? = null
+
+    /**
+     * Adds (true) or skips (false) the surround simulator stage in the running "Connect to audio mode" pipeline.
+     * Takes effect live; the output is reopened only if the channel count has to change.
+     */
+    fun setVideoSurroundInPipeline(enabled: Boolean) {
+        engineScope.launch {
+            controlMutex.withLock {
+                if (videoSurroundInPipeline == enabled) return@withLock
+                applyDspConfig(userDspConfig) { videoSurroundInPipeline = enabled }
+            }
+        }
+    }
 
     private fun setVideoAudioRoute(enabled: Boolean) {
         if (videoAudioRoute == enabled) return
@@ -908,10 +937,17 @@ class AudioEngine(
     private var pushedBuffer: List<Int>? = null
     private var pushedMmap: Pair<Boolean, Int>? = null
 
-    fun updateDspConfig(userConfig: DspConfig) {
+    fun updateDspConfig(userConfig: DspConfig) = applyDspConfig(userConfig)
+
+    /**
+     * [beforeApply] runs after the old effective config was captured and before the new one is computed, so a flag the
+     * effective config depends on (see [videoSurroundInPipeline]) is diffed like any other setting.
+     */
+    private fun applyDspConfig(userConfig: DspConfig, beforeApply: () -> Unit = {}) {
         val oldConfig = dspConfig
         val sourceSampleRate = currentSong?.sampleRateHz ?: activeSession?.pcmFormat?.sampleRate ?: 44100
         val oldTargetRate = resolveTargetSampleRate(sourceSampleRate, oldConfig)
+        beforeApply()
         userDspConfig = userConfig
         // Everything below works with what the audio path really runs with (differs on the 5.1-engine route).
         val config = dspConfig

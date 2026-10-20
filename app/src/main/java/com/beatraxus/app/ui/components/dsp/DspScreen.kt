@@ -122,110 +122,48 @@ private val EqLineStart = Color.White
 private val EqLineEnd = Color.White
 
 /**
- * "Stage is live" colour. Deliberately a fixed neon signal green that is used ONLY by the pipeline header
- * (title bar + page tabs) - no other control on the Studio DSP pages uses it.
+ * "Stage is live" colour: orange. Used ONLY by the pipeline header (page tabs and the lines between them) - no other
+ * control on the Studio DSP pages uses it.
  */
-private val DspSignalOn = Color(0xFF39FF88)
+private val DspSignalOn = Color(0xFFFF8F00)
+
+/** State of one Studio DSP stage as shown by the pipeline in the page tabs. */
+private enum class DspStageState { ON, OFF, BYPASS }
+
+/** The line between two stages: a bypassed stage bypasses the line, otherwise it is lit only when both stages are on. */
+private fun segmentState(a: DspStageState, b: DspStageState): DspStageState = when {
+    a == DspStageState.BYPASS || b == DspStageState.BYPASS -> DspStageState.BYPASS
+    a == DspStageState.ON && b == DspStageState.ON -> DspStageState.ON
+    else -> DspStageState.OFF
+}
 
 /**
- * Title flanked by an intricate ornamental bar on both sides (replaces the old source -> stage -> output pipeline
- * motif): a fading main line with a thin parallel hairline, a row of small diamonds and dots, and a larger diamond
- * next to the title. A soft shimmer glides along the bar. The bar lights up in the signal colour while any stage is on.
+ * One piece of the pipeline line, drawn like the signal path preview:
+ * ON = solid orange, OFF = thin dim line, BYPASS = dim dashed line.
  */
 @Composable
-private fun DspPipelineTitle(
-    title: String,
-    liveStages: Int,
-    modifier: Modifier = Modifier
-) {
-    val flow = rememberInfiniteTransition(label = "title_bar_flow")
-    val t by flow.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(3200, easing = LinearEasing)),
-        label = "title_bar_t"
+private fun PipelineRail(state: DspStageState, visible: Boolean, modifier: Modifier = Modifier) {
+    val color by animateColorAsState(
+        when (state) {
+            DspStageState.ON -> DspSignalOn.copy(alpha = 0.90f)
+            DspStageState.OFF -> Color.White.copy(alpha = 0.14f)
+            DspStageState.BYPASS -> Color.White.copy(alpha = 0.38f)
+        },
+        label = "rail_color"
     )
-    val anyLive = liveStages > 0
-    val base = if (anyLive) DspSignalOn else Color.White
-    Row(
-        modifier = modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        @Composable
-        fun RowScope.Bar(mirror: Boolean) {
-            Canvas(
-                modifier = Modifier
-                    .weight(1f)
-                    .height(18.dp)
-            ) {
-                val dp = 1.dp.toPx()
-                val w = size.width
-                val cy = size.height / 2f
-                // innerX is the end next to the title, outerX the faded far end.
-                val innerX = if (mirror) 0f else w
-                val outerX = if (mirror) w else 0f
-                val dir = if (mirror) 1f else -1f // direction from inner to outer
-
-                fun at(f: Float) = innerX + dir * (w * f)
-                fun fade(from: Float) = Brush.horizontalGradient(
-                    colors = if (mirror) listOf(base.copy(alpha = from), Color.Transparent)
-                    else listOf(Color.Transparent, base.copy(alpha = from)),
-                    startX = 0f, endX = w
-                )
-
-                // Main line and thin parallel hairlines, fading towards the outer end
-                val startX = at(0.16f)
-                drawLine(fade(0.55f), Offset(startX, cy), Offset(outerX, cy), strokeWidth = 1.4f * dp, cap = StrokeCap.Round)
-                drawLine(fade(0.22f), Offset(at(0.26f), cy - 3.6f * dp), Offset(outerX, cy - 3.6f * dp), strokeWidth = 0.8f * dp)
-                drawLine(fade(0.22f), Offset(at(0.26f), cy + 3.6f * dp), Offset(outerX, cy + 3.6f * dp), strokeWidth = 0.8f * dp)
-
-                // Large diamond with a hollow ring next to the title
-                val big = 3.4f * dp
-                val cx0 = at(0.07f)
-                val diamond = androidx.compose.ui.graphics.Path().apply {
-                    moveTo(cx0, cy - big); lineTo(cx0 + big, cy); lineTo(cx0, cy + big); lineTo(cx0 - big, cy); close()
-                }
-                drawPath(diamond, base.copy(alpha = if (anyLive) 0.95f else 0.55f))
-                drawCircle(base.copy(alpha = 0.35f), big * 1.9f, Offset(cx0, cy), style = Stroke(0.8f * dp))
-
-                // Small diamonds and dots along the bar, getting fainter and smaller outwards
-                val marks = listOf(0.30f to 2.2f, 0.42f to 1.4f, 0.54f to 2.0f, 0.66f to 1.2f, 0.78f to 1.6f)
-                marks.forEachIndexed { i, (f, r) ->
-                    val x = at(f)
-                    val alpha = (0.55f - i * 0.08f).coerceAtLeast(0.15f)
-                    if (i % 2 == 0) {
-                        val d = r * dp
-                        val p = androidx.compose.ui.graphics.Path().apply {
-                            moveTo(x, cy - d); lineTo(x + d, cy); lineTo(x, cy + d); lineTo(x - d, cy); close()
-                        }
-                        drawPath(p, base.copy(alpha = alpha))
-                    } else {
-                        drawCircle(base.copy(alpha = alpha), r * dp, Offset(x, cy))
-                    }
-                }
-
-                // Soft shimmer gliding from the title outwards
-                val sx = innerX + dir * (w * t)
-                drawCircle(
-                    brush = Brush.radialGradient(
-                        listOf(base.copy(alpha = if (anyLive) 0.55f else 0.30f), Color.Transparent),
-                        center = Offset(sx, cy), radius = 8f * dp
-                    ),
-                    radius = 8f * dp, center = Offset(sx, cy)
-                )
-            }
+    Canvas(modifier = modifier.height(3.dp)) {
+        if (!visible) return@Canvas
+        val cy = size.height / 2f
+        val dp = 1.dp.toPx()
+        when (state) {
+            DspStageState.ON -> drawLine(color, Offset(0f, cy), Offset(size.width, cy), strokeWidth = 2f * dp)
+            DspStageState.OFF -> drawLine(color, Offset(0f, cy), Offset(size.width, cy), strokeWidth = 1f * dp)
+            DspStageState.BYPASS -> drawLine(
+                color, Offset(0f, cy), Offset(size.width, cy),
+                strokeWidth = 1.2f * dp,
+                pathEffect = PathEffect.dashPathEffect(floatArrayOf(3f * dp, 3f * dp))
+            )
         }
-        Bar(mirror = false)
-        Text(
-            text = title,
-            color = Color.White,
-            fontWeight = FontWeight.Black,
-            letterSpacing = 4.sp,
-            style = MaterialTheme.typography.titleLarge,
-            maxLines = 1,
-            modifier = Modifier.padding(horizontal = 8.dp)
-        )
-        Bar(mirror = true)
     }
 }
 
@@ -248,7 +186,7 @@ private fun Modifier.dspPanel(radius: androidx.compose.ui.unit.Dp = 22.dp): Modi
 @Composable
 private fun DspTabBar(
     pagerState: androidx.compose.foundation.pager.PagerState,
-    active: List<Boolean>,
+    states: List<DspStageState>,
     modifier: Modifier = Modifier,
     onSelect: (Int) -> Unit
 ) {
@@ -257,19 +195,21 @@ private fun DspTabBar(
     val icons = listOf(Icons.Rounded.GraphicEq, Icons.Rounded.SurroundSound, Icons.Rounded.AutoAwesome, Icons.Rounded.Waves, Icons.Rounded.ViewInAr)
     val labels = listOf("EQ", "SURROUND", "MASTER", "REVERB", "SPATIAL")
     val current = pagerState.currentPage
-    val railIdle = Color.White.copy(alpha = 0.12f)
     Column(modifier = modifier) {
-        // Pipeline style: one stage node per page. A node lights up in the dedicated "signal" colour only while
-        // something on that page is switched ON; a rail segment lights up when both stages it joins are live.
+        // Pipeline style: one stage node per page, joined by lines that read like the signal path preview.
+        // ON = orange node and solid orange line, OFF = dim node and thin line, BYPASS = dim node and dashed line.
         // The page you are viewing is marked in white (never in the signal colour).
         Row(modifier = Modifier.fillMaxWidth()) {
             labels.forEachIndexed { i, label ->
                 val selected = current == i
-                val on = active.getOrElse(i) { false }
+                val state = states.getOrElse(i) { DspStageState.OFF }
+                val on = state == DspStageState.ON
+                val bypassed = state == DspStageState.BYPASS
                 val tint by animateColorAsState(
                     when {
                         on -> DspSignalOn
                         selected -> Color.White
+                        bypassed -> Color.White.copy(alpha = 0.32f)
                         else -> Color.White.copy(alpha = 0.40f)
                     },
                     label = "tab_tint"
@@ -281,12 +221,12 @@ private fun DspTabBar(
                 )
                 val nodeRim by animateColorAsState(
                     if (on) DspSignalOn.copy(alpha = 0.90f)
-                    else if (selected) Color.White.copy(alpha = 0.55f) else Color.White.copy(alpha = 0.14f),
+                    else if (selected) Color.White.copy(alpha = 0.55f)
+                    else if (bypassed) Color.White.copy(alpha = 0.26f) else Color.White.copy(alpha = 0.14f),
                     label = "tab_rim"
                 )
-                val leftLit = i > 0 && on && active.getOrElse(i - 1) { false }
-                val rightLit = i < labels.lastIndex && on && active.getOrElse(i + 1) { false }
-                val railLitL = DspSignalOn.copy(alpha = 0.75f)
+                val leftState = if (i > 0) segmentState(states.getOrElse(i - 1) { DspStageState.OFF }, state) else DspStageState.OFF
+                val rightState = if (i < labels.lastIndex) segmentState(state, states.getOrElse(i + 1) { DspStageState.OFF }) else DspStageState.OFF
                 Column(
                     modifier = Modifier
                         .weight(1f)
@@ -301,12 +241,7 @@ private fun DspTabBar(
                         modifier = Modifier.fillMaxWidth().height(20.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(1.dp)
-                                .background(if (i == 0) Color.Transparent else if (leftLit) railLitL else railIdle)
-                        )
+                        PipelineRail(leftState, visible = i > 0, modifier = Modifier.weight(1f))
                         Box(
                             modifier = Modifier
                                 .size(20.dp)
@@ -318,12 +253,7 @@ private fun DspTabBar(
                         ) {
                             Icon(icons[i], contentDescription = label, tint = tint, modifier = Modifier.size(13.dp))
                         }
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(1.dp)
-                                .background(if (i == labels.lastIndex) Color.Transparent else if (rightLit) railLitL else railIdle)
-                        )
+                        PipelineRail(rightState, visible = i < labels.lastIndex, modifier = Modifier.weight(1f))
                     }
                     Spacer(Modifier.height(2.dp))
                     Text(
@@ -569,16 +499,21 @@ fun DspScreen(
         // Pages: 0 EQ, 1 Surround, 2 Master, 3 Reverb, 4 Spatial
         val pagerState = rememberPagerState(pageCount = { 5 })
         val pageScope = rememberCoroutineScope()
-        // A stage is "live" when something on its page is switched on (and the whole chain isn't bypassed).
-        val stageActive = remember(uiState.dsp.config) {
+        // Per stage: ON when something on its page is switched on, BYPASS when the whole chain (A/B bypass) or
+        // Bit-Perfect bypasses it, otherwise OFF.
+        val stageStates = remember(uiState.dsp.config) {
             val c = uiState.dsp.config
-            val on = !c.bypassAll
+            fun stage(enabled: Boolean, bypassed: Boolean) = when {
+                c.bypassAll || bypassed -> DspStageState.BYPASS
+                enabled -> DspStageState.ON
+                else -> DspStageState.OFF
+            }
             listOf(
-                on && (c.eqEnabled || c.autoEqEnabled || c.aiEqEnabled),
-                on && c.surroundEnabled,
-                on && (c.bassEnabled || c.trebleEnabled || c.airEnabled || c.balanceEnabled || c.stereoExpansionEnabled),
-                on && c.reverbEnabled,
-                on && (c.spatialAudioEnabled || c.soundStageEnabled || c.audio3DStageEnabled)
+                stage(c.eqEnabled || c.autoEqEnabled || c.aiEqEnabled, c.bitPerfectEnabled && !c.bitPerfectUnbypassEq),
+                stage(c.surroundEnabled, c.bitPerfectEnabled),
+                stage(c.bassEnabled || c.trebleEnabled || c.airEnabled || c.balanceEnabled || c.stereoExpansionEnabled, c.bitPerfectEnabled),
+                stage(c.reverbEnabled, c.bitPerfectEnabled && !c.bitPerfectUnbypassReverb),
+                stage(c.spatialAudioEnabled || c.soundStageEnabled || c.audio3DStageEnabled, c.bitPerfectEnabled && !c.bitPerfectUnbypass3DStage)
             )
         }
 
@@ -611,9 +546,13 @@ fun DspScreen(
                             modifier = Modifier.padding(horizontal = 44.dp),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
-                            DspPipelineTitle(
-                                title = "STUDIO DSP",
-                                liveStages = stageActive.count { it }
+                            Text(
+                                text = "STUDIO DSP",
+                                color = Color.White,
+                                fontWeight = FontWeight.Black,
+                                letterSpacing = 4.sp,
+                                style = MaterialTheme.typography.titleLarge,
+                                maxLines = 1
                             )
                             Text(
                                 text = "Settings for: ${uiState.dsp.activeOutputDeviceLabel}",
@@ -644,7 +583,7 @@ fun DspScreen(
                     }
                     DspTabBar(
                         pagerState = pagerState,
-                        active = stageActive,
+                        states = stageStates,
                         modifier = Modifier
                             .padding(top = 8.dp)
                             .widthIn(max = 340.dp)

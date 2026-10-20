@@ -161,7 +161,13 @@ data class VideoPlayerUiState(
      * false = the "Connect to audio mode" route (whole Studio DSP chain).
      */
     val surroundEngineRoute: Boolean = false,
-    /** The Audio Engine confirms that the surround simulator is really in this video's signal path. Drives the top icon. */
+    /**
+     * The surround simulator switch (top icon sheet). It is the user's intent and always visible:
+     * - "Connect to audio mode" ON: ON adds the simulator to the audio track pipeline, OFF skips it.
+     * - "Connect to audio mode" OFF: ON runs the soundtrack through the simulator alone, OFF plays it untouched.
+     */
+    val surroundSimulatorEnabled: Boolean = false,
+    /** The Audio Engine confirms that the surround simulator is really in this video's signal path. */
     val surroundActive: Boolean = false,
     /** The soundtrack is a real 5.1 / 7.1 mix: its discrete channels are kept, nothing is upmixed. */
     val surroundDiscrete: Boolean = false,
@@ -1184,35 +1190,28 @@ class VideoPlayerViewModel(
     }
 
     /**
-     * "Connect to audio mode" switch: routes the soundtrack through the Audio Engine with the whole Studio DSP chain.
-     * Turning it ON while the 5.1 engine is active switches over to this mode; turning it OFF always stops routing.
+     * Stops (false) or starts (true) the "Connect to audio mode" route: the soundtrack goes through the Audio Engine
+     * with the whole Studio DSP chain. Used internally (errors, speed change) where false must always stop routing.
+     * The audio-mode switch in the Audio Tracks sheet uses [setAudioMode].
      */
     fun setRouteAudioToEngine(enabled: Boolean) {
-        // The user picked (or dropped) audio mode themselves: nothing to restore when the simulator is turned off.
-        audioModeBeforeSimulator = false
         setEngineRoute(enabled, surroundEngine = false)
     }
 
-    /** True when "Connect to audio mode" was already on (set by the user) before the surround simulator was turned on. */
-    private var audioModeBeforeSimulator = false
-
     /**
-     * "Surround simulator" switch (formerly "5.1/7.1 engine"): routes the soundtrack through the Audio Engine with the
-     * surround simulator only (no Studio DSP effects). Turning it ON while audio mode is active switches over to this
-     * mode and remembers that audio mode was on. Turning it OFF stops the simulator route; "Connect to audio mode" is
-     * NOT switched on by this, it only comes back if the user already had it on before the simulator. It does nothing
-     * while audio mode is running.
+     * "Connect to audio mode" switch in the Audio Tracks sheet.
+     *
+     * ON: the soundtrack runs through the Studio DSP chain. The surround simulator is added to that pipeline when its
+     * switch is ON ([VideoPlayerUiState.surroundSimulatorEnabled]) and skipped when it is OFF.
+     * OFF: routing stops, except that a simulator that is still ON keeps working on the soundtrack alone.
      */
-    fun setSurroundEngine(enabled: Boolean) {
+    fun setAudioMode(enabled: Boolean) {
         val state = _uiState.value
-        if (!enabled) {
-            if (!state.surroundEngineRoute) return
-            val restoreAudioMode = audioModeBeforeSimulator
-            audioModeBeforeSimulator = false
-            if (restoreAudioMode) setEngineRoute(true, surroundEngine = false) else setEngineRoute(false, surroundEngine = false)
-        } else {
-            if (state.routeAudioToEngine && !state.surroundEngineRoute) audioModeBeforeSimulator = true
-            setEngineRoute(true, surroundEngine = true)
+        when {
+            enabled -> setEngineRoute(true, surroundEngine = false)
+            state.surroundSimulatorEnabled && state.routeAudioToEngine && !state.surroundEngineRoute ->
+                setEngineRoute(true, surroundEngine = true)
+            else -> setEngineRoute(false, surroundEngine = false)
         }
     }
 
@@ -1362,16 +1361,22 @@ class VideoPlayerViewModel(
     }
 
     /**
-     * On/off switch of the surround simulator in the video player sheet. The simulator is exactly the 5.1/7.1 engine
-     * route, so the switch moves the video between the two routes and never disconnects the Audio Engine.
+     * On/off switch of the surround simulator in the video player sheet (the top icon is always there).
      *
-     * ON: the simulator route (surround simulator only), also from fully off.
-     * OFF: the simulator route stops. "Connect to audio mode" is not switched on by it; it only stays / returns if the
-     * user already had it on before the simulator was turned on.
+     * "Connect to audio mode" running: the simulator stage is added to / skipped in the running DSP pipeline, no
+     * restart of the route.
+     * Otherwise ON starts the simulator-only route (also from fully off) and OFF stops it.
      */
     fun setSurroundSimulatorEnabled(enabled: Boolean) {
-        if (_uiState.value.isConnectingEngineRoute) return
-        setSurroundEngine(enabled)
+        val state = _uiState.value
+        if (state.isConnectingEngineRoute) return
+        _uiState.update { it.copy(surroundSimulatorEnabled = enabled) }
+        when {
+            state.routeAudioToEngine && !state.surroundEngineRoute ->
+                VideoAudioBridge.getAudioEngine()?.setVideoSurroundInPipeline(enabled)
+            enabled -> setEngineRoute(true, surroundEngine = true)
+            state.surroundEngineRoute -> setEngineRoute(false, surroundEngine = true)
+        }
     }
 
     fun setSurroundLayout(layout: SurroundLayout) = applySurroundConfig { it.copy(surroundLayout = layout) }
@@ -1445,7 +1450,9 @@ class VideoPlayerViewModel(
             startPlaying = wasPlaying,
             title = video.title,
             codecMime = selectedTrackInfo?.format,
-            surroundEngine = _uiState.value.surroundEngineRoute
+            surroundEngine = _uiState.value.surroundEngineRoute,
+            // "Connect to audio mode": the simulator joins the DSP pipeline only while its switch is ON.
+            surroundInPipeline = _uiState.value.surroundSimulatorEnabled
         )
         observeSurroundState(engine)
 

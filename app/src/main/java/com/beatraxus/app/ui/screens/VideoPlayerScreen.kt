@@ -164,9 +164,6 @@ fun VideoPlayerScreen(
 
     var controlsVisible by remember { mutableStateOf(true) }
     var sheetType by remember { mutableStateOf(PlayerSheetType.NONE) }
-    // The surround icon (and its sheet) show whenever the soundtrack goes through the Audio Engine (surround simulator
-    // or "Connect to audio mode"). The sheet stays open after the simulator is switched off so it can be switched on again.
-    val showSurroundIcon = uiState.routeAudioToEngine || uiState.isConnectingEngineRoute || sheetType == PlayerSheetType.SURROUND
 
     val appContext = context.applicationContext as Application
     val api = remember { SubtitleApiClientFactory.createApi() }
@@ -739,7 +736,7 @@ fun VideoPlayerScreen(
                         isHdr = uiState.isHdr,
                         sleepTimerRemainingMs = uiState.sleepTimerRemainingMs,
                         decoderLabel = uiState.videoDecoderMode.label,
-                        isAudioDelayActive = uiState.audioDelayMs != 0,
+                        isSurroundActive = uiState.surroundSimulatorEnabled,
                         onBack = onBack,
                         onDecoderClick = {
                             val mode = viewModel.cycleVideoDecoderMode()
@@ -751,9 +748,7 @@ fun VideoPlayerScreen(
                             ).show()
                         },
                         onAudioClick = { sheetType = PlayerSheetType.AUDIO },
-                        onAudioDelayClick = { sheetType = PlayerSheetType.AUDIO_DELAY },
                         onSubtitleClick = { sheetType = PlayerSheetType.SUBTITLE },
-                        showSurroundIcon = showSurroundIcon,
                         onSurroundClick = { sheetType = PlayerSheetType.SURROUND },
                         modifier = Modifier.align(Alignment.TopCenter)
                     )
@@ -771,6 +766,7 @@ fun VideoPlayerScreen(
                         },
                         onSpeedClick = { sheetType = PlayerSheetType.SPEED },
                         onMotionBoostClick = { sheetType = PlayerSheetType.MOTION_BOOST },
+                        onAudioDelayClick = { sheetType = PlayerSheetType.AUDIO_DELAY },
                         onEqClick = { sheetType = PlayerSheetType.EQUALIZER },
                         onToggleBoost = { viewModel.toggleVolumeBoost() },
                         onHeadphonesClick = { viewModel.toggleBackgroundPlay() },
@@ -1021,7 +1017,10 @@ private fun VpToolButton(
     active: Boolean,
     onClick: () -> Unit,
     onLongClick: (() -> Unit)? = null,
-    label: String? = null
+    label: String? = null,
+    /** Small glyph drawn in the lower-right corner of the icon (e.g. the clock on the audio delay icon). */
+    badge: androidx.compose.ui.graphics.vector.ImageVector? = null,
+    contentDescription: String? = null
 ) {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
@@ -1060,10 +1059,24 @@ private fun VpToolButton(
         } else {
             Icon(
                 imageVector = icon,
-                contentDescription = null,
+                contentDescription = contentDescription,
                 tint = tint,
                 modifier = Modifier.size(22.dp)
             )
+            if (badge != null) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(end = 4.dp, bottom = 4.dp)
+                        .size(15.dp)
+                        .clip(CircleShape)
+                        .background(Color(0xE6101014))
+                        .border(0.8.dp, tint.copy(alpha = 0.7f), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(badge, null, tint = tint, modifier = Modifier.size(10.dp))
+                }
+            }
         }
     }
 }
@@ -1075,6 +1088,7 @@ fun FloatingControls(
     onPiPClick: () -> Unit,
     onSpeedClick: () -> Unit,
     onMotionBoostClick: () -> Unit,
+    onAudioDelayClick: () -> Unit,
     onEqClick: () -> Unit,
     onToggleBoost: () -> Unit,
     onHeadphonesClick: () -> Unit,
@@ -1139,6 +1153,14 @@ fun FloatingControls(
                 uiState.fpsBoosterPlan.active,
                 onMotionBoostClick,
                 label = if (uiState.fpsBoosterPlan.active) uiState.fpsBoosterPlan.targetFps.toString() else null
+            )
+            // Audio delay: sound-wave glyph with a small clock badge = "audio timing"
+            VpToolButton(
+                Icons.Rounded.GraphicEq,
+                uiState.audioDelayMs != 0,
+                onAudioDelayClick,
+                badge = Icons.Rounded.Schedule,
+                contentDescription = "Audio delay"
             )
             VpToolButton(Icons.Rounded.Equalizer, uiState.isEqEnabled, onEqClick)
             VpToolButton(
@@ -1277,16 +1299,14 @@ fun PlayerTopBar(
     isHdr: Boolean,
     sleepTimerRemainingMs: Long? = null,
     decoderLabel: String,
-    isAudioDelayActive: Boolean,
+    /** The surround simulator switch is ON (lights the icon). The icon itself is always shown. */
+    isSurroundActive: Boolean,
     onBack: () -> Unit,
     onDecoderClick: () -> Unit,
     onAudioClick: () -> Unit,
-    onAudioDelayClick: () -> Unit,
     onSubtitleClick: () -> Unit,
-    modifier: Modifier = Modifier,
-    /** The surround simulator is in the video's signal path: show its control icon. */
-    showSurroundIcon: Boolean = false,
-    onSurroundClick: () -> Unit = {}
+    onSurroundClick: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     Box(
         modifier = modifier
@@ -1374,41 +1394,9 @@ fun PlayerTopBar(
             VpGlassButton(onClick = onAudioClick, size = 42.dp) {
                 Icon(Icons.Rounded.AudioFile, null, tint = Color.White, modifier = Modifier.size(21.dp))
             }
+            // Surround simulator: always here (never appears / disappears); lit while its switch is ON.
             Spacer(Modifier.width(8.dp))
-            VpGlassButton(onClick = onAudioDelayClick, size = 42.dp, active = isAudioDelayActive) {
-                // sound-wave glyph with a small clock badge = "audio timing"
-                Icon(
-                    Icons.Rounded.GraphicEq,
-                    "Audio delay",
-                    tint = Color.White,
-                    modifier = Modifier.align(Alignment.Center).size(22.dp)
-                )
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(end = 4.dp, bottom = 4.dp)
-                        .size(15.dp)
-                        .clip(CircleShape)
-                        .background(Color(0xE6101014))
-                        .border(
-                            0.8.dp,
-                            if (isAudioDelayActive) VpAmberSoft else Color.White.copy(alpha = 0.55f),
-                            CircleShape
-                        ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        Icons.Rounded.Schedule,
-                        null,
-                        tint = if (isAudioDelayActive) VpAmberSoft else Color.White,
-                        modifier = Modifier.size(10.dp)
-                    )
-                }
-            }
-            if (showSurroundIcon) {
-                Spacer(Modifier.width(8.dp))
-                SurroundTopIcon(onClick = onSurroundClick)
-            }
+            SurroundTopIcon(active = isSurroundActive, onClick = onSurroundClick)
             Spacer(Modifier.width(8.dp))
             VpGlassButton(onClick = onSubtitleClick, size = 42.dp) {
                 Icon(Icons.Rounded.Subtitles, null, tint = Color.White, modifier = Modifier.size(21.dp))
@@ -1419,8 +1407,8 @@ fun PlayerTopBar(
 
 /** Opens the surround simulator sheet. */
 @Composable
-private fun SurroundTopIcon(onClick: () -> Unit) {
-    VpGlassButton(onClick = onClick, size = 42.dp, active = true) {
+private fun SurroundTopIcon(active: Boolean, onClick: () -> Unit) {
+    VpGlassButton(onClick = onClick, size = 42.dp, active = active) {
         Icon(
             Icons.Rounded.SurroundSound,
             "Surround simulator",
@@ -1818,11 +1806,11 @@ fun VideoSettingsSheetContent(
         }
 
         if (activeSheetType == PlayerSheetType.AUDIO) {
-            // Two mutually exclusive routes through the Audio Engine. Turning one on switches the other off.
+            // "Connect to audio mode": the soundtrack goes through the Audio Engine with the Studio DSP chain. The surround
+            // simulator (always available from its top icon) is added to that pipeline when it is ON and skipped when OFF.
             val canRoute = uiState.availableAudioTracks.isNotEmpty() && uiState.playbackSpeed == 1.0f && !uiState.isConnectingEngineRoute
             val routedOrConnecting = uiState.routeAudioToEngine || uiState.isConnectingEngineRoute
             val audioModeOn = routedOrConnecting && !uiState.surroundEngineRoute
-            val surroundEngineOn = routedOrConnecting && uiState.surroundEngineRoute
 
             // "Connect to audio mode" toggle sits on its own line, below the title
             Row(
@@ -1849,44 +1837,7 @@ fun VideoSettingsSheetContent(
                 Switch(
                     checked = audioModeOn,
                     enabled = canRoute,
-                    onCheckedChange = { viewModel.setRouteAudioToEngine(it) },
-                    colors = SwitchDefaults.colors(
-                        checkedThumbColor = mxOrange,
-                        checkedTrackColor = mxOrange.copy(0.4f),
-                        disabledCheckedThumbColor = mxOrange.copy(0.4f),
-                        disabledUncheckedThumbColor = Color.Gray.copy(0.4f)
-                    )
-                )
-            }
-
-            // "Surround simulator": the soundtrack goes through the surround simulator only. Shown next to audio mode;
-            // the two are mutually exclusive. Turning this off does not turn "Connect to audio mode" on (it only
-            // returns if it was already on before).
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text(
-                    text = "Surround simulator",
-                    color = Color.White,
-                    fontSize = 14.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
-                )
-                if (uiState.isConnectingEngineRoute && uiState.surroundEngineRoute) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(18.dp),
-                        color = mxOrange,
-                        strokeWidth = 2.dp
-                    )
-                    Spacer(Modifier.width(8.dp))
-                }
-                Switch(
-                    checked = surroundEngineOn,
-                    enabled = canRoute,
-                    onCheckedChange = { viewModel.setSurroundEngine(it) },
+                    onCheckedChange = { viewModel.setAudioMode(it) },
                     colors = SwitchDefaults.colors(
                         checkedThumbColor = mxOrange,
                         checkedTrackColor = mxOrange.copy(0.4f),
@@ -1906,10 +1857,10 @@ fun VideoSettingsSheetContent(
                 )
             } else if (uiState.routeAudioToEngine) {
                 Text(
-                    text = if (uiState.surroundEngineRoute) {
-                        "Audio is playing through the surround simulator (no DSP effects)"
-                    } else {
-                        "Audio is playing through the Audio Engine (DSP / Hi-Res)"
+                    text = when {
+                        uiState.surroundEngineRoute -> "Audio is playing through the surround simulator (no DSP effects)"
+                        uiState.surroundSimulatorEnabled -> "Audio is playing through the Audio Engine (DSP / Hi-Res) with the surround simulator"
+                        else -> "Audio is playing through the Audio Engine (DSP / Hi-Res)"
                     },
                     color = mxOrange,
                     fontSize = 12.sp,
@@ -2049,10 +2000,10 @@ fun VideoSettingsSheetContent(
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = if (uiState.surroundEngineRoute) {
-                                "Audio track connected with the surround simulator"
-                            } else {
-                                "Audio track connected with DSP Studio (Audio mode)"
+                            text = when {
+                                uiState.surroundEngineRoute -> "Audio track connected with the surround simulator"
+                                uiState.surroundSimulatorEnabled -> "Audio track connected with DSP Studio (Audio mode) and the surround simulator"
+                                else -> "Audio track connected with DSP Studio (Audio mode)"
                             },
                             color = Color.White,
                             fontSize = 16.sp,
