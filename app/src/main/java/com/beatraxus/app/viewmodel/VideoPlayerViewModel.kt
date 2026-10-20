@@ -1191,10 +1191,18 @@ class VideoPlayerViewModel(
 
     /**
      * "5.1 engine" switch: routes the soundtrack through the Audio Engine with the surround simulator only (no Studio
-     * DSP effects). Turning it ON while audio mode is active switches over to this mode; turning it OFF only has an
-     * effect while the 5.1 engine itself is the active route.
+     * DSP effects). Turning it ON while audio mode is active switches over to this mode; turning it OFF while it is the
+     * active route switches back to audio mode (still connected). It does nothing while audio mode is running.
      */
-    fun setSurroundEngine(enabled: Boolean) = setEngineRoute(enabled, surroundEngine = true)
+    fun setSurroundEngine(enabled: Boolean) {
+        val state = _uiState.value
+        if (!enabled && state.routeAudioToEngine && state.surroundEngineRoute) {
+            // Turning the 5.1/7.1 engine off keeps the Audio Engine connected: the route falls back to audio mode.
+            setEngineRoute(true, surroundEngine = false)
+        } else {
+            setEngineRoute(enabled, surroundEngine = true)
+        }
+    }
 
     private fun setEngineRoute(enabled: Boolean, surroundEngine: Boolean) {
         val current = _uiState.value
@@ -1339,6 +1347,20 @@ class VideoPlayerViewModel(
             delay(500)
             dspPreferences.saveConfig(updated, dspPreferences.getCurrentDeviceId())
         }
+    }
+
+    /**
+     * On/off switch of the surround simulator in the video player sheet. The simulator is exactly the 5.1/7.1 engine
+     * route, so the switch moves the video between the two routes and never disconnects the Audio Engine.
+     *
+     * ON: the 5.1/7.1 engine route (surround simulator only).
+     * OFF: "Connect to audio mode" stays ON, and the simulator is skipped in its pipeline (the engine never runs the
+     * surround stage on the audio mode route, whatever Studio DSP says).
+     */
+    fun setSurroundSimulatorEnabled(enabled: Boolean) {
+        val state = _uiState.value
+        if (!state.routeAudioToEngine || state.isConnectingEngineRoute) return
+        if (enabled) setSurroundEngine(true) else setRouteAudioToEngine(true)
     }
 
     fun setSurroundLayout(layout: SurroundLayout) = applySurroundConfig { it.copy(surroundLayout = layout) }

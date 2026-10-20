@@ -56,6 +56,7 @@ private val SurroundAmberSoft = Color(0xFFFFB347)
 @Composable
 internal fun VideoSurroundSection(
     uiState: VideoPlayerUiState,
+    onEnabled: (Boolean) -> Unit,
     onLayout: (SurroundLayout) -> Unit,
     onMode: (SurroundMode) -> Unit,
     onPreset: (String) -> Unit,
@@ -64,6 +65,8 @@ internal fun VideoSurroundSection(
     onSaveCustom: () -> Unit
 ) {
     val settings = uiState.surroundSettings
+    // The simulator is in the signal path only on the 5.1/7.1 engine route; audio mode skips it.
+    val simulatorOn = uiState.surroundEngineRoute
     val discrete = uiState.surroundDiscrete
     val sevenOne = if (discrete) uiState.surroundSourceChannels == 8 else uiState.surroundOutputChannels == 8
     val layoutName = if (sevenOne) "7.1" else "5.1"
@@ -73,40 +76,91 @@ internal fun VideoSurroundSection(
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         // ── Status ─────────────────────────────────────────────────────────────────────────────────────
         SurroundCard {
-            Text(
-                text = if (uiState.surroundEngineRoute) "5.1/7.1 ENGINE" else "AUDIO MODE · DSP STUDIO",
-                color = SurroundAmber,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Black,
-                letterSpacing = 0.8.sp
-            )
-            Spacer(Modifier.height(4.dp))
-            Text(
-                text = if (discrete) {
-                    "Real $layoutName soundtrack (${uiState.surroundSourceChannels} channels). Original channels are kept, nothing is upmixed."
-                } else {
-                    "Stereo soundtrack upmixed to $layoutName."
-                },
-                color = Color.White,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Medium
-            )
-            if (!uiState.surroundEngineRoute && !uiState.surroundActive) {
+            // On/off switch. OFF skips the simulator in the audio pipeline; the audio mode connection stays on.
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = "Surround simulator",
+                    color = Color.White,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f)
+                )
+                Switch(
+                    checked = simulatorOn,
+                    enabled = !uiState.isConnectingEngineRoute,
+                    onCheckedChange = onEnabled,
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = SurroundAmber,
+                        checkedTrackColor = SurroundAmber.copy(0.4f),
+                        uncheckedThumbColor = SurroundAmber,
+                        uncheckedTrackColor = SurroundAmber.copy(0.25f),
+                        uncheckedBorderColor = SurroundAmber.copy(0.5f),
+                        disabledCheckedThumbColor = SurroundAmber.copy(0.4f),
+                        disabledUncheckedThumbColor = Color.Gray.copy(0.4f)
+                    )
+                )
+            }
+            Spacer(Modifier.height(6.dp))
+            if (!simulatorOn) {
+                Text(
+                    text = "OFF",
+                    color = SurroundAmber,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Black,
+                    letterSpacing = 0.8.sp
+                )
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    text = "The surround simulator is off in DSP Studio, so these settings take effect once it is enabled there.",
-                    color = SurroundAmberSoft,
+                    text = "The simulator is skipped, so the soundtrack plays in its own layout. " +
+                        "The audio mode connection stays on.",
+                    color = Color.White,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium
+                )
+            } else {
+                Text(
+                    text = "5.1/7.1 ENGINE",
+                    color = SurroundAmber,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Black,
+                    letterSpacing = 0.8.sp
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = if (discrete) {
+                        "Real $layoutName soundtrack (${uiState.surroundSourceChannels} channels). Original channels are kept, nothing is upmixed."
+                    } else {
+                        "Stereo soundtrack upmixed to $layoutName."
+                    },
+                    color = Color.White,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium
+                )
+                if (!uiState.surroundActive) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = "The simulator is not active for this soundtrack right now " +
+                            "(an output that refused multichannel keeps it out of the path).",
+                        color = SurroundAmberSoft,
+                        fontSize = 11.sp
+                    )
+                }
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = "Phone speakers, headphones and Bluetooth play this folded down to stereo. " +
+                        "HDMI, a USB DAC or an AV receiver give real discrete speakers.",
+                    color = Color.White.copy(0.55f),
                     fontSize = 11.sp
                 )
             }
-            Spacer(Modifier.height(4.dp))
-            Text(
-                text = "Phone speakers, headphones and Bluetooth play this folded down to stereo. " +
-                    "HDMI, a USB DAC or an AV receiver give real discrete speakers.",
-                color = Color.White.copy(0.55f),
-                fontSize = 11.sp
-            )
         }
+
+        // Simulator off: nothing below applies (layout, mode, presets and levels only shape the simulator).
+        if (!simulatorOn) return@Column
 
         // ── Speaker preview: speakers move closer / further as their level changes ────────────────────
         val previewChannels = if (sevenOne) 8 else 6

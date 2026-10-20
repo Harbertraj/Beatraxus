@@ -1862,42 +1862,40 @@ fun VideoSettingsSheetContent(
                 )
             }
 
-            // "5.1/7.1 engine": the soundtrack leaves the normal path and goes through the surround simulator only.
-            // Hidden while audio mode is on (audio mode already carries the simulator when it is enabled in DSP Studio).
-            if (!audioModeOn) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text(
-                        text = "5.1/7.1 engine",
-                        color = Color.White,
-                        fontSize = 14.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f)
+            // "5.1/7.1 engine": the soundtrack goes through the surround simulator only. Shown next to audio mode;
+            // the two are mutually exclusive, and turning this off keeps "Connect to audio mode" on.
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = "5.1/7.1 engine",
+                    color = Color.White,
+                    fontSize = 14.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+                if (uiState.isConnectingEngineRoute && uiState.surroundEngineRoute) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        color = mxOrange,
+                        strokeWidth = 2.dp
                     )
-                    if (uiState.isConnectingEngineRoute && uiState.surroundEngineRoute) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(18.dp),
-                            color = mxOrange,
-                            strokeWidth = 2.dp
-                        )
-                        Spacer(Modifier.width(8.dp))
-                    }
-                    Switch(
-                        checked = surroundEngineOn,
-                        enabled = canRoute,
-                        onCheckedChange = { viewModel.setSurroundEngine(it) },
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = mxOrange,
-                            checkedTrackColor = mxOrange.copy(0.4f),
-                            disabledCheckedThumbColor = mxOrange.copy(0.4f),
-                            disabledUncheckedThumbColor = Color.Gray.copy(0.4f)
-                        )
-                    )
+                    Spacer(Modifier.width(8.dp))
                 }
+                Switch(
+                    checked = surroundEngineOn,
+                    enabled = canRoute,
+                    onCheckedChange = { viewModel.setSurroundEngine(it) },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = mxOrange,
+                        checkedTrackColor = mxOrange.copy(0.4f),
+                        disabledCheckedThumbColor = mxOrange.copy(0.4f),
+                        disabledUncheckedThumbColor = Color.Gray.copy(0.4f)
+                    )
+                )
             }
 
             if (uiState.isConnectingEngineRoute) {
@@ -2078,6 +2076,7 @@ fun VideoSettingsSheetContent(
         if (activeSheetType == PlayerSheetType.SURROUND) {
             VideoSurroundSection(
                 uiState = uiState,
+                onEnabled = { viewModel.setSurroundSimulatorEnabled(it) },
                 onLayout = { viewModel.setSurroundLayout(it) },
                 onMode = { viewModel.setSurroundMode(it) },
                 onPreset = { viewModel.applySurroundPreset(it) },

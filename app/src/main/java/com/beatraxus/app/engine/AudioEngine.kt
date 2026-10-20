@@ -179,6 +179,7 @@ class AudioEngine(
                 stopVideoAudioInternal(emitIdle = false)
                 // Must be set before the session (and its DSP pipeline) is created: they read the effective config.
                 setSurroundEngineRoute(surroundEngine)
+                setVideoAudioRoute(true)
 
             val mappedFormat = when (codecMime) {
                 MimeTypes.AUDIO_AC3 -> "ac3"
@@ -265,6 +266,7 @@ class AudioEngine(
             videoSession = null
         }
         setSurroundEngineRoute(false)
+        setVideoAudioRoute(false)
         if (emitIdle) {
             _videoRouteStateFlow.update { VideoRouteState(phase = VideoRoutePhase.IDLE) }
             Log.d("VideoAudioRouting", "Video route state -> IDLE")
@@ -370,11 +372,30 @@ class AudioEngine(
     private val dspConfig: DspConfig
         get() {
             val user = userDspConfig
-            if (!surroundEngineRoute) return user
-            val cached = surroundEngineConfigCache
-            if (cached != null && cached.first === user) return cached.second
-            return user.toSurroundEngineConfig().also { surroundEngineConfigCache = user to it }
+            if (surroundEngineRoute) {
+                val cached = surroundEngineConfigCache
+                if (cached != null && cached.first === user) return cached.second
+                return user.toSurroundEngineConfig().also { surroundEngineConfigCache = user to it }
+            }
+            // "Connect to audio mode" (video route without the 5.1/7.1 engine): the surround simulator skips this
+            // pipeline whatever Studio DSP has it set to; only the 5.1/7.1 engine route runs it.
+            if (videoAudioRoute && user.surroundEnabled) {
+                val cached = videoAudioConfigCache
+                if (cached != null && cached.first === user) return cached.second
+                return user.copy(surroundEnabled = false).also { videoAudioConfigCache = user to it }
+            }
+            return user
         }
+
+    /** True while a video soundtrack is routed through the engine (either route). */
+    @Volatile private var videoAudioRoute = false
+    private var videoAudioConfigCache: Pair<DspConfig, DspConfig>? = null
+
+    private fun setVideoAudioRoute(enabled: Boolean) {
+        if (videoAudioRoute == enabled) return
+        videoAudioRoute = enabled
+        dspRevision.incrementAndGet()
+    }
 
     private fun setSurroundEngineRoute(enabled: Boolean) {
         if (surroundEngineRoute == enabled) return
