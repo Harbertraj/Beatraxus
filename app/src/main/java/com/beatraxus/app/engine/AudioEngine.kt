@@ -410,6 +410,26 @@ class AudioEngine(
     }
 
     /**
+     * Hardware frame at which the NEXT track's first sample will be heard, used as the zero point of its
+     * elapsed-time counter on a track change (gapless, crossfade, promoted prepared session).
+     *
+     * The write cursor ([AudioOutput.totalFramesWritten]) is the right anchor only while it shares a base with
+     * [AudioOutput.playbackPositionFrames]: it then sits ahead of the playback head by the queued output buffer, so the
+     * counter starts at 0:00 exactly when the new song becomes audible. After a flush / output reconfigure (e.g. a
+     * Spatial or resampler change) the two counters can be out of step. Anchoring to a write cursor far below the
+     * playback head made `head - anchor` huge, which `currentRenderedPositionMs()` then clamped to the song duration,
+     * so the new song showed its FULL runtime (e.g. 4:37) while audio was actually playing from 0:00.
+     * If the cursor is not a plausible "slightly ahead of the head" value, anchor at the playback head instead.
+     */
+    private fun trackStartAnchorFrames(): Long {
+        val played = output.playbackPositionFrames()
+        val written = output.totalFramesWritten()
+        val rate = output.outputSampleRate().takeIf { it > 0 } ?: 48_000
+        val queued = written - played
+        return if (queued in 0L..(rate * MAX_PLAUSIBLE_QUEUED_SECONDS)) written else played
+    }
+
+    /**
      * Play Together: true when the prepared (paused) song has decoded audio waiting, so play() is heard at once
      * and the position is where it was asked to start.
      */
@@ -464,9 +484,9 @@ class AudioEngine(
                     // A seek that was pending on the previous song must not freeze this song's runtime.
                     isSeeking.set(false)
 
-                    // Use write-cursor (totalFramesWritten) as the reference for live-track continuation,
-                    // so the counter only starts once the new song's first written sample is rendered.
-                    activeSession?.setStartFrameOffset(output.totalFramesWritten())
+                    // Anchor the new song's elapsed counter where its first sample will be rendered
+                    // (see trackStartAnchorFrames for why this is not simply totalFramesWritten()).
+                    activeSession?.setStartFrameOffset(trackStartAnchorFrames())
 
                     // Don't reset positionMs to 0 if we are promoting a prepared session
                     // instead, sync it with the session's current internal position.
@@ -615,9 +635,9 @@ class AudioEngine(
                     nextSong = null
                     isSeeking.set(false)
 
-                    // Use write-cursor (totalFramesWritten) as the reference for live-track continuation,
-                    // so the counter only starts once the new song's first written sample is rendered.
-                    activeSession?.setStartFrameOffset(output.totalFramesWritten())
+                    // Anchor the new song's elapsed counter where its first sample will be rendered
+                    // (see trackStartAnchorFrames for why this is not simply totalFramesWritten()).
+                    activeSession?.setStartFrameOffset(trackStartAnchorFrames())
 
                     this@AudioEngine.positionMs = activeSession?.currentRenderedPositionMs() ?: positionMs
 
@@ -1054,8 +1074,7 @@ class AudioEngine(
                         val newSessionId = activeSession?.sessionId ?: 0L
                         nextSession = null
                         currentSong = activeSession?.song
-                        val currentHwPos = output.totalFramesWritten()
-                        activeSession?.setStartFrameOffset(currentHwPos)
+                        activeSession?.setStartFrameOffset(trackStartAnchorFrames())
                         updateAudioStateForSong(currentSong!!)
                         this@AudioEngine.positionMs = 0L
                         _playbackStateFlow.update { it.copy(currentSong = currentSong, sessionId = newSessionId) }
@@ -1214,8 +1233,7 @@ class AudioEngine(
                             if (newFormat != null && oldFormat != newFormat) {
                                 next.configure(newFormat)
                             }
-                            val framesAtTransition = output.totalFramesWritten()
-                            next.setStartFrameOffset(framesAtTransition)
+                            next.setStartFrameOffset(trackStartAnchorFrames())
 
                             updateAudioStateForSong(currentSong!!)
                             this@AudioEngine.positionMs = 0L
@@ -1442,8 +1460,17 @@ class AudioEngine(
             }
             
             val position = basePositionMs + framesToMs(framesSinceStart, sampleRate)
-            // Never report a position past the end of the track.
             val duration = song.durationMs
+
+            // Backstop: a position far beyond the track length cannot be real playback, it means the start anchor
+            // and the hardware counter are out of step. Clamping it would show the FULL runtime as the elapsed time,
+            // so re-anchor at the current hardware position and report the track start instead.
+            if (duration > 0L && position > duration + POSITION_DESYNC_TOLERANCE_MS) {
+                startFrameOffset = hwPosition
+                return basePositionMs.coerceAtMost(duration)
+            }
+
+            // Never report a position past the end of the track.
             return if (duration > 0L) position.coerceAtMost(duration) else position
         }
 
@@ -1641,6 +1668,10 @@ class AudioEngine(
         private const val RING_BUFFER_SAMPLES = 262_144 // Increased for better pre-fetch
         private const val RENDER_BATCH_SAMPLES = 1_024
         private const val NO_SEEK_PENDING = -1L
+        /** Largest write-cursor lead over the playback head still considered a real output buffer (seconds). */
+        private const val MAX_PLAUSIBLE_QUEUED_SECONDS = 5L
+        /** How far past the tagged duration the position may run before it is treated as a counter desync. */
+        private const val POSITION_DESYNC_TOLERANCE_MS = 30_000L
         private const val OUTPUT_RECONFIG_SKIP_MS = 0L
         /** Highest output rate used when 5.1/7.1 is rendered through the platform mixer (device not truly multichannel). */
         private const val SURROUND_MIXER_RATE_CAP = 48_000
