@@ -68,15 +68,32 @@ internal fun VideoSurroundSection(
     // The simulator is in the signal path only on the 5.1/7.1 engine route; audio mode skips it.
     val simulatorOn = uiState.surroundEngineRoute
     val discrete = uiState.surroundDiscrete
-    val sevenOne = if (discrete) uiState.surroundSourceChannels == 8 else uiState.surroundOutputChannels == 8
-    val layoutName = if (sevenOne) "7.1" else "5.1"
-    // The 5.1 engine never runs plain Stereo (it uses 5.1 instead), so show that as the selected layout.
-    val shownLayout = if (settings.layout == SurroundLayout.STEREO) SurroundLayout.FIVE_ONE else settings.layout
+    val layout = settings.layout
+    // What Auto resolves to for this soundtrack: a real 5.1 / 7.1 mix keeps its own layout, a stereo one stays stereo.
+    val autoChannels = when (uiState.surroundSourceChannels) {
+        8 -> 8
+        6 -> 6
+        else -> 2
+    }
+    // Channel count the speaker preview / level rows are drawn for.
+    val shownChannels = when {
+        discrete -> uiState.surroundSourceChannels
+        layout == SurroundLayout.SEVEN_ONE -> 8
+        layout == SurroundLayout.FIVE_ONE -> 6
+        layout == SurroundLayout.AUTO -> autoChannels
+        else -> 2
+    }
+    val sevenOne = shownChannels == 8
+    val layoutName = when (shownChannels) {
+        8 -> "7.1"
+        6 -> "5.1"
+        else -> "Stereo"
+    }
 
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         // ── Status ─────────────────────────────────────────────────────────────────────────────────────
         SurroundCard {
-            // On/off switch. OFF skips the simulator in the audio pipeline; the audio mode connection stays on.
+            // On/off switch. OFF stops the simulator route; "Connect to audio mode" is not turned on by it.
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -115,15 +132,14 @@ internal fun VideoSurroundSection(
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    text = "The simulator is skipped, so the soundtrack plays in its own layout. " +
-                        "The audio mode connection stays on.",
+                    text = "The simulator is off, so the soundtrack plays in its own layout.",
                     color = Color.White,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Medium
                 )
             } else {
                 Text(
-                    text = "5.1/7.1 ENGINE",
+                    text = "SURROUND SIMULATOR",
                     color = SurroundAmber,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Black,
@@ -131,16 +147,16 @@ internal fun VideoSurroundSection(
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    text = if (discrete) {
-                        "Real $layoutName soundtrack (${uiState.surroundSourceChannels} channels). Original channels are kept, nothing is upmixed."
-                    } else {
-                        "Stereo soundtrack upmixed to $layoutName."
+                    text = when {
+                        discrete -> "Real $layoutName soundtrack (${uiState.surroundSourceChannels} channels). Original channels are kept, nothing is upmixed."
+                        shownChannels > 2 -> "Stereo soundtrack upmixed to $layoutName."
+                        else -> "Stereo output: nothing is upmixed."
                     },
                     color = Color.White,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Medium
                 )
-                if (!uiState.surroundActive) {
+                if (!uiState.surroundActive && shownChannels > 2) {
                     Spacer(Modifier.height(4.dp))
                     Text(
                         text = "The simulator is not active for this soundtrack right now " +
@@ -159,52 +175,47 @@ internal fun VideoSurroundSection(
             }
         }
 
+        uiState.engineRouteError?.let { err ->
+            Text(text = err, color = Color(0xFFFF5252), fontSize = 12.sp, fontWeight = FontWeight.Medium)
+        }
+
         // Simulator off: nothing below applies (layout, mode, presets and levels only shape the simulator).
         if (!simulatorOn) return@Column
 
         // ── Speaker preview: speakers move closer / further as their level changes ────────────────────
-        val previewChannels = if (sevenOne) 8 else 6
         SurroundStageCard(
-            channels = if (uiState.surroundActive || uiState.surroundEngineRoute) previewChannels else 2,
+            channels = shownChannels,
             trimsDb = settings.trimsDb,
             isPlaying = uiState.isPlaying,
-            statusText = if (sevenOne) "7.1" else "5.1"
+            statusText = layoutName
         )
 
-        // ── Layout + mode (stereo upmix only) ─────────────────────────────────────────────────────────
-        if (!discrete) {
-            SurroundLabel("LAYOUT")
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                val isSevenOne = shownLayout == SurroundLayout.SEVEN_ONE
-                Text(
-                    "5.1",
-                    color = if (!isSevenOne) SurroundAmberSoft else Color.White.copy(0.5f),
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold
-                )
-                Switch(
-                    checked = isSevenOne,
-                    onCheckedChange = { onLayout(if (it) SurroundLayout.SEVEN_ONE else SurroundLayout.FIVE_ONE) },
-                    colors = SwitchDefaults.colors(
-                        checkedThumbColor = SurroundAmber,
-                        checkedTrackColor = SurroundAmber.copy(0.4f),
-                        uncheckedThumbColor = SurroundAmber,
-                        uncheckedTrackColor = SurroundAmber.copy(0.25f),
-                        uncheckedBorderColor = SurroundAmber.copy(0.5f)
-                    )
-                )
-                Text(
-                    "7.1",
-                    color = if (isSevenOne) SurroundAmberSoft else Color.White.copy(0.5f),
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold
+        // ── Layout: Stereo / 5.1 / 7.1 / Auto (Auto follows the soundtrack) ───────────────────────────
+        SurroundLabel("LAYOUT")
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            SurroundLayout.values().forEach { option ->
+                SurroundChip(
+                    label = option.displayName,
+                    selected = layout == option,
+                    onClick = { onLayout(option) }
                 )
             }
+        }
+        Text(
+            text = when {
+                discrete -> "This soundtrack is a real $layoutName mix and keeps its own channels."
+                layout == SurroundLayout.AUTO -> "Auto follows the soundtrack: 5.1 stays 5.1, 7.1 stays 7.1, stereo stays stereo (now $layoutName)."
+                else -> "Applies to stereo soundtracks. A real 5.1 / 7.1 track keeps its own channels."
+            },
+            color = Color.White.copy(0.55f),
+            fontSize = 11.sp
+        )
 
+        // Nothing is upmixed on a stereo output, so mode / presets / levels have nothing to shape.
+        if (shownChannels <= 2) return@Column
+
+        // ── Mode (stereo upmix only) ──────────────────────────────────────────────────────────────────
+        if (!discrete) {
             SurroundLabel("MODE")
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 SurroundMode.values().forEach { mode ->

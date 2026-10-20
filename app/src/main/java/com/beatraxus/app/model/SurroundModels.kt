@@ -187,7 +187,8 @@ fun discreteChannelTrimIndex(channels: Int): IntArray? = when (channels) {
  * Studio DSP chain (EQ, tone, spatial, reverb, limiter, ...) is reset to its neutral default, while everything that
  * describes how audio reaches the device (output mode, resampler, sample format, DVC, USB, buffers, dither) is kept so
  * the output still behaves the way the user configured it. The surround simulator is always on for this route, the
- * layout is never plain Stereo (5.1 is used instead), and Bit-Perfect / A/B bypass do not switch it off.
+ * layout (Stereo / 5.1 / 7.1 / Auto) is the one chosen in the video player, and Bit-Perfect / A/B bypass do not
+ * switch it off.
  */
 fun DspConfig.toSurroundEngineConfig(): DspConfig = DspConfig(
     outputMode = outputMode,
@@ -213,7 +214,10 @@ fun DspConfig.toSurroundEngineConfig(): DspConfig = DspConfig(
     hardwareVolumeEnabled = hardwareVolumeEnabled,
     customUsbDriverEnabled = customUsbDriverEnabled,
     surroundEnabled = true,
-    surroundLayout = if (surroundLayout == SurroundLayout.STEREO) SurroundLayout.FIVE_ONE else surroundLayout,
+    // The video player lets the user pick Stereo / 5.1 / 7.1 / Auto. For a video soundtrack "Auto" follows the track:
+    // a real 5.1 / 7.1 mix keeps its own channels and a stereo track stays stereo (see [resolveSurroundOutputChannels]),
+    // so it resolves to Stereo here (no upmix), and Stereo itself is honoured instead of being turned into 5.1.
+    surroundLayout = if (surroundLayout == SurroundLayout.AUTO) SurroundLayout.STEREO else surroundLayout,
     surroundMode = surroundMode,
     surroundChannelTrimsDb = surroundChannelTrimsDb,
     surroundActivePreset = surroundActivePreset,

@@ -123,14 +123,14 @@ private val EqLineEnd = Color.White
 
 /**
  * "Stage is live" colour. Deliberately a fixed neon signal green that is used ONLY by the pipeline header
- * (title + page tabs) - no other control on the Studio DSP pages uses it.
+ * (title bar + page tabs) - no other control on the Studio DSP pages uses it.
  */
 private val DspSignalOn = Color(0xFF39FF88)
 
 /**
- * Title with an audio-pipeline motif: SOURCE node -> line -> stage ticks -> line -> TITLE -> line -> stage ticks
- * -> line -> OUTPUT node. A soft pulse travels along the lines like signal flowing through the chain; the pulse and
- * the end nodes light up in the signal colour as soon as any stage is on.
+ * Title flanked by an intricate ornamental bar on both sides (replaces the old source -> stage -> output pipeline
+ * motif): a fading main line with a thin parallel hairline, a row of small diamonds and dots, and a larger diamond
+ * next to the title. A soft shimmer glides along the bar. The bar lights up in the signal colour while any stage is on.
  */
 @Composable
 private fun DspPipelineTitle(
@@ -138,82 +138,84 @@ private fun DspPipelineTitle(
     liveStages: Int,
     modifier: Modifier = Modifier
 ) {
-    val flow = rememberInfiniteTransition(label = "pipe_flow")
+    val flow = rememberInfiniteTransition(label = "title_bar_flow")
     val t by flow.animateFloat(
         initialValue = 0f,
         targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(2600, easing = LinearEasing)),
-        label = "pipe_t"
+        animationSpec = infiniteRepeatable(tween(3200, easing = LinearEasing)),
+        label = "title_bar_t"
     )
     val anyLive = liveStages > 0
-    val idleLine = Color.White.copy(alpha = 0.16f)
-    val idleNode = Color.White.copy(alpha = 0.34f)
-    val lit = DspSignalOn
+    val base = if (anyLive) DspSignalOn else Color.White
     Row(
         modifier = modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically
     ) {
         @Composable
-        fun RowScope.Rail(mirror: Boolean) {
+        fun RowScope.Bar(mirror: Boolean) {
             Canvas(
                 modifier = Modifier
                     .weight(1f)
-                    .height(16.dp)
+                    .height(18.dp)
             ) {
+                val dp = 1.dp.toPx()
                 val w = size.width
                 val cy = size.height / 2f
-                val dpPx = 1.dp.toPx()
-                val nodeR = 3.2f * dpPx
-                // End node (outer side) and inner junction (towards title)
-                val outerX = if (mirror) w - nodeR else nodeR
-                val innerX = if (mirror) nodeR else w - nodeR
-                val lineY = cy
-                // Base line with a small gap before each node
-                val a = minOf(outerX, innerX) + nodeR + 2f * dpPx
-                val b = maxOf(outerX, innerX) - nodeR - 2f * dpPx
-                if (b > a) {
-                    drawLine(idleLine, Offset(a, lineY), Offset(b, lineY), strokeWidth = 1.2f * dpPx, cap = StrokeCap.Round)
-                    // Lit overlay while live
-                    if (anyLive) {
-                        drawLine(lit.copy(alpha = 0.28f), Offset(a, lineY), Offset(b, lineY), strokeWidth = 1.2f * dpPx, cap = StrokeCap.Round)
-                    }
-                    // Stage ticks: small bars crossing the line, like inserts on a signal chain
-                    val ticks = 3
-                    for (k in 1..ticks) {
-                        val f = k / (ticks + 1f)
-                        val tx = a + (b - a) * f
-                        val tall = if (k == 2) 5.5f else 3.5f
-                        drawLine(
-                            if (anyLive) lit.copy(alpha = 0.55f) else idleLine,
-                            Offset(tx, lineY - tall * dpPx), Offset(tx, lineY + tall * dpPx),
-                            strokeWidth = 1.2f * dpPx, cap = StrokeCap.Round
-                        )
-                    }
-                    // Travelling pulse (only while a stage is live)
-                    if (anyLive) {
-                        val progress = if (mirror) (t + 0.5f) % 1f else t
-                        val px = a + (b - a) * progress
-                        drawCircle(
-                            brush = Brush.radialGradient(
-                                listOf(lit, lit.copy(alpha = 0.25f), Color.Transparent),
-                                center = Offset(px, lineY), radius = 7f * dpPx
-                            ),
-                            radius = 7f * dpPx, center = Offset(px, lineY)
-                        )
+                // innerX is the end next to the title, outerX the faded far end.
+                val innerX = if (mirror) 0f else w
+                val outerX = if (mirror) w else 0f
+                val dir = if (mirror) 1f else -1f // direction from inner to outer
+
+                fun at(f: Float) = innerX + dir * (w * f)
+                fun fade(from: Float) = Brush.horizontalGradient(
+                    colors = if (mirror) listOf(base.copy(alpha = from), Color.Transparent)
+                    else listOf(Color.Transparent, base.copy(alpha = from)),
+                    startX = 0f, endX = w
+                )
+
+                // Main line and thin parallel hairlines, fading towards the outer end
+                val startX = at(0.16f)
+                drawLine(fade(0.55f), Offset(startX, cy), Offset(outerX, cy), strokeWidth = 1.4f * dp, cap = StrokeCap.Round)
+                drawLine(fade(0.22f), Offset(at(0.26f), cy - 3.6f * dp), Offset(outerX, cy - 3.6f * dp), strokeWidth = 0.8f * dp)
+                drawLine(fade(0.22f), Offset(at(0.26f), cy + 3.6f * dp), Offset(outerX, cy + 3.6f * dp), strokeWidth = 0.8f * dp)
+
+                // Large diamond with a hollow ring next to the title
+                val big = 3.4f * dp
+                val cx0 = at(0.07f)
+                val diamond = androidx.compose.ui.graphics.Path().apply {
+                    moveTo(cx0, cy - big); lineTo(cx0 + big, cy); lineTo(cx0, cy + big); lineTo(cx0 - big, cy); close()
+                }
+                drawPath(diamond, base.copy(alpha = if (anyLive) 0.95f else 0.55f))
+                drawCircle(base.copy(alpha = 0.35f), big * 1.9f, Offset(cx0, cy), style = Stroke(0.8f * dp))
+
+                // Small diamonds and dots along the bar, getting fainter and smaller outwards
+                val marks = listOf(0.30f to 2.2f, 0.42f to 1.4f, 0.54f to 2.0f, 0.66f to 1.2f, 0.78f to 1.6f)
+                marks.forEachIndexed { i, (f, r) ->
+                    val x = at(f)
+                    val alpha = (0.55f - i * 0.08f).coerceAtLeast(0.15f)
+                    if (i % 2 == 0) {
+                        val d = r * dp
+                        val p = androidx.compose.ui.graphics.Path().apply {
+                            moveTo(x, cy - d); lineTo(x + d, cy); lineTo(x, cy + d); lineTo(x - d, cy); close()
+                        }
+                        drawPath(p, base.copy(alpha = alpha))
+                    } else {
+                        drawCircle(base.copy(alpha = alpha), r * dp, Offset(x, cy))
                     }
                 }
-                // Outer end node: ring (SOURCE / OUTPUT)
-                drawCircle(if (anyLive) lit else idleNode, nodeR, Offset(outerX, cy), style = Stroke(1.4f * dpPx))
-                drawCircle(if (anyLive) lit.copy(alpha = 0.9f) else idleNode.copy(alpha = 0.5f), nodeR * 0.42f, Offset(outerX, cy))
-                // Inner junction: small diamond next to the title
-                val d = 2.6f * dpPx
-                val path = androidx.compose.ui.graphics.Path().apply {
-                    moveTo(innerX, cy - d); lineTo(innerX + d, cy); lineTo(innerX, cy + d); lineTo(innerX - d, cy); close()
-                }
-                drawPath(path, if (anyLive) lit else idleNode)
+
+                // Soft shimmer gliding from the title outwards
+                val sx = innerX + dir * (w * t)
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        listOf(base.copy(alpha = if (anyLive) 0.55f else 0.30f), Color.Transparent),
+                        center = Offset(sx, cy), radius = 8f * dp
+                    ),
+                    radius = 8f * dp, center = Offset(sx, cy)
+                )
             }
         }
-        Rail(mirror = false)
+        Bar(mirror = false)
         Text(
             text = title,
             color = Color.White,
@@ -223,7 +225,7 @@ private fun DspPipelineTitle(
             maxLines = 1,
             modifier = Modifier.padding(horizontal = 8.dp)
         )
-        Rail(mirror = true)
+        Bar(mirror = true)
     }
 }
 

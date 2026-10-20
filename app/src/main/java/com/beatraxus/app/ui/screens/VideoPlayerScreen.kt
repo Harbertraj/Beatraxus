@@ -164,12 +164,9 @@ fun VideoPlayerScreen(
 
     var controlsVisible by remember { mutableStateOf(true) }
     var sheetType by remember { mutableStateOf(PlayerSheetType.NONE) }
-    // The surround icon (and its sheet) show whenever the soundtrack goes through the Audio Engine:
-    // 5.1/7.1 engine on, or "Connect to audio mode" on.
-    val showSurroundIcon = uiState.routeAudioToEngine
-    LaunchedEffect(showSurroundIcon) {
-        if (!showSurroundIcon && sheetType == PlayerSheetType.SURROUND) sheetType = PlayerSheetType.NONE
-    }
+    // The surround icon (and its sheet) show whenever the soundtrack goes through the Audio Engine (surround simulator
+    // or "Connect to audio mode"). The sheet stays open after the simulator is switched off so it can be switched on again.
+    val showSurroundIcon = uiState.routeAudioToEngine || uiState.isConnectingEngineRoute || sheetType == PlayerSheetType.SURROUND
 
     val appContext = context.applicationContext as Application
     val api = remember { SubtitleApiClientFactory.createApi() }
@@ -1862,15 +1859,16 @@ fun VideoSettingsSheetContent(
                 )
             }
 
-            // "5.1/7.1 engine": the soundtrack goes through the surround simulator only. Shown next to audio mode;
-            // the two are mutually exclusive, and turning this off keeps "Connect to audio mode" on.
+            // "Surround simulator": the soundtrack goes through the surround simulator only. Shown next to audio mode;
+            // the two are mutually exclusive. Turning this off does not turn "Connect to audio mode" on (it only
+            // returns if it was already on before).
             Row(
                 modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text(
-                    text = "5.1/7.1 engine",
+                    text = "Surround simulator",
                     color = Color.White,
                     fontSize = 14.sp,
                     maxLines = 1,
@@ -1909,7 +1907,7 @@ fun VideoSettingsSheetContent(
             } else if (uiState.routeAudioToEngine) {
                 Text(
                     text = if (uiState.surroundEngineRoute) {
-                        "Audio is playing through the 5.1/7.1 engine (surround simulator only)"
+                        "Audio is playing through the surround simulator (no DSP effects)"
                     } else {
                         "Audio is playing through the Audio Engine (DSP / Hi-Res)"
                     },
@@ -2052,7 +2050,7 @@ fun VideoSettingsSheetContent(
                     ) {
                         Text(
                             text = if (uiState.surroundEngineRoute) {
-                                "Audio track connected with the 5.1/7.1 engine (surround simulator)"
+                                "Audio track connected with the surround simulator"
                             } else {
                                 "Audio track connected with DSP Studio (Audio mode)"
                             },

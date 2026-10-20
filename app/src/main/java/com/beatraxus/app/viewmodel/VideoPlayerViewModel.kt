@@ -1187,20 +1187,32 @@ class VideoPlayerViewModel(
      * "Connect to audio mode" switch: routes the soundtrack through the Audio Engine with the whole Studio DSP chain.
      * Turning it ON while the 5.1 engine is active switches over to this mode; turning it OFF always stops routing.
      */
-    fun setRouteAudioToEngine(enabled: Boolean) = setEngineRoute(enabled, surroundEngine = false)
+    fun setRouteAudioToEngine(enabled: Boolean) {
+        // The user picked (or dropped) audio mode themselves: nothing to restore when the simulator is turned off.
+        audioModeBeforeSimulator = false
+        setEngineRoute(enabled, surroundEngine = false)
+    }
+
+    /** True when "Connect to audio mode" was already on (set by the user) before the surround simulator was turned on. */
+    private var audioModeBeforeSimulator = false
 
     /**
-     * "5.1 engine" switch: routes the soundtrack through the Audio Engine with the surround simulator only (no Studio
-     * DSP effects). Turning it ON while audio mode is active switches over to this mode; turning it OFF while it is the
-     * active route switches back to audio mode (still connected). It does nothing while audio mode is running.
+     * "Surround simulator" switch (formerly "5.1/7.1 engine"): routes the soundtrack through the Audio Engine with the
+     * surround simulator only (no Studio DSP effects). Turning it ON while audio mode is active switches over to this
+     * mode and remembers that audio mode was on. Turning it OFF stops the simulator route; "Connect to audio mode" is
+     * NOT switched on by this, it only comes back if the user already had it on before the simulator. It does nothing
+     * while audio mode is running.
      */
     fun setSurroundEngine(enabled: Boolean) {
         val state = _uiState.value
-        if (!enabled && state.routeAudioToEngine && state.surroundEngineRoute) {
-            // Turning the 5.1/7.1 engine off keeps the Audio Engine connected: the route falls back to audio mode.
-            setEngineRoute(true, surroundEngine = false)
+        if (!enabled) {
+            if (!state.surroundEngineRoute) return
+            val restoreAudioMode = audioModeBeforeSimulator
+            audioModeBeforeSimulator = false
+            if (restoreAudioMode) setEngineRoute(true, surroundEngine = false) else setEngineRoute(false, surroundEngine = false)
         } else {
-            setEngineRoute(enabled, surroundEngine = true)
+            if (state.routeAudioToEngine && !state.surroundEngineRoute) audioModeBeforeSimulator = true
+            setEngineRoute(true, surroundEngine = true)
         }
     }
 
@@ -1353,14 +1365,13 @@ class VideoPlayerViewModel(
      * On/off switch of the surround simulator in the video player sheet. The simulator is exactly the 5.1/7.1 engine
      * route, so the switch moves the video between the two routes and never disconnects the Audio Engine.
      *
-     * ON: the 5.1/7.1 engine route (surround simulator only).
-     * OFF: "Connect to audio mode" stays ON, and the simulator is skipped in its pipeline (the engine never runs the
-     * surround stage on the audio mode route, whatever Studio DSP says).
+     * ON: the simulator route (surround simulator only), also from fully off.
+     * OFF: the simulator route stops. "Connect to audio mode" is not switched on by it; it only stays / returns if the
+     * user already had it on before the simulator was turned on.
      */
     fun setSurroundSimulatorEnabled(enabled: Boolean) {
-        val state = _uiState.value
-        if (!state.routeAudioToEngine || state.isConnectingEngineRoute) return
-        if (enabled) setSurroundEngine(true) else setRouteAudioToEngine(true)
+        if (_uiState.value.isConnectingEngineRoute) return
+        setSurroundEngine(enabled)
     }
 
     fun setSurroundLayout(layout: SurroundLayout) = applySurroundConfig { it.copy(surroundLayout = layout) }

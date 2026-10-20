@@ -253,9 +253,19 @@ class SurroundUpmixerTest {
         assertFalse(cfg.limiterEnabled)
         assertFalse(cfg.bitPerfectEnabled)
         assertTrue(cfg.surroundEnabled)
-        assertEquals(SurroundLayout.FIVE_ONE, cfg.surroundLayout)
+        assertEquals(SurroundLayout.STEREO, cfg.surroundLayout)
         assertTrue(cfg.ditherEnabled)
-        assertEquals(6, resolveSurroundOutputChannels(cfg, 2, false, 2))
+        // Stereo layout is honoured: no upmix.
+        assertEquals(2, resolveSurroundOutputChannels(cfg, 2, false, 2))
+        // 5.1 / 7.1 upmix a stereo track; Auto follows the track (stereo stays stereo, real 5.1 / 7.1 keep channels).
+        val five = user.copy(surroundLayout = SurroundLayout.FIVE_ONE).toSurroundEngineConfig()
+        val seven = user.copy(surroundLayout = SurroundLayout.SEVEN_ONE).toSurroundEngineConfig()
+        val auto = user.copy(surroundLayout = SurroundLayout.AUTO).toSurroundEngineConfig()
+        assertEquals(6, resolveSurroundOutputChannels(five, 2, false, 2))
+        assertEquals(8, resolveSurroundOutputChannels(seven, 2, false, 2))
+        assertEquals(2, resolveSurroundOutputChannels(auto, 2, false, 8))
+        assertEquals(6, resolveSurroundOutputChannels(auto, 6, false, 8))
+        assertEquals(8, resolveSurroundOutputChannels(auto, 8, false, 8))
     }
 
     @Test
