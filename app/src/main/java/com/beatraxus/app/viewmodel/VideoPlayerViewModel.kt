@@ -1302,6 +1302,10 @@ class VideoPlayerViewModel(
     private fun observeSurroundSettings() {
         viewModelScope.launch {
             dspPreferences.dspConfig.collect { config ->
+                // A tap in the sheet is saved after a short debounce. Until it lands, the stored copy is older than what
+                // the sheet shows, so adopting it here (any unrelated setting write re-emits it) would flip the layout
+                // chips and the speaker preview back to the previous choice. The save re-emits the new value anyway.
+                if (surroundSaveJob?.isActive == true) return@collect
                 latestDspConfig = config
                 val settings = config.toVideoSurroundSettings()
                 _uiState.update { if (it.surroundSettings == settings) it else it.copy(surroundSettings = settings) }

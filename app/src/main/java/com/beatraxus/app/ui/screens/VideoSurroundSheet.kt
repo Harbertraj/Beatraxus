@@ -90,6 +90,12 @@ internal fun VideoSurroundSection(
         6 -> "5.1"
         else -> "Stereo"
     }
+    // What the speaker preview draws. It follows the layout chips straight away. Only two things overrule it: a real
+    // 5.1 / 7.1 soundtrack (always drawn with its own channels) and an output the device refused to open wide (the sound
+    // really is stereo, so the room shows stereo, like the Studio DSP surround page does).
+    val outputRefusedWide = !discrete && uiState.surroundFallback && shownChannels > 2
+    val previewChannels = if (outputRefusedWide) 2 else shownChannels
+    val previewStatus = if (outputRefusedWide) "Stereo only" else layoutName
 
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         // ── Status ─────────────────────────────────────────────────────────────────────────────────────
@@ -122,7 +128,40 @@ internal fun VideoSurroundSection(
                     )
                 )
             }
+
+            // ── Layout: Stereo / 5.1 / 7.1 / Auto, right under the on/off switch ─────────────────────────
+            // Always visible so a layout can be picked before the simulator is switched on. A real 5.1 / 7.1 soundtrack
+            // keeps its own channels, so the chips are greyed out for it instead of silently doing nothing.
+            Spacer(Modifier.height(12.dp))
+            SurroundLabel("LAYOUT")
             Spacer(Modifier.height(6.dp))
+            FlowRow(
+                modifier = Modifier.alpha(if (simulatorOn) 1f else 0.6f),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                SurroundLayout.values().forEach { option ->
+                    SurroundChip(
+                        label = option.displayName,
+                        selected = layout == option,
+                        enabled = !discrete,
+                        onClick = { onLayout(option) }
+                    )
+                }
+            }
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = when {
+                    discrete -> "This soundtrack is a real $layoutName mix and keeps its own channels, so the layout cannot change it."
+                    !simulatorOn -> "Pick the layout now; it is used as soon as the simulator is on."
+                    layout == SurroundLayout.AUTO -> "Auto follows the soundtrack: 5.1 stays 5.1, 7.1 stays 7.1, stereo stays stereo (now $layoutName)."
+                    else -> "Applies to stereo soundtracks. A real 5.1 / 7.1 track keeps its own channels."
+                },
+                color = Color.White.copy(0.55f),
+                fontSize = 11.sp
+            )
+            Spacer(Modifier.height(10.dp))
+
             if (!simulatorOn) {
                 Text(
                     text = "OFF",
@@ -189,31 +228,10 @@ internal fun VideoSurroundSection(
 
         // ── Speaker preview: speakers move closer / further as their level changes ────────────────────
         SurroundStageCard(
-            channels = shownChannels,
+            channels = previewChannels,
             trimsDb = settings.trimsDb,
             isPlaying = uiState.isPlaying,
-            statusText = layoutName
-        )
-
-        // ── Layout: Stereo / 5.1 / 7.1 / Auto (Auto follows the soundtrack) ───────────────────────────
-        SurroundLabel("LAYOUT")
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            SurroundLayout.values().forEach { option ->
-                SurroundChip(
-                    label = option.displayName,
-                    selected = layout == option,
-                    onClick = { onLayout(option) }
-                )
-            }
-        }
-        Text(
-            text = when {
-                discrete -> "This soundtrack is a real $layoutName mix and keeps its own channels."
-                layout == SurroundLayout.AUTO -> "Auto follows the soundtrack: 5.1 stays 5.1, 7.1 stays 7.1, stereo stays stereo (now $layoutName)."
-                else -> "Applies to stereo soundtracks. A real 5.1 / 7.1 track keeps its own channels."
-            },
-            color = Color.White.copy(0.55f),
-            fontSize = 11.sp
+            statusText = previewStatus
         )
 
         // Nothing is upmixed on a stereo output, so mode / presets / levels have nothing to shape.
