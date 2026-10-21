@@ -51,7 +51,12 @@ void main() {
 }
 """
 
-    /** Stand-in for flow_interp.frag: the same kind of work per displayed pixel (2 frame taps, 2 flow taps, blend). */
+    /**
+     * Stand-in for flow_interp.frag: the same kind of work per displayed pixel. The real shader takes 2 flow
+     * lookups (4 texels each), 4 plain frame taps for the trust test and 4 x 5 bicubic taps for the colour,
+     * so this does the same number of dependent fetches (an under-estimate here would make the recommender
+     * promise a target the GPU cannot present).
+     */
     private const val WARP_FRAGMENT = """#version 300 es
 precision highp float;
 uniform sampler2D uA;
@@ -67,6 +72,10 @@ void main() {
   vec3 a = texture(uA, vUv - fw * uT).rgb;
   vec3 b = texture(uB, vUv - bw * (1.0 - uT)).rgb;
   vec3 c = mix(a, b, uT);
+  for (int i = 0; i < 22; i++) {
+    float k = float(i) * 0.0007;
+    c += 0.002 * (texture(uA, vUv + fw * (uT + k)).rgb + texture(uB, vUv - bw * (uT + k)).rgb);
+  }
   float l = dot(c, vec3(0.299, 0.587, 0.114));
   o = vec4(mix(vec3(l), c, 1.1), 1.0);
 }

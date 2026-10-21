@@ -62,6 +62,7 @@ void main() {
   vec2 best = vec2(0.0);
   pred = vec2(0.0);
   float bestC;
+  bool skipRings = false;
 
   if (uMode == 2) {
     bestC = total(vec2(0.0), 2);
@@ -102,23 +103,32 @@ void main() {
       float c = total(v, 2);
       if (c < bestC) { bestC = c; best = v; }
     }
+    // The own vector already went through the two integer rings in the hierarchical pass: when it is still
+    // the best there is nothing new to refine (this skips ~16 of ~21 window matches for most blocks).
+    skipRings = (best == own);
   }
 
-  // local refinement: two integer rings, then (optionally) half and quarter pixel
-  for (int pass = 0; pass < 2; pass++) {
-    vec2 c0 = best;
-    for (int dy = -1; dy <= 1; dy++) {
-      for (int dx = -1; dx <= 1; dx++) {
-        if (dx == 0 && dy == 0) continue;
-        vec2 v = c0 + vec2(float(dx), float(dy));
-        float c = total(v, 2);
-        if (c < bestC) { bestC = c; best = v; }
+  // local refinement: two integer rings (skipped when a propagation pass kept its own, already refined vector)
+  if (!skipRings) {
+    for (int pass = 0; pass < 2; pass++) {
+      vec2 c0 = best;
+      for (int dy = -1; dy <= 1; dy++) {
+        for (int dx = -1; dx <= 1; dx++) {
+          if (dx == 0 && dy == 0) continue;
+          vec2 v = c0 + vec2(float(dx), float(dy));
+          float c = total(v, 2);
+          if (c < bestC) { bestC = c; best = v; }
+        }
       }
     }
   }
-  // switch to the full 64-tap cost for the final decisions
-  bestC = total(best, 1);
+  // Half and quarter pixel refinement. Candidates are compared with the same cheap 16-tap cost the integer
+  // search used (about a quarter of the work of the 64-tap cost, which made sub-pixel the most expensive pass);
+  // only the reported match quality below uses all 64 taps. Without sub-pixel vectors every block is off by up
+  // to half a WORK pixel, i.e. 1.5 px at 1080p / 3 px at 4K with a 640 px work image: that is the smeared,
+  // ghosted detail seen on the Performance preset.
   if (uSubpel == 1) {
+    bestC = total(best, 2);
     for (int pass = 0; pass < 2; pass++) {
       float step = (pass == 0) ? 0.5 : 0.25;
       vec2 c0 = best;
@@ -126,11 +136,12 @@ void main() {
         for (int dx = -1; dx <= 1; dx++) {
           if (dx == 0 && dy == 0) continue;
           vec2 v = c0 + vec2(float(dx), float(dy)) * step;
-          float c = total(v, 1);
+          float c = total(v, 2);
           if (c < bestC) { bestC = c; best = v; }
         }
       }
     }
   }
+  // Final match quality (what flow_consistency / flow_interp use as trust) always from the full 64-tap window.
   o = vec4(best, sad(best, 1), 0.0);
 }

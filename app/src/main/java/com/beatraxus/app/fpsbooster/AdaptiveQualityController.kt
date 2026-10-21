@@ -66,8 +66,10 @@ class AdaptiveQualityController(
         val LADDER: List<QualityLevel> = listOf(
             QualityLevel("Quality", 1280, FRAME_EDGE_ORIGINAL, 8, true),
             QualityLevel("Balanced", 960, FRAME_EDGE_ORIGINAL, 6, true),
-            QualityLevel("Performance", 640, FRAME_EDGE_ORIGINAL, 6, false),
-            QualityLevel("Minimal", 480, 1280, 6, false) // only reachable with adaptive resolution on
+            QualityLevel("Performance", 640, FRAME_EDGE_ORIGINAL, 6, true),
+            // Only the motion-analysis size shrinks. The shown frame always stays at the video's own resolution:
+            // the old 1280 px frame cap made the picture soft exactly when the device was already struggling.
+            QualityLevel("Minimal", 480, FRAME_EDGE_ORIGINAL, 6, true) // only reachable with adaptive resolution on
         )
 
         fun indexFor(q: BoosterQuality) = when (q) {

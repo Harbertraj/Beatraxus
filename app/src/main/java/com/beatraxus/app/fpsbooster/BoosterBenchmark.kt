@@ -34,7 +34,7 @@ data class BenchmarkResult(
 
     companion object {
         /** Bump when the test changes so old results are discarded and the test runs again. */
-        const val VERSION = 1
+        const val VERSION = 2   // v2: Performance now includes sub-pixel refinement and the cheaper refinement shader
 
         fun fromStored(s: String?): BenchmarkResult? {
             if (s.isNullOrBlank()) return null

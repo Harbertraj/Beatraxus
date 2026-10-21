@@ -21,6 +21,7 @@ import com.beatraxus.app.motionboost.MotionBoostTiming
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlin.math.abs
+import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.min
 
@@ -123,6 +124,9 @@ class OpticalFlowRenderer(
     private val texMatrix = FloatArray(16)
     private var frameIntervalNs = 0L
     private val holdCtl = HoldController()
+    private val cadence = CadenceTracker()
+    private var perf: PerfSession = PerfSession.create(context, 0, 0L)   // replaced in initGl (needs the thread id)
+    private var lumaTaps = 1
     private var vsyncPeriodNs = 8_333_333L
     private var lastVsyncNs = 0L
     private var nextDueNs = 0L
@@ -176,7 +180,10 @@ class OpticalFlowRenderer(
         handler.post { runGuarded("init failed") { initGl() } }
     }
 
-    fun setTargetFps(fps: Int) { targetFps = fps.coerceIn(1, 240) }
+    fun setTargetFps(fps: Int) {
+        targetFps = fps.coerceIn(1, 240)
+        handler.post { if (!released) perf.updateTarget((FramePacing.intervalNs(targetFps) * PerfHints.TARGET_SHARE).toLong()) }
+    }
 
     fun setColorGrade(brightness: Float, contrast: Float, saturation: Float) {
         this.brightness = brightness
@@ -204,6 +211,7 @@ class OpticalFlowRenderer(
         val done = CountDownLatch(1)
         val posted = handler.post {
             choreographer?.removeFrameCallback(frameCallback)
+            perf.close()
             releaseGl()
             thread.quitSafely()
             done.countDown()
@@ -232,10 +240,7 @@ class OpticalFlowRenderer(
         check(EGL14.eglChooseConfig(eglDisplay, configAttribs, 0, configs, 0, 1, numConfigs, 0) && numConfigs[0] > 0) {
             "no ES3 EGL config"
         }
-        eglContext = EGL14.eglCreateContext(
-            eglDisplay, configs[0], EGL14.EGL_NO_CONTEXT,
-            intArrayOf(EGL14.EGL_CONTEXT_CLIENT_VERSION, 3, EGL14.EGL_NONE), 0
-        )
+        eglContext = PerfHints.createContext(eglDisplay, configs[0])   // high GPU priority when the driver has it
         check(eglContext != EGL14.EGL_NO_CONTEXT) { "eglCreateContext" }
         eglSurface = EGL14.eglCreateWindowSurface(eglDisplay, configs[0], outputSurface, intArrayOf(EGL14.EGL_NONE), 0)
         check(eglSurface != EGL14.EGL_NO_SURFACE) { "eglCreateWindowSurface" }
@@ -272,6 +277,7 @@ class OpticalFlowRenderer(
         callbacks.onInputSurfaceReady(inputSurface!!)
 
         runCatching { Process.setThreadPriority(thread.threadId, Process.THREAD_PRIORITY_URGENT_DISPLAY) }
+        perf = PerfSession.create(context, thread.threadId, (FramePacing.intervalNs(targetFps) * PerfHints.TARGET_SHARE).toLong())
         choreographer = Choreographer.getInstance()
         choreographer?.postFrameCallback(frameCallback)
     }
@@ -295,6 +301,8 @@ class OpticalFlowRenderer(
         val ws = min(1f, lv.workEdge.toFloat() / max(width, height))
         val wW = max(32, (width * ws).toInt() and 1.inv())
         val wH = max(32, (height * ws).toInt() and 1.inv())
+        // exact box filter over the footprint of one work pixel (see luma_work.frag)
+        lumaTaps = ceil(max(frameW.toFloat() / wW, frameH.toFloat() / wH) - 0.01f).toInt().coerceIn(1, 6)
 
         val lw = ArrayList<Int>().apply { add(wW) }
         val lh = ArrayList<Int>().apply { add(wH) }
@@ -354,6 +362,10 @@ class OpticalFlowRenderer(
         var ts = st.timestamp
         // A codec that did not stamp a render time gives a value that is not on our clock: use arrival time.
         if (abs(ts - now) > 2_000_000_000L) ts = now
+        // The release time is snapped to the display's vsync grid (24 fps on 60 Hz arrives as 50/33/50/33 ms):
+        // fit it to an even line so the interpolation phase advances at a constant speed (see CadenceTracker).
+        val rawTs = ts
+        ts = cadence.onFrame(rawTs)
 
         val slot = acquireSlot()
         uploadFrame(slot)
@@ -369,11 +381,12 @@ class OpticalFlowRenderer(
             if (gap in MIN_FRAME_NS..MAX_FRAME_NS) {
                 frameIntervalNs = if (frameIntervalNs == 0L) gap else (frameIntervalNs * 7 + gap) / 8
             }
-            holdCtl.onFrame(ts - now)
+            holdCtl.onFrame(rawTs - now)
         } else {
             // seek / pause / new clip: never interpolate across it
             while (queue.isNotEmpty()) freeSlots.add(queue.removeAt(0))
             holdCtl.reset()
+            cadence.reset(); ts = cadence.onFrame(rawTs); slot.tsNs = ts
         }
         queue.add(slot)
 
@@ -410,6 +423,7 @@ class OpticalFlowRenderer(
         luma.use()
         tex(0, luma, "uSrc", slot.full)
         GLES30.glUniform2f(luma.loc("uTexel"), 1f / levelW[0], 1f / levelH[0])
+        GLES30.glUniform1i(luma.loc("uTaps"), lumaTaps)
         GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
 
         val down = downProg!!
@@ -558,7 +572,9 @@ class OpticalFlowRenderer(
             fail(FallbackReason.GPU_ERROR, "eglSwapBuffers failed (0x${Integer.toHexString(EGL14.eglGetError())})", null)
             return
         }
-        acc.onDrawMs((System.nanoTime() - workStart) / 1e6f)
+        val workNs = System.nanoTime() - workStart
+        perf.report(workNs)
+        acc.onDrawMs(workNs / 1e6f)
         nextDueNs = MotionBoostTiming.nextDue(nextDueNs, vsyncNs, intervalNs)
         lastDrawnA = a; lastDrawnB = b; lastDrawnTsA = a.tsNs; lastDrawnTsB = b.tsNs
         lastDrawnAlpha = alpha; lastDrawnWarp = warp
@@ -591,6 +607,7 @@ class OpticalFlowRenderer(
         GLES30.glUniform3f(ip.loc("uGrade"), brightness, contrast, saturation)
         GLES30.glUniform1f(ip.loc("uConsLo"), CONS_LO)
         GLES30.glUniform1f(ip.loc("uConsHi"), CONS_HI)
+        GLES30.glUniform1i(ip.loc("uSharp"), 1)
         GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
     }
 
@@ -664,6 +681,7 @@ class OpticalFlowRenderer(
         Log.e(TAG, what, t)
         released = true
         choreographer?.removeFrameCallback(frameCallback)
+        perf.close()
         callbacks.onError(reason, "$what${t?.message?.let { ": $it" } ?: ""}")
         handler.post { releaseGl(); thread.quitSafely() }
     }

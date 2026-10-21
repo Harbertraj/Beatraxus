@@ -17,7 +17,7 @@ ASSETS = Path(__file__).resolve().parents[2] / "app/src/main/assets/fpsbooster"
 PITCH = 4
 
 PRESETS = {  # work_edge, coarsest_range, subpel, refine_passes handled in shader
-    "performance": dict(work_edge=640, range=6, subpel=0),
+    "performance": dict(work_edge=640, range=6, subpel=1),
     "balanced": dict(work_edge=960, range=6, subpel=1),
     "quality": dict(work_edge=1280, range=8, subpel=1),
 }
@@ -31,6 +31,7 @@ class NewEngine(Engine):
     def __init__(self, preset: str = "balanced", lam: float = 0.003, cons=(1.0, 3.0)) -> None:
         self.name = f"new optical-flow [{preset}]"
         self.cfg = PRESETS[preset]
+        self.sharp = int(__import__("os").environ.get("FPSB_SHARP", "1"))
         self.lam = lam
         self.cons = cons
         self.gl = G.get_gl()
@@ -109,7 +110,8 @@ class NewEngine(Engine):
         gl.upload_rgba8(slot["full"], frame)
         lw, lh = self.sizes[0]
         gl.bind_target(slot["luma"][0], lw, lh)
-        self.p_luma.use().tex(0, "uSrc", slot["full"]).f2("uTexel", 1 / lw, 1 / lh)
+        taps = max(1, min(6, int(np.ceil(max(self.frameW / lw, self.frameH / lh) - 0.01))))
+        self.p_luma.use().tex(0, "uSrc", slot["full"]).f2("uTexel", 1 / lw, 1 / lh).i1("uTaps", taps)
         gl.draw()
         for i in range(1, len(self.sizes)):
             pw, ph = self.sizes[i - 1]
@@ -191,6 +193,6 @@ class NewEngine(Engine):
         else:
             p.f1("uT", t).i1("uWarp", 1)
         p.f2("uWork", *self.sizes[0]).f2("uFlowUv", self.sizes[0][0] / (gw * PITCH), self.sizes[0][1] / (gh * PITCH))
-        p.f3("uGrade", 0.0, 1.0, 1.0).f1("uConsLo", self.cons[0]).f1("uConsHi", self.cons[1])
+        p.f3("uGrade", 0.0, 1.0, 1.0).f1("uConsLo", self.cons[0]).f1("uConsHi", self.cons[1]).i1("uSharp", self.sharp)
         gl.draw()
         return gl.read_rgba8(self.out, self.frameW, self.frameH)[:, :, :3]

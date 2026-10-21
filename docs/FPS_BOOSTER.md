@@ -228,3 +228,32 @@ Researched from primary sources by a read-only agent; **nothing was downloaded a
 - **Recommendation: do not ship it in the base app. If pursued, deliver it as an optional downloadable model pack (hash-checked, MIT notice kept), behind an on-device benchmark gate (p95 < ~35 ms at the chosen resolution, sustained and thermal-tested).** First step would be a throwaway Android app that runs rife-v4.6 and a lite model with ncnn+Vulkan (MNN as the fallback runtime) at 540p/720p, fp16 on/off, for 5+ minutes, recording latency, memory and temperature. Only then design the Media3/SurfaceTexture integration. The engine setting already has an enum to extend (`BoosterEngine`), but no AI option is shown today.
 
 For the supported device range, AI interpolation is **not practical today** on mid-range SoCs; it could be an opt-in extra on flagship GPUs after the benchmark above.
+
+---
+
+## 10. Stability / sharpness fixes (target-FPS misses, blur, smearing)
+
+Root causes found by reading the code, and what changed (Optical flow **and** Classic unless noted):
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Output never quite reaches target, motion judders | ExoPlayer's frame timestamp is the *vsync-snapped release time* (24 fps on 60 Hz = 50/33/50/33 ms), so the interpolation phase moved at +-20 % speed from pair to pair | `CadenceTracker` fits a straight line through the last 30 frame times; used by both renderers |
+| Clocks ramp up too late, vsyncs missed | ADPF hint session was Classic-only and only in Extreme; no GPU priority | `PerfHints` / `PerfSession`: high-priority EGL context (`EGL_IMG_context_priority`), ADPF session with work-duration reports and `setPreferPowerEfficiency(false)` (API 35+), URGENT_DISPLAY thread, in both engines |
+| Blur on Classic (default quality) | "Extreme" (switched on by the default Performance quality) capped the **shown frame** at 1280 px | Extreme now only reduces the motion-search size; shown frame stays original resolution |
+| Blur when adaptive resolution steps down | "Minimal" rung capped the shown frame at 1280 px | Minimal keeps the full frame; only analysis size drops |
+| Smeared detail on 1080p/4K | `luma_work.frag` took 4 fixed taps: aliased luma when the frame is >2x the work image | exact box filter (`uTaps` = ceil(frame/work)) |
+| Smeared / ghosted detail on Performance | No sub-pixel vectors on Performance (up to half a work pixel = 1.5 px at 1080p, 3 px at 4K, wrong) | Performance enables sub-pixel; sub-pixel candidates now use the 16-tap cost (was 64) and the second refinement ring is skipped when propagation kept the block's own vector, so the extra precision is cheaper than before |
+| Generated frames softer than real frames ("breathing") | bilinear sampling of a fractional position | Catmull-Rom (5 taps) in `flow_interp.frag`, temporal blend leans toward the nearer frame |
+| Benchmark over-promised target FPS | stand-in warp shader was much cheaper than the real one | stand-in now does the same number of fetches; stored benchmark `VERSION` 2 forces a re-test |
+
+Desktop harness (llvmpipe, 1080p, mean over phases 0.2..0.8; sharpness = gradient energy / ground truth):
+
+| Scene | Before PSNR (Perf) | After | Before sharp | After sharp |
+|---|---|---|---|---|
+| pan 3 px | 43.9 | 49.4 | 0.948 | 0.985 |
+| pan 10 px | 30.9 | 38.7 | 0.940 | 0.995 |
+| pan 28 px | 28.7 | 35.8 | 0.938 | 0.980 |
+| zoom + rotate | 37.3 | 41.7 | 0.858 | 0.961 |
+| layers (occlusion) | 33.3 | 37.1 | 0.931 | 0.980 |
+
+Not measured on a phone: real GPU time, thermals. The on-device benchmark (first run of the sheet) re-runs automatically because of the version bump.

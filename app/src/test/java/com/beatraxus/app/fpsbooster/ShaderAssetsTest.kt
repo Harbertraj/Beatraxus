@@ -17,12 +17,12 @@ class ShaderAssetsTest {
 
     /** shader file -> uniforms OpticalFlowRenderer sets on it. Keep in sync with the renderer. */
     private val expected = mapOf(
-        "luma_work.frag" to listOf("uSrc", "uTexel"),
+        "luma_work.frag" to listOf("uSrc", "uTexel", "uTaps"),
         "pyramid_down.frag" to listOf("uSrc", "uSrcSize"),
         "flow_search.frag" to listOf("uRef", "uTgt", "uParent", "uSize", "uGrid", "uParentGrid", "uScale", "uMode", "uRange", "uSubpel", "uLambda"),
         "flow_consistency.frag" to listOf("uSelf", "uOther", "uGrid"),
         "cut_detect.frag" to listOf("uFlow", "uGrid", "uMeanThresh", "uPoorThresh"),
-        "flow_interp.frag" to listOf("uA", "uB", "uFw", "uBw", "uCut", "uT", "uWarp", "uWork", "uFlowUv", "uGrade", "uConsLo", "uConsHi")
+        "flow_interp.frag" to listOf("uA", "uB", "uFw", "uBw", "uCut", "uT", "uWarp", "uWork", "uFlowUv", "uGrade", "uConsLo", "uConsHi", "uSharp")
     )
 
     @Test fun everyShaderExistsAndIsEs3() {

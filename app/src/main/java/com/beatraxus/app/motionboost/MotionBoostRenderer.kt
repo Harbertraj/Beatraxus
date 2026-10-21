@@ -14,7 +14,6 @@ import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.Looper
-import android.os.PerformanceHintManager
 import android.os.Process
 import android.util.Log
 import android.view.Choreographer
@@ -70,7 +69,8 @@ class MotionBoostRenderer(
     /** Extreme performance: lighter working resolution + CPU/GPU performance hints. */
     @Volatile private var extreme = false
     private var appliedExtreme = false
-    private var hintSession: PerformanceHintManager.Session? = null
+    private var perf: com.beatraxus.app.fpsbooster.PerfSession? = null
+    private val cadence = com.beatraxus.app.fpsbooster.CadenceTracker()
     @Volatile private var brightness = 0f
     @Volatile private var contrast = 1f
     @Volatile private var saturation = 1f
@@ -222,8 +222,7 @@ class MotionBoostRenderer(
         check(EGL14.eglChooseConfig(eglDisplay, configAttribs, 0, configs, 0, 1, numConfigs, 0) && numConfigs[0] > 0) {
             "no ES3 EGL config"
         }
-        val ctxAttribs = intArrayOf(EGL14.EGL_CONTEXT_CLIENT_VERSION, 3, EGL14.EGL_NONE)
-        eglContext = EGL14.eglCreateContext(eglDisplay, configs[0], EGL14.EGL_NO_CONTEXT, ctxAttribs, 0)
+        eglContext = com.beatraxus.app.fpsbooster.PerfHints.createContext(eglDisplay, configs[0])
         check(eglContext != EGL14.EGL_NO_CONTEXT) { "eglCreateContext" }
         eglSurface = EGL14.eglCreateWindowSurface(eglDisplay, configs[0], outputSurface, intArrayOf(EGL14.EGL_NONE), 0)
         check(eglSurface != EGL14.EGL_NO_SURFACE) { "eglCreateWindowSurface" }
@@ -272,7 +271,10 @@ class MotionBoostRenderer(
 
         // Stored frames keep (up to) the source resolution so the picture stays at original quality;
         // only the motion search runs on a capped size. Extreme trades resolution for speed on both.
-        val frameEdge = if (appliedExtreme) EXTREME_FRAME_EDGE else MAX_FRAME_EDGE
+        // Extreme only lowers the motion-search size. The shown frame stays at the video's own resolution: capping
+        // it at 1280 px (the old behaviour, switched on by the default Performance quality) made every frame,
+        // real and generated, visibly soft on 1080p / 4K video.
+        val frameEdge = MAX_FRAME_EDGE
         val meEdge = if (appliedExtreme) EXTREME_ME_EDGE else MAX_WORK_EDGE
         val frameScale = min(1f, frameEdge.toFloat() / max(width, height))
         frameW = max(16, ((width * frameScale).toInt()) and 1.inv())
@@ -337,6 +339,10 @@ class MotionBoostRenderer(
         var ts = st.timestamp
         // If the codec did not stamp a render time the value is not on our clock: use arrival time.
         if (abs(ts - now) > 2_000_000_000L) ts = now
+        // Release times are snapped to the vsync grid (24 fps on 60 Hz = 50/33/50/33 ms): even them out so the
+        // in-between frames advance at a constant speed.
+        val rawTs = ts
+        ts = cadence.onFrame(rawTs)
 
         val newSlot = slots.first { it !== cur && it !== prev }
         copyFrameInto(newSlot)
@@ -353,7 +359,7 @@ class MotionBoostRenderer(
             prev = null // seek, pause, new clip: never interpolate across it
         }
         cur = newSlot
-        val lead = (ts - now).coerceIn(-50_000_000L, 200_000_000L)
+        val lead = (rawTs - now).coerceIn(-50_000_000L, 200_000_000L)
         leadNs = (leadNs * 7 + lead) / 8
     }
 
@@ -531,36 +537,22 @@ class MotionBoostRenderer(
         GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
     }
 
-    /** Extreme mode: tells the system how long a frame took so it can ramp CPU / GPU clocks up in time. */
+    /** Tells the system how long a frame took so it raises CPU / GPU clocks before a vsync is missed (all modes). */
     private fun reportWorkDuration(workNs: Long, targetNs: Long) {
-        val session = hintSession ?: return
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
-        try {
-            session.updateTargetWorkDuration(targetNs)
-            session.reportActualWorkDuration(workNs)
-        } catch (t: Throwable) {
-            hintSession = null
-        }
+        val session = perf ?: return
+        session.updateTarget((targetNs * com.beatraxus.app.fpsbooster.PerfHints.TARGET_SHARE).toLong())
+        session.report(workNs)
     }
 
     private fun updateHintSession() {
-        runCatching {
-            Process.setThreadPriority(
-                thread.threadId,
-                if (extreme) Process.THREAD_PRIORITY_URGENT_DISPLAY else Process.THREAD_PRIORITY_DISPLAY
-            )
-        }
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
-        if (!extreme) {
-            runCatching { hintSession?.close() }
-            hintSession = null
-            return
-        }
-        if (hintSession != null) return
-        hintSession = runCatching {
-            val mgr = context?.getSystemService(Context.PERFORMANCE_HINT_SERVICE) as? PerformanceHintManager
-            mgr?.createHintSession(intArrayOf(thread.threadId), 1_000_000_000L / targetFps.coerceAtLeast(1))
-        }.getOrNull()
+        // Maximum scheduling priority for the presenter thread in every mode: a missed vsync is a visible stutter.
+        runCatching { Process.setThreadPriority(thread.threadId, Process.THREAD_PRIORITY_URGENT_DISPLAY) }
+        if (perf != null) return
+        val ctx = context ?: return
+        perf = com.beatraxus.app.fpsbooster.PerfSession.create(
+            ctx, thread.threadId,
+            (1_000_000_000L / targetFps.coerceAtLeast(1) * com.beatraxus.app.fpsbooster.PerfHints.TARGET_SHARE).toLong()
+        )
     }
 
     private fun reportStats(nowNs: Long, sourceFps: Float) {
@@ -613,8 +605,8 @@ class MotionBoostRenderer(
 
     private fun releaseGl() {
         runCatching {
-            runCatching { hintSession?.close() }
-            hintSession = null
+            perf?.close()
+            perf = null
             surfaceTexture?.setOnFrameAvailableListener(null)
             inputSurface?.release()
             surfaceTexture?.release()
@@ -696,7 +688,6 @@ class MotionBoostRenderer(
         private const val BLOCK = 4 // motion block = 4x4 luma texels = 16x16 working pixels
         private const val MAX_WORK_EDGE = 1920      // motion search size cap
         private const val MAX_FRAME_EDGE = 3840     // stored / shown frame cap (original quality up to 4K)
-        private const val EXTREME_FRAME_EDGE = 1280 // Extreme performance
         private const val EXTREME_ME_EDGE = 960
         private const val MIN_FRAME_NS = 4_000_000L
         private const val MAX_FRAME_NS = 200_000_000L

@@ -43,7 +43,7 @@ enum class BoosterQuality(
     val searchRange: Int,
     val subpixel: Boolean
 ) {
-    PERFORMANCE("Performance", 640, FRAME_EDGE_ORIGINAL, 6, false),
+    PERFORMANCE("Performance", 640, FRAME_EDGE_ORIGINAL, 6, true),   // sub-pixel on: without it every vector is up to half a work pixel (1.5 px at 1080p) off => smeared detail
     BALANCED("Balanced", 960, FRAME_EDGE_ORIGINAL, 6, true),
     QUALITY("Quality", 1280, FRAME_EDGE_ORIGINAL, 8, true);
 

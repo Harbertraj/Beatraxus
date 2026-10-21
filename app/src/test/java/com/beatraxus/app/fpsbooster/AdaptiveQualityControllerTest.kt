@@ -33,6 +33,15 @@ class AdaptiveQualityControllerTest {
         }
     }
 
+    @Test fun noRungEverShrinksTheShownPicture() {
+        // Adaptive resolution may lower the motion-analysis size, never the resolution of the frames on screen.
+        AdaptiveQualityController.LADDER.forEach { assertEquals(it.label, FRAME_EDGE_ORIGINAL, it.frameEdge) }
+    }
+
+    @Test fun everyRungUsesSubPixelVectors() {
+        AdaptiveQualityController.LADDER.forEach { assertTrue(it.label, it.subpixel) }
+    }
+
     @Test fun calmWindowsNeverChangeAnything() {
         val c = AdaptiveQualityController(BoosterQuality.BALANCED, true, false)
         repeat(50) {
