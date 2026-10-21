@@ -464,7 +464,37 @@ fun SettingsScreen(
                         }
                     },
                     actions = {
-                        Spacer(Modifier.width(60.dp))
+                        if (currentSection == "About") {
+                            // In-app logcat viewer (time-range filter), opened from the About screen's top-right corner.
+                            val haptic = LocalHapticFeedback.current
+                            IconButton(
+                                onClick = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    sectionStack.add("About: Logcat")
+                                },
+                                modifier = Modifier.padding(end = 12.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(38.dp)
+                                        .glassIconBackground(
+                                            backgroundColor = Color.White.copy(alpha = 0.05f),
+                                            shape = CircleShape,
+                                            borderColor = Color.White.copy(alpha = 0.1f)
+                                        ),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        Icons.Rounded.Terminal,
+                                        "Logcat",
+                                        tint = TextWhite,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                            }
+                        } else {
+                            Spacer(Modifier.width(60.dp))
+                        }
                     }
                 )
             }
@@ -613,6 +643,7 @@ fun SettingsScreen(
                             "Nextcloud Settings" -> MetadataSyncContent(uiState, playerViewModel, provider = com.beatraxus.app.model.CloudProvider.NEXTCLOUD)
                             "Last.fm" -> LastFmContent(uiState, playerViewModel)
                             "About" -> AboutContent()
+                            "About: Logcat" -> LogcatContent()
                             "Backup & Restore" -> BackupRestoreContent(
                                 playerViewModel = playerViewModel,
                                 onExport = { showExportPassphraseDialog = true },
