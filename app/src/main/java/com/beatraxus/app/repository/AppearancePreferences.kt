@@ -11,6 +11,11 @@ import com.beatraxus.app.model.AlbumArtTransform
 import com.beatraxus.app.model.QualityBadgeStyle
 import com.beatraxus.app.model.SeekbarStyle
 import com.beatraxus.app.repository.lyrics.LyricsProviderRegistry
+import com.beatraxus.app.theme.ThemeCodec
+import com.beatraxus.app.theme.ThemeSpec
+import com.beatraxus.app.theme.ThemeSurface
+import com.beatraxus.app.theme.backgroundFor
+import com.beatraxus.app.ui.theme.DspPalette
 import com.beatraxus.app.utils.DeviceUtils
 import com.beatraxus.app.utils.HomeSectionKeys
 import kotlinx.coroutines.flow.Flow
@@ -157,8 +162,73 @@ class AppearancePreferences(context: Context) {
             surroundAnimated = preferences[SURROUND_ANIMATED] ?: true,
             surroundShowArcs = preferences[SURROUND_SHOW_ARCS] ?: true,
             surroundShowScreen = preferences[SURROUND_SHOW_SCREEN] ?: true,
-            selectedFontId = preferences[SELECTED_FONT_ID] ?: "system"
+            selectedFontId = preferences[SELECTED_FONT_ID] ?: "system",
+            activeTheme = preferences[ACTIVE_THEME_JSON]
+                ?.let { runCatching { ThemeCodec.parseTheme(it).getOrThrow() }.getOrNull() }
         )
+    }
+
+    /**
+     * Applies a theme in one atomic edit, so the UI never shows a half-applied look. Every value
+     * in [ThemeSpec] was already validated and clamped by [ThemeCodec].
+     */
+    suspend fun applyTheme(spec: ThemeSpec) {
+        dataStore.edit { p ->
+            p[SEEKBAR_STYLE] = spec.seekbarStyle
+            p[SELECTED_FONT_ID] = spec.fontId
+
+            p[DSP_PALETTE_ID] = spec.dspPaletteId
+            if (spec.dspPaletteId == DspPalette.CUSTOM_ID) {
+                p[DSP_CUSTOM_PRIMARY] = spec.dspPrimary
+                p[DSP_CUSTOM_SECONDARY] = spec.dspSecondary
+            }
+
+            spec.backgroundFor(ThemeSurface.MAIN).let {
+                p[MAIN_BACKGROUND_MODE] = it.mode.name
+                p[MAIN_BLUR_INTENSITY] = it.blurIntensity
+                p[MAIN_BLUR_DARKNESS] = it.blurDarkness
+                p[MAIN_SOLID_COLOR_INTENSITY] = it.solidIntensity
+                p[MAIN_SOLID_COLOR_DARKNESS] = it.solidDarkness
+            }
+            spec.backgroundFor(ThemeSurface.HOME).let {
+                p[HOME_BACKGROUND_MODE] = it.mode.name
+                p[HOME_BLUR_INTENSITY] = it.blurIntensity
+                p[HOME_BLUR_DARKNESS] = it.blurDarkness
+                p[HOME_SOLID_COLOR_INTENSITY] = it.solidIntensity
+                p[HOME_SOLID_COLOR_DARKNESS] = it.solidDarkness
+            }
+            spec.backgroundFor(ThemeSurface.SETTINGS).let {
+                p[SETTINGS_BACKGROUND_MODE] = it.mode.name
+                p[SETTINGS_BLUR_INTENSITY] = it.blurIntensity
+                p[SETTINGS_BLUR_DARKNESS] = it.blurDarkness
+                p[SETTINGS_SOLID_COLOR_INTENSITY] = it.solidIntensity
+                p[SETTINGS_SOLID_COLOR_DARKNESS] = it.solidDarkness
+            }
+            spec.backgroundFor(ThemeSurface.NOW_PLAYING).let {
+                p[NOW_PLAYING_BACKGROUND_MODE] = it.mode.name
+                p[BLUR_INTENSITY] = it.blurIntensity
+                p[BLUR_DARKNESS] = it.blurDarkness
+                p[SOLID_COLOR_INTENSITY] = it.solidIntensity
+                p[SOLID_COLOR_DARKNESS] = it.solidDarkness
+            }
+            spec.backgroundFor(ThemeSurface.MINI_PLAYER).let {
+                p[MINI_PLAYER_BACKGROUND_MODE] = it.mode.name
+                p[MINI_PLAYER_BLUR_INTENSITY] = it.blurIntensity
+                p[MINI_PLAYER_BLUR_DARKNESS] = it.blurDarkness
+                p[MINI_PLAYER_SOLID_COLOR_INTENSITY] = it.solidIntensity
+                p[MINI_PLAYER_SOLID_COLOR_DARKNESS] = it.solidDarkness
+            }
+
+            p[ACTIVE_THEME_JSON] = ThemeCodec.toJson(spec)
+        }
+    }
+
+    /**
+     * Stops following the theme. The settings it applied stay exactly as they are (they simply
+     * become the user's own), only the accent override and the "Theme" tags go away.
+     */
+    suspend fun clearActiveTheme() {
+        dataStore.edit { it.remove(ACTIVE_THEME_JSON) }
     }
 
     suspend fun setSurroundRoomTheme(id: String) { dataStore.edit { it[SURROUND_ROOM_THEME] = id } }
@@ -582,5 +652,8 @@ class AppearancePreferences(context: Context) {
         private val SURROUND_SHOW_SCREEN = booleanPreferencesKey("surround_show_screen")
 
         private val SELECTED_FONT_ID = stringPreferencesKey("selected_font_id")
+
+        // Themes: the full spec of the applied theme (see com.beatraxus.app.theme)
+        private val ACTIVE_THEME_JSON = stringPreferencesKey("active_theme_json")
     }
 }

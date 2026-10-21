@@ -285,7 +285,10 @@ data class AppearanceConfig(
     val surroundShowScreen: Boolean = true,          // screen bar and sweet-spot halo
 
     // Fonts
-    val selectedFontId: String = "system"
+    val selectedFontId: String = "system",
+
+    // Theme currently applied from Settings > Appearance > Themes (null = none / fully manual).
+    val activeTheme: com.beatraxus.app.theme.ThemeSpec? = null
 )
 
 enum class AudioOutputDevice(val displayName: String) {

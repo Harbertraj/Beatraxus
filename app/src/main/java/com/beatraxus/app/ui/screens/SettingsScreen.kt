@@ -1,6 +1,8 @@
 package com.beatraxus.app.ui.screens
 
 import android.app.Application
+import com.beatraxus.app.theme.ThemeArea
+import com.beatraxus.app.theme.themeSubtitle
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
 import java.util.Locale
@@ -606,6 +608,7 @@ fun SettingsScreen(
                         when (section) {
                             "Audio" -> AudioContent(uiState, playerViewModel, onEditValue = { editingValue = it })
                             "Appearance" -> AppearanceContent(uiState, sectionStack)
+                            "Appearance: Themes" -> ThemesContent(uiState.appearance)
                             "Appearance: Main Interface" -> MainScreenAppearanceContent(uiState, playerViewModel)
                             "Appearance: Now Playing Interface" -> NowPlayingAppearanceContent(uiState, playerViewModel, sectionStack)
                             "Appearance: Seekbar Settings" -> SeekbarSettingsContent(uiState, playerViewModel)
@@ -829,38 +832,46 @@ private fun ValueEditDialog(
 
 @Composable
 fun AppearanceContent(uiState: PlayerUiState, sectionStack: SnapshotStateList<String>) {
+    val appearance = uiState.appearance
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         SettingMenuItem(
+            title = "Themes",
+            subtitle = appearance.activeTheme?.let { "Theme: ${it.name}" } ?: "Browse, install, import and share themes",
+            icon = Icons.Rounded.AutoAwesome,
+            iconColor = PrimaryCyan,
+            onClick = { sectionStack.add("Appearance: Themes") }
+        )
+        SettingMenuItem(
             title = "Main Interface",
-            subtitle = "Settings for the main app container",
+            subtitle = appearance.themeSubtitle("Settings for the main app container", ThemeArea.MAIN, ThemeArea.MINI_PLAYER),
             icon = Icons.Rounded.Smartphone,
             iconColor = PrimaryCyan,
             onClick = { sectionStack.add("Appearance: Main Interface") }
         )
         SettingMenuItem(
             title = "Now Playing Interface",
-            subtitle = "Customize the player interface and shortcuts",
+            subtitle = appearance.themeSubtitle("Customize the player interface and shortcuts", ThemeArea.NOW_PLAYING),
             icon = Icons.Rounded.PlayCircle,
             iconColor = PrimaryCyan,
             onClick = { sectionStack.add("Appearance: Now Playing Interface") }
         )
         SettingMenuItem(
             title = "Home Interface",
-            subtitle = "Customize visible categories on the home interface",
+            subtitle = appearance.themeSubtitle("Customize visible categories on the home interface", ThemeArea.HOME),
             icon = Icons.Rounded.Dashboard,
             iconColor = PrimaryCyan,
             onClick = { sectionStack.add("Appearance: Home Interface") }
         )
         SettingMenuItem(
             title = "Settings Interface",
-            subtitle = "Customize background for the settings interface",
+            subtitle = appearance.themeSubtitle("Customize background for the settings interface", ThemeArea.SETTINGS),
             icon = Icons.Rounded.Palette,
             iconColor = PrimaryCyan,
             onClick = { sectionStack.add("Appearance: Settings Interface") }
         )
         SettingMenuItem(
             title = "Studio DSP Interface",
-            subtitle = "Dual Colour Palette",
+            subtitle = appearance.themeSubtitle("Dual Colour Palette", ThemeArea.DSP),
             icon = Icons.Rounded.ColorLens,
             iconColor = PrimaryCyan,
             onClick = { sectionStack.add("Appearance: Dual Colour Palette") }
@@ -874,7 +885,10 @@ fun AppearanceContent(uiState: PlayerUiState, sectionStack: SnapshotStateList<St
         )
         SettingMenuItem(
             title = "Fonts",
-            subtitle = "Customize app typography (${FontRepository.getFontItem(uiState.appearance.selectedFontId).name})",
+            subtitle = appearance.themeSubtitle(
+                "Customize app typography (${FontRepository.getFontItem(uiState.appearance.selectedFontId).name})",
+                ThemeArea.FONT
+            ),
             icon = Icons.Rounded.FontDownload,
             iconColor = PrimaryCyan,
             onClick = { sectionStack.add("Appearance: Fonts") }
@@ -1479,7 +1493,7 @@ fun NowPlayingAppearanceContent(uiState: PlayerUiState, playerViewModel: PlayerV
 
         SettingMenuItem(
             title = "Seekbar Design",
-            subtitle = "Change the look and behavior of the progress bar",
+            subtitle = appearance.themeSubtitle("Change the look and behavior of the progress bar", ThemeArea.SEEKBAR),
             icon = Icons.Rounded.LinearScale,
             iconColor = PrimaryCyan,
             onClick = { sectionStack.add("Appearance: Seekbar Settings") }

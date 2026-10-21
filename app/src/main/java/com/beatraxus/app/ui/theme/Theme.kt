@@ -10,6 +10,7 @@ import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontFamily
@@ -50,6 +51,9 @@ val appFontFamily: FontFamily?
 @Composable
 fun BeatraxusTheme(
     fontFamily: FontFamily = FontFamily.Default,
+    /** Accent colours of the applied theme (ARGB), or null for the app's default colours. */
+    themeAccent: Int? = null,
+    themeAccentSecondary: Int? = null,
     content: @Composable () -> Unit
 ) {
     val view = LocalView.current
@@ -67,8 +71,22 @@ fun BeatraxusTheme(
     val typography = remember(fontFamily) {
         getBeatraxusTypography(fontFamily)
     }
+    val colorScheme = remember(themeAccent, themeAccentSecondary) {
+        if (themeAccent == null) BeatraxusDarkColorScheme
+        else {
+            val primary = Color(themeAccent)
+            val secondary = Color(themeAccentSecondary ?: themeAccent)
+            BeatraxusDarkColorScheme.copy(
+                primary = primary,
+                // Keep text readable on the accent whether it is pale or dark.
+                onPrimary = if (primary.luminance() > 0.5f) Color.Black else Color.White,
+                secondary = secondary,
+                onSecondary = if (secondary.luminance() > 0.5f) Color.Black else Color.White
+            )
+        }
+    }
     MaterialTheme(
-        colorScheme = BeatraxusDarkColorScheme,
+        colorScheme = colorScheme,
         typography  = typography
     ) {
         // Make the selected font the base for every Text(), including ones that set only

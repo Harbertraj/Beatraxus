@@ -6606,21 +6606,37 @@ fun SlideDrawerMenu(
                         icon = Icons.Rounded.GraphicEq,
                         contentDescription = "Equalizer",
                         iconSize = 22.dp,
-                        onClick = { onNavigateToDsp(); onClose() }
+                        onClick = { 
+                            onClose() 
+                            // Give time for drawer animation to finish so the UI remains smooth
+                            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                                onNavigateToDsp()
+                            }, 250)
+                        }
                     )
                     DrawerBottomIconButton(
                         modifier = Modifier.weight(1f),
                         icon = Icons.Rounded.Groups,
                         contentDescription = "Play Together",
                         iconSize = 24.dp,
-                        onClick = { onNavigateToPlayTogether(); onClose() }
+                        onClick = { 
+                            onClose()
+                            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                                onNavigateToPlayTogether()
+                            }, 250)
+                        }
                     )
                     DrawerBottomIconButton(
                         modifier = Modifier.weight(1f),
                         icon = Icons.Rounded.Settings,
                         contentDescription = "Settings",
                         iconSize = 22.dp,
-                        onClick = { onNavigateToSettings(); onClose() }
+                        onClick = { 
+                            onClose()
+                            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                                onNavigateToSettings()
+                            }, 250)
+                        }
                     )
                 }
             }

@@ -96,6 +96,13 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="beatraxus" android:host="lastfm" />
             </intent-filter>
+            <!-- Theme sharing: beatraxus://theme?data=... -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="beatraxus" android:host="theme" />
+            </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />

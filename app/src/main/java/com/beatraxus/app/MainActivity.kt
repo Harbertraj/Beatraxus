@@ -53,6 +53,8 @@ import com.google.android.gms.common.api.Scope
 import com.google.api.services.drive.DriveScopes
 
 import com.beatraxus.app.R
+import com.beatraxus.app.theme.themeAccent
+import com.beatraxus.app.theme.themeAccentSecondary
 import com.beatraxus.app.repository.DriveAccount
 import com.beatraxus.app.service.AudioPlaybackService
 import com.beatraxus.app.ui.screens.APP_OPEN_EXIT_FADE_MS
@@ -273,11 +275,17 @@ class MainActivity : FragmentActivity() {
             val currentFontFamily = remember(uiState.appearance.selectedFontId) {
                 com.beatraxus.app.ui.theme.FontRepository.getFontFamily(uiState.appearance.selectedFontId)
             }
-            BeatraxusTheme(fontFamily = currentFontFamily) {
+            BeatraxusTheme(
+                fontFamily = currentFontFamily,
+                themeAccent = uiState.appearance.themeAccent,
+                themeAccentSecondary = uiState.appearance.themeAccentSecondary
+            ) {
                 BeatraxusApp(
                     viewModel = viewModel,
                     onRequestPermissions = { action -> requestPermissions(action) }
                 )
+                val pendingThemeLink by com.beatraxus.app.theme.ThemeInbox.pending.collectAsStateWithLifecycle()
+                pendingThemeLink?.let { com.beatraxus.app.ui.screens.ThemeImportDialog(it) }
             }
         }
 
@@ -328,6 +336,9 @@ class MainActivity : FragmentActivity() {
                     } else {
                         Log.w("MainActivity", "Ignoring unsolicited lastfm callback intent")
                     }
+                } else if (uri.scheme == "beatraxus" && uri.host == "theme") {
+                    // Shared theme. Never applied silently: the UI shows a preview and asks first.
+                    com.beatraxus.app.theme.ThemeInbox.offer(uri.toString())
                 } else {
                     // Check if it's an audio file/content
                     val type = intent.type ?: contentResolver.getType(uri)
@@ -730,23 +741,32 @@ fun BeatraxusApp(
                     }
                 },
                 exitTransition = {
-                    // Settings opens from the left, so Main gives way towards the right.
                     val toSettings = targetState.destination.route == Screen.Settings.route
-                    fadeOut(tween(400, easing = FastOutSlowInEasing)) +
-                            slideOutOfContainer(
-                                towards = if (toSettings) AnimatedContentTransitionScope.SlideDirection.End
-                                          else AnimatedContentTransitionScope.SlideDirection.Start,
-                                animationSpec = tween(400, easing = FastOutSlowInEasing)
-                            )
+                    val toDsp = targetState.destination.route == Screen.Dsp.route
+                    if (toSettings || toDsp) {
+                        // Settings and Dsp slide over Main, so Main stays still and fades slightly
+                        fadeOut(tween(400))
+                    } else {
+                        fadeOut(tween(400, easing = FastOutSlowInEasing)) +
+                                slideOutOfContainer(
+                                    towards = AnimatedContentTransitionScope.SlideDirection.Start,
+                                    animationSpec = tween(400, easing = FastOutSlowInEasing)
+                                )
+                    }
                 },
                 popEnterTransition = {
                     val fromSettings = initialState.destination.route == Screen.Settings.route
-                    fadeIn(tween(400, easing = FastOutSlowInEasing)) +
-                            slideIntoContainer(
-                                towards = if (fromSettings) AnimatedContentTransitionScope.SlideDirection.Start
-                                          else AnimatedContentTransitionScope.SlideDirection.End,
-                                animationSpec = tween(400, easing = FastOutSlowInEasing)
-                            )
+                    val fromDsp = initialState.destination.route == Screen.Dsp.route
+                    if (fromSettings || fromDsp) {
+                        // Main just fades back in, sitting still
+                        fadeIn(tween(400))
+                    } else {
+                        fadeIn(tween(400, easing = FastOutSlowInEasing)) +
+                                slideIntoContainer(
+                                    towards = AnimatedContentTransitionScope.SlideDirection.End,
+                                    animationSpec = tween(400, easing = FastOutSlowInEasing)
+                                )
+                    }
                 }
             ) {
                 MainScreen(
