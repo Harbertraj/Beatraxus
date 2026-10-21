@@ -327,11 +327,18 @@ private class NativeDspProcessor(
         dsp.setDvcMode(cfg.dvcMode.ordinal)
         
         val resampleActive = !isBP || cfg.bitPerfectUnbypassResample
-        val soxrActive = !isBP || cfg.bitPerfectUnbypassSoxr
-        
-        dsp.setHighQualityResampler(if (soxrActive) cfg.highQualityResampler else false)
-        if (cfg.highQualityResampler && soxrActive) {
-            dsp.setSoxrQuality(cfg.soxrQuality.nativeValue)
+        // SoXR quality preset is selectable once the Resampler (or SoXR) is unbypassed in Bit-Perfect mode.
+        val soxrQualityOpen = resampleActive || cfg.bitPerfectUnbypassSoxr
+
+        // Bit-Perfect mode: the Resampler screen is locked until it is unbypassed. A rate conversion can still be
+        // unavoidable (the output may not run at the file's rate), and that must never fall back to the
+        // low-quality cubic, so while locked the resampler is SoXR at the recommended preset. Once unbypassed
+        // (or outside Bit-Perfect mode) the user's own type (SoXR / SW Cubic) and preset apply.
+        val useSoxr = if (resampleActive) cfg.highQualityResampler else true
+        dsp.setHighQualityResampler(useSoxr)
+        if (useSoxr) {
+            val quality = if (soxrQualityOpen) cfg.soxrQuality else com.beatraxus.app.model.SoxrQuality.HIGH
+            dsp.setSoxrQuality(quality.nativeValue)
         }
         dsp.setFloat64(if (isBP) cfg.bitPerfectUnbypassFloat64 else cfg.float64Enabled)
         dsp.setCutoffRatio(if (resampleActive) cfg.resamplerCutoffRatio else 0.999f)

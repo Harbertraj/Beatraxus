@@ -11,6 +11,7 @@ import kotlin.math.pow
 import kotlin.math.sqrt
 import kotlin.math.min
 import com.beatraxus.app.model.SpatialUiMode
+import com.beatraxus.app.ui.components.BitPerfectUnbypassRow
 import com.beatraxus.app.ui.components.PremiumSwitch
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -2022,6 +2023,15 @@ private fun PremiumEqualizerCard(
             }
         }
 
+        // Bit-Perfect mode bypasses the equalizer; this switch (below the header) lets it run.
+        BitPerfectUnbypassRow(
+            label = "Equalizer",
+            bitPerfectEnabled = config.bitPerfectEnabled,
+            checked = config.bitPerfectUnbypassEq,
+            onCheckedChange = { viewModel.setBitPerfectUnbypassEq(it) },
+            accentColor = PremiumAccent
+        )
+
         // Custom Premium Preamp Slider
         PremiumPreampSlider(
             value = config.preampDb,
@@ -2932,6 +2942,15 @@ private fun PremiumSoundStageCard(
             .padding(bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp)
     ) {
+        // Bit-Perfect mode bypasses Spatial / Sound Stage (Classic and Modern); this switch lets it run.
+        BitPerfectUnbypassRow(
+            label = "Spatial audio",
+            bitPerfectEnabled = config.bitPerfectEnabled,
+            checked = config.bitPerfectUnbypass3DStage,
+            onCheckedChange = { viewModel.setBitPerfectUnbypass3DStage(it) },
+            accentColor = PremiumAccent
+        )
+
         // Spatial mode toggle
         Column(
             modifier = Modifier.fillMaxWidth(),
@@ -4180,6 +4199,15 @@ private fun PremiumReverbCard(uiState: PlayerUiState, viewModel: PlayerViewModel
                 )
             }
         }
+
+        // Bit-Perfect mode bypasses reverb; this switch (below the header) lets it run.
+        BitPerfectUnbypassRow(
+            label = "Reverb",
+            bitPerfectEnabled = config.bitPerfectEnabled,
+            checked = config.bitPerfectUnbypassReverb,
+            onCheckedChange = { viewModel.setBitPerfectUnbypassReverb(it) },
+            accentColor = PremiumAccent
+        )
 
         // Control Buttons Row
         Row(

@@ -120,6 +120,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import com.beatraxus.app.BuildConfig
 import com.beatraxus.app.ui.components.PremiumSwitch
+import com.beatraxus.app.ui.components.BitPerfectUnbypassRow
 import com.beatraxus.app.ui.components.glassIconBackground
 import com.beatraxus.app.ui.components.seekbars.AppSeekBar
 import com.beatraxus.app.model.OutputMode
@@ -2339,11 +2340,12 @@ fun AudioEngineContent(
         }
 
         // ── 2. Resampling ────────────────────────────────────────────────────
-        val isResamplerBypassed = uiState.dsp.config.bitPerfectEnabled
+        // Bit-Perfect mode switches the resampler section off until its unbypass switch (bottom of this section) is on.
+        val isResamplerBypassed = uiState.dsp.config.bitPerfectEnabled && !uiState.dsp.config.bitPerfectUnbypassResample
         SettingsSection(
             title = "RESAMPLING",
             icon = Icons.Rounded.Speed,
-            isActive = uiState.dsp.config.highQualityResampler && !isResamplerBypassed,
+            isActive = uiState.inputSampleRate != uiState.outputSampleRate,
             headerActions = {
                 if (isResamplerBypassed) {
                     Box(
@@ -2360,14 +2362,67 @@ fun AudioEngineContent(
                         )
                     }
                 } else {
-                    PremiumSwitch(
-                        checked = uiState.dsp.config.highQualityResampler,
-                        onCheckedChange = { playerViewModel.setHighQualityResampler(it) }
-                    )
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(PrimaryCyan.copy(0.15f))
+                            .padding(horizontal = 10.dp, vertical = 5.dp)
+                    ) {
+                        Text(
+                            if (uiState.dsp.config.highQualityResampler) "SOXR" else "SW CUBIC",
+                            color = PrimaryCyan,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                 }
             }
         ) {
+            // Resampler type: SoXR (high quality) or SW Cubic (lightweight). Locked while bypassed by Bit-Perfect mode.
             Column(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    "RESAMPLER TYPE",
+                    color = PrimaryCyan.copy(if (isResamplerBypassed) 0.3f else 0.8f),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.5.sp
+                )
+                Spacer(Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    // While locked, SoXR is what actually runs (see DspPipeline), so show it as the selection.
+                    val soxrSelected = isResamplerBypassed || uiState.dsp.config.highQualityResampler
+                    PremiumChip(
+                        selected = soxrSelected,
+                        onClick = { if (!isResamplerBypassed) playerViewModel.setHighQualityResampler(true) },
+                        label = "SoXR",
+                        modifier = Modifier.graphicsLayer { alpha = if (isResamplerBypassed) 0.35f else 1f }
+                    )
+                    PremiumChip(
+                        selected = !soxrSelected,
+                        onClick = { if (!isResamplerBypassed) playerViewModel.setHighQualityResampler(false) },
+                        label = "SW Cubic",
+                        modifier = Modifier.graphicsLayer { alpha = if (isResamplerBypassed) 0.35f else 1f }
+                    )
+                }
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    when {
+                        isResamplerBypassed -> "Bit-Perfect mode: locked to SoXR, used only if the output rate has to differ from the file. Unbypass below to change it."
+                        uiState.dsp.config.highQualityResampler -> "SoXR: high-quality, clean resampling (recommended)."
+                        else -> "SW Cubic: lightweight, lower quality (adds distortion and dulls the highs)."
+                    },
+                    color = TextWhite.copy(0.45f),
+                    fontSize = 11.sp,
+                    lineHeight = 15.sp,
+                    modifier = Modifier.padding(horizontal = 16.dp)
+                )
+                Spacer(Modifier.height(16.dp))
                 Text(
                     "TARGET SAMPLE RATE",
                     color = PrimaryCyan.copy(if (isResamplerBypassed) 0.3f else 0.8f),
@@ -2387,8 +2442,9 @@ fun AudioEngineContent(
                         val isSelected = uiState.dsp.config.resamplerMode == mode
                         PremiumChip(
                             selected = isSelected,
-                            onClick = { playerViewModel.setResamplerMode(mode) },
-                            label = mode.displayName
+                            onClick = { if (!isResamplerBypassed) playerViewModel.setResamplerMode(mode) },
+                            label = mode.displayName,
+                            modifier = Modifier.graphicsLayer { alpha = if (isResamplerBypassed) 0.35f else 1f }
                         )
                     }
                 }
@@ -2406,6 +2462,15 @@ fun AudioEngineContent(
                 onValueClick = {
                     onEditValue(EditingValue("Cutoff Ratio", uiState.dsp.config.resamplerCutoffRatio, 0.5f..1.0f, playerViewModel::setResamplerCutoffRatio))
                 }
+            )
+
+            // Unbypass switch below the resampler: while Bit-Perfect mode is on, switching it on makes the options above usable.
+            Spacer(Modifier.height(12.dp))
+            BitPerfectUnbypassRow(
+                label = "Resampler",
+                bitPerfectEnabled = uiState.dsp.config.bitPerfectEnabled,
+                checked = uiState.dsp.config.bitPerfectUnbypassResample,
+                onCheckedChange = { playerViewModel.setBitPerfectUnbypassResample(it) }
             )
         }
 
@@ -2791,6 +2856,16 @@ private fun BitPerfectCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
                             selected = config.bitPerfectUnbypassDithering,
                             onToggle = { viewModel.setBitPerfectUnbypassDithering(it) }
                         )
+                        UnbypassChip(
+                            label = "SoXR Quality",
+                            selected = config.bitPerfectUnbypassSoxr,
+                            onToggle = { viewModel.setBitPerfectUnbypassSoxr(it) }
+                        )
+                        UnbypassChip(
+                            label = "Float64",
+                            selected = config.bitPerfectUnbypassFloat64,
+                            onToggle = { viewModel.setBitPerfectUnbypassFloat64(it) }
+                        )
                     }
 
                     Text(
@@ -3098,7 +3173,7 @@ private fun SoxrQualityCard(uiState: PlayerUiState, viewModel: PlayerViewModel) 
     val config = uiState.dsp.config
     val isResamplerOn = config.highQualityResampler
     val isResampling = uiState.inputSampleRate != uiState.outputSampleRate
-    val isBypassed = config.bitPerfectEnabled && !config.bitPerfectUnbypassSoxr
+    val isBypassed = config.bitPerfectEnabled && !config.bitPerfectUnbypassResample && !config.bitPerfectUnbypassSoxr
     val canChange = isResamplerOn && !isBypassed
 
     SettingsSection(
@@ -3141,6 +3216,12 @@ private fun SoxrQualityCard(uiState: PlayerUiState, viewModel: PlayerViewModel) 
             }
         }
     ) {
+        BitPerfectUnbypassRow(
+            label = "SoXR quality",
+            bitPerfectEnabled = config.bitPerfectEnabled,
+            checked = config.bitPerfectUnbypassSoxr,
+            onCheckedChange = { viewModel.setBitPerfectUnbypassSoxr(it) }
+        )
         val qualities = SoxrQualityEnum.entries
         Row(
             modifier = Modifier
@@ -3286,6 +3367,12 @@ private fun Float64Card(uiState: PlayerUiState, viewModel: PlayerViewModel) {
             }
         }
     ) {
+        BitPerfectUnbypassRow(
+            label = "Float64 processing",
+            bitPerfectEnabled = config.bitPerfectEnabled,
+            checked = config.bitPerfectUnbypassFloat64,
+            onCheckedChange = { viewModel.setBitPerfectUnbypassFloat64(it) }
+        )
         if (isActive && !isBypassed) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -3354,6 +3441,12 @@ private fun DitherCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
             }
         }
     ) {
+        BitPerfectUnbypassRow(
+            label = "Dithering",
+            bitPerfectEnabled = config.bitPerfectEnabled,
+            checked = config.bitPerfectUnbypassDithering,
+            onCheckedChange = { viewModel.setBitPerfectUnbypassDithering(it) }
+        )
         val types = DitherType.entries.filter { it != DitherType.NONE }
         Row(
             modifier = Modifier
@@ -3485,6 +3578,12 @@ private fun LimiterCard(
         }
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            BitPerfectUnbypassRow(
+                label = "Limiter",
+                bitPerfectEnabled = config.bitPerfectEnabled,
+                checked = config.bitPerfectUnbypassLimiter,
+                onCheckedChange = { viewModel.setBitPerfectUnbypassLimiter(it) }
+            )
             Text(
                 "Smooth Soft-Knee + Dynamic Peak Protection",
                 color = Color.White.copy(0.5f),

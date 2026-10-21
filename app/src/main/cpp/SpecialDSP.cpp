@@ -975,42 +975,6 @@ public:
     }
 };
 
-void resample_cubic(const float* in, int inFrames, float* out, int outFrames, int channels, float ratio) {
-    // Anti-aliasing pre-filter state (one-pole lowpass at Nyquist*ratio) for downsampling
-    static thread_local std::vector<float> filterState;
-    static thread_local std::vector<float> filtered;
-    bool needFilter = ratio < 0.999f; // downsampling: output is lower rate
-    if (needFilter) {
-        filtered.assign(inFrames * channels, 0.0f);
-        filterState.resize(channels, 0.0f);
-        // cutoff = ratio * pi (bilinear-approx one-pole)
-        float alpha = ratio / (ratio + 1.0f);  // simple RC lowpass
-        for (int f = 0; f < inFrames; f++)
-            for (int c = 0; c < channels; c++) {
-                filterState[c] = filterState[c] + alpha * (in[f * channels + c] - filterState[c]);
-                filtered[f * channels + c] = filterState[c];
-            }
-    }
-    const float* src = needFilter ? filtered.data() : in;
-    for (int i = 0; i < outFrames; i++) {
-        float x = i / ratio;
-        int ix = (int)x;
-        float frac = x - ix;
-        for (int ch = 0; ch < channels; ch++) {
-            auto get = [&](int f) -> float {
-                if (f < 0) return src[ch];
-                if (f >= inFrames) return src[(inFrames - 1) * channels + ch];
-                return src[f * channels + ch];
-            };
-            float y0=get(ix-1), y1=get(ix), y2=get(ix+1), y3=get(ix+2);
-            float a=(-0.5f*y0)+(1.5f*y1)-(1.5f*y2)+(0.5f*y3);
-            float b=y0-(2.5f*y1)+(2.0f*y2)-(0.5f*y3);
-            float c2=(-0.5f*y0)+(0.5f*y2);
-            out[i*channels+ch] = a*frac*frac*frac + b*frac*frac + c2*frac + y1;
-        }
-    }
-}
-
 class DcBlocker {
     std::vector<double> x1, y1;
     double R;
@@ -1926,12 +1890,80 @@ public:
         limiter.setParams((double)limiterThresholdDb, (double)limiterAttackMs, (double)limiterReleaseMs);
         eq.init((float)inRate);
         tempo.init(inRate, channels);
+        resetCubic();
         updateFilters(); updateSoxr();
     }
 
     float playbackSpeed = 1.0f;
     bool preservePitch = true;
     TempoProcessor tempo;
+
+    // ---- SW Cubic resampler (4-point Catmull-Rom), continuous across chunks -------------------------
+    // cubicPos is the read position in "combined" coordinates: the 3 history frames come first, then the
+    // new chunk, so the first real sample of a stream sits at index 3.
+    void resetCubic() {
+        cubicHist.assign((size_t)3 * (size_t)std::max(1, channels), 0.0f);
+        cubicLp.assign((size_t)std::max(1, channels), 0.0f);
+        cubicPos = 3.0;
+        cubicPrimed = false;
+    }
+
+    int cubicResample(const float* in, int inFrames, float* out, int outCapFrames, float ratio) {
+        const int ch = std::max(1, channels);
+        if (inFrames <= 0 || outCapFrames <= 0 || ratio <= 0.0f) return 0;
+        if (cubicHist.size() != (size_t)3 * (size_t)ch) resetCubic();
+
+        const int total = 3 + inFrames;
+        cubicWork.resize((size_t)total * (size_t)ch);
+        std::copy(cubicHist.begin(), cubicHist.end(), cubicWork.begin());
+
+        // Downsampling: one-pole anti-alias pre-filter, state kept per channel across chunks.
+        const bool needFilter = ratio < 0.999f;
+        const float alpha = ratio / (ratio + 1.0f);
+        for (int f = 0; f < inFrames; f++) {
+            for (int c = 0; c < ch; c++) {
+                float v = in[f * ch + c];
+                if (needFilter) {
+                    cubicLp[c] += alpha * (v - cubicLp[c]);
+                    v = cubicLp[c];
+                }
+                cubicWork[(size_t)(3 + f) * ch + c] = v;
+            }
+        }
+        if (!cubicPrimed) {
+            // Start of stream: fill the history with the first sample instead of silence (no click).
+            for (int h = 0; h < 3; h++)
+                for (int c = 0; c < ch; c++)
+                    cubicWork[(size_t)h * ch + c] = cubicWork[(size_t)3 * ch + c];
+            cubicPrimed = true;
+        }
+
+        const double step = 1.0 / (double)ratio;
+        int n = 0;
+        while (n < outCapFrames) {
+            int ix = (int)cubicPos;
+            if (ix + 2 >= total) break;           // not enough look-ahead yet: wait for the next chunk
+            float frac = (float)(cubicPos - (double)ix);
+            for (int c = 0; c < ch; c++) {
+                float y0 = cubicWork[(size_t)(ix - 1) * ch + c];
+                float y1 = cubicWork[(size_t)(ix    ) * ch + c];
+                float y2 = cubicWork[(size_t)(ix + 1) * ch + c];
+                float y3 = cubicWork[(size_t)(ix + 2) * ch + c];
+                float a  = (-0.5f * y0) + (1.5f * y1) - (1.5f * y2) + (0.5f * y3);
+                float b  = y0 - (2.5f * y1) + (2.0f * y2) - (0.5f * y3);
+                float c2 = (-0.5f * y0) + (0.5f * y2);
+                out[(size_t)n * ch + c] = a * frac * frac * frac + b * frac * frac + c2 * frac + y1;
+            }
+            n++;
+            cubicPos += step;
+        }
+
+        // Keep the last 3 frames and move the read position into the next chunk's coordinates.
+        std::copy(cubicWork.begin() + (size_t)(total - 3) * ch, cubicWork.begin() + (size_t)total * ch, cubicHist.begin());
+        cubicPos -= (double)inFrames;
+        if (cubicPos < 0.0) cubicPos = 0.0;
+        return n;
+    }
 
     void updateSoxr() {
 #ifdef HAVE_SOXR
@@ -2185,9 +2217,11 @@ public:
 #else
             {
 #endif
-                float ratio = (float)outRate / effectiveInRate;
-                resample_cubic(effectiveInput, effectiveInFrames, resampleBuffer.data(), expectedOutFrames, channels, ratio);
-                outFrames = expectedOutFrames;
+                // SW Cubic fallback. Stateful: it carries its fractional read position and the last 3 input
+                // frames from one chunk to the next, so there are no restarts/edge clamps at chunk borders.
+                float ratio = (float)outRate / (float)effectiveInRate;
+                int capFrames = (int)(resampleBuffer.size() / (size_t)std::max(1, channels));
+                outFrames = cubicResample(effectiveInput, effectiveInFrames, resampleBuffer.data(), capFrames, ratio);
             }
 
             if (outFrames > outputCapacityFrames) {
@@ -2344,7 +2378,7 @@ public:
     }
     void setSimEqEnabled(bool enabled) { simEq.setEnabled(enabled); }
 
-    void setUseSox(bool use) { if (useSox != use) { useSox = use; updateSoxr(); } }
+    void setUseSox(bool use) { if (useSox != use) { useSox = use; resetCubic(); updateSoxr(); } }
     void setCutoffRatio(float ratio) { if (fabsf(cutoffRatio - ratio) > 0.001f) { cutoffRatio = ratio; updateSoxr(); } }
     void setSoxrQuality(int quality) { if (soxrQuality != quality) { soxrQuality = quality; updateSoxr(); } }
     void setFloat64Mode(bool enabled) { float64Enabled = enabled; }
@@ -2424,6 +2458,7 @@ private:
     float toneSmoothingFactor = 0.12f; // per-buffer interpolation
 
     std::vector<float> tempoBuffer, resampleBuffer; std::vector<double> doubleBuffer;
+    std::vector<float> cubicHist, cubicLp, cubicWork; double cubicPos = 3.0; bool cubicPrimed = false;
 };
 
 // ===================== AUDIO ANALYZER (Offline) =====================
