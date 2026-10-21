@@ -1287,10 +1287,16 @@ class AudioEngine(
                             currentSong = next.song
                             nextSong = null
 
+                            // Anchor the new track BEFORE configure(). configure() snapshots
+                            // basePositionMs = currentRenderedPositionMs(), and until the anchor is set the
+                            // session still holds the frame offset captured when it was preloaded (during the
+                            // previous song). That made the snapshot equal to the previous song's elapsed time,
+                            // so the new song started with a base position at/after its own duration and
+                            // displayed its full runtime while the audio played from 0:00.
+                            next.beginAsActiveTrack(trackStartAnchorFrames())
                             if (newFormat != null && oldFormat != newFormat) {
                                 next.configure(newFormat)
                             }
-                            next.setStartFrameOffset(trackStartAnchorFrames())
 
                             updateAudioStateForSong(currentSong!!)
                             this@AudioEngine.positionMs = 0L
@@ -1395,6 +1401,15 @@ class AudioEngine(
 
         fun setStartFrameOffset(offset: Long) {
             startFrameOffset = offset
+        }
+
+        /**
+         * Gapless hand-off: this preloaded session becomes the audible track. Resets both halves of the
+         * elapsed-time math (frame anchor and base position) so the counter starts at this track's own start.
+         */
+        fun beginAsActiveTrack(anchorFrames: Long) {
+            startFrameOffset = anchorFrames
+            basePositionMs = initialStartPositionMs
         }
 
         fun requestSeek(positionMs: Long) {
@@ -1524,6 +1539,9 @@ class AudioEngine(
             // so re-anchor at the current hardware position and report the track start instead.
             if (duration > 0L && position > duration + POSITION_DESYNC_TOLERANCE_MS) {
                 startFrameOffset = hwPosition
+                // A base that is itself at/after the end is the corrupted half; returning it clamped to the
+                // duration would again show the full runtime, so restart from the track start.
+                if (basePositionMs >= duration) basePositionMs = initialStartPositionMs
                 return basePositionMs.coerceAtMost(duration)
             }
 
