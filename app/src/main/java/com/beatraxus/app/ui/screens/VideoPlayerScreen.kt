@@ -19,6 +19,7 @@ import com.beatraxus.app.subtitles.data.SubtitleAuthManager
 import com.beatraxus.app.subtitles.data.SubtitleCredentialsStore
 import com.beatraxus.app.subtitles.data.SubtitleRepositoryImpl
 import com.beatraxus.app.subtitles.ui.OpenSubtitlesAuthDialog
+import com.beatraxus.app.subtitles.ui.SecondarySubtitleOverlay
 import com.beatraxus.app.subtitles.ui.SubtitlePlayerSheetSection
 import com.beatraxus.app.subtitles.viewmodel.SubtitleUiEvent
 import com.beatraxus.app.subtitles.viewmodel.SubtitleViewModel
@@ -723,6 +724,15 @@ fun VideoPlayerScreen(
                 )
         )
         } // key(useTextureSurface)
+
+        // Dual subtitles (video feature 22): the second subtitle, drawn over the video in step with the player position.
+        SecondarySubtitleOverlay(
+            subtitleViewModel = subtitleViewModel,
+            positionProvider = { viewModel.getPlayer()?.currentPosition ?: 0L },
+            primarySizeSp = uiState.subtitleSize,
+            primaryTranslationY = uiState.subtitlePositionPreset.offsetDp + uiState.subtitleOffset,
+            primaryBold = uiState.subtitleBold
+        )
 
 
         // Ripple Animation Layer

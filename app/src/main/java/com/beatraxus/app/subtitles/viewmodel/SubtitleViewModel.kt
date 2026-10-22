@@ -17,6 +17,11 @@ import com.beatraxus.app.subtitles.data.SubtitleFileImporter
 import com.beatraxus.app.subtitles.domain.EncodingNormalizer
 import com.beatraxus.app.subtitles.domain.FilenameParser
 import com.beatraxus.app.subtitles.domain.MediaKey
+import com.beatraxus.app.subtitles.domain.SecondarySubtitlePlacement
+import com.beatraxus.app.subtitles.domain.SecondarySubtitlePrefs
+import com.beatraxus.app.subtitles.domain.SecondarySubtitleStyle
+import com.beatraxus.app.subtitles.domain.SubtitleCueParser
+import com.beatraxus.app.subtitles.domain.SubtitleCueTimeline
 import com.beatraxus.app.subtitles.domain.SubtitleError
 import com.beatraxus.app.subtitles.domain.SubtitleException
 import com.beatraxus.app.subtitles.domain.SubtitleMatchScorer
@@ -63,6 +68,10 @@ class SubtitleViewModel(
     private val _events = MutableSharedFlow<SubtitleUiEvent>()
     val events: SharedFlow<SubtitleUiEvent> = _events.asSharedFlow()
 
+    /** Cues of the second subtitle (video feature 22), or null when none is loaded for the current video. */
+    private val _secondaryTimeline = MutableStateFlow<SubtitleCueTimeline?>(null)
+    val secondaryTimeline: StateFlow<SubtitleCueTimeline?> = _secondaryTimeline.asStateFlow()
+
     private var currentVideo: Video? = null
     private var currentMediaKey: String = ""
     private var searchJob: Job? = null
@@ -89,6 +98,8 @@ class SubtitleViewModel(
         _uiState.update {
             it.copy(
                 enabled = enabled,
+                dualEnabled = SecondarySubtitlePrefs.isEnabled(prefs),
+                secondaryStyle = SecondarySubtitlePrefs.readStyle(prefs),
                 selectedLanguages = prefLangs,
                 autoSearchMode = autoSearchMode,
                 isSignedIn = isSignedIn,
@@ -134,6 +145,8 @@ class SubtitleViewModel(
 
     fun onVideoChanged(video: Video) {
         currentVideo = video
+        // The second subtitle belongs to the video it was picked for.
+        clearSecondarySubtitle()
         viewModelScope.launch(Dispatchers.IO) {
             val hash = VideoHashCalculator.calculateHash(video.id, video.uri, getApplication<Application>().contentResolver)
             val mediaKey = MediaKey.of(video, hash)
@@ -490,6 +503,81 @@ class SubtitleViewModel(
 
     fun resetSubtitleDelay() {
         setSubtitleDelay(0L)
+    }
+
+    // ---- Dual subtitles (video feature 22) ----
+
+    fun setDualSubtitlesEnabled(enabled: Boolean) {
+        SecondarySubtitlePrefs.setEnabled(prefs, enabled)
+        _uiState.update { it.copy(dualEnabled = enabled) }
+        if (!enabled) clearSecondarySubtitle()
+    }
+
+    /** Uses one of the subtitles already saved for this video as the second subtitle. */
+    fun selectSecondaryFromCache(cached: CachedSubtitle) {
+        val video = currentVideo ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            val file = File(cached.localPath)
+            val timeline = try {
+                val cues = if (file.exists()) SubtitleCueParser.parse(file.readText(Charsets.UTF_8)) else emptyList()
+                if (cues.isNotEmpty()) SubtitleCueTimeline(cues) else null
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                null
+            }
+            withContext(Dispatchers.Main) {
+                if (currentVideo?.id != video.id) return@withContext
+                if (timeline == null) {
+                    _events.emit(SubtitleUiEvent.Error("Could not read that subtitle."))
+                } else {
+                    applySecondary(timeline, cached.releaseName ?: "Subtitle")
+                }
+            }
+        }
+    }
+
+    /** Loads a subtitle file picked by the viewer as the second subtitle. It is not saved to the video's subtitle list. */
+    fun importSecondarySubtitle(uri: Uri) {
+        val video = currentVideo ?: return
+        viewModelScope.launch {
+            val language = _uiState.value.selectedLanguages.firstOrNull() ?: "en"
+            val res = fileImporter.readSubtitleFromUri(uri, language)
+            if (currentVideo?.id != video.id) return@launch
+            val read = res.getOrNull()
+            val cues = read?.let { SubtitleCueParser.parse(it.srtContent) }.orEmpty()
+            if (read != null && cues.isNotEmpty()) {
+                applySecondary(SubtitleCueTimeline(cues), read.displayName)
+            } else {
+                val error = (res.exceptionOrNull() as? SubtitleException)?.error ?: SubtitleError.InvalidSubtitle
+                _events.emit(SubtitleUiEvent.Error(SubtitleErrorMapper.toUserMessage(error)))
+            }
+        }
+    }
+
+    fun clearSecondarySubtitle() {
+        _secondaryTimeline.value = null
+        _uiState.update { it.copy(secondarySubtitleName = null) }
+    }
+
+    fun setSecondaryPlacement(placement: SecondarySubtitlePlacement) =
+        updateSecondaryStyle { it.copy(placement = placement) }
+
+    fun setSecondaryTextColor(color: Int) = updateSecondaryStyle { it.copy(textColor = color) }
+
+    fun setSecondarySizePercent(percent: Int) = updateSecondaryStyle {
+        it.copy(sizePercent = percent.coerceIn(SecondarySubtitleStyle.MIN_SIZE_PERCENT, SecondarySubtitleStyle.MAX_SIZE_PERCENT))
+    }
+
+    private fun applySecondary(timeline: SubtitleCueTimeline, name: String) {
+        _secondaryTimeline.value = timeline
+        _uiState.update { it.copy(secondarySubtitleName = name) }
+    }
+
+    private fun updateSecondaryStyle(change: (SecondarySubtitleStyle) -> SecondarySubtitleStyle) {
+        val updated = change(_uiState.value.secondaryStyle)
+        SecondarySubtitlePrefs.writeStyle(prefs, updated)
+        _uiState.update { it.copy(secondaryStyle = updated) }
     }
 
     fun signIn(username: String, password: String) {

@@ -59,6 +59,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.media3.common.util.UnstableApi
 import com.beatraxus.app.BuildConfig
+import com.beatraxus.app.subtitles.domain.SecondarySubtitlePlacement
+import com.beatraxus.app.subtitles.domain.SecondarySubtitleStyle
 import com.beatraxus.app.subtitles.domain.SubtitlePositionPreset
 import com.beatraxus.app.subtitles.viewmodel.SubtitleViewModel
 import com.beatraxus.app.ui.screens.SubtitleColorRow
@@ -84,6 +86,12 @@ fun SubtitlePlayerSheetSection(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         uri?.let { subtitleViewModel.importLocalSubtitle(it) }
+    }
+
+    val secondaryFilePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        uri?.let { subtitleViewModel.importSecondarySubtitle(it) }
     }
 
     if (showLanguagePicker) {
@@ -473,6 +481,142 @@ fun SubtitlePlayerSheetSection(
                         Text(label, fontSize = 11.sp, maxLines = 1, softWrap = false)
                     }
                 }
+            }
+        }
+
+        // 5b. Dual subtitles (video feature 22): a second subtitle shown together with the main one
+        Column {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Dual Subtitles", color = Color.White.copy(0.9f), fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                    Text(
+                        "Show a second language at the same time",
+                        color = Color.White.copy(0.5f),
+                        fontSize = 11.sp
+                    )
+                }
+                Switch(
+                    checked = subUiState.dualEnabled,
+                    onCheckedChange = { subtitleViewModel.setDualSubtitlesEnabled(it) },
+                    colors = SwitchDefaults.colors(checkedThumbColor = mxOrange, checkedTrackColor = mxOrange.copy(0.4f))
+                )
+            }
+
+            if (subUiState.dualEnabled) {
+                Spacer(Modifier.height(10.dp))
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Color.White.copy(0.06f))
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("Second subtitle", color = Color.White.copy(0.6f), fontSize = 13.sp)
+                    Text(
+                        text = subUiState.secondarySubtitleName ?: "None",
+                        color = mxOrange,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                // Subtitles already saved for this video, other than the main one.
+                val secondaryChoices = subUiState.cachedSubtitles.filter { it.subtitleId != subUiState.selectedSubtitleId }
+                if (secondaryChoices.isNotEmpty()) {
+                    Spacer(Modifier.height(8.dp))
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        secondaryChoices.forEach { cached ->
+                            val label = cached.releaseName ?: cached.language
+                            MxFilterChip(
+                                selected = subUiState.secondarySubtitleName == label,
+                                onClick = { subtitleViewModel.selectSecondaryFromCache(cached) },
+                                label = label
+                            )
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = {
+                            secondaryFilePickerLauncher.launch(
+                                arrayOf("text/plain", "application/x-subrip", "text/vtt", "application/octet-stream", "*/*")
+                            )
+                        },
+                        modifier = Modifier.weight(1f),
+                        border = BorderStroke(1.dp, Color.White.copy(0.3f)),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
+                    ) {
+                        Icon(Icons.Rounded.Folder, null, tint = Color.White, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Select file", fontSize = 13.sp)
+                    }
+                    OutlinedButton(
+                        onClick = { subtitleViewModel.clearSecondarySubtitle() },
+                        enabled = subUiState.secondarySubtitleName != null,
+                        modifier = Modifier.weight(1f),
+                        border = BorderStroke(1.dp, Color.White.copy(0.3f)),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
+                    ) {
+                        Text("Remove", fontSize = 13.sp)
+                    }
+                }
+
+                Spacer(Modifier.height(10.dp))
+                Text("Placement", color = Color.White.copy(0.7f), fontSize = 12.sp)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SecondarySubtitlePlacement.entries.forEach { placement ->
+                        MxFilterChip(
+                            selected = subUiState.secondaryStyle.placement == placement,
+                            onClick = { subtitleViewModel.setSecondaryPlacement(placement) },
+                            label = placement.displayName
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(10.dp))
+                Text("Second subtitle size", color = Color.White.copy(0.7f), fontSize = 12.sp)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "${subUiState.secondaryStyle.sizePercent}%",
+                        color = Color.White,
+                        fontSize = 13.sp,
+                        modifier = Modifier.width(48.dp)
+                    )
+                    Slider(
+                        value = subUiState.secondaryStyle.sizePercent.toFloat(),
+                        onValueChange = { subtitleViewModel.setSecondarySizePercent(it.toInt()) },
+                        valueRange = SecondarySubtitleStyle.MIN_SIZE_PERCENT.toFloat()..SecondarySubtitleStyle.MAX_SIZE_PERCENT.toFloat(),
+                        colors = SliderDefaults.colors(
+                            thumbColor = mxOrange,
+                            activeTrackColor = mxOrange,
+                            inactiveTrackColor = Color.White.copy(0.2f)
+                        ),
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
+                Spacer(Modifier.height(10.dp))
+                SubtitleColorRow(
+                    "Second subtitle color",
+                    subUiState.secondaryStyle.textColor,
+                    onColorChange = { subtitleViewModel.setSecondaryTextColor(it) },
+                    mxOrange
+                )
             }
         }
 

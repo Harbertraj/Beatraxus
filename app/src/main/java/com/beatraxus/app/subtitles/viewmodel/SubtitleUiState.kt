@@ -2,6 +2,7 @@ package com.beatraxus.app.subtitles.viewmodel
 
 import com.beatraxus.app.subtitles.data.CachedSubtitle
 import com.beatraxus.app.subtitles.domain.ScoredSubtitle
+import com.beatraxus.app.subtitles.domain.SecondarySubtitleStyle
 import com.beatraxus.app.subtitles.domain.SubtitleError
 import com.beatraxus.app.subtitles.domain.SubtitleLanguage
 
@@ -38,5 +39,9 @@ data class SubtitleUiState(
     val errorMessage: String? = null,
     val delayMs: Long = 0L,
     val delaySupported: Boolean = false,
-    val autoSearchMode: AutoSearchMode = AutoSearchMode.OFF
+    val autoSearchMode: AutoSearchMode = AutoSearchMode.OFF,
+    // Dual subtitles (video feature 22)
+    val dualEnabled: Boolean = false,
+    val secondarySubtitleName: String? = null,
+    val secondaryStyle: SecondarySubtitleStyle = SecondarySubtitleStyle()
 )

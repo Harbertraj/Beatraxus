@@ -19,11 +19,18 @@ class SubtitleFileImporter(
     private val subtitleCache: SubtitleCache
 ) {
 
-    suspend fun importSubtitleFromUri(
-        mediaKey: String,
+    /** A subtitle file read, decoded and converted to SRT, but not saved anywhere. */
+    data class ReadSubtitle(val displayName: String, val srtContent: String)
+
+    /**
+     * Reads a subtitle file (SRT, WebVTT, ASS/SSA or a ZIP holding one), fixes its text encoding and converts it to SRT.
+     * Nothing is written to the subtitle cache, so this is also what dual subtitles (video feature 22) uses to load
+     * the second file without it turning into the video's main subtitle.
+     */
+    suspend fun readSubtitleFromUri(
         uri: Uri,
         languageCode: String = "en"
-    ): Result<CachedSubtitle> = withContext(Dispatchers.IO) {
+    ): Result<ReadSubtitle> = withContext(Dispatchers.IO) {
         try {
             val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
                 ?: return@withContext Result.failure(SubtitleException(SubtitleError.FileAccessDenied))
@@ -47,17 +54,35 @@ class SubtitleFileImporter(
 
             SubtitleValidator.validate(srtContent).getOrThrow()
 
+            Result.success(ReadSubtitle(originalName, srtContent))
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            if (e is SubtitleException) Result.failure(e)
+            else Result.failure(SubtitleException(SubtitleError.Unknown(e)))
+        }
+    }
+
+    suspend fun importSubtitleFromUri(
+        mediaKey: String,
+        uri: Uri,
+        languageCode: String = "en"
+    ): Result<CachedSubtitle> = withContext(Dispatchers.IO) {
+        try {
+            val read = readSubtitleFromUri(uri, languageCode).getOrElse {
+                return@withContext Result.failure(it)
+            }
+
             val subtitleId = "local_" + System.currentTimeMillis()
             val cachedSubtitle = CachedSubtitle(
                 subtitleId = subtitleId,
                 language = languageCode,
                 format = "SRT",
-                releaseName = originalName,
+                releaseName = read.displayName,
                 localPath = "",
                 source = SubtitleSource.LOCAL
             )
 
-            val savedFile = subtitleCache.saveSubtitle(mediaKey, cachedSubtitle, srtContent)
+            val savedFile = subtitleCache.saveSubtitle(mediaKey, cachedSubtitle, read.srtContent)
             val updated = cachedSubtitle.copy(localPath = savedFile.absolutePath)
             Result.success(updated)
         } catch (e: Exception) {
