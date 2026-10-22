@@ -266,7 +266,9 @@ class AudioPlaybackService : Service() {
 
         serviceScope.launch {
             com.beatraxus.app.cast.CastManager.castMediaStatus.collect { status ->
-                if (status != null && com.beatraxus.app.cast.CastManager.isConnected) {
+                // While the video player is casting a video, this status belongs to the video, not to the music.
+                if (status != null && com.beatraxus.app.cast.CastManager.isConnected &&
+                    !com.beatraxus.app.cast.CastManager.isVideoCasting) {
                     val isPlaying = status.playerState == MediaStatus.PLAYER_STATE_PLAYING ||
                             status.playerState == MediaStatus.PLAYER_STATE_BUFFERING
                     if (_playbackStateFlow.value.isPlaying != isPlaying) {

@@ -25,6 +25,8 @@ import com.beatraxus.app.subtitles.viewmodel.SubtitleUiEvent
 import com.beatraxus.app.subtitles.viewmodel.SubtitleViewModel
 import com.beatraxus.app.subtitles.viewmodel.SubtitleViewModelFactory
 import androidx.activity.compose.BackHandler
+import com.beatraxus.app.cast.CastManager
+import com.beatraxus.app.ui.components.CastButton
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
@@ -152,7 +154,8 @@ fun VideoPlayerScreen(
             val isReconfiguring = activity?.isChangingConfigurations == true
             if (event == Lifecycle.Event.ON_PAUSE) {
                 // Don't pause if reconfiguring (e.g. orientation change), in PiP, or if Background Play is enabled
-                if (uiState.isPlaying && !uiState.isBackgroundPlayEnabled && !isInPiP && !isReconfiguring) {
+                // (While casting, the phone is only a remote: turning its screen off must not pause the TV.)
+                if (uiState.isPlaying && !uiState.isBackgroundPlayEnabled && !isInPiP && !isReconfiguring && uiState.castDeviceName == null) {
                     viewModel.togglePlayPause()
                 }
             } else if (event == Lifecycle.Event.ON_STOP) {
@@ -741,6 +744,31 @@ fun VideoPlayerScreen(
             typeface = customSubtitleTypeface
         )
 
+        // Feature 26: the picture is on the TV; this screen is the remote control.
+        uiState.castDeviceName?.let { deviceName ->
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color(0xFF0B0B0F)),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                Icon(Icons.Rounded.CastConnected, null, tint = VpAmberSoft, modifier = Modifier.size(56.dp))
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    "Casting to $deviceName",
+                    color = Color.White,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "Play, pause and seek from here. Tap the cast icon to stop.",
+                    color = Color.White.copy(alpha = 0.6f),
+                    fontSize = 13.sp
+                )
+            }
+        }
 
         // Ripple Animation Layer
         doubleTapRipplePos?.let { pos ->
@@ -842,6 +870,8 @@ fun VideoPlayerScreen(
                         onAudioClick = { sheetType = PlayerSheetType.AUDIO },
                         onSubtitleClick = { sheetType = PlayerSheetType.SUBTITLE },
                         onSurroundClick = { sheetType = PlayerSheetType.SURROUND },
+                        showCast = CastManager.isConnected || CastManager.availableDevices.isNotEmpty(),
+                        castDeviceName = uiState.castDeviceName,
                         modifier = Modifier.align(Alignment.TopCenter)
                     )
 
@@ -1464,6 +1494,10 @@ fun PlayerTopBar(
     onAudioClick: () -> Unit,
     onSubtitleClick: () -> Unit,
     onSurroundClick: () -> Unit,
+    /** Feature 26: a Cast device is around (or connected), so the Cast button is shown. */
+    showCast: Boolean = false,
+    /** Feature 26: non-null while the video plays on that Cast device (lights the Cast button). */
+    castDeviceName: String? = null,
     modifier: Modifier = Modifier
 ) {
     Box(
@@ -1558,6 +1592,13 @@ fun PlayerTopBar(
             Spacer(Modifier.width(8.dp))
             VpGlassButton(onClick = onSubtitleClick, size = 42.dp) {
                 Icon(Icons.Rounded.Subtitles, null, tint = Color.White, modifier = Modifier.size(21.dp))
+            }
+            if (showCast) {
+                // The system Cast button opens the device picker (or the "stop casting" dialog when connected).
+                Spacer(Modifier.width(8.dp))
+                VpGlassButton(onClick = {}, size = 42.dp, active = castDeviceName != null) {
+                    CastButton(modifier = Modifier.fillMaxSize(), tint = Color.White)
+                }
             }
         }
     }

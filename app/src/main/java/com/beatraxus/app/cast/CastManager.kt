@@ -10,6 +10,8 @@ import androidx.compose.runtime.setValue
 import androidx.mediarouter.media.MediaRouteSelector
 import androidx.mediarouter.media.MediaRouter
 import com.beatraxus.app.model.Song
+import com.beatraxus.app.model.Video
+import com.beatraxus.app.model.VideoSource
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import com.google.android.gms.cast.CastMediaControlIntent
@@ -41,6 +43,18 @@ object CastManager {
     }
 
     private var pendingSongToCast: Pair<Song, String>? = null
+
+    /**
+     * Feature 26: set by the video player while it is open. When a Cast session becomes ready and a host is
+     * registered, the host's video is cast to the TV instead of the song that is playing in the music player.
+     */
+    var videoHost: VideoCastHost? = null
+
+    /** True while a video is being cast (so other parts of the app, e.g. the music service, can stay out of it). */
+    var isVideoCasting by mutableStateOf(false)
+        private set
+
+    private var lastVideoCastPositionMs = 0L
 
     private var onErrorMessage: ((String) -> Unit)? = null
 
@@ -98,6 +112,8 @@ object CastManager {
 
                     LocalCastServer.start(context)
 
+                    if (handleVideoSession(context, session)) return
+
                     val explicitPending = pendingSongToCast?.first
                     val (songToLoad, startPositionMs) = when {
                         explicitPending != null -> explicitPending to 0L
@@ -138,6 +154,10 @@ object CastManager {
                 }
                 override fun onSessionEnding(session: CastSession) {
                     Log.d(TAG, "onSessionEnding")
+                    if (isVideoCasting) {
+                        // The remote client is still valid here; after onSessionEnded it is gone.
+                        lastVideoCastPositionMs = session.remoteMediaClient?.approximateStreamPosition ?: 0L
+                    }
                 }
                 override fun onSessionEnded(session: CastSession, error: Int) {
                     Log.d(TAG, "onSessionEnded: error code $error")
@@ -146,6 +166,12 @@ object CastManager {
                     session.remoteMediaClient?.unregisterCallback(mediaClientCallback)
                     _castMediaStatus.value = null
                     LocalCastServer.stop()
+                    if (isVideoCasting) {
+                        isVideoCasting = false
+                        LocalCastServer.currentVideo = null
+                        videoHost?.onCastSessionEnded(lastVideoCastPositionMs)
+                        lastVideoCastPositionMs = 0L
+                    }
                 }
                 override fun onSessionResuming(session: CastSession, sessionId: String) {
                     Log.d(TAG, "onSessionResuming: $sessionId")
@@ -156,6 +182,8 @@ object CastManager {
                     connectedDeviceName = session.castDevice?.friendlyName
                     
                     LocalCastServer.start(context)
+
+                    if (handleVideoSession(context, session)) return
 
                     val explicitPending = pendingSongToCast?.first
                     val (songToLoad, startPositionMs) = when {
@@ -254,6 +282,78 @@ object CastManager {
                 }
             }
         pendingSongToCast = null
+    }
+
+    // ---- Feature 26: cast a video ----
+
+    /** @return true when the video player owns this session (the song path must then stay out of it). */
+    private fun handleVideoSession(context: Context, session: CastSession): Boolean {
+        val host = videoHost ?: return false
+        val request = host.onCastSessionReady(session.castDevice?.friendlyName)
+        if (request == null) {
+            // The current video can't be cast: don't leave the TV connected to nothing.
+            castContext?.sessionManager?.endCurrentSession(true)
+            return true
+        }
+        isVideoCasting = true
+        if (!loadVideo(context, session, request.video, request.startPositionMs)) {
+            Log.e(TAG, "Couldn't start casting ${request.video.title}")
+        }
+        return true
+    }
+
+    /** Loads [video] on the connected Cast device (also used to move on to the next video of the queue). */
+    fun loadVideo(context: Context, video: Video, startPositionMs: Long = 0L): Boolean {
+        val session = castContext?.sessionManager?.currentCastSession ?: return false
+        return loadVideo(context, session, video, startPositionMs)
+    }
+
+    private fun loadVideo(context: Context, session: CastSession, video: Video, startPositionMs: Long): Boolean {
+        val remoteMediaClient = session.remoteMediaClient ?: run {
+            Log.e(TAG, "RemoteMediaClient is null")
+            return false
+        }
+
+        val route = VideoCastSupport.routeFor(video.uri.scheme)
+        val url = when (route) {
+            VideoCastSupport.Route.LOCAL_SERVER -> LocalCastServer.startForVideo(context, video)
+            VideoCastSupport.Route.DIRECT -> video.uri.toString()
+            VideoCastSupport.Route.UNSUPPORTED -> null
+        }
+        if (url == null) {
+            onErrorMessage?.invoke("Couldn't prepare this video for casting")
+            return false
+        }
+
+        val isLive = video.source == VideoSource.LIVE_TV
+        val metadata = MediaMetadata(MediaMetadata.MEDIA_TYPE_MOVIE).apply {
+            putString(MediaMetadata.KEY_TITLE, video.title)
+        }
+        val contentType = VideoCastSupport.contentType(
+            video.mimeType,
+            if (route == VideoCastSupport.Route.DIRECT) video.uri.toString() else video.displayName
+        )
+        val mediaInfo = MediaInfo.Builder(url)
+            .setStreamType(if (isLive) MediaInfo.STREAM_TYPE_LIVE else MediaInfo.STREAM_TYPE_BUFFERED)
+            .setContentType(contentType)
+            .setMetadata(metadata)
+            .apply { if (!isLive && video.durationMs > 0) setStreamDuration(video.durationMs) }
+            .build()
+
+        val loadRequest = MediaLoadRequestData.Builder()
+            .setMediaInfo(mediaInfo)
+            .setAutoplay(true)
+            .setCurrentTime(if (isLive) 0L else startPositionMs.coerceAtLeast(0L))
+            .build()
+
+        Log.d(TAG, "Casting video: $url ($contentType, start=$startPositionMs)")
+        remoteMediaClient.load(loadRequest).setResultCallback { result ->
+            if (!result.status.isSuccess) {
+                Log.e(TAG, "Failed to load video: ${result.status.statusMessage} (Code: ${result.status.statusCode})")
+                onErrorMessage?.invoke("The TV couldn't play this video. Its format may not be supported by Chromecast.")
+            }
+        }
+        return true
     }
 
     fun stopCast() {

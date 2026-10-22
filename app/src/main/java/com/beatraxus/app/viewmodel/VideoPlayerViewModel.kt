@@ -30,6 +30,11 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.ui.CaptionStyleCompat
 import com.beatraxus.app.BeatraxusApplication
+import com.beatraxus.app.cast.CastManager
+import com.beatraxus.app.cast.VideoCastHost
+import com.beatraxus.app.cast.VideoCastRequest
+import com.beatraxus.app.cast.VideoCastSupport
+import com.google.android.gms.cast.MediaStatus
 import com.beatraxus.app.engine.AudioEngine
 import com.beatraxus.app.engine.AudioFrameUtils
 import com.beatraxus.app.engine.ExternalAudioMediaSourceFactory
@@ -106,6 +111,8 @@ data class VideoPlayerUiState(
     val availableSubtitleTracks: List<VideoTrackInfo> = emptyList(),
     /** Feature 25: name of the external audio file loaded for the current video, or null. */
     val externalAudioName: String? = null,
+    /** Feature 26: name of the Cast device while this video plays on a TV (the phone only acts as the remote). */
+    val castDeviceName: String? = null,
     val selectedAudioTrackIndex: Int = -1,
     val selectedSubtitleTrackIndex: Int = -1,
     val aspectRatio: VideoAspectRatio = VideoAspectRatio.FIT,
@@ -274,6 +281,7 @@ class VideoPlayerViewModel(
     initialVideoId: String
 ) : AndroidViewModel(application) {
     private val TAG = "VideoPlayerViewModel"
+    private val CAST_STATUS_SETTLE_MS = 4000L
 
     private var exoPlayer: ExoPlayer? = null
     private var telegramDataSourceFactory: com.beatraxus.app.telegram.TelegramAwareDataSourceFactory? = null
@@ -307,6 +315,15 @@ class VideoPlayerViewModel(
     // Feature 25: external audio files loaded per video id. Read from ExoPlayer's loader thread, hence concurrent.
     private val externalAudioByVideoId = java.util.concurrent.ConcurrentHashMap<String, ExternalAudioTrack>()
     private var selectExternalAudioOnNextTracks = false
+
+    // Feature 26: casting a video to a Chromecast.
+    private var castProgressJob: Job? = null
+    private var castFinishedHandled = false
+    private var castIgnoreFinishedUntil = 0L
+    private val castHost = object : VideoCastHost {
+        override fun onCastSessionReady(deviceName: String?): VideoCastRequest? = onCastReady(deviceName)
+        override fun onCastSessionEnded(positionMs: Long) = onCastEnded(positionMs)
+    }
 
     private val volumeReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -417,6 +434,8 @@ class VideoPlayerViewModel(
         loadIntroRange()
         probeDeviceForFpsBooster()
         observeSurroundSettings()
+        // Feature 26: a Cast session started from this screen takes the video to the TV.
+        CastManager.videoHost = castHost
     }
 
     // ---- FPS Booster ----
@@ -1145,6 +1164,12 @@ class VideoPlayerViewModel(
     }
 
     fun togglePlayPause() = exoPlayer?.let { p ->
+        if (_uiState.value.castDeviceName != null) {
+            // Casting: the phone is the remote control for the TV.
+            if (_uiState.value.isPlaying) CastManager.pause() else CastManager.play()
+            _uiState.update { it.copy(isPlaying = !it.isPlaying) }
+            return@let
+        }
         val nextPlaying = !p.isPlaying
         if (_uiState.value.routeAudioToEngine) {
             val engine = VideoAudioBridge.getAudioEngine()
@@ -1161,6 +1186,11 @@ class VideoPlayerViewModel(
     }
 
     fun seekTo(position: Long) {
+        if (_uiState.value.castDeviceName != null) {
+            CastManager.seek(position)
+            positionFlow.value = position
+            return
+        }
         exoPlayer?.seekTo(position)
         positionFlow.value = position
         if (_uiState.value.routeAudioToEngine) {
@@ -1272,6 +1302,108 @@ class VideoPlayerViewModel(
     fun setAspectRatio(ratio: VideoAspectRatio) {
         _uiState.update { it.copy(aspectRatio = ratio, aspectRatioMessage = ratio.displayName) }
         viewModelScope.launch { delay(2000); _uiState.update { it.copy(aspectRatioMessage = null) } }
+    }
+
+    // ---- Feature 26: cast the video to a Chromecast ----
+
+    /** The queue entry the player is on right now (callbacks that update currentVideo run a little later). */
+    private fun playerCurrentVideo(): Video? {
+        val id = exoPlayer?.currentMediaItem?.mediaId ?: return null
+        return videoQueue.find { it.id == id }
+    }
+
+    /** A Cast session is ready: pause here, remember where we were and let CastManager load the video on the TV. */
+    private fun onCastReady(deviceName: String?): VideoCastRequest? {
+        val player = exoPlayer ?: return null
+        val video = playerCurrentVideo() ?: return null
+        if (VideoCastSupport.routeFor(video.uri.scheme) == VideoCastSupport.Route.UNSUPPORTED) {
+            android.widget.Toast.makeText(
+                getApplication(),
+                "Casting isn't available for cloud or Telegram videos yet.",
+                android.widget.Toast.LENGTH_LONG
+            ).show()
+            return null
+        }
+        val alreadyCasting = _uiState.value.castDeviceName != null
+        // currentPosition includes the audio-delay clock shift, so take it back out.
+        val positionMs = if (alreadyCasting) positionFlow.value
+        else (player.currentPosition - tuning.audioDelayMs).coerceAtLeast(0L)
+
+        // The Audio Engine route decodes the video file on the phone; it has no place while the TV plays it.
+        if (_uiState.value.routeAudioToEngine || _uiState.value.isConnectingEngineRoute) {
+            setRouteAudioToEngine(false)
+        }
+        player.pause()
+        castFinishedHandled = false
+        castIgnoreFinishedUntil = android.os.SystemClock.elapsedRealtime() + CAST_STATUS_SETTLE_MS
+        _uiState.update { it.copy(castDeviceName = deviceName ?: "Chromecast", isPlaying = true) }
+        startCastProgress()
+        return VideoCastRequest(video, positionMs)
+    }
+
+    /** The Cast session ended (the user stopped it, or the TV went away): carry on playing here. */
+    private fun onCastEnded(positionMs: Long) {
+        if (_uiState.value.castDeviceName == null) return
+        castProgressJob?.cancel()
+        val wasPlaying = _uiState.value.isPlaying
+        val resumeAt = if (positionMs > 0) positionMs else positionFlow.value
+        _uiState.update { it.copy(castDeviceName = null) }
+        val player = exoPlayer ?: return
+        player.seekTo(resumeAt)
+        positionFlow.value = resumeAt
+        player.playWhenReady = wasPlaying
+    }
+
+    /** Loads the queue entry the player is on (after next / previous) on the TV, from the start. */
+    private fun castCurrentVideo() {
+        val video = playerCurrentVideo() ?: return
+        if (VideoCastSupport.routeFor(video.uri.scheme) == VideoCastSupport.Route.UNSUPPORTED) {
+            android.widget.Toast.makeText(
+                getApplication(),
+                "This video can't be cast. Stop casting to play it on the phone.",
+                android.widget.Toast.LENGTH_LONG
+            ).show()
+            return
+        }
+        castFinishedHandled = false
+        castIgnoreFinishedUntil = android.os.SystemClock.elapsedRealtime() + CAST_STATUS_SETTLE_MS
+        positionFlow.value = 0L
+        _uiState.update { it.copy(isPlaying = true) }
+        CastManager.loadVideo(getApplication(), video, 0L)
+    }
+
+    /** Mirrors the TV's position, play state and duration into the player UI while casting. */
+    private fun startCastProgress() {
+        castProgressJob?.cancel()
+        castProgressJob = viewModelScope.launch {
+            while (isActive) {
+                val status = CastManager.castMediaStatus.value
+                val pos = CastManager.currentPositionMs()
+                if (positionFlow.value != pos) positionFlow.value = pos
+
+                val state = status?.playerState
+                val remotePlaying = state == MediaStatus.PLAYER_STATE_PLAYING ||
+                    state == MediaStatus.PLAYER_STATE_BUFFERING ||
+                    state == MediaStatus.PLAYER_STATE_LOADING
+                val remoteDuration = status?.mediaInfo?.streamDuration ?: -1L
+                _uiState.update { s ->
+                    val newDuration = if (remoteDuration > 0) remoteDuration else s.duration
+                    if (s.isPlaying == remotePlaying && s.duration == newDuration) s
+                    else s.copy(isPlaying = remotePlaying, duration = newDuration)
+                }
+
+                // Finished on the TV: carry on with the next video of the queue, like local playback does.
+                if (status != null && state == MediaStatus.PLAYER_STATE_IDLE &&
+                    status.idleReason == MediaStatus.IDLE_REASON_FINISHED &&
+                    !castFinishedHandled &&
+                    android.os.SystemClock.elapsedRealtime() >= castIgnoreFinishedUntil
+                ) {
+                    castFinishedHandled = true
+                    if (playerOptions.autoPlayNext && exoPlayer?.hasNextMediaItem() == true) playNext()
+                }
+                delay(500)
+            }
+        }
     }
 
     // ---- Feature 25: load an external audio track ----
@@ -1855,7 +1987,7 @@ class VideoPlayerViewModel(
         exoPlayer?.let {
             if (it.hasNextMediaItem()) {
                 it.seekToNext()
-                it.play()
+                if (_uiState.value.castDeviceName != null) castCurrentVideo() else it.play()
             }
         }
     }
@@ -1864,7 +1996,7 @@ class VideoPlayerViewModel(
         exoPlayer?.let {
             if (it.hasPreviousMediaItem()) {
                 it.seekToPrevious()
-                it.play()
+                if (_uiState.value.castDeviceName != null) castCurrentVideo() else it.play()
             }
         }
     }
@@ -2326,6 +2458,14 @@ class VideoPlayerViewModel(
     override fun onCleared() {
         if (_uiState.value.routeAudioToEngine) {
             stopEngineRouting(restoreExoAudio = false)
+        }
+        // Feature 26: leaving the player ends the cast. Remember where the TV was so "continue watching" is right.
+        if (CastManager.videoHost === castHost) CastManager.videoHost = null
+        castProgressJob?.cancel()
+        if (_uiState.value.castDeviceName != null) {
+            val resumeAt = CastManager.currentPositionMs().takeIf { it > 0 } ?: positionFlow.value
+            exoPlayer?.seekTo(resumeAt)
+            CastManager.stopCast()
         }
         super.onCleared()
         getApplication<Application>().unregisterReceiver(volumeReceiver)

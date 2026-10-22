@@ -6,6 +6,7 @@ import android.net.wifi.WifiManager
 import android.util.Log
 import com.beatraxus.app.model.Song
 import com.beatraxus.app.model.SongSource
+import com.beatraxus.app.model.Video
 import com.beatraxus.app.telegram.TdLibManager
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -27,6 +28,10 @@ object LocalCastServer {
     private var multicastLock: WifiManager.MulticastLock? = null
 
     var currentSong: Song? = null
+
+    /** Feature 26: the local video the Chromecast is currently streaming from this phone (served at /video). */
+    @Volatile
+    var currentVideo: Video? = null
 
     /**
      * Skips exactly [bytesToSkip] bytes from [stream]. InputStream.skip() is allowed to skip
@@ -98,6 +103,17 @@ object LocalCastServer {
             if (it.isHeld) it.release()
         }
         multicastLock = null
+    }
+
+    /**
+     * Makes [video] (a content:// or file:// video on this phone) available to the TV and returns the address to
+     * hand to the Chromecast, e.g. http://192.168.1.20:41234/video?vid=123. Starts the server when needed.
+     */
+    fun startForVideo(context: Context, video: Video): String? {
+        currentVideo = video
+        if (!isRunning && start(context) == null) return null
+        val ip = getLocalIpAddress(context) ?: return null
+        return "http://$ip:$port/video?vid=${java.net.URLEncoder.encode(video.id, "UTF-8")}"
     }
 
     private fun getUrl(context: Context): String? {
@@ -197,6 +213,11 @@ object LocalCastServer {
                 val path = fullPath.substringBefore('?')
                 val query = fullPath.substringAfter('?', "")
                 val output = socket.getOutputStream()
+
+                if (path.startsWith("/video")) {
+                    serveVideo(context, reader, output, query)
+                    return@execute
+                }
 
                 if (path.startsWith("/art")) {
                     serveArt(context, output)
@@ -448,6 +469,106 @@ object LocalCastServer {
             } finally {
                 try { socket.close() } catch (e: Exception) {}
             }
+        }
+    }
+
+    /** Feature 26: streams [currentVideo] to the Chromecast, honouring Range requests so the TV can seek. */
+    private fun serveVideo(context: Context, reader: java.io.BufferedReader, output: OutputStream, query: String) {
+        val video = currentVideo
+        if (video == null) {
+            sendError(output, 404, "Not Found")
+            return
+        }
+
+        // Same stale-request guard as the audio stream: a request for a previous video must not get this one.
+        val requestedVid = if (query.contains("vid=")) {
+            runCatching {
+                java.net.URLDecoder.decode(query.substringAfter("vid=").substringBefore('&'), "UTF-8")
+            }.getOrNull()
+        } else null
+        if (requestedVid != null && requestedVid != video.id) {
+            Log.w(TAG, "Rejecting request for stale video id: $requestedVid (current: ${video.id})")
+            sendError(output, 403, "Stale Request")
+            return
+        }
+
+        var rangeHeader: String? = null
+        while (true) {
+            val line = reader.readLine() ?: break
+            if (line.isEmpty()) break
+            if (line.startsWith("Range:", ignoreCase = true)) {
+                rangeHeader = line.substringAfter(':').trim()
+            }
+        }
+
+        var pfd: android.os.ParcelFileDescriptor? = null
+        try {
+            val uri = video.uri
+            pfd = if (uri.scheme == "file") {
+                android.os.ParcelFileDescriptor.open(
+                    java.io.File(uri.path ?: ""), android.os.ParcelFileDescriptor.MODE_READ_ONLY
+                )
+            } else {
+                context.contentResolver.openFileDescriptor(uri, "r")
+            }
+            if (pfd == null) {
+                sendError(output, 404, "Not Found")
+                return
+            }
+
+            val total = pfd.statSize.takeIf { it > 0 } ?: video.sizeBytes
+            val mime = VideoCastSupport.contentType(video.mimeType, video.displayName)
+            val range = VideoCastSupport.parseRange(rangeHeader, total)
+
+            val start: Long
+            val length: Long // -1 = unknown, send until EOF
+            when (range) {
+                is VideoCastSupport.RangeResult.NotSatisfiable -> {
+                    output.write("HTTP/1.1 416 Range Not Satisfiable\r\n".toByteArray())
+                    output.write("Content-Range: bytes */$total\r\n".toByteArray())
+                    output.write("Connection: close\r\n\r\n".toByteArray())
+                    output.flush()
+                    return
+                }
+                is VideoCastSupport.RangeResult.Partial -> {
+                    start = range.start
+                    length = range.length
+                    output.write("HTTP/1.1 206 Partial Content\r\n".toByteArray())
+                    output.write("Content-Range: bytes ${range.start}-${range.end}/$total\r\n".toByteArray())
+                }
+                is VideoCastSupport.RangeResult.Full -> {
+                    start = 0L
+                    length = if (total > 0) total else -1L
+                    output.write("HTTP/1.1 200 OK\r\n".toByteArray())
+                }
+            }
+            output.write("Content-Type: $mime\r\n".toByteArray())
+            if (length > 0) output.write("Content-Length: $length\r\n".toByteArray())
+            output.write("Accept-Ranges: bytes\r\n".toByteArray())
+            // The receiver may fetch the media with XHR (HLS/DASH), which needs CORS.
+            output.write("Access-Control-Allow-Origin: *\r\n".toByteArray())
+            output.write("Connection: close\r\n\r\n".toByteArray())
+
+            android.os.ParcelFileDescriptor.AutoCloseInputStream(pfd).use { input ->
+                if (start > 0) input.channel.position(start)
+                val buffer = ByteArray(128 * 1024)
+                var remaining = if (length > 0) length else Long.MAX_VALUE
+                while (remaining > 0) {
+                    val n = input.read(buffer, 0, minOf(buffer.size.toLong(), remaining).toInt())
+                    if (n < 0) break
+                    output.write(buffer, 0, n)
+                    remaining -= n
+                }
+                output.flush()
+            }
+        } catch (e: java.io.IOException) {
+            // The TV closes the connection whenever it seeks or stops: expected, not an error.
+            Log.d(TAG, "Video connection closed: ${e.message}")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error serving video ${video.title}", e)
+            sendError(output, 500, "Internal Server Error")
+        } finally {
+            try { pfd?.close() } catch (_: Exception) {}
         }
     }
 
