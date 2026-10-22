@@ -564,7 +564,7 @@ fun SettingsScreen(
                         )
                         SettingMenuItem(
                             title = "Video Settings",
-                            subtitle = "Subtitles, Online Thumbnails, Player preferences",
+                            subtitle = "Subtitles, Gestures & Controls, Playback & Audio",
                             icon = Icons.Rounded.Movie,
                             iconColor = Color(0xFFFF9800),
                             onClick = { sectionStack.add("Video Settings") }
@@ -623,7 +623,10 @@ fun SettingsScreen(
                             "Appearance: Lyrics Database" -> LyricsDatabaseContent(uiState, playerViewModel)
                             "Replay Gain" -> ReplayGainContent(uiState, playerViewModel, onEditValue = { editingValue = it })
                             "Library" -> LibraryContent(uiState, playerViewModel, onShowInfo = { showInfoPopup = true })
-                            "Video Settings" -> VideoSettingsContent(uiState, playerViewModel)
+                            "Video Settings" -> VideoSettingsContent(sectionStack)
+                            VIDEO_SETTINGS_SUBTITLES -> VideoSubtitlesSettingsContent()
+                            VIDEO_SETTINGS_GESTURES -> VideoGesturesSettingsContent()
+                            VIDEO_SETTINGS_PLAYBACK -> VideoPlaybackSettingsContent()
                             "Cloud" -> CloudContent(
                                 uiState,
                                 playerViewModel,
@@ -6870,31 +6873,6 @@ fun android.content.Context.findActivity(): android.app.Activity? = when (this) 
     is android.app.Activity -> this
     is android.content.ContextWrapper -> baseContext.findActivity()
     else -> null
-}
-
-@Composable
-fun VideoSettingsContent(uiState: PlayerUiState, playerViewModel: PlayerViewModel) {
-    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        val context = LocalContext.current
-        val appContext = context.applicationContext as Application
-        val api = remember { SubtitleApiClientFactory.createApi() }
-        val credStore = remember { SubtitleCredentialsStore(appContext) }
-        val authManager = remember { SubtitleAuthManager(api, credStore) }
-        val repository = remember { SubtitleRepositoryImpl(appContext, api, authManager) }
-        val controller = remember { Media3SubtitlePlayerController { null } }
-
-        val subtitleViewModel: SubtitleViewModel = viewModel(
-            factory = SubtitleViewModelFactory(
-                application = appContext,
-                repository = repository,
-                authManager = authManager,
-                subtitleController = controller,
-                credentialsStore = credStore
-            )
-        )
-
-        SubtitleSettingsSection(subtitleViewModel = subtitleViewModel)
-    }
 }
 
 @Composable

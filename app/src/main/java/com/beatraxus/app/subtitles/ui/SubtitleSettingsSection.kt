@@ -91,8 +91,6 @@ fun SubtitleSettingsSection(
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        Text("Subtitles", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-
         if (BuildConfig.OPENSUBTITLES_API_KEY.isBlank()) {
             Box(
                 modifier = Modifier

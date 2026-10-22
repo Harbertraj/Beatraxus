@@ -2451,51 +2451,29 @@ internal fun SleepTimerSheet(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(topStart = 42.dp, topEnd = 42.dp))
-                .then(
-                    if (coverPalette != null) {
-                        // Glass edge: a thin highlight that fades out down the sheet.
-                        Modifier.border(
-                            1.dp,
-                            Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.22f), Color.Transparent)),
-                            RoundedCornerShape(topStart = 42.dp, topEnd = 42.dp)
-                        )
-                    } else Modifier
+                // Same panel look as the Lyrics Sources popup: solid dark card, glass edge, blurred art backdrop.
+                .background(Color(0xFF0E0E14))
+                .border(
+                    BorderStroke(
+                        1.dp,
+                        Brush.verticalGradient(listOf(Color.White.copy(0.22f), Color.White.copy(0.04f)))
+                    ),
+                    RoundedCornerShape(topStart = 42.dp, topEnd = 42.dp)
                 )
-                .background(Color(0xFF0F0E0E).copy(alpha = POPUP_PANEL_ALPHA))
         ) {
-            if (coverPalette != null) {
-                // Full Cover Art: the same drifting cover-colour mesh as the Now Playing screen.
-                CoverMeshBackground(palette = coverPalette, modifier = Modifier.matchParentSize())
-                // Soft light at the top, a little shade at the bottom so text and buttons stay crisp.
-                Box(
-                    modifier = Modifier
-                        .matchParentSize()
-                        .background(
-                            Brush.verticalGradient(
-                                listOf(
-                                    Color.White.copy(alpha = 0.08f),
-                                    Color.Transparent,
-                                    Color.Black.copy(alpha = 0.30f)
-                                )
-                            )
-                        )
-                )
-            } else if (uiState.appearance.nowPlayingBackgroundMode == NowPlayingBackgroundMode.BLUR) {
-                // Background Layer with enhanced blur and subtle animation
+            if (uiState.appearance.nowPlayingBackgroundMode == NowPlayingBackgroundMode.BLUR && albumArtUri != null) {
                 AsyncImage(
                     model = ImageRequest.Builder(LocalContext.current)
                         .data(albumArtUri)
+                        .size(200, 200)
                         .build(),
                     contentDescription = null,
+                    contentScale = ContentScale.Crop,
                     modifier = Modifier
                         .matchParentSize()
-                        .blur(160.dp)
-                        .alpha(0.3f)
-                        .graphicsLayer {
-                            scaleX = 1.2f
-                            scaleY = 1.2f
-                        },
-                    contentScale = ContentScale.Crop
+                        .graphicsLayer { scaleX = 1.4f; scaleY = 1.4f }
+                        .blur(60.dp)
+                        .alpha(0.28f)
                 )
             }
 

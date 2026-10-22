@@ -102,6 +102,7 @@ import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
 import com.beatraxus.app.model.SavedEqPreset
 import com.beatraxus.app.util.PlaybackGlobalState
+import com.beatraxus.app.util.VideoPlayerPrefs
 import com.beatraxus.app.viewmodel.VideoAspectRatio
 import com.beatraxus.app.viewmodel.VideoPlayerUiState
 import com.beatraxus.app.viewmodel.VideoPlayerViewModel
@@ -132,6 +133,8 @@ fun VideoPlayerScreen(
     val uiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
     val activity = context as? Activity
+    // Settings -> Video Settings (gestures, orientation, ...). Read once per player session.
+    val playerOptions = remember { VideoPlayerPrefs.read(context) }
     val scope = rememberCoroutineScope()
     val lifecycleOwner = LocalLifecycleOwner.current
     val isInPiP = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
@@ -231,6 +234,7 @@ fun VideoPlayerScreen(
     var showGestureOverlay by remember { mutableStateOf(false) }
     var zoomScale by remember { mutableFloatStateOf(1f) }
     var isFastForwarding by remember { mutableStateOf(false) }
+    var speedBeforeHold by remember { mutableFloatStateOf(1f) }
     var doubleTapRipplePos by remember { mutableStateOf<Offset?>(null) }
     var doubleTapRippleText by remember { mutableStateOf("") }
 
@@ -266,17 +270,17 @@ fun VideoPlayerScreen(
     DisposableEffect(Unit) {
         PlaybackGlobalState.setVideoPlayerOnScreen(true)
         val originalOrientation = activity?.requestedOrientation ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-        
+        activity?.requestedOrientation = playerOptions.orientationMode.requestedOrientation
+
         val window = activity?.window
         val originalBrightness = window?.attributes?.screenBrightness
         if (window != null) {
             val controller = WindowCompat.getInsetsController(window, window.decorView)
             controller.hide(WindowInsetsCompat.Type.systemBars())
             controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            if (playerOptions.keepScreenOn) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         }
-        
+
         onDispose {
             viewModel.saveProgressNow()
             PlaybackGlobalState.setVideoPlayerOnScreen(false)
@@ -349,7 +353,7 @@ fun VideoPlayerScreen(
 
                         if (onControls) continue
 
-                        if (event.changes.size > 1) {
+                        if (event.changes.size > 1 && playerOptions.gestureZoom) {
                             initialDragIntent = GestureType.ZOOM
                             dragStarted = true
                         }
@@ -372,9 +376,18 @@ fun VideoPlayerScreen(
                                     else -> GestureType.SUBTITLE
                                 }
                             }
+                            // Video Settings -> Gestures & Controls: a switched-off gesture is simply ignored.
+                            val intentEnabled = when (initialDragIntent) {
+                                GestureType.SEEK -> playerOptions.gestureSeek
+                                GestureType.BRIGHTNESS -> playerOptions.gestureBrightness
+                                GestureType.VOLUME -> playerOptions.gestureVolume
+                                GestureType.SUBTITLE -> playerOptions.gestureSubtitleMove
+                                else -> true
+                            }
+                            if (!intentEnabled) initialDragIntent = GestureType.NONE
                         }
 
-                        if (dragStarted) {
+                        if (dragStarted && initialDragIntent != GestureType.NONE) {
                             gestureType = initialDragIntent
                             // Show overlay for navigation gestures
                             showGestureOverlay = true
@@ -438,24 +451,39 @@ fun VideoPlayerScreen(
             }
             .pointerInput(uiState.isLocked) {
                 detectTapGestures(
+                    // Hold to fast-forward: speed up while the finger stays down, restore on release.
+                    onPress = {
+                        tryAwaitRelease()
+                        if (isFastForwarding) {
+                            isFastForwarding = false
+                            viewModel.setPlaybackSpeed(speedBeforeHold)
+                        }
+                    },
+                    onLongPress = {
+                        if (!uiState.isLocked && playerOptions.holdToSpeedEnabled) {
+                            speedBeforeHold = uiState.playbackSpeed
+                            isFastForwarding = true
+                            viewModel.setPlaybackSpeed(playerOptions.holdSpeed)
+                        }
+                    },
                     onTap = { controlsVisible = !controlsVisible },
                     onDoubleTap = { offset ->
                         if (uiState.isLocked) return@detectTapGestures
                         val isCenter = offset.x > size.width / 3 && offset.x < size.width * 2 / 3
                         if (isCenter) {
-                            viewModel.togglePlayPause()
+                            if (playerOptions.doubleTapPlayPause) viewModel.togglePlayPause()
                         } else {
                             val isLeft = offset.x < size.width / 2
-                            val delta = if (isLeft) -10000L else 10000L
+                            val delta = if (isLeft) -playerOptions.doubleTapSeekMs else playerOptions.doubleTapSeekMs
                             viewModel.seekTo(viewModel.positionFlow.value + delta)
                             doubleTapRipplePos = offset
-                            doubleTapRippleText = if (isLeft) "-10s" else "+10s"
+                            doubleTapRippleText = if (isLeft) "-${playerOptions.doubleTapSeekSeconds}s" else "+${playerOptions.doubleTapSeekSeconds}s"
                         }
                     }
                 )
             }
             .pointerInput(uiState.isLocked) {
-                if (uiState.isLocked) return@pointerInput
+                if (uiState.isLocked || !playerOptions.gestureZoom) return@pointerInput
                 // Custom pinch handler: reacts on the very first pixel of movement
                 // (detectTransformGestures waits for touch-slop, which felt laggy).
                 awaitEachGesture {
@@ -702,7 +730,7 @@ fun VideoPlayerScreen(
                     ) {
                         Icon(Icons.Rounded.FastForward, null, tint = VpAmberSoft, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(8.dp))
-                        Text("2X Speed", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.ExtraBold)
+                        Text("${VideoPlayerPrefs.formatSpeed(playerOptions.holdSpeed)}X Speed", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.ExtraBold)
                     }
                 }
             }

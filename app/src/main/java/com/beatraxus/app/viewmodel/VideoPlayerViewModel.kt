@@ -249,6 +249,8 @@ class VideoPlayerViewModel(
     private val sceneChangeDetector = com.beatraxus.app.engine.SceneChangeDetector(application)
     private var cachedIntroRange: com.beatraxus.app.model.IntroOutroRange? = null
     private val prefs = application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE)
+    // Settings -> Video Settings. Read once per player session, so a change applies from the next video.
+    private val playerOptions = com.beatraxus.app.util.VideoPlayerPrefs.read(prefs)
     // Read live by VideoRenderersFactory: decoder mode is persisted, audio delay is per video.
     private val tuning = VideoPlaybackTuning(
         decoderMode = VideoDecoderMode.fromName(prefs.getString(PREF_VIDEO_DECODER_MODE, null))
@@ -282,6 +284,7 @@ class VideoPlayerViewModel(
         maxVolume = (application.getSystemService(Context.AUDIO_SERVICE) as AudioManager).getStreamMaxVolume(AudioManager.STREAM_MUSIC),
         isEqEnabled = application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE).getBoolean("video_eq_enabled", false),
         videoDecoderMode = tuning.decoderMode,
+        playbackSpeed = playerOptions.defaultSpeed,
         fpsBooster = FpsBoosterStore.load(application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE)),
         // A result from an earlier run is shown again instead of testing every time. Read synchronously so the
         // sheet never mistakes "not loaded yet" for "never tested" and starts the test a second time.
@@ -530,12 +533,21 @@ class VideoPlayerViewModel(
                 )
             )
             .setAudioAttributes(audioAttributes, true)
-            .setHandleAudioBecomingNoisy(true)
+            .setHandleAudioBecomingNoisy(playerOptions.pauseOnHeadsetUnplug)
             .setLoadControl(loadControl)
             .build()
             .apply {
                 setVideoScalingMode(C.VIDEO_SCALING_MODE_SCALE_TO_FIT)
                 repeatMode = Player.REPEAT_MODE_OFF
+                // Video Settings -> Playback & Audio
+                pauseAtEndOfMediaItems = !playerOptions.autoPlayNext
+                if (playerOptions.defaultSpeed != 1f) this.setPlaybackSpeed(playerOptions.defaultSpeed)
+                if (playerOptions.preferredAudioLanguage != null || playerOptions.preferredSubtitleLanguage != null) {
+                    trackSelectionParameters = trackSelectionParameters.buildUpon().apply {
+                        playerOptions.preferredAudioLanguage?.let { setPreferredAudioLanguage(it) }
+                        playerOptions.preferredSubtitleLanguage?.let { setPreferredTextLanguage(it) }
+                    }.build()
+                }
                 setMediaItems(videoQueue.map { v ->
                     MediaItem.Builder().setUri(v.uri).setMediaId(v.id).apply {
                         // Live TV channels: some playlists are served from addresses without a .m3u8 extension.
@@ -547,7 +559,7 @@ class VideoPlayerViewModel(
                 
                 viewModelScope.launch(Dispatchers.IO) {
                     val recentlyPlayed = videoRecentlyPlayedDao.getRecentlyPlayedByVideoId(video.id)
-                    val lastPos = recentlyPlayed?.lastPositionMs ?: 0L
+                    val lastPos = if (playerOptions.resumePlayback) (recentlyPlayed?.lastPositionMs ?: 0L) else 0L
                     val lastRatio = recentlyPlayed?.lastAspectRatio?.let { ratioName ->
                         val mappedName = when (ratioName) {
                             "ORIGINAL" -> "FIT"
