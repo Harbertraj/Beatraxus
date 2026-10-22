@@ -31,6 +31,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import com.beatraxus.app.ui.theme.Icon
 
 private val OttBg = Color(0xFF0B0B0F)
 private val OttAccent = Color(0xFFFF8A00)

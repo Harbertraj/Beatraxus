@@ -31,7 +31,9 @@ data class ThemesUiState(
     /** Id of the store theme being downloaded right now. */
     val busyId: String? = null,
     /** A short one-off message ("Applied Neon Night"), shown once. */
-    val message: String? = null
+    val message: String? = null,
+    /** Full themes of store cards (by id), loaded in the background so the gallery can show a real UI preview. */
+    val previews: Map<String, ThemeSpec> = emptyMap()
 )
 
 class ThemeViewModel(application: Application) : AndroidViewModel(application) {
@@ -58,14 +60,40 @@ class ThemeViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private val previewRequested = HashSet<String>()
+
+    /** Loads the full theme behind each store card, one at a time, so cards fill in as they arrive. */
+    fun loadPreviews(entries: List<ThemeIndexEntry>) {
+        val todo = entries.filter { previewRequested.add("${it.id}-${it.version}") }
+        if (todo.isEmpty()) return
+        viewModelScope.launch {
+            for (entry in todo) {
+                val spec = repo.loadPreviewSpec(entry)
+                if (spec != null) _state.update { it.copy(previews = it.previews + (entry.id to spec)) }
+            }
+        }
+    }
+
     private fun reloadInstalled() {
         viewModelScope.launch { _state.update { it.copy(installed = repo.installed()) } }
     }
 
     fun apply(spec: ThemeSpec) {
         viewModelScope.launch {
+            // Make sure the theme's icon images are on the phone first, so the whole look appears at once.
+            val iconsOk = repo.ensureIconPack(spec)
             prefs.applyTheme(spec)
-            _state.update { it.copy(message = "Applied ${spec.name}") }
+            _state.update {
+                it.copy(message = if (iconsOk) "Applied ${spec.name}" else "Applied ${spec.name} (some icons couldn't be downloaded)")
+            }
+        }
+    }
+
+    /** Built-in Default theme: the whole app look (UI only) goes back to the app's own defaults. */
+    fun applyDefault() {
+        viewModelScope.launch {
+            prefs.resetThemeToDefault()
+            _state.update { it.copy(message = "Default look restored") }
         }
     }
 
@@ -90,7 +118,11 @@ class ThemeViewModel(application: Application) : AndroidViewModel(application) {
     fun saveImported(spec: ThemeSpec, apply: Boolean) {
         viewModelScope.launch {
             repo.save(spec)
-            if (apply) prefs.applyTheme(spec)
+            // A shared theme carries no images; if the store has icons for its id they are fetched here.
+            if (apply) {
+                repo.ensureIconPack(spec)
+                prefs.applyTheme(spec)
+            }
             _state.update { it.copy(message = if (apply) "Applied ${spec.name}" else "Saved ${spec.name}") }
             reloadInstalled()
         }

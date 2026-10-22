@@ -149,6 +149,7 @@ import com.beatraxus.app.subtitles.viewmodel.SubtitleViewModelFactory
 import com.beatraxus.app.ui.theme.BgDeep
 import com.beatraxus.app.viewmodel.PlayerViewModel
 import com.beatraxus.app.ui.theme.appFontFamily
+import com.beatraxus.app.ui.theme.Icon
 
 private val PremiumAccent = Color(0xFF00C2A8)
 private val PrimaryCyan = Color(0xFF00C2A8)
@@ -2339,11 +2340,11 @@ fun AudioEngineContent(
             )
         }
 
-        // ── 2. Resampling ────────────────────────────────────────────────────
+        // ── 2. Resampler ────────────────────────────────────────────────────
         // Bit-Perfect mode switches the resampler section off until its unbypass switch (bottom of this section) is on.
         val isResamplerBypassed = uiState.dsp.config.bitPerfectEnabled && !uiState.dsp.config.bitPerfectUnbypassResample
         SettingsSection(
-            title = "RESAMPLING",
+            title = "RESAMPLER",
             icon = Icons.Rounded.Speed,
             isActive = uiState.inputSampleRate != uiState.outputSampleRate,
             headerActions = {
@@ -2398,15 +2399,15 @@ fun AudioEngineContent(
                     // While locked, SoXR is what actually runs (see DspPipeline), so show it as the selection.
                     val soxrSelected = isResamplerBypassed || uiState.dsp.config.highQualityResampler
                     PremiumChip(
-                        selected = soxrSelected,
-                        onClick = { if (!isResamplerBypassed) playerViewModel.setHighQualityResampler(true) },
-                        label = "SoXR",
-                        modifier = Modifier.graphicsLayer { alpha = if (isResamplerBypassed) 0.35f else 1f }
-                    )
-                    PremiumChip(
                         selected = !soxrSelected,
                         onClick = { if (!isResamplerBypassed) playerViewModel.setHighQualityResampler(false) },
                         label = "SW Cubic",
+                        modifier = Modifier.graphicsLayer { alpha = if (isResamplerBypassed) 0.35f else 1f }
+                    )
+                    PremiumChip(
+                        selected = soxrSelected,
+                        onClick = { if (!isResamplerBypassed) playerViewModel.setHighQualityResampler(true) },
+                        label = "SoXR",
                         modifier = Modifier.graphicsLayer { alpha = if (isResamplerBypassed) 0.35f else 1f }
                     )
                 }

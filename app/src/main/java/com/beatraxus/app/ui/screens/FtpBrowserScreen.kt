@@ -20,6 +20,7 @@ import com.beatraxus.app.repository.FtpProtocol
 import com.beatraxus.app.repository.FtpServer
 import com.beatraxus.app.util.NetworkUtils
 import com.beatraxus.app.viewmodel.PlayerViewModel
+import com.beatraxus.app.ui.theme.Icon
 
 @Composable
 fun FtpBrowserScreen(uiState: PlayerUiState, viewModel: PlayerViewModel) {

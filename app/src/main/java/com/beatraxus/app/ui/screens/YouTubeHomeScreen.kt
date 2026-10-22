@@ -62,6 +62,7 @@ import com.beatraxus.app.addons.YouTubeAddon
 import com.beatraxus.app.addons.YtVideo
 import com.beatraxus.app.addons.ottCatching
 import com.beatraxus.app.viewmodel.PlayerViewModel
+import com.beatraxus.app.ui.theme.Icon
 
 private val YtBg = Color(0xFF0F0F0F)
 private val YtRed = Color(0xFFFF0000)

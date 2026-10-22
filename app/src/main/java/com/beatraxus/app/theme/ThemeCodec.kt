@@ -3,7 +3,10 @@ package com.beatraxus.app.theme
 import android.net.Uri
 import android.util.Base64
 import androidx.compose.ui.graphics.toArgb
+import com.beatraxus.app.model.AlbumArtTransform
+import com.beatraxus.app.model.MiniPlayerStyle
 import com.beatraxus.app.model.NowPlayingBackgroundMode
+import com.beatraxus.app.model.QualityBadgeStyle
 import com.beatraxus.app.model.SeekbarStyle
 import com.beatraxus.app.ui.theme.DspPalette
 import com.beatraxus.app.ui.theme.FontRepository
@@ -42,6 +45,20 @@ import java.util.zip.Inflater
  * }
  * ```
  * A custom DSP palette is `"dsp": { "primary": "#RRGGBB", "secondary": "#RRGGBB" }`.
+ *
+ * ### Optional sections (all may be left out; a missing one leaves the user's own setting alone)
+ * ```json
+ *   "colors":   { ..., "background": "#0B0B14", "surface": "#161622", "text": "#F0F0FF" },
+ *   "shape":    { "cornerScale": 1.0 },
+ *   "player":   { "albumArt": "SOFT_FADE", "qualityBadge": "GLASSMORPHIC", "miniStyle": "PILL",
+ *                 "miniHeight": 64, "miniCorner": 36, "miniArtCorner": 18,
+ *                 "miniProgressRing": true, "miniShowTime": true, "miniTintFromArt": true },
+ *   "surround": { "room": "dark", "visualizer": "wave", "visualizerEnabled": true, "speakerIcons": true,
+ *                 "labels": true, "beams": true, "animated": true, "arcs": true, "screen": true },
+ *   "icons":    { "color": "#FFFFFF", "scale": 1.0, "packTint": true,
+ *                 "pack": { "play": "play.png", "pause": "pause.png" } }
+ * ```
+ * Icon pack images live in the theme repo at `icons/<theme id>/<file>` (PNG or WebP, see [MAX_ICON_BYTES]).
  */
 object ThemeCodec {
     const val SCHEMA = 1
@@ -51,6 +68,10 @@ object ThemeCodec {
     const val SHARE_SCHEME = "beatraxus"
     const val SHARE_HOST = "theme"
     const val CODE_PREFIX = "BTX1."
+
+    const val MAX_ICON_BYTES = 32 * 1024
+    const val MAX_ICON_PIXELS = 512
+    const val MAX_PACK_ICONS = 40
 
     private const val MAX_SHARE_CHARS = 32 * 1024
     private const val MAX_INDEX_ENTRIES = 500
@@ -62,9 +83,13 @@ object ThemeCodec {
     private val ID_REGEX = Regex("^[a-z0-9][a-z0-9_-]{0,47}$")
     private val FILE_REGEX = Regex("^themes/[a-z0-9][a-z0-9_-]{0,47}\\.json$")
     private val COLOR_REGEX = Regex("^#([0-9a-fA-F]{6}|[0-9a-fA-F]{8})$")
+    private val ICON_FILE_REGEX = Regex("^[a-z0-9][a-z0-9_-]{0,39}\\.(png|webp)$")
+    private val SURROUND_ROOMS = setOf("dark", "studio", "living")
+    private val SURROUND_VISUALIZERS = setOf("wave", "spectrum", "circle")
 
     fun isValidId(id: String): Boolean = ID_REGEX.matches(id)
     fun isValidFile(path: String): Boolean = FILE_REGEX.matches(path)
+    fun isValidIconFile(name: String): Boolean = ICON_FILE_REGEX.matches(name)
 
     // ---------------------------------------------------------------- theme file
 
@@ -135,8 +160,72 @@ object ThemeCodec {
             id = id, name = name, author = author, version = version, isDark = isDark,
             accent = accent, accentSecondary = accentSecondary, preview = preview,
             dspPaletteId = paletteId, dspPrimary = primary, dspSecondary = secondary,
-            seekbarStyle = seekbar, fontId = font, background = background
+            seekbarStyle = seekbar, fontId = font, background = background,
+            surfaces = ThemeSurfaces(
+                background = optionalColor(colors, "background"),
+                surface = optionalColor(colors, "surface"),
+                text = optionalColor(colors, "text")
+            ),
+            shape = o.optJSONObject("shape")?.takeIf { it.has("cornerScale") }
+                ?.let { ThemeShape(number(it, "cornerScale", 1f, 0.2f, 2f)) },
+            player = parsePlayer(o.optJSONObject("player")),
+            surround = parseSurround(o.optJSONObject("surround")),
+            icons = parseIcons(o.optJSONObject("icons"))
         )
+    }
+
+    private fun parsePlayer(p: JSONObject?): ThemePlayer? {
+        if (p == null) return null
+        val out = ThemePlayer(
+            albumArt = enumName(p, "albumArt", AlbumArtTransform.entries.map { it.name }),
+            qualityBadge = enumName(p, "qualityBadge", QualityBadgeStyle.entries.map { it.name }),
+            miniStyle = enumName(p, "miniStyle", MiniPlayerStyle.entries.map { it.name }),
+            // Same ranges as the sliders in Settings > Appearance > Main Interface.
+            miniHeight = optionalNumber(p, "miniHeight", 56f, 120f),
+            miniCorner = optionalNumber(p, "miniCorner", 8f, 60f),
+            miniArtCorner = optionalNumber(p, "miniArtCorner", 0f, 40f),
+            miniProgressRing = optionalBool(p, "miniProgressRing"),
+            miniShowTime = optionalBool(p, "miniShowTime"),
+            miniTintFromArt = optionalBool(p, "miniTintFromArt")
+        )
+        return out.takeIf { it != ThemePlayer() }
+    }
+
+    private fun parseSurround(s: JSONObject?): ThemeSurround? {
+        if (s == null) return null
+        val out = ThemeSurround(
+            room = s.optString("room").trim().takeIf { it in SURROUND_ROOMS },
+            visualizer = s.optString("visualizer").trim().takeIf { it in SURROUND_VISUALIZERS },
+            visualizerEnabled = optionalBool(s, "visualizerEnabled"),
+            speakerIcons = optionalBool(s, "speakerIcons"),
+            labels = optionalBool(s, "labels"),
+            beams = optionalBool(s, "beams"),
+            animated = optionalBool(s, "animated"),
+            arcs = optionalBool(s, "arcs"),
+            screen = optionalBool(s, "screen")
+        )
+        return out.takeIf { it != ThemeSurround() }
+    }
+
+    private fun parseIcons(i: JSONObject?): ThemeIcons? {
+        if (i == null) return null
+        val pack = LinkedHashMap<String, String>()
+        i.optJSONObject("pack")?.let { obj ->
+            val names = obj.keys()
+            while (names.hasNext() && pack.size < MAX_PACK_ICONS) {
+                val key = names.next()
+                val file = obj.optString(key).trim()
+                // Only known keys and plain file names (no folders, no "..") are accepted.
+                if (key in ThemeIconKeys.keys && ICON_FILE_REGEX.matches(file)) pack[key] = file
+            }
+        }
+        val out = ThemeIcons(
+            color = optionalColor(i, "color"),
+            scale = number(i, "scale", 1f, 0.7f, 1.4f),
+            pack = pack,
+            packTint = optionalBool(i, "packTint") ?: true
+        )
+        return out.takeIf { it != ThemeIcons() }
     }
 
     fun toJson(spec: ThemeSpec): String {
@@ -144,6 +233,9 @@ object ThemeCodec {
             .put("accent", hex(spec.accent))
             .put("accentSecondary", hex(spec.accentSecondary))
             .put("preview", JSONArray(spec.preview.map { hex(it) }))
+        spec.surfaces.background?.let { colors.put("background", hex(it)) }
+        spec.surfaces.surface?.let { colors.put("surface", hex(it)) }
+        spec.surfaces.text?.let { colors.put("text", hex(it)) }
         val dsp = JSONObject()
         if (spec.dspPaletteId == DspPalette.CUSTOM_ID) {
             dsp.put("primary", hex(spec.dspPrimary)).put("secondary", hex(spec.dspSecondary))
@@ -151,7 +243,7 @@ object ThemeCodec {
             dsp.put("palette", spec.dspPaletteId)
         }
         val bg = spec.background
-        return JSONObject()
+        val root = JSONObject()
             .put("schema", SCHEMA)
             .put("id", spec.id)
             .put("name", spec.name)
@@ -171,7 +263,42 @@ object ThemeCodec {
                     .put("solidIntensity", bg.solidIntensity.toDouble())
                     .put("solidDarkness", bg.solidDarkness.toDouble())
             )
-            .toString()
+        spec.shape?.let { root.put("shape", JSONObject().put("cornerScale", it.cornerScale.toDouble())) }
+        spec.player?.let { p ->
+            val o = JSONObject()
+            p.albumArt?.let { o.put("albumArt", it) }
+            p.qualityBadge?.let { o.put("qualityBadge", it) }
+            p.miniStyle?.let { o.put("miniStyle", it) }
+            p.miniHeight?.let { o.put("miniHeight", it.toDouble()) }
+            p.miniCorner?.let { o.put("miniCorner", it.toDouble()) }
+            p.miniArtCorner?.let { o.put("miniArtCorner", it.toDouble()) }
+            p.miniProgressRing?.let { o.put("miniProgressRing", it) }
+            p.miniShowTime?.let { o.put("miniShowTime", it) }
+            p.miniTintFromArt?.let { o.put("miniTintFromArt", it) }
+            root.put("player", o)
+        }
+        spec.surround?.let { s ->
+            val o = JSONObject()
+            s.room?.let { o.put("room", it) }
+            s.visualizer?.let { o.put("visualizer", it) }
+            s.visualizerEnabled?.let { o.put("visualizerEnabled", it) }
+            s.speakerIcons?.let { o.put("speakerIcons", it) }
+            s.labels?.let { o.put("labels", it) }
+            s.beams?.let { o.put("beams", it) }
+            s.animated?.let { o.put("animated", it) }
+            s.arcs?.let { o.put("arcs", it) }
+            s.screen?.let { o.put("screen", it) }
+            root.put("surround", o)
+        }
+        spec.icons?.let { i ->
+            val o = JSONObject()
+            i.color?.let { o.put("color", hex(it)) }
+            o.put("scale", i.scale.toDouble())
+            o.put("packTint", i.packTint)
+            if (i.pack.isNotEmpty()) o.put("pack", JSONObject(i.pack as Map<*, *>))
+            root.put("icons", o)
+        }
+        return root.toString()
     }
 
     // ---------------------------------------------------------------- store index
@@ -294,6 +421,22 @@ object ThemeCodec {
         val v = o?.optDouble(key, default.toDouble())?.toFloat() ?: default
         return if (v.isFinite()) v.coerceIn(min, max) else default
     }
+
+    /** A colour that may be left out, or is ignored when malformed (an extra must never reject a whole theme). */
+    private fun optionalColor(o: JSONObject?, key: String): Int? =
+        if (o != null && o.has(key)) runCatching { parseColor(o.optString(key), key) }.getOrNull() else null
+
+    private fun optionalNumber(o: JSONObject, key: String, min: Float, max: Float): Float? {
+        if (!o.has(key)) return null
+        val v = o.optDouble(key, Double.NaN).toFloat()
+        return if (v.isFinite()) v.coerceIn(min, max) else null
+    }
+
+    private fun optionalBool(o: JSONObject, key: String): Boolean? =
+        if (o.has(key) && o.opt(key) is Boolean) o.optBoolean(key) else null
+
+    private fun enumName(o: JSONObject, key: String, allowed: List<String>): String? =
+        o.optString(key).trim().uppercase().takeIf { it in allowed }
 
     private fun cleanText(raw: String, max: Int): String =
         raw.filterNot { it.isISOControl() }.trim().take(max)

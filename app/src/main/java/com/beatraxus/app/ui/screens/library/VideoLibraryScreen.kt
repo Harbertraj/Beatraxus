@@ -16,7 +16,7 @@ import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.material.icons.rounded.CalendarToday
 import androidx.compose.material.icons.rounded.AspectRatio
-import androidx.compose.material3.Icon
+import com.beatraxus.app.ui.theme.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text

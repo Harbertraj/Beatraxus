@@ -52,6 +52,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
+import com.beatraxus.app.ui.theme.Icon
 
 sealed class BrowseState {
     object Loading : BrowseState()

@@ -4,11 +4,17 @@ import android.app.Activity
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ProvideTextStyle
+import androidx.compose.material3.Shapes
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.ReadOnlyComposable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.unit.dp
+import com.beatraxus.app.theme.ThemeSpec
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
@@ -54,6 +60,8 @@ fun BeatraxusTheme(
     /** Accent colours of the applied theme (ARGB), or null for the app's default colours. */
     themeAccent: Int? = null,
     themeAccentSecondary: Int? = null,
+    /** The applied theme, for its optional extras (surface colours, corner scale, icons). Null = none. */
+    activeTheme: ThemeSpec? = null,
     content: @Composable () -> Unit
 ) {
     val view = LocalView.current
@@ -71,8 +79,9 @@ fun BeatraxusTheme(
     val typography = remember(fontFamily) {
         getBeatraxusTypography(fontFamily)
     }
-    val colorScheme = remember(themeAccent, themeAccentSecondary) {
-        if (themeAccent == null) BeatraxusDarkColorScheme
+    val surfaces = activeTheme?.surfaces
+    val colorScheme = remember(themeAccent, themeAccentSecondary, surfaces) {
+        var scheme = if (themeAccent == null) BeatraxusDarkColorScheme
         else {
             val primary = Color(themeAccent)
             val secondary = Color(themeAccentSecondary ?: themeAccent)
@@ -84,14 +93,65 @@ fun BeatraxusTheme(
                 onSecondary = if (secondary.luminance() > 0.5f) Color.Black else Color.White
             )
         }
+        // Optional theme colours for Material components (dialogs, sheets, cards, menus, fields).
+        surfaces?.background?.let { c ->
+            scheme = scheme.copy(background = Color(c))
+        }
+        surfaces?.surface?.let { c ->
+            val base = Color(c)
+            scheme = scheme.copy(
+                surface = base,
+                surfaceVariant = base,
+                surfaceContainer = base,
+                surfaceContainerHigh = base,
+                surfaceContainerHighest = base
+            )
+        }
+        surfaces?.text?.let { c ->
+            val text = Color(c)
+            scheme = scheme.copy(
+                onBackground = text,
+                onSurface = text,
+                onSurfaceVariant = text.copy(alpha = 0.7f)
+            )
+        }
+        scheme
     }
+    val cornerScale = activeTheme?.shape?.cornerScale
+    val shapes = remember(cornerScale) {
+        if (cornerScale == null) Shapes()
+        else Shapes(
+            extraSmall = RoundedCornerShape((4f * cornerScale).dp),
+            small = RoundedCornerShape((8f * cornerScale).dp),
+            medium = RoundedCornerShape((12f * cornerScale).dp),
+            large = RoundedCornerShape((16f * cornerScale).dp),
+            extraLarge = RoundedCornerShape((28f * cornerScale).dp)
+        )
+    }
+
+    // Icon look from the theme: recolour/resize, and any images the theme brings with it.
+    val icons = activeTheme?.icons
+    val packIcons by rememberPackIcons(activeTheme)
+    val iconTheme = remember(icons, packIcons) {
+        if (icons == null) IconTheme.None
+        else IconTheme(
+            color = icons.color?.let { Color(it) },
+            scale = icons.scale,
+            pack = packIcons,
+            packTint = icons.packTint
+        )
+    }
+
     MaterialTheme(
         colorScheme = colorScheme,
-        typography  = typography
+        typography  = typography,
+        shapes = shapes
     ) {
         // Make the selected font the base for every Text(), including ones that set only
         // fontSize/color and ones inside dialogs, sheets and menus, so nothing falls back to
         // the device system font.
-        ProvideTextStyle(value = LocalTextStyle.current.copy(fontFamily = fontFamily), content = content)
+        CompositionLocalProvider(LocalIconTheme provides iconTheme) {
+            ProvideTextStyle(value = LocalTextStyle.current.copy(fontFamily = fontFamily), content = content)
+        }
     }
 }

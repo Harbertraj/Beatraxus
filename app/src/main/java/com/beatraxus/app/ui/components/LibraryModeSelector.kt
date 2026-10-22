@@ -24,7 +24,7 @@ import androidx.compose.material.icons.rounded.AllInclusive
 import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.Extension
 import androidx.compose.material.icons.rounded.Storage
-import androidx.compose.material3.Icon
+import com.beatraxus.app.ui.theme.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment

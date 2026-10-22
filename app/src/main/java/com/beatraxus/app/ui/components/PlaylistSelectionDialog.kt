@@ -20,6 +20,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.beatraxus.app.model.Playlist
 import com.beatraxus.app.ui.theme.AccentBlue
+import com.beatraxus.app.ui.theme.Icon
 
 @Composable
 fun PlaylistSelectionDialog(

@@ -219,6 +219,30 @@ class AppearancePreferences(context: Context) {
                 p[MINI_PLAYER_SOLID_COLOR_DARKNESS] = it.solidDarkness
             }
 
+            // Optional sections: only what the theme actually names is written, the rest stays the user's own.
+            spec.player?.let { pl ->
+                pl.albumArt?.let { p[ALBUM_ART_TRANSFORM] = it }
+                pl.qualityBadge?.let { p[QUALITY_BADGE_STYLE] = it }
+                pl.miniStyle?.let { p[MINI_PLAYER_STYLE] = it }
+                pl.miniHeight?.let { p[MINI_PLAYER_HEIGHT] = it }
+                pl.miniCorner?.let { p[MINI_PLAYER_CORNER_RADIUS] = it }
+                pl.miniArtCorner?.let { p[MINI_PLAYER_ART_CORNER_RADIUS] = it }
+                pl.miniProgressRing?.let { p[MINI_PLAYER_SHOW_PROGRESS_RING] = it }
+                pl.miniShowTime?.let { p[MINI_PLAYER_SHOW_TIME] = it }
+                pl.miniTintFromArt?.let { p[MINI_PLAYER_TINT_FROM_ART] = it }
+            }
+            spec.surround?.let { sr ->
+                sr.room?.let { p[SURROUND_ROOM_THEME] = it }
+                sr.visualizer?.let { p[SURROUND_VISUALIZER_STYLE] = it }
+                sr.visualizerEnabled?.let { p[SURROUND_VISUALIZER_ENABLED] = it }
+                sr.speakerIcons?.let { p[SURROUND_SHOW_ICONS] = it }
+                sr.labels?.let { p[SURROUND_SHOW_LABELS] = it }
+                sr.beams?.let { p[SURROUND_SHOW_BEAMS] = it }
+                sr.animated?.let { p[SURROUND_ANIMATED] = it }
+                sr.arcs?.let { p[SURROUND_SHOW_ARCS] = it }
+                sr.screen?.let { p[SURROUND_SHOW_SCREEN] = it }
+            }
+
             p[ACTIVE_THEME_JSON] = ThemeCodec.toJson(spec)
         }
     }
@@ -229,6 +253,75 @@ class AppearancePreferences(context: Context) {
      */
     suspend fun clearActiveTheme() {
         dataStore.edit { it.remove(ACTIVE_THEME_JSON) }
+    }
+
+    /**
+     * Built-in "Default" theme: puts the whole app look (UI only) back to the app's own defaults.
+     * It removes every setting [applyTheme] writes (including the optional player/Surround ones), so each one falls back to the default the app
+     * ships with (no copy of those numbers to keep in sync), and drops the active theme so the accent
+     * override and the "Theme" tags go away too. Audio/DSP settings and the user's data are untouched.
+     */
+    suspend fun resetThemeToDefault() {
+        dataStore.edit { p ->
+            p.remove(SEEKBAR_STYLE)
+            p.remove(SELECTED_FONT_ID)
+
+            p.remove(DSP_PALETTE_ID)
+            p.remove(DSP_CUSTOM_PRIMARY)
+            p.remove(DSP_CUSTOM_SECONDARY)
+
+            p.remove(MAIN_BACKGROUND_MODE)
+            p.remove(MAIN_BLUR_INTENSITY)
+            p.remove(MAIN_BLUR_DARKNESS)
+            p.remove(MAIN_SOLID_COLOR_INTENSITY)
+            p.remove(MAIN_SOLID_COLOR_DARKNESS)
+
+            p.remove(HOME_BACKGROUND_MODE)
+            p.remove(HOME_BLUR_INTENSITY)
+            p.remove(HOME_BLUR_DARKNESS)
+            p.remove(HOME_SOLID_COLOR_INTENSITY)
+            p.remove(HOME_SOLID_COLOR_DARKNESS)
+
+            p.remove(SETTINGS_BACKGROUND_MODE)
+            p.remove(SETTINGS_BLUR_INTENSITY)
+            p.remove(SETTINGS_BLUR_DARKNESS)
+            p.remove(SETTINGS_SOLID_COLOR_INTENSITY)
+            p.remove(SETTINGS_SOLID_COLOR_DARKNESS)
+
+            p.remove(NOW_PLAYING_BACKGROUND_MODE)
+            p.remove(BLUR_INTENSITY)
+            p.remove(BLUR_DARKNESS)
+            p.remove(SOLID_COLOR_INTENSITY)
+            p.remove(SOLID_COLOR_DARKNESS)
+
+            p.remove(MINI_PLAYER_BACKGROUND_MODE)
+            p.remove(MINI_PLAYER_BLUR_INTENSITY)
+            p.remove(MINI_PLAYER_BLUR_DARKNESS)
+            p.remove(MINI_PLAYER_SOLID_COLOR_INTENSITY)
+            p.remove(MINI_PLAYER_SOLID_COLOR_DARKNESS)
+
+            // Extras a theme may have set (mini player shape, album art, badge, Surround screen).
+            p.remove(ALBUM_ART_TRANSFORM)
+            p.remove(QUALITY_BADGE_STYLE)
+            p.remove(MINI_PLAYER_STYLE)
+            p.remove(MINI_PLAYER_HEIGHT)
+            p.remove(MINI_PLAYER_CORNER_RADIUS)
+            p.remove(MINI_PLAYER_ART_CORNER_RADIUS)
+            p.remove(MINI_PLAYER_SHOW_PROGRESS_RING)
+            p.remove(MINI_PLAYER_SHOW_TIME)
+            p.remove(MINI_PLAYER_TINT_FROM_ART)
+            p.remove(SURROUND_ROOM_THEME)
+            p.remove(SURROUND_VISUALIZER_STYLE)
+            p.remove(SURROUND_VISUALIZER_ENABLED)
+            p.remove(SURROUND_SHOW_ICONS)
+            p.remove(SURROUND_SHOW_LABELS)
+            p.remove(SURROUND_SHOW_BEAMS)
+            p.remove(SURROUND_ANIMATED)
+            p.remove(SURROUND_SHOW_ARCS)
+            p.remove(SURROUND_SHOW_SCREEN)
+
+            p.remove(ACTIVE_THEME_JSON)
+        }
     }
 
     suspend fun setSurroundRoomTheme(id: String) { dataStore.edit { it[SURROUND_ROOM_THEME] = id } }

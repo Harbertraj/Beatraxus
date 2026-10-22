@@ -1,6 +1,7 @@
 package com.beatraxus.app.theme
 
 import android.content.Context
+import com.beatraxus.app.ui.theme.IconPackLoader
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -24,6 +25,8 @@ class ThemeRepository(context: Context) {
     private val root = File(context.applicationContext.filesDir, "themes")
     private val installedDir = File(root, "installed")
     private val indexFile = File(root, "index.json")
+    private val previewDir = File(root, "preview")
+    private val appContext = context.applicationContext
 
     private val http = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
@@ -60,9 +63,71 @@ class ThemeRepository(context: Context) {
             // masquerade as another theme.
             require(spec.id == entry.id) { "Theme file doesn't match the store listing" }
             save(spec)
+            // Icons come with the theme. Offline or a missing file only leaves those icons as the app's own.
+            ensureIconPack(spec, refresh = true)
             spec
         }
     }
+
+    /**
+     * The full theme behind a store card, so the gallery can draw a real UI preview instead of colour
+     * stripes. Kept on the phone (per id and version), so each theme is downloaded once. Returns null
+     * when offline and not cached; the card then simply keeps its colour stripes.
+     */
+    suspend fun loadPreviewSpec(entry: ThemeIndexEntry): ThemeSpec? = withContext(Dispatchers.IO) {
+        val cache = File(previewDir, "${entry.id}-${entry.version}.json")
+        val cached = if (cache.exists()) runCatching { ThemeCodec.parseTheme(cache.readText()).getOrThrow() }.getOrNull() else null
+        val spec = cached ?: runCatching {
+            val text = download(entry.file, ThemeCodec.MAX_THEME_BYTES)
+            val parsed = ThemeCodec.parseTheme(text).getOrThrow()
+            require(parsed.id == entry.id)
+            writeAtomic(cache, text)
+            parsed
+        }.getOrNull() ?: return@withContext null
+        // Only the few icons the preview draws, not the whole pack.
+        ensureIconPack(spec, ThemeIconKeys.previewKeys)
+        spec
+    }
+
+    /**
+     * Downloads the icon images a theme names into `filesDir/themes/icons/<id>/`. Files that are already
+     * there are kept (a theme update changes its version, and its icons are fetched again). Best effort:
+     * an icon that can't be downloaded just stays the app's own. Returns true when every wanted icon is on the phone.
+     */
+    suspend fun ensureIconPack(spec: ThemeSpec, onlyKeys: Set<String>? = null, refresh: Boolean = false): Boolean =
+        withContext(Dispatchers.IO) {
+            val pack = spec.icons?.pack ?: return@withContext true
+            if (pack.isEmpty() || !ThemeCodec.isValidId(spec.id)) return@withContext true
+            val folder = IconPackLoader.dir(appContext, spec.id)
+            val stamp = File(folder, ".version")
+            // A preview (only some keys) just fills in what is missing; a full install re-checks the version.
+            val stale = refresh || (onlyKeys == null && (!stamp.exists() || stamp.readText().trim() != spec.version.toString()))
+            var allThere = true
+            for ((key, file) in pack) {
+                if (onlyKeys != null && key !in onlyKeys) continue
+                if (!ThemeCodec.isValidIconFile(file)) continue
+                val target = File(folder, file)
+                if (target.isFile && !stale) continue
+                val ok = runCatching {
+                    val bytes = downloadBytes("icons/${spec.id}/$file", ThemeCodec.MAX_ICON_BYTES)
+                    folder.mkdirs()
+                    val tmp = File(folder, "$file.tmp")
+                    tmp.writeBytes(bytes)
+                    if (!tmp.renameTo(target)) { target.writeBytes(bytes); tmp.delete() }
+                }.isSuccess
+                if (!ok) {
+                    // Offline or blocked: stop here instead of waiting for a timeout on every remaining icon.
+                    allThere = false
+                    break
+                }
+            }
+            // Remember which version these files belong to, only once a full pack is on the phone.
+            if (onlyKeys == null && allThere) {
+                folder.mkdirs()
+                stamp.writeText(spec.version.toString())
+            }
+            allThere
+        }
 
     // ---------------------------------------------------------------- installed
 
@@ -78,7 +143,10 @@ class ThemeRepository(context: Context) {
     }
 
     suspend fun remove(id: String) = withContext(Dispatchers.IO) {
-        if (ThemeCodec.isValidId(id)) File(installedDir, "$id.json").delete()
+        if (ThemeCodec.isValidId(id)) {
+            File(installedDir, "$id.json").delete()
+            IconPackLoader.dir(appContext, id).deleteRecursively()
+        }
         Unit
     }
 
@@ -104,6 +172,33 @@ class ThemeRepository(context: Context) {
             }
         }
         throw IOException("Download failed: $path", last)
+    }
+
+    private fun downloadBytes(path: String, maxBytes: Int): ByteArray {
+        var last: Exception? = null
+        for (base in BASES) {
+            try {
+                return fetchBytes(base + path, maxBytes)
+            } catch (e: Exception) {
+                last = e
+            }
+        }
+        throw IOException("Download failed: $path", last)
+    }
+
+    private fun fetchBytes(url: String, maxBytes: Int): ByteArray {
+        val request = Request.Builder().url(url).build()
+        http.newCall(request).execute().use { resp ->
+            if (!resp.isSuccessful) throw IOException("HTTP ${resp.code}")
+            val body = resp.body ?: throw IOException("Empty response")
+            if (body.contentLength() > maxBytes) throw IOException("Response too large")
+            val bytes = body.source().let { src ->
+                src.request(maxBytes + 1L)
+                src.buffer.readByteArray(minOf(src.buffer.size, maxBytes + 1L))
+            }
+            if (bytes.size > maxBytes) throw IOException("Response too large")
+            return bytes
+        }
     }
 
     private fun fetch(url: String, maxBytes: Int): String {

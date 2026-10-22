@@ -21,6 +21,7 @@ import com.beatraxus.app.repository.SmbServer
 import com.beatraxus.app.util.NetworkUtils
 import com.beatraxus.app.viewmodel.PlayerViewModel
 import kotlinx.coroutines.launch
+import com.beatraxus.app.ui.theme.Icon
 
 @Composable
 fun SmbBrowserScreen(uiState: PlayerUiState, viewModel: PlayerViewModel) {

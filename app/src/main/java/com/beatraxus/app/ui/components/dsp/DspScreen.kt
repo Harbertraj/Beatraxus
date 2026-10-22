@@ -96,6 +96,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.*
 import com.beatraxus.app.ui.theme.appFontFamily
+import com.beatraxus.app.ui.theme.Icon
 
 // Studio DSP dual colour palette. Defaults to Yellow + Orange ("Solar Flare") and follows
 // Settings > Appearance > Dual Colour Palette. All values are derived from two colours and

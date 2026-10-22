@@ -204,7 +204,7 @@ enum class SpatialUiMode {
 
 data class DspConfig(
     val outputMode: OutputMode = OutputMode.HI_RES,
-    val highQualityResampler: Boolean = true,
+    val highQualityResampler: Boolean = false,   // false = SW Cubic (default), true = SoXR
     val soxrQuality: SoxrQuality = SoxrQuality.HIGH,
     val float64Enabled: Boolean = false,
     val resamplerMode: ResamplerMode = ResamplerMode.AUTO,

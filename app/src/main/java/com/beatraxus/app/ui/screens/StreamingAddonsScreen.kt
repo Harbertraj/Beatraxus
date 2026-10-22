@@ -43,6 +43,7 @@ import com.beatraxus.app.ui.components.glassIconBackground
 import com.beatraxus.app.viewmodel.PlayerViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.beatraxus.app.ui.theme.appFontFamily
+import com.beatraxus.app.ui.theme.Icon
 
 private val TextWhite = Color(0xFFF4F6F8)
 

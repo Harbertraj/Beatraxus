@@ -136,6 +136,7 @@ import androidx.compose.ui.semantics.Role
 import coil.size.Precision
 import java.util.Calendar
 import com.beatraxus.app.ui.theme.appFontFamily
+import com.beatraxus.app.ui.theme.Icon
 
 @Composable
 fun DefaultAlbumArt(modifier: Modifier = Modifier) {
@@ -579,6 +580,19 @@ fun MainScreen(
     var playlistToDelete by remember { mutableStateOf<com.beatraxus.app.model.Playlist?>(null) }
     var showPipelineOverlay by remember { mutableStateOf(false) }
     var showDrawer by rememberSaveable { mutableStateOf(false) }
+    // Settings opened from the drawer keeps the drawer open underneath; when this screen is shown again
+    // (coming back from Settings) the drawer closes and the main screen returns to its normal size/place.
+    var closeDrawerOnReturn by rememberSaveable { mutableStateOf(false) }
+    DisposableEffect(inspectorLifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME && closeDrawerOnReturn) {
+                closeDrawerOnReturn = false
+                showDrawer = false
+            }
+        }
+        inspectorLifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { inspectorLifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     var categoryGridColumns by rememberSaveable { mutableIntStateOf(2) }
     var trackLayoutDensity by rememberSaveable { mutableIntStateOf(1) }
@@ -795,7 +809,10 @@ fun MainScreen(
                             }
                         }
                     },
-                    onNavigateToSettings = onNavigateToSettings,
+                    onNavigateToSettings = {
+                        closeDrawerOnReturn = true   // drawer stays open now, closes on return
+                        onNavigateToSettings()
+                    },
                     onNavigateToDsp = onNavigateToDsp,
                     onNavigateToPlayTogether = onNavigateToPlayTogether,
                     onClose = { showDrawer = false }
@@ -6631,11 +6648,9 @@ fun SlideDrawerMenu(
                         icon = Icons.Rounded.Settings,
                         contentDescription = "Settings",
                         iconSize = 22.dp,
-                        onClick = { 
-                            onClose()
-                            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                                onNavigateToSettings()
-                            }, 250)
+                        onClick = {
+                            // Drawer is NOT closed here: Settings slides in over it from the right.
+                            onNavigateToSettings()
                         }
                     )
                 }

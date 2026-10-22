@@ -54,6 +54,7 @@ import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.math.pow
 import kotlin.math.log10
+import com.beatraxus.app.ui.theme.Icon
 
 /**
  * Music Detail Inspector — an "audiophile lab" reading of a single track. Deliberately

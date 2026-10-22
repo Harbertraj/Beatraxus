@@ -24,6 +24,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.beatraxus.app.model.Song
 import com.beatraxus.app.ui.theme.*
+import com.beatraxus.app.ui.theme.Icon
 
 @Composable
 fun NowPlayingSection(

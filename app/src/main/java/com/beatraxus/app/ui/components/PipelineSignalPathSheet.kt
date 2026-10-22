@@ -60,6 +60,7 @@ import com.beatraxus.app.ui.utils.rememberWindowBlurSupported
 import java.util.Locale
 import kotlin.math.abs
 import com.beatraxus.app.ui.theme.appFontFamily
+import com.beatraxus.app.ui.theme.Icon
 
 private const val PULSE_PERIOD_MS = 2200     // one slow, calm packet pass per connector
 private val PACKET_TAIL = 16.dp              // length of the fading comet tail

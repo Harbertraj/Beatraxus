@@ -39,6 +39,7 @@ import kotlinx.coroutines.launch
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import com.beatraxus.app.ui.theme.Icon
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

@@ -41,6 +41,7 @@ import androidx.compose.ui.layout.ContentScale
 import coil.compose.AsyncImage
 import androidx.compose.ui.text.style.TextOverflow
 import com.beatraxus.app.model.Song
+import com.beatraxus.app.ui.theme.Icon
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

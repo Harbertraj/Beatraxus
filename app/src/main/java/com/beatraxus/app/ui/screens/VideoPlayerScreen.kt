@@ -112,6 +112,7 @@ import kotlinx.coroutines.launch
 import java.util.*
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import com.beatraxus.app.ui.theme.Icon
 
 enum class GestureType {
     NONE, BRIGHTNESS, VOLUME, SEEK, ZOOM, SUBTITLE

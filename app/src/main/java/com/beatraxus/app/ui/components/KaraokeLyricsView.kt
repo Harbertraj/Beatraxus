@@ -70,6 +70,7 @@ import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
+import com.beatraxus.app.ui.theme.Icon
 
 /** Devanagari through Sinhala (Hindi, Bengali, Gujarati, Tamil, Telugu, Kannada, Malayalam...). */
 private fun isIndicScript(text: String): Boolean = text.any { it in '\u0900'..'\u0DFF' }

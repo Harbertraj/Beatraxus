@@ -28,7 +28,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Icon
+import com.beatraxus.app.ui.theme.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -57,6 +57,10 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.beatraxus.app.model.AppearanceConfig
+import com.beatraxus.app.theme.ThemePlayer
+import com.beatraxus.app.theme.ThemeSurround
+import com.beatraxus.app.ui.theme.AccentBlue
+import com.beatraxus.app.ui.theme.AccentRed
 import com.beatraxus.app.theme.ThemeBackground
 import com.beatraxus.app.theme.ThemeCodec
 import com.beatraxus.app.theme.ThemeIndexEntry
@@ -99,14 +103,18 @@ fun ThemesContent(appearance: AppearanceConfig) {
                 installed = state.installed,
                 activeId = active?.id,
                 busyId = state.busyId,
+                previews = state.previews,
+                onLoadPreviews = vm::loadPreviews,
                 onRefresh = { vm.refreshStore(force = true) },
                 onGet = vm::installAndApply,
-                onApplyInstalled = vm::apply
+                onApplyInstalled = vm::apply,
+                onApplyDefault = vm::applyDefault
             )
             1 -> InstalledTab(
                 installed = state.installed,
                 activeId = active?.id,
                 onApply = vm::apply,
+                onApplyDefault = vm::applyDefault,
                 onRemove = { vm.remove(it, it.id == active?.id) }
             )
             else -> ImportTab(appearance, vm)
@@ -122,13 +130,19 @@ private fun BrowseTab(
     installed: List<ThemeSpec>,
     activeId: String?,
     busyId: String?,
+    previews: Map<String, ThemeSpec>,
+    onLoadPreviews: (List<ThemeIndexEntry>) -> Unit,
     onRefresh: () -> Unit,
     onGet: (ThemeIndexEntry) -> Unit,
-    onApplyInstalled: (ThemeSpec) -> Unit
+    onApplyInstalled: (ThemeSpec) -> Unit,
+    onApplyDefault: () -> Unit
 ) {
     val installedById = remember(installed) { installed.associateBy { it.id } }
+    // Fetch the full theme behind each card in the background so it can show a real UI preview.
+    LaunchedEffect(store.entries) { onLoadPreviews(store.entries) }
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        DefaultThemeCard(onApplyDefault)
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 text = if (store.fromCache) "Showing saved list (offline)" else "Official themes",
@@ -152,7 +166,9 @@ private fun BrowseTab(
                     name = entry.name,
                     author = entry.author,
                     swatches = entry.preview.ifEmpty { local?.preview.orEmpty() },
-                    note = if (needsUpdate) "Update available" else null
+                    note = if (needsUpdate) "Update available" else null,
+                    // The store's version is what "Get" will install, so prefer it for the preview.
+                    spec = previews[entry.id] ?: local
                 ) {
                     when {
                         busyId == entry.id -> CircularProgressIndicator(Modifier.size(24.dp), color = Teal, strokeWidth = 2.dp)
@@ -172,17 +188,19 @@ private fun InstalledTab(
     installed: List<ThemeSpec>,
     activeId: String?,
     onApply: (ThemeSpec) -> Unit,
+    onApplyDefault: () -> Unit,
     onRemove: (ThemeSpec) -> Unit
 ) {
     val context = LocalContext.current
     var confirmRemove by remember { mutableStateOf<ThemeSpec?>(null) }
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        DefaultThemeCard(onApplyDefault)
         if (installed.isEmpty()) {
             InfoCard("Themes you get or import are saved here and work offline.")
         }
         installed.forEach { spec ->
-            ThemeCard(name = spec.name, author = spec.author, swatches = spec.preview, note = null) {
+            ThemeCard(name = spec.name, author = spec.author, swatches = spec.preview, note = null, spec = spec) {
                 IconButton(onClick = { shareText(context, spec.name, ThemeCodec.shareLink(spec)) }) {
                     Icon(Icons.Rounded.Share, "Share", tint = Color.White.copy(0.7f))
                 }
@@ -288,7 +306,7 @@ private fun ShareMyLookCard(appearance: AppearanceConfig) {
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         Text("Share my current look", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-        Text("Your seekbar, font, DSP colours and backgrounds, as a link or code for a friend.",
+        Text("Your seekbar, font, DSP colours, backgrounds, mini player, badge and Surround look, as a link or code for a friend.",
             color = Color.White.copy(0.55f), fontSize = 12.sp)
         OutlinedTextField(
             value = name, onValueChange = { name = it.take(40) }, singleLine = true,
@@ -387,6 +405,7 @@ private fun ThemeCard(
     author: String,
     swatches: List<Int>,
     note: String?,
+    spec: ThemeSpec? = null,
     actions: @Composable () -> Unit
 ) {
     Column(
@@ -394,7 +413,8 @@ private fun ThemeCard(
             .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        Swatches(swatches)
+        // The real UI preview once the theme is known; colour stripes while it loads or when offline.
+        if (spec != null) ThemeUiPreview(spec) else Swatches(swatches)
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(name, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp,
@@ -407,13 +427,56 @@ private fun ThemeCard(
     }
 }
 
+/**
+ * The built-in "Default" theme. It is not a file: applying it puts every themed setting (accent, DSP colours,
+ * seekbar, font, backgrounds) back to the app's own defaults, so you can always return to the original look.
+ * The swatches come from the real default settings.
+ */
+@Composable
+private fun DefaultThemeCard(onApply: () -> Unit) {
+    val spec = remember { defaultThemeSpec() }
+    ThemeCard(name = "Default", author = "Beatraxus", swatches = spec.preview, note = "Built-in · resets the look", spec = spec) {
+        SmallButton("Apply", onApply)
+    }
+}
+
+/** The app's own look as a theme, built from the real default settings, only for the preview picture. */
+private fun defaultThemeSpec(): ThemeSpec {
+    val a = AppearanceConfig()
+    val palette = DspPalette.from(a)
+    val accent = AccentBlue.toArgb()
+    val accent2 = AccentRed.toArgb()
+    return ThemeSpec(
+        id = "default", name = "Default", author = "Beatraxus", version = 1, isDark = true,
+        accent = accent, accentSecondary = accent2,
+        preview = listOf(0xFF0B0B14.toInt(), palette.primary.toArgb(), palette.secondary.toArgb()),
+        dspPaletteId = a.dspPaletteId,
+        dspPrimary = palette.primary.toArgb(), dspSecondary = palette.secondary.toArgb(),
+        seekbarStyle = a.seekbarStyle.name, fontId = a.selectedFontId,
+        background = ThemeBackground(
+            mode = a.mainBackgroundMode,
+            blurScale = 1f,
+            blurDarkness = a.mainBlurDarkness,
+            solidIntensity = a.mainSolidColorIntensity,
+            solidDarkness = a.mainSolidColorDarkness
+        ),
+        player = ThemePlayer(
+            albumArt = a.albumArtTransform.name, qualityBadge = a.qualityBadgeStyle.name,
+            miniStyle = a.miniPlayerStyle.name, miniHeight = a.miniPlayerHeight,
+            miniCorner = a.miniPlayerCornerRadius, miniArtCorner = a.miniPlayerArtCornerRadius,
+            miniProgressRing = a.miniPlayerShowProgressRing, miniShowTime = a.miniPlayerShowTime,
+            miniTintFromArt = a.miniPlayerTintFromArt
+        )
+    )
+}
+
 @Composable
 private fun ThemePreviewCard(spec: ThemeSpec) {
     Column(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(CardBg).padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Swatches(spec.preview)
+        ThemeUiPreview(spec)
         Text(spec.name, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
         Text("by ${spec.author}", color = Color.White.copy(0.55f), fontSize = 12.sp)
     }
@@ -490,7 +553,25 @@ private fun themeFromCurrentLook(a: AppearanceConfig, name: String): ThemeSpec {
             blurDarkness = a.mainBlurDarkness,
             solidIntensity = a.mainSolidColorIntensity,
             solidDarkness = a.mainSolidColorDarkness
-        )
+        ),
+        // The rest of the look, so a shared theme carries the mini player, badge and Surround screen too.
+        surfaces = a.activeTheme?.surfaces ?: com.beatraxus.app.theme.ThemeSurfaces(),
+        shape = a.activeTheme?.shape,
+        player = ThemePlayer(
+            albumArt = a.albumArtTransform.name, qualityBadge = a.qualityBadgeStyle.name,
+            miniStyle = a.miniPlayerStyle.name, miniHeight = a.miniPlayerHeight,
+            miniCorner = a.miniPlayerCornerRadius, miniArtCorner = a.miniPlayerArtCornerRadius,
+            miniProgressRing = a.miniPlayerShowProgressRing, miniShowTime = a.miniPlayerShowTime,
+            miniTintFromArt = a.miniPlayerTintFromArt
+        ),
+        surround = ThemeSurround(
+            room = a.surroundRoomTheme, visualizer = a.surroundVisualizerStyle,
+            visualizerEnabled = a.surroundVisualizerEnabled, speakerIcons = a.surroundShowSpeakerIcons,
+            labels = a.surroundShowLabels, beams = a.surroundShowBeams, animated = a.surroundAnimated,
+            arcs = a.surroundShowArcs, screen = a.surroundShowScreen
+        ),
+        // Icon recolour/size travel with the share link; icon images are fetched from the store by theme id.
+        icons = a.activeTheme?.icons
     )
 }
 

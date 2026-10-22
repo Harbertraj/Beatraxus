@@ -34,6 +34,7 @@ import com.beatraxus.app.addons.SubsonicAddon
 import com.beatraxus.app.ui.components.glassIconBackground
 import kotlinx.coroutines.launch
 import com.beatraxus.app.ui.theme.appFontFamily
+import com.beatraxus.app.ui.theme.Icon
 
 private val SheetBg = Color(0xFF121316)
 private val TextWhite = Color(0xFFF4F6F8)

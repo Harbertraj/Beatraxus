@@ -113,7 +113,7 @@ class DspPreferences(private val context: Context) {
             bitPerfectUnbypassFloat64 = pref(BIT_PERFECT_UNBYPASS_FLOAT64, false),
             bitPerfectUnbypassLimiter = pref(BIT_PERFECT_UNBYPASS_LIMITER, false),
             mmapRequestedBufferSizeFrames = pref(MMAP_BUFFER_FRAMES, 96),
-            highQualityResampler = pref(HIGH_QUALITY_RESAMPLER, true),
+            highQualityResampler = pref(HIGH_QUALITY_RESAMPLER, false),
             soxrQuality = runCatching {
                 SoxrQuality.valueOf(prefNullable(SOXR_QUALITY) ?: SoxrQuality.HIGH.name)
             }.getOrDefault(SoxrQuality.HIGH),

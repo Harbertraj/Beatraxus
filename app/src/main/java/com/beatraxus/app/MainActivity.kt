@@ -278,7 +278,8 @@ class MainActivity : FragmentActivity() {
             BeatraxusTheme(
                 fontFamily = currentFontFamily,
                 themeAccent = uiState.appearance.themeAccent,
-                themeAccentSecondary = uiState.appearance.themeAccentSecondary
+                themeAccentSecondary = uiState.appearance.themeAccentSecondary,
+                activeTheme = uiState.appearance.activeTheme
             ) {
                 BeatraxusApp(
                     viewModel = viewModel,
@@ -813,9 +814,9 @@ fun BeatraxusApp(
             composable(
                 Screen.Settings.route,
                 enterTransition = {
-                    // Opens from the LEFT edge
+                    // Opens from the RIGHT edge
                     slideIntoContainer(
-                        towards = AnimatedContentTransitionScope.SlideDirection.End,
+                        towards = AnimatedContentTransitionScope.SlideDirection.Start,
                         animationSpec = tween(400, easing = FastOutSlowInEasing)
                     ) + fadeIn(tween(400))
                 },
@@ -832,9 +833,9 @@ fun BeatraxusApp(
                     ) + fadeIn(tween(400))
                 },
                 popExitTransition = {
-                    // Closes back out through the LEFT edge
+                    // Closes back out through the RIGHT edge
                     slideOutOfContainer(
-                        towards = AnimatedContentTransitionScope.SlideDirection.Start,
+                        towards = AnimatedContentTransitionScope.SlideDirection.End,
                         animationSpec = tween(400, easing = FastOutSlowInEasing)
                     ) + fadeOut(tween(400))
                 }

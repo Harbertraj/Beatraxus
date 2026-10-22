@@ -3633,11 +3633,6 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         service?.seekTo(positionMs)
     }
 
-    fun toggleResampling() {
-        val newValue = !_uiState.value.dsp.config.highQualityResampler
-        applyDspConfig { it.copy(highQualityResampler = newValue) }
-    }
-
     fun setHighQualityResampler(enabled: Boolean) {
         applyDspConfig { it.copy(highQualityResampler = enabled) }
     }
