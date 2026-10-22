@@ -836,6 +836,30 @@ fun VideoPlayerScreen(
                         onRotationClick = { activity?.let { viewModel.toggleOrientation(it) } },
                         onOrientationClick = { sheetType = PlayerSheetType.ORIENTATION },
                         onDeinterlaceClick = { sheetType = PlayerSheetType.DEINTERLACE },
+                        onSnapshotClick = {
+                            val pv = playerViewRef
+                            val video = uiState.currentVideo
+                            val position = viewModel.getPlayer()?.currentPosition ?: 0L
+                            val videoHeight = uiState.videoSize.height
+                            scope.launch {
+                                // On the TextureView path the picture is copied from the window: clear the controls first.
+                                val hideControls = com.beatraxus.app.util.VideoSnapshot.needsClearScreen(pv)
+                                if (hideControls) {
+                                    controlsVisible = false
+                                    delay(400)
+                                }
+                                val result = com.beatraxus.app.util.VideoSnapshot.captureAndSave(
+                                    context, pv, video?.title, position, videoHeight
+                                )
+                                if (hideControls) controlsVisible = true
+                                val text = when (result) {
+                                    is com.beatraxus.app.util.VideoSnapshot.Result.Saved ->
+                                        "Screenshot saved to Gallery (Pictures/${com.beatraxus.app.model.VideoSnapshotSpec.ALBUM})"
+                                    is com.beatraxus.app.util.VideoSnapshot.Result.Failed -> result.reason
+                                }
+                                android.widget.Toast.makeText(context, text, android.widget.Toast.LENGTH_SHORT).show()
+                            }
+                        },
                         onColorClick = { sheetType = PlayerSheetType.COLOR },
                         onAbRepeatClick = { viewModel.toggleAbRepeat() },
                         onLoopClick = { viewModel.toggleLoop() },
@@ -1153,6 +1177,7 @@ fun FloatingControls(
     onRotationClick: () -> Unit,
     onOrientationClick: () -> Unit,
     onDeinterlaceClick: () -> Unit,
+    onSnapshotClick: () -> Unit,
     onColorClick: () -> Unit,
     onAbRepeatClick: () -> Unit,
     onLoopClick: () -> Unit,
@@ -1241,6 +1266,12 @@ fun FloatingControls(
                 uiState.deinterlaceMode.isOn,
                 onDeinterlaceClick,
                 contentDescription = "Deinterlacing"
+            )
+            VpToolButton(
+                Icons.Rounded.PhotoCamera,
+                false,
+                onSnapshotClick,
+                contentDescription = "Save a screenshot to the gallery"
             )
             VpToolButton(
                 Icons.Rounded.Tune,
