@@ -32,6 +32,8 @@ import androidx.media3.ui.CaptionStyleCompat
 import com.beatraxus.app.BeatraxusApplication
 import com.beatraxus.app.engine.AudioEngine
 import com.beatraxus.app.engine.AudioFrameUtils
+import com.beatraxus.app.engine.ExternalAudioMediaSourceFactory
+import com.beatraxus.app.engine.ExternalAudioTrack
 import com.beatraxus.app.engine.VideoDecoderMode
 import com.beatraxus.app.fpsbooster.BenchmarkState
 import com.beatraxus.app.fpsbooster.BoosterBenchmarkRunner
@@ -102,6 +104,8 @@ data class VideoPlayerUiState(
     val isLocked: Boolean = false,
     val availableAudioTracks: List<VideoTrackInfo> = emptyList(),
     val availableSubtitleTracks: List<VideoTrackInfo> = emptyList(),
+    /** Feature 25: name of the external audio file loaded for the current video, or null. */
+    val externalAudioName: String? = null,
     val selectedAudioTrackIndex: Int = -1,
     val selectedSubtitleTrackIndex: Int = -1,
     val aspectRatio: VideoAspectRatio = VideoAspectRatio.FIT,
@@ -236,7 +240,9 @@ data class VideoTrackInfo(
     val isSelected: Boolean,
     val audioOrdinal: Int = 0,
     val channelCount: Int = -1,
-    val sampleRate: Int = -1
+    val sampleRate: Int = -1,
+    /** True for the audio file loaded with "Add audio track" (feature 25). */
+    val isExternal: Boolean = false
 )
 
 /**
@@ -297,6 +303,10 @@ class VideoPlayerViewModel(
     private val processedBackgroundVideos = mutableSetOf<String>()
     private val chapterDetectionStartedForVideoIds = mutableSetOf<String>()
     private var isEffectActive = false
+
+    // Feature 25: external audio files loaded per video id. Read from ExoPlayer's loader thread, hence concurrent.
+    private val externalAudioByVideoId = java.util.concurrent.ConcurrentHashMap<String, ExternalAudioTrack>()
+    private var selectExternalAudioOnNextTracks = false
 
     private val volumeReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -560,19 +570,24 @@ class VideoPlayerViewModel(
             .setPrioritizeTimeOverSizeThresholds(true)
             .build()
 
+        // Same chain as before for every normal Uri; `tgvideo://` Telegram videos are streamed through TDLib
+        // and `cloudvideo://` cloud-drive videos (Drive, Dropbox, OneDrive, Box, Nextcloud) are
+        // resolved to an authorised https address first.
+        val streamDataSourceFactory = com.beatraxus.app.telegram.TelegramAwareDataSourceFactory(
+            (context.applicationContext as BeatraxusApplication).tdLibManager,
+            com.beatraxus.app.drive.CloudVideoDataSource.wrap(
+                context,
+                com.beatraxus.app.addons.AddonStreamHeaders.dataSourceFactory(context)
+            )
+        ).also { telegramDataSourceFactory = it }
+
         val player = ExoPlayer.Builder(context, VideoRenderersFactory(context, tuning))
             .setMediaSourceFactory(
-                androidx.media3.exoplayer.source.DefaultMediaSourceFactory(
-                    // Same as before for every normal Uri; `tgvideo://` Telegram videos are streamed through TDLib
-                    // and `cloudvideo://` cloud-drive videos (Drive, Dropbox, OneDrive, Box, Nextcloud) are
-                    // resolved to an authorised https address first.
-                    com.beatraxus.app.telegram.TelegramAwareDataSourceFactory(
-                        (context.applicationContext as BeatraxusApplication).tdLibManager,
-                        com.beatraxus.app.drive.CloudVideoDataSource.wrap(
-                            context,
-                            com.beatraxus.app.addons.AddonStreamHeaders.dataSourceFactory(context)
-                        )
-                    ).also { telegramDataSourceFactory = it }
+                // Feature 25: merges a loaded external audio file into the video; a no-op for other items.
+                ExternalAudioMediaSourceFactory(
+                    delegate = androidx.media3.exoplayer.source.DefaultMediaSourceFactory(streamDataSourceFactory),
+                    audioDataSourceFactory = streamDataSourceFactory,
+                    externalAudioFor = { mediaId -> externalAudioByVideoId[mediaId] }
                 )
             )
             .setAudioAttributes(audioAttributes, true)
@@ -703,6 +718,8 @@ class VideoPlayerViewModel(
             }
 
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                // Feature 25: the loaded audio file couldn't be merged / decoded: drop it and play the video again.
+                if (handleExternalAudioFailure(error)) return
                 // Only Live TV gets special handling; every other video behaves exactly as before.
                 val live = _uiState.value.currentVideo
                     ?.takeIf { it.source == com.beatraxus.app.model.VideoSource.LIVE_TV } ?: return
@@ -787,7 +804,7 @@ class VideoPlayerViewModel(
         val video = videoQueue.find { it.id == currentId }
         
         _uiState.value.currentVideo?.let { recordVideoPlayed(it) }
-        _uiState.update { withFpsPlan(it.copy(currentVideo = video, isHdr = video?.isHdr ?: false)) }
+        _uiState.update { withFpsPlan(it.copy(currentVideo = video, isHdr = video?.isHdr ?: false, externalAudioName = video?.let { v -> externalAudioByVideoId[v.id]?.label })) }
         
         if (video?.id != lastHandledVideoId) {
             lastHandledVideoId = video?.id
@@ -965,7 +982,8 @@ class VideoPlayerViewModel(
         
         player.currentTracks.groups.forEachIndexed { index, group ->
             if (group.isSelected) {
-                if (group.type == C.TRACK_TYPE_AUDIO) audioIdx = index
+                // The loaded external audio only exists for this session, so never remember its group index.
+                if (group.type == C.TRACK_TYPE_AUDIO) audioIdx = if (ExternalAudioTrack.isExternalGroupId(group.mediaTrackGroup.id)) -1 else index
                 else if (group.type == C.TRACK_TYPE_TEXT) subtitleIdx = index
             }
         }
@@ -1066,15 +1084,17 @@ class VideoPlayerViewModel(
                 
                 if (group.type == C.TRACK_TYPE_AUDIO) {
                     val ordinal = currentAudioOrdinal++
+                    val external = externalAudioTrackFor(group.mediaTrackGroup.id)
                     val info = VideoTrackInfo(
                         index = index,
-                        name = format.label ?: "Track ${ordinal + 1}",
+                        name = external?.label ?: format.label ?: "Track ${ordinal + 1}",
                         language = format.language,
                         format = format.sampleMimeType,
                         isSelected = isSelected,
                         audioOrdinal = ordinal,
                         channelCount = format.channelCount,
-                        sampleRate = format.sampleRate
+                        sampleRate = format.sampleRate,
+                        isExternal = external != null
                     )
                     audioTracks.add(info)
                     if (isSelected) selectedAudio = ordinal
@@ -1114,6 +1134,14 @@ class VideoPlayerViewModel(
             selectedAudioTrackIndex = effectiveSelectedAudio,
             selectedSubtitleTrackIndex = selectedSubtitle
         ) }
+
+        // Feature 25: right after an audio file was loaded, switch to it as soon as its track shows up.
+        if (selectExternalAudioOnNextTracks) {
+            updatedAudioTracks.firstOrNull { it.isExternal }?.let { external ->
+                selectExternalAudioOnNextTracks = false
+                selectAudioTrack(external)
+            }
+        }
     }
 
     fun togglePlayPause() = exoPlayer?.let { p ->
@@ -1246,6 +1274,97 @@ class VideoPlayerViewModel(
         viewModelScope.launch { delay(2000); _uiState.update { it.copy(aspectRatioMessage = null) } }
     }
 
+    // ---- Feature 25: load an external audio track ----
+
+    /** The loaded audio file when [groupId] is its track group (and it belongs to the current video), else null. */
+    private fun externalAudioTrackFor(groupId: String?): ExternalAudioTrack? {
+        if (!ExternalAudioTrack.isExternalGroupId(groupId)) return null
+        val videoId = exoPlayer?.currentMediaItem?.mediaId ?: return null
+        return externalAudioByVideoId[videoId]
+    }
+
+    /**
+     * Loads [uri] (picked with the system file picker) as an extra audio track of the current video and switches
+     * to it. The video keeps its position and play state; the file stays loaded for this video until the player
+     * closes or [removeExternalAudio] is called.
+     */
+    fun addExternalAudio(uri: Uri, displayName: String?) {
+        val player = exoPlayer ?: return
+        val videoId = player.currentMediaItem?.mediaId ?: return
+        // The Audio Engine route decodes the video file itself and can't play a separate file: leave it first.
+        if (_uiState.value.routeAudioToEngine || _uiState.value.isConnectingEngineRoute) {
+            setRouteAudioToEngine(false)
+        }
+        val track = ExternalAudioTrack(uri, ExternalAudioTrack.labelFromFileName(displayName))
+        externalAudioByVideoId[videoId] = track
+        selectExternalAudioOnNextTracks = true
+        rebuildCurrentMediaItem()
+        _uiState.update { it.copy(externalAudioName = track.label, error = null) }
+    }
+
+    /** Unloads the external audio of the current video and goes back to its own audio track. */
+    fun removeExternalAudio() {
+        val player = exoPlayer ?: return
+        val videoId = player.currentMediaItem?.mediaId ?: return
+        if (externalAudioByVideoId.remove(videoId) == null) return
+        selectExternalAudioOnNextTracks = false
+        // The override pointed at the (now gone) external group; clear it so the default audio is chosen again.
+        savedAudioTrackOverride = null
+        savedAudioTrackIndex = -1
+        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+            .clearOverridesOfType(C.TRACK_TYPE_AUDIO)
+            .build()
+        rebuildCurrentMediaItem()
+        _uiState.update { it.copy(externalAudioName = null) }
+    }
+
+    /**
+     * Re-creates the current item's media source (so the factory re-reads [externalAudioByVideoId]) without losing
+     * the position, play state or speed. Same technique the subtitle controller uses for external subtitles.
+     */
+    private fun rebuildCurrentMediaItem() {
+        val player = exoPlayer ?: return
+        val index = player.currentMediaItemIndex
+        if (index < 0 || index >= player.mediaItemCount) return
+        val item = player.getMediaItemAt(index)
+        // currentPosition includes the audio-delay clock shift, so take it back out (as setVideoDecoderMode does).
+        val positionMs = (player.currentPosition - tuning.audioDelayMs).coerceAtLeast(0L)
+        val playWhenReady = player.playWhenReady
+        val speed = player.playbackParameters.speed
+        player.replaceMediaItem(index, item)
+        player.seekTo(index, positionMs)
+        player.playbackParameters = PlaybackParameters(speed)
+        player.playWhenReady = playWhenReady
+    }
+
+    /** @return true when the error came from the loaded audio file and was handled here. */
+    private fun handleExternalAudioFailure(error: androidx.media3.common.PlaybackException): Boolean {
+        val player = exoPlayer ?: return false
+        val videoId = player.currentMediaItem?.mediaId ?: return false
+        if (!externalAudioByVideoId.containsKey(videoId)) return false
+        Log.w(TAG, "External audio failed (${error.errorCodeName}); removing it", error)
+        externalAudioByVideoId.remove(videoId)
+        selectExternalAudioOnNextTracks = false
+        savedAudioTrackOverride = null
+        savedAudioTrackIndex = -1
+        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+            .clearOverridesOfType(C.TRACK_TYPE_AUDIO)
+            .build()
+        _uiState.update { it.copy(externalAudioName = null) }
+        android.widget.Toast.makeText(
+            getApplication(),
+            "Couldn't use that audio file. Playing the original audio.",
+            android.widget.Toast.LENGTH_LONG
+        ).show()
+        val index = player.currentMediaItemIndex
+        val positionMs = player.currentPosition.coerceAtLeast(0L)
+        player.replaceMediaItem(index, player.getMediaItemAt(index))
+        player.seekTo(index, positionMs)
+        player.prepare()
+        player.playWhenReady = true
+        return true
+    }
+
     fun selectAudioTrack(track: VideoTrackInfo) {
         exoPlayer?.let { p ->
             val trackGroup = p.currentTracks.groups.getOrNull(track.index)
@@ -1320,6 +1439,10 @@ class VideoPlayerViewModel(
             }
             if (current.availableAudioTracks.isEmpty()) {
                 _uiState.update { it.copy(engineRouteError = "No audio tracks available to route", isConnectingEngineRoute = false) }
+                return
+            }
+            if (current.availableAudioTracks.any { it.isExternal && it.isSelected }) {
+                _uiState.update { it.copy(engineRouteError = "Audio Engine routing isn't available with an external audio track", isConnectingEngineRoute = false) }
                 return
             }
             if (current.playbackSpeed != 1.0f) {

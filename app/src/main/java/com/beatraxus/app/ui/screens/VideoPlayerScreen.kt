@@ -25,6 +25,8 @@ import com.beatraxus.app.subtitles.viewmodel.SubtitleUiEvent
 import com.beatraxus.app.subtitles.viewmodel.SubtitleViewModel
 import com.beatraxus.app.subtitles.viewmodel.SubtitleViewModelFactory
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
@@ -1915,6 +1917,21 @@ fun VideoSettingsSheetContent(
             lastActiveSheetTypeState.value = sheetType
         }
         val activeSheetType = lastActiveSheetTypeState.value
+
+        // Feature 25: "Add audio track" opens the system file picker; the chosen file is merged into the video.
+        val audioFileContext = LocalContext.current
+        val audioFilePicker = rememberLauncherForActivityResult(
+            contract = ActivityResultContracts.OpenDocument()
+        ) { picked: android.net.Uri? ->
+            if (picked != null) {
+                val fileName = runCatching {
+                    audioFileContext.contentResolver.query(
+                        picked, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null
+                    )?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
+                }.getOrNull() ?: picked.lastPathSegment
+                viewModel.addExternalAudio(picked, fileName)
+            }
+        }
         // EQ is handled by DSP Studio while video audio is routed to the Audio Engine
         val eqLockedByEngine = uiState.routeAudioToEngine || uiState.isConnectingEngineRoute
         
@@ -2258,6 +2275,49 @@ fun VideoSettingsSheetContent(
 
         // Audio Tracks
         if (activeSheetType == PlayerSheetType.AUDIO || activeSheetType == PlayerSheetType.ALL) {
+            // Feature 25: load an external audio file (e.g. a dub or commentary track) for this video.
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(Color.White.copy(alpha = 0.06f))
+                    .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(16.dp))
+                    .clickable {
+                        audioFilePicker.launch(arrayOf("audio/*", "application/ogg", "application/octet-stream"))
+                    }
+                    .heightIn(min = 56.dp)
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.AddCircleOutline,
+                    contentDescription = null,
+                    tint = mxOrange,
+                    modifier = Modifier.size(22.dp)
+                )
+                Spacer(Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Add audio track", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                    Text(
+                        text = uiState.externalAudioName?.let { "Loaded: $it" } ?: "Load an audio file from your device",
+                        color = Color.White.copy(0.6f),
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                if (uiState.externalAudioName != null) {
+                    IconButton(onClick = { viewModel.removeExternalAudio() }) {
+                        Icon(
+                            imageVector = Icons.Rounded.Close,
+                            contentDescription = "Remove external audio",
+                            tint = Color.White.copy(alpha = 0.8f)
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+
             if (uiState.availableAudioTracks.isEmpty()) {
                 Box(
                     modifier = Modifier
