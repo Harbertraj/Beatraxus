@@ -41,6 +41,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -143,7 +144,7 @@ fun PremiumSurroundCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     "SURROUND",
-                    color = Color.White, fontWeight = FontWeight.Black, fontSize = 16.sp, letterSpacing = 2.2.sp
+                    color = Color.White, fontWeight = FontWeight.Black, fontSize = 14.sp, letterSpacing = 1.5.sp
                 )
                 Text("Immersive sound. Your way.", color = Color.White.copy(0.55f), fontSize = 10.sp)
             }
@@ -200,17 +201,17 @@ fun PremiumSurroundCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(16.dp))
-                    .background(Color.Black.copy(0.22f))
-                    .border(1.dp, Color.White.copy(0.07f), RoundedCornerShape(16.dp))
+                    .background(Brush.verticalGradient(listOf(Color(0xFF050912), Color(0xFF0A1322))))
+                    .border(1.dp, Brush.verticalGradient(listOf(accent.copy(0.28f), Color.White.copy(0.05f))), RoundedCornerShape(16.dp))
                     .padding(12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Rounded.Tune, null, tint = accent, modifier = Modifier.size(16.dp))
+                    Icon(Icons.Rounded.Tune, null, tint = accent, modifier = Modifier.size(20.dp))
                     Spacer(Modifier.width(8.dp))
                     Text(
-                        "CHANNEL LEVELS", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Black,
-                        letterSpacing = 1.sp, modifier = Modifier.weight(1f)
+                        "CHANNEL LEVELS", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Black,
+                        letterSpacing = 1.5.sp, modifier = Modifier.weight(1f)
                     )
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -241,15 +242,17 @@ fun PremiumSurroundCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(16.dp))
-                    .background(Color.Black.copy(0.22f))
-                    .border(1.dp, Color.White.copy(0.07f), RoundedCornerShape(16.dp))
+                    .background(Brush.verticalGradient(listOf(Color(0xFF050912), Color(0xFF0A1322))))
+                    .border(1.dp, Brush.verticalGradient(listOf(accent.copy(0.28f), Color.White.copy(0.05f))), RoundedCornerShape(16.dp))
                     .padding(12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Rounded.SurroundSound, null, tint = accent, modifier = Modifier.size(20.dp))
+                    Spacer(Modifier.width(8.dp))
                     Text(
-                        "PRESETS", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Black,
-                        letterSpacing = 1.sp, modifier = Modifier.weight(1f)
+                        "PRESETS", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Black,
+                        letterSpacing = 1.5.sp, modifier = Modifier.weight(1f)
                     )
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -675,11 +678,11 @@ private fun DrawScope.drawVisualizer(style: String, color: Color, centre: Offset
 
 private fun Modifier.glassPanel(primary: Color, secondary: Color, radius: androidx.compose.ui.unit.Dp): Modifier = this
     .clip(RoundedCornerShape(radius))
-    .background(lerp(Color.Black, lerp(primary, secondary, 0.35f), 0.075f).copy(alpha = 0.66f))
-    .background(Brush.verticalGradient(listOf(Color.White.copy(0.075f), Color.White.copy(0.012f))))
+    .background(Brush.verticalGradient(listOf(Color(0xFF0B1424).copy(alpha = 0.88f), Color(0xFF070B14).copy(alpha = 0.92f))))
+    .background(Brush.radialGradient(listOf(primary.copy(alpha = 0.07f), Color.Transparent), radius = 700f))
     .border(
         1.dp,
-        Brush.linearGradient(listOf(primary.copy(0.42f), Color.White.copy(0.06f), secondary.copy(0.32f))),
+        Brush.linearGradient(listOf(primary.copy(0.55f), primary.copy(0.10f), secondary.copy(0.45f))),
         RoundedCornerShape(radius)
     )
 
@@ -688,28 +691,30 @@ private fun LayoutButton(label: String, icon: ImageVector, selected: Boolean, ac
     val shape = RoundedCornerShape(50)
     Row(
         modifier = modifier
-            .height(40.dp)
+            .height(46.dp)
+            .then(if (selected) Modifier.shadow(10.dp, shape, ambientColor = accent, spotColor = accent) else Modifier)
             .clip(shape)
-            .background(if (selected) accent.copy(0.16f) else Color.White.copy(0.05f))
+            .background(if (selected) accent.copy(0.18f) else Color(0xFF0B1424).copy(0.9f))
             .border(if (selected) 1.5.dp else 1.dp, if (selected) accent else Color.White.copy(0.12f), shape)
             .clickable(onClick = onClick),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center
     ) {
-        Icon(icon, null, tint = if (selected) accent else Color.White.copy(0.6f), modifier = Modifier.size(15.dp))
-        Spacer(Modifier.width(5.dp))
-        Text(label, color = if (selected) Color.White else Color.White.copy(0.7f), fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+        Icon(icon, null, tint = if (selected) accent else Color.White.copy(0.6f), modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(6.dp))
+        Text(label, color = if (selected) Color.White else Color.White.copy(0.7f), fontSize = 12.sp, fontWeight = if (selected) FontWeight.Black else FontWeight.Bold, maxLines = 1)
     }
 }
 
 @Composable
 private fun PresetChip(name: String, selected: Boolean, enabled: Boolean, accent: Color, modifier: Modifier, onClick: () -> Unit) {
-    val shape = RoundedCornerShape(12.dp)
+    val shape = RoundedCornerShape(50)
     Box(
         modifier = modifier
-            .height(36.dp)
+            .height(38.dp)
+            .then(if (selected && enabled) Modifier.shadow(8.dp, shape, ambientColor = accent, spotColor = accent) else Modifier)
             .clip(shape)
-            .background(if (selected) accent.copy(0.16f) else Color.White.copy(0.05f))
+            .background(if (selected) accent.copy(0.18f) else Color(0xFF0B1424).copy(0.9f))
             .border(if (selected) 1.5.dp else 1.dp, if (selected) accent else Color.White.copy(0.10f), shape)
             .clickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center
@@ -724,17 +729,23 @@ private fun PresetChip(name: String, selected: Boolean, enabled: Boolean, accent
 
 @Composable
 private fun TrimColumn(label: String, valueDb: Float, active: Boolean, color: Color, onChange: (Float) -> Unit) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(34.dp)) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(36.dp)) {
         val text = if (abs(valueDb) < 0.05f) "0.0" else String.format(java.util.Locale.US, "%+.1f", valueDb)
-        Text(
-            text,
-            color = if (active) (if (abs(valueDb) < 0.05f) Color.White.copy(0.7f) else color) else Color.White.copy(0.28f),
-            fontSize = 9.sp, fontWeight = FontWeight.Bold, maxLines = 1
-        )
-        Spacer(Modifier.height(4.dp))
+        val valueColor = if (active) (if (abs(valueDb) < 0.05f) Color.White.copy(0.7f) else color) else Color.White.copy(0.28f)
         TrimSlider(valueDb, active, color, onChange)
+        Spacer(Modifier.height(6.dp))
+        Text(label, color = if (active) Color.White else Color.White.copy(0.35f), fontSize = 11.sp, fontWeight = FontWeight.Black)
         Spacer(Modifier.height(4.dp))
-        Text(label, color = if (active) Color.White else Color.White.copy(0.35f), fontSize = 10.sp, fontWeight = FontWeight.Black)
+        Box(
+            modifier = Modifier
+                .clip(RoundedCornerShape(10.dp))
+                .background(if (active) color.copy(0.10f) else Color.White.copy(0.04f))
+                .border(1.dp, if (active) color.copy(0.55f) else Color.White.copy(0.08f), RoundedCornerShape(10.dp))
+                .padding(horizontal = 3.dp, vertical = 3.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(text, color = valueColor, fontSize = 9.sp, fontWeight = FontWeight.Black, maxLines = 1, softWrap = false)
+        }
     }
 }
 
@@ -769,14 +780,22 @@ private fun TrimSlider(valueDb: Float, active: Boolean, color: Color, onChange: 
     ) {
         val trackW = 5.dp.toPx()
         val x = size.width / 2f
-        val top = 8.dp.toPx()
-        val bottom = size.height - 8.dp.toPx()
+        val top = 10.dp.toPx()
+        val bottom = size.height - 10.dp.toPx()
         val frac = ((valueDb - SURROUND_TRIM_MIN_DB) / (SURROUND_TRIM_MAX_DB - SURROUND_TRIM_MIN_DB)).coerceIn(0f, 1f)
         val thumbY = bottom - (bottom - top) * frac
         val zeroY = bottom - (bottom - top) * 0.5f
         val tint = if (active) color else Color.White.copy(0.25f)
 
-        drawRoundRect(Color.White.copy(0.10f), Offset(x - trackW / 2, top), Size(trackW, bottom - top), CornerRadius(trackW))
+        // Recessed capsule track with scale ticks
+        val capW = 16.dp.toPx()
+        drawRoundRect(Color(0xFF050912), Offset(x - capW / 2, 0f), Size(capW, size.height), CornerRadius(capW / 2))
+        drawRoundRect(Color.White.copy(0.08f), Offset(x - capW / 2, 0f), Size(capW, size.height), CornerRadius(capW / 2), style = Stroke(1.dp.toPx()))
+        for (i in 0..4) {
+            val ty = top + (bottom - top) * i / 4f
+            val tw = if (i == 2) 5.dp.toPx() else 3.dp.toPx()
+            drawLine(Color.White.copy(if (i == 2) 0.35f else 0.14f), Offset(x - tw, ty), Offset(x + tw, ty), 1.dp.toPx())
+        }
         // Fill from the 0 dB mark to the thumb
         val fillTop = minOf(thumbY, zeroY)
         val fillBottom = maxOf(thumbY, zeroY)
@@ -784,8 +803,15 @@ private fun TrimSlider(valueDb: Float, active: Boolean, color: Color, onChange: 
             Brush.verticalGradient(listOf(tint, tint.copy(0.55f)), fillTop, fillBottom.coerceAtLeast(fillTop + 1f)),
             Offset(x - trackW / 2, fillTop), Size(trackW, fillBottom - fillTop), CornerRadius(trackW)
         )
-        drawLine(Color.White.copy(0.28f), Offset(x - 8.dp.toPx(), zeroY), Offset(x + 8.dp.toPx(), zeroY), 1f)
-        drawCircle(Color(0xFF0B0F14), 8.dp.toPx(), Offset(x, thumbY))
-        drawCircle(tint, 8.dp.toPx(), Offset(x, thumbY), style = Stroke(2.5f))
+        if (active) drawCircle(Brush.radialGradient(listOf(tint.copy(0.35f), Color.Transparent), Offset(x, thumbY), 20.dp.toPx()), 20.dp.toPx(), Offset(x, thumbY))
+        // Metal fader cap with a neon centre line
+        val capH = 16.dp.toPx()
+        val knobW = 28.dp.toPx()
+        drawRoundRect(
+            Brush.verticalGradient(listOf(Color(0xFF6B7380), Color(0xFF3A404B), Color(0xFF1E222A)), thumbY - capH / 2, thumbY + capH / 2),
+            Offset(x - knobW / 2, thumbY - capH / 2), Size(knobW, capH), CornerRadius(7.dp.toPx())
+        )
+        drawRoundRect(tint.copy(0.8f), Offset(x - knobW / 2, thumbY - capH / 2), Size(knobW, capH), CornerRadius(7.dp.toPx()), style = Stroke(1.dp.toPx()))
+        drawLine(tint, Offset(x - 8.dp.toPx(), thumbY), Offset(x + 8.dp.toPx(), thumbY), 2.5.dp.toPx(), cap = androidx.compose.ui.graphics.StrokeCap.Round)
     }
 }
