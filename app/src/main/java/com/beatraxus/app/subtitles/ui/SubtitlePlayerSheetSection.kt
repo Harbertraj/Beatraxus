@@ -620,6 +620,9 @@ fun SubtitlePlayerSheetSection(
             }
         }
 
+        // 5c. Custom font and text encoding (video feature 23)
+        SubtitleFontEncodingSection(subtitleViewModel = subtitleViewModel)
+
         // 6. Extended Subtitle Appearance
         Column {
             Text("Subtitle Appearance", color = Color.White.copy(0.9f), fontSize = 15.sp, fontWeight = FontWeight.Bold)

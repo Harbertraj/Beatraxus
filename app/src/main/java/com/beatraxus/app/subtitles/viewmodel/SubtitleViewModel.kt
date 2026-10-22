@@ -2,6 +2,7 @@ package com.beatraxus.app.subtitles.viewmodel
 
 import android.app.Application
 import android.content.Context
+import android.graphics.Typeface
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
@@ -14,6 +15,7 @@ import com.beatraxus.app.subtitles.data.SubtitleAuthManager
 import com.beatraxus.app.subtitles.data.SubtitleCache
 import com.beatraxus.app.subtitles.data.SubtitleCredentialsStore
 import com.beatraxus.app.subtitles.data.SubtitleFileImporter
+import com.beatraxus.app.subtitles.data.SubtitleFontStore
 import com.beatraxus.app.subtitles.domain.EncodingNormalizer
 import com.beatraxus.app.subtitles.domain.FilenameParser
 import com.beatraxus.app.subtitles.domain.MediaKey
@@ -22,6 +24,8 @@ import com.beatraxus.app.subtitles.domain.SecondarySubtitlePrefs
 import com.beatraxus.app.subtitles.domain.SecondarySubtitleStyle
 import com.beatraxus.app.subtitles.domain.SubtitleCueParser
 import com.beatraxus.app.subtitles.domain.SubtitleCueTimeline
+import com.beatraxus.app.subtitles.domain.SubtitleEncodingPrefs
+import com.beatraxus.app.subtitles.domain.SubtitleEncodings
 import com.beatraxus.app.subtitles.domain.SubtitleError
 import com.beatraxus.app.subtitles.domain.SubtitleException
 import com.beatraxus.app.subtitles.domain.SubtitleMatchScorer
@@ -61,6 +65,7 @@ class SubtitleViewModel(
     private val prefs = application.getSharedPreferences("beatraxus", Context.MODE_PRIVATE)
     private val fileImporter = SubtitleFileImporter(application, subtitleCache)
     private val siblingFinder = SiblingSubtitleFinder(application)
+    private val fontStore = SubtitleFontStore(application, prefs)
 
     private val _uiState = MutableStateFlow(SubtitleUiState())
     val uiState: StateFlow<SubtitleUiState> = _uiState.asStateFlow()
@@ -72,6 +77,14 @@ class SubtitleViewModel(
     private val _secondaryTimeline = MutableStateFlow<SubtitleCueTimeline?>(null)
     val secondaryTimeline: StateFlow<SubtitleCueTimeline?> = _secondaryTimeline.asStateFlow()
 
+    /** The viewer's custom subtitle font (video feature 23), or null for the default one. */
+    private val _customTypeface = MutableStateFlow<Typeface?>(null)
+    val customTypeface: StateFlow<Typeface?> = _customTypeface.asStateFlow()
+
+    /** Where each subtitle the viewer loaded from a file came from, so a new text encoding can re-read it. */
+    private val sourceUris = mutableMapOf<String, Uri>()
+    private var secondarySourceUri: Uri? = null
+
     private var currentVideo: Video? = null
     private var currentMediaKey: String = ""
     private var searchJob: Job? = null
@@ -80,6 +93,7 @@ class SubtitleViewModel(
     init {
         loadSettings()
         loadLanguages()
+        loadCustomFont()
         observeControllerState()
     }
 
@@ -99,6 +113,7 @@ class SubtitleViewModel(
             it.copy(
                 enabled = enabled,
                 dualEnabled = SecondarySubtitlePrefs.isEnabled(prefs),
+                encodingId = SubtitleEncodingPrefs.read(prefs),
                 secondaryStyle = SecondarySubtitlePrefs.readStyle(prefs),
                 selectedLanguages = prefLangs,
                 autoSearchMode = autoSearchMode,
@@ -211,7 +226,8 @@ class SubtitleViewModel(
         // Forced-only tracks (foreign dialogue only) stay available for a manual pick but are never loaded on their own.
         for (sibling in found.filter { !it.candidate.isForced }.take(MAX_SIBLING_ATTEMPTS)) {
             val language = sibling.candidate.languageCode ?: languages.firstOrNull() ?: "en"
-            val cached = fileImporter.importSubtitleFromUri(mediaKey, sibling.uri, language).getOrNull() ?: continue
+            val cached = fileImporter.importSubtitleFromUri(mediaKey, sibling.uri, language, currentCharset()).getOrNull() ?: continue
+            sourceUris[cached.subtitleId] = sibling.uri
             // The viewer may have moved on to another video while the file was being read.
             if (currentVideo?.id != video.id) return false
 
@@ -422,9 +438,10 @@ class SubtitleViewModel(
         val mediaKey = currentMediaKey.ifBlank { MediaKey.of(video) }
 
         viewModelScope.launch {
-            val res = fileImporter.importSubtitleFromUri(mediaKey, uri, _uiState.value.selectedLanguages.firstOrNull() ?: "en")
+            val res = fileImporter.importSubtitleFromUri(mediaKey, uri, _uiState.value.selectedLanguages.firstOrNull() ?: "en", currentCharset())
             if (res.isSuccess) {
                 val cached = res.getOrThrow()
+                sourceUris[cached.subtitleId] = uri
                 val file = File(cached.localPath)
                 subtitleController.attachExternalSubtitle(
                     videoId = video.id,
@@ -505,6 +522,119 @@ class SubtitleViewModel(
         setSubtitleDelay(0L)
     }
 
+    // ---- Custom font and text encoding (video feature 23) ----
+
+    /** The charset to force when reading a subtitle file, or null for auto-detect. */
+    private fun currentCharset() = SubtitleEncodings.charsetFor(_uiState.value.encodingId)
+
+    /**
+     * Sets the text encoding for subtitle files and re-reads the subtitles the viewer already loaded from a file
+     * (the main one, and the second one of a dual pair) so the change shows straight away.
+     */
+    fun setEncoding(encodingId: String) {
+        if (encodingId == _uiState.value.encodingId) return
+        SubtitleEncodingPrefs.write(prefs, encodingId)
+        _uiState.update { it.copy(encodingId = encodingId) }
+        reloadMainSubtitleWithEncoding()
+        reloadSecondarySubtitleWithEncoding()
+    }
+
+    private fun reloadMainSubtitleWithEncoding() {
+        val video = currentVideo ?: return
+        val state = _uiState.value
+        val oldId = state.selectedSubtitleId ?: return
+        val uri = sourceUris[oldId] ?: return
+        if (state.selectedSubtitleType != SelectedSubtitleType.EXTERNAL) return
+
+        val mediaKey = currentMediaKey.ifBlank { MediaKey.of(video) }
+        val language = state.selectedLanguages.firstOrNull() ?: "en"
+        val delayMs = state.delayMs
+
+        viewModelScope.launch {
+            val res = fileImporter.importSubtitleFromUri(mediaKey, uri, language, currentCharset())
+            val cached = res.getOrNull()
+            if (cached == null) {
+                val error = (res.exceptionOrNull() as? SubtitleException)?.error ?: SubtitleError.Unknown(res.exceptionOrNull())
+                _events.emit(SubtitleUiEvent.Error(SubtitleErrorMapper.toUserMessage(error)))
+                return@launch
+            }
+            // The viewer may have moved on to another video while the file was being read.
+            if (currentVideo?.id != video.id) return@launch
+
+            val label = cached.releaseName ?: "Local Subtitle"
+            subtitleController.attachExternalSubtitle(
+                videoId = video.id,
+                file = File(cached.localPath),
+                language = cached.language,
+                label = label,
+                subtitleId = cached.subtitleId
+            )
+            // Only now is the previous copy (decoded with the old encoding) out of use.
+            subtitleCache.deleteSubtitle(mediaKey, oldId)
+            sourceUris.remove(oldId)
+            sourceUris[cached.subtitleId] = uri
+
+            val updatedList = subtitleCache.getCachedSubtitles(mediaKey)
+            _uiState.update {
+                it.copy(
+                    cachedSubtitles = updatedList,
+                    selectedSubtitleId = cached.subtitleId,
+                    selectedSubtitleType = SelectedSubtitleType.EXTERNAL,
+                    selectedSubtitleName = label
+                )
+            }
+            // The new file has no delay applied; put back the one the viewer had set.
+            if (delayMs != 0L) setSubtitleDelay(delayMs)
+        }
+    }
+
+    private fun reloadSecondarySubtitleWithEncoding() {
+        val video = currentVideo ?: return
+        val uri = secondarySourceUri ?: return
+        if (_secondaryTimeline.value == null) return
+        val language = _uiState.value.selectedLanguages.firstOrNull() ?: "en"
+
+        viewModelScope.launch {
+            val read = fileImporter.readSubtitleFromUri(uri, language, currentCharset()).getOrNull() ?: return@launch
+            val cues = SubtitleCueParser.parse(read.srtContent)
+            if (currentVideo?.id != video.id || cues.isEmpty()) return@launch
+            applySecondary(SubtitleCueTimeline(cues), read.displayName)
+        }
+    }
+
+    private fun loadCustomFont() {
+        viewModelScope.launch {
+            val font = fontStore.load() ?: return@launch
+            _customTypeface.value = font.typeface
+            _uiState.update { it.copy(customFontName = font.displayName) }
+        }
+    }
+
+    /** Copies the picked TTF/OTF file into the app and uses it for subtitles. */
+    fun importCustomFont(uri: Uri) {
+        viewModelScope.launch {
+            val res = fontStore.import(uri)
+            val font = res.getOrNull()
+            if (font != null) {
+                _customTypeface.value = font.typeface
+                _uiState.update { it.copy(customFontName = font.displayName) }
+                _events.emit(SubtitleUiEvent.ShowToast("Subtitle font: ${font.displayName}"))
+            } else {
+                val error = (res.exceptionOrNull() as? SubtitleFontStore.FontImportException)?.error
+                _events.emit(SubtitleUiEvent.Error(SubtitleErrorMapper.toFontMessage(error)))
+            }
+        }
+    }
+
+    /** Goes back to the default subtitle font. */
+    fun clearCustomFont() {
+        viewModelScope.launch {
+            fontStore.clear()
+            _customTypeface.value = null
+            _uiState.update { it.copy(customFontName = null) }
+        }
+    }
+
     // ---- Dual subtitles (video feature 22) ----
 
     fun setDualSubtitlesEnabled(enabled: Boolean) {
@@ -531,6 +661,7 @@ class SubtitleViewModel(
                 if (timeline == null) {
                     _events.emit(SubtitleUiEvent.Error("Could not read that subtitle."))
                 } else {
+                    secondarySourceUri = null
                     applySecondary(timeline, cached.releaseName ?: "Subtitle")
                 }
             }
@@ -542,11 +673,12 @@ class SubtitleViewModel(
         val video = currentVideo ?: return
         viewModelScope.launch {
             val language = _uiState.value.selectedLanguages.firstOrNull() ?: "en"
-            val res = fileImporter.readSubtitleFromUri(uri, language)
+            val res = fileImporter.readSubtitleFromUri(uri, language, currentCharset())
             if (currentVideo?.id != video.id) return@launch
             val read = res.getOrNull()
             val cues = read?.let { SubtitleCueParser.parse(it.srtContent) }.orEmpty()
             if (read != null && cues.isNotEmpty()) {
+                secondarySourceUri = uri
                 applySecondary(SubtitleCueTimeline(cues), read.displayName)
             } else {
                 val error = (res.exceptionOrNull() as? SubtitleException)?.error ?: SubtitleError.InvalidSubtitle
@@ -556,6 +688,7 @@ class SubtitleViewModel(
     }
 
     fun clearSecondarySubtitle() {
+        secondarySourceUri = null
         _secondaryTimeline.value = null
         _uiState.update { it.copy(secondarySubtitleName = null) }
     }

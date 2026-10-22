@@ -3,6 +3,7 @@ package com.beatraxus.app.subtitles.viewmodel
 import com.beatraxus.app.subtitles.data.CachedSubtitle
 import com.beatraxus.app.subtitles.domain.ScoredSubtitle
 import com.beatraxus.app.subtitles.domain.SecondarySubtitleStyle
+import com.beatraxus.app.subtitles.domain.SubtitleEncodings
 import com.beatraxus.app.subtitles.domain.SubtitleError
 import com.beatraxus.app.subtitles.domain.SubtitleLanguage
 
@@ -43,5 +44,8 @@ data class SubtitleUiState(
     // Dual subtitles (video feature 22)
     val dualEnabled: Boolean = false,
     val secondarySubtitleName: String? = null,
-    val secondaryStyle: SecondarySubtitleStyle = SecondarySubtitleStyle()
+    val secondaryStyle: SecondarySubtitleStyle = SecondarySubtitleStyle(),
+    // Custom font and text encoding (video feature 23)
+    val encodingId: String = SubtitleEncodings.AUTO,
+    val customFontName: String? = null
 )

@@ -208,6 +208,9 @@ fun VideoPlayerScreen(
     var showAuthDialogInPlayer by remember { mutableStateOf(false) }
     var authDialogNote by remember { mutableStateOf<String?>(null) }
 
+    // The viewer's custom subtitle font (video feature 23); null means the default font.
+    val customSubtitleTypeface by subtitleViewModel.customTypeface.collectAsState()
+
     LaunchedEffect(subtitleViewModel) {
         subtitleViewModel.events.collect { event ->
             when (event) {
@@ -679,7 +682,8 @@ fun VideoPlayerScreen(
                     uiState.subtitleBackgroundColor
                 }
 
-                val typeface = if (uiState.subtitleBold) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+                val baseTypeface = customSubtitleTypeface ?: Typeface.DEFAULT
+                val typeface = if (uiState.subtitleBold) Typeface.create(baseTypeface, Typeface.BOLD) else baseTypeface
 
                 @Suppress("WrongConstant")
                 val captionStyle = CaptionStyleCompat(
@@ -731,7 +735,8 @@ fun VideoPlayerScreen(
             positionProvider = { viewModel.getPlayer()?.currentPosition ?: 0L },
             primarySizeSp = uiState.subtitleSize,
             primaryTranslationY = uiState.subtitlePositionPreset.offsetDp + uiState.subtitleOffset,
-            primaryBold = uiState.subtitleBold
+            primaryBold = uiState.subtitleBold,
+            typeface = customSubtitleTypeface
         )
 
 

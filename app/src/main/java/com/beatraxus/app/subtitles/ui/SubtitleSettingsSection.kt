@@ -191,6 +191,9 @@ fun SubtitleSettingsSection(
             Text("Change", color = mxOrange, fontSize = 13.sp, fontWeight = FontWeight.Bold)
         }
 
+        // Custom font and text encoding (video feature 23)
+        SubtitleFontEncodingSection(subtitleViewModel = subtitleViewModel)
+
         // OpenSubtitles Account
         Row(
             modifier = Modifier

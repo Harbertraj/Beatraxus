@@ -1,6 +1,7 @@
 package com.beatraxus.app.subtitles.util
 
 import com.beatraxus.app.subtitles.domain.SubtitleError
+import com.beatraxus.app.subtitles.domain.SubtitleFontError
 
 object SubtitleErrorMapper {
 
@@ -27,6 +28,15 @@ object SubtitleErrorMapper {
             is SubtitleError.FileAccessDenied -> "Cannot access subtitle file."
             is SubtitleError.HashCalculationFailed -> "Failed to compute video hash."
             is SubtitleError.Unknown -> "Subtitle service is temporarily unavailable."
+        }
+    }
+
+    fun toFontMessage(error: SubtitleFontError?): String {
+        return when (error) {
+            SubtitleFontError.NOT_A_FONT -> "That file is not a TTF or OTF font."
+            SubtitleFontError.TOO_LARGE -> "That file is too large to be a font."
+            SubtitleFontError.UNUSABLE -> "This font could not be loaded."
+            SubtitleFontError.UNREADABLE, null -> "Cannot read the font file."
         }
     }
 }

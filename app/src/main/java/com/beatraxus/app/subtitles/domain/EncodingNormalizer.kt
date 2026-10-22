@@ -6,8 +6,17 @@ import java.nio.charset.CodingErrorAction
 
 object EncodingNormalizer {
 
-    fun normalizeToUtf8(bytes: ByteArray, languageCode: String? = null): String {
+    /**
+     * Turns subtitle bytes into text.
+     *
+     * With [forcedCharset] null (the "Auto-detect" choice) the encoding is worked out from a byte-order mark, a strict
+     * UTF-8 check and then the language. With a charset given (video feature 23, the text encoding picker) the bytes
+     * are decoded with exactly that charset, whatever they look like, so a wrong guess can be fixed by choosing the
+     * right one. Bytes the charset cannot decode become U+FFFD rather than failing.
+     */
+    fun normalizeToUtf8(bytes: ByteArray, languageCode: String? = null, forcedCharset: Charset? = null): String {
         if (bytes.isEmpty()) return ""
+        if (forcedCharset != null) return decodeWith(bytes, forcedCharset)
 
         // Check BOM
         if (bytes.size >= 3 && bytes[0] == 0xEF.toByte() && bytes[1] == 0xBB.toByte() && bytes[2] == 0xBF.toByte()) {
@@ -40,6 +49,11 @@ object EncodingNormalizer {
         val legacyCharset = getFallbackCharset(languageCode)
         val decoded = String(bytes, legacyCharset)
         return sanitizeText(decoded)
+    }
+
+    private fun decodeWith(bytes: ByteArray, charset: Charset): String {
+        // A byte-order mark decodes to U+FEFF under UTF-8 and the fixed-endian UTF-16 charsets; it is not subtitle text.
+        return sanitizeText(String(bytes, charset).removePrefix("\uFEFF"))
     }
 
     private fun getFallbackCharset(languageCode: String?): Charset {

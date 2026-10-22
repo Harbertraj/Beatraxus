@@ -13,6 +13,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.nio.charset.Charset
 
 class SubtitleFileImporter(
     private val context: Context,
@@ -25,11 +26,13 @@ class SubtitleFileImporter(
     /**
      * Reads a subtitle file (SRT, WebVTT, ASS/SSA or a ZIP holding one), fixes its text encoding and converts it to SRT.
      * Nothing is written to the subtitle cache, so this is also what dual subtitles (video feature 22) uses to load
-     * the second file without it turning into the video's main subtitle.
+     * the second file without it turning into the video's main subtitle. [forcedCharset] is the text encoding chosen in
+     * the encoding picker (video feature 23); null means auto-detect.
      */
     suspend fun readSubtitleFromUri(
         uri: Uri,
-        languageCode: String = "en"
+        languageCode: String = "en",
+        forcedCharset: Charset? = null
     ): Result<ReadSubtitle> = withContext(Dispatchers.IO) {
         try {
             val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
@@ -42,10 +45,10 @@ class SubtitleFileImporter(
                     return@withContext Result.failure(zipRes.exceptionOrNull()!!)
                 }
                 val (name, extractedBytes) = zipRes.getOrThrow()
-                Pair(EncodingNormalizer.normalizeToUtf8(extractedBytes, languageCode), name)
+                Pair(EncodingNormalizer.normalizeToUtf8(extractedBytes, languageCode, forcedCharset), name)
             } else {
                 val name = getFileNameFromUri(uri) ?: "local_subtitle.srt"
-                Pair(EncodingNormalizer.normalizeToUtf8(bytes, languageCode), name)
+                Pair(EncodingNormalizer.normalizeToUtf8(bytes, languageCode, forcedCharset), name)
             }
 
             val format = SubtitleFormatDetector.detect(rawContent)
@@ -65,10 +68,11 @@ class SubtitleFileImporter(
     suspend fun importSubtitleFromUri(
         mediaKey: String,
         uri: Uri,
-        languageCode: String = "en"
+        languageCode: String = "en",
+        forcedCharset: Charset? = null
     ): Result<CachedSubtitle> = withContext(Dispatchers.IO) {
         try {
-            val read = readSubtitleFromUri(uri, languageCode).getOrElse {
+            val read = readSubtitleFromUri(uri, languageCode, forcedCharset).getOrElse {
                 return@withContext Result.failure(it)
             }
 

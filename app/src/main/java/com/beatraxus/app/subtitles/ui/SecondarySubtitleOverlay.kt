@@ -1,5 +1,6 @@
 package com.beatraxus.app.subtitles.ui
 
+import android.graphics.Typeface
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
@@ -20,6 +21,7 @@ import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -40,6 +42,7 @@ import kotlinx.coroutines.isActive
  * @param primarySizeSp the main subtitle's text size, which the second subtitle's size is a percentage of
  * @param primaryTranslationY the vertical shift the player applies to the main subtitle (position preset + offset)
  * @param primaryBold whether the main subtitle is bold; the second one matches it
+ * @param typeface the viewer's custom subtitle font (video feature 23), or null for the default font
  */
 @Composable
 fun SecondarySubtitleOverlay(
@@ -48,6 +51,7 @@ fun SecondarySubtitleOverlay(
     primarySizeSp: Float,
     primaryTranslationY: Float,
     primaryBold: Boolean,
+    typeface: Typeface? = null,
     modifier: Modifier = Modifier
 ) {
     val uiState by subtitleViewModel.uiState.collectAsState()
@@ -73,11 +77,16 @@ fun SecondarySubtitleOverlay(
     val textSizeSp = (primarySizeSp * style.sizePercent / 100f).coerceAtLeast(MIN_TEXT_SP)
 
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
+        // A custom font is a loaded Typeface, which ignores FontWeight, so bold is baked into it instead.
+        val fontFamily = remember(typeface, primaryBold) {
+            typeface?.let { FontFamily(if (primaryBold) Typeface.create(it, Typeface.BOLD) else it) }
+        }
         val textStyle = TextStyle(
             color = Color(style.textColor),
             fontSize = textSizeSp.sp,
             lineHeight = (textSizeSp * 1.2f).sp,
-            fontWeight = if (primaryBold) FontWeight.Bold else FontWeight.Normal,
+            fontFamily = fontFamily,
+            fontWeight = if (primaryBold && typeface == null) FontWeight.Bold else FontWeight.Normal,
             textAlign = TextAlign.Center,
             shadow = Shadow(color = Color.Black, offset = Offset(1.5f, 1.5f), blurRadius = 6f)
         )
