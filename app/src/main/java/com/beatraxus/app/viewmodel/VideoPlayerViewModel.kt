@@ -221,12 +221,25 @@ data class VideoTrackInfo(
     val sampleRate: Int = -1
 )
 
-enum class VideoAspectRatio(val displayName: String) {
+/**
+ * Picture shapes of the video player. FIT / FILL / ZOOM follow the video's own ratio ([forcedRatio] is null);
+ * every other entry forces the picture frame to that width / height ratio.
+ *
+ * The order is the order of the aspect-ratio button cycle, so a new ratio only needs a new entry here.
+ * Saved names (recently played, preferences) are looked up by [name]: never rename an existing entry.
+ */
+enum class VideoAspectRatio(val displayName: String, val forcedRatio: Float? = null) {
     FIT("Fit to screen"),
     FILL("Fill screen"),
     ZOOM("Zoom"),
-    FOUR_THREE("4:3"),
-    SIXTEEN_NINE("16:9")
+    FOUR_THREE("4:3", 4f / 3f),
+    SIXTEEN_NINE("16:9", 16f / 9f),
+    SIXTEEN_TEN("16:10", 16f / 10f),
+    TWENTY_ONE_NINE("21:9", 21f / 9f),
+    CINEMASCOPE("2.35:1", 2.35f);
+
+    /** The next mode of the aspect-ratio button; wraps from the last entry back to [FIT]. */
+    fun next(): VideoAspectRatio = entries[(ordinal + 1) % entries.size]
 }
 
 

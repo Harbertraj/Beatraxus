@@ -821,14 +821,7 @@ fun VideoPlayerScreen(
                         onLock = { viewModel.toggleLock() },
                         onTimeClick = { viewModel.toggleTimeDisplay() },
                         onAspectRatioClick = { 
-                            val nextRatio = when (uiState.aspectRatio) {
-                                VideoAspectRatio.FIT -> VideoAspectRatio.FILL
-                                VideoAspectRatio.FILL -> VideoAspectRatio.ZOOM
-                                VideoAspectRatio.ZOOM -> VideoAspectRatio.FOUR_THREE
-                                VideoAspectRatio.FOUR_THREE -> VideoAspectRatio.SIXTEEN_NINE
-                                VideoAspectRatio.SIXTEEN_NINE -> VideoAspectRatio.FIT
-                            }
-                            viewModel.setAspectRatio(nextRatio)
+                            viewModel.setAspectRatio(uiState.aspectRatio.next())
                         },
 
                         onScrubbing = {
@@ -2579,7 +2572,8 @@ private fun formatAudioTrackSubtitleLine(track: VideoTrackInfo): String {
 
 /**
  * Applies the chosen aspect-ratio mode directly to PlayerView's content frame.
- * FIT / FILL / ZOOM use the video's real ratio; 4:3 and 16:9 force the frame ratio.
+ * FIT / FILL / ZOOM use the video's real ratio; every mode with a [VideoAspectRatio.forcedRatio]
+ * (4:3, 16:9, 16:10, 21:9, 2.35:1) forces the frame to that ratio.
  */
 @UnstableApi
 private fun applyVideoAspect(view: PlayerView, mode: VideoAspectRatio, size: VideoSize) {
@@ -2606,13 +2600,13 @@ private fun applyVideoAspect(view: PlayerView, mode: VideoAspectRatio, size: Vid
             view.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
             if (natural > 0f) frame.setAspectRatio(natural)
         }
-        VideoAspectRatio.FOUR_THREE -> {
+        VideoAspectRatio.FOUR_THREE,
+        VideoAspectRatio.SIXTEEN_NINE,
+        VideoAspectRatio.SIXTEEN_TEN,
+        VideoAspectRatio.TWENTY_ONE_NINE,
+        VideoAspectRatio.CINEMASCOPE -> {
             view.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
-            frame.setAspectRatio(4f / 3f)
-        }
-        VideoAspectRatio.SIXTEEN_NINE -> {
-            view.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
-            frame.setAspectRatio(16f / 9f)
+            mode.forcedRatio?.let { frame.setAspectRatio(it) }
         }
     }
 }
