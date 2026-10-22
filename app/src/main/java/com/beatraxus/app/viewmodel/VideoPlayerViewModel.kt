@@ -55,6 +55,7 @@ import com.beatraxus.app.model.SURROUND_CUSTOM_PRESET_NAME
 import com.beatraxus.app.model.SurroundLayout
 import com.beatraxus.app.model.SurroundMode
 import com.beatraxus.app.model.Video
+import com.beatraxus.app.model.VideoOrientation
 import com.beatraxus.app.model.SavedEqPreset
 import com.beatraxus.app.model.sanitizeSurroundTrims
 import com.beatraxus.app.model.withSurroundPreset
@@ -96,6 +97,8 @@ data class VideoPlayerUiState(
     val selectedSubtitleTrackIndex: Int = -1,
     val aspectRatio: VideoAspectRatio = VideoAspectRatio.FIT,
     val aspectRatioMessage: String? = null,
+    /** Rotate / flip / mirror of the picture. Kept for the whole player session (all videos in the queue). */
+    val videoOrientation: VideoOrientation = VideoOrientation.NONE,
     val isVolumeBoost: Boolean = false,
     val subtitleOffset: Float = 0f,
     val showTotalTime: Boolean = false,
@@ -1176,6 +1179,23 @@ class VideoPlayerViewModel(
         _uiState.update {
             withFpsPlan(it.copy(fpsBoosterSuspended = reason.message, fpsBoosterStats = BoosterStats(fallbackReason = reason.message)))
         }
+    }
+
+    /** Turns the picture 90 degrees clockwise (0 -> 90 -> 180 -> 270 -> 0). */
+    fun rotateVideo() = changeVideoOrientation { it.rotatedClockwise() }
+
+    /** Mirror: swaps left and right. */
+    fun toggleVideoMirror() = changeVideoOrientation { it.withFlipHorizontal(!it.flipHorizontal) }
+
+    /** Swaps top and bottom. */
+    fun toggleVideoFlipVertical() = changeVideoOrientation { it.withFlipVertical(!it.flipVertical) }
+
+    fun resetVideoOrientation() = changeVideoOrientation { VideoOrientation.NONE }
+
+    private fun changeVideoOrientation(change: (VideoOrientation) -> VideoOrientation) {
+        val next = change(_uiState.value.videoOrientation)
+        _uiState.update { it.copy(videoOrientation = next, aspectRatioMessage = next.describe()) }
+        viewModelScope.launch { delay(2000); _uiState.update { it.copy(aspectRatioMessage = null) } }
     }
 
     fun setAspectRatio(ratio: VideoAspectRatio) {

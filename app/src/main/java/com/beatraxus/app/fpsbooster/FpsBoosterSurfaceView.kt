@@ -11,6 +11,7 @@ import android.view.Surface
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.Window
+import com.beatraxus.app.model.VideoOrientation
 import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
 import com.beatraxus.app.motionboost.DisplayRefreshRate
@@ -46,6 +47,7 @@ class FpsBoosterSurfaceView(context: Context) : SurfaceView(context), SurfaceHol
     private var brightness = 0f
     private var contrast = 1f
     private var saturation = 1f
+    private var orientation = VideoOrientation.NONE
 
     private val playerListener = object : Player.Listener {
         override fun onVideoSizeChanged(videoSize: VideoSize) {
@@ -83,6 +85,12 @@ class FpsBoosterSurfaceView(context: Context) : SurfaceView(context), SurfaceHol
         renderer?.setColorGrade(brightness, contrast, saturation)
     }
 
+    /** Rotate / flip / mirror of the picture; drawn by the renderer, since a SurfaceView cannot be transformed. */
+    fun setOrientation(orientation: VideoOrientation) {
+        this.orientation = orientation
+        renderer?.setOrientation(orientation)
+    }
+
     private fun startManager() {
         manager?.release()
         val p = plan ?: return
@@ -117,6 +125,7 @@ class FpsBoosterSurfaceView(context: Context) : SurfaceView(context), SurfaceHol
         created.setTargetFps(p.targetFps)
         manager?.let { created.setLevel(it.initialLevel) }
         created.setColorGrade(brightness, contrast, saturation)
+        created.setOrientation(orientation)
         player?.let { pl ->
             pl.addListener(playerListener)
             val size = pl.videoSize

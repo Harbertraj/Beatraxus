@@ -101,6 +101,7 @@ import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
 import com.beatraxus.app.model.SavedEqPreset
+import com.beatraxus.app.model.VideoOrientation
 import com.beatraxus.app.util.PlaybackGlobalState
 import com.beatraxus.app.util.VideoPlayerPrefs
 import com.beatraxus.app.viewmodel.VideoAspectRatio
@@ -120,7 +121,7 @@ enum class GestureType {
 }
 
 enum class PlayerSheetType {
-    NONE, AUDIO, SUBTITLE, SPEED, ALL, EQUALIZER, SLEEP_TIMER, COLOR, AUDIO_DELAY, MOTION_BOOST, SURROUND
+    NONE, AUDIO, SUBTITLE, SPEED, ALL, EQUALIZER, SLEEP_TIMER, COLOR, AUDIO_DELAY, MOTION_BOOST, SURROUND, ORIENTATION
 }
 
 @UnstableApi
@@ -504,6 +505,7 @@ fun VideoPlayerScreen(
         // Player View
         var playerViewRef by remember { mutableStateOf<PlayerView?>(null) }
         val latestAspect by rememberUpdatedState(uiState.aspectRatio)
+        val latestOrientation by rememberUpdatedState(uiState.videoOrientation)
 
         // PlayerView resets its own frame ratio on every video-size change (new video,
         // rotation, format change). Re-apply ours right after it, on the same callback.
@@ -512,11 +514,34 @@ fun VideoPlayerScreen(
             val exo = viewModel.getPlayer()
             val listener = object : Player.Listener {
                 override fun onVideoSizeChanged(videoSize: VideoSize) {
-                    pv?.let { applyVideoAspect(it, latestAspect, videoSize) }
+                    pv?.let { applyVideoAspect(it, latestAspect, videoSize, latestOrientation) }
                 }
             }
             if (pv != null) exo?.addListener(listener)
             onDispose { exo?.removeListener(listener) }
+        }
+
+        // Rotate / flip / mirror on the TextureView (a SurfaceView cannot be transformed; the FPS Booster draws it in GL).
+        // The matrix depends on the view's size, which changes with every aspect-ratio or rotation change, so it is
+        // applied again after each layout.
+        DisposableEffect(playerViewRef, uiState.videoOrientation) {
+            val texture = playerViewRef?.videoSurfaceView as? TextureView
+            val current = uiState.videoOrientation
+            val applyTransform = { v: TextureView ->
+                val matrix = android.graphics.Matrix()
+                if (v.width > 0 && v.height > 0) {
+                    matrix.setValues(current.textureMatrixValues(v.width.toFloat(), v.height.toFloat()))
+                }
+                v.setTransform(matrix)
+            }
+            val layoutListener = android.view.View.OnLayoutChangeListener { v, _, _, _, _, _, _, _, _ ->
+                (v as? TextureView)?.let(applyTransform)
+            }
+            if (texture != null) {
+                texture.addOnLayoutChangeListener(layoutListener)
+                applyTransform(texture)
+            }
+            onDispose { texture?.removeOnLayoutChangeListener(layoutListener) }
         }
 
         // Colour grading is applied as a ColorMatrix filter on a TextureView layer (instant, works
@@ -532,7 +557,11 @@ fun VideoPlayerScreen(
         val boostPlan = uiState.fpsBoosterPlan
         val boostActive = boostPlan.active
         val boostEngine = boostPlan.engine
-        val useTextureSurface = !boostActive && (gradingActive || sheetType == PlayerSheetType.COLOR)
+        // Rotate / flip / mirror also needs the TextureView: a SurfaceView cannot be transformed. (With the FPS Booster
+        // the GL renderer does it itself.)
+        val orientation = uiState.videoOrientation
+        val useTextureSurface = !boostActive &&
+            (gradingActive || sheetType == PlayerSheetType.COLOR || !orientation.isIdentity)
 
         key(useTextureSurface, boostActive, boostEngine) {
         AndroidView(
@@ -599,11 +628,13 @@ fun VideoPlayerScreen(
                     is FpsBoosterSurfaceView -> boostView.apply {
                         configure(boostPlan, uiState.fpsBooster)
                         setColorGrade(uiState.colorBrightness, uiState.colorContrast, uiState.colorSaturation)
+                        setOrientation(orientation)
                     }
                     is MotionBoostSurfaceView -> boostView.apply {
                         setTargetFps(boostPlan.targetFps)
                         setExtreme(boostPlan.quality == BoosterQuality.PERFORMANCE)
                         setColorGrade(uiState.colorBrightness, uiState.colorContrast, uiState.colorSaturation)
+                        setOrientation(orientation)
                     }
                 }
                 // Apply brightness / contrast / saturation to the video layer.
@@ -624,7 +655,7 @@ fun VideoPlayerScreen(
                 // NOTE: no player.videoScalingMode changes here. Codec scaling only applies to
                 // the NEXT rendered frame, so while paused the new mode appeared "late".
                 // The frame layout (resizeMode + aspect ratio) is applied instantly instead.
-                applyVideoAspect(view, uiState.aspectRatio, uiState.videoSize)
+                applyVideoAspect(view, uiState.aspectRatio, uiState.videoSize, orientation)
                 
                 // Update Subtitle Styles
                 val bgColorWithOpacity = if (uiState.subtitleBackgroundOpacity > 0f) {
@@ -662,10 +693,11 @@ fun VideoPlayerScreen(
                     scaleY = zoomScale
                 }
                 .then(
-                    // Never blur / re-saturate the video while the Color Grading sheet is open:
-                    // the user must see the REAL picture to judge brightness / contrast / saturation.
+                    // Never blur / re-saturate the video while the Color Grading or Rotate & Flip sheet is open:
+                    // the user must see the REAL picture to judge the change.
                     if (sheetType != PlayerSheetType.NONE &&
                         sheetType != PlayerSheetType.COLOR &&
+                        sheetType != PlayerSheetType.ORIENTATION &&
                         Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
                     ) {
                         Modifier.graphicsLayer {
@@ -800,6 +832,7 @@ fun VideoPlayerScreen(
                         onToggleBoost = { viewModel.toggleVolumeBoost() },
                         onHeadphonesClick = { viewModel.toggleBackgroundPlay() },
                         onRotationClick = { activity?.let { viewModel.toggleOrientation(it) } },
+                        onOrientationClick = { sheetType = PlayerSheetType.ORIENTATION },
                         onColorClick = { sheetType = PlayerSheetType.COLOR },
                         onAbRepeatClick = { viewModel.toggleAbRepeat() },
                         onLoopClick = { viewModel.toggleLoop() },
@@ -907,8 +940,8 @@ fun VideoPlayerScreen(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    // no dim for Color Grading, so the true colours stay visible
-                    .background(Color.Black.copy(alpha = if (sheetType == PlayerSheetType.COLOR) 0f else 0.20f))
+                    // no dim for Color Grading / Rotate & Flip, so the true picture stays visible
+                    .background(Color.Black.copy(alpha = if (sheetType == PlayerSheetType.COLOR || sheetType == PlayerSheetType.ORIENTATION) 0f else 0.20f))
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null
@@ -1115,6 +1148,7 @@ fun FloatingControls(
     onToggleBoost: () -> Unit,
     onHeadphonesClick: () -> Unit,
     onRotationClick: () -> Unit,
+    onOrientationClick: () -> Unit,
     onColorClick: () -> Unit,
     onAbRepeatClick: () -> Unit,
     onLoopClick: () -> Unit,
@@ -1192,6 +1226,12 @@ fun FloatingControls(
             )
             VpToolButton(Icons.Rounded.Headset, uiState.isBackgroundPlayEnabled, onHeadphonesClick)
             VpToolButton(Icons.Rounded.ScreenRotation, false, onRotationClick)
+            VpToolButton(
+                Icons.Rounded.Flip,
+                !uiState.videoOrientation.isIdentity,
+                onOrientationClick,
+                contentDescription = "Rotate, flip and mirror the video"
+            )
             VpToolButton(
                 Icons.Rounded.Tune,
                 uiState.colorBrightness != 0f || uiState.colorContrast != 1f || uiState.colorSaturation != 1f,
@@ -1794,6 +1834,7 @@ fun VideoSettingsSheetContent(
             PlayerSheetType.SLEEP_TIMER -> "Sleep Timer"
             PlayerSheetType.COLOR -> "Color Grading"
             PlayerSheetType.SURROUND -> "Surround Simulator"
+            PlayerSheetType.ORIENTATION -> "Rotate & Flip"
             else -> "Settings"
         }
         
@@ -1822,6 +1863,19 @@ fun VideoSettingsSheetContent(
                 if (activeSheetType == PlayerSheetType.COLOR) {
                     IconButton(onClick = { viewModel.resetColorGrading() }) {
                         Icon(Icons.Rounded.RestartAlt, "Reset", tint = Color.White)
+                    }
+                }
+
+                if (activeSheetType == PlayerSheetType.ORIENTATION) {
+                    IconButton(
+                        onClick = { viewModel.resetVideoOrientation() },
+                        enabled = !uiState.videoOrientation.isIdentity
+                    ) {
+                        Icon(
+                            Icons.Rounded.RestartAlt,
+                            "Reset",
+                            tint = Color.White.copy(alpha = if (uiState.videoOrientation.isIdentity) 0.35f else 1f)
+                        )
                     }
                 }
             }
@@ -2271,6 +2325,11 @@ fun VideoSettingsSheetContent(
             )
         }
 
+        // Rotate & Flip Section
+        if (activeSheetType == PlayerSheetType.ORIENTATION) {
+            VideoOrientationSection(uiState = uiState, viewModel = viewModel)
+        }
+
         // Sleep Timer Section
         if (activeSheetType == PlayerSheetType.SLEEP_TIMER) {
             SleepTimerSheetContent(
@@ -2278,6 +2337,87 @@ fun VideoSettingsSheetContent(
                 viewModel = viewModel
             )
         }
+    }
+}
+
+
+/** Rotate / flip / mirror controls of the "Rotate & Flip" sheet. Changes show on the picture straight away. */
+@Composable
+fun VideoOrientationSection(uiState: VideoPlayerUiState, viewModel: VideoPlayerViewModel) {
+    val mxOrange = Color(0xFFFF8F00)
+    val o = uiState.videoOrientation
+    val switchColors = SwitchDefaults.colors(checkedThumbColor = mxOrange, checkedTrackColor = mxOrange.copy(0.4f))
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        SettingSectionHeader("Picture")
+
+        OrientationActionRow(
+            icon = Icons.Rounded.RotateRight,
+            title = "Rotate",
+            subtitle = "Turn the picture 90° clockwise",
+            onClick = { viewModel.rotateVideo() }
+        ) {
+            Text(
+                text = "${o.rotationDegrees}°",
+                color = if (o.turns != 0) mxOrange else Color.White.copy(0.7f),
+                fontSize = 16.sp,
+                fontWeight = FontWeight.ExtraBold
+            )
+        }
+
+        Spacer(Modifier.height(8.dp))
+        OrientationActionRow(
+            icon = Icons.Rounded.Flip,
+            title = "Mirror",
+            subtitle = "Swap left and right",
+            onClick = { viewModel.toggleVideoMirror() }
+        ) {
+            Switch(checked = o.flipHorizontal, onCheckedChange = { viewModel.toggleVideoMirror() }, colors = switchColors)
+        }
+
+        Spacer(Modifier.height(8.dp))
+        OrientationActionRow(
+            icon = Icons.Rounded.SwapVert,
+            title = "Flip vertically",
+            subtitle = "Swap top and bottom",
+            onClick = { viewModel.toggleVideoFlipVertical() }
+        ) {
+            Switch(checked = o.flipVertical, onCheckedChange = { viewModel.toggleVideoFlipVertical() }, colors = switchColors)
+        }
+
+        Spacer(Modifier.height(12.dp))
+        Text(
+            text = "Applies to every video in this session. Subtitles stay upright.",
+            color = Color.White.copy(0.55f),
+            fontSize = 12.sp
+        )
+    }
+}
+
+@Composable
+private fun OrientationActionRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit,
+    trailing: @Composable () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color.White.copy(0.05f))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(icon, null, tint = Color.White.copy(0.9f), modifier = Modifier.size(24.dp))
+        Spacer(Modifier.width(14.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            Text(subtitle, color = Color.White.copy(0.6f), fontSize = 12.sp)
+        }
+        trailing()
     }
 }
 
@@ -2573,10 +2713,11 @@ private fun formatAudioTrackSubtitleLine(track: VideoTrackInfo): String {
 /**
  * Applies the chosen aspect-ratio mode directly to PlayerView's content frame.
  * FIT / FILL / ZOOM use the video's real ratio; every mode with a [VideoAspectRatio.forcedRatio]
- * (4:3, 16:9, 16:10, 21:9, 2.35:1) forces the frame to that ratio.
+ * (4:3, 16:9, 16:10, 21:9, 2.35:1) forces the frame to that ratio. When the picture is rotated by 90 / 270 degrees
+ * the video's real ratio is inverted first, so the same modes still fit / fill / zoom the rotated picture.
  */
 @UnstableApi
-private fun applyVideoAspect(view: PlayerView, mode: VideoAspectRatio, size: VideoSize) {
+private fun applyVideoAspect(view: PlayerView, mode: VideoAspectRatio, size: VideoSize, orientation: VideoOrientation) {
     val frame = view.findViewById<AspectRatioFrameLayout>(androidx.media3.ui.R.id.exo_content_frame)
         ?: return
 
@@ -2584,6 +2725,10 @@ private fun applyVideoAspect(view: PlayerView, mode: VideoAspectRatio, size: Vid
         size.width * size.pixelWidthHeightRatio / size.height
     } else 0f
     if (natural > 0f && (size.unappliedRotationDegrees == 90 || size.unappliedRotationDegrees == 270)) {
+        natural = 1f / natural
+    }
+    // A picture turned by 90 / 270 degrees is as tall as it was wide: the frame follows the rotated shape.
+    if (natural > 0f && orientation.swapsAxes) {
         natural = 1f / natural
     }
 

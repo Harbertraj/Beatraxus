@@ -11,6 +11,7 @@ import android.view.Surface
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.Window
+import com.beatraxus.app.model.VideoOrientation
 import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
 
@@ -40,6 +41,7 @@ class MotionBoostSurfaceView(context: Context) : SurfaceView(context), SurfaceHo
     private var brightness = 0f
     private var contrast = 1f
     private var saturation = 1f
+    private var orientation = VideoOrientation.NONE
 
     private val playerListener = object : Player.Listener {
         override fun onVideoSizeChanged(videoSize: VideoSize) {
@@ -72,6 +74,12 @@ class MotionBoostSurfaceView(context: Context) : SurfaceView(context), SurfaceHo
         renderer?.setColorGrade(brightness, contrast, saturation)
     }
 
+    /** Rotate / flip / mirror of the picture; drawn by the renderer, since a SurfaceView cannot be transformed. */
+    fun setOrientation(orientation: VideoOrientation) {
+        this.orientation = orientation
+        renderer?.setOrientation(orientation)
+    }
+
     override fun surfaceCreated(holder: SurfaceHolder) {
         lateinit var created: MotionBoostRenderer
         created = MotionBoostRenderer(holder.surface, object : MotionBoostRenderer.Callbacks {
@@ -97,6 +105,7 @@ class MotionBoostSurfaceView(context: Context) : SurfaceView(context), SurfaceHo
         created.setTargetFps(targetFps)
         created.setExtreme(extreme)
         created.setColorGrade(brightness, contrast, saturation)
+        created.setOrientation(orientation)
         player?.let { p ->
             p.addListener(playerListener)
             val size = p.videoSize

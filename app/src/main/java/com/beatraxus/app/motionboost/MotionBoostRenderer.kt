@@ -19,6 +19,7 @@ import android.os.Process
 import android.util.Log
 import android.view.Choreographer
 import android.view.Surface
+import com.beatraxus.app.model.VideoOrientation
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlin.math.abs
@@ -121,6 +122,7 @@ class MotionBoostRenderer(
     private var leadNs = 20_000_000L
     private var vsyncPeriodNs = 8_333_333L
     private var lastVsyncNs = 0L
+    @Volatile private var orientationMatrix: FloatArray = VideoOrientation.NONE.videoFromScreen()
     private var lastPresentNs = 0L
     private var nextDueNs = 0L
 
@@ -173,6 +175,12 @@ class MotionBoostRenderer(
         this.brightness = brightness
         this.contrast = contrast
         this.saturation = saturation
+        dirty = true
+    }
+
+    /** Rotate / flip / mirror of the picture; applied in the present pass only (see [PRESENT_VERTEX]). */
+    fun setOrientation(orientation: VideoOrientation) {
+        orientationMatrix = orientation.videoFromScreen()
         dirty = true
     }
 
@@ -236,7 +244,7 @@ class MotionBoostRenderer(
         meProg = Prog(VERTEX, MOTION_FRAGMENT)
         refineProg = Prog(VERTEX, REFINE_FRAGMENT)
         smoothProg = Prog(VERTEX, SMOOTH_FRAGMENT)
-        interpProg = Prog(VERTEX, INTERP_FRAGMENT)
+        interpProg = Prog(PRESENT_VERTEX, INTERP_FRAGMENT)
 
         val ids = IntArray(2)
         GLES30.glGenFramebuffers(1, ids, 0)
@@ -528,6 +536,7 @@ class MotionBoostRenderer(
         GLES30.glUniform1i(ip.loc("uWarp"), if (warp) 1 else 0)
         GLES30.glUniform2f(ip.loc("uInvHalf"), 1f / halfW, 1f / halfH)
         GLES30.glUniform3f(ip.loc("uGrade"), brightness, contrast, saturation)
+        GLES30.glUniformMatrix2fv(ip.loc("uOrient"), 1, false, orientationMatrix, 0)
         GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
     }
 
@@ -707,6 +716,21 @@ out vec2 vUv;
 void main() {
   vec2 p = vec2(float(gl_VertexID & 1), float(gl_VertexID >> 1));
   vUv = p;
+  gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
+}
+"""
+
+        /**
+         * Vertex shader of the final (on-screen) pass only. uOrient maps a screen position to the picture position to
+         * sample, about the picture centre, so rotate / flip / mirror cost nothing and every texture read of the
+         * fragment shader (frames, motion vectors) stays in picture space.
+         */
+        private const val PRESENT_VERTEX = """#version 300 es
+uniform mat2 uOrient;
+out vec2 vUv;
+void main() {
+  vec2 p = vec2(float(gl_VertexID & 1), float(gl_VertexID >> 1));
+  vUv = uOrient * (p - 0.5) + 0.5;
   gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
 }
 """
