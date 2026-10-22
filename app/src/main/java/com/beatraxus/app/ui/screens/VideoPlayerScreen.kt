@@ -122,7 +122,7 @@ enum class GestureType {
 }
 
 enum class PlayerSheetType {
-    NONE, AUDIO, SUBTITLE, SPEED, ALL, EQUALIZER, SLEEP_TIMER, COLOR, AUDIO_DELAY, MOTION_BOOST, SURROUND, ORIENTATION, DEINTERLACE
+    NONE, AUDIO, SUBTITLE, SPEED, ALL, EQUALIZER, SLEEP_TIMER, COLOR, AUDIO_DELAY, MOTION_BOOST, SURROUND, ORIENTATION, DEINTERLACE, NIGHT_FILTER
 }
 
 @UnstableApi
@@ -169,6 +169,17 @@ fun VideoPlayerScreen(
     }
 
     var controlsVisible by remember { mutableStateOf(true) }
+
+    // Night filter (feature 17): the local hour is checked once a minute, only needed for the "Auto" mode.
+    var localHour by remember { mutableStateOf(java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)) }
+    LaunchedEffect(uiState.nightFilter.mode) {
+        while (uiState.nightFilter.mode == com.beatraxus.app.model.NightFilterMode.AUTO) {
+            localHour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+            delay(60_000)
+        }
+        localHour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+    }
+    val nightFilterActive = uiState.nightFilter.isActive(localHour)
     var sheetType by remember { mutableStateOf(PlayerSheetType.NONE) }
 
     val appContext = context.applicationContext as Application
@@ -700,6 +711,7 @@ fun VideoPlayerScreen(
                         sheetType != PlayerSheetType.COLOR &&
                         sheetType != PlayerSheetType.ORIENTATION &&
                         sheetType != PlayerSheetType.DEINTERLACE &&
+                        sheetType != PlayerSheetType.NIGHT_FILTER &&
                         Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
                     ) {
                         Modifier.graphicsLayer {
@@ -836,6 +848,7 @@ fun VideoPlayerScreen(
                         onRotationClick = { activity?.let { viewModel.toggleOrientation(it) } },
                         onOrientationClick = { sheetType = PlayerSheetType.ORIENTATION },
                         onDeinterlaceClick = { sheetType = PlayerSheetType.DEINTERLACE },
+                        onNightFilterClick = { sheetType = PlayerSheetType.NIGHT_FILTER },
                         onSnapshotClick = {
                             val pv = playerViewRef
                             val video = uiState.currentVideo
@@ -968,7 +981,7 @@ fun VideoPlayerScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     // no dim for Color Grading / Rotate & Flip, so the true picture stays visible
-                    .background(Color.Black.copy(alpha = if (sheetType == PlayerSheetType.COLOR || sheetType == PlayerSheetType.ORIENTATION || sheetType == PlayerSheetType.DEINTERLACE) 0f else 0.20f))
+                    .background(Color.Black.copy(alpha = if (sheetType == PlayerSheetType.COLOR || sheetType == PlayerSheetType.ORIENTATION || sheetType == PlayerSheetType.DEINTERLACE || sheetType == PlayerSheetType.NIGHT_FILTER) 0f else 0.20f))
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null
@@ -1033,6 +1046,16 @@ fun VideoPlayerScreen(
                     )
                 }
             }
+        }
+
+        // Night filter (feature 17): last child, so it tints the picture, the controls and the sheets alike.
+        // It has no pointer handlers, so every touch still reaches the player underneath.
+        if (nightFilterActive) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color(uiState.nightFilter.overlayArgb))
+            )
         }
     }
 }
@@ -1178,6 +1201,7 @@ fun FloatingControls(
     onOrientationClick: () -> Unit,
     onDeinterlaceClick: () -> Unit,
     onSnapshotClick: () -> Unit,
+    onNightFilterClick: () -> Unit,
     onColorClick: () -> Unit,
     onAbRepeatClick: () -> Unit,
     onLoopClick: () -> Unit,
@@ -1272,6 +1296,12 @@ fun FloatingControls(
                 false,
                 onSnapshotClick,
                 contentDescription = "Save a screenshot to the gallery"
+            )
+            VpToolButton(
+                Icons.Rounded.Nightlight,
+                uiState.nightFilter.mode != com.beatraxus.app.model.NightFilterMode.OFF,
+                onNightFilterClick,
+                contentDescription = "Night filter"
             )
             VpToolButton(
                 Icons.Rounded.Tune,
@@ -1877,6 +1907,7 @@ fun VideoSettingsSheetContent(
             PlayerSheetType.SURROUND -> "Surround Simulator"
             PlayerSheetType.ORIENTATION -> "Rotate & Flip"
             PlayerSheetType.DEINTERLACE -> "Deinterlacing"
+            PlayerSheetType.NIGHT_FILTER -> "Night Filter"
             else -> "Settings"
         }
         
@@ -2372,6 +2403,11 @@ fun VideoSettingsSheetContent(
             VideoOrientationSection(uiState = uiState, viewModel = viewModel)
         }
 
+        // Night Filter Section
+        if (activeSheetType == PlayerSheetType.NIGHT_FILTER) {
+            VideoNightFilterSection(uiState = uiState, viewModel = viewModel)
+        }
+
         // Deinterlacing Section
         if (activeSheetType == PlayerSheetType.DEINTERLACE) {
             VideoDeinterlaceSection(uiState = uiState, viewModel = viewModel)
@@ -2387,6 +2423,66 @@ fun VideoSettingsSheetContent(
     }
 }
 
+
+/** Night / blue-light filter choices (feature 17). The tint over the player changes live while this sheet is open. */
+@Composable
+fun VideoNightFilterSection(uiState: VideoPlayerUiState, viewModel: VideoPlayerViewModel) {
+    val mxOrange = Color(0xFFFF8F00)
+    val filter = uiState.nightFilter
+    Column(modifier = Modifier.fillMaxWidth()) {
+        SettingSectionHeader("When")
+        com.beatraxus.app.model.NightFilterMode.entries.forEach { mode ->
+            val selected = filter.mode == mode
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 8.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(if (selected) mxOrange.copy(0.16f) else Color.White.copy(0.05f))
+                    .clickable { viewModel.setNightFilterMode(mode) }
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                RadioButton(
+                    selected = selected,
+                    onClick = { viewModel.setNightFilterMode(mode) },
+                    colors = RadioButtonDefaults.colors(selectedColor = mxOrange, unselectedColor = Color.White.copy(0.6f))
+                )
+                Spacer(Modifier.width(8.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(mode.label, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                    Text(mode.description, color = Color.White.copy(0.6f), fontSize = 12.sp)
+                }
+            }
+        }
+
+        Spacer(Modifier.height(8.dp))
+        SettingSectionHeader("Strength")
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Slider(
+                value = filter.strength.toFloat(),
+                onValueChange = { viewModel.setNightFilterStrength(it.toInt()) },
+                onValueChangeFinished = { viewModel.commitNightFilterStrength() },
+                valueRange = 0f..100f,
+                enabled = filter.mode != com.beatraxus.app.model.NightFilterMode.OFF,
+                modifier = Modifier.weight(1f),
+                colors = SliderDefaults.colors(
+                    thumbColor = mxOrange,
+                    activeTrackColor = mxOrange,
+                    inactiveTrackColor = Color.White.copy(0.3f)
+                )
+            )
+            Spacer(Modifier.width(8.dp))
+            Text("${filter.strength}%", color = Color.White.copy(0.8f), fontSize = 14.sp, fontWeight = FontWeight.Bold)
+        }
+        Spacer(Modifier.height(8.dp))
+        Text(
+            text = "Warms the whole player to cut harsh light at night. Saved for all videos.",
+            color = Color.White.copy(0.55f),
+            fontSize = 12.sp
+        )
+    }
+}
 
 /** Deinterlacing choices (feature 15). The picture changes as soon as a row is tapped. */
 @Composable

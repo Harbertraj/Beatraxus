@@ -65,6 +65,9 @@ import com.beatraxus.app.model.VideoRecentlyPlayedEntity
 import com.beatraxus.app.colorgrade.ColorGradeEffect
 import com.beatraxus.app.deinterlace.DeinterlaceEffect
 import com.beatraxus.app.model.DeinterlaceMode
+import com.beatraxus.app.model.NightFilterMath
+import com.beatraxus.app.model.NightFilterMode
+import com.beatraxus.app.model.NightFilterSettings
 import com.beatraxus.app.subtitles.data.SubtitleCache
 import com.beatraxus.app.subtitles.domain.MediaKey
 import com.beatraxus.app.subtitles.domain.SubtitlePositionPreset
@@ -103,6 +106,8 @@ data class VideoPlayerUiState(
     val videoOrientation: VideoOrientation = VideoOrientation.NONE,
     /** Feature 15: removes combing lines from interlaced video. Remembered between sessions. */
     val deinterlaceMode: DeinterlaceMode = DeinterlaceMode.OFF,
+    /** Feature 17: warm night / blue-light veil over the player. Remembered between sessions. */
+    val nightFilter: NightFilterSettings = NightFilterSettings(),
     val isVolumeBoost: Boolean = false,
     val subtitleOffset: Float = 0f,
     val showTotalTime: Boolean = false,
@@ -304,6 +309,12 @@ class VideoPlayerViewModel(
         maxVolume = (application.getSystemService(Context.AUDIO_SERVICE) as AudioManager).getStreamMaxVolume(AudioManager.STREAM_MUSIC),
         isEqEnabled = application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE).getBoolean("video_eq_enabled", false),
         videoDecoderMode = tuning.decoderMode,
+        nightFilter = application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE).let { p ->
+            NightFilterSettings(
+                mode = NightFilterMode.fromName(p.getString(NightFilterSettings.KEY_MODE, null)),
+                strength = NightFilterMath.clampStrength(p.getInt(NightFilterSettings.KEY_STRENGTH, NightFilterSettings.DEFAULT_STRENGTH))
+            )
+        },
         deinterlaceMode = DeinterlaceMode.fromName(application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE).getString(DeinterlaceMode.PREF_KEY, null)),
         playbackSpeed = playerOptions.defaultSpeed,
         fpsBooster = FpsBoosterStore.load(application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE)),
@@ -2061,6 +2072,21 @@ class VideoPlayerViewModel(
     fun setForceSdrToneMapping(force: Boolean) {
         _uiState.update { it.copy(forceSdrToneMapping = force) }
         updateVideoEffects()
+    }
+
+    /** Feature 17. Off / always on / only in the evening. */
+    fun setNightFilterMode(mode: NightFilterMode) {
+        prefs.edit().putString(NightFilterSettings.KEY_MODE, mode.name).apply()
+        _uiState.update { it.copy(nightFilter = it.nightFilter.copy(mode = mode)) }
+    }
+
+    /** Feature 17. Called while the slider moves, so the tint changes live; saved by [commitNightFilterStrength]. */
+    fun setNightFilterStrength(strength: Int) {
+        _uiState.update { it.copy(nightFilter = it.nightFilter.copy(strength = NightFilterMath.clampStrength(strength))) }
+    }
+
+    fun commitNightFilterStrength() {
+        prefs.edit().putInt(NightFilterSettings.KEY_STRENGTH, _uiState.value.nightFilter.strength).apply()
     }
 
     /** Feature 15. Picks how combing lines of interlaced video are removed; remembered for the next video. */
