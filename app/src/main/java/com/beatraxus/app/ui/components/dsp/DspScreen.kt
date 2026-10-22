@@ -125,10 +125,19 @@ private val EqLineStart get() = Pal.accent
 private val EqLineEnd get() = Pal.secondary
 
 /**
- * "Stage is live" colour: orange. Used ONLY by the pipeline header (page tabs and the lines between them) - no other
- * control on the Studio DSP pages uses it.
+ * "Stage is live" colour: the opposite (complementary) hue of the palette's primary colour, kept bright and saturated
+ * so it never matches the rest of the DSP screen and follows the chosen palette. Used ONLY by the pipeline header
+ * (page tabs and the lines between them) - no other control on the Studio DSP pages uses it.
  */
-private val DspSignalOn = Color(0xFFFF8F00)
+private val DspSignalOn: Color
+    get() {
+        val hsv = FloatArray(3)
+        android.graphics.Color.colorToHSV(Pal.accent.toArgb(), hsv)
+        hsv[0] = (hsv[0] + 180f) % 360f
+        hsv[1] = hsv[1].coerceAtLeast(0.65f)
+        hsv[2] = hsv[2].coerceAtLeast(0.95f)
+        return Color(android.graphics.Color.HSVToColor(hsv))
+    }
 
 /** State of one Studio DSP stage as shown by the pipeline in the page tabs. */
 private enum class DspStageState { ON, OFF, BYPASS }
@@ -142,7 +151,7 @@ private fun segmentState(a: DspStageState, b: DspStageState): DspStageState = wh
 
 /**
  * One piece of the pipeline line, drawn like the signal path preview:
- * ON = solid orange, OFF = thin dim line, BYPASS = dim dashed line.
+ * ON = solid signal colour, OFF = thin dim line, BYPASS = dim dashed line.
  */
 @Composable
 private fun PipelineRail(state: DspStageState, visible: Boolean, modifier: Modifier = Modifier) {
@@ -186,7 +195,7 @@ private fun Modifier.dspPanel(radius: androidx.compose.ui.unit.Dp = 24.dp): Modi
 
 
 /**
- * Top page switcher. One stage node per page joined by pipeline lines (ON = orange, OFF = dim, BYPASS = dashed),
+ * Top page switcher. One stage node per page joined by pipeline lines (ON = signal colour, OFF = dim, BYPASS = dashed),
  * with larger nodes and 10sp labels so it reads like the rest of the app. A white bar slides with the pager swipe.
  */
 @Composable
@@ -2083,12 +2092,11 @@ private fun PremiumEqualizerCard(
             }
         )
 
-        val evenBands = config.eqBands.size <= 10
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .then(if (evenBands) Modifier else Modifier.horizontalScroll(rememberScrollState())),
-            horizontalArrangement = if (evenBands) Arrangement.SpaceEvenly else Arrangement.spacedBy(8.dp)
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             config.eqBands.forEachIndexed { index, band ->
                 val shownBand = if (aiActive) {
@@ -2096,7 +2104,6 @@ private fun PremiumEqualizerCard(
                     band.copy(gainDb = ai.coerceIn(-12f, 12f), enabled = true)
                 } else band
                 PremiumVerticalBand(
-                    modifier = if (evenBands) Modifier.weight(1f) else Modifier,
                     band = shownBand,
                     enabled = if (aiActive) !isEqBypassed else config.eqEnabled && !isEqBypassed && !isLocked,
                     aiControlled = aiActive,
@@ -2348,8 +2355,7 @@ private fun PremiumVerticalBand(
     onGainChange: (Float) -> Unit,
     onLongPress: () -> Unit,
     onFrequencyEdit: () -> Unit,
-    aiControlled: Boolean = false,
-    modifier: Modifier = Modifier
+    aiControlled: Boolean = false
 ) {
     val isActive = enabled && band.enabled
     val gainProgress by animateFloatAsState(
@@ -2371,9 +2377,18 @@ private fun PremiumVerticalBand(
 
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = modifier.widthIn(min = 30.dp, max = 42.dp),
+        modifier = Modifier.width(42.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp) // Increased spacing to prevent knob overlap
     ) {
+        Text(
+            text = if (shownGain >= 0) "+%.1f".format(shownGain) else "%.1f".format(shownGain),
+            color = if (isActive) gainColor else Color.White.copy(0.2f),
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Black,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.width(38.dp).clickable { onLongPress() }
+        )
+
         Box(
             modifier = Modifier
                 .height(250.dp) 
@@ -2538,24 +2553,6 @@ private fun PremiumVerticalBand(
                 onFrequencyEdit()
             }
         )
-        Box(
-            modifier = Modifier
-                .clip(RoundedCornerShape(10.dp))
-                .background(if (isActive) gainColor.copy(0.10f) else Color.White.copy(0.04f))
-                .border(1.dp, if (isActive) gainColor.copy(0.55f) else Color.White.copy(0.08f), RoundedCornerShape(10.dp))
-                .clickable { onLongPress() }
-                .padding(horizontal = 4.dp, vertical = 4.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = if (shownGain >= 0) "+%.1f".format(shownGain) else "%.1f".format(shownGain),
-                color = if (isActive) gainColor else Color.White.copy(0.25f),
-                fontSize = 9.sp,
-                fontWeight = FontWeight.Black,
-                maxLines = 1,
-                softWrap = false
-            )
-        }
     }
 }
 
