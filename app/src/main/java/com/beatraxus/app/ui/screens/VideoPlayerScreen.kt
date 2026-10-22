@@ -100,6 +100,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
+import com.beatraxus.app.model.DeinterlaceMode
 import com.beatraxus.app.model.SavedEqPreset
 import com.beatraxus.app.model.VideoOrientation
 import com.beatraxus.app.util.PlaybackGlobalState
@@ -121,7 +122,7 @@ enum class GestureType {
 }
 
 enum class PlayerSheetType {
-    NONE, AUDIO, SUBTITLE, SPEED, ALL, EQUALIZER, SLEEP_TIMER, COLOR, AUDIO_DELAY, MOTION_BOOST, SURROUND, ORIENTATION
+    NONE, AUDIO, SUBTITLE, SPEED, ALL, EQUALIZER, SLEEP_TIMER, COLOR, AUDIO_DELAY, MOTION_BOOST, SURROUND, ORIENTATION, DEINTERLACE
 }
 
 @UnstableApi
@@ -698,6 +699,7 @@ fun VideoPlayerScreen(
                     if (sheetType != PlayerSheetType.NONE &&
                         sheetType != PlayerSheetType.COLOR &&
                         sheetType != PlayerSheetType.ORIENTATION &&
+                        sheetType != PlayerSheetType.DEINTERLACE &&
                         Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
                     ) {
                         Modifier.graphicsLayer {
@@ -833,6 +835,7 @@ fun VideoPlayerScreen(
                         onHeadphonesClick = { viewModel.toggleBackgroundPlay() },
                         onRotationClick = { activity?.let { viewModel.toggleOrientation(it) } },
                         onOrientationClick = { sheetType = PlayerSheetType.ORIENTATION },
+                        onDeinterlaceClick = { sheetType = PlayerSheetType.DEINTERLACE },
                         onColorClick = { sheetType = PlayerSheetType.COLOR },
                         onAbRepeatClick = { viewModel.toggleAbRepeat() },
                         onLoopClick = { viewModel.toggleLoop() },
@@ -941,7 +944,7 @@ fun VideoPlayerScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     // no dim for Color Grading / Rotate & Flip, so the true picture stays visible
-                    .background(Color.Black.copy(alpha = if (sheetType == PlayerSheetType.COLOR || sheetType == PlayerSheetType.ORIENTATION) 0f else 0.20f))
+                    .background(Color.Black.copy(alpha = if (sheetType == PlayerSheetType.COLOR || sheetType == PlayerSheetType.ORIENTATION || sheetType == PlayerSheetType.DEINTERLACE) 0f else 0.20f))
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null
@@ -1149,6 +1152,7 @@ fun FloatingControls(
     onHeadphonesClick: () -> Unit,
     onRotationClick: () -> Unit,
     onOrientationClick: () -> Unit,
+    onDeinterlaceClick: () -> Unit,
     onColorClick: () -> Unit,
     onAbRepeatClick: () -> Unit,
     onLoopClick: () -> Unit,
@@ -1231,6 +1235,12 @@ fun FloatingControls(
                 !uiState.videoOrientation.isIdentity,
                 onOrientationClick,
                 contentDescription = "Rotate, flip and mirror the video"
+            )
+            VpToolButton(
+                Icons.Rounded.Deblur,
+                uiState.deinterlaceMode.isOn,
+                onDeinterlaceClick,
+                contentDescription = "Deinterlacing"
             )
             VpToolButton(
                 Icons.Rounded.Tune,
@@ -1835,6 +1845,7 @@ fun VideoSettingsSheetContent(
             PlayerSheetType.COLOR -> "Color Grading"
             PlayerSheetType.SURROUND -> "Surround Simulator"
             PlayerSheetType.ORIENTATION -> "Rotate & Flip"
+            PlayerSheetType.DEINTERLACE -> "Deinterlacing"
             else -> "Settings"
         }
         
@@ -2330,6 +2341,11 @@ fun VideoSettingsSheetContent(
             VideoOrientationSection(uiState = uiState, viewModel = viewModel)
         }
 
+        // Deinterlacing Section
+        if (activeSheetType == PlayerSheetType.DEINTERLACE) {
+            VideoDeinterlaceSection(uiState = uiState, viewModel = viewModel)
+        }
+
         // Sleep Timer Section
         if (activeSheetType == PlayerSheetType.SLEEP_TIMER) {
             SleepTimerSheetContent(
@@ -2340,6 +2356,46 @@ fun VideoSettingsSheetContent(
     }
 }
 
+
+/** Deinterlacing choices (feature 15). The picture changes as soon as a row is tapped. */
+@Composable
+fun VideoDeinterlaceSection(uiState: VideoPlayerUiState, viewModel: VideoPlayerViewModel) {
+    val mxOrange = Color(0xFFFF8F00)
+    Column(modifier = Modifier.fillMaxWidth()) {
+        SettingSectionHeader("Interlaced video")
+        DeinterlaceMode.entries.forEach { mode ->
+            val selected = uiState.deinterlaceMode == mode
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 8.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(if (selected) mxOrange.copy(0.16f) else Color.White.copy(0.05f))
+                    .clickable { viewModel.setDeinterlaceMode(mode) }
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                RadioButton(
+                    selected = selected,
+                    onClick = { viewModel.setDeinterlaceMode(mode) },
+                    colors = RadioButtonDefaults.colors(selectedColor = mxOrange, unselectedColor = Color.White.copy(0.6f))
+                )
+                Spacer(Modifier.width(8.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(mode.label, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                    Text(mode.description, color = Color.White.copy(0.6f), fontSize = 12.sp)
+                }
+            }
+        }
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = "Removes the comb-like lines that moving objects show in interlaced video (old TV, DVD, 1080i). " +
+                "Saved for all videos.",
+            color = Color.White.copy(0.55f),
+            fontSize = 12.sp
+        )
+    }
+}
 
 /** Rotate / flip / mirror controls of the "Rotate & Flip" sheet. Changes show on the picture straight away. */
 @Composable

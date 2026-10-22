@@ -63,6 +63,8 @@ import com.beatraxus.app.model.withSurroundTrim
 import com.beatraxus.app.model.withSurroundTrimsReset
 import com.beatraxus.app.model.VideoRecentlyPlayedEntity
 import com.beatraxus.app.colorgrade.ColorGradeEffect
+import com.beatraxus.app.deinterlace.DeinterlaceEffect
+import com.beatraxus.app.model.DeinterlaceMode
 import com.beatraxus.app.subtitles.data.SubtitleCache
 import com.beatraxus.app.subtitles.domain.MediaKey
 import com.beatraxus.app.subtitles.domain.SubtitlePositionPreset
@@ -99,6 +101,8 @@ data class VideoPlayerUiState(
     val aspectRatioMessage: String? = null,
     /** Rotate / flip / mirror of the picture. Kept for the whole player session (all videos in the queue). */
     val videoOrientation: VideoOrientation = VideoOrientation.NONE,
+    /** Feature 15: removes combing lines from interlaced video. Remembered between sessions. */
+    val deinterlaceMode: DeinterlaceMode = DeinterlaceMode.OFF,
     val isVolumeBoost: Boolean = false,
     val subtitleOffset: Float = 0f,
     val showTotalTime: Boolean = false,
@@ -300,6 +304,7 @@ class VideoPlayerViewModel(
         maxVolume = (application.getSystemService(Context.AUDIO_SERVICE) as AudioManager).getStreamMaxVolume(AudioManager.STREAM_MUSIC),
         isEqEnabled = application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE).getBoolean("video_eq_enabled", false),
         videoDecoderMode = tuning.decoderMode,
+        deinterlaceMode = DeinterlaceMode.fromName(application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE).getString(DeinterlaceMode.PREF_KEY, null)),
         playbackSpeed = playerOptions.defaultSpeed,
         fpsBooster = FpsBoosterStore.load(application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE)),
         // A result from an earlier run is shown again instead of testing every time. Read synchronously so the
@@ -348,6 +353,7 @@ class VideoPlayerViewModel(
     private var sleepTimerJob: Job? = null
     
     private val colorGradeEffect = ColorGradeEffect(0f, 1f, 1f)
+    private val deinterlaceEffect = DeinterlaceEffect(DeinterlaceMode.OFF)
 
     private var pendingAudioTrackIndex = -1
     private var pendingSubtitleTrackIndex = -1
@@ -599,7 +605,7 @@ class VideoPlayerViewModel(
                         val isIdentity = abs(_uiState.value.colorBrightness) < 0.001f &&
                                          abs(_uiState.value.colorContrast - 1f) < 0.001f &&
                                          abs(_uiState.value.colorSaturation - 1f) < 0.001f
-                        if (!isIdentity) {
+                        if (!isIdentity || _uiState.value.deinterlaceMode.isOn) {
                             updateVideoEffects() // Apply initial effects before prepare
                         }
                         
@@ -2057,15 +2063,32 @@ class VideoPlayerViewModel(
         updateVideoEffects()
     }
 
+    /** Feature 15. Picks how combing lines of interlaced video are removed; remembered for the next video. */
+    fun setDeinterlaceMode(mode: DeinterlaceMode) {
+        prefs.edit().putString(DeinterlaceMode.PREF_KEY, mode.name).apply()
+        _uiState.update { it.copy(deinterlaceMode = mode, aspectRatioMessage = "Deinterlacing: ${mode.label}") }
+        updateVideoEffects()
+        viewModelScope.launch { delay(2000); _uiState.update { it.copy(aspectRatioMessage = null) } }
+    }
+
     /**
-     * Colour grading is now drawn by the UI (ColorMatrix on the video TextureView, see
-     * VideoPlayerScreen), which updates instantly - also while paused - and does not depend on the
-     * codec / media3 effect pipeline. Make sure no leftover GL effect is active so the grade is
-     * never applied twice.
+     * Colour grading is drawn by the UI (ColorMatrix on the video TextureView, see VideoPlayerScreen), which
+     * updates instantly - also while paused - and does not depend on the codec / media3 effect pipeline, so no
+     * colour GL effect is ever installed here (it would be applied twice).
+     *
+     * The media3 effect pipeline is only used while deinterlacing is on, and removed again as soon as it is off,
+     * so normal playback never pays for it.
      */
     private fun updateVideoEffects() {
         val player = exoPlayer ?: return
-        if (isEffectActive) {
+        val mode = _uiState.value.deinterlaceMode
+        deinterlaceEffect.mode = mode
+        if (mode.isOn) {
+            if (!isEffectActive) {
+                player.setVideoEffects(listOf(deinterlaceEffect))
+                isEffectActive = true
+            }
+        } else if (isEffectActive) {
             player.setVideoEffects(emptyList())
             isEffectActive = false
         }
