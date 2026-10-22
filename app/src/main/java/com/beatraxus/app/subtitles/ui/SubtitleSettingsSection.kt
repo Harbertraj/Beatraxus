@@ -18,6 +18,8 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -30,12 +32,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.beatraxus.app.BuildConfig
+import com.beatraxus.app.subtitles.data.SiblingSubtitleFinder
 import com.beatraxus.app.subtitles.viewmodel.AutoSearchMode
 import com.beatraxus.app.subtitles.viewmodel.SubtitleViewModel
+import com.beatraxus.app.util.VideoPlayerPrefs
 
 @Composable
 fun SubtitleSettingsSection(
@@ -105,6 +110,40 @@ fun SubtitleSettingsSection(
                     fontSize = 12.sp
                 )
             }
+        }
+
+        // Subtitle file next to the video (video feature 21)
+        val context = LocalContext.current
+        val settingsPrefs = remember { VideoPlayerPrefs.prefs(context) }
+        var autoLoadSibling by remember { mutableStateOf(SiblingSubtitleFinder.isAutoLoadEnabled(settingsPrefs)) }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(Color.White.copy(0.06f))
+                .padding(14.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Auto-Load Subtitle From Video Folder", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                Text(
+                    "Loads a .srt, .vtt, .ass or .ssa file that has the same name as the video. " +
+                        "On Android 11 and newer it can only read folders you added to the video library.",
+                    color = Color.White.copy(0.5f),
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(top = 2.dp)
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+            Switch(
+                checked = autoLoadSibling,
+                onCheckedChange = {
+                    autoLoadSibling = it
+                    settingsPrefs.edit().putBoolean(SiblingSubtitleFinder.KEY_AUTO_LOAD, it).apply()
+                },
+                colors = SwitchDefaults.colors(checkedThumbColor = Color.Black, checkedTrackColor = mxOrange)
+            )
         }
 
         // Auto-search Mode

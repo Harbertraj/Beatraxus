@@ -9,6 +9,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.beatraxus.app.model.Video
 import com.beatraxus.app.subtitles.data.CachedSubtitle
+import com.beatraxus.app.subtitles.data.SiblingSubtitleFinder
 import com.beatraxus.app.subtitles.data.SubtitleAuthManager
 import com.beatraxus.app.subtitles.data.SubtitleCache
 import com.beatraxus.app.subtitles.data.SubtitleCredentialsStore
@@ -28,6 +29,7 @@ import com.beatraxus.app.subtitles.domain.SubtitleValidator
 import com.beatraxus.app.subtitles.domain.VideoHashCalculator
 import com.beatraxus.app.subtitles.player.SubtitlePlayerController
 import com.beatraxus.app.subtitles.util.SubtitleErrorMapper
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -53,6 +55,7 @@ class SubtitleViewModel(
 
     private val prefs = application.getSharedPreferences("beatraxus", Context.MODE_PRIVATE)
     private val fileImporter = SubtitleFileImporter(application, subtitleCache)
+    private val siblingFinder = SiblingSubtitleFinder(application)
 
     private val _uiState = MutableStateFlow(SubtitleUiState())
     val uiState: StateFlow<SubtitleUiState> = _uiState.asStateFlow()
@@ -163,6 +166,11 @@ class SubtitleViewModel(
                 }
             }
 
+            // A subtitle file next to the video (video feature 21) comes before any online search.
+            if (_uiState.value.enabled && SiblingSubtitleFinder.isAutoLoadEnabled(prefs)) {
+                if (autoLoadSiblingSubtitle(video, mediaKey)) return@launch
+            }
+
             // Auto-search logic
             val autoMode = _uiState.value.autoSearchMode
             if (autoMode != AutoSearchMode.OFF && !autoSearchedVideoIds.contains(video.id)) {
@@ -170,6 +178,51 @@ class SubtitleViewModel(
                 searchOnline()
             }
         }
+    }
+
+    /**
+     * Video feature 21: loads the subtitle that sits next to the video, if there is one. The best match is imported
+     * through the normal importer (so encoding and format handling are the same as "Select file") and saved in the
+     * subtitle cache, which means later plays of this video find it there without looking at the folder again.
+     * Returns true when a subtitle was attached. Failures are silent: the caller carries on to online search.
+     */
+    private suspend fun autoLoadSiblingSubtitle(video: Video, mediaKey: String): Boolean {
+        val languages = _uiState.value.selectedLanguages
+        val found = try {
+            siblingFinder.find(video, languages)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            emptyList()
+        }
+        // Forced-only tracks (foreign dialogue only) stay available for a manual pick but are never loaded on their own.
+        for (sibling in found.filter { !it.candidate.isForced }.take(MAX_SIBLING_ATTEMPTS)) {
+            val language = sibling.candidate.languageCode ?: languages.firstOrNull() ?: "en"
+            val cached = fileImporter.importSubtitleFromUri(mediaKey, sibling.uri, language).getOrNull() ?: continue
+            // The viewer may have moved on to another video while the file was being read.
+            if (currentVideo?.id != video.id) return false
+
+            val label = cached.releaseName ?: sibling.candidate.fileName
+            subtitleController.attachExternalSubtitle(
+                videoId = video.id,
+                file = File(cached.localPath),
+                language = cached.language,
+                label = label,
+                subtitleId = cached.subtitleId
+            )
+            val updatedList = subtitleCache.getCachedSubtitles(mediaKey)
+            _uiState.update {
+                it.copy(
+                    cachedSubtitles = updatedList,
+                    selectedSubtitleId = cached.subtitleId,
+                    selectedSubtitleType = SelectedSubtitleType.EXTERNAL,
+                    selectedSubtitleName = label
+                )
+            }
+            _events.emit(SubtitleUiEvent.DownloadSuccess(label))
+            return true
+        }
+        return false
     }
 
     fun searchOnline(manualQuery: String? = null) {
@@ -479,6 +532,11 @@ class SubtitleViewModel(
                 _events.emit(SubtitleUiEvent.ShowToast("Subtitle cache cleared"))
             }
         }
+    }
+
+    private companion object {
+        /** How many matching files next to a video are tried before giving up (an unreadable one moves on to the next). */
+        const val MAX_SIBLING_ATTEMPTS = 3
     }
 }
 
