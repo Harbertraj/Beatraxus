@@ -59,6 +59,8 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -89,8 +91,11 @@ import com.beatraxus.app.model.NowPlayingBackgroundMode
 import com.beatraxus.app.model.Song
 import com.beatraxus.app.model.SongSource
 import com.beatraxus.app.ui.components.seekbars.AppSeekBar
+import com.beatraxus.app.ui.components.CoverMeshBackground
+import com.beatraxus.app.ui.components.CoverPalette
 import com.beatraxus.app.ui.components.KaraokeLyricsView
 import com.beatraxus.app.ui.components.PremiumSwitch
+import com.beatraxus.app.ui.components.rememberCoverPalette
 import com.beatraxus.app.ui.components.SongInfoDialog
 import com.beatraxus.app.ui.components.SongOptionsSheet
 import com.beatraxus.app.ui.components.glassIconBackground
@@ -198,6 +203,16 @@ fun NowPlayingScreen(
         animationSpec = tween(600),
         label = "dominantColor"
     )
+
+    // Full Cover Art only: colours taken from the cover, shared by the background, the queue and
+    // the sleep timer. Null (and nothing is computed) while the option is off.
+    val coverPalette: State<CoverPalette>? = if (uiState.appearance.nowPlayingFullCoverArt) {
+        rememberCoverPalette(
+            artUri = song.albumArtUri,
+            songKey = song.id,
+            seed = currentDominantColor
+        )
+    } else null
 
     val lyricAccentColorsCache = remember { mutableStateMapOf<String, Color>() }
     val lyricAccentColor by animateColorAsState(
@@ -358,14 +373,9 @@ fun NowPlayingScreen(
         val fullCoverArt = appearance.nowPlayingFullCoverArt
         val isFullCoverArtBlurred = showLyrics || showQueue || showSleepTimerSheet || showLyricsSourcesSheet || showSongInfo || showPipelineOverlay
 
-        if (fullCoverArt) {
-            FullCoverArtBackground(
-                artUri = song.albumArtUri,
-                songKey = song.id,
-                dominantColor = currentDominantColor,
-                isBlurred = isFullCoverArtBlurred
-            )
-        } else when (appearance.nowPlayingBackgroundMode) {
+        // Same background as with Full Cover Art off (black / solid / blurred cover, per setting).
+        // With Full Cover Art on, the cover is simply drawn over its top part and fades into it.
+        when (appearance.nowPlayingBackgroundMode) {
             NowPlayingBackgroundMode.BLACK -> {
                 // Background is already black from the parent Box
             }
@@ -424,6 +434,16 @@ fun NowPlayingScreen(
                         .background(Color.Black.copy(alpha = appearance.nowPlayingBlurDarkness))
                 )
             }
+        }
+
+        if (fullCoverArt) {
+            FullCoverArtBackground(
+                artUri = song.albumArtUri,
+                songKey = song.id,
+                isBlurred = isFullCoverArtBlurred,
+                // Lyrics and queue: much stronger blur on the cover area.
+                strongBlur = showLyrics || showQueue
+            )
         }
 
         Box(
@@ -611,7 +631,8 @@ fun NowPlayingScreen(
                             onPlayFromQueue(it)
                         },
                         onClose = onToggleQueue,
-                        dominantColor = currentDominantColor
+                        dominantColor = currentDominantColor,
+                        coverPalette = coverPalette
                     )
                 } else {
                     // Middle Section: Album Art or Lyrics
@@ -1139,7 +1160,8 @@ fun NowPlayingScreen(
                     onSetSleepTimer(seconds, finishTrack, playCount)
                 },
                 onStopTimer = onStopSleepTimer,
-                onDismiss = { showSleepTimerSheet = false }
+                onDismiss = { showSleepTimerSheet = false },
+                coverPalette = coverPalette
             )
         }
 
@@ -1783,7 +1805,9 @@ fun QueueView(
     onMove: (Int, Int) -> Unit,
     onPlayFromQueue: (String) -> Unit,
     onClose: () -> Unit,
-    dominantColor: Color
+    dominantColor: Color,
+    // Full Cover Art only: art-derived palette -> glass cards on the colour mesh. Null = classic look.
+    coverPalette: State<CoverPalette>? = null
 ) {
     val context = LocalContext.current
 
@@ -1793,7 +1817,13 @@ fun QueueView(
         label = "dominantColor"
     )
 
-    val isLight = remember(animatedDominantColor) {
+    val palette = coverPalette?.value
+    val glass = palette != null
+    val headerColor = palette?.accent ?: animatedDominantColor
+
+    val isLight = if (glass) {
+        false // palette colours are graded for white text
+    } else remember(animatedDominantColor) {
         val luminance = 0.299 * animatedDominantColor.red + 0.587 * animatedDominantColor.green + 0.114 * animatedDominantColor.blue
         luminance > 0.5
     }
@@ -1830,7 +1860,7 @@ fun QueueView(
             // Previous Songs Section
             if (previousSongs.isNotEmpty()) {
                 item {
-                    SectionHeader("PREVIOUSLY PLAYED", previousSongs.size, animatedDominantColor)
+                    SectionHeader("PREVIOUSLY PLAYED", previousSongs.size, headerColor)
                 }
                 items(previousSongs, key = { "prev_${it.id}" }) { song ->
                     SongQueueItem(
@@ -1839,7 +1869,8 @@ fun QueueView(
                         isPrevious = true,
                         animatedDominantColor = animatedDominantColor,
                         onPlay = { onPlayFromQueue(song.id) },
-                        onRemove = { onRemoveFromQueue(song.id) }
+                        onRemove = { onRemoveFromQueue(song.id) },
+                        glass = glass
                     )
                 }
             }
@@ -1853,7 +1884,7 @@ fun QueueView(
                         .shadow(12.dp, RoundedCornerShape(24.dp))
                         .clickable { onClose() },
                     shape = RoundedCornerShape(24.dp),
-                    color = animatedDominantColor.copy(alpha = 0.9f),
+                    color = if (palette != null) palette.c1.copy(alpha = 0.82f) else animatedDominantColor.copy(alpha = 0.9f),
                     border = BorderStroke(1.dp, Color.White.copy(alpha = if (isLight) 0.1f else 0.2f))
                 ) {
                     Box(modifier = Modifier.fillMaxWidth()) {
@@ -1937,7 +1968,7 @@ fun QueueView(
             // Next Up Section
             if (upcomingSongs.isNotEmpty()) {
                 item {
-                    SectionHeader("NEXT UP", upcomingSongs.size, animatedDominantColor)
+                    SectionHeader("NEXT UP", upcomingSongs.size, headerColor)
                 }
                 items(upcomingSongs, key = { it.id }) { song ->
                     ReorderableItem(reorderableState, key = song.id) { isDragging ->
@@ -1949,12 +1980,12 @@ fun QueueView(
                                 .clickable { onPlayFromQueue(song.id) },
                             shape = RoundedCornerShape(18.dp),
                             color = if (isDragging)
-                                animatedDominantColor.copy(alpha = 0.4f)
+                                (palette?.c1 ?: animatedDominantColor).copy(alpha = 0.4f)
                             else
-                                Color.White.copy(alpha = 0.05f),
+                                Color.White.copy(alpha = if (glass) 0.09f else 0.05f),
                             border = BorderStroke(
                                 1.dp,
-                                if (isDragging) Color.White.copy(alpha = 0.3f) else Color.White.copy(alpha = 0.03f)
+                                if (isDragging) Color.White.copy(alpha = 0.3f) else Color.White.copy(alpha = if (glass) 0.08f else 0.03f)
                             )
                         ) {
                             Row(
@@ -2091,17 +2122,20 @@ private fun SongQueueItem(
     isPrevious: Boolean,
     animatedDominantColor: Color,
     onPlay: () -> Unit,
-    onRemove: () -> Unit
+    onRemove: () -> Unit,
+    glass: Boolean = false
 ) {
     Surface(
         modifier = Modifier
             .fillMaxWidth()
             .clickable { onPlay() },
         shape = RoundedCornerShape(18.dp),
-        color = if (isPrevious) Color.White.copy(alpha = 0.02f) else Color.White.copy(alpha = 0.05f),
+        color = if (isPrevious) Color.White.copy(alpha = if (glass) 0.05f else 0.02f)
+        else Color.White.copy(alpha = if (glass) 0.09f else 0.05f),
         border = BorderStroke(
             1.dp,
-            if (isPrevious) Color.White.copy(alpha = 0.01f) else Color.White.copy(alpha = 0.03f)
+            if (isPrevious) Color.White.copy(alpha = if (glass) 0.04f else 0.01f)
+            else Color.White.copy(alpha = if (glass) 0.08f else 0.03f)
         )
     ) {
         Row(
@@ -2150,31 +2184,70 @@ private fun SongQueueItem(
 }
 
 /**
- * Full-screen cover art that dissolves into a dark version of the album colour.
- * The art fills the top 62% (0.62f) of the screen and its lower edge melts into the colour field the controls sit on.
- * When [isBlurred] is true (e.g. during lyrics, queue, or sleep timer overlay), the cover art is softly blurred and dimmed.
+ * Full Cover Art cover layer.
+ *
+ * The cover sits at the top, full width, and its lower edge fades out (alpha mask) so it melts into
+ * whatever Now Playing background is behind it (the same one used when Full Cover Art is off).
+ *
+ * When [isBlurred] is true (sleep timer, song info ...) the cover is softly blurred and dimmed.
+ * When [strongBlur] is true (lyrics, queue) it is blurred and dimmed much more.
  */
 @Composable
 private fun FullCoverArtBackground(
     artUri: Any?,
     songKey: Any?,
-    dominantColor: Color,
-    isBlurred: Boolean = false
+    isBlurred: Boolean = false,
+    strongBlur: Boolean = false
 ) {
-    val field = androidx.compose.ui.graphics.lerp(dominantColor, Color.Black, 0.62f)
     val blurRadius by animateDpAsState(
-        targetValue = if (isBlurred) 32.dp else 0.dp,
+        targetValue = when {
+            strongBlur -> 80.dp
+            isBlurred -> 32.dp
+            else -> 0.dp
+        },
         animationSpec = tween(350),
         label = "fullCoverBlurRadius"
     )
     val blurDim by animateFloatAsState(
-        targetValue = if (isBlurred) 0.35f else 0f,
+        targetValue = when {
+            strongBlur -> 0.45f
+            isBlurred -> 0.35f
+            else -> 0f
+        },
         animationSpec = tween(350),
         label = "fullCoverBlurDim"
     )
 
-    Box(Modifier.fillMaxSize().background(field)) {
-        Box(Modifier.fillMaxWidth().fillMaxHeight(0.62f)) {
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        // Roughly square-plus: keeps the whole cover readable and avoids blowing a small
+        // (often 512px) cached cover up far beyond its resolution, which is what made it look soft.
+        val artHeight = (maxWidth * 1.22f).coerceAtMost(maxHeight * 0.64f)
+
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(artHeight)
+                .graphicsLayer {
+                    compositingStrategy = CompositingStrategy.Offscreen
+                }
+                .drawWithContent {
+                    drawContent()
+                    // Eased fade-out of the cover's own alpha (smoothstep-like) so the
+                    // mesh shows through underneath with no visible edge.
+                    drawRect(
+                        brush = Brush.verticalGradient(
+                            0f to Color.Black,
+                            0.52f to Color.Black,
+                            0.64f to Color.Black.copy(alpha = 0.90f),
+                            0.76f to Color.Black.copy(alpha = 0.64f),
+                            0.87f to Color.Black.copy(alpha = 0.30f),
+                            0.95f to Color.Black.copy(alpha = 0.08f),
+                            1f to Color.Transparent
+                        ),
+                        blendMode = BlendMode.DstIn
+                    )
+                }
+        ) {
             AnimatedContent(
                 targetState = songKey to artUri,
                 transitionSpec = { fadeIn(tween(450)).togetherWith(fadeOut(tween(450))) },
@@ -2193,7 +2266,7 @@ private fun FullCoverArtBackground(
                         .fallback(ImageUtils.getDefaultAlbumArtRes())
                         .apply {
                             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S && isBlurred) {
-                                transformations(FastBlurTransformation(25f))
+                                transformations(FastBlurTransformation(if (strongBlur) 90f else 25f))
                             }
                         }
                         .build(),
@@ -2202,11 +2275,13 @@ private fun FullCoverArtBackground(
                         .fillMaxSize()
                         .then(
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && blurRadius > 0.dp) {
-                                Modifier.blur(radius = blurRadius, edgeTreatment = BlurredEdgeTreatment.Unbounded)
+                                // Rectangle (not Unbounded) so the image edges don't fade out at the screen sides.
+                                Modifier.blur(radius = blurRadius, edgeTreatment = BlurredEdgeTreatment.Rectangle)
                             } else Modifier
                         ),
                     contentScale = ContentScale.Crop,
-                    alignment = Alignment.TopCenter
+                    alignment = Alignment.TopCenter,
+                    filterQuality = FilterQuality.High
                 )
             }
             if (blurDim > 0f) {
@@ -2216,15 +2291,12 @@ private fun FullCoverArtBackground(
                         .background(Color.Black.copy(alpha = blurDim))
                 )
             }
-            // dissolve into the colour field + a light scrim under the status bar / title
+            // Light scrim under the status bar / title so the white icons stay readable.
             Box(
                 Modifier.fillMaxSize().background(
                     Brush.verticalGradient(
-                        0f to Color.Black.copy(alpha = 0.35f),
-                        0.25f to Color.Transparent,
-                        0.5f to Color.Transparent,
-                        0.78f to field.copy(alpha = 0.75f),
-                        1f to field
+                        0f to Color.Black.copy(alpha = 0.42f),
+                        0.22f to Color.Transparent
                     )
                 )
             )
@@ -2294,8 +2366,14 @@ internal fun SleepTimerSheet(
     onStopTimer: () -> Unit,
     onDismiss: () -> Unit,
     // Live radio has no tracks: hides "Play Count" and "Finish current track", duration only.
-    liveStream: Boolean = false
+    liveStream: Boolean = false,
+    // Full Cover Art only: art-derived colour mesh + accent for the sheet. Null = classic look.
+    coverPalette: State<CoverPalette>? = null
 ) {
+    val palette = coverPalette?.value
+    val accent = palette?.accent ?: Color(0xFFFFB2AD)
+    val onAccent = if (palette != null) Color(0xFF14110F) else Color(0xFF2C1817)
+    val glassFill = if (palette != null) 0.09f else 0.04f
     val presets = listOf(0, 15, 30, 45, 60, 120, 180, 240) // in minutes
     var timerValue by remember { mutableFloatStateOf(0f) }
     var playCountValue by remember { mutableFloatStateOf(0f) }
@@ -2326,10 +2404,37 @@ internal fun SleepTimerSheet(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(topStart = 42.dp, topEnd = 42.dp))
+                .then(
+                    if (coverPalette != null) {
+                        // Glass edge: a thin highlight that fades out down the sheet.
+                        Modifier.border(
+                            1.dp,
+                            Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.22f), Color.Transparent)),
+                            RoundedCornerShape(topStart = 42.dp, topEnd = 42.dp)
+                        )
+                    } else Modifier
+                )
                 .background(Color(0xFF0F0E0E).copy(alpha = POPUP_PANEL_ALPHA))
         ) {
-            // Background Layer with enhanced blur and subtle animation
-            if (uiState.appearance.nowPlayingBackgroundMode == NowPlayingBackgroundMode.BLUR) {
+            if (coverPalette != null) {
+                // Full Cover Art: the same drifting cover-colour mesh as the Now Playing screen.
+                CoverMeshBackground(palette = coverPalette, modifier = Modifier.matchParentSize())
+                // Soft light at the top, a little shade at the bottom so text and buttons stay crisp.
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(
+                                    Color.White.copy(alpha = 0.08f),
+                                    Color.Transparent,
+                                    Color.Black.copy(alpha = 0.30f)
+                                )
+                            )
+                        )
+                )
+            } else if (uiState.appearance.nowPlayingBackgroundMode == NowPlayingBackgroundMode.BLUR) {
+                // Background Layer with enhanced blur and subtle animation
                 AsyncImage(
                     model = ImageRequest.Builder(LocalContext.current)
                         .data(albumArtUri)
@@ -2376,9 +2481,9 @@ internal fun SleepTimerSheet(
 
                     if (uiState.isSleepTimerActive) {
                         Surface(
-                            color = Color(0xFFFFB2AD).copy(alpha = 0.15f),
+                            color = accent.copy(alpha = 0.15f),
                             shape = RoundedCornerShape(12.dp),
-                            border = BorderStroke(1.dp, Color(0xFFFFB2AD).copy(alpha = 0.3f))
+                            border = BorderStroke(1.dp, accent.copy(alpha = 0.3f))
                         ) {
                             val remaining = uiState.sleepTimerRemainingSeconds
                             val h = remaining / 3600
@@ -2393,12 +2498,12 @@ internal fun SleepTimerSheet(
                                 Box(
                                     modifier = Modifier
                                         .size(6.dp)
-                                        .background(Color(0xFFFFB2AD), CircleShape)
+                                        .background(accent, CircleShape)
                                 )
                                 Spacer(Modifier.width(8.dp))
                                 Text(
                                     text = "Ends in $countdownText",
-                                    color = Color(0xFFFFB2AD),
+                                    color = accent,
                                     style = MaterialTheme.typography.labelMedium.copy(
                                         fontWeight = FontWeight.Bold,
                                         letterSpacing = 1.sp
@@ -2419,7 +2524,7 @@ internal fun SleepTimerSheet(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(Color.White.copy(0.04f), RoundedCornerShape(32.dp))
+                        .background(Color.White.copy(glassFill), RoundedCornerShape(32.dp))
                         .border(1.dp, Color.White.copy(0.06f), RoundedCornerShape(32.dp))
                         .padding(horizontal = 24.dp, vertical = 16.dp),
                     verticalArrangement = Arrangement.spacedBy(20.dp)
@@ -2438,7 +2543,7 @@ internal fun SleepTimerSheet(
                             }
                             Text(
                                 text = if (selectedMinutes == 0) "Off" else if (selectedMinutes >= 60) "${selectedMinutes/60}h ${if (selectedMinutes%60>0) "${selectedMinutes%60}m" else ""}" else "${selectedMinutes}m",
-                                color = Color(0xFFFFB2AD),
+                                color = accent,
                                 fontSize = 16.sp,
                                 fontWeight = FontWeight.ExtraBold
                             )
@@ -2464,7 +2569,7 @@ internal fun SleepTimerSheet(
                             }
                             Text(
                                 text = if (selectedPlayCount == 0) "Off" else "$selectedPlayCount songs",
-                                color = Color(0xFFFFB2AD),
+                                color = accent,
                                 fontSize = 16.sp,
                                 fontWeight = FontWeight.ExtraBold
                             )
@@ -2483,7 +2588,7 @@ internal fun SleepTimerSheet(
                     if (!liveStream) Surface(
                         onClick = { endOfTrack = !endOfTrack },
                         shape = RoundedCornerShape(24.dp),
-                        color = Color.White.copy(0.05f),
+                        color = Color.White.copy(if (palette != null) 0.09f else 0.05f),
                         border = BorderStroke(1.dp, Color.White.copy(0.05f))
                     ) {
                         Row(
@@ -2544,12 +2649,12 @@ internal fun SleepTimerSheet(
                             },
                             modifier = Modifier.weight(if (uiState.isSleepTimerActive) 1.5f else 1f).height(64.dp),
                             shape = RoundedCornerShape(20.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFB2AD)),
+                            colors = ButtonDefaults.buttonColors(containerColor = accent),
                             elevation = ButtonDefaults.buttonElevation(defaultElevation = 8.dp)
                         ) {
                             Text(
                                 if (selectedMinutes == 0 && selectedPlayCount == 0) "Custom Time" else "Set Timer",
-                                color = Color(0xFF2C1817),
+                                color = onAccent,
                                 fontWeight = FontWeight.ExtraBold,
                                 fontSize = 16.sp
                             )
