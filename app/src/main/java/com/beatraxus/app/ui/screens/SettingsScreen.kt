@@ -1362,7 +1362,7 @@ fun NowPlayingAppearanceContent(uiState: PlayerUiState, playerViewModel: PlayerV
     val appearance = uiState.appearance
 
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        // Full Cover Art (off by default). While on, the album-art animation below is not used.
+        // Full Cover Art (off by default). The album-art animation below also animates the full cover.
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -1384,7 +1384,7 @@ fun NowPlayingAppearanceContent(uiState: PlayerUiState, playerViewModel: PlayerV
         HorizontalDivider(color = Color.White.copy(0.05f))
 
         var expandedTransform by remember { mutableStateOf(false) }
-        Column(modifier = Modifier.graphicsLayer { alpha = if (appearance.nowPlayingFullCoverArt) 0.35f else 1f }) {
+        Column {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -1397,7 +1397,6 @@ fun NowPlayingAppearanceContent(uiState: PlayerUiState, playerViewModel: PlayerV
                 Box {
                     TextButton(
                         onClick = { expandedTransform = true },
-                        enabled = !appearance.nowPlayingFullCoverArt,
                         colors = ButtonDefaults.textButtonColors(contentColor = PremiumAccent)
                     ) {
                         Text(

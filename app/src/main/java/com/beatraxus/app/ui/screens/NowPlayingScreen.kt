@@ -92,6 +92,7 @@ import com.beatraxus.app.model.Song
 import com.beatraxus.app.model.SongSource
 import com.beatraxus.app.ui.components.seekbars.AppSeekBar
 import com.beatraxus.app.ui.components.CoverMeshBackground
+import com.beatraxus.app.ui.components.CoverNavTracker
 import com.beatraxus.app.ui.components.CoverPalette
 import com.beatraxus.app.ui.components.KaraokeLyricsView
 import com.beatraxus.app.ui.components.PremiumSwitch
@@ -213,6 +214,10 @@ fun NowPlayingScreen(
             seed = currentDominantColor
         )
     } else null
+
+    // Direction of the last song change (+1 next / -1 previous), used by the Full Cover Art animation.
+    val coverNav = remember { CoverNavTracker() }
+    val coverDirection = coverNav.update(song.id, previousSongs)
 
     val lyricAccentColorsCache = remember { mutableStateMapOf<String, Color>() }
     val lyricAccentColor by animateColorAsState(
@@ -442,7 +447,9 @@ fun NowPlayingScreen(
                 songKey = song.id,
                 isBlurred = isFullCoverArtBlurred,
                 // Lyrics and queue: much stronger blur on the cover area.
-                strongBlur = showLyrics || showQueue
+                strongBlur = showLyrics || showQueue,
+                transform = appearance.albumArtTransform,
+                direction = coverDirection
             )
         }
 
@@ -1048,7 +1055,7 @@ fun NowPlayingScreen(
                                 }
 
                                 // Previous
-                                IconButton(onClick = onPrevious, modifier = Modifier.weight(1f)) {
+                                IconButton(onClick = { coverNav.markTap(-1); onPrevious() }, modifier = Modifier.weight(1f)) {
                                     Icon(prevIcon, null, tint = Color.White, modifier = Modifier.size(28.dp))
                                 }
 
@@ -1056,7 +1063,7 @@ fun NowPlayingScreen(
                                 Spacer(modifier = Modifier.weight(1.6f))
 
                                 // Next
-                                IconButton(onClick = onNext, modifier = Modifier.weight(1f)) {
+                                IconButton(onClick = { coverNav.markTap(1); onNext() }, modifier = Modifier.weight(1f)) {
                                     Icon(nextIcon, null, tint = Color.White, modifier = Modifier.size(28.dp))
                                 }
 
@@ -2191,13 +2198,18 @@ private fun SongQueueItem(
  *
  * When [isBlurred] is true (sleep timer, song info ...) the cover is softly blurred and dimmed.
  * When [strongBlur] is true (lyrics, queue) it is blurred and dimmed much more.
+ *
+ * The whole cover is what animates when the song changes, using the Album Art Animation setting
+ * ([transform]); Slide follows [direction] (+1 next, -1 previous).
  */
 @Composable
 private fun FullCoverArtBackground(
     artUri: Any?,
     songKey: Any?,
     isBlurred: Boolean = false,
-    strongBlur: Boolean = false
+    strongBlur: Boolean = false,
+    transform: AlbumArtTransform = AlbumArtTransform.SOFT_FADE,
+    direction: Int = 1
 ) {
     val blurRadius by animateDpAsState(
         targetValue = when {
@@ -2250,7 +2262,7 @@ private fun FullCoverArtBackground(
         ) {
             AnimatedContent(
                 targetState = songKey to artUri,
-                transitionSpec = { fadeIn(tween(450)).togetherWith(fadeOut(tween(450))) },
+                transitionSpec = { fullCoverTransition(transform, direction) },
                 label = "fullCoverArt",
                 modifier = Modifier.fillMaxSize()
             ) { (_, uri) ->
@@ -2301,6 +2313,41 @@ private fun FullCoverArtBackground(
                 )
             )
         }
+    }
+}
+
+/**
+ * Song-change animation for the Full Cover Art cover (the whole full-width cover moves, not a
+ * picture inside a frame). Same styles as the framed art; Slide is direction aware.
+ */
+private fun fullCoverTransition(transform: AlbumArtTransform, direction: Int): ContentTransform {
+    val dir = if (direction >= 0) 1 else -1
+    return when (transform) {
+        AlbumArtTransform.SOFT_FADE ->
+            (fadeIn(tween(520, easing = LinearOutSlowInEasing)) +
+                scaleIn(tween(620, easing = FastOutSlowInEasing), initialScale = 1.06f))
+                .togetherWith(fadeOut(tween(380)))
+        // Next: current cover leaves to the left, the next one arrives from the right.
+        // Previous: current cover leaves to the right, the previous one arrives from the left.
+        AlbumArtTransform.SLIDE ->
+            slideInHorizontally(tween(520, easing = FastOutSlowInEasing)) { it * dir }
+                .togetherWith(slideOutHorizontally(tween(520, easing = FastOutSlowInEasing)) { -it * dir })
+        AlbumArtTransform.DEPTH ->
+            (scaleIn(tween(560, easing = FastOutSlowInEasing), initialScale = 0.86f) +
+                slideInVertically(tween(560, easing = FastOutSlowInEasing)) { it / 10 } +
+                fadeIn(tween(480)))
+                .togetherWith(
+                    scaleOut(tween(480, easing = FastOutSlowInEasing), targetScale = 0.92f) +
+                        fadeOut(tween(360))
+                )
+        AlbumArtTransform.POP ->
+            (scaleIn(
+                spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMediumLow),
+                initialScale = 0.82f
+            ) + fadeIn(tween(260)))
+                .togetherWith(fadeOut(tween(220)))
+        AlbumArtTransform.NONE ->
+            EnterTransition.None.togetherWith(ExitTransition.None)
     }
 }
 

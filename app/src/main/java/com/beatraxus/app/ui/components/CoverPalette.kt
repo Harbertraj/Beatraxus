@@ -1,6 +1,7 @@
 package com.beatraxus.app.ui.components
 
 import android.graphics.drawable.BitmapDrawable
+import android.os.SystemClock
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -28,6 +29,7 @@ import coil.imageLoader
 import coil.request.ImageRequest
 import coil.request.SuccessResult
 import coil.size.Precision
+import com.beatraxus.app.model.Song
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -249,5 +251,49 @@ internal fun CoverMeshBackground(palette: State<CoverPalette>, modifier: Modifie
                 center = center
             )
         }
+    }
+}
+
+/**
+ * Works out which way the cover should travel when the song changes: +1 = next (current cover
+ * leaves to the left, new one comes from the right), -1 = previous (the opposite).
+ *
+ * A Previous / Next tap on the Now Playing controls decides it. Without a recent tap (notification
+ * or headset buttons, queue taps, auto-advance) it falls back to the play history: if the new song
+ * is in the history it is a step back, otherwise forward.
+ */
+internal class CoverNavTracker {
+    private var lastSongId: String? = null
+    private var lastPrevious: List<Song> = emptyList()
+    private var olderPrevious: List<Song> = emptyList()
+    private var pendingDir = 0
+    private var pendingAt = 0L
+    var direction: Int = 1
+        private set
+
+    fun markTap(dir: Int) {
+        pendingDir = dir
+        pendingAt = SystemClock.elapsedRealtime()
+    }
+
+    /** Call from composition with the current song; returns the direction for the latest change. */
+    fun update(songId: String, previous: List<Song>): Int {
+        if (lastSongId != songId) {
+            if (lastSongId != null) {
+                val tapped = pendingDir != 0 && SystemClock.elapsedRealtime() - pendingAt < 2500L
+                direction = when {
+                    tapped -> pendingDir
+                    lastPrevious.any { it.id == songId } || olderPrevious.any { it.id == songId } -> -1
+                    else -> 1
+                }
+            }
+            pendingDir = 0
+            lastSongId = songId
+        }
+        if (previous !== lastPrevious) {
+            olderPrevious = lastPrevious
+            lastPrevious = previous
+        }
+        return direction
     }
 }
