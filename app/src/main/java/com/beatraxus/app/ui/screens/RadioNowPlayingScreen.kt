@@ -3,7 +3,6 @@ package com.beatraxus.app.ui.screens
 import android.content.Intent
 import android.graphics.drawable.BitmapDrawable
 import android.os.Build
-import android.widget.Toast
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -46,21 +45,17 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.PlaylistPlay
-import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Equalizer
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
-import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Radio
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material.icons.rounded.Timer
 import androidx.compose.material3.CenterAlignedTopAppBar
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import com.beatraxus.app.ui.theme.Icon
 import androidx.compose.material3.IconButton
@@ -93,9 +88,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -160,14 +153,12 @@ fun RadioNowPlayingScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    val clipboard = LocalClipboardManager.current
     val appearance = uiState.appearance
 
     var showStations by rememberSaveable { mutableStateOf(false) }
     var showSleepTimerSheet by remember { mutableStateOf(false) }
     var showStationInfo by remember { mutableStateOf(false) }
     var showPipeline by remember { mutableStateOf(false) }
-    var showMenu by remember { mutableStateOf(false) }
 
     val prevStation = RadioStationCache.neighbour(song.id, -1)
     val nextStation = RadioStationCache.neighbour(song.id, +1)
@@ -576,48 +567,6 @@ fun RadioNowPlayingScreen(
                                             tint = if (isFavorite) Color(0xFFFF4081) else Color.White.copy(0.7f),
                                             modifier = Modifier.size(28.dp)
                                         )
-                                    }
-
-                                    // Options (three dots)
-                                    Box {
-                                        IconButton(onClick = { showMenu = true }) {
-                                            Icon(
-                                                Icons.Rounded.MoreVert,
-                                                contentDescription = "More options",
-                                                tint = Color.White.copy(0.7f),
-                                                modifier = Modifier.size(28.dp)
-                                            )
-                                        }
-                                        DropdownMenu(
-                                            expanded = showMenu,
-                                            onDismissRequest = { showMenu = false },
-                                            modifier = Modifier.background(Color(0xFF1C1C1E))
-                                        ) {
-                                            DropdownMenuItem(
-                                                text = { Text("Station info", color = Color.White) },
-                                                leadingIcon = { Icon(Icons.Rounded.Info, null, tint = Color.White.copy(0.8f)) },
-                                                onClick = { showMenu = false; showStationInfo = true }
-                                            )
-                                            DropdownMenuItem(
-                                                text = { Text("Share station", color = Color.White) },
-                                                leadingIcon = { Icon(Icons.Rounded.Share, null, tint = Color.White.copy(0.8f)) },
-                                                onClick = { showMenu = false; shareStation(context, song) }
-                                            )
-                                            DropdownMenuItem(
-                                                text = { Text("Copy stream link", color = Color.White) },
-                                                leadingIcon = { Icon(Icons.Rounded.ContentCopy, null, tint = Color.White.copy(0.8f)) },
-                                                onClick = {
-                                                    showMenu = false
-                                                    clipboard.setText(AnnotatedString(song.uri.toString()))
-                                                    Toast.makeText(context, "Stream link copied", Toast.LENGTH_SHORT).show()
-                                                }
-                                            )
-                                            DropdownMenuItem(
-                                                text = { Text("Signal path", color = Color.White) },
-                                                leadingIcon = { Icon(Icons.Rounded.GraphicEq, null, tint = Color.White.copy(0.8f)) },
-                                                onClick = { showMenu = false; showPipeline = true }
-                                            )
-                                        }
                                     }
                                 }
                             }
