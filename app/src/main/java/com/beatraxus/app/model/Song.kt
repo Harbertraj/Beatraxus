@@ -197,6 +197,8 @@ data class AppearanceConfig(
     val nowPlayingBlurIntensity: Float = 210f,
     val nowPlayingBlurDarkness: Float = 0.3f,
     val albumArtTransform: AlbumArtTransform = AlbumArtTransform.SOFT_FADE,
+    /** Full-screen cover art on the Now Playing screen (off by default). */
+    val nowPlayingFullCoverArt: Boolean = false,
     val qualityBadgeStyle: QualityBadgeStyle = QualityBadgeStyle.GLASSMORPHIC,
 
     val seekbarStyle: SeekbarStyle = SeekbarStyle.BEATRAXUS_MATRIX,

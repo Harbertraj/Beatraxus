@@ -355,7 +355,17 @@ fun NowPlayingScreen(
         ) {
         // --- NEW DYNAMIC BACKGROUND ---
         val appearance = uiState.appearance
-        when (appearance.nowPlayingBackgroundMode) {
+        val fullCoverArt = appearance.nowPlayingFullCoverArt
+        val isFullCoverArtBlurred = showLyrics || showQueue || showSleepTimerSheet || showLyricsSourcesSheet || showSongInfo || showPipelineOverlay
+
+        if (fullCoverArt) {
+            FullCoverArtBackground(
+                artUri = song.albumArtUri,
+                songKey = song.id,
+                dominantColor = currentDominantColor,
+                isBlurred = isFullCoverArtBlurred
+            )
+        } else when (appearance.nowPlayingBackgroundMode) {
             NowPlayingBackgroundMode.BLACK -> {
                 // Background is already black from the parent Box
             }
@@ -647,7 +657,8 @@ fun NowPlayingScreen(
                             // No Surface fill / shadow / gradient here: those drew a dark rounded rectangle
                             // behind the art while it scaled back in after the lyrics closed.
                             val artShape = RoundedCornerShape(28.dp)
-                            Box(
+                            // Full Cover Art: the cover is already the background, so the framed art is not drawn.
+                            if (!fullCoverArt) Box(
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .clip(artShape)
@@ -2134,6 +2145,89 @@ private fun SongQueueItem(
             ) {
                 Icon(Icons.Rounded.RemoveCircleOutline, null, tint = Color.White, modifier = Modifier.size(20.dp))
             }
+        }
+    }
+}
+
+/**
+ * Full-screen cover art that dissolves into a dark version of the album colour.
+ * The art fills the top 62% (0.62f) of the screen and its lower edge melts into the colour field the controls sit on.
+ * When [isBlurred] is true (e.g. during lyrics, queue, or sleep timer overlay), the cover art is softly blurred and dimmed.
+ */
+@Composable
+private fun FullCoverArtBackground(
+    artUri: Any?,
+    songKey: Any?,
+    dominantColor: Color,
+    isBlurred: Boolean = false
+) {
+    val field = androidx.compose.ui.graphics.lerp(dominantColor, Color.Black, 0.62f)
+    val blurRadius by animateDpAsState(
+        targetValue = if (isBlurred) 32.dp else 0.dp,
+        animationSpec = tween(350),
+        label = "fullCoverBlurRadius"
+    )
+    val blurDim by animateFloatAsState(
+        targetValue = if (isBlurred) 0.35f else 0f,
+        animationSpec = tween(350),
+        label = "fullCoverBlurDim"
+    )
+
+    Box(Modifier.fillMaxSize().background(field)) {
+        Box(Modifier.fillMaxWidth().fillMaxHeight(0.62f)) {
+            AnimatedContent(
+                targetState = songKey to artUri,
+                transitionSpec = { fadeIn(tween(450)).togetherWith(fadeOut(tween(450))) },
+                label = "fullCoverArt",
+                modifier = Modifier.fillMaxSize()
+            ) { (_, uri) ->
+                AsyncImage(
+                    model = ImageRequest.Builder(LocalContext.current)
+                        .data(uri)
+                        .diskCachePolicy(CachePolicy.ENABLED)
+                        .memoryCachePolicy(CachePolicy.ENABLED)
+                        .size(1080, 1080)
+                        .precision(Precision.INEXACT)
+                        .crossfade(true)
+                        .error(ImageUtils.getDefaultAlbumArtRes())
+                        .fallback(ImageUtils.getDefaultAlbumArtRes())
+                        .apply {
+                            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S && isBlurred) {
+                                transformations(FastBlurTransformation(25f))
+                            }
+                        }
+                        .build(),
+                    contentDescription = null,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .then(
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && blurRadius > 0.dp) {
+                                Modifier.blur(radius = blurRadius, edgeTreatment = BlurredEdgeTreatment.Unbounded)
+                            } else Modifier
+                        ),
+                    contentScale = ContentScale.Crop,
+                    alignment = Alignment.TopCenter
+                )
+            }
+            if (blurDim > 0f) {
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = blurDim))
+                )
+            }
+            // dissolve into the colour field + a light scrim under the status bar / title
+            Box(
+                Modifier.fillMaxSize().background(
+                    Brush.verticalGradient(
+                        0f to Color.Black.copy(alpha = 0.35f),
+                        0.25f to Color.Transparent,
+                        0.5f to Color.Transparent,
+                        0.78f to field.copy(alpha = 0.75f),
+                        1f to field
+                    )
+                )
+            )
         }
     }
 }

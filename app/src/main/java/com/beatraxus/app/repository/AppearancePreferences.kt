@@ -39,6 +39,7 @@ class AppearancePreferences(context: Context) {
             nowPlayingSolidColorDarkness = preferences[SOLID_COLOR_DARKNESS] ?: 0.4f,
             nowPlayingBlurIntensity = preferences[BLUR_INTENSITY] ?: 210f,
             nowPlayingBlurDarkness = preferences[BLUR_DARKNESS] ?: 0.3f,
+            nowPlayingFullCoverArt = preferences[NOW_PLAYING_FULL_COVER_ART] ?: false,
             // Animations removed in older versions fall back to the soft fade.
             albumArtTransform = runCatching {
                 AlbumArtTransform.valueOf(preferences[ALBUM_ART_TRANSFORM] ?: AlbumArtTransform.SOFT_FADE.name)
@@ -372,6 +373,10 @@ class AppearancePreferences(context: Context) {
         dataStore.edit { it[SOLID_COLOR_DARKNESS] = value }
     }
 
+    suspend fun setNowPlayingFullCoverArt(enabled: Boolean) {
+        dataStore.edit { it[NOW_PLAYING_FULL_COVER_ART] = enabled }
+    }
+
     suspend fun setNowPlayingBlurIntensity(value: Float) {
         dataStore.edit { it[BLUR_INTENSITY] = value }
     }
@@ -666,6 +671,7 @@ class AppearancePreferences(context: Context) {
         private val BLUR_INTENSITY = floatPreferencesKey("blur_intensity")
         private val BLUR_DARKNESS = floatPreferencesKey("blur_darkness")
         private val ALBUM_ART_TRANSFORM = stringPreferencesKey("album_art_transform")
+        private val NOW_PLAYING_FULL_COVER_ART = booleanPreferencesKey("now_playing_full_cover_art")
         private val QUALITY_BADGE_STYLE = stringPreferencesKey("quality_badge_style")
         private val SEEKBAR_STYLE = stringPreferencesKey("seekbar_style")
 

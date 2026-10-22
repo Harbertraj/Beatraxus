@@ -5801,6 +5801,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun setNowPlayingFullCoverArt(enabled: Boolean) {
+        viewModelScope.launch {
+            appearancePreferences.setNowPlayingFullCoverArt(enabled)
+        }
+    }
+
     fun setNowPlayingBlurIntensity(value: Float) {
         viewModelScope.launch {
             appearancePreferences.setNowPlayingBlurIntensity(value)
