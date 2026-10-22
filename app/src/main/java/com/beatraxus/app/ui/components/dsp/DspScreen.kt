@@ -49,6 +49,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.zIndex
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
@@ -129,55 +130,8 @@ private val EqLineEnd get() = Pal.secondary
  * so it never matches the rest of the DSP screen and follows the chosen palette. Used ONLY by the pipeline header
  * (page tabs and the lines between them) - no other control on the Studio DSP pages uses it.
  */
-private val DspSignalOn: Color
-    get() {
-        val hsv = FloatArray(3)
-        android.graphics.Color.colorToHSV(Pal.accent.toArgb(), hsv)
-        hsv[0] = (hsv[0] + 180f) % 360f
-        hsv[1] = hsv[1].coerceAtLeast(0.65f)
-        hsv[2] = hsv[2].coerceAtLeast(0.95f)
-        return Color(android.graphics.Color.HSVToColor(hsv))
-    }
-
 /** State of one Studio DSP stage as shown by the pipeline in the page tabs. */
 private enum class DspStageState { ON, OFF, BYPASS }
-
-/** The line between two stages: a bypassed stage bypasses the line, otherwise it is lit only when both stages are on. */
-private fun segmentState(a: DspStageState, b: DspStageState): DspStageState = when {
-    a == DspStageState.BYPASS || b == DspStageState.BYPASS -> DspStageState.BYPASS
-    a == DspStageState.ON && b == DspStageState.ON -> DspStageState.ON
-    else -> DspStageState.OFF
-}
-
-/**
- * One piece of the pipeline line, drawn like the signal path preview:
- * ON = solid signal colour, OFF = thin dim line, BYPASS = dim dashed line.
- */
-@Composable
-private fun PipelineRail(state: DspStageState, visible: Boolean, modifier: Modifier = Modifier) {
-    val color by animateColorAsState(
-        when (state) {
-            DspStageState.ON -> DspSignalOn.copy(alpha = 0.90f)
-            DspStageState.OFF -> Color.White.copy(alpha = 0.14f)
-            DspStageState.BYPASS -> Color.White.copy(alpha = 0.38f)
-        },
-        label = "rail_color"
-    )
-    Canvas(modifier = modifier.height(3.dp)) {
-        if (!visible) return@Canvas
-        val cy = size.height / 2f
-        val dp = 1.dp.toPx()
-        when (state) {
-            DspStageState.ON -> drawLine(color, Offset(0f, cy), Offset(size.width, cy), strokeWidth = 2f * dp)
-            DspStageState.OFF -> drawLine(color, Offset(0f, cy), Offset(size.width, cy), strokeWidth = 1f * dp)
-            DspStageState.BYPASS -> drawLine(
-                color, Offset(0f, cy), Offset(size.width, cy),
-                strokeWidth = 1.2f * dp,
-                pathEffect = PathEffect.dashPathEffect(floatArrayOf(3f * dp, 3f * dp))
-            )
-        }
-    }
-}
 
 /**
  * Shared glass panel used by every DSP card. Same recipe as the Settings cards (SettingsSection):
@@ -193,10 +147,52 @@ private fun Modifier.dspPanel(radius: androidx.compose.ui.unit.Dp = 24.dp): Modi
         RoundedCornerShape(radius)
     )
 
+/**
+ * Inner dark card used inside a DSP page. Same recipe as the Surround page's CHANNEL LEVELS / PRESETS cards, so
+ * Master and Reverb group their controls the same way.
+ */
+private fun Modifier.dspSubPanel(): Modifier = this
+    .clip(RoundedCornerShape(16.dp))
+    .background(Brush.verticalGradient(listOf(Color(0xFF050912), Color(0xFF0A1322))))
+    .border(1.dp, Brush.verticalGradient(listOf(PremiumAccent.copy(0.28f), Color.White.copy(0.05f))), RoundedCornerShape(16.dp))
+    .padding(12.dp)
+
+/** Page header shared with the Surround page: icon tile, title with a one-line subtitle, and a trailing control. */
+@Composable
+private fun DspPageHeader(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    trailing: @Composable () -> Unit
+) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Box(
+            modifier = Modifier
+                .size(42.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(Brush.linearGradient(listOf(PremiumAccent.copy(0.30f), DspViolet.copy(0.14f))))
+                .border(1.dp, PremiumAccent.copy(0.55f), RoundedCornerShape(14.dp)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(icon, null, tint = PremiumAccent, modifier = Modifier.size(24.dp))
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, color = Color.White, fontWeight = FontWeight.Black, fontSize = 14.sp, letterSpacing = 1.5.sp)
+            Text(subtitle, color = Color.White.copy(0.55f), fontSize = 10.sp)
+        }
+        trailing()
+    }
+}
+
+/** Pill button used for the Reverb preset picker and its quick actions (Surround's layout-button look). */
+private fun Modifier.dspPill(enabled: Boolean = true): Modifier = this
+    .clip(RoundedCornerShape(50))
+    .background(Color(0xFF0B1424).copy(0.9f))
+    .border(1.dp, Color.White.copy(if (enabled) 0.12f else 0.06f), RoundedCornerShape(50))
 
 /**
- * Top page switcher. One stage node per page joined by pipeline lines (ON = signal colour, OFF = dim, BYPASS = dashed),
- * with larger nodes and 10sp labels so it reads like the rest of the app. A white bar slides with the pager swipe.
+ * Top page switcher. One stage node per page joined by pipeline lines, with larger nodes and 10sp labels so it reads
+ * like the rest of the app. A white bar slides with the pager swipe. If a page option is ON, a small white dot appears at the top right of its icon.
  */
 @Composable
 private fun DspTabBar(
@@ -217,7 +213,6 @@ private fun DspTabBar(
                 val bypassed = state == DspStageState.BYPASS
                 val tint by animateColorAsState(
                     when {
-                        on -> DspSignalOn
                         selected -> PremiumAccent
                         bypassed -> Color.White.copy(alpha = 0.40f)
                         else -> Color.White.copy(alpha = 0.55f)
@@ -225,18 +220,14 @@ private fun DspTabBar(
                     label = "tab_tint"
                 )
                 val nodeFill by animateColorAsState(
-                    if (on) DspSignalOn.copy(alpha = 0.20f)
-                    else if (selected) Color.White.copy(alpha = 0.10f) else Color.White.copy(alpha = 0.05f),
+                    if (selected) Color.White.copy(alpha = 0.10f) else Color.White.copy(alpha = 0.05f),
                     label = "tab_fill"
                 )
                 val nodeRim by animateColorAsState(
-                    if (on) DspSignalOn.copy(alpha = 0.90f)
-                    else if (selected) PremiumAccent.copy(alpha = 0.85f)
+                    if (selected) PremiumAccent.copy(alpha = 0.85f)
                     else if (bypassed) Color.White.copy(alpha = 0.26f) else Color.White.copy(alpha = 0.14f),
                     label = "tab_rim"
                 )
-                val leftState = if (i > 0) segmentState(states.getOrElse(i - 1) { DspStageState.OFF }, state) else DspStageState.OFF
-                val rightState = if (i < labels.lastIndex) segmentState(state, states.getOrElse(i + 1) { DspStageState.OFF }) else DspStageState.OFF
                 Column(
                     modifier = Modifier
                         .weight(1f)
@@ -248,15 +239,13 @@ private fun DspTabBar(
                         .padding(top = 4.dp, bottom = 4.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Row(
+                    Box(
                         modifier = Modifier.fillMaxWidth().height(28.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                        contentAlignment = Alignment.Center
                     ) {
-                        PipelineRail(leftState, visible = i > 0, modifier = Modifier.weight(1f))
                         Box(
                             modifier = Modifier
                                 .size(28.dp)
-                                .then(if (on) Modifier.shadow(6.dp, RoundedCornerShape(9.dp), ambientColor = DspSignalOn, spotColor = DspSignalOn) else Modifier)
                                 .clip(RoundedCornerShape(9.dp))
                                 .background(nodeFill)
                                 .border(1.dp, nodeRim, RoundedCornerShape(9.dp)),
@@ -264,14 +253,29 @@ private fun DspTabBar(
                         ) {
                             Icon(icons[i], contentDescription = label, tint = tint, modifier = Modifier.size(17.dp))
                         }
-                        PipelineRail(rightState, visible = i < labels.lastIndex, modifier = Modifier.weight(1f))
+                        if (on) {
+                            Box(
+                                modifier = Modifier
+                                    .size(28.dp)
+                                    .align(Alignment.Center)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .align(Alignment.TopEnd)
+                                        .offset(x = 1.dp, y = (-1).dp)
+                                        .size(5.dp)
+                                        .clip(CircleShape)
+                                        .background(Color.White)
+                                )
+                            }
+                        }
                     }
                     Spacer(Modifier.height(3.dp))
                     Text(
                         text = label,
                         color = tint,
                         fontSize = 10.sp,
-                        fontWeight = if (selected || on) FontWeight.Black else FontWeight.Bold,
+                        fontWeight = if (selected) FontWeight.Black else FontWeight.Bold,
                         letterSpacing = 0.6.sp,
                         maxLines = 1
                     )
@@ -4238,31 +4242,17 @@ private fun PremiumReverbCard(uiState: PlayerUiState, viewModel: PlayerViewModel
             .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        // Header
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Icon(Icons.Rounded.Waves, null, tint = PremiumAccent, modifier = Modifier.size(16.dp))
-                Text(
-                    "REVERB ENGINE",
-                    color = Color.White,
-                    fontWeight = FontWeight.Black,
-                    fontSize = 12.sp,
-                    letterSpacing = 2.sp
-                )
-            }
-
+        // Header: same icon tile + title + subtitle + switch as the Surround page.
+        DspPageHeader(Icons.Rounded.Waves, "REVERB", "Space and depth. Your room.") {
             if (isReverbBypassed) {
                 Box(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(6.dp))
+                        .clip(RoundedCornerShape(50))
                         .background(Color.White.copy(0.05f))
-                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                        .border(1.dp, Color.White.copy(0.12f), RoundedCornerShape(50))
+                        .padding(horizontal = 10.dp, vertical = 5.dp)
                 ) {
-                    Text("BYPASSED", color = Color.White.copy(0.3f), fontSize = 9.sp, fontWeight = FontWeight.Black)
+                    Text("BYPASSED", color = Color(0xFFFFB74D), fontSize = 9.sp, fontWeight = FontWeight.Black, letterSpacing = 1.sp)
                 }
             } else {
                 PremiumSwitch(
@@ -4282,95 +4272,84 @@ private fun PremiumReverbCard(uiState: PlayerUiState, viewModel: PlayerViewModel
             accentColor = PremiumAccent
         )
 
-        // Control Buttons Row
+        // Environment picker + quick actions, as pills like the Surround layout buttons.
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            val isEnabled = config.reverbEnabled && !isReverbBypassed
-
-            // Preset Selection Button
-            Surface(
-                onClick = { if (!isReverbBypassed) showPresetPicker = true },
-                enabled = !isReverbBypassed,
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.weight(1f).height(40.dp),
-                color = Color.White.copy(0.04f),
-                border = BorderStroke(1.dp, Color.White.copy(0.1f))
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .height(46.dp)
+                    .dspPill(!isReverbBypassed)
+                    .clickable(enabled = !isReverbBypassed) { showPresetPicker = true }
+                    .padding(horizontal = 16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text(config.reverbPreset, color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                    Icon(Icons.Rounded.KeyboardArrowDown, null, tint = Color.White.copy(0.4f), modifier = Modifier.size(16.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Rounded.Waves, null, tint = if (isReverbBypassed) Color.White.copy(0.3f) else PremiumAccent, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        config.reverbPreset,
+                        color = Color.White.copy(if (isReverbBypassed) 0.4f else 1f),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Black,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 }
+                Icon(Icons.Rounded.KeyboardArrowDown, null, tint = Color.White.copy(0.5f), modifier = Modifier.size(18.dp))
             }
-
-            // Quick Actions
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                ReverbActionIcon(Icons.Rounded.Save, onClick = { newReverbPresetName = ""; showSavePresetDialog = true }, enabled = !isReverbBypassed)
-                ReverbActionIcon(Icons.Rounded.RestartAlt, onClick = { viewModel.resetReverb() }, enabled = !isReverbBypassed)
-            }
+            ReverbActionIcon(Icons.Rounded.Save, onClick = { newReverbPresetName = ""; showSavePresetDialog = true }, enabled = !isReverbBypassed)
+            ReverbActionIcon(Icons.Rounded.RestartAlt, onClick = { viewModel.resetReverb() }, enabled = !isReverbBypassed)
         }
 
         val knobSizeSmall = 70.dp
         val reverbActive = config.reverbEnabled && !isReverbBypassed
 
-        // Main Mix Area
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(20.dp))
-                .background(Brush.radialGradient(listOf(PremiumAccent.copy(0.08f), Color.Transparent)))
-                .padding(vertical = 2.dp),
-            contentAlignment = Alignment.Center
+        // Everything below softly dims while reverb is off or bypassed, like the Surround page.
+        Column(
+            modifier = Modifier.fillMaxWidth().alpha(if (reverbActive) 1f else 0.6f),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            KnobControl(
-                label = "WET MIX",
-                value = config.reverbAmount,
-                onValueChange = viewModel::setReverbAmount,
-                range = 0f..1f,
-                unit = "x",
-                knobSize = 100.dp,
-                isBipolar = false,
-                enabled = !isReverbBypassed,
-                active = config.reverbEnabled,
-                onToggle = { viewModel.setReverbEnabled(!config.reverbEnabled) },
-                onLongPress = { onEditValue(EditingValue("WET MIX", config.reverbAmount, 0f..1f, viewModel::setReverbAmount)) }
-            )
-        }
-
-        // Section: Room Characteristics
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            MasteringSectionHeader("ROOM ACOUSTICS", Icons.Rounded.HomeWork, isActive = reverbActive)
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(20.dp))
-                    .background(Brush.radialGradient(listOf(PremiumAccent.copy(0.06f), Color.Transparent)))
-                    .padding(vertical = 2.dp)
+            // Main mix
+            Column(
+                modifier = Modifier.fillMaxWidth().dspSubPanel(),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
+                MasteringSectionHeader("MIX", Icons.Rounded.Tune, isActive = reverbActive)
+                Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    KnobControl(
+                        label = "WET MIX",
+                        value = config.reverbAmount,
+                        onValueChange = viewModel::setReverbAmount,
+                        range = 0f..1f,
+                        unit = "x",
+                        knobSize = 100.dp,
+                        isBipolar = false,
+                        enabled = !isReverbBypassed,
+                        active = config.reverbEnabled,
+                        onToggle = { viewModel.setReverbEnabled(!config.reverbEnabled) },
+                        onLongPress = { onEditValue(EditingValue("WET MIX", config.reverbAmount, 0f..1f, viewModel::setReverbAmount)) }
+                    )
+                }
+            }
+
+            // Section: Room Characteristics
+            Column(modifier = Modifier.fillMaxWidth().dspSubPanel(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                MasteringSectionHeader("ROOM ACOUSTICS", Icons.Rounded.HomeWork, isActive = reverbActive)
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceAround) {
                     KnobControl("DAMPING", config.reverbDamping, viewModel::setReverbDamping, 0f..1f, "x", knobSizeSmall, false, !isReverbBypassed, reverbActive, {}, { onEditValue(EditingValue("DAMPING", config.reverbDamping, 0f..1f, viewModel::setReverbDamping)) })
                     KnobControl("WIDTH", config.reverbWidth, viewModel::setReverbWidth, 0f..1f, "x", knobSizeSmall, false, !isReverbBypassed, reverbActive, {}, { onEditValue(EditingValue("WIDTH", config.reverbWidth, 0f..1f, viewModel::setReverbWidth)) })
                     KnobControl("DECAY", config.reverbDecay, viewModel::setReverbDecay, 0f..1f, "x", knobSizeSmall, false, !isReverbBypassed, reverbActive, {}, { onEditValue(EditingValue("DECAY", config.reverbDecay, 0f..1f, viewModel::setReverbDecay)) })
                 }
             }
-        }
 
-        // Section: Timing & Structure
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            MasteringSectionHeader("TIMING & STRUCTURE", Icons.Rounded.Timer, isActive = reverbActive)
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(20.dp))
-                    .background(Brush.radialGradient(listOf(PremiumAccent.copy(0.06f), Color.Transparent)))
-                    .padding(vertical = 2.dp)
-            ) {
+            // Section: Timing & Structure
+            Column(modifier = Modifier.fillMaxWidth().dspSubPanel(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                MasteringSectionHeader("TIMING & STRUCTURE", Icons.Rounded.Timer, isActive = reverbActive)
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceAround) {
                     KnobControl("PRE-DELAY", config.reverbPredelayMs, viewModel::setReverbPredelay, 0f..250f, "ms", knobSizeSmall, false, !isReverbBypassed, reverbActive, {}, { onEditValue(EditingValue("PRE-DELAY", config.reverbPredelayMs, 0f..250f, viewModel::setReverbPredelay)) })
                     KnobControl("DRY/WET", config.reverbPredelayMix, viewModel::setReverbPredelayMix, 0f..1f, "x", knobSizeSmall, false, !isReverbBypassed, reverbActive, {}, { onEditValue(EditingValue("DRY/WET MIX", config.reverbPredelayMix, 0f..1f, viewModel::setReverbPredelayMix)) })
@@ -4381,7 +4360,7 @@ private fun PremiumReverbCard(uiState: PlayerUiState, viewModel: PlayerViewModel
 
         // Footer Stats
         Row(
-            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceEvenly
         ) {
             StatChip("REVERB", "${(config.reverbAmount * 100).roundToInt()}%")
@@ -4506,11 +4485,10 @@ private fun ReverbActionIcon(icon: ImageVector, onClick: () -> Unit, enabled: Bo
         onClick = onClick,
         enabled = enabled,
         modifier = Modifier
-            .size(40.dp)
-            .background(Color.White.copy(0.04f), RoundedCornerShape(12.dp))
-            .border(1.dp, Color.White.copy(0.1f), RoundedCornerShape(12.dp))
+            .size(46.dp)
+            .dspPill(enabled)
     ) {
-        Icon(icon, null, tint = if (enabled) Color.White else Color.White.copy(0.2f), modifier = Modifier.size(18.dp))
+        Icon(icon, null, tint = if (enabled) PremiumAccent else Color.White.copy(0.2f), modifier = Modifier.size(20.dp))
     }
 }
 
@@ -4524,45 +4502,34 @@ private fun PremiumMasteringCard(uiState: PlayerUiState, viewModel: PlayerViewMo
             .fillMaxWidth()
             .dspPanel()
             .padding(14.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Icon(Icons.Rounded.AutoAwesome, null, tint = PremiumAccent, modifier = Modifier.size(16.dp))
-                Text(
-                    "MASTERING & ENHANCEMENTS",
-                    color = Color.White,
-                    fontWeight = FontWeight.Black,
-                    fontSize = 12.sp,
-                    letterSpacing = 2.sp
-                )
-            }
+        // Header: same icon tile + title + subtitle as the Surround page.
+        DspPageHeader(Icons.Rounded.AutoAwesome, "MASTERING", "Tone, width and air. Polished.") {
             if (isBypassed) {
                 Box(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(6.dp))
+                        .clip(RoundedCornerShape(50))
                         .background(Color.White.copy(0.05f))
-                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                        .border(1.dp, Color.White.copy(0.12f), RoundedCornerShape(50))
+                        .padding(horizontal = 10.dp, vertical = 5.dp)
                 ) {
-                    Text("BYPASSED", color = Color.White.copy(0.3f), fontSize = 9.sp, fontWeight = FontWeight.Black)
+                    Text("BYPASSED", color = Color(0xFFFFB74D), fontSize = 9.sp, fontWeight = FontWeight.Black, letterSpacing = 1.sp)
                 }
             }
         }
 
-        // GRID 3x2 (3 rows, 2 columns) with enhanced styling
         val knobSize = 84.dp
         val controlsEnabled = !isBypassed
 
         Column(
-            modifier = Modifier.fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
+            modifier = Modifier
+                .fillMaxWidth()
+                .alpha(if (controlsEnabled) 1f else 0.6f),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             // Section 1: Tone
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Column(modifier = Modifier.fillMaxWidth().dspSubPanel(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 MasteringSectionHeader("TONAL BALANCE", Icons.Rounded.Equalizer, isActive = config.bassEnabled || config.trebleEnabled)
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
                     KnobControl("BASS", config.bassDb, viewModel::setBassDb, -12f..12f, "dB", knobSize, true, controlsEnabled, config.bassEnabled, { viewModel.setBassEnabled(!config.bassEnabled) }, { onEditValue(EditingValue("BASS", config.bassDb, -12f..12f, viewModel::setBassDb)) })
@@ -4571,7 +4538,7 @@ private fun PremiumMasteringCard(uiState: PlayerUiState, viewModel: PlayerViewMo
             }
 
             // Section 2: Space
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Column(modifier = Modifier.fillMaxWidth().dspSubPanel(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 MasteringSectionHeader("STEREO IMAGING", Icons.Rounded.CenterFocusWeak, isActive = config.stereoExpansionEnabled || config.balanceEnabled)
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
                     KnobControl("STEREO", config.stereoWidth, viewModel::setStereoWidth, 0.5f..2.0f, "x", knobSize, false, controlsEnabled, config.stereoExpansionEnabled, { viewModel.setStereoExpansionEnabled(!config.stereoExpansionEnabled) }, { onEditValue(EditingValue("STEREO WIDTH", config.stereoWidth, 0.5f..2.0f, viewModel::setStereoWidth)) })
@@ -4580,7 +4547,7 @@ private fun PremiumMasteringCard(uiState: PlayerUiState, viewModel: PlayerViewMo
             }
 
             // Section 3: Fine Tune
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Column(modifier = Modifier.fillMaxWidth().dspSubPanel(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 MasteringSectionHeader("ENHANCEMENTS", Icons.Rounded.AutoAwesome, isActive = config.airEnabled || config.soundStageEnabled || config.spatialAudioEnabled)
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
                     KnobControl("AIR", config.airDb, viewModel::setAirDb, -12f..12f, "dB", knobSize, true, controlsEnabled, config.airEnabled, { viewModel.setAirEnabled(!config.airEnabled) }, { onEditValue(EditingValue("AIR", config.airDb, -12f..12f, viewModel::setAirDb)) })
@@ -4605,41 +4572,20 @@ private fun PremiumMasteringCard(uiState: PlayerUiState, viewModel: PlayerViewMo
 
 @Composable
 internal fun MasteringSectionHeader(label: String, icon: ImageVector, isActive: Boolean = false) {
-    val alpha = if (isActive) 1f else 0.38f
-    val iconAlpha = if (isActive) 1f else 0.3f
+    // Same title row as the Surround page's CHANNEL LEVELS / PRESETS cards.
     Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Box(
-            modifier = Modifier
-                .size(20.dp)
-                .clip(CircleShape)
-                .background(
-                    if (isActive) Brush.linearGradient(listOf(PremiumAccent.copy(0.30f), DspViolet.copy(0.30f)))
-                    else Brush.linearGradient(listOf(Color.White.copy(0.06f), Color.White.copy(0.06f)))
-                ),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(icon, null, tint = if (isActive) PremiumAccentSoft else Color.White.copy(iconAlpha), modifier = Modifier.size(12.dp))
-        }
+        Icon(icon, null, tint = if (isActive) PremiumAccent else Color.White.copy(0.35f), modifier = Modifier.size(20.dp))
+        Spacer(Modifier.width(8.dp))
         Text(
             label,
-            color = Color.White.copy(alpha),
+            color = if (isActive) Color.White else Color.White.copy(0.55f),
+            fontSize = 13.sp,
             fontWeight = FontWeight.Black,
-            fontSize = 9.sp,
-            letterSpacing = 1.8.sp
-        )
-        Box(
-            Modifier
-                .weight(1f)
-                .height(1.dp)
-                .background(
-                    Brush.horizontalGradient(
-                        listOf(if (isActive) PremiumAccent.copy(0.45f) else Color.White.copy(0.10f), Color.Transparent)
-                    )
-                )
+            letterSpacing = 1.5.sp,
+            modifier = Modifier.weight(1f)
         )
     }
 }
