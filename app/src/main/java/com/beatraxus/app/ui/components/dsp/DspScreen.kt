@@ -3013,12 +3013,39 @@ private fun PremiumSoundStageCard(
         )
     }
 
+    val isModern = config.spatialUiMode == SpatialUiMode.MODERN
+    val headerOn = if (isModern) config.spatialAudioEnabled else config.audio3DStageEnabled
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(bottom = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(20.dp)
+            .dspPanel()
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        // Header: same icon tile + title + subtitle + switch as the Surround, Master and Reverb pages.
+        DspPageHeader(Icons.Rounded.ViewInAr, "SPATIAL", "Sound stage and 3D space. Around you.") {
+            if (isSpatialBypassed) {
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .background(Color.White.copy(0.05f))
+                        .border(1.dp, Color.White.copy(0.12f), RoundedCornerShape(50))
+                        .padding(horizontal = 10.dp, vertical = 5.dp)
+                ) {
+                    Text("BYPASSED", color = Color(0xFFFFB74D), fontSize = 9.sp, fontWeight = FontWeight.Black, letterSpacing = 1.sp)
+                }
+            } else {
+                PremiumSwitch(
+                    checked = headerOn,
+                    onCheckedChange = {
+                        if (isModern) viewModel.setSpatialAudioEnabled(it) else viewModel.setAudio3DStageEnabled(it)
+                    },
+                    accentColor = PremiumAccent
+                )
+            }
+        }
+
         // Bit-Perfect mode bypasses Spatial / Sound Stage (Classic and Modern); this switch lets it run.
         BitPerfectUnbypassRow(
             label = "Spatial audio",
@@ -3029,12 +3056,10 @@ private fun PremiumSoundStageCard(
         )
 
         // Spatial mode toggle
-        Column(
+        Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            horizontalArrangement = Arrangement.Center
         ) {
-            // UI Mode Toggle
             Row(
                 modifier = Modifier
                     .background(DspInk.copy(0.6f), RoundedCornerShape(50))
@@ -3051,7 +3076,7 @@ private fun PremiumSoundStageCard(
             }
         }
 
-        if (config.spatialUiMode == SpatialUiMode.MODERN) {
+        if (isModern) {
             ModernSpatialAudioContent(uiState, viewModel, onEditValue)
         } else {
             ClassicSpatialAudioCard(uiState, viewModel, onEditValue)
@@ -3096,10 +3121,8 @@ private fun ClassicSpatialAudioCard(
     val spatialActive = config.audio3DStageEnabled
 
     Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(bottom = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(20.dp)
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         ClassicSoundStageView(uiState, viewModel)
         ClassicControlPanel(uiState, viewModel, onEditValue)
@@ -3353,40 +3376,10 @@ private fun ClassicControlPanel(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .dspPanel(26.dp)
-            .padding(14.dp),
+            .dspSubPanel(),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                "SPATIAL ANALYZER (CLASSIC)",
-                color = PremiumAccent.copy(0.8f),
-                fontWeight = FontWeight.Black,
-                fontSize = 10.sp,
-                letterSpacing = 1.5.sp
-            )
-
-            if (isSpatialBypassed) {
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(Color.White.copy(0.05f))
-                        .padding(horizontal = 8.dp, vertical = 4.dp)
-                ) {
-                    Text("BYPASSED", color = Color.White.copy(0.3f), fontSize = 9.sp, fontWeight = FontWeight.Black)
-                }
-            } else {
-                PremiumSwitch(
-                    checked = config.audio3DStageEnabled,
-                    onCheckedChange = { viewModel.setAudio3DStageEnabled(it) },
-                    accentColor = PremiumAccent
-                )
-            }
-        }
+        MasteringSectionHeader("SPATIAL ANALYZER", Icons.Rounded.Tune, isActive = spatialActive)
 
         SoundStageSliderRow(
             title = "Width",
@@ -3452,7 +3445,7 @@ private fun ModernSpatialAudioContent(
         )
     }
 
-    Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         BoxWithConstraints(
             modifier = Modifier
                 .fillMaxWidth()
@@ -3691,8 +3684,7 @@ private fun ModernSpatialAudioContent(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .dspPanel(26.dp)
-                .padding(14.dp)
+                .dspSubPanel()
                 .graphicsLayer { alpha = if (spatialActive) 1f else 0.4f },
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
@@ -3701,13 +3693,7 @@ private fun ModernSpatialAudioContent(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    "SPATIAL ANALYZER",
-                    color = PremiumAccent.copy(0.8f),
-                    fontWeight = FontWeight.Black,
-                    fontSize = 10.sp,
-                    letterSpacing = 1.5.sp
-                )
+                MasteringSectionHeader("SPATIAL ANALYZER", Icons.Rounded.Tune, isActive = spatialActive, modifier = Modifier.weight(1f))
 
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -3872,44 +3858,10 @@ private fun ModernSpatialAudioContent(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .dspPanel(22.dp)
-                .padding(14.dp),
+                .dspSubPanel(),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    "3D SPATIAL AUDIO",
-                    color = PremiumAccent.copy(0.6f),
-                    fontWeight = FontWeight.Black,
-                    fontSize = 9.sp,
-                    letterSpacing = 1.sp
-                )
-                if (isSpatialBypassed) {
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(Color.White.copy(0.05f))
-                            .padding(horizontal = 8.dp, vertical = 4.dp)
-                    ) {
-                        Text(
-                            "BYPASSED",
-                            color = Color.White.copy(0.3f),
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.Black
-                        )
-                    }
-                } else {
-                PremiumSwitch(
-                    checked = config.spatialAudioEnabled,
-                    onCheckedChange = { viewModel.setSpatialAudioEnabled(it) },
-                    accentColor = PremiumAccent
-                )
-                }
-            }
+            MasteringSectionHeader("3D SPATIAL AUDIO", Icons.Rounded.ViewInAr, isActive = spatialActive)
 
             Column {
                 SoundStageSliderRow(
@@ -4571,10 +4523,10 @@ private fun PremiumMasteringCard(uiState: PlayerUiState, viewModel: PlayerViewMo
 }
 
 @Composable
-internal fun MasteringSectionHeader(label: String, icon: ImageVector, isActive: Boolean = false) {
+internal fun MasteringSectionHeader(label: String, icon: ImageVector, isActive: Boolean = false, modifier: Modifier = Modifier.fillMaxWidth()) {
     // Same title row as the Surround page's CHANNEL LEVELS / PRESETS cards.
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier,
         verticalAlignment = Alignment.CenterVertically
     ) {
         Icon(icon, null, tint = if (isActive) PremiumAccent else Color.White.copy(0.35f), modifier = Modifier.size(20.dp))
