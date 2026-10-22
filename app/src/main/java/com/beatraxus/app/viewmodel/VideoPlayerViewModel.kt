@@ -27,6 +27,7 @@ import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.ui.CaptionStyleCompat
 import com.beatraxus.app.BeatraxusApplication
 import com.beatraxus.app.engine.AudioEngine
@@ -55,6 +56,8 @@ import com.beatraxus.app.model.SURROUND_CUSTOM_PRESET_NAME
 import com.beatraxus.app.model.SurroundLayout
 import com.beatraxus.app.model.SurroundMode
 import com.beatraxus.app.model.Video
+import com.beatraxus.app.model.VideoInfoData
+import com.beatraxus.app.model.VideoStreamInfo
 import com.beatraxus.app.model.VideoOrientation
 import com.beatraxus.app.model.SavedEqPreset
 import com.beatraxus.app.model.sanitizeSurroundTrims
@@ -65,6 +68,7 @@ import com.beatraxus.app.model.VideoRecentlyPlayedEntity
 import com.beatraxus.app.colorgrade.ColorGradeEffect
 import com.beatraxus.app.deinterlace.DeinterlaceEffect
 import com.beatraxus.app.model.DeinterlaceMode
+import com.beatraxus.app.model.AudioStreamInfo
 import com.beatraxus.app.model.NightFilterMath
 import com.beatraxus.app.model.NightFilterMode
 import com.beatraxus.app.model.NightFilterSettings
@@ -108,6 +112,8 @@ data class VideoPlayerUiState(
     val deinterlaceMode: DeinterlaceMode = DeinterlaceMode.OFF,
     /** Feature 17: warm night / blue-light veil over the player. Remembered between sessions. */
     val nightFilter: NightFilterSettings = NightFilterSettings(),
+    /** Feature 20: codec / bitrate / frame rate facts for the info panel. Refreshed while the panel is open. */
+    val videoInfo: VideoInfoData? = null,
     val isVolumeBoost: Boolean = false,
     val subtitleOffset: Float = 0f,
     val showTotalTime: Boolean = false,
@@ -365,6 +371,10 @@ class VideoPlayerViewModel(
     
     private val colorGradeEffect = ColorGradeEffect(0f, 1f, 1f)
     private val deinterlaceEffect = DeinterlaceEffect(DeinterlaceMode.OFF)
+
+    // Feature 20: decoder names the device picked, reported by the player.
+    private var videoDecoderName: String? = null
+    private var audioDecoderName: String? = null
 
     private var pendingAudioTrackIndex = -1
     private var pendingSubtitleTrackIndex = -1
@@ -626,6 +636,22 @@ class VideoPlayerViewModel(
                     }
                 }
             }
+
+        player.addAnalyticsListener(object : AnalyticsListener {
+            override fun onVideoDecoderInitialized(
+                eventTime: AnalyticsListener.EventTime, decoderName: String,
+                initializedTimestampMs: Long, initializationDurationMs: Long
+            ) {
+                videoDecoderName = decoderName
+            }
+
+            override fun onAudioDecoderInitialized(
+                eventTime: AnalyticsListener.EventTime, decoderName: String,
+                initializedTimestampMs: Long, initializationDurationMs: Long
+            ) {
+                audioDecoderName = decoderName
+            }
+        })
 
         player.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -2072,6 +2098,53 @@ class VideoPlayerViewModel(
     fun setForceSdrToneMapping(force: Boolean) {
         _uiState.update { it.copy(forceSdrToneMapping = force) }
         updateVideoEffects()
+    }
+
+    /** Feature 20. Reads the facts of the current video from the player; the info sheet calls it every second. */
+    fun refreshVideoInfo() {
+        val player = exoPlayer ?: return
+        val video = _uiState.value.currentVideo
+        val vf = player.videoFormat
+        val af = player.audioFormat
+        val counters = player.videoDecoderCounters?.also { it.ensureUpdated() }
+        val playerDuration = player.duration.takeIf { it != C.TIME_UNSET && it > 0 }
+        val info = VideoInfoData(
+            fileName = video?.displayName?.takeIf { it.isNotBlank() } ?: video?.title.orEmpty(),
+            location = video?.let { if (it.isCloud) it.source.name.lowercase().replaceFirstChar { c -> c.uppercase() } else it.folderPath },
+            containerMime = vf?.containerMimeType ?: video?.mimeType,
+            sizeBytes = video?.sizeBytes ?: 0L,
+            durationMs = playerDuration ?: video?.durationMs ?: 0L,
+            isStreamed = video?.isCloud == true,
+            video = vf?.let {
+                VideoStreamInfo(
+                    mimeType = it.sampleMimeType,
+                    codecs = it.codecs,
+                    width = it.width.coerceAtLeast(0),
+                    height = it.height.coerceAtLeast(0),
+                    frameRate = it.frameRate.takeIf { fps -> fps > 0f } ?: 0f,
+                    bitrate = it.averageBitrate,
+                    peakBitrate = it.peakBitrate,
+                    colorTransfer = it.colorInfo?.colorTransfer ?: -1,
+                    colorSpace = it.colorInfo?.colorSpace ?: -1
+                )
+            },
+            audio = af?.let {
+                AudioStreamInfo(
+                    mimeType = it.sampleMimeType,
+                    codecs = it.codecs,
+                    channelCount = it.channelCount,
+                    sampleRate = it.sampleRate,
+                    bitrate = if (it.averageBitrate > 0) it.averageBitrate else it.peakBitrate,
+                    language = it.language,
+                    label = it.label
+                )
+            },
+            videoDecoder = videoDecoderName,
+            audioDecoder = audioDecoderName,
+            droppedFrames = counters?.droppedBufferCount ?: 0,
+            renderedFrames = counters?.renderedOutputBufferCount ?: 0
+        )
+        _uiState.update { it.copy(videoInfo = info) }
     }
 
     /** Feature 17. Off / always on / only in the evening. */

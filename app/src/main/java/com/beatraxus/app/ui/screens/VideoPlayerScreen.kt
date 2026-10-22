@@ -122,7 +122,7 @@ enum class GestureType {
 }
 
 enum class PlayerSheetType {
-    NONE, AUDIO, SUBTITLE, SPEED, ALL, EQUALIZER, SLEEP_TIMER, COLOR, AUDIO_DELAY, MOTION_BOOST, SURROUND, ORIENTATION, DEINTERLACE, NIGHT_FILTER
+    NONE, AUDIO, SUBTITLE, SPEED, ALL, EQUALIZER, SLEEP_TIMER, COLOR, AUDIO_DELAY, MOTION_BOOST, SURROUND, ORIENTATION, DEINTERLACE, NIGHT_FILTER, INFO
 }
 
 @UnstableApi
@@ -849,6 +849,7 @@ fun VideoPlayerScreen(
                         onOrientationClick = { sheetType = PlayerSheetType.ORIENTATION },
                         onDeinterlaceClick = { sheetType = PlayerSheetType.DEINTERLACE },
                         onNightFilterClick = { sheetType = PlayerSheetType.NIGHT_FILTER },
+                        onInfoClick = { sheetType = PlayerSheetType.INFO },
                         onSnapshotClick = {
                             val pv = playerViewRef
                             val video = uiState.currentVideo
@@ -1202,6 +1203,7 @@ fun FloatingControls(
     onDeinterlaceClick: () -> Unit,
     onSnapshotClick: () -> Unit,
     onNightFilterClick: () -> Unit,
+    onInfoClick: () -> Unit,
     onColorClick: () -> Unit,
     onAbRepeatClick: () -> Unit,
     onLoopClick: () -> Unit,
@@ -1302,6 +1304,12 @@ fun FloatingControls(
                 uiState.nightFilter.mode != com.beatraxus.app.model.NightFilterMode.OFF,
                 onNightFilterClick,
                 contentDescription = "Night filter"
+            )
+            VpToolButton(
+                Icons.Rounded.Info,
+                false,
+                onInfoClick,
+                contentDescription = "Video info: codec, bitrate and frame rate"
             )
             VpToolButton(
                 Icons.Rounded.Tune,
@@ -1908,6 +1916,7 @@ fun VideoSettingsSheetContent(
             PlayerSheetType.ORIENTATION -> "Rotate & Flip"
             PlayerSheetType.DEINTERLACE -> "Deinterlacing"
             PlayerSheetType.NIGHT_FILTER -> "Night Filter"
+            PlayerSheetType.INFO -> "Video Info"
             else -> "Settings"
         }
         
@@ -1936,6 +1945,29 @@ fun VideoSettingsSheetContent(
                 if (activeSheetType == PlayerSheetType.COLOR) {
                     IconButton(onClick = { viewModel.resetColorGrading() }) {
                         Icon(Icons.Rounded.RestartAlt, "Reset", tint = Color.White)
+                    }
+                }
+
+                if (activeSheetType == PlayerSheetType.INFO) {
+                    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+                    val copyContext = LocalContext.current
+                    IconButton(
+                        onClick = {
+                            uiState.videoInfo?.let { info ->
+                                val text = com.beatraxus.app.model.VideoInfoReport.toPlainText(
+                                    com.beatraxus.app.model.VideoInfoReport.sections(info)
+                                )
+                                clipboard.setText(androidx.compose.ui.text.AnnotatedString(text))
+                                android.widget.Toast.makeText(copyContext, "Video info copied", android.widget.Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        enabled = uiState.videoInfo != null
+                    ) {
+                        Icon(
+                            Icons.Rounded.ContentCopy,
+                            "Copy video info",
+                            tint = Color.White.copy(alpha = if (uiState.videoInfo != null) 1f else 0.35f)
+                        )
                     }
                 }
 
@@ -2403,6 +2435,11 @@ fun VideoSettingsSheetContent(
             VideoOrientationSection(uiState = uiState, viewModel = viewModel)
         }
 
+        // Video Info Section
+        if (activeSheetType == PlayerSheetType.INFO) {
+            VideoInfoSection(uiState = uiState, viewModel = viewModel)
+        }
+
         // Night Filter Section
         if (activeSheetType == PlayerSheetType.NIGHT_FILTER) {
             VideoNightFilterSection(uiState = uiState, viewModel = viewModel)
@@ -2423,6 +2460,43 @@ fun VideoSettingsSheetContent(
     }
 }
 
+
+/** Video info panel (feature 20): codec, resolution, frame rate, bitrate, decoder and audio facts. Updates every second. */
+@Composable
+fun VideoInfoSection(uiState: VideoPlayerUiState, viewModel: VideoPlayerViewModel) {
+    // Only runs while this section is on screen; dropped frames change as the video plays.
+    LaunchedEffect(Unit) {
+        while (true) {
+            viewModel.refreshVideoInfo()
+            delay(1000)
+        }
+    }
+    val info = uiState.videoInfo
+    val sections = remember(info) { info?.let { com.beatraxus.app.model.VideoInfoReport.sections(it) }.orEmpty() }
+    Column(modifier = Modifier.fillMaxWidth()) {
+        if (sections.isEmpty()) {
+            Text("Reading video info...", color = Color.White.copy(0.6f), fontSize = 13.sp)
+        }
+        sections.forEach { section ->
+            SettingSectionHeader(section.title)
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 10.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Color.White.copy(0.05f))
+                    .padding(horizontal = 14.dp, vertical = 6.dp)
+            ) {
+                section.rows.forEach { row ->
+                    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 5.dp), verticalAlignment = Alignment.Top) {
+                        Text(row.label, color = Color.White.copy(0.55f), fontSize = 12.sp, modifier = Modifier.width(92.dp))
+                        Text(row.value, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+                    }
+                }
+            }
+        }
+    }
+}
 
 /** Night / blue-light filter choices (feature 17). The tint over the player changes live while this sheet is open. */
 @Composable
