@@ -580,19 +580,6 @@ fun MainScreen(
     var playlistToDelete by remember { mutableStateOf<com.beatraxus.app.model.Playlist?>(null) }
     var showPipelineOverlay by remember { mutableStateOf(false) }
     var showDrawer by rememberSaveable { mutableStateOf(false) }
-    // Settings opened from the drawer keeps the drawer open underneath; when this screen is shown again
-    // (coming back from Settings) the drawer closes and the main screen returns to its normal size/place.
-    var closeDrawerOnReturn by rememberSaveable { mutableStateOf(false) }
-    DisposableEffect(inspectorLifecycleOwner) {
-        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
-            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME && closeDrawerOnReturn) {
-                closeDrawerOnReturn = false
-                showDrawer = false
-            }
-        }
-        inspectorLifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { inspectorLifecycleOwner.lifecycle.removeObserver(observer) }
-    }
 
     var categoryGridColumns by rememberSaveable { mutableIntStateOf(2) }
     var trackLayoutDensity by rememberSaveable { mutableIntStateOf(1) }
@@ -809,10 +796,7 @@ fun MainScreen(
                             }
                         }
                     },
-                    onNavigateToSettings = {
-                        closeDrawerOnReturn = true   // drawer stays open now, closes on return
-                        onNavigateToSettings()
-                    },
+                    onNavigateToSettings = onNavigateToSettings,
                     onNavigateToDsp = onNavigateToDsp,
                     onNavigateToPlayTogether = onNavigateToPlayTogether,
                     onClose = { showDrawer = false }
@@ -6649,7 +6633,9 @@ fun SlideDrawerMenu(
                         contentDescription = "Settings",
                         iconSize = 22.dp,
                         onClick = {
-                            // Drawer is NOT closed here: Settings slides in over it from the right.
+                            // Close the drawer and open Settings together: the drawer closes behind the
+                            // sliding Settings screen, so going back shows the normal main screen.
+                            onClose()
                             onNavigateToSettings()
                         }
                     )
