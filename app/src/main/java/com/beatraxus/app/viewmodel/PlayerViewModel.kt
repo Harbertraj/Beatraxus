@@ -3014,6 +3014,30 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         Log.d(TAG, "Navigating to live channel ${queue.startVideoId} (queue of ${queue.videos.size})")
     }
 
+    /**
+     * Feature 27: opens the video player on a link the user pasted. The link becomes a one-item queue; the same link
+     * always gets the same video id, so its resume position is remembered the next time it is opened.
+     */
+    fun playNetworkStream(url: String) {
+        val video = com.beatraxus.app.util.NetworkStreamLink.toVideo(url)
+
+        if (_uiState.value.isPlaying) {
+            service?.togglePlayPause()
+        }
+
+        _uiState.update { it.copy(
+            activeVideoQueue = listOf(video),
+            navigateToVideoPlayer = video.id
+        ) }
+
+        prefs.edit().apply {
+            putBoolean("bg_video_active", false)
+            apply()
+        }
+
+        Log.d(TAG, "Navigating to network stream ${video.id} (${video.title})")
+    }
+
     fun consumeVideoNavigation() {
         _uiState.update { it.copy(navigateToVideoPlayer = null) }
     }

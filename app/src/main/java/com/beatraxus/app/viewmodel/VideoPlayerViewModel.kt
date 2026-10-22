@@ -631,6 +631,10 @@ class VideoPlayerViewModel(
                         if (v.source == com.beatraxus.app.model.VideoSource.LIVE_TV) {
                             com.beatraxus.app.livetv.LiveTvPlayback.mimeTypeFor(v.uri)?.let { setMimeType(it) }
                         }
+                        // Feature 27: pasted links whose address hides that it is an HLS / DASH manifest.
+                        if (v.source == com.beatraxus.app.model.VideoSource.NETWORK) {
+                            com.beatraxus.app.util.NetworkStreamLink.mimeTypeFor(v.uri.toString())?.let { setMimeType(it) }
+                        }
                     }.build()
                 })
                 

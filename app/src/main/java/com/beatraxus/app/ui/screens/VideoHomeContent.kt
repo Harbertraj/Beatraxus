@@ -35,6 +35,7 @@ import androidx.compose.material.icons.rounded.AccessTime
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.FolderCopy
 import androidx.compose.material.icons.rounded.History
+import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material.icons.rounded.NewReleases
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.VideoLibrary
@@ -165,6 +166,17 @@ fun LazyListScope.videoHomeItems(
 
     // ── Library shortcuts ───────────────────────────────────────────────
     item(key = "VIDEO_SHORTCUTS") {
+        // Feature 27: open a pasted network or stream link.
+        var showOpenStream by remember { mutableStateOf(false) }
+        if (showOpenStream) {
+            com.beatraxus.app.ui.components.OpenNetworkStreamDialog(
+                onDismiss = { showOpenStream = false },
+                onPlay = { url ->
+                    showOpenStream = false
+                    viewModel.playNetworkStream(url)
+                }
+            )
+        }
         Column(
             Modifier.fillMaxWidth().padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -188,6 +200,13 @@ fun LazyListScope.videoHomeItems(
                     "Recently Played", Icons.Rounded.History, Color(0xFFBF5AF2),
                     Modifier.weight(1f)
                 ) { viewModel.setLibraryView(LibraryView.VIDEO_RECENTLY_PLAYED) }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                ShortcutTile(
+                    "Network Stream", Icons.Rounded.Link, Color(0xFF30D158),
+                    Modifier.weight(1f)
+                ) { showOpenStream = true }
+                Spacer(Modifier.weight(1f))
             }
         }
         Spacer(Modifier.height(8.dp))

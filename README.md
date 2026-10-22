@@ -83,6 +83,7 @@ Implemented in `app/src/main/cpp/SpecialDSP.cpp` and exposed through JNI (`Nativ
 - **FPS Booster**: GPU optical-flow frame interpolation (45 / 60 / 90 / 120 FPS targets), with adaptive quality, thermal monitoring and a benchmark tool. See [`docs/FPS_BOOSTER.md`](docs/FPS_BOOSTER.md) for its status and limitations.
 - **Color grading** and thumbnail sprite generation for seek previews.
 - Cloud, Telegram and add-on sources are playable as video too.
+- **Open network stream**: paste an http(s) link to a video file, HLS (`.m3u8`) or DASH (`.mpd`) stream from the video home screen and play it directly; the same link remembers its resume position.
 
 ### Play Together
 Listen in sync with friends. Each phone plays the matching song from its own library (matched by title, artist and duration), and the room keeps playback synchronized via Firebase Realtime Database (REST + server-sent events, no Firebase SDK). Phones that lack the song can receive it through peer-to-peer transfer (WebRTC data channel), Nearby (Bluetooth / Wi-Fi Direct) or a local Wi-Fi hotspot route.

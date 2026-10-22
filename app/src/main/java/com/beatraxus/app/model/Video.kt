@@ -5,8 +5,9 @@ import android.net.Uri
 /**
  * Where a video lives. LOCAL = on-device (MediaStore); everything else is streamed. LIVE_TV marks an IPTV channel
  * (see the livetv package): it is streamed like a cloud video, never scanned, and never saved to watch history.
+ * NETWORK (Feature 27) is a link the user pasted ("Open network stream"): it is never scanned or listed in the library.
  */
-enum class VideoSource { LOCAL, TELEGRAM, GDRIVE, ONEDRIVE, DROPBOX, BOX, NEXTCLOUD, LIVE_TV }
+enum class VideoSource { LOCAL, TELEGRAM, GDRIVE, ONEDRIVE, DROPBOX, BOX, NEXTCLOUD, LIVE_TV, NETWORK }
 
 data class Video(
     val id: String,
