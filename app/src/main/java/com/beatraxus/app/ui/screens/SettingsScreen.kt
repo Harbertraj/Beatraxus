@@ -1384,6 +1384,26 @@ fun NowPlayingAppearanceContent(uiState: PlayerUiState, playerViewModel: PlayerV
             )
         }
 
+        if (appearance.nowPlayingFullCoverArt) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                    Text("HD Cover", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    Text(
+                        "Uses the original embedded cover and sharpens it. The cover is always shown whole, so faces and text are not cut off",
+                        color = Color.White.copy(0.6f), fontSize = 12.sp
+                    )
+                }
+                PremiumSwitch(
+                    checked = appearance.nowPlayingHdCover,
+                    onCheckedChange = { playerViewModel.setNowPlayingHdCover(it) }
+                )
+            }
+        }
+
         HorizontalDivider(color = Color.White.copy(0.05f))
 
         var expandedTransform by remember { mutableStateOf(false) }

@@ -5831,6 +5831,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun setNowPlayingHdCover(enabled: Boolean) {
+        viewModelScope.launch {
+            appearancePreferences.setNowPlayingHdCover(enabled)
+        }
+    }
+
     fun setNowPlayingBlurIntensity(value: Float) {
         viewModelScope.launch {
             appearancePreferences.setNowPlayingBlurIntensity(value)

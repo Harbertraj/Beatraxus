@@ -199,6 +199,8 @@ data class AppearanceConfig(
     val albumArtTransform: AlbumArtTransform = AlbumArtTransform.SOFT_FADE,
     /** Full-screen cover art on the Now Playing screen (off by default). */
     val nowPlayingFullCoverArt: Boolean = false,
+    /** Full Cover Art: load the original embedded cover, sharpen/upscale it (on by default). */
+    val nowPlayingHdCover: Boolean = true,
     val qualityBadgeStyle: QualityBadgeStyle = QualityBadgeStyle.GLASSMORPHIC,
 
     val seekbarStyle: SeekbarStyle = SeekbarStyle.BEATRAXUS_MATRIX,

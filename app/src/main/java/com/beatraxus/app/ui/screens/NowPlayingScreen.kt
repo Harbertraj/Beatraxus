@@ -94,6 +94,7 @@ import com.beatraxus.app.ui.components.seekbars.AppSeekBar
 import com.beatraxus.app.ui.components.CoverMeshBackground
 import com.beatraxus.app.ui.components.CoverNavTracker
 import com.beatraxus.app.ui.components.CoverPalette
+import com.beatraxus.app.ui.components.FullCoverLayer
 import com.beatraxus.app.ui.components.KaraokeLyricsView
 import com.beatraxus.app.ui.components.PremiumSwitch
 import com.beatraxus.app.ui.components.rememberCoverPalette
@@ -445,6 +446,8 @@ fun NowPlayingScreen(
             FullCoverArtBackground(
                 artUri = song.albumArtUri,
                 songKey = song.id,
+                audioUri = song.uri,
+                hdCover = appearance.nowPlayingHdCover,
                 isBlurred = isFullCoverArtBlurred,
                 // Lyrics and queue: much stronger blur on the cover area.
                 strongBlur = showLyrics || showQueue,
@@ -2206,6 +2209,8 @@ private fun SongQueueItem(
 private fun FullCoverArtBackground(
     artUri: Any?,
     songKey: Any?,
+    audioUri: android.net.Uri? = null,
+    hdCover: Boolean = true,
     isBlurred: Boolean = false,
     strongBlur: Boolean = false,
     transform: AlbumArtTransform = AlbumArtTransform.SOFT_FADE,
@@ -2231,87 +2236,32 @@ private fun FullCoverArtBackground(
     )
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
-        // Roughly square-plus: keeps the whole cover readable and avoids blowing a small
-        // (often 512px) cached cover up far beyond its resolution, which is what made it look soft.
+        // Roughly square-plus box. The cover is fitted to the full width inside it (nothing is cut at
+        // the sides); whatever the cover does not reach is filled by a blurred copy of itself.
         val artHeight = (maxWidth * 1.22f).coerceAtMost(maxHeight * 0.64f)
 
         Box(
             Modifier
                 .fillMaxWidth()
                 .height(artHeight)
-                .graphicsLayer {
-                    compositingStrategy = CompositingStrategy.Offscreen
-                }
-                .drawWithContent {
-                    drawContent()
-                    // Eased fade-out of the cover's own alpha (smoothstep-like) so the
-                    // mesh shows through underneath with no visible edge.
-                    drawRect(
-                        brush = Brush.verticalGradient(
-                            0f to Color.Black,
-                            0.52f to Color.Black,
-                            0.64f to Color.Black.copy(alpha = 0.90f),
-                            0.76f to Color.Black.copy(alpha = 0.64f),
-                            0.87f to Color.Black.copy(alpha = 0.30f),
-                            0.95f to Color.Black.copy(alpha = 0.08f),
-                            1f to Color.Transparent
-                        ),
-                        blendMode = BlendMode.DstIn
-                    )
-                }
         ) {
             AnimatedContent(
-                targetState = songKey to artUri,
+                targetState = Triple(songKey, artUri, audioUri),
                 transitionSpec = { fullCoverTransition(transform, direction) },
                 label = "fullCoverArt",
                 modifier = Modifier.fillMaxSize()
-            ) { (_, uri) ->
-                AsyncImage(
-                    model = ImageRequest.Builder(LocalContext.current)
-                        .data(uri)
-                        .diskCachePolicy(CachePolicy.ENABLED)
-                        .memoryCachePolicy(CachePolicy.ENABLED)
-                        .size(1080, 1080)
-                        .precision(Precision.INEXACT)
-                        .crossfade(true)
-                        .error(ImageUtils.getDefaultAlbumArtRes())
-                        .fallback(ImageUtils.getDefaultAlbumArtRes())
-                        .apply {
-                            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S && isBlurred) {
-                                transformations(FastBlurTransformation(if (strongBlur) 90f else 25f))
-                            }
-                        }
-                        .build(),
-                    contentDescription = null,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .then(
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && blurRadius > 0.dp) {
-                                // Rectangle (not Unbounded) so the image edges don't fade out at the screen sides.
-                                Modifier.blur(radius = blurRadius, edgeTreatment = BlurredEdgeTreatment.Rectangle)
-                            } else Modifier
-                        ),
-                    contentScale = ContentScale.Crop,
-                    alignment = Alignment.TopCenter,
-                    filterQuality = FilterQuality.High
+            ) { (key, uri, audio) ->
+                FullCoverLayer(
+                    uri = uri,
+                    songId = key,
+                    audioUri = audio,
+                    hdEnabled = hdCover,
+                    isBlurred = isBlurred,
+                    strongBlur = strongBlur,
+                    blurRadius = blurRadius,
+                    blurDim = blurDim
                 )
             }
-            if (blurDim > 0f) {
-                Box(
-                    Modifier
-                        .fillMaxSize()
-                        .background(Color.Black.copy(alpha = blurDim))
-                )
-            }
-            // Light scrim under the status bar / title so the white icons stay readable.
-            Box(
-                Modifier.fillMaxSize().background(
-                    Brush.verticalGradient(
-                        0f to Color.Black.copy(alpha = 0.42f),
-                        0.22f to Color.Transparent
-                    )
-                )
-            )
         }
     }
 }
