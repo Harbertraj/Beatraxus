@@ -60,6 +60,32 @@ class NightFilterTest {
     }
 
     @Test
+    fun multiplyColourCutsBlueMostAndKeepsRed() {
+        fun a(c: Int) = (c ushr 24) and 0xFF
+        fun r(c: Int) = (c shr 16) and 0xFF
+        fun g(c: Int) = (c shr 8) and 0xFF
+        fun b(c: Int) = c and 0xFF
+        val none = NightFilterMath.multiplyArgb(0)
+        val mid = NightFilterMath.multiplyArgb(50)
+        val full = NightFilterMath.multiplyArgb(100)
+        // Strength 0 is white: multiplying by it changes nothing.
+        assertEquals(0xFFFFFFFF.toInt(), none)
+        for (c in listOf(none, mid, full)) {
+            assertEquals(255, a(c))
+            assertEquals(255, r(c))
+        }
+        // Blue falls faster than green, and both fall as the strength grows.
+        assertTrue(b(mid) < g(mid))
+        assertTrue(b(full) < b(mid) && b(mid) < b(none))
+        assertTrue(g(full) < g(mid) && g(mid) < g(none))
+        assertEquals(64.0, b(full).toDouble(), 1.0) // 25 % of 255
+        assertEquals(178.5, g(full).toDouble(), 1.0) // 70 % of 255
+        // Out of range strengths are clamped.
+        assertEquals(full, NightFilterMath.multiplyArgb(500))
+        assertEquals(none, NightFilterMath.multiplyArgb(-5))
+    }
+
+    @Test
     fun modeFromNameFallsBackToOff() {
         assertEquals(NightFilterMode.OFF, NightFilterMode.fromName(null))
         assertEquals(NightFilterMode.OFF, NightFilterMode.fromName("x"))

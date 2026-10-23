@@ -18,10 +18,10 @@ enum class NightFilterMode(val label: String, val description: String) {
 /**
  * Video feature 17: night / blue-light filter.
  *
- * A warm amber veil over the whole player (picture, controls and sheets), so late-night viewing is easier on the
- * eyes. It is drawn as a translucent overlay rather than inside the video pipeline, so it works the same for every
- * way the picture is drawn (normal, rotated, FPS Booster) and never touches the video itself or screenshots taken
- * straight from the video surface.
+ * A blue-light cut over the whole player (picture, controls and sheets), so late-night viewing is easier on the
+ * eyes. It is a multiply layer drawn over the player rather than inside the video pipeline, so it never touches the
+ * video itself or screenshots taken straight from the video surface. The picture is drawn on a TextureView while
+ * the filter is on, because a plain SurfaceView cannot be multiplied; the FPS Booster falls back to a flat veil.
  *
  * Pure maths, no Android types, so it can be unit tested.
  */
@@ -39,8 +39,14 @@ data class NightFilterSettings(
         NightFilterMode.AUTO -> NightFilterMath.inWindow(hourOfDay, autoStartHour, autoEndHour)
     }
 
-    /** Overlay colour as 0xAARRGGBB. */
+    /** Overlay colour as 0xAARRGGBB, for the old flat-tint fallback (see [NightFilterMath.overlayArgb]). */
     val overlayArgb: Int get() = NightFilterMath.overlayArgb(strength)
+
+    /**
+     * Opaque 0xFFRRGGBB colour to MULTIPLY over the picture: red stays, green dips a little and blue drops a lot.
+     * Real blue-light cut, black stays black and white turns warm instead of getting a yellow haze.
+     */
+    val multiplyArgb: Int get() = NightFilterMath.multiplyArgb(strength)
 
     companion object {
         const val DEFAULT_STRENGTH = 50
@@ -73,7 +79,29 @@ object NightFilterMath {
 
     fun alpha(strength: Int): Float = MIN_ALPHA + (MAX_ALPHA - MIN_ALPHA) * clampStrength(strength) / 100f
 
-    /** Amber that turns redder as the strength grows (less blue and green reach the eye). */
+    /** How much blue / green is removed at 100 % strength (0.75 = blue drops to 25 %). Red is never touched. */
+    const val MAX_BLUE_CUT = 0.75f
+    const val MAX_GREEN_CUT = 0.30f
+
+    fun greenGain(strength: Int): Float = 1f - MAX_GREEN_CUT * clampStrength(strength) / 100f
+
+    fun blueGain(strength: Int): Float = 1f - MAX_BLUE_CUT * clampStrength(strength) / 100f
+
+    /**
+     * Colour to multiply over the picture (0xFFRRGGBB). Multiplying scales each channel, so blue is really reduced,
+     * blacks stay black and contrast is kept. Strength 0 is pure white = no change.
+     */
+    fun multiplyArgb(strength: Int): Int {
+        val r = 255
+        val g = (255f * greenGain(strength)).roundToInt()
+        val b = (255f * blueGain(strength)).roundToInt()
+        return (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+    }
+
+    /**
+     * Old flat amber veil. Only used as a fallback where the picture cannot be multiplied (the FPS Booster draws the
+     * video on its own GL surface). It adds a yellow haze, so the multiply colour above is preferred.
+     */
     fun overlayArgb(strength: Int): Int {
         val s = clampStrength(strength) / 100f
         val a = (alpha(strength) * 255f).roundToInt()

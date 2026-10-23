@@ -70,6 +70,8 @@ import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
@@ -581,8 +583,9 @@ fun VideoPlayerScreen(
         // Rotate / flip / mirror also needs the TextureView: a SurfaceView cannot be transformed. (With the FPS Booster
         // the GL renderer does it itself.)
         val orientation = uiState.videoOrientation
+        // The night filter multiplies the picture, which a SurfaceView cannot take, so it needs the TextureView too.
         val useTextureSurface = !boostActive &&
-            (gradingActive || sheetType == PlayerSheetType.COLOR || !orientation.isIdentity)
+            (gradingActive || sheetType == PlayerSheetType.COLOR || !orientation.isIdentity || nightFilterActive)
 
         key(useTextureSurface, boostActive, boostEngine) {
         AndroidView(
@@ -1099,11 +1102,22 @@ fun VideoPlayerScreen(
         // Night filter (feature 17): last child, so it tints the picture, the controls and the sheets alike.
         // It has no pointer handlers, so every touch still reaches the player underneath.
         if (nightFilterActive) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color(uiState.nightFilter.overlayArgb))
-            )
+            if (boostActive) {
+                // FPS Booster draws on its own GL surface, which cannot be multiplied: keep the flat veil there.
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color(uiState.nightFilter.overlayArgb))
+                )
+            } else {
+                // Multiply, not a see-through tint: blue is cut, black stays black, white turns warm (no yellow haze).
+                val multiplyColor = Color(uiState.nightFilter.multiplyArgb)
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .drawBehind { drawRect(color = multiplyColor, blendMode = BlendMode.Modulate) }
+                )
+            }
         }
     }
 }
@@ -2667,7 +2681,7 @@ fun VideoNightFilterSection(uiState: VideoPlayerUiState, viewModel: VideoPlayerV
         }
         Spacer(Modifier.height(8.dp))
         Text(
-            text = "Warms the whole player to cut harsh light at night. Saved for all videos.",
+            text = "Cuts blue light across the whole player for easier night viewing. Saved for all videos.",
             color = Color.White.copy(0.55f),
             fontSize = 12.sp
         )
