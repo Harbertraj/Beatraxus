@@ -98,6 +98,7 @@ import com.beatraxus.app.ui.components.CoverNavTracker
 import com.beatraxus.app.ui.components.CoverPalette
 import com.beatraxus.app.ui.components.FullCoverBackdrop
 import com.beatraxus.app.ui.components.FullCoverLayer
+import com.beatraxus.app.ui.components.prefetchCover
 import com.beatraxus.app.ui.components.KaraokeLyricsView
 import com.beatraxus.app.ui.components.PremiumSwitch
 import com.beatraxus.app.ui.components.rememberCoverPalette
@@ -218,6 +219,20 @@ fun NowPlayingScreen(
             seed = currentDominantColor
         )
     } else null
+
+    // Full Cover Art + HD: prepare the covers of this and the neighbouring songs ahead of time so a
+    // song change shows its HD cover instantly.
+    if (uiState.appearance.nowPlayingFullCoverArt) {
+        val hdCover = uiState.appearance.nowPlayingHdCover
+        val nextSong = upcomingSongs.firstOrNull()
+        val next2Song = upcomingSongs.getOrNull(1)
+        val prevSong = previousSongs.lastOrNull()
+        LaunchedEffect(song.id, nextSong?.id, next2Song?.id, prevSong?.id, hdCover) {
+            for (s in listOfNotNull(song, nextSong, prevSong, next2Song)) {
+                prefetchCover(context, s.id, s.uri, s.albumArtUri, hdCover)
+            }
+        }
+    }
 
     // Direction of the last song change (+1 next / -1 previous), used by the Full Cover Art animation.
     val coverNav = remember { CoverNavTracker() }
@@ -471,6 +486,11 @@ fun NowPlayingScreen(
             )
         }
 
+        val evenShade by animateFloatAsState(
+            targetValue = if (fullCoverArt && (showLyrics || showQueue)) 1f else 0f,
+            animationSpec = tween(350),
+            label = "evenShade"
+        )
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -479,7 +499,7 @@ fun NowPlayingScreen(
                         colors = listOf(
                             Color.Black.copy(alpha = if (fullCoverArt) 0f else 0.2f),
                             Color.Transparent,
-                            Color.Black.copy(alpha = 0.4f)
+                            Color.Black.copy(alpha = 0.4f * (1f - evenShade))
                         )
                     )
                 )
@@ -2262,8 +2282,8 @@ private fun FullCoverArtBackground(
     )
     val blurDim by animateFloatAsState(
         targetValue = when {
-            strongBlur -> 0.22f
-            isBlurred -> 0.15f
+            strongBlur -> 0.34f
+            isBlurred -> 0.24f
             else -> 0f
         },
         animationSpec = tween(350),
@@ -2286,10 +2306,18 @@ private fun FullCoverArtBackground(
             with(LocalDensity.current) { anchoredPx.toDp() }.coerceIn(maxHeight * 0.35f, maxHeight * 0.85f)
         } else legacyHeight
 
+        // Lyrics / queue: the (blurred) sharp cover layer steps aside so the whole screen is the same
+        // single blurred backdrop + one even dim: no top / bottom difference.
+        val coverLayerAlpha by animateFloatAsState(
+            targetValue = if (strongBlur) 0f else 1f,
+            animationSpec = tween(350),
+            label = "fullCoverLayerAlpha"
+        )
         Box(
             Modifier
                 .fillMaxWidth()
                 .height(artHeight)
+                .alpha(coverLayerAlpha)
         ) {
             AnimatedContent(
                 targetState = Triple(songKey, artUri, audioUri),
@@ -2309,6 +2337,10 @@ private fun FullCoverArtBackground(
                     reachBottom = reachBadge
                 )
             }
+        }
+        // One even dim over the WHOLE screen (cover area + blurred backdrop), not only the cover's half.
+        if (blurDim > 0f) {
+            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = blurDim)))
         }
     }
 }

@@ -177,21 +177,40 @@ private fun detectFaces(src: Bitmap): Pair<Float?, Float?> {
 
 private const val HD_MAX_EDGE = 2048
 
+private fun hdCoverFile(context: Context, songId: String): File {
+    val dir = File(context.cacheDir, "hd_cover").apply { mkdirs() }
+    // ".v2": file already contains the HD enhancement (older files had none and are ignored).
+    return File(dir, songId.replace(Regex("[^A-Za-z0-9_.-]"), "_") + ".v2.jpg")
+}
+
+/** The ready HD cover of [songId] if it was prepared before (cheap file check, safe on the main thread). */
+internal fun cachedHdCover(context: Context, songId: String): Uri? {
+    val f = hdCoverFile(context, songId)
+    return if (f.exists() && f.length() > 0L) Uri.fromFile(f) else null
+}
+
 /**
- * The original embedded cover of [audioUri] (cached in cacheDir/hd_cover), or [fallback] when the
- * file has no embedded picture / is not a local file / anything fails.
+ * The HD cover of [audioUri] (cached in cacheDir/hd_cover, already upscaled + sharpened, so showing it
+ * needs no extra work), or [fallback] when the file has no embedded picture / is not a local file /
+ * anything fails.
  */
 internal suspend fun resolveHdCover(context: Context, songId: String, audioUri: Uri?, fallback: Any?): Any? =
     withContext(Dispatchers.IO) { hdCoverBlocking(context, songId, audioUri) ?: fallback }
+
+/** Warms everything the cover of another song needs (HD file + aspect ratio) so it shows instantly later. */
+internal suspend fun prefetchCover(context: Context, songId: String, audioUri: Uri?, artUri: Any?, hd: Boolean) {
+    if (hd) resolveHdCover(context, songId, audioUri, artUri)
+    val key = artUri?.toString() ?: return
+    if (analysisCache.get(key) == null) analysisCache.put(key, analyzeCover(context, artUri))
+}
 
 private fun hdCoverBlocking(context: Context, songId: String, audioUri: Uri?): Uri? {
     if (audioUri == null) return null
     val scheme = audioUri.scheme ?: return null
     if (scheme != "content" && scheme != "file") return null // never probe network streams here
 
-    val dir = File(context.cacheDir, "hd_cover").apply { mkdirs() }
-    val file = File(dir, songId.replace(Regex("[^A-Za-z0-9_.-]"), "_") + ".jpg")
-    if (file.exists() && file.length() > 0L) return Uri.fromFile(file)
+    cachedHdCover(context, songId)?.let { return it }
+    val file = hdCoverFile(context, songId)
 
     val retriever = MediaMetadataRetriever()
     return try {
@@ -202,20 +221,28 @@ private fun hdCoverBlocking(context: Context, songId: String, audioUri: Uri?): U
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
 
+        // Enough for the widest phones, small enough to keep the enhancement pass light.
+        val screenW = context.resources.displayMetrics.widthPixels.coerceAtLeast(720)
+        val target = (screenW * 3 / 2).coerceIn(1080, 1600)
         var sample = 1
-        while (max(bounds.outWidth, bounds.outHeight) / (sample * 2) >= HD_MAX_EDGE) sample *= 2
+        while (max(bounds.outWidth, bounds.outHeight) / (sample * 2) >= target) sample *= 2
 
-        if (sample == 1) {
-            // Already a sensible size: keep the original bytes (no extra JPEG generation loss).
-            file.writeBytes(bytes)
-        } else {
-            val bitmap = BitmapFactory.decodeByteArray(
-                bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample }
-            ) ?: return null
-            FileOutputStream(file).use { bitmap.compress(Bitmap.CompressFormat.JPEG, 92, it) }
-            bitmap.recycle()
+        var bitmap = BitmapFactory.decodeByteArray(
+            bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample }
+        ) ?: return null
+        val longEdge = max(bitmap.width, bitmap.height)
+        if (longEdge > target) {
+            val k = target.toFloat() / longEdge
+            bitmap = Bitmap.createScaledBitmap(
+                bitmap, (bitmap.width * k).roundToInt().coerceAtLeast(1), (bitmap.height * k).roundToInt().coerceAtLeast(1), true
+            )
         }
-        if (file.length() > 0L) Uri.fromFile(file) else null
+        val enhanced = HdCoverTransformation(screenW.coerceAtMost(HD_MAX_EDGE)).enhance(bitmap)
+        val tmp = File(file.parentFile, file.name + ".tmp")
+        FileOutputStream(tmp).use { enhanced.compress(Bitmap.CompressFormat.JPEG, 94, it) }
+        if (enhanced !== bitmap) bitmap.recycle()
+        enhanced.recycle()
+        if (tmp.length() > 0L && tmp.renameTo(file)) Uri.fromFile(file) else { runCatching { tmp.delete() }; null }
     } catch (e: Throwable) {
         runCatching { file.delete() }
         null
@@ -237,7 +264,9 @@ internal class HdCoverTransformation(private val minWidthPx: Int) : Transformati
 
     override val cacheKey: String = "HdCoverTransformation-v1-$minWidthPx"
 
-    override suspend fun transform(input: Bitmap, size: Size): Bitmap {
+    override suspend fun transform(input: Bitmap, size: Size): Bitmap = enhance(input)
+
+    fun enhance(input: Bitmap): Bitmap {
         var bmp = if (input.config == Bitmap.Config.ARGB_8888) input
         else input.copy(Bitmap.Config.ARGB_8888, true) ?: return input
 
@@ -370,10 +399,17 @@ internal fun FullCoverLayer(
         val info = analysis ?: CoverAnalysis(1f, null, null)
 
         // Source: original embedded picture when HD is on (falls back to the library cache art).
-        // null until the HD file is ready: the plain library art is drawn straight away meanwhile.
-        val hdSource by produceState<Any?>(null, uri, songId, audioUri, hdEnabled) {
-            value = null
-            if (hdEnabled) value = resolveHdCover(context, songId.toString(), audioUri, uri)
+        // The HD file is prepared ahead of time (prefetch) and already enhanced, so when it exists it is
+        // used from the very first frame: no "plain cover first, HD a moment later" swap.
+        val hdSource by produceState<Any?>(
+            if (hdEnabled) cachedHdCover(context, songId.toString()) else null,
+            uri, songId, audioUri, hdEnabled
+        ) {
+            if (!hdEnabled) {
+                value = null
+            } else if (value == null) {
+                value = resolveHdCover(context, songId.toString(), audioUri, uri)
+            }
         }
         val displayUri = hdSource ?: uri
 
@@ -415,20 +451,17 @@ internal fun FullCoverLayer(
         // Same transformation list while blurring (API 31+ blurs on the GPU), otherwise the cover is
         // re-decoded the moment lyrics / queue open and the blur appears late.
         val gpuBlur = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
-        val hdTransform = hdEnabled && hdSource != null && (gpuBlur || !isBlurred)
-        val sharpRequest = remember(displayUri, decodeW, decodeH, hdTransform, isBlurred && !gpuBlur, strongBlur && !gpuBlur) {
+                val sharpRequest = remember(displayUri, decodeW, decodeH, isBlurred && !gpuBlur, strongBlur && !gpuBlur) {
             ImageRequest.Builder(context)
                 .data(displayUri)
                 .diskCachePolicy(CachePolicy.ENABLED)
                 .memoryCachePolicy(CachePolicy.ENABLED)
                 .size(Size(decodeW, decodeH))
                 .precision(Precision.INEXACT)
-                .crossfade(true)
                 .error(ImageUtils.getDefaultAlbumArtRes())
                 .fallback(ImageUtils.getDefaultAlbumArtRes())
                 .apply {
-                    val list = ArrayList<Transformation>(2)
-                    if (hdTransform) list += HdCoverTransformation(decodeW.coerceAtMost(HD_MAX_EDGE))
+                    val list = ArrayList<Transformation>(1)
                     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S && isBlurred) {
                         list += FastBlurTransformation(if (strongBlur) 90f else 25f)
                     }
@@ -488,9 +521,7 @@ internal fun FullCoverLayer(
                         filterQuality = FilterQuality.High
                     )
                 }
-                if (blurDim > 0f) {
-                    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = blurDim)))
-                }
+                // (The lyrics / queue dim is drawn over the whole screen by the caller, not here.)
                 // Light scrim under the status bar so the white icons stay readable on bright covers.
                 // It fades away while lyrics / queue are open (no extra dark shade at the top there).
                 val topScrim = 0.30f * (1f - (blurDim / 0.12f).coerceIn(0f, 1f))
@@ -523,15 +554,14 @@ internal fun FullCoverBackdrop(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    val extraDim by animateFloatAsState(
-        targetValue = when {
-            strongBlur -> 0.22f
-            isBlurred -> 0.15f
-            else -> 0f
-        },
+    // Lyrics / queue: the readability gradient flattens to one even shade, so the top and the bottom of
+    // the screen are exactly equally dark.
+    val flat by animateFloatAsState(
+        targetValue = if (strongBlur) 1f else 0f,
         animationSpec = tween(350),
-        label = "fullCoverBackdropDim"
+        label = "fullCoverBackdropFlat"
     )
+    fun shade(base: Float) = base + (0.30f - base) * flat
     // Strong colour boost: blurring washes colours out, the reference keeps them rich.
     val saturate = remember {
         ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(1.35f) })
@@ -573,15 +603,12 @@ internal fun FullCoverBackdrop(
         Box(
             Modifier.fillMaxSize().background(
                 Brush.verticalGradient(
-                    0f to Color.Black.copy(alpha = 0.10f),
-                    0.45f to Color.Black.copy(alpha = 0.18f),
-                    0.75f to Color.Black.copy(alpha = 0.38f),
-                    1f to Color.Black.copy(alpha = 0.58f)
+                    0f to Color.Black.copy(alpha = shade(0.10f)),
+                    0.45f to Color.Black.copy(alpha = shade(0.18f)),
+                    0.75f to Color.Black.copy(alpha = shade(0.38f)),
+                    1f to Color.Black.copy(alpha = shade(0.58f))
                 )
             )
         )
-        if (extraDim > 0f) {
-            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = extraDim)))
-        }
     }
 }
