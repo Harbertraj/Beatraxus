@@ -60,6 +60,7 @@ import com.beatraxus.app.fpsbooster.BoosterStats
 import com.beatraxus.app.fpsbooster.FallbackReason
 import com.beatraxus.app.fpsbooster.FpsBoosterSurfaceView
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.PlaylistPlay
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -109,6 +110,7 @@ import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
 import com.beatraxus.app.model.DeinterlaceMode
 import com.beatraxus.app.model.SavedEqPreset
+import com.beatraxus.app.model.Video
 import com.beatraxus.app.model.VideoOrientation
 import com.beatraxus.app.util.PlaybackGlobalState
 import com.beatraxus.app.util.VideoPlayerPrefs
@@ -129,7 +131,7 @@ enum class GestureType {
 }
 
 enum class PlayerSheetType {
-    NONE, AUDIO, SUBTITLE, SPEED, ALL, EQUALIZER, SLEEP_TIMER, COLOR, AUDIO_DELAY, MOTION_BOOST, SURROUND, ORIENTATION, DEINTERLACE, NIGHT_FILTER, INFO
+    NONE, AUDIO, SUBTITLE, SPEED, ALL, EQUALIZER, SLEEP_TIMER, COLOR, AUDIO_DELAY, MOTION_BOOST, SURROUND, ORIENTATION, DEINTERLACE, NIGHT_FILTER, INFO, QUEUE
 }
 
 @UnstableApi
@@ -873,6 +875,8 @@ fun VideoPlayerScreen(
                         onAudioClick = { sheetType = PlayerSheetType.AUDIO },
                         onSubtitleClick = { sheetType = PlayerSheetType.SUBTITLE },
                         onSurroundClick = { sheetType = PlayerSheetType.SURROUND },
+                        queueSize = viewModel.queue.size,
+                        onQueueClick = { sheetType = PlayerSheetType.QUEUE },
                         showCast = CastManager.isConnected || CastManager.availableDevices.isNotEmpty(),
                         castDeviceName = uiState.castDeviceName,
                         modifier = Modifier.align(Alignment.TopCenter)
@@ -1508,6 +1512,9 @@ fun PlayerTopBar(
     onAudioClick: () -> Unit,
     onSubtitleClick: () -> Unit,
     onSurroundClick: () -> Unit,
+    /** Number of videos in the queue; the "Up next" button shows only for 2 or more. */
+    queueSize: Int = 0,
+    onQueueClick: () -> Unit = {},
     /** Feature 26: a Cast device is around (or connected), so the Cast button is shown. */
     showCast: Boolean = false,
     /** Feature 26: non-null while the video plays on that Cast device (lights the Cast button). */
@@ -1606,6 +1613,12 @@ fun PlayerTopBar(
             Spacer(Modifier.width(8.dp))
             VpGlassButton(onClick = onSubtitleClick, size = 42.dp) {
                 Icon(Icons.Rounded.Subtitles, null, tint = Color.White, modifier = Modifier.size(21.dp))
+            }
+            if (queueSize > 1) {
+                Spacer(Modifier.width(8.dp))
+                VpGlassButton(onClick = onQueueClick, size = 42.dp) {
+                    Icon(Icons.AutoMirrored.Rounded.PlaylistPlay, "Up next", tint = Color.White, modifier = Modifier.size(23.dp))
+                }
             }
             if (showCast) {
                 // The system Cast button opens the device picker (or the "stop casting" dialog when connected).
@@ -2004,6 +2017,7 @@ fun VideoSettingsSheetContent(
             PlayerSheetType.DEINTERLACE -> "Deinterlacing"
             PlayerSheetType.NIGHT_FILTER -> "Night Filter"
             PlayerSheetType.INFO -> "Video Info"
+            PlayerSheetType.QUEUE -> "Up next"
             else -> "Settings"
         }
         
@@ -2570,6 +2584,11 @@ fun VideoSettingsSheetContent(
             VideoInfoSection(uiState = uiState, viewModel = viewModel)
         }
 
+        // Up next (queue) Section
+        if (activeSheetType == PlayerSheetType.QUEUE) {
+            VideoQueueSection(uiState = uiState, viewModel = viewModel)
+        }
+
         // Night Filter Section
         if (activeSheetType == PlayerSheetType.NIGHT_FILTER) {
             VideoNightFilterSection(uiState = uiState, viewModel = viewModel)
@@ -2590,6 +2609,76 @@ fun VideoSettingsSheetContent(
     }
 }
 
+
+/**
+ * "Up next" sheet: the video that is playing, then everything queued after it, then the videos played earlier.
+ * Tapping a row jumps to that video.
+ */
+@Composable
+fun VideoQueueSection(uiState: VideoPlayerUiState, viewModel: VideoPlayerViewModel) {
+    val queue = viewModel.queue
+    val currentId = uiState.currentVideo?.id
+    val currentIndex = queue.indexOfFirst { it.id == currentId }.coerceAtLeast(0)
+    val accent = Color(0xFFFF8F00)
+
+    @Composable
+    fun QueueRow(index: Int, video: Video, isCurrent: Boolean) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 2.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(if (isCurrent) accent.copy(alpha = 0.16f) else Color.Transparent)
+                .clickable(enabled = !isCurrent) { viewModel.playQueueItem(video.id) }
+                .padding(horizontal = 10.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(Modifier.width(30.dp), contentAlignment = Alignment.Center) {
+                if (isCurrent) {
+                    Icon(Icons.Rounded.PlayArrow, null, tint = accent, modifier = Modifier.size(20.dp))
+                } else {
+                    Text("${index + 1}", color = Color.White.copy(0.5f), fontSize = 12.sp)
+                }
+            }
+            Column(Modifier.weight(1f)) {
+                Text(
+                    video.title.ifBlank { video.displayName },
+                    color = if (isCurrent) accent else Color.White,
+                    fontSize = 14.sp,
+                    fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Medium,
+                    maxLines = 2,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                )
+                val resolution = if (video.resolutionHeight > 0) "  \u2022  ${video.resolutionHeight}p" else ""
+                Text(
+                    formatTime(video.durationMs) + resolution,
+                    color = Color.White.copy(0.55f),
+                    fontSize = 11.sp
+                )
+            }
+        }
+    }
+
+    if (queue.isEmpty()) {
+        Text("The queue is empty", color = Color.Gray, fontSize = 14.sp, modifier = Modifier.padding(16.dp))
+        return
+    }
+
+    SettingSectionHeader("Now playing")
+    QueueRow(currentIndex, queue[currentIndex], isCurrent = true)
+
+    val upNext = queue.drop(currentIndex + 1)
+    if (upNext.isNotEmpty()) {
+        SettingSectionHeader("Up next (${upNext.size})")
+        upNext.forEachIndexed { i, v -> key(v.id) { QueueRow(currentIndex + 1 + i, v, isCurrent = false) } }
+    }
+
+    val earlier = queue.take(currentIndex)
+    if (earlier.isNotEmpty()) {
+        SettingSectionHeader("Played earlier (${earlier.size})")
+        earlier.forEachIndexed { i, v -> key(v.id) { QueueRow(i, v, isCurrent = false) } }
+    }
+}
 
 /** Video info panel (feature 20): codec, resolution, frame rate, bitrate, decoder and audio facts. Updates every second. */
 @Composable

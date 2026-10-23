@@ -1996,6 +1996,20 @@ class VideoPlayerViewModel(
         }
     }
 
+    /** The videos of this player session in play order (the "Up next" sheet lists them). */
+    val queue: List<Video> get() = videoQueue
+
+    /** Jumps straight to a video of the queue, picked from the "Up next" sheet. */
+    fun playQueueItem(videoId: String) {
+        val index = videoQueue.indexOfFirst { it.id == videoId }
+        if (index < 0) return
+        exoPlayer?.let {
+            if (index >= it.mediaItemCount) return
+            it.seekTo(index, 0L)
+            if (_uiState.value.castDeviceName != null) castCurrentVideo() else it.play()
+        }
+    }
+
     fun playPrevious() {
         exoPlayer?.let {
             if (it.hasPreviousMediaItem()) {
