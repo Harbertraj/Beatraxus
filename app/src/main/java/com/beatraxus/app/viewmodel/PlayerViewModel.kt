@@ -406,7 +406,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         allVideos,
         _uiState.map { it.libraryMode }.distinctUntilChanged()
     ) { all, mode -> videosForMode(all, mode) }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     private val _recentlyPlayed = MutableStateFlow<List<String>>(emptyList())
     private val _recentlyPlayedVideos = MutableStateFlow<List<String>>(emptyList())
@@ -464,7 +464,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             filtered = filtered.filter { it.title.contains(query, ignoreCase = true) }
         }
         filtered
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val videos: StateFlow<List<com.beatraxus.app.model.Video>> = filteredVideos
 
@@ -494,7 +494,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 previewThumbnails = folderVideos.take(4).mapNotNull { it.thumbnailUri ?: it.uri.takeUnless { _ -> it.isCloud } }
             )
         }.filter { it.videoCount > 0 }.sortedBy { it.name.lowercase() }
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     private val allSongsWithFavorites: StateFlow<List<Song>> = combine(
         allSongs,
@@ -1634,11 +1634,6 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         enrichmentJob?.cancel()
 
         enrichmentJob = viewModelScope.launch {
-            if (!forceImmediate) {
-                // Delay startup video scan and thumbnail/HDR extraction until 5 seconds after moving to main screen.
-                awaitUiSettled(5000L)
-            }
-
             _uiState.update { it.copy(isLoadingVideos = true) }
             try {
                 val blocked = musicRepository.getBlockedFolders()
@@ -1650,6 +1645,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
                 _videos.value = scannedVideos
                 _uiState.update { it.copy(isLoadingVideos = false) }
+
+                // Delay thumbnail and HDR extraction until UI settles
+                if (!forceImmediate) {
+                    awaitUiSettled(2000L)
+                }
 
                 // Background enrichment (Local Thumbnails + HDR)
                 val context = getApplication<Application>()

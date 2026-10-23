@@ -190,6 +190,8 @@ fun VideoPlayerScreen(
         localHour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
     }
     val nightFilterActive = uiState.nightFilter.isActive(localHour)
+    val boostPlan = uiState.fpsBoosterPlan
+    val boostActive = boostPlan.active
     var sheetType by remember { mutableStateOf(PlayerSheetType.NONE) }
 
     val appContext = context.applicationContext as Application
