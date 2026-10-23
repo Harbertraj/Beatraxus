@@ -96,6 +96,7 @@ import com.beatraxus.app.ui.components.seekbars.AppSeekBar
 import com.beatraxus.app.ui.components.CoverMeshBackground
 import com.beatraxus.app.ui.components.CoverNavTracker
 import com.beatraxus.app.ui.components.CoverPalette
+import com.beatraxus.app.ui.components.FullCoverBackdrop
 import com.beatraxus.app.ui.components.FullCoverLayer
 import com.beatraxus.app.ui.components.KaraokeLyricsView
 import com.beatraxus.app.ui.components.PremiumSwitch
@@ -386,7 +387,15 @@ fun NowPlayingScreen(
 
         // Same background as with Full Cover Art off (black / solid / blurred cover, per setting).
         // With Full Cover Art on, the cover is simply drawn over its top part and fades into it.
-        when (appearance.nowPlayingBackgroundMode) {
+        // Full Cover Art ON: the background is a full-screen blurred copy of the cover (reference style).
+        // Full Cover Art OFF: the normal background modes below, untouched.
+        if (fullCoverArt) {
+            FullCoverBackdrop(
+                uri = song.albumArtUri,
+                isBlurred = isFullCoverArtBlurred,
+                strongBlur = showLyrics || showQueue
+            )
+        } else when (appearance.nowPlayingBackgroundMode) {
             NowPlayingBackgroundMode.BLACK -> {
                 // Background is already black from the parent Box
             }
@@ -2258,13 +2267,11 @@ private fun FullCoverArtBackground(
     ) {
         // Roughly square-plus box. The cover is fitted to the full width inside it (nothing is cut at
         // the sides); whatever the cover does not reach is filled by a blurred copy of itself.
-        val legacyHeight = (maxWidth * 1.22f).coerceAtMost(maxHeight * 0.64f)
+        val legacyHeight = (maxWidth * 1.16f).coerceAtMost(maxHeight * 0.58f)
         // With the quality badge on screen the box ends exactly at the badge, so the cover touches it.
         val anchoredPx = artBottomWindowPx - backgroundTopWindowPx
-        val reachBadge = artBottomWindowPx > 0f && !backgroundTopWindowPx.isNaN() && anchoredPx > 0f
-        val artHeight = if (reachBadge) {
-            with(LocalDensity.current) { anchoredPx.toDp() }.coerceIn(maxHeight * 0.35f, maxHeight * 0.85f)
-        } else legacyHeight
+        val reachBadge = false // cover no longer stretches to the badge; it melts into the backdrop
+        val artHeight = legacyHeight
 
         Box(
             Modifier

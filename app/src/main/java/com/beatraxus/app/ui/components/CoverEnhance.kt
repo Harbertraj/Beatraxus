@@ -10,6 +10,7 @@ import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Build
 import android.util.LruCache
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -33,6 +34,8 @@ import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.graphicsLayer
@@ -326,7 +329,7 @@ internal fun FullCoverLayer(
     strongBlur: Boolean,
     blurRadius: Dp,
     blurDim: Float,
-    /** True when the parent box ends at the quality badge: the cover must reach that edge. */
+    /** Unused (kept so existing callers still compile). */
     reachBottom: Boolean = false
 ) {
     val context = LocalContext.current
@@ -362,22 +365,18 @@ internal fun FullCoverLayer(
         }
 
         // ---- layout decision --------------------------------------------------------------
+        // Reference style: the cover is edge-to-edge in width, starts at the very top of the screen
+        // (under the status bar) and its lower part melts into the full-screen blurred backdrop.
         val aspect = info.aspect.coerceIn(0.3f, 4f)
         val fitH = wPx / aspect // height when the cover is fitted to the full width
         val fit = when {
-            fitH <= hPx ->
-                if (reachBottom && (hPx - fitH) / hPx <= REACH_BOTTOM_MAX_GAP) CoverFit.CROP else CoverFit.FIT_WIDTH
-            (fitH - hPx) / fitH <= 0.12f -> CoverFit.CROP
-            else -> CoverFit.FIT_INSIDE
+            fitH <= hPx -> CoverFit.FIT_WIDTH                 // square / wide cover: whole cover, no crop
+            (fitH - hPx) / fitH <= 0.30f -> CoverFit.CROP     // tall poster: crop the bottom, keep faces
+            else -> CoverFit.FIT_INSIDE                       // very tall: show whole, blurred sides
         }
-        val artBottomFrac = if (fit == CoverFit.FIT_WIDTH) (fitH / hPx).coerceAtMost(1f) else 1f
-        // reachBottom: keep the cover solid almost down to the badge, only its last 10% feathers out.
-        val fadeStart = when {
-            artBottomFrac >= 0.999f -> if (reachBottom) 0.90f else 0.52f
-            else -> (artBottomFrac - 0.12f).coerceIn(0.52f, 0.80f)
-        }
+        val artHeightPx = if (fit == CoverFit.FIT_WIDTH) fitH.coerceAtMost(hPx) else hPx
 
-        // Vertical focus for the (small) crop: keep faces in view, otherwise show the top.
+        // Vertical focus for the crop: keep faces in view, otherwise show the top.
         val cropBias = run {
             val extra = fitH - hPx
             if (fit != CoverFit.CROP || extra <= 0f) -1f
@@ -388,10 +387,10 @@ internal fun FullCoverLayer(
             }
         }
 
-        // A cover scaled up to the box height (reachBottom + CROP) is decoded at that height, so it stays sharp.
-        val fillsHeight = fit == CoverFit.FIT_INSIDE || (fit == CoverFit.CROP && fitH < hPx)
-        val decodeW = (if (fillsHeight) hPx * aspect else wPx).roundToInt().coerceAtLeast(1)
-        val decodeH = (if (fillsHeight) hPx else fitH).roundToInt().coerceAtLeast(1)
+        val fillsHeight = fit == CoverFit.FIT_INSIDE || fit == CoverFit.CROP
+        val decodeW = (if (fit == CoverFit.FIT_INSIDE) hPx * aspect else if (fit == CoverFit.CROP) fitH.coerceAtLeast(hPx) * aspect else wPx)
+            .roundToInt().coerceAtLeast(1)
+        val decodeH = (if (fillsHeight) max(hPx, fitH.coerceAtMost(hPx * 1.5f)) else fitH).roundToInt().coerceAtLeast(1)
         val hdTransform = hdEnabled && !isBlurred
         val sharpRequest = remember(displayUri, decodeW, decodeH, hdTransform, isBlurred, strongBlur) {
             ImageRequest.Builder(context)
@@ -413,89 +412,39 @@ internal fun FullCoverLayer(
                 }
                 .build()
         }
-        val backdropRequest = remember(uri) {
-            ImageRequest.Builder(context)
-                .data(uri)
-                .diskCachePolicy(CachePolicy.ENABLED)
-                .memoryCachePolicy(CachePolicy.ENABLED)
-                .size(256, 256)
-                .precision(Precision.INEXACT)
-                .apply {
-                    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
-                        transformations(FastBlurTransformation(60f))
-                    }
-                }
-                .build()
-        }
 
         Box(
             Modifier
                 .fillMaxSize()
                 .alpha(shown)
-                .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
-                .drawWithContent {
-                    drawContent()
-                    drawRect(brush = coverFadeBrush(fadeStart), blendMode = BlendMode.DstIn)
-                }
         ) {
-            // Blur (lyrics / queue / sheets) applies to backdrop + sharp cover together.
+            // Blur (lyrics / queue / sheets) applies to the cover only; the backdrop handles its own dim.
             Box(
                 Modifier
-                    .fillMaxSize()
+                    .align(Alignment.TopCenter)
+                    .fillMaxWidth()
+                    .height(with(density) { artHeightPx.toDp() })
                     .then(
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && blurRadius > 0.dp) {
                             // Rectangle (not Unbounded) so the edges don't fade out at the screen sides.
                             Modifier.blur(radius = blurRadius, edgeTreatment = BlurredEdgeTreatment.Rectangle)
                         } else Modifier
                     )
-            ) {
-                // Blurred copy of the same cover that fills whatever the sharp cover doesn't reach.
-                if (fit != CoverFit.CROP) {
-                    AsyncImage(
-                        model = backdropRequest,
-                        contentDescription = null,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .then(
-                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                                    Modifier.blur(radius = 48.dp, edgeTreatment = BlurredEdgeTreatment.Rectangle)
-                                } else Modifier
-                            ),
-                        contentScale = ContentScale.Crop
-                    )
-                    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.28f)))
-                }
-
-                when (fit) {
-                    CoverFit.FIT_WIDTH -> {
-                        // Full width, nothing cut at the sides; only its own bottom edge feathers out.
-                        Box(
-                            Modifier
-                                .align(Alignment.TopCenter)
-                                .fillMaxWidth()
-                                .height(with(density) { fitH.toDp() })
-                                .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
-                                .drawWithContent {
-                                    drawContent()
-                                    drawRect(
-                                        brush = Brush.verticalGradient(
-                                            0f to Color.Black,
-                                            0.90f to Color.Black,
-                                            1f to Color.Transparent
-                                        ),
-                                        blendMode = BlendMode.DstIn
-                                    )
-                                }
-                        ) {
-                            AsyncImage(
-                                model = sharpRequest,
-                                contentDescription = null,
-                                modifier = Modifier.fillMaxSize(),
-                                contentScale = ContentScale.Crop, // box already has the cover's aspect
-                                filterQuality = FilterQuality.High
-                            )
-                        }
+                    .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+                    .drawWithContent {
+                        drawContent()
+                        // Long, eased feather: the cover is solid for its top ~58% and then melts away.
+                        drawRect(brush = coverFadeBrush(0.58f), blendMode = BlendMode.DstIn)
                     }
+            ) {
+                when (fit) {
+                    CoverFit.FIT_WIDTH -> AsyncImage(
+                        model = sharpRequest,
+                        contentDescription = null,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop, // box already has the cover's aspect
+                        filterQuality = FilterQuality.High
+                    )
 
                     CoverFit.CROP -> AsyncImage(
                         model = sharpRequest,
@@ -515,20 +464,96 @@ internal fun FullCoverLayer(
                         filterQuality = FilterQuality.High
                     )
                 }
-            }
-
-            if (blurDim > 0f) {
-                Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = blurDim)))
-            }
-            // Light scrim under the status bar / title so the white icons stay readable.
-            Box(
-                Modifier.fillMaxSize().background(
-                    Brush.verticalGradient(
-                        0f to Color.Black.copy(alpha = 0.42f),
-                        0.22f to Color.Transparent
+                if (blurDim > 0f) {
+                    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = blurDim)))
+                }
+                // Light scrim under the status bar so the white icons stay readable on bright covers.
+                Box(
+                    Modifier.fillMaxSize().background(
+                        Brush.verticalGradient(
+                            0f to Color.Black.copy(alpha = 0.30f),
+                            0.18f to Color.Transparent
+                        )
                     )
                 )
+            }
+        }
+    }
+}
+
+/**
+ * Full Cover Art background: the SAME cover, scaled up to fill the whole screen, heavily blurred and
+ * colour-boosted, then darkened toward the bottom so the title / seek bar / controls stay readable.
+ * It sits behind [FullCoverLayer], whose sharp cover melts into it. It replaces the normal Now Playing
+ * background only while Full Cover Art is on.
+ */
+@Composable
+internal fun FullCoverBackdrop(
+    uri: Any?,
+    isBlurred: Boolean,
+    strongBlur: Boolean,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    val extraDim by animateFloatAsState(
+        targetValue = when {
+            strongBlur -> 0.40f
+            isBlurred -> 0.25f
+            else -> 0f
+        },
+        animationSpec = tween(350),
+        label = "fullCoverBackdropDim"
+    )
+    // Strong colour boost: blurring washes colours out, the reference keeps them rich.
+    val saturate = remember {
+        ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(1.35f) })
+    }
+
+    Box(modifier.fillMaxSize().background(Color.Black)) {
+        Crossfade(targetState = uri, animationSpec = tween(450), label = "fullCoverBackdrop") { target ->
+            val request = remember(target) {
+                ImageRequest.Builder(context)
+                    .data(target)
+                    .diskCachePolicy(CachePolicy.ENABLED)
+                    .memoryCachePolicy(CachePolicy.ENABLED)
+                    .size(256, 256)
+                    .precision(Precision.INEXACT)
+                    .error(ImageUtils.getDefaultAlbumArtRes())
+                    .fallback(ImageUtils.getDefaultAlbumArtRes())
+                    .apply {
+                        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+                            transformations(FastBlurTransformation(70f))
+                        }
+                    }
+                    .build()
+            }
+            AsyncImage(
+                model = request,
+                contentDescription = null,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .then(
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                            Modifier.blur(radius = 72.dp, edgeTreatment = BlurredEdgeTreatment.Rectangle)
+                        } else Modifier
+                    ),
+                contentScale = ContentScale.Crop,
+                colorFilter = saturate
             )
+        }
+        // Readability: light in the middle (where the cover melts in), progressively darker at the bottom.
+        Box(
+            Modifier.fillMaxSize().background(
+                Brush.verticalGradient(
+                    0f to Color.Black.copy(alpha = 0.10f),
+                    0.45f to Color.Black.copy(alpha = 0.18f),
+                    0.75f to Color.Black.copy(alpha = 0.38f),
+                    1f to Color.Black.copy(alpha = 0.58f)
+                )
+            )
+        )
+        if (extraDim > 0f) {
+            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = extraDim)))
         }
     }
 }
