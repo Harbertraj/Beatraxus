@@ -100,13 +100,18 @@ private enum class CoverFit { FIT_WIDTH, CROP, FIT_INSIDE }
  * Full Cover Art with [reachBottom]: a cover that is fitted to the width but leaves up to this share of the
  * box empty is scaled up to fill the box height (small side crop) so it touches the quality badge.
  */
-private const val REACH_BOTTOM_MAX_GAP = 0.22f
+private const val REACH_BOTTOM_MAX_GAP = 0.40f
 
 // ---------------------------------------------------------------------------------------------
 // Analysis (aspect ratio + faces)
 // ---------------------------------------------------------------------------------------------
 
-internal suspend fun analyzeCover(context: Context, data: Any?): CoverAnalysis = withContext(Dispatchers.IO) {
+internal suspend fun analyzeCover(
+    context: Context,
+    data: Any?,
+    /** Called as soon as the aspect ratio is known, before the (slower) face detection runs. */
+    onAspect: ((CoverAnalysis) -> Unit)? = null
+): CoverAnalysis = withContext(Dispatchers.IO) {
     val fallback = CoverAnalysis(1f, null, null)
     try {
         val request = ImageRequest.Builder(context)
@@ -119,6 +124,7 @@ internal suspend fun analyzeCover(context: Context, data: Any?): CoverAnalysis =
             ?: return@withContext fallback
         if (bitmap.width <= 0 || bitmap.height <= 0) return@withContext fallback
         val aspect = bitmap.width.toFloat() / bitmap.height.toFloat()
+        onAspect?.invoke(CoverAnalysis(aspect, null, null))
         val (top, bottom) = detectFaces(bitmap)
         CoverAnalysis(aspect, top, bottom)
     } catch (e: CancellationException) {
@@ -253,7 +259,7 @@ internal class HdCoverTransformation(private val minWidthPx: Int) : Transformati
         return unsharp(bmp, if (upscaled) 0.70f else 0.35f)
     }
 
-    /** out = src + amount * (src - boxBlur3x3(src)) */
+    /** out = src + amount * (src - boxBlur3x3(src)), computed as two 1-D passes. */
     private fun unsharp(src: Bitmap, amount: Float): Bitmap {
         val w = src.width
         val h = src.height
@@ -261,36 +267,40 @@ internal class HdCoverTransformation(private val minWidthPx: Int) : Transformati
 
         val px = IntArray(w * h)
         src.getPixels(px, 0, w, 0, 0, w, h)
-        val out = IntArray(w * h)
-
+        // Horizontal sums of 3 pixels, per channel, packed in three int arrays.
+        val hr = IntArray(w * h)
+        val hg = IntArray(w * h)
+        val hb = IntArray(w * h)
         for (y in 0 until h) {
-            val y0 = if (y > 0) y - 1 else y
-            val y1 = if (y < h - 1) y + 1 else y
+            val row = y * w
             for (x in 0 until w) {
-                val x0 = if (x > 0) x - 1 else x
-                val x1 = if (x < w - 1) x + 1 else x
-                var sr = 0
-                var sg = 0
-                var sb = 0
-                var n = 0
-                for (yy in y0..y1) {
-                    val row = yy * w
-                    for (xx in x0..x1) {
-                        val p = px[row + xx]
-                        sr += (p shr 16) and 0xFF
-                        sg += (p shr 8) and 0xFF
-                        sb += p and 0xFF
-                        n++
-                    }
-                }
-                val c = px[y * w + x]
+                val a = px[row + (if (x > 0) x - 1 else x)]
+                val b = px[row + x]
+                val c = px[row + (if (x < w - 1) x + 1 else x)]
+                hr[row + x] = ((a shr 16) and 0xFF) + ((b shr 16) and 0xFF) + ((c shr 16) and 0xFF)
+                hg[row + x] = ((a shr 8) and 0xFF) + ((b shr 8) and 0xFF) + ((c shr 8) and 0xFF)
+                hb[row + x] = (a and 0xFF) + (b and 0xFF) + (c and 0xFF)
+            }
+        }
+        val out = IntArray(w * h)
+        val inv = 1f / 9f
+        for (y in 0 until h) {
+            val up = (if (y > 0) y - 1 else y) * w
+            val mid = y * w
+            val down = (if (y < h - 1) y + 1 else y) * w
+            for (x in 0 until w) {
+                val i = mid + x
+                val br = (hr[up + x] + hr[i] + hr[down + x]) * inv
+                val bg = (hg[up + x] + hg[i] + hg[down + x]) * inv
+                val bb = (hb[up + x] + hb[i] + hb[down + x]) * inv
+                val c = px[i]
                 val cr = (c shr 16) and 0xFF
                 val cg = (c shr 8) and 0xFF
                 val cb = c and 0xFF
-                val nr = (cr + amount * (cr - sr / n.toFloat())).roundToInt().coerceIn(0, 255)
-                val ng = (cg + amount * (cg - sg / n.toFloat())).roundToInt().coerceIn(0, 255)
-                val nb = (cb + amount * (cb - sb / n.toFloat())).roundToInt().coerceIn(0, 255)
-                out[y * w + x] = (c ushr 24 shl 24) or (nr shl 16) or (ng shl 8) or nb
+                val nr = (cr + amount * (cr - br)).roundToInt().coerceIn(0, 255)
+                val ng = (cg + amount * (cg - bg)).roundToInt().coerceIn(0, 255)
+                val nb = (cb + amount * (cb - bb)).roundToInt().coerceIn(0, 255)
+                out[i] = (c ushr 24 shl 24) or (nr shl 16) or (ng shl 8) or nb
             }
         }
         return Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).also { it.setPixels(out, 0, w, 0, 0, w, h) }
@@ -346,7 +356,8 @@ internal fun FullCoverLayer(
             key1 = cacheKey
         ) {
             if (value == null) {
-                val result = analyzeCover(context, uri)
+                // The cover is shown as soon as its aspect ratio is known; faces only refine the crop.
+                val result = analyzeCover(context, uri) { quick -> value = quick }
                 if (cacheKey != null) analysisCache.put(cacheKey, result)
                 value = result
             }
@@ -359,10 +370,12 @@ internal fun FullCoverLayer(
         val info = analysis ?: CoverAnalysis(1f, null, null)
 
         // Source: original embedded picture when HD is on (falls back to the library cache art).
-        val displayUri by produceState<Any?>(uri, uri, songId, audioUri, hdEnabled) {
-            value = uri
+        // null until the HD file is ready: the plain library art is drawn straight away meanwhile.
+        val hdSource by produceState<Any?>(null, uri, songId, audioUri, hdEnabled) {
+            value = null
             if (hdEnabled) value = resolveHdCover(context, songId.toString(), audioUri, uri)
         }
+        val displayUri = hdSource ?: uri
 
         // ---- layout decision --------------------------------------------------------------
         // Reference style: the cover is edge-to-edge in width, starts at the very top of the screen
@@ -370,7 +383,10 @@ internal fun FullCoverLayer(
         val aspect = info.aspect.coerceIn(0.3f, 4f)
         val fitH = wPx / aspect // height when the cover is fitted to the full width
         val fit = when {
-            fitH <= hPx -> CoverFit.FIT_WIDTH                 // square / wide cover: whole cover, no crop
+            // Cover shorter than the box: scale it up to the box bottom (small side crop) so there is
+            // no empty band between the cover and the quality badge. Very wide covers stay whole.
+            fitH <= hPx ->
+                if ((hPx - fitH) / hPx <= REACH_BOTTOM_MAX_GAP) CoverFit.CROP else CoverFit.FIT_WIDTH
             (fitH - hPx) / fitH <= 0.30f -> CoverFit.CROP     // tall poster: crop the bottom, keep faces
             else -> CoverFit.FIT_INSIDE                       // very tall: show whole, blurred sides
         }
@@ -387,12 +403,20 @@ internal fun FullCoverLayer(
             }
         }
 
-        val fillsHeight = fit == CoverFit.FIT_INSIDE || fit == CoverFit.CROP
-        val decodeW = (if (fit == CoverFit.FIT_INSIDE) hPx * aspect else if (fit == CoverFit.CROP) fitH.coerceAtLeast(hPx) * aspect else wPx)
-            .roundToInt().coerceAtLeast(1)
-        val decodeH = (if (fillsHeight) max(hPx, fitH.coerceAtMost(hPx * 1.5f)) else fitH).roundToInt().coerceAtLeast(1)
-        val hdTransform = hdEnabled && !isBlurred
-        val sharpRequest = remember(displayUri, decodeW, decodeH, hdTransform, isBlurred, strongBlur) {
+        // Decode size = the size the cover is actually drawn at.
+        val drawH = when (fit) {
+            CoverFit.FIT_WIDTH -> fitH
+            CoverFit.CROP -> max(fitH, hPx)
+            CoverFit.FIT_INSIDE -> hPx
+        }
+        val drawW = if (fit == CoverFit.FIT_WIDTH) wPx else drawH * aspect
+        val decodeW = drawW.roundToInt().coerceAtLeast(1)
+        val decodeH = drawH.roundToInt().coerceAtLeast(1)
+        // Same transformation list while blurring (API 31+ blurs on the GPU), otherwise the cover is
+        // re-decoded the moment lyrics / queue open and the blur appears late.
+        val gpuBlur = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+        val hdTransform = hdEnabled && hdSource != null && (gpuBlur || !isBlurred)
+        val sharpRequest = remember(displayUri, decodeW, decodeH, hdTransform, isBlurred && !gpuBlur, strongBlur && !gpuBlur) {
             ImageRequest.Builder(context)
                 .data(displayUri)
                 .diskCachePolicy(CachePolicy.ENABLED)
@@ -468,14 +492,18 @@ internal fun FullCoverLayer(
                     Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = blurDim)))
                 }
                 // Light scrim under the status bar so the white icons stay readable on bright covers.
-                Box(
-                    Modifier.fillMaxSize().background(
-                        Brush.verticalGradient(
-                            0f to Color.Black.copy(alpha = 0.30f),
-                            0.18f to Color.Transparent
+                // It fades away while lyrics / queue are open (no extra dark shade at the top there).
+                val topScrim = 0.30f * (1f - (blurDim / 0.12f).coerceIn(0f, 1f))
+                if (topScrim > 0.001f) {
+                    Box(
+                        Modifier.fillMaxSize().background(
+                            Brush.verticalGradient(
+                                0f to Color.Black.copy(alpha = topScrim),
+                                0.18f to Color.Transparent
+                            )
                         )
                     )
-                )
+                }
             }
         }
     }
@@ -497,8 +525,8 @@ internal fun FullCoverBackdrop(
     val context = LocalContext.current
     val extraDim by animateFloatAsState(
         targetValue = when {
-            strongBlur -> 0.40f
-            isBlurred -> 0.25f
+            strongBlur -> 0.22f
+            isBlurred -> 0.15f
             else -> 0f
         },
         animationSpec = tween(350),

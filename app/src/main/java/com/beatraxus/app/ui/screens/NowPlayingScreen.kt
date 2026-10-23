@@ -477,7 +477,7 @@ fun NowPlayingScreen(
                 .background(
                     Brush.verticalGradient(
                         colors = listOf(
-                            Color.Black.copy(alpha = 0.2f),
+                            Color.Black.copy(alpha = if (fullCoverArt) 0f else 0.2f),
                             Color.Transparent,
                             Color.Black.copy(alpha = 0.4f)
                         )
@@ -646,19 +646,29 @@ fun NowPlayingScreen(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 if (showQueue) {
-                    QueueView(
-                        currentSong = song,
-                        previousSongs = previousSongs,
-                        upcomingSongs = upcomingSongs,
-                        onRemoveFromQueue = onRemoveFromQueue,
-                        onMove = onMoveInQueue,
-                        onPlayFromQueue = {
-                            onPlayFromQueue(it)
-                        },
-                        onClose = onToggleQueue,
-                        dominantColor = currentDominantColor,
-                        coverPalette = coverPalette
-                    )
+                    // Full Cover Art: fade the queue in over the same 350 ms the cover blur takes,
+                    // so the queue and the blur arrive together instead of the blur coming late.
+                    val queueAlpha = remember { Animatable(if (fullCoverArt) 0f else 1f) }
+                    LaunchedEffect(Unit) { queueAlpha.animateTo(1f, tween(350)) }
+                    Box(
+                        Modifier
+                            .fillMaxSize()
+                            .graphicsLayer { alpha = queueAlpha.value }
+                    ) {
+                        QueueView(
+                            currentSong = song,
+                            previousSongs = previousSongs,
+                            upcomingSongs = upcomingSongs,
+                            onRemoveFromQueue = onRemoveFromQueue,
+                            onMove = onMoveInQueue,
+                            onPlayFromQueue = {
+                                onPlayFromQueue(it)
+                            },
+                            onClose = onToggleQueue,
+                            dominantColor = currentDominantColor,
+                            coverPalette = coverPalette
+                        )
+                    }
                 } else {
                     // Middle Section: Album Art or Lyrics
                     Box(
@@ -2252,8 +2262,8 @@ private fun FullCoverArtBackground(
     )
     val blurDim by animateFloatAsState(
         targetValue = when {
-            strongBlur -> 0.45f
-            isBlurred -> 0.35f
+            strongBlur -> 0.22f
+            isBlurred -> 0.15f
             else -> 0f
         },
         animationSpec = tween(350),
@@ -2270,8 +2280,11 @@ private fun FullCoverArtBackground(
         val legacyHeight = (maxWidth * 1.16f).coerceAtMost(maxHeight * 0.58f)
         // With the quality badge on screen the box ends exactly at the badge, so the cover touches it.
         val anchoredPx = artBottomWindowPx - backgroundTopWindowPx
-        val reachBadge = false // cover no longer stretches to the badge; it melts into the backdrop
-        val artHeight = legacyHeight
+        // With the quality badge on screen the cover box ends at the badge, so there is no empty band.
+        val reachBadge = artBottomWindowPx > 0f && !backgroundTopWindowPx.isNaN() && anchoredPx > 0f
+        val artHeight = if (reachBadge) {
+            with(LocalDensity.current) { anchoredPx.toDp() }.coerceIn(maxHeight * 0.35f, maxHeight * 0.85f)
+        } else legacyHeight
 
         Box(
             Modifier
