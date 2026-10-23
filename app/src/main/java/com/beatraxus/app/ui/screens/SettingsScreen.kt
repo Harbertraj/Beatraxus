@@ -1391,6 +1391,23 @@ fun NowPlayingAppearanceContent(uiState: PlayerUiState, playerViewModel: PlayerV
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                    Text("Hide Top Bar", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    Text(
+                        "Hides the \"Now Playing\" title, the info icon and the close arrow on the player. Queue and lyrics keep their top bar",
+                        color = Color.White.copy(0.6f), fontSize = 12.sp
+                    )
+                }
+                PremiumSwitch(
+                    checked = appearance.nowPlayingHideTopBar,
+                    onCheckedChange = { playerViewModel.setNowPlayingHideTopBar(it) }
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
                     Text("HD Cover", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                     Text(
                         "Uses the original embedded cover and sharpens it. The cover is always shown whole, so faces and text are not cut off",

@@ -507,6 +507,15 @@ fun NowPlayingScreen(
 
         val dismissState = remember { mutableStateOf(0f) }
 
+        // Full Cover Art + "Hide Top Bar": the title, info icon and close arrow disappear on the main player
+        // only. Queue and lyrics keep their top content exactly as before.
+        val hideTopBar = fullCoverArt && appearance.nowPlayingHideTopBar && !showQueue && !showLyrics
+        val topBarAlpha by animateFloatAsState(
+            targetValue = if (hideTopBar) 0f else 1f,
+            animationSpec = tween(300),
+            label = "topBarAlpha"
+        )
+
         Scaffold(
             modifier = Modifier
                 .pointerInput(Unit) {
@@ -531,7 +540,7 @@ fun NowPlayingScreen(
                     title = {
                         AnimatedContent(
                             targetState = showLyrics,
-                            modifier = Modifier.offset(y = (-8).dp),
+                            modifier = Modifier.offset(y = (-8).dp).alpha(topBarAlpha),
                             transitionSpec = {
                                 (fadeIn(tween(600)) + slideInVertically(tween(600)) { it / 2 })
                                     .togetherWith(fadeOut(tween(600)) + slideOutVertically(tween(600)) { -it / 2 })
@@ -577,9 +586,10 @@ fun NowPlayingScreen(
                             modifier = Modifier
                                 .padding(start = 12.dp)
                                 .offset(y = (-8).dp)
+                                .alpha(topBarAlpha)
                                 .size(40.dp)
                                 .clip(CircleShape)
-                                .clickable {
+                                .clickable(enabled = !hideTopBar) {
                                     if (showQueue) onToggleQueue()
                                     else {
                                         onTogglePipeline(false)
@@ -607,13 +617,14 @@ fun NowPlayingScreen(
                             modifier = Modifier
                                 .padding(end = 12.dp)
                                 .offset(y = (-8).dp)
+                                .alpha(topBarAlpha)
                         ) { queueVisible ->
                             if (!queueVisible) {
                                 Box(
                                     modifier = Modifier
                                         .size(40.dp)
                                         .clip(CircleShape)
-                                        .clickable(onClick = { showSongInfo = true }),
+                                        .clickable(enabled = !hideTopBar, onClick = { showSongInfo = true }),
                                     contentAlignment = Alignment.Center
                                 ) {
                                     Icon(
@@ -1229,6 +1240,7 @@ fun NowPlayingScreen(
 
         if (showSongOptions) {
             SongOptionsSheet(
+                showDlnaOption = false,
                 song = song,
                 currentPlayingSong = uiState.currentSong,
                 onDismiss = { showSongOptions = false },

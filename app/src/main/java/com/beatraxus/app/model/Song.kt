@@ -201,6 +201,8 @@ data class AppearanceConfig(
     val nowPlayingFullCoverArt: Boolean = false,
     /** Full Cover Art: load the original embedded cover, sharpen/upscale it (on by default). */
     val nowPlayingHdCover: Boolean = true,
+    /** Full Cover Art: hide the "Now Playing" title, info icon and close arrow on the main player (not on queue / lyrics). */
+    val nowPlayingHideTopBar: Boolean = false,
     val qualityBadgeStyle: QualityBadgeStyle = QualityBadgeStyle.GLASSMORPHIC,
 
     val seekbarStyle: SeekbarStyle = SeekbarStyle.BEATRAXUS_MATRIX,

@@ -5837,6 +5837,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun setNowPlayingHideTopBar(enabled: Boolean) {
+        viewModelScope.launch {
+            appearancePreferences.setNowPlayingHideTopBar(enabled)
+        }
+    }
+
     fun setNowPlayingBlurIntensity(value: Float) {
         viewModelScope.launch {
             appearancePreferences.setNowPlayingBlurIntensity(value)

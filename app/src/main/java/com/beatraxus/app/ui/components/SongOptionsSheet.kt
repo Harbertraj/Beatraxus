@@ -84,7 +84,9 @@ fun SongOptionsSheet(
     // A-B loop entry: only passed by the Now Playing screen, so it is shown nowhere else.
     abLoopLabel: String? = null,
     abLoopActive: Boolean = false,
-    onAbLoop: (() -> Unit)? = null
+    onAbLoop: (() -> Unit)? = null,
+    // Now Playing passes false: its 3-dot menu never shows the DLNA / UPnP entry.
+    showDlnaOption: Boolean = true
 ) {
     var showInfoOverlay by remember { mutableStateOf(initialShowInfoOverlay) }
     var showTagEditor by remember { mutableStateOf(false) }
@@ -194,7 +196,7 @@ fun SongOptionsSheet(
                 Spacer(Modifier.height(8.dp))
 
                 // Options Grid
-                val options = remember(showPlayNext, showMark, song.id, abLoopLabel, abLoopActive) {
+                val options = remember(showPlayNext, showMark, song.id, abLoopLabel, abLoopActive, showDlnaOption) {
                     buildList {
                         add(OptionItem(Icons.AutoMirrored.Rounded.PlaylistAdd, "Playlist", onAddToPlaylist))
                         if (showPlayNext) {
@@ -212,7 +214,9 @@ fun SongOptionsSheet(
                         if (!song.isCloud()) {
                             add(OptionItem(Icons.Rounded.RingVolume, "Set as", { showRingtone = true }))
                         }
-                        add(OptionItem(Icons.Rounded.Cast, "DLNA / UPnP", { showDlna = true }))
+                        if (showDlnaOption) {
+                            add(OptionItem(Icons.Rounded.Cast, "DLNA / UPnP", { showDlna = true }))
+                        }
                         if (abLoopLabel != null && onAbLoop != null) {
                             add(OptionItem(Icons.Rounded.Loop, abLoopLabel, onAbLoop, tint = if (abLoopActive) AccentBlue else null))
                         }
