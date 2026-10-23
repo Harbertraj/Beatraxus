@@ -1979,7 +1979,11 @@ public:
             case 3: recipe = SOXR_HQ; break; case 4: recipe = SOXR_VHQ; break; default: recipe = SOXR_HQ; break;
         }
         soxr_quality_spec_t q_spec = soxr_quality_spec(recipe, SOXR_LINEAR_PHASE);
-        q_spec.passband_end = 0.997; q_spec.stopband_begin = 1.0;
+        // Passband edge follows the Cutoff Ratio setting (it used to be fixed at 0.997, which made the
+        // filter extremely steep: ~0.67 s of delay and ~25 ms of pre-ringing). 0.95..0.97 stays flat to
+        // 21 kHz at 44.1/48 kHz with ~40 ms delay. Clamped so a bad value can never build a broken filter.
+        const double passbandEnd = std::min(0.995, std::max(0.80, (double)cutoffRatio));
+        q_spec.passband_end = passbandEnd; q_spec.stopband_begin = 1.0;
         soxr_runtime_spec_t r_spec = soxr_runtime_spec(1);
         soxr_handle = soxr_create(effectiveInRate, (double)outRate, (unsigned)channels, &err, &io_spec, &q_spec, &r_spec);
 #endif

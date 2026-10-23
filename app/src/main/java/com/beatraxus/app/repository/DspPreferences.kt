@@ -124,6 +124,7 @@ class DspPreferences(private val context: Context) {
             preampEnabled = pref(PREAMP_ENABLED, false),
             preampDb = pref(PREAMP_DB, 0f),
             eqEnabled = pref(EQ_ENABLED, false),
+            aiEqEnabled = pref(AI_EQ_ENABLED, false),
             eqBands = deserializeBands(prefNullable(EQ_BANDS)),
             eqMasterGainDb = pref(EQ_MASTER_GAIN, 0f),
             eqPhaseMode = runCatching {
@@ -275,6 +276,7 @@ class DspPreferences(private val context: Context) {
             set(PREAMP_ENABLED, config.preampEnabled)
             set(PREAMP_DB, config.preampDb)
             set(EQ_ENABLED, config.eqEnabled)
+            set(AI_EQ_ENABLED, config.aiEqEnabled)
             set(EQ_BANDS, serializeBands(config.eqBands))
             set(EQ_MASTER_GAIN, config.eqMasterGainDb)
             set(EQ_PHASE_MODE, config.eqPhaseMode.name)
@@ -448,6 +450,7 @@ class DspPreferences(private val context: Context) {
                 set(PREAMP_ENABLED, config.preampEnabled)
                 set(PREAMP_DB, config.preampDb)
                 set(EQ_ENABLED, config.eqEnabled)
+                set(AI_EQ_ENABLED, config.aiEqEnabled)
                 set(EQ_BANDS, serializeBands(config.eqBands))
                 set(EQ_MASTER_GAIN, config.eqMasterGainDb)
                 set(EQ_PHASE_MODE, config.eqPhaseMode.name)
@@ -890,6 +893,7 @@ class DspPreferences(private val context: Context) {
         private val PREAMP_ENABLED = booleanPreferencesKey("preamp_enabled")
         private val PREAMP_DB = floatPreferencesKey("preamp_db")
         private val EQ_ENABLED = booleanPreferencesKey("eq_enabled")
+        private val AI_EQ_ENABLED = booleanPreferencesKey("ai_eq_enabled")
         private val EQ_BANDS = stringPreferencesKey("eq_bands")
         private val EQ_MASTER_GAIN = floatPreferencesKey("eq_master_gain")
         private val EQ_PHASE_MODE = stringPreferencesKey("eq_phase_mode")

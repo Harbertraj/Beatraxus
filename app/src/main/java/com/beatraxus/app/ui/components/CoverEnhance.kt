@@ -93,6 +93,12 @@ private val analysisCache = LruCache<String, CoverAnalysis>(48)
 
 private enum class CoverFit { FIT_WIDTH, CROP, FIT_INSIDE }
 
+/**
+ * Full Cover Art with [reachBottom]: a cover that is fitted to the width but leaves up to this share of the
+ * box empty is scaled up to fill the box height (small side crop) so it touches the quality badge.
+ */
+private const val REACH_BOTTOM_MAX_GAP = 0.22f
+
 // ---------------------------------------------------------------------------------------------
 // Analysis (aspect ratio + faces)
 // ---------------------------------------------------------------------------------------------
@@ -319,7 +325,9 @@ internal fun FullCoverLayer(
     isBlurred: Boolean,
     strongBlur: Boolean,
     blurRadius: Dp,
-    blurDim: Float
+    blurDim: Float,
+    /** True when the parent box ends at the quality badge: the cover must reach that edge. */
+    reachBottom: Boolean = false
 ) {
     val context = LocalContext.current
     val density = LocalDensity.current
@@ -357,12 +365,17 @@ internal fun FullCoverLayer(
         val aspect = info.aspect.coerceIn(0.3f, 4f)
         val fitH = wPx / aspect // height when the cover is fitted to the full width
         val fit = when {
-            fitH <= hPx -> CoverFit.FIT_WIDTH
+            fitH <= hPx ->
+                if (reachBottom && (hPx - fitH) / hPx <= REACH_BOTTOM_MAX_GAP) CoverFit.CROP else CoverFit.FIT_WIDTH
             (fitH - hPx) / fitH <= 0.12f -> CoverFit.CROP
             else -> CoverFit.FIT_INSIDE
         }
         val artBottomFrac = if (fit == CoverFit.FIT_WIDTH) (fitH / hPx).coerceAtMost(1f) else 1f
-        val fadeStart = if (artBottomFrac >= 0.999f) 0.52f else (artBottomFrac - 0.12f).coerceIn(0.52f, 0.80f)
+        // reachBottom: keep the cover solid almost down to the badge, only its last 10% feathers out.
+        val fadeStart = when {
+            artBottomFrac >= 0.999f -> if (reachBottom) 0.90f else 0.52f
+            else -> (artBottomFrac - 0.12f).coerceIn(0.52f, 0.80f)
+        }
 
         // Vertical focus for the (small) crop: keep faces in view, otherwise show the top.
         val cropBias = run {
@@ -375,8 +388,10 @@ internal fun FullCoverLayer(
             }
         }
 
-        val decodeW = (if (fit == CoverFit.FIT_INSIDE) hPx * aspect else wPx).roundToInt().coerceAtLeast(1)
-        val decodeH = (if (fit == CoverFit.FIT_INSIDE) hPx else fitH).roundToInt().coerceAtLeast(1)
+        // A cover scaled up to the box height (reachBottom + CROP) is decoded at that height, so it stays sharp.
+        val fillsHeight = fit == CoverFit.FIT_INSIDE || (fit == CoverFit.CROP && fitH < hPx)
+        val decodeW = (if (fillsHeight) hPx * aspect else wPx).roundToInt().coerceAtLeast(1)
+        val decodeH = (if (fillsHeight) hPx else fitH).roundToInt().coerceAtLeast(1)
         val hdTransform = hdEnabled && !isBlurred
         val sharpRequest = remember(displayUri, decodeW, decodeH, hdTransform, isBlurred, strongBlur) {
             ImageRequest.Builder(context)

@@ -64,6 +64,8 @@ import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -378,6 +380,9 @@ fun NowPlayingScreen(
         val appearance = uiState.appearance
         val fullCoverArt = appearance.nowPlayingFullCoverArt
         val isFullCoverArtBlurred = showLyrics || showQueue || showSleepTimerSheet || showLyricsSourcesSheet || showSongInfo || showPipelineOverlay
+        // Full Cover Art: window-Y of the bottom of the audio-quality badge row. The cover is sized to end
+        // there, so it touches the badge instead of leaving an empty band above it.
+        var badgeBottomWindowPx by remember { mutableStateOf(0f) }
 
         // Same background as with Full Cover Art off (black / solid / blurred cover, per setting).
         // With Full Cover Art on, the cover is simply drawn over its top part and fades into it.
@@ -452,7 +457,8 @@ fun NowPlayingScreen(
                 // Lyrics and queue: much stronger blur on the cover area.
                 strongBlur = showLyrics || showQueue,
                 transform = appearance.albumArtTransform,
-                direction = coverDirection
+                direction = coverDirection,
+                artBottomWindowPx = if (isBadgeEnabled) badgeBottomWindowPx else 0f
             )
         }
 
@@ -839,7 +845,14 @@ fun NowPlayingScreen(
                             ) {
                                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                     Box(
-                                        modifier = Modifier.height(36.dp),
+                                        modifier = Modifier
+                                            .height(36.dp)
+                                            .onGloballyPositioned { coords ->
+                                                // Not while lyrics are open: the row is collapsing then.
+                                                if (fullCoverArt && !showLyrics) {
+                                                    badgeBottomWindowPx = coords.positionInWindow().y + coords.size.height
+                                                }
+                                            },
                                         contentAlignment = Alignment.BottomCenter
                                     ) {
                                         key(song.id) {
@@ -2214,8 +2227,11 @@ private fun FullCoverArtBackground(
     isBlurred: Boolean = false,
     strongBlur: Boolean = false,
     transform: AlbumArtTransform = AlbumArtTransform.SOFT_FADE,
-    direction: Int = 1
+    direction: Int = 1,
+    /** Window-Y where the cover should end (bottom of the quality badge); 0 = use the default height. */
+    artBottomWindowPx: Float = 0f
 ) {
+    var backgroundTopWindowPx by remember { mutableStateOf(Float.NaN) }
     val blurRadius by animateDpAsState(
         targetValue = when {
             strongBlur -> 80.dp
@@ -2235,10 +2251,20 @@ private fun FullCoverArtBackground(
         label = "fullCoverBlurDim"
     )
 
-    BoxWithConstraints(Modifier.fillMaxSize()) {
+    BoxWithConstraints(
+        Modifier
+            .fillMaxSize()
+            .onGloballyPositioned { backgroundTopWindowPx = it.positionInWindow().y }
+    ) {
         // Roughly square-plus box. The cover is fitted to the full width inside it (nothing is cut at
         // the sides); whatever the cover does not reach is filled by a blurred copy of itself.
-        val artHeight = (maxWidth * 1.22f).coerceAtMost(maxHeight * 0.64f)
+        val legacyHeight = (maxWidth * 1.22f).coerceAtMost(maxHeight * 0.64f)
+        // With the quality badge on screen the box ends exactly at the badge, so the cover touches it.
+        val anchoredPx = artBottomWindowPx - backgroundTopWindowPx
+        val reachBadge = artBottomWindowPx > 0f && !backgroundTopWindowPx.isNaN() && anchoredPx > 0f
+        val artHeight = if (reachBadge) {
+            with(LocalDensity.current) { anchoredPx.toDp() }.coerceIn(maxHeight * 0.35f, maxHeight * 0.85f)
+        } else legacyHeight
 
         Box(
             Modifier
@@ -2259,7 +2285,8 @@ private fun FullCoverArtBackground(
                     isBlurred = isBlurred,
                     strongBlur = strongBlur,
                     blurRadius = blurRadius,
-                    blurDim = blurDim
+                    blurDim = blurDim,
+                    reachBottom = reachBadge
                 )
             }
         }

@@ -341,7 +341,7 @@ private class NativeDspProcessor(
             dsp.setSoxrQuality(quality.nativeValue)
         }
         dsp.setFloat64(if (isBP) cfg.bitPerfectUnbypassFloat64 else cfg.float64Enabled)
-        dsp.setCutoffRatio(if (resampleActive) cfg.resamplerCutoffRatio else 0.999f)
+        dsp.setCutoffRatio(if (resampleActive) cfg.resamplerCutoffRatio else 0.95f)
 
         // Tone knobs - smooth application is handled inside NativeDsp
         val targetBass = if (!isBP && cfg.bassEnabled) cfg.bassDb else 0f
