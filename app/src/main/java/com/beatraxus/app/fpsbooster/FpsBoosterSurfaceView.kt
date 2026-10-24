@@ -11,6 +11,7 @@ import android.view.Surface
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.Window
+import com.beatraxus.app.model.DeinterlaceMode
 import com.beatraxus.app.model.VideoOrientation
 import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
@@ -50,6 +51,7 @@ class FpsBoosterSurfaceView(context: Context) : SurfaceView(context), SurfaceHol
     private var hue = 0f
     private var temperature = 0f
     private var orientation = VideoOrientation.NONE
+    private var deinterlace = DeinterlaceMode.OFF
 
     private val playerListener = object : Player.Listener {
         override fun onVideoSizeChanged(videoSize: VideoSize) {
@@ -101,6 +103,17 @@ class FpsBoosterSurfaceView(context: Context) : SurfaceView(context), SurfaceHol
         renderer?.setOrientation(orientation)
     }
 
+    /**
+     * Deinterlacing. Done here, in the booster's own copy pass: media3's effect pipeline cannot draw into the bare
+     * Surface the booster hands to ExoPlayer (black picture, sound only), so the player has no deinterlace effect
+     * while the booster runs.
+     */
+    fun setDeinterlace(mode: DeinterlaceMode) {
+        if (mode == deinterlace) return
+        deinterlace = mode
+        renderer?.setDeinterlace(mode.shaderValue)
+    }
+
     private fun startManager() {
         manager?.release()
         val p = plan ?: return
@@ -137,6 +150,7 @@ class FpsBoosterSurfaceView(context: Context) : SurfaceView(context), SurfaceHol
         created.setColorGrade(brightness, contrast, saturation)
         created.setColorTune(hue, temperature)
         created.setOrientation(orientation)
+        created.setDeinterlace(deinterlace.shaderValue)
         player?.let { pl ->
             pl.addListener(playerListener)
             val size = pl.videoSize

@@ -85,6 +85,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.*
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLifecycleOwner
@@ -180,6 +181,8 @@ fun VideoPlayerScreen(
     }
 
     var controlsVisible by remember { mutableStateOf(true) }
+    // Which tool category (Playback / Audio / Picture) is open under the title; null = all collapsed.
+    var openToolCategory by remember { mutableStateOf<VpToolCategory?>(null) }
 
     // Night filter (feature 17): the local hour is checked once a minute, only needed for the "Auto" mode.
     var localHour by remember { mutableStateOf(java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)) }
@@ -271,7 +274,7 @@ fun VideoPlayerScreen(
     var lastScrubSeek by remember { mutableLongStateOf(0L) }
 
     // Auto-hide controls
-    LaunchedEffect(controlsVisible, uiState.isPlaying, uiState.isLocked, uiState.scrubbingTimeMs == null) {
+    LaunchedEffect(controlsVisible, uiState.isPlaying, uiState.isLocked, uiState.scrubbingTimeMs == null, openToolCategory) {
         if (controlsVisible && uiState.scrubbingTimeMs == null && (uiState.isPlaying || uiState.isLocked)) {
             delay(3000)
             controlsVisible = false
@@ -658,11 +661,13 @@ fun VideoPlayerScreen(
                 when (val boostView = view.tag) {
                     is FpsBoosterSurfaceView -> boostView.apply {
                         configure(boostPlan, uiState.fpsBooster)
+                        setDeinterlace(uiState.deinterlaceMode)
                         setColorGrade(uiState.colorBrightness, uiState.colorContrast, uiState.colorSaturation)
                         setColorTune(uiState.colorHue, uiState.colorTemperature)
                         setOrientation(orientation)
                     }
                     is MotionBoostSurfaceView -> boostView.apply {
+                        setDeinterlace(uiState.deinterlaceMode)
                         setTargetFps(boostPlan.targetFps)
                         setExtreme(boostPlan.quality == BoosterQuality.PERFORMANCE)
                         setColorGrade(uiState.colorBrightness, uiState.colorContrast, uiState.colorSaturation)
@@ -890,41 +895,7 @@ fun VideoPlayerScreen(
                         onQueueClick = { sheetType = PlayerSheetType.QUEUE },
                         showCast = CastManager.isConnected || CastManager.availableDevices.isNotEmpty(),
                         castDeviceName = uiState.castDeviceName,
-                        modifier = Modifier.align(Alignment.TopCenter)
-                    )
-
-                    // Center transport controls: previous / frame step / play-pause / next
-                    PlayerCenterControls(
-                        uiState = uiState,
-                        onTogglePlayPause = { viewModel.togglePlayPause() },
-                        onPlayNext = { viewModel.playNext() },
-                        onPlayPrevious = { viewModel.playPrevious() },
-                        onStepFrame = { viewModel.stepFrame(it) },
-                        modifier = Modifier.align(Alignment.Center)
-                    )
-
-                    // Bottom Bar: seek bar, then lock | tool icons | aspect ratio
-                    PlayerBottomBar(
-                        uiState = uiState,
-                        positionFlow = viewModel.positionFlow,
-                        onSeek = { viewModel.seekTo(it) },
-                        onLock = { viewModel.toggleLock() },
-                        onTimeClick = { viewModel.toggleTimeDisplay() },
-                        onAspectRatioClick = {
-                            viewModel.setAspectRatio(uiState.aspectRatio.next())
-                        },
-                        onScrubbing = {
-                            viewModel.updateScrubbingPreview(it)
-                            if (it != null) {
-                                val now = System.currentTimeMillis()
-                                if (now - lastScrubSeek > 120) {
-                                    lastScrubSeek = now
-                                    viewModel.seekTo(it)
-                                }
-                            }
-                        },
-                        onLongPress = { showChapterStrip = true },
-                        toolsContent = { toolsModifier ->
+                        toolsContent = {
                             FloatingControls(
                                 uiState = uiState,
                                 sheetType = sheetType,
@@ -975,9 +946,44 @@ fun VideoPlayerScreen(
                                 onAbRepeatClick = { viewModel.toggleAbRepeat() },
                                 onLoopClick = { viewModel.toggleLoop() },
                                 onSleepTimerClick = { sheetType = PlayerSheetType.SLEEP_TIMER },
-                                modifier = toolsModifier
+                                openCategory = openToolCategory,
+                                onCategoryClick = { openToolCategory = if (openToolCategory == it) null else it }
                             )
                         },
+                        modifier = Modifier.align(Alignment.TopCenter)
+                    )
+
+                    // Center transport controls: previous / frame step / play-pause / next
+                    PlayerCenterControls(
+                        uiState = uiState,
+                        onTogglePlayPause = { viewModel.togglePlayPause() },
+                        onPlayNext = { viewModel.playNext() },
+                        onPlayPrevious = { viewModel.playPrevious() },
+                        onStepFrame = { viewModel.stepFrame(it) },
+                        modifier = Modifier.align(Alignment.Center)
+                    )
+
+                    // Bottom Bar: seek bar, then lock | aspect ratio (tool icons are under the title)
+                    PlayerBottomBar(
+                        uiState = uiState,
+                        positionFlow = viewModel.positionFlow,
+                        onSeek = { viewModel.seekTo(it) },
+                        onLock = { viewModel.toggleLock() },
+                        onTimeClick = { viewModel.toggleTimeDisplay() },
+                        onAspectRatioClick = {
+                            viewModel.setAspectRatio(uiState.aspectRatio.next())
+                        },
+                        onScrubbing = {
+                            viewModel.updateScrubbingPreview(it)
+                            if (it != null) {
+                                val now = System.currentTimeMillis()
+                                if (now - lastScrubSeek > 120) {
+                                    lastScrubSeek = now
+                                    viewModel.seekTo(it)
+                                }
+                            }
+                        },
+                        onLongPress = { showChapterStrip = true },
                         modifier = Modifier.align(Alignment.BottomCenter)
                     )
 
@@ -1270,6 +1276,17 @@ private fun VpToolButton(
     }
 }
 
+/**
+ * The tool icons of the video player, grouped so the row stays short.
+ * Each category is ONE icon; tapping it opens the icons it holds in a second row right below it.
+ * Tools that belong to no category (PiP, screenshot, video info) stay as single icons in the main row.
+ */
+enum class VpToolCategory(val icon: androidx.compose.ui.graphics.vector.ImageVector, val title: String) {
+    PLAYBACK(Icons.Rounded.SlowMotionVideo, "Playback"),
+    AUDIO(Icons.Rounded.Audiotrack, "Audio"),
+    PICTURE(Icons.Rounded.Palette, "Picture and screen")
+}
+
 @Composable
 fun FloatingControls(
     uiState: VideoPlayerUiState,
@@ -1292,87 +1309,60 @@ fun FloatingControls(
     onAbRepeatClick: () -> Unit,
     onLoopClick: () -> Unit,
     onSleepTimerClick: () -> Unit,
+    /** The category whose icons are shown in the second row, or null when all are collapsed. */
+    openCategory: VpToolCategory? = null,
+    onCategoryClick: (VpToolCategory) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    val scrollState = rememberScrollState()
+    val abRepeatOn = uiState.isAbRepeatActive || uiState.abRepeatPointA != null
+    val sleepTimerOn = uiState.sleepTimerMode != com.beatraxus.app.viewmodel.SleepTimerMode.OFF
+    val nightFilterOn = uiState.nightFilter.mode != com.beatraxus.app.model.NightFilterMode.OFF
+    val colorChanged = uiState.colorBrightness != 0f || uiState.colorContrast != 1f || uiState.colorSaturation != 1f ||
+        uiState.colorGamma != 1f || uiState.colorHue != 0f || uiState.colorTemperature != 0f || uiState.colorSharpness != 0f
 
-    // Flat, scrollable row of tool icons that sits in the bottom bar (no floating capsule any more).
-    Box(
-        modifier = modifier
-            .pointerInput(Unit) {
-                // Consume all touches/gestures to prevent them from triggering
-                // underlying player navigation gestures (seek, brightness, etc.)
-                detectTapGestures { }
-            }
-            .horizontalScroll(scrollState)
+    // A category lights up when any tool inside it is switched on, so nothing is hidden silently.
+    fun categoryActive(category: VpToolCategory): Boolean = when (category) {
+        VpToolCategory.PLAYBACK ->
+            uiState.isLooping || abRepeatOn || sleepTimerOn || uiState.playbackSpeed != 1.0f || uiState.fpsBoosterPlan.active
+        VpToolCategory.AUDIO ->
+            uiState.audioDelayMs != 0 || uiState.isEqEnabled || uiState.isVolumeBoost || uiState.isBackgroundPlayEnabled
+        VpToolCategory.PICTURE ->
+            !uiState.videoOrientation.isIdentity || uiState.deinterlaceMode.isOn || uiState.upscaleMode.isOn ||
+                nightFilterOn || colorChanged
+    }
+
+    @Composable
+    fun CategoryButton(category: VpToolCategory) {
+        val open = openCategory == category
+        VpToolButton(
+            icon = category.icon,
+            active = open || categoryActive(category),
+            onClick = { onCategoryClick(category) },
+            // Little arrow = "this icon holds more icons"
+            badge = if (open) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+            contentDescription = category.title + " tools"
+        )
+    }
+
+    // Main row (centred) + the opened category's icons right below it.
+    Column(
+        modifier = modifier.pointerInput(Unit) {
+            // Consume all touches/gestures to prevent them from triggering
+            // underlying player navigation gestures (seek, brightness, etc.)
+            detectTapGestures { }
+        },
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(2.dp)
         ) {
-            VpToolButton(Icons.Rounded.PictureInPicture, false, onPiPClick)
-            VpToolButton(
-                if (uiState.isLooping) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
-                uiState.isLooping,
-                onLoopClick
-            )
-            VpToolButton(
-                Icons.Rounded.Repeat,
-                uiState.isAbRepeatActive || uiState.abRepeatPointA != null,
-                onAbRepeatClick,
-                label = when {
-                    uiState.isAbRepeatActive -> "A-B"
-                    uiState.abRepeatPointA != null -> "A-"
-                    else -> "A-B"
-                }
-            )
-            VpToolButton(
-                Icons.Rounded.Bedtime,
-                uiState.sleepTimerMode != com.beatraxus.app.viewmodel.SleepTimerMode.OFF,
-                onSleepTimerClick
-            )
-            VpToolButton(Icons.Rounded.Speed, uiState.playbackSpeed != 1.0f, onSpeedClick)
-            VpToolButton(
-                Icons.Rounded.Animation,
-                uiState.fpsBoosterPlan.active,
-                onMotionBoostClick,
-                label = if (uiState.fpsBoosterPlan.active) uiState.fpsBoosterPlan.targetFps.toString() else null
-            )
-            // Audio delay: sound-wave glyph with a small clock badge = "audio timing"
-            VpToolButton(
-                Icons.Rounded.GraphicEq,
-                uiState.audioDelayMs != 0,
-                onAudioDelayClick,
-                badge = Icons.Rounded.Schedule,
-                contentDescription = "Audio delay"
-            )
-            VpToolButton(Icons.Rounded.Equalizer, uiState.isEqEnabled, onEqClick)
-            VpToolButton(
-                if (uiState.isVolumeBoost) Icons.Rounded.VolumeUp else Icons.Rounded.VolumeDown,
-                uiState.isVolumeBoost,
-                onToggleBoost
-            )
-            VpToolButton(Icons.Rounded.Headset, uiState.isBackgroundPlayEnabled, onHeadphonesClick)
-            VpToolButton(Icons.Rounded.ScreenRotation, false, onRotationClick)
-            VpToolButton(
-                Icons.Rounded.Flip,
-                !uiState.videoOrientation.isIdentity,
-                onOrientationClick,
-                contentDescription = "Rotate, flip and mirror the video"
-            )
-            VpToolButton(
-                Icons.Rounded.Deblur,
-                uiState.deinterlaceMode.isOn,
-                onDeinterlaceClick,
-                contentDescription = "Deinterlacing"
-            )
-            VpToolButton(
-                Icons.Rounded.AutoFixHigh,
-                uiState.upscaleMode.isOn,
-                onUpscalerClick,
-                contentDescription = "Video upscaler"
-            )
+            // No category: shown directly
+            VpToolButton(Icons.Rounded.PictureInPicture, false, onPiPClick, contentDescription = "Picture in picture")
+            CategoryButton(VpToolCategory.PLAYBACK)
+            CategoryButton(VpToolCategory.AUDIO)
+            CategoryButton(VpToolCategory.PICTURE)
             VpToolButton(
                 Icons.Rounded.PhotoCamera,
                 false,
@@ -1380,23 +1370,109 @@ fun FloatingControls(
                 contentDescription = "Save a screenshot to the gallery"
             )
             VpToolButton(
-                Icons.Rounded.Nightlight,
-                uiState.nightFilter.mode != com.beatraxus.app.model.NightFilterMode.OFF,
-                onNightFilterClick,
-                contentDescription = "Night filter"
-            )
-            VpToolButton(
                 Icons.Rounded.Info,
                 false,
                 onInfoClick,
                 contentDescription = "Video info: codec, bitrate and frame rate"
             )
-            VpToolButton(
-                Icons.Rounded.Tune,
-                uiState.colorBrightness != 0f || uiState.colorContrast != 1f || uiState.colorSaturation != 1f ||
-                    uiState.colorGamma != 1f || uiState.colorHue != 0f || uiState.colorTemperature != 0f || uiState.colorSharpness != 0f,
-                onColorClick
-            )
+        }
+
+        AnimatedContent(
+            targetState = openCategory,
+            transitionSpec = { fadeIn(tween(180)) togetherWith fadeOut(tween(120)) },
+            label = "vpToolCategory"
+        ) { category ->
+            if (category != null) {
+                Row(
+                    modifier = Modifier
+                        .padding(top = 4.dp)
+                        .clip(RoundedCornerShape(24.dp))
+                        .background(Color.Black.copy(alpha = 0.45f))
+                        .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(24.dp))
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    when (category) {
+                        VpToolCategory.PLAYBACK -> {
+                            VpToolButton(
+                                if (uiState.isLooping) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
+                                uiState.isLooping,
+                                onLoopClick,
+                                contentDescription = "Loop"
+                            )
+                            VpToolButton(
+                                Icons.Rounded.Repeat,
+                                abRepeatOn,
+                                onAbRepeatClick,
+                                label = when {
+                                    uiState.isAbRepeatActive -> "A-B"
+                                    uiState.abRepeatPointA != null -> "A-"
+                                    else -> "A-B"
+                                }
+                            )
+                            VpToolButton(Icons.Rounded.Bedtime, sleepTimerOn, onSleepTimerClick, contentDescription = "Sleep timer")
+                            VpToolButton(Icons.Rounded.Speed, uiState.playbackSpeed != 1.0f, onSpeedClick, contentDescription = "Playback speed")
+                            VpToolButton(
+                                Icons.Rounded.Animation,
+                                uiState.fpsBoosterPlan.active,
+                                onMotionBoostClick,
+                                label = if (uiState.fpsBoosterPlan.active) uiState.fpsBoosterPlan.targetFps.toString() else null,
+                                contentDescription = "Motion boost"
+                            )
+                        }
+                        VpToolCategory.AUDIO -> {
+                            // Audio delay: sound-wave glyph with a small clock badge = "audio timing"
+                            VpToolButton(
+                                Icons.Rounded.GraphicEq,
+                                uiState.audioDelayMs != 0,
+                                onAudioDelayClick,
+                                badge = Icons.Rounded.Schedule,
+                                contentDescription = "Audio delay"
+                            )
+                            VpToolButton(Icons.Rounded.Equalizer, uiState.isEqEnabled, onEqClick, contentDescription = "Equalizer")
+                            VpToolButton(
+                                if (uiState.isVolumeBoost) Icons.Rounded.VolumeUp else Icons.Rounded.VolumeDown,
+                                uiState.isVolumeBoost,
+                                onToggleBoost,
+                                contentDescription = "Volume boost"
+                            )
+                            VpToolButton(Icons.Rounded.Headset, uiState.isBackgroundPlayEnabled, onHeadphonesClick, contentDescription = "Background play")
+                        }
+                        VpToolCategory.PICTURE -> {
+                            VpToolButton(Icons.Rounded.ScreenRotation, false, onRotationClick, contentDescription = "Screen rotation")
+                            VpToolButton(
+                                Icons.Rounded.Flip,
+                                !uiState.videoOrientation.isIdentity,
+                                onOrientationClick,
+                                contentDescription = "Rotate, flip and mirror the video"
+                            )
+                            VpToolButton(
+                                Icons.Rounded.Deblur,
+                                uiState.deinterlaceMode.isOn,
+                                onDeinterlaceClick,
+                                contentDescription = "Deinterlacing"
+                            )
+                            VpToolButton(
+                                Icons.Rounded.AutoFixHigh,
+                                uiState.upscaleMode.isOn,
+                                onUpscalerClick,
+                                contentDescription = "Video upscaler"
+                            )
+                            VpToolButton(
+                                Icons.Rounded.Nightlight,
+                                nightFilterOn,
+                                onNightFilterClick,
+                                contentDescription = "Night filter"
+                            )
+                            VpToolButton(Icons.Rounded.Tune, colorChanged, onColorClick, contentDescription = "Color adjustments")
+                        }
+                    }
+                }
+            } else {
+                Spacer(Modifier.height(0.dp))
+            }
         }
     }
 }
@@ -1557,11 +1633,7 @@ private fun VpFlatButton(
 }
 
 /** Space the bottom control stack needs, so floating items (Skip Intro, chapter strip) sit above it. */
-@Composable
-private fun vpBottomStackClearance(): Dp =
-    if (androidx.compose.ui.platform.LocalConfiguration.current.orientation ==
-        android.content.res.Configuration.ORIENTATION_LANDSCAPE
-    ) 132.dp else 176.dp
+private fun vpBottomStackClearance(): Dp = 116.dp
 
 @Composable
 fun PlayerTopBar(
@@ -1585,9 +1657,11 @@ fun PlayerTopBar(
     showCast: Boolean = false,
     /** Feature 26: non-null while the video plays on that Cast device (lights the Cast button). */
     castDeviceName: String? = null,
+    /** The tool icons (grouped by category). Drawn under the title row, centred at the top. */
+    toolsContent: @Composable () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    Box(
+    Column(
         modifier = modifier
             .fillMaxWidth()
             .background(
@@ -1703,6 +1777,15 @@ fun PlayerTopBar(
                 }
             }
         }
+        // Tool icons: under the title, horizontally centred (not at the bottom any more)
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 2.dp),
+            contentAlignment = Alignment.TopCenter
+        ) {
+            toolsContent()
+        }
     }
 }
 
@@ -1785,11 +1868,7 @@ fun PlayerCenterControls(
     }
 }
 
-/**
- * Bottom area: seek bar with both times, then one row of  lock | tool icons | aspect ratio.
- * In portrait the tool icons get their own full-width row above lock / aspect.
- * [toolsContent] receives the modifier it must use to fill the space it is given.
- */
+/** Bottom area: seek bar with both times, then one row of  lock | aspect ratio. (The tool icons live under the title.) */
 @Composable
 fun PlayerBottomBar(
     uiState: VideoPlayerUiState,
@@ -1800,12 +1879,8 @@ fun PlayerBottomBar(
     onAspectRatioClick: () -> Unit,
     onScrubbing: (Long?) -> Unit,
     onLongPress: () -> Unit,
-    modifier: Modifier = Modifier,
-    toolsContent: @Composable (Modifier) -> Unit = {}
+    modifier: Modifier = Modifier
 ) {
-    val isLandscape = androidx.compose.ui.platform.LocalConfiguration.current.orientation ==
-        android.content.res.Configuration.ORIENTATION_LANDSCAPE
-
     Box(
         modifier = modifier
             .fillMaxWidth()
@@ -2011,9 +2086,19 @@ fun PlayerBottomBar(
                 )
             }
 
-            // Lock, aspect ratio and the tool icons
-            val lockButton: @Composable () -> Unit = {
-                VpFlatButton(onClick = onLock, active = uiState.isLocked) {
+            // Lock and aspect ratio. Pulled up under the seek bar: the slider's 48dp touch area leaves a big gap otherwise.
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .layout { measurable, constraints ->
+                        val pull = 12.dp.roundToPx()
+                        val placeable = measurable.measure(constraints)
+                        layout(placeable.width, placeable.height - pull) { placeable.placeRelative(0, -pull) }
+                    },
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                VpFlatButton(onClick = onLock, size = 40.dp, active = uiState.isLocked) {
                     Icon(
                         if (uiState.isLocked) Icons.Rounded.Lock else Icons.Rounded.LockOpen,
                         if (uiState.isLocked) "Unlock screen" else "Lock screen",
@@ -2021,31 +2106,8 @@ fun PlayerBottomBar(
                         modifier = Modifier.size(22.dp)
                     )
                 }
-            }
-            val aspectButton: @Composable () -> Unit = {
-                VpFlatButton(onClick = onAspectRatioClick) {
+                VpFlatButton(onClick = onAspectRatioClick, size = 40.dp) {
                     Icon(Icons.Rounded.AspectRatio, "Aspect ratio", tint = Color.White.copy(0.92f), modifier = Modifier.size(22.dp))
-                }
-            }
-
-            if (isLandscape) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    lockButton()
-                    toolsContent(Modifier.weight(1f))
-                    aspectButton()
-                }
-            } else {
-                toolsContent(Modifier.fillMaxWidth())
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    lockButton()
-                    aspectButton()
                 }
             }
         }

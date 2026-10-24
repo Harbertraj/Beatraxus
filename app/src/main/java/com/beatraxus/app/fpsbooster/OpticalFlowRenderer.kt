@@ -18,6 +18,7 @@ import android.util.Log
 import android.view.Choreographer
 import android.view.Surface
 import com.beatraxus.app.colorgrade.ColorTune
+import com.beatraxus.app.deinterlace.DeinterlaceGlsl
 import com.beatraxus.app.model.VideoOrientation
 import com.beatraxus.app.motionboost.MotionBoostTiming
 import java.util.concurrent.CountDownLatch
@@ -87,6 +88,7 @@ class OpticalFlowRenderer(
     /** Hue + colour temperature as (matrix - identity), column-major; all zeros = no change. */
     @Volatile private var colorDelta: FloatArray = ColorTune.NO_DELTA
     @Volatile private var dirty = true
+    @Volatile private var deinterlaceMode = 0
     @Volatile private var orientationMatrix: FloatArray = VideoOrientation.NONE.videoFromScreen()
     private var appliedLevel: QualityLevel? = null
 
@@ -199,6 +201,13 @@ class OpticalFlowRenderer(
     /** Rotate / flip / mirror of the picture; applied in the present pass only (see [PRESENT_VERTEX]). */
     fun setOrientation(orientation: VideoOrientation) {
         orientationMatrix = orientation.videoFromScreen()
+        dirty = true
+    }
+
+    /** Deinterlacing done in the copy pass: 0 = off, 1 = auto, 2 = always (see [DeinterlaceGlsl]). */
+    fun setDeinterlace(mode: Int) {
+        if (mode == deinterlaceMode) return
+        deinterlaceMode = mode
         dirty = true
     }
 
@@ -420,6 +429,8 @@ class OpticalFlowRenderer(
         GLES30.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, oesTexture)
         GLES30.glUniform1i(copy.loc("uTex"), 0)
         GLES30.glUniformMatrix4fv(copy.loc("uTexMatrix"), 1, false, texMatrix, 0)
+        GLES30.glUniform1f(copy.loc("uTexelH"), if (srcH > 0) 1f / srcH else 0f)
+        GLES30.glUniform1i(copy.loc("uMode"), deinterlaceMode)
         GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
 
         val luma = lumaProg!!
@@ -759,17 +770,7 @@ void main() {
 }
 """
 
-        private const val COPY_OES_FRAGMENT = """#version 300 es
-#extension GL_OES_EGL_image_external_essl3 : require
-precision highp float;
-uniform samplerExternalOES uTex;
-uniform mat4 uTexMatrix;
-in vec2 vUv;
-out vec4 o;
-void main() {
-  vec2 uv = (uTexMatrix * vec4(vUv, 0.0, 1.0)).xy;
-  o = vec4(texture(uTex, uv).rgb, 1.0);
-}
-"""
+        /** Copies the decoded OES frame, deinterlacing it on the way (see [DeinterlaceGlsl]). */
+        private val COPY_OES_FRAGMENT: String = DeinterlaceGlsl.oesCopyFragment()
     }
 }
