@@ -29,6 +29,8 @@ import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.RestartAlt
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Star
+import androidx.compose.material.icons.rounded.SwapVert
+import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -62,7 +64,9 @@ import com.beatraxus.app.BuildConfig
 import com.beatraxus.app.subtitles.domain.SecondarySubtitlePlacement
 import com.beatraxus.app.subtitles.domain.SecondarySubtitleStyle
 import com.beatraxus.app.subtitles.domain.SubtitlePositionPreset
+import com.beatraxus.app.subtitles.viewmodel.SelectedSubtitleType
 import com.beatraxus.app.subtitles.viewmodel.SubtitleViewModel
+import com.beatraxus.app.subtitles.viewmodel.SyncTarget
 import com.beatraxus.app.ui.screens.SubtitleColorRow
 import com.beatraxus.app.viewmodel.VideoPlayerUiState
 import com.beatraxus.app.viewmodel.VideoPlayerViewModel
@@ -81,6 +85,7 @@ fun SubtitlePlayerSheetSection(
     var showOnlineResultsView by remember { mutableStateOf(false) }
     var showLanguagePicker by remember { mutableStateOf(false) }
     var manualSearchText by remember { mutableStateOf("") }
+    var tapSyncTarget by remember { mutableStateOf<SyncTarget?>(null) }
 
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
@@ -100,6 +105,15 @@ fun SubtitlePlayerSheetSection(
             selectedCodes = subUiState.selectedLanguages,
             onDismiss = { showLanguagePicker = false },
             onLanguagesSelected = { subtitleViewModel.setPreferredLanguages(it) }
+        )
+    }
+
+    tapSyncTarget?.let { target ->
+        SubtitleTapSyncDialog(
+            target = target,
+            subtitleViewModel = subtitleViewModel,
+            positionProvider = { videoViewModel.getPlayer()?.currentPosition ?: 0L },
+            onDismiss = { tapSyncTarget = null }
         )
     }
 
@@ -482,6 +496,20 @@ fun SubtitlePlayerSheetSection(
                     }
                 }
             }
+
+            // Video feature 20: sync by tapping the line that is being spoken
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = { tapSyncTarget = SyncTarget.MAIN },
+                enabled = subUiState.delaySupported,
+                modifier = Modifier.fillMaxWidth(),
+                border = BorderStroke(1.dp, if (subUiState.delaySupported) mxOrange.copy(0.5f) else Color.White.copy(0.1f)),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
+            ) {
+                Icon(Icons.Rounded.Sync, null, tint = Color.White, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Sync by tapping a line", fontSize = 13.sp)
+            }
         }
 
         // 5b. Dual subtitles (video feature 22): a second subtitle shown together with the main one
@@ -573,6 +601,67 @@ fun SubtitlePlayerSheetSection(
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
                     ) {
                         Text("Remove", fontSize = 13.sp)
+                    }
+                }
+
+                // Video feature 20: swap the two subtitles, and sync the second one by tapping a line
+                val hasSecond = subUiState.secondarySubtitleName != null
+                val canSwap = hasSecond && subUiState.selectedSubtitleType == SelectedSubtitleType.EXTERNAL
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = { subtitleViewModel.swapSubtitles() },
+                        enabled = canSwap,
+                        modifier = Modifier.weight(1f),
+                        border = BorderStroke(1.dp, if (canSwap) mxOrange.copy(0.5f) else Color.White.copy(0.1f)),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
+                    ) {
+                        Icon(Icons.Rounded.SwapVert, null, tint = Color.White, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Swap", fontSize = 13.sp)
+                    }
+                    OutlinedButton(
+                        onClick = { tapSyncTarget = SyncTarget.SECOND },
+                        enabled = hasSecond,
+                        modifier = Modifier.weight(1f),
+                        border = BorderStroke(1.dp, if (hasSecond) mxOrange.copy(0.5f) else Color.White.copy(0.1f)),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
+                    ) {
+                        Icon(Icons.Rounded.Sync, null, tint = Color.White, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Sync second", fontSize = 13.sp)
+                    }
+                }
+                if (hasSecond && !canSwap) {
+                    Text(
+                        "Swap needs a main subtitle from a file, not a built-in track",
+                        color = Color.White.copy(0.4f),
+                        fontSize = 11.sp,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                }
+                if (hasSecond && subUiState.secondaryDelayMs != 0L) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        val secondSec = subUiState.secondaryDelayMs / 1000f
+                        Text(
+                            "Second subtitle delay: " + if (secondSec > 0f) "+%.1f s".format(secondSec) else "%.1f s".format(secondSec),
+                            color = mxOrange,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Text(
+                            "Reset",
+                            color = Color.White.copy(0.7f),
+                            fontSize = 12.sp,
+                            modifier = Modifier.clickable { subtitleViewModel.setSecondaryDelay(0L) }.padding(4.dp)
+                        )
                     }
                 }
 

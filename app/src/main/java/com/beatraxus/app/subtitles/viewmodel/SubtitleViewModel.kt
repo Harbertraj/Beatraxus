@@ -24,8 +24,10 @@ import com.beatraxus.app.subtitles.domain.ScoredSubtitle
 import com.beatraxus.app.subtitles.domain.SecondarySubtitlePlacement
 import com.beatraxus.app.subtitles.domain.SecondarySubtitlePrefs
 import com.beatraxus.app.subtitles.domain.SecondarySubtitleStyle
+import com.beatraxus.app.subtitles.domain.SubtitleCue
 import com.beatraxus.app.subtitles.domain.SubtitleCueParser
 import com.beatraxus.app.subtitles.domain.SubtitleCueTimeline
+import com.beatraxus.app.subtitles.domain.SubtitleTapSync
 import com.beatraxus.app.subtitles.domain.SubtitleEncodingPrefs
 import com.beatraxus.app.subtitles.domain.SubtitleEncodings
 import com.beatraxus.app.subtitles.domain.SubtitleError
@@ -86,6 +88,10 @@ class SubtitleViewModel(
     /** Where each subtitle the viewer loaded from a file came from, so a new text encoding can re-read it. */
     private val sourceUris = mutableMapOf<String, Uri>()
     private var secondarySourceUri: Uri? = null
+
+    /** The second subtitle's cues as they are in its file, and the saved subtitle it came from (null when loaded as a file). */
+    private var secondaryRawCues: List<SubtitleCue> = emptyList()
+    private var secondaryCachedId: String? = null
 
     private var currentVideo: Video? = null
     private var currentMediaKey: String = ""
@@ -656,7 +662,8 @@ class SubtitleViewModel(
             val read = fileImporter.readSubtitleFromUri(uri, language, currentCharset()).getOrNull() ?: return@launch
             val cues = SubtitleCueParser.parse(read.srtContent)
             if (currentVideo?.id != video.id || cues.isEmpty()) return@launch
-            applySecondary(SubtitleCueTimeline(cues), read.displayName)
+            // Same subtitle, new encoding: the delay the viewer set stays.
+            applySecondary(cues, read.displayName, _uiState.value.secondaryDelayMs)
         }
     }
 
@@ -705,25 +712,27 @@ class SubtitleViewModel(
     fun selectSecondaryFromCache(cached: CachedSubtitle) {
         val video = currentVideo ?: return
         viewModelScope.launch(Dispatchers.IO) {
-            val file = File(cached.localPath)
-            val timeline = try {
-                val cues = if (file.exists()) SubtitleCueParser.parse(file.readText(Charsets.UTF_8)) else emptyList()
-                if (cues.isNotEmpty()) SubtitleCueTimeline(cues) else null
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Exception) {
-                null
-            }
+            val cues = readCues(File(cached.localPath))
             withContext(Dispatchers.Main) {
                 if (currentVideo?.id != video.id) return@withContext
-                if (timeline == null) {
+                if (cues.isEmpty()) {
                     _events.emit(SubtitleUiEvent.Error("Could not read that subtitle."))
                 } else {
                     secondarySourceUri = null
-                    applySecondary(timeline, cached.releaseName ?: "Subtitle")
+                    secondaryCachedId = cached.subtitleId
+                    applySecondary(cues, cached.releaseName ?: "Subtitle")
                 }
             }
         }
+    }
+
+    /** The cues of a saved subtitle file (always UTF-8 SRT), or an empty list when it is missing or unreadable. */
+    private fun readCues(file: File): List<SubtitleCue> = try {
+        if (file.exists()) SubtitleCueParser.parse(file.readText(Charsets.UTF_8)) else emptyList()
+    } catch (e: CancellationException) {
+        throw e
+    } catch (_: Exception) {
+        emptyList()
     }
 
     /** Loads a subtitle file picked by the viewer as the second subtitle. It is not saved to the video's subtitle list. */
@@ -737,7 +746,8 @@ class SubtitleViewModel(
             val cues = read?.let { SubtitleCueParser.parse(it.srtContent) }.orEmpty()
             if (read != null && cues.isNotEmpty()) {
                 secondarySourceUri = uri
-                applySecondary(SubtitleCueTimeline(cues), read.displayName)
+                secondaryCachedId = null
+                applySecondary(cues, read.displayName)
             } else {
                 val error = (res.exceptionOrNull() as? SubtitleException)?.error ?: SubtitleError.InvalidSubtitle
                 _events.emit(SubtitleUiEvent.Error(SubtitleErrorMapper.toUserMessage(error)))
@@ -747,8 +757,10 @@ class SubtitleViewModel(
 
     fun clearSecondarySubtitle() {
         secondarySourceUri = null
+        secondaryCachedId = null
+        secondaryRawCues = emptyList()
         _secondaryTimeline.value = null
-        _uiState.update { it.copy(secondarySubtitleName = null) }
+        _uiState.update { it.copy(secondarySubtitleName = null, secondaryDelayMs = 0L) }
     }
 
     fun setSecondaryPlacement(placement: SecondarySubtitlePlacement) =
@@ -760,9 +772,135 @@ class SubtitleViewModel(
         it.copy(sizePercent = percent.coerceIn(SecondarySubtitleStyle.MIN_SIZE_PERCENT, SecondarySubtitleStyle.MAX_SIZE_PERCENT))
     }
 
-    private fun applySecondary(timeline: SubtitleCueTimeline, name: String) {
-        _secondaryTimeline.value = timeline
-        _uiState.update { it.copy(secondarySubtitleName = name) }
+    /** Shows [cues] as the second subtitle, moved by [delayMs]. The cues are kept as they are in the file. */
+    private fun applySecondary(cues: List<SubtitleCue>, name: String, delayMs: Long = 0L) {
+        secondaryRawCues = cues
+        _secondaryTimeline.value = SubtitleCueTimeline(SubtitleTapSync.shift(cues, delayMs))
+        _uiState.update { it.copy(secondarySubtitleName = name, secondaryDelayMs = delayMs) }
+    }
+
+    /** Moves the second subtitle against the video, the way the delay buttons move the main one (video feature 20). */
+    fun setSecondaryDelay(delayMs: Long) {
+        if (secondaryRawCues.isEmpty()) return
+        _secondaryTimeline.value = SubtitleCueTimeline(SubtitleTapSync.shift(secondaryRawCues, delayMs))
+        _uiState.update { it.copy(secondaryDelayMs = delayMs) }
+    }
+
+    // ---- Swap and tap-to-sync (video feature 20) ----
+
+    /**
+     * Makes the second subtitle the main one and the main one the second, each keeping its delay.
+     * Needs a main subtitle from a file (built-in tracks have no cues to read) and a loaded second subtitle.
+     * A second subtitle that was only picked as a file is saved to this video's list first, because the player
+     * can only show a saved file as the main subtitle.
+     */
+    fun swapSubtitles() {
+        val video = currentVideo ?: return
+        val state = _uiState.value
+        val primaryId = state.selectedSubtitleId
+        if (!state.dualEnabled || _secondaryTimeline.value == null ||
+            state.selectedSubtitleType != SelectedSubtitleType.EXTERNAL || primaryId == null
+        ) {
+            viewModelScope.launch(Dispatchers.IO) {
+                _events.emit(SubtitleUiEvent.ShowToast("Load a main subtitle from a file and a second subtitle to swap them"))
+            }
+            return
+        }
+
+        val mediaKey = currentMediaKey.ifBlank { MediaKey.of(video) }
+        val primaryDelay = state.delayMs
+        val secondaryDelay = state.secondaryDelayMs
+        val language = state.selectedLanguages.firstOrNull() ?: "en"
+
+        viewModelScope.launch(Dispatchers.IO) {
+            val saved = subtitleCache.getCachedSubtitles(mediaKey)
+            val oldPrimary = saved.firstOrNull { it.subtitleId == primaryId }
+            val oldPrimaryCues = oldPrimary?.let { readCues(File(it.localPath)) }.orEmpty()
+
+            var newPrimary = secondaryCachedId?.let { id -> saved.firstOrNull { it.subtitleId == id } }
+            if (newPrimary == null) {
+                val uri = secondarySourceUri
+                if (uri != null) {
+                    newPrimary = fileImporter.importSubtitleFromUri(mediaKey, uri, language, currentCharset()).getOrNull()
+                        ?.also { sourceUris[it.subtitleId] = uri }
+                }
+            }
+
+            val promoted = newPrimary
+            if (oldPrimary == null || oldPrimaryCues.isEmpty() || promoted == null || promoted.subtitleId == oldPrimary.subtitleId) {
+                _events.emit(SubtitleUiEvent.Error("Could not swap the subtitles."))
+                return@launch
+            }
+
+            withContext(Dispatchers.Main) {
+                // The viewer may have moved on to another video while the files were being read.
+                if (currentVideo?.id != video.id) return@withContext
+
+                val label = promoted.releaseName ?: "External Subtitle"
+                subtitleController.attachExternalSubtitle(
+                    videoId = video.id,
+                    file = File(promoted.localPath),
+                    language = promoted.language,
+                    label = label,
+                    subtitleId = promoted.subtitleId
+                )
+                val updatedList = subtitleCache.getCachedSubtitles(mediaKey)
+                _uiState.update {
+                    it.copy(
+                        cachedSubtitles = updatedList,
+                        selectedSubtitleId = promoted.subtitleId,
+                        selectedSubtitleType = SelectedSubtitleType.EXTERNAL,
+                        selectedSubtitleName = label
+                    )
+                }
+
+                secondarySourceUri = null
+                secondaryCachedId = oldPrimary.subtitleId
+                applySecondary(oldPrimaryCues, oldPrimary.releaseName ?: "Subtitle", primaryDelay)
+
+                // The new main subtitle carries the delay the second one had. The player keeps showing the old delay
+                // until it is told otherwise, so this also runs when only the old main subtitle had one.
+                if (primaryDelay != 0L || secondaryDelay != 0L) setSubtitleDelay(secondaryDelay)
+            }
+        }
+    }
+
+    /**
+     * The cues of the chosen subtitle as they are in its file, for the "tap the line you hear" list.
+     * Empty when there is nothing to list (no file-based subtitle loaded).
+     */
+    suspend fun loadCuesForSync(target: SyncTarget): List<SubtitleCue> = when (target) {
+        SyncTarget.SECOND -> secondaryRawCues
+        SyncTarget.MAIN -> withContext(Dispatchers.IO) {
+            val video = currentVideo ?: return@withContext emptyList<SubtitleCue>()
+            val state = _uiState.value
+            val id = state.selectedSubtitleId
+            if (state.selectedSubtitleType != SelectedSubtitleType.EXTERNAL || id == null) {
+                emptyList<SubtitleCue>()
+            } else {
+                val mediaKey = currentMediaKey.ifBlank { MediaKey.of(video) }
+                val item = subtitleCache.getCachedSubtitles(mediaKey).firstOrNull { it.subtitleId == id }
+                item?.let { readCues(File(it.localPath)) }.orEmpty()
+            }
+        }
+    }
+
+    /**
+     * Syncs [target] so that [cue] appears at [playerPositionMs]: the viewer tapped the line they are hearing right now.
+     * The cue must come from [loadCuesForSync], i.e. carry its time from the file, because the delay is set from that.
+     */
+    fun syncToCue(target: SyncTarget, cue: SubtitleCue, playerPositionMs: Long) {
+        val delay = SubtitleTapSync.delayFor(cue, playerPositionMs)
+        when (target) {
+            SyncTarget.MAIN -> {
+                if (!_uiState.value.delaySupported) return
+                setSubtitleDelay(delay)
+            }
+            SyncTarget.SECOND -> setSecondaryDelay(delay)
+        }
+        val seconds = delay / 1000f
+        val shown = if (delay > 0L) "+%.1f s".format(seconds) else "%.1f s".format(seconds)
+        viewModelScope.launch(Dispatchers.IO) { _events.emit(SubtitleUiEvent.ShowToast("Subtitles synced ($shown)")) }
     }
 
     private fun updateSecondaryStyle(change: (SecondarySubtitleStyle) -> SecondarySubtitleStyle) {

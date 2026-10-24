@@ -6,6 +6,7 @@ import com.beatraxus.app.model.Video
 import com.beatraxus.app.subtitles.data.SubtitleAuthManager
 import com.beatraxus.app.subtitles.data.SubtitleCache
 import com.beatraxus.app.subtitles.domain.DownloadInfo
+import com.beatraxus.app.subtitles.domain.SubtitleCue
 import com.beatraxus.app.subtitles.domain.SubtitleError
 import com.beatraxus.app.subtitles.domain.SubtitleException
 import com.beatraxus.app.subtitles.domain.SubtitleLanguage
@@ -15,6 +16,7 @@ import com.beatraxus.app.subtitles.domain.SubtitleSearchQuery
 import com.beatraxus.app.subtitles.player.SubtitlePlayerController
 import com.beatraxus.app.subtitles.viewmodel.AutoSearchMode
 import com.beatraxus.app.subtitles.viewmodel.SubtitleViewModel
+import com.beatraxus.app.subtitles.viewmodel.SyncTarget
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -249,6 +251,32 @@ class SubtitleViewModelTest {
 
         viewModel.setAutoSearchMode(AutoSearchMode.OFF)
         assertFalse(viewModel.uiState.value.autoDownload)
+    }
+
+    @Test
+    fun testSwapDoesNothingWithoutASecondSubtitle() {
+        viewModel.onVideoChanged(autoDownloadVideo("vid_606"))
+        viewModel.setDualSubtitlesEnabled(true)
+
+        viewModel.swapSubtitles()
+
+        assertEquals(0, fakeController.attachCount)
+        assertEquals(null, viewModel.uiState.value.secondarySubtitleName)
+    }
+
+    @Test
+    fun testTapSyncOfMainSubtitleIsIgnoredWhenDelayIsNotSupported() {
+        // Built-in tracks cannot be delayed, so a tapped line must not change the delay.
+        viewModel.syncToCue(SyncTarget.MAIN, SubtitleCue(1_000, 2_000, "line"), 5_000)
+
+        assertEquals(0L, viewModel.uiState.value.delayMs)
+    }
+
+    @Test
+    fun testSecondaryDelayIsIgnoredWithoutASecondSubtitle() {
+        viewModel.setSecondaryDelay(1_500)
+
+        assertEquals(0L, viewModel.uiState.value.secondaryDelayMs)
     }
 
     @Test

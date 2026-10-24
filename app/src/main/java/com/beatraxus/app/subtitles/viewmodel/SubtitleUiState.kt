@@ -13,6 +13,12 @@ enum class AutoSearchMode(val displayName: String) {
     ON_PREFERRED_LANGUAGE("On (Preferred Language Only)")
 }
 
+/** Which subtitle of a dual pair a tap-to-sync (video feature 20) moves. */
+enum class SyncTarget {
+    MAIN,
+    SECOND
+}
+
 enum class SelectedSubtitleType {
     NONE,
     EXTERNAL,
@@ -46,6 +52,7 @@ data class SubtitleUiState(
     // Dual subtitles (video feature 22)
     val dualEnabled: Boolean = false,
     val secondarySubtitleName: String? = null,
+    val secondaryDelayMs: Long = 0L,
     val secondaryStyle: SecondarySubtitleStyle = SecondarySubtitleStyle(),
     // Custom font and text encoding (video feature 23)
     val encodingId: String = SubtitleEncodings.AUTO,
