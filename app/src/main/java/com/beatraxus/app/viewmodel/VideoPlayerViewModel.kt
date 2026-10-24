@@ -117,6 +117,8 @@ data class VideoPlayerUiState(
     val externalAudioName: String? = null,
     /** 0f..1f while an audio track is being extracted to a file ("Extract" icon of the Audio Tracks sheet), else null. */
     val audioExtractProgress: Float? = null,
+    /** Language / name of the audio track being extracted, e.g. "Tamil" (shown as [Tamil] next to the progress). */
+    val audioExtractLanguage: String? = null,
     /** Feature 26: name of the Cast device while this video plays on a TV (the phone only acts as the remote). */
     val castDeviceName: String? = null,
     val selectedAudioTrackIndex: Int = -1,
@@ -356,6 +358,26 @@ class VideoPlayerViewModel(
     private var lastExtSeekAtMs = 0L
     /** How many corrective seeks in a row did not bring the added audio back in step (imprecise seeking in raw streams). */
     private var extMissCount = 0
+    /** Time (ms) the last corrective seek needed before sound came out again; the next seek aims this far ahead. */
+    private var extSeekLeadMs = 0L
+    private var extSeekPending = false
+    /** Current speed correction of the added audio: 1f = none, <1 = slowed (audio is ahead), >1 = sped up (behind). */
+    private var extNudge = 1f
+    /**
+     * Timeline factor of the added file: 1 = normal. Some files carry timestamps that run N times faster than their
+     * sound (seen in logcat: ~341 ms of timestamps for every 42.7 ms of decoded audio, so N = 8). The player's position
+     * then races ahead of the video, the sync loop "corrects" it with a seek every 2 s and the same second of sound
+     * repeats. N is found at run time (see [handleRunawayExternal]); seeks are then made in the file's own timeline.
+     */
+    private var extScale = 1f
+    private var extRateAtMs = 0L
+    private var extRateEpPos = 0L
+    private var extRateMainPos = 0L
+    private var extLastMainPos = 0L
+    private var extLastMainAtMs = 0L
+    private var extLastMainPlaying = false
+    /** The video jumped (user seek): the added audio must be seeked too. Used when the file's timeline is scaled. */
+    private var extNeedReseek = false
     /** Codec / channel info of each loaded file (by uri), known once it has been opened; shown in the track row. */
     private val externalFormats = java.util.concurrent.ConcurrentHashMap<String, androidx.media3.common.Format>()
 
@@ -1533,7 +1555,13 @@ class VideoPlayerViewModel(
 
             override fun onPlaybackStateChanged(playbackState: Int) {
                 // Not a forced seek: a seek ends in READY again, which would seek again, forever.
-                if (playbackState == Player.STATE_READY) syncExternal()
+                if (playbackState == Player.STATE_READY) {
+                    if (extSeekPending) {
+                        extSeekPending = false
+                        extSeekLeadMs = (android.os.SystemClock.elapsedRealtime() - lastExtSeekAtMs).coerceIn(0L, 3000L)
+                    }
+                    syncExternal()
+                }
             }
         })
         extPlayer = ep
@@ -1557,6 +1585,12 @@ class VideoPlayerViewModel(
         ep.volume = 1f
         lastExtSeekAtMs = android.os.SystemClock.elapsedRealtime() // the start position above is already aligned
         extMissCount = 0
+        extNudge = 1f
+        extScale = 1f
+        extRateAtMs = 0L
+        extLastMainAtMs = 0L
+        extNeedReseek = false
+        extSeekPending = true // the first load counts as a seek: its length becomes the lead for later seeks
         ep.prepare()
         ep.playWhenReady = main.isPlaying
         main.volume = 0f
@@ -1564,7 +1598,7 @@ class VideoPlayerViewModel(
         extSyncJob = viewModelScope.launch {
             while (isActive && activeExternalIndex >= 0) {
                 syncExternal()
-                delay(400)
+                delay(200)
             }
         }
         updateTracks()
@@ -1574,11 +1608,54 @@ class VideoPlayerViewModel(
     private fun stopExternalPlayback() {
         extSyncJob?.cancel()
         extSyncJob = null
+        extNudge = 1f
+        extScale = 1f
+        extRateAtMs = 0L
+        extNeedReseek = false
+        extSeekPending = false
         activeExternalIndex = -1
         extVideoId = null
         extPlayer?.let { it.stop(); it.clearMediaItems() }
         exoPlayer?.volume = 1f
         updateTracks()
+    }
+
+    /** Seeks the added audio to where the video is now (in the added file's own timeline, see [extScale]). */
+    private fun seekExternalToVideo(ep: ExoPlayer, main: ExoPlayer, now: Long, speed: Float) {
+        lastExtSeekAtMs = now
+        extMissCount++
+        extSeekPending = true
+        extNeedReseek = false
+        extRateAtMs = 0L
+        // While the video plays on, the seek itself takes time: aim ahead by what the last seek needed,
+        // otherwise the audio lands behind again every time.
+        val lead = if (main.isPlaying) (extSeekLeadMs * speed).toLong() else 0L
+        val target = (main.currentPosition - tuning.audioDelayMs + lead).coerceAtLeast(0L)
+        ep.seekTo((target * extScale).toLong())
+    }
+
+    /**
+     * The added audio's position ran much faster than the video's: its timestamps don't match its sound. When the file's
+     * length is a whole multiple of the video's (8x, ...), that multiple is the timeline factor and sync continues with
+     * it. Otherwise the file can't be synced: the original audio comes back. Returns true when the file was dropped.
+     */
+    private fun handleRunawayExternal(ep: ExoPlayer, main: ExoPlayer, now: Long, speed: Float): Boolean {
+        val mainDur = main.duration
+        val epDur = ep.duration
+        val ratio = if (mainDur > 0 && epDur > 0) epDur.toDouble() / mainDur else 0.0
+        val n = Math.round(ratio)
+        if (n >= 2 && abs(ratio - n) <= 0.1 * n) {
+            Log.w(TAG, "Added audio timeline runs ${n}x faster than its sound; syncing with factor $n")
+            extScale = n.toFloat()
+            seekExternalToVideo(ep, main, now, speed)
+            return false
+        }
+        Log.w(TAG, "Added audio timestamps are unusable (position ran away, length ratio $ratio); dropping it")
+        android.widget.Toast.makeText(
+            getApplication(), "This audio file has broken timing (a file saved by an older version?). Extract the track again and add the new file. Playing the original audio.", android.widget.Toast.LENGTH_LONG
+        ).show()
+        removeExternalAudio(activeExternalIndex)
+        return true
     }
 
     /** Makes the added-audio player follow the video player: play state, speed and position. */
@@ -1592,34 +1669,81 @@ class VideoPlayerViewModel(
         }
         if (main.volume != 0f) main.volume = 0f
         val speed = main.playbackParameters.speed
-        if (ep.playbackParameters.speed != speed) ep.playbackParameters = PlaybackParameters(speed)
         val epState = ep.playbackState
+        if (epState == Player.STATE_ENDED) extSeekPending = false // a seek past the end never turns READY
+        val now = android.os.SystemClock.elapsedRealtime()
+        // Did the video jump (user seek)? Needed when the file's own position can't be compared with the video's.
+        if (extLastMainAtMs != 0L) {
+            val expectedMain = extLastMainPos + if (extLastMainPlaying) ((now - extLastMainAtMs) * speed).toLong() else 0L
+            if (abs(main.currentPosition - expectedMain) > 1000L) extNeedReseek = true
+        }
+        extLastMainPos = main.currentPosition
+        extLastMainAtMs = now
+        extLastMainPlaying = main.isPlaying
+        var nudge = extNudge
         if (main.playbackState == Player.STATE_READY && epState != Player.STATE_IDLE) {
-            val now = android.os.SystemClock.elapsedRealtime()
             val sinceSeek = now - lastExtSeekAtMs
+            val scaled = extScale > 1f
             // The file really ended (it is shorter than the video) when the video is already past the point where it
             // stopped. Judged by position, not by ep.duration: for raw streams the duration is only an estimate.
-            val ended = epState == Player.STATE_ENDED && main.currentPosition >= ep.currentPosition - 500
+            val ended = epState == Player.STATE_ENDED &&
+                main.currentPosition * extScale >= ep.currentPosition - 500 * extScale
             // A seek in a raw stream can take seconds to load. Seeking again while it loads restarts the load from the
             // beginning every time, so the audio never arrives ("stuck"): wait for it (up to 20 s) unless forced.
-            val loadingSeek = epState == Player.STATE_BUFFERING && !forceSeek && sinceSeek < 20_000L
-            // Cool-down: after a seek the position needs a moment to settle; re-seeking at once flushes the audio
-            // output over and over (which sounded like no audio at all).
-            val cooledDown = sinceSeek > (if (forceSeek) 250L else 2000L)
-            if (!ended && !loadingSeek) {
-                val drift = abs(ep.currentPosition - main.currentPosition)
-                if (forceSeek) extMissCount = 0
-                if (drift <= 500L) extMissCount = 0
-                // Seeks in some files are never exact; after two corrections that did not help, accept a larger offset
-                // instead of seeking (and flushing the sound) forever.
-                val tolerance = if (extMissCount >= 2) 1500L else 500L
-                if (cooledDown && (forceSeek || drift > tolerance)) {
-                    lastExtSeekAtMs = now
-                    extMissCount++
-                    ep.seekTo((main.currentPosition - tuning.audioDelayMs).coerceAtLeast(0L))
+            val loadingSeek = (epState == Player.STATE_BUFFERING || extSeekPending) && !forceSeek && sinceSeek < 20_000L
+            if (ended) {
+                nudge = 1f
+            } else if (!loadingSeek) {
+                if (scaled) {
+                    // The file's position runs on its own timeline: it can't be compared with the video's. After the
+                    // first seek the sound simply plays in real time, so only a jump of the video needs a new seek.
+                    nudge = 1f
+                    if (sinceSeek > 400L && (forceSeek || extNeedReseek)) seekExternalToVideo(ep, main, now, speed)
+                } else {
+                    // > 0: the added audio is ahead of the video, < 0: behind it.
+                    val drift = ep.currentPosition - main.currentPosition
+                    val absDrift = abs(drift)
+                    if (forceSeek || absDrift <= 300L) extMissCount = 0
+                    // Seeks in some files are never exact; after three corrections that did not help, only seek for big gaps.
+                    val seekThreshold = if (extMissCount >= 3) 2000L else 700L
+                    val cooledDown = sinceSeek > (if (forceSeek) 250L else 2000L)
+                    if (cooledDown && (forceSeek || absDrift > seekThreshold)) {
+                        nudge = 1f
+                        seekExternalToVideo(ep, main, now, speed)
+                    } else if (epState == Player.STATE_READY && main.isPlaying) {
+                        // Small gaps are closed by playing the added audio a little slower / faster (pitch is kept), which
+                        // is inaudible and does not flush the sound like a seek does. Hysteresis: start 120 ms, stop 40 ms.
+                        nudge = when {
+                            absDrift < 40L -> 1f
+                            absDrift > 300L -> if (drift > 0) 0.95f else 1.05f
+                            absDrift > 120L -> if (drift > 0) 0.975f else 1.025f
+                            else -> nudge
+                        }
+                        // Runaway check: over one second of normal playback the file's position must not move much
+                        // faster than the video's. If it does, its timestamps don't match its sound.
+                        if (extRateAtMs == 0L) {
+                            extRateAtMs = now; extRateEpPos = ep.currentPosition; extRateMainPos = main.currentPosition
+                        } else if (now - extRateAtMs >= 1000L) {
+                            val dMain = main.currentPosition - extRateMainPos
+                            val dEp = ep.currentPosition - extRateEpPos
+                            extRateAtMs = now; extRateEpPos = ep.currentPosition; extRateMainPos = main.currentPosition
+                            if (dMain >= 600L && dEp > dMain * 1.6) {
+                                if (handleRunawayExternal(ep, main, now, speed)) return
+                                nudge = 1f
+                            }
+                        }
+                    } else {
+                        extRateAtMs = 0L
+                    }
                 }
             }
+        } else {
+            nudge = 1f
+            extRateAtMs = 0L
         }
+        extNudge = nudge
+        val wanted = speed * nudge
+        if (abs(ep.playbackParameters.speed - wanted) > 0.001f) ep.playbackParameters = PlaybackParameters(wanted)
         val playing = main.isPlaying
         if (ep.playWhenReady != playing) ep.playWhenReady = playing
     }
@@ -1675,7 +1799,8 @@ class VideoPlayerViewModel(
         val title = video.title.ifBlank { video.displayName.substringBeforeLast('.') }
         val baseName = com.beatraxus.app.util.VideoAudioExtractor.buildBaseName(title, language)
 
-        _uiState.update { it.copy(audioExtractProgress = 0f) }
+        _uiState.update { it.copy(audioExtractProgress = 0f, audioExtractLanguage = language) }
+        android.widget.Toast.makeText(app, "Extracting audio [$language]…", android.widget.Toast.LENGTH_SHORT).show()
         extractJob = extractScope.launch {
             var cancelled = false
             val result = try {
@@ -1685,13 +1810,14 @@ class VideoPlayerViewModel(
                     nativeAudioIndex = nativeIndex,
                     treeUri = treeUri,
                     baseName = baseName,
-                    onProgress = { p -> _uiState.update { s -> if (s.audioExtractProgress != null) s.copy(audioExtractProgress = p) else s } }
+                    onProgress = { p -> _uiState.update { s -> if (s.audioExtractProgress != null) s.copy(audioExtractProgress = p) else s } },
+                    fallbackDurationUs = video.durationMs * 1000L
                 )
             } catch (e: kotlinx.coroutines.CancellationException) {
                 cancelled = true
                 null
             } finally {
-                _uiState.update { it.copy(audioExtractProgress = null) }
+                _uiState.update { it.copy(audioExtractProgress = null, audioExtractLanguage = null) }
             }
             withContext(kotlinx.coroutines.NonCancellable + Dispatchers.Main) {
                 val text = when {

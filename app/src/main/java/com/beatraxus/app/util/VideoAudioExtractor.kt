@@ -11,6 +11,9 @@ import android.os.ParcelFileDescriptor
 import android.os.Process
 import android.os.SystemClock
 import android.provider.DocumentsContract
+import android.util.Log
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.MediaExtractorCompat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
@@ -27,11 +30,77 @@ import kotlin.coroutines.coroutineContext
  * Containers: AAC -> .m4a, Opus -> .opus (Android 10+), Vorbis -> .webm; AC-3 / E-AC-3 / DTS / MP3 / FLAC are written
  * as plain streams (.ac3 .eac3 .dts .mp3 .flac), which every audio player opens.
  */
+/**
+ * Reads the compressed samples of a file. Two implementations: the phone's own [MediaExtractor], and Media3's
+ * [MediaExtractorCompat], which uses the same demuxers as the video player.
+ *
+ * Why both: for some files (Matroska audio stored several frames per block) the phone's extractor hands out a whole block
+ * as ONE sample. Written into an .m4a that is one huge "sample" holding ~8 audio frames, and a decoder plays only the
+ * first frame of each, so the saved file can't be played back or synced (the player showed "timing invalid"). Media3
+ * hands out every frame separately, exactly as the video player itself plays them, so it is tried first.
+ */
+private interface Demuxer {
+    val trackCount: Int
+    fun trackFormat(index: Int): MediaFormat
+    fun selectTrack(index: Int)
+    /** Size of the sample read into [buffer] (at offset 0), or -1 at the end. */
+    fun readSampleData(buffer: ByteBuffer): Int
+    val sampleTime: Long
+    fun advance()
+    fun release()
+}
+
+private class PlatformDemuxer(private val e: MediaExtractor) : Demuxer {
+    override val trackCount get() = e.trackCount
+    override fun trackFormat(index: Int): MediaFormat = e.getTrackFormat(index)
+    override fun selectTrack(index: Int) = e.selectTrack(index)
+    override fun readSampleData(buffer: ByteBuffer): Int = e.readSampleData(buffer, 0)
+    override val sampleTime get() = e.sampleTime
+    override fun advance() { e.advance() }
+    override fun release() = e.release()
+}
+
+@UnstableApi
+private class Media3Demuxer(private val e: MediaExtractorCompat) : Demuxer {
+    override val trackCount get() = e.trackCount
+    override fun trackFormat(index: Int): MediaFormat = e.getTrackFormat(index)
+    override fun selectTrack(index: Int) = e.selectTrack(index)
+    override fun readSampleData(buffer: ByteBuffer): Int = e.readSampleData(buffer, 0)
+    override val sampleTime get() = e.sampleTime
+    override fun advance() { e.advance() }
+    override fun release() = e.release()
+}
+
 object VideoAudioExtractor {
 
     sealed interface Result {
         data class Saved(val fileName: String) : Result
         data class Failed(val reason: String) : Result
+    }
+
+
+    private const val TAG = "VideoAudioExtractor"
+
+    /** A Media3 demuxer for [source] when it can read it and finds an audio track, otherwise null. */
+    @androidx.annotation.OptIn(UnstableApi::class)
+    private fun openMedia3(context: Context, source: Uri): Demuxer? {
+        return try {
+            val compat = MediaExtractorCompat(context)
+            try {
+                compat.setDataSource(source, 0L)
+                val hasAudio = (0 until compat.trackCount).any {
+                    compat.getTrackFormat(it).getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true
+                }
+                if (hasAudio) Media3Demuxer(compat) else { compat.release(); null }
+            } catch (e: Exception) {
+                runCatching { compat.release() }
+                Log.w(TAG, "Media3 couldn't read the file, using the phone's extractor", e)
+                null
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "Media3 extractor not usable, using the phone's extractor", t)
+            null
+        }
     }
 
     private enum class Kind { MUXER_MP4, MUXER_OGG, MUXER_WEBM, RAW, RAW_FLAC }
@@ -76,14 +145,16 @@ object VideoAudioExtractor {
         nativeAudioIndex: Int,
         treeUri: Uri,
         baseName: String,
-        onProgress: (Float) -> Unit
+        onProgress: (Float) -> Unit,
+        /** Length of the whole video (us), used for the percentage when the audio track itself doesn't report one. */
+        fallbackDurationUs: Long = 0L
     ): Result = withContext(Dispatchers.IO) {
         val scheme = source.scheme?.lowercase(Locale.ROOT)
         if (scheme != "content" && scheme != "file" && scheme != "http" && scheme != "https") {
             return@withContext Result.Failed("This video can't be read directly, so its audio can't be extracted")
         }
         val resolver = context.contentResolver
-        val extractor = MediaExtractor()
+        var opened: Demuxer? = null
         var docUri: Uri? = null
         var finished = false
         var sourcePfd: ParcelFileDescriptor? = null
@@ -91,30 +162,40 @@ object VideoAudioExtractor {
         val oldPriority = Process.getThreadPriority(Process.myTid())
         runCatching { Process.setThreadPriority(Process.THREAD_PRIORITY_FOREGROUND) }
         try {
-            try {
-                // A real file descriptor lets the extractor read straight from the file (kernel read-ahead);
-                // going through the content resolver is several times slower. Network streams use the Uri.
-                val local = source.scheme?.lowercase(Locale.ROOT).let { it == "content" || it == "file" }
-                sourcePfd = if (local) runCatching { resolver.openFileDescriptor(source, "r") }.getOrNull() else null
-                val pfd = sourcePfd
-                if (pfd != null) extractor.setDataSource(pfd.fileDescriptor) else extractor.setDataSource(context, source, null)
-            } catch (e: Exception) {
+            // First choice: Media3's demuxers (the video player's own), which hand out every audio frame separately.
+            opened = openMedia3(context, source)
+            if (opened == null) {
+                val platform = MediaExtractor()
+                opened = PlatformDemuxer(platform)
                 try {
-                    extractor.setDataSource(context, source, null)
-                } catch (e2: Exception) {
-                    return@withContext Result.Failed("Couldn't open the video file")
+                    // A real file descriptor lets the extractor read straight from the file (kernel read-ahead);
+                    // going through the content resolver is several times slower. Network streams use the Uri.
+                    val local = source.scheme?.lowercase(Locale.ROOT).let { it == "content" || it == "file" }
+                    sourcePfd = if (local) runCatching { resolver.openFileDescriptor(source, "r") }.getOrNull() else null
+                    val pfd = sourcePfd
+                    if (pfd != null) platform.setDataSource(pfd.fileDescriptor) else platform.setDataSource(context, source, null)
+                } catch (e: Exception) {
+                    try {
+                        platform.setDataSource(context, source, null)
+                    } catch (e2: Exception) {
+                        return@withContext Result.Failed("Couldn't open the video file")
+                    }
                 }
             }
+            val extractor: Demuxer = opened ?: return@withContext Result.Failed("Couldn't open the video file")
+            Log.i(TAG, "Extracting with ${if (extractor is PlatformDemuxer) "the phone's MediaExtractor" else "Media3"}")
             val audioTracks = (0 until extractor.trackCount).filter {
-                extractor.getTrackFormat(it).getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true
+                extractor.trackFormat(it).getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true
             }
             if (audioTracks.isEmpty()) return@withContext Result.Failed("No audio track found in this file")
             val trackIndex = audioTracks[nativeAudioIndex.coerceIn(0, audioTracks.lastIndex)]
-            val format = extractor.getTrackFormat(trackIndex)
+            val format = extractor.trackFormat(trackIndex)
             val audioMime = format.getString(MediaFormat.KEY_MIME) ?: ""
             val target = targetFor(audioMime)
                 ?: return@withContext Result.Failed("This audio format ($audioMime) can't be saved without converting it")
-            val durationUs = if (format.containsKey(MediaFormat.KEY_DURATION)) format.getLong(MediaFormat.KEY_DURATION) else 0L
+            // Media3's track formats often carry no duration, which left the percentage stuck at 0%.
+            val durationUs = (if (format.containsKey(MediaFormat.KEY_DURATION)) format.getLong(MediaFormat.KEY_DURATION) else 0L)
+                .takeIf { it > 0L } ?: fallbackDurationUs
 
             val parent = DocumentsContract.buildDocumentUriUsingTree(treeUri, DocumentsContract.getTreeDocumentId(treeUri))
             docUri = DocumentsContract.createDocument(resolver, parent, target.mime, "$baseName.${target.ext}")
@@ -161,7 +242,7 @@ object VideoAudioExtractor {
                             while (true) {
                                 coroutineContext.ensureActive()
                                 buffer.clear()
-                                val size = extractor.readSampleData(buffer, 0)
+                                val size = extractor.readSampleData(buffer)
                                 if (size < 0) break
                                 val sampleTime = extractor.sampleTime
                                 info.set(0, size, sampleTime, MediaCodec.BUFFER_FLAG_KEY_FRAME)
@@ -195,7 +276,7 @@ object VideoAudioExtractor {
                         while (true) {
                             coroutineContext.ensureActive()
                             buffer.clear()
-                            val size = extractor.readSampleData(buffer, 0)
+                            val size = extractor.readSampleData(buffer)
                             if (size < 0) break
                             val sampleTime = extractor.sampleTime
                             stream.write(bytes, buffer.arrayOffset(), size)
@@ -214,7 +295,7 @@ object VideoAudioExtractor {
         } catch (e: Exception) {
             Result.Failed("Extraction failed: ${e.message ?: e.javaClass.simpleName}")
         } finally {
-            runCatching { extractor.release() }
+            runCatching { opened?.release() }
             runCatching { sourcePfd?.close() }
             runCatching { Process.setThreadPriority(oldPriority) }
             // Never leave a half-written file behind.

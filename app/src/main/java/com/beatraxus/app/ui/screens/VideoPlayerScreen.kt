@@ -2269,7 +2269,12 @@ fun VideoSettingsSheetContent(
                         uiState.availableAudioTracks.any { !it.isExternal }
                     if (extractProgress != null) {
                         Text(
-                            "Cancel ${(extractProgress * 100).toInt()}%",
+                            buildString {
+                                append("Cancel")
+                                uiState.audioExtractLanguage?.let { append(" [").append(it).append("]") }
+                                append(" ").append((extractProgress * 100).toInt()).append("%")
+                            },
+                            maxLines = 1, softWrap = false,
                             color = mxOrange, fontSize = 12.sp, fontWeight = FontWeight.Bold,
                             modifier = Modifier
                                 .clip(RoundedCornerShape(8.dp))
@@ -2289,18 +2294,39 @@ fun VideoSettingsSheetContent(
                             }
                         }
                     } else {
-                        IconButton(
-                            onClick = {
-                                val native = uiState.availableAudioTracks.filter { !it.isExternal }
-                                extractChoiceOrdinal = (native.firstOrNull { it.isSelected } ?: native.firstOrNull())?.audioOrdinal ?: -1
-                                showExtractTrackDialog = true
-                            },
-                            enabled = canExtract
+                        // Pill button: icon + "Extract" text on a rounded background, so it reads as an action and
+                        // not as a download icon.
+                        val extractContentAlpha = if (canExtract) 1f else 0.35f
+                        Row(
+                            modifier = Modifier
+                                .padding(end = 4.dp)
+                                .clip(RoundedCornerShape(50))
+                                .background(mxOrange.copy(alpha = if (canExtract) 0.22f else 0.08f))
+                                .border(
+                                    width = 1.dp,
+                                    color = mxOrange.copy(alpha = if (canExtract) 0.7f else 0.2f),
+                                    shape = RoundedCornerShape(50)
+                                )
+                                .clickable(enabled = canExtract) {
+                                    val native = uiState.availableAudioTracks.filter { !it.isExternal }
+                                    extractChoiceOrdinal = (native.firstOrNull { it.isSelected } ?: native.firstOrNull())?.audioOrdinal ?: -1
+                                    showExtractTrackDialog = true
+                                }
+                                .padding(start = 10.dp, end = 12.dp, top = 6.dp, bottom = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             Icon(
                                 Icons.Rounded.Unarchive,
-                                "Extract audio track",
-                                tint = Color.White.copy(alpha = if (canExtract) 1f else 0.35f)
+                                contentDescription = null,
+                                tint = Color.White.copy(alpha = extractContentAlpha),
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Text(
+                                "Extract",
+                                color = Color.White.copy(alpha = extractContentAlpha),
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold
                             )
                         }
                     }
