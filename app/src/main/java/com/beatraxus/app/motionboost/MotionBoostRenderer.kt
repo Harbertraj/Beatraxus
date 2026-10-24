@@ -19,6 +19,7 @@ import android.os.Process
 import android.util.Log
 import android.view.Choreographer
 import android.view.Surface
+import com.beatraxus.app.colorgrade.ColorTune
 import com.beatraxus.app.model.VideoOrientation
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -75,6 +76,8 @@ class MotionBoostRenderer(
     @Volatile private var brightness = 0f
     @Volatile private var contrast = 1f
     @Volatile private var saturation = 1f
+    /** Hue + colour temperature as (matrix - identity), column-major; all zeros = no change. */
+    @Volatile private var colorDelta: FloatArray = ColorTune.NO_DELTA
     @Volatile private var dirty = true
 
     // ---- EGL ----
@@ -175,6 +178,12 @@ class MotionBoostRenderer(
         this.brightness = brightness
         this.contrast = contrast
         this.saturation = saturation
+        dirty = true
+    }
+
+    /** Hue (degrees) and colour temperature (-1 cool .. 1 warm); the booster draws the video itself, so it does both. */
+    fun setColorTune(hueDegrees: Float, temperature: Float) {
+        colorDelta = ColorTune.deltaColumnMajor(hueDegrees, temperature)
         dirty = true
     }
 
@@ -536,6 +545,7 @@ class MotionBoostRenderer(
         GLES30.glUniform1i(ip.loc("uWarp"), if (warp) 1 else 0)
         GLES30.glUniform2f(ip.loc("uInvHalf"), 1f / halfW, 1f / halfH)
         GLES30.glUniform3f(ip.loc("uGrade"), brightness, contrast, saturation)
+        GLES30.glUniformMatrix3fv(ip.loc("uColorDelta"), 1, false, colorDelta, 0)
         GLES30.glUniformMatrix2fv(ip.loc("uOrient"), 1, false, orientationMatrix, 0)
         GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
     }
@@ -971,6 +981,7 @@ uniform float uAlpha;
 uniform int uWarp;
 uniform vec2 uInvHalf;      // 1 / half-size luma dimensions (vector unit = half-size texel)
 uniform vec3 uGrade;        // brightness, contrast, saturation
+uniform mat3 uColorDelta;   // hue + colour temperature matrix minus identity (zeros = off)
 in vec2 vUv;
 out vec4 o;
 
@@ -1017,6 +1028,7 @@ void main() {
   rgb = (rgb - 0.5) * uGrade.y + 0.5;
   float luma = dot(rgb, vec3(0.299, 0.587, 0.114));
   rgb = mix(vec3(luma), rgb, uGrade.z);
+  rgb += uColorDelta * rgb;
   o = vec4(clamp(rgb, 0.0, 1.0), 1.0);
 }
 """

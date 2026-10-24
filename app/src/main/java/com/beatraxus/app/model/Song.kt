@@ -268,6 +268,9 @@ data class AppearanceConfig(
     val lyricsEnabledProviders: Set<String> = emptySet(),
     val lyricsShowAll: Boolean = false,
     val alignLyricsBySinger: Boolean = true,
+    // Translate lyrics: original line on top, translation below
+    val lyricsTranslateEnabled: Boolean = false,
+    val lyricsTranslateLanguage: String = "en",
 
     // Studio DSP interface dual colour palette
     val dspPaletteId: String = "aurora_dusk",
@@ -437,6 +440,12 @@ data class PlayerUiState(
     val selectedIds: Set<String> = emptySet(),
     val sortType: SortType = SortType.NAME,
     val isAscending: Boolean = true,
+    // Video library sort (video library feature 21): kept apart from the music sort above and remembered between sessions
+    val videoSortType: SortType = SortType.NAME,
+    val videoSortAscending: Boolean = true,
+    // Audio feature 13: songs the listener hid, and the shortest song (in seconds, 0 = off) that stays in the library
+    val hiddenSongIds: Set<String> = emptySet(),
+    val minSongDurationSec: Int = 0,
     val qualityTierFilter: String? = null, // null = "All"; else "Excellent"/"Good"/"Fair"/"Poor"
     val viewMode: ViewMode = ViewMode.LIST,
     val isSearchActive: Boolean = false,
@@ -616,6 +625,10 @@ data class PlayerUiState(
                 selectedIds == other.selectedIds &&
                 sortType == other.sortType &&
                 isAscending == other.isAscending &&
+                videoSortType == other.videoSortType &&
+                videoSortAscending == other.videoSortAscending &&
+                hiddenSongIds == other.hiddenSongIds &&
+                minSongDurationSec == other.minSongDurationSec &&
                 qualityTierFilter == other.qualityTierFilter &&
                 viewMode == other.viewMode &&
                 isSearchActive == other.isSearchActive &&
@@ -767,6 +780,10 @@ data class PlayerUiState(
         result = 31 * result + selectedIds.hashCode()
         result = 31 * result + sortType.hashCode()
         result = 31 * result + isAscending.hashCode()
+        result = 31 * result + videoSortType.hashCode()
+        result = 31 * result + videoSortAscending.hashCode()
+        result = 31 * result + hiddenSongIds.hashCode()
+        result = 31 * result + minSongDurationSec
         result = 31 * result + (qualityTierFilter?.hashCode() ?: 0)
         result = 31 * result + viewMode.hashCode()
         result = 31 * result + isSearchActive.hashCode()

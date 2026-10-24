@@ -13,6 +13,7 @@ import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -122,6 +123,10 @@ fun KaraokeLyricsView(
     progressMs: () -> Long = { 0L }, // Live playback position, drives the word-fill sweep
     providerLabel: String? = null,
     alignBySinger: Boolean = true,
+    translateEnabled: Boolean = false,
+    translateLanguage: String = "en",
+    translationStatus: String? = null,
+    onSetTranslation: ((Boolean, String) -> Unit)? = null,
     onShowAllLyrics: (() -> Unit)? = null,
     accentColor: Color = Color.White
 ) {
@@ -131,6 +136,7 @@ fun KaraokeLyricsView(
     var autoScrollEnabled by remember { mutableStateOf(true) }
     var containerHeight by remember { mutableStateOf(0) }
     var showSyncControls by remember { mutableStateOf(false) }
+    var showTranslateDialog by remember { mutableStateOf(false) }
     var lastInteractionTime by remember { mutableLongStateOf(0L) }
     var isLongPressing by remember { mutableStateOf(false) }
     var tempOffsetStr by remember { mutableStateOf("") }
@@ -247,6 +253,7 @@ fun KaraokeLyricsView(
                     if (isPlainLyrics) {
                         PlainLyricLine(
                             text = line.text,
+                            translation = line.translation,
                             speaker = speakerToUse,
                             onLongClick = { onSearchOnline?.invoke() }
                         )
@@ -402,8 +409,48 @@ fun KaraokeLyricsView(
                             }
                         }
                     }
+
+                    if (onSetTranslation != null) {
+                        Surface(
+                            color = if (translateEnabled) Color.White.copy(alpha = 0.28f) else Color.White.copy(alpha = 0.12f),
+                            shape = RoundedCornerShape(24.dp),
+                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.1f)),
+                            modifier = Modifier
+                                .wrapContentWidth()
+                                .clip(RoundedCornerShape(24.dp))
+                                .clickable {
+                                    showTranslateDialog = true
+                                    lastInteractionTime = System.currentTimeMillis()
+                                }
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp).height(48.dp)
+                            ) {
+                                Text(
+                                    text = "TRANSLATE",
+                                    color = Color.White,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                            }
+                        }
+                    }
                 }
             }
+        }
+
+
+        if (showTranslateDialog && onSetTranslation != null) {
+            LyricsTranslateDialog(
+                enabled = translateEnabled,
+                language = translateLanguage,
+                status = translationStatus,
+                onChange = onSetTranslation,
+                onDismiss = { showTranslateDialog = false }
+            )
         }
 
         if (isLongPressing) {
@@ -450,6 +497,7 @@ fun KaraokeLyricsView(
 @Composable
 fun PlainLyricLine(
     text: String,
+    translation: String? = null,
     speaker: LyricSpeaker,
     onLongClick: () -> Unit
 ) {
@@ -482,10 +530,7 @@ fun PlainLyricLine(
         )
     )
 
-    Text(
-        text = text,
-        style = baseStyle,
-        color = Color.White,
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(linePadding)
@@ -495,6 +540,86 @@ fun PlainLyricLine(
                 onClick = {},
                 onLongClick = onLongClick
             )
+    ) {
+        Text(
+            text = text,
+            style = baseStyle,
+            color = Color.White,
+            modifier = Modifier.fillMaxWidth()
+        )
+        if (!translation.isNullOrBlank()) TranslationText(translation, lineTextAlign)
+    }
+}
+
+/** Translated line shown below the original: smaller and dimmer so the original stays the lead. */
+@Composable
+private fun TranslationText(text: String, textAlign: TextAlign, modifier: Modifier = Modifier) {
+    val isIndic = remember(text) { isIndicScript(text) }
+    Text(
+        text = text,
+        color = Color.White.copy(alpha = 0.6f),
+        fontSize = 15.sp,
+        lineHeight = if (isIndic) 22.sp else 20.sp,
+        fontWeight = FontWeight.Medium,
+        textAlign = textAlign,
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(top = 4.dp)
+    )
+}
+
+/** On/off + target language picker for lyric translation. */
+@Composable
+fun LyricsTranslateDialog(
+    enabled: Boolean,
+    language: String,
+    status: String?,
+    onChange: (Boolean, String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Translate lyrics") },
+        text = {
+            Column {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        "Show translation below each line",
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Switch(checked = enabled, onCheckedChange = { onChange(it, language) })
+                }
+                if (enabled && status != null) {
+                    Text(
+                        status,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                }
+                Spacer(Modifier.height(12.dp))
+                Text("Translate into", style = MaterialTheme.typography.labelLarge)
+                LazyColumn(modifier = Modifier.heightIn(max = 320.dp)) {
+                    items(com.beatraxus.app.model.LyricsTranslationLogic.LANGUAGES, key = { it.tag }) { lang ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onChange(true, lang.tag) }
+                                .padding(vertical = 2.dp)
+                        ) {
+                            RadioButton(selected = lang.tag == language, onClick = { onChange(true, lang.tag) })
+                            Text(lang.name, style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } }
     )
 }
 
@@ -639,6 +764,9 @@ fun SyncedLyricLine(
                     modifier = Modifier.fillMaxWidth()
                 )
             }
+        }
+        if (!line.translation.isNullOrBlank()) {
+            TranslationText(line.translation, lineTextAlign)
         }
     }
 }

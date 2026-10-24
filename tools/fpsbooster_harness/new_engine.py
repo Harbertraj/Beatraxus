@@ -15,6 +15,8 @@ from engines import Engine
 
 ASSETS = Path(__file__).resolve().parents[2] / "app/src/main/assets/fpsbooster"
 PITCH = 4
+COARSEST_EDGE = 64   # keep in sync with OpticalFlowRenderer.COARSEST_EDGE
+MAX_LEVELS = 6       # ... and MAX_LEVELS
 
 PRESETS = {  # work_edge, coarsest_range, subpel, refine_passes handled in shader
     "performance": dict(work_edge=640, range=6, subpel=0),
@@ -48,7 +50,7 @@ class NewEngine(Engine):
     # ---- allocation ----
     def _level_sizes(self, w: int, h: int) -> list[tuple[int, int]]:
         sizes = [(w, h)]
-        while max(sizes[-1]) > 128 and len(sizes) < 5:
+        while max(sizes[-1]) > COARSEST_EDGE and len(sizes) < MAX_LEVELS:
             pw, ph = sizes[-1]
             sizes.append((max(8, (pw + 1) // 2), max(8, (ph + 1) // 2)))
         return sizes

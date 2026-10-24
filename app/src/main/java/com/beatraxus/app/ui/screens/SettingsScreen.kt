@@ -4423,6 +4423,12 @@ fun LibraryContent(uiState: PlayerUiState, viewModel: PlayerViewModel, onShowInf
             }
         }
 
+        // Audio feature 13: minimum song length and hidden songs
+        Spacer(Modifier.height(24.dp))
+        HorizontalDivider(color = Color.White.copy(0.06f))
+        Spacer(Modifier.height(16.dp))
+        SongFiltersSection(uiState, viewModel)
+
         // Video Folders Section
         val videoFolders by viewModel.videoFolders.collectAsStateWithLifecycle()
         Spacer(Modifier.height(24.dp))
@@ -7194,5 +7200,165 @@ fun LyricsDatabaseContent(uiState: PlayerUiState, playerViewModel: PlayerViewMod
         ) {
             Text("Reset order", fontWeight = FontWeight.Bold)
         }
+    }
+}
+
+/**
+ * Audio feature 13: the shortest song kept in the library, and the list of songs the listener hid
+ * (with a way to show them again). Sits under the music folders in Settings.
+ */
+@Composable
+private fun SongFiltersSection(uiState: PlayerUiState, viewModel: PlayerViewModel) {
+    val hiddenSongs by viewModel.hiddenSongs.collectAsStateWithLifecycle()
+    val belowMin by viewModel.songsBelowMinDuration.collectAsStateWithLifecycle()
+    var showHidden by remember { mutableStateOf(false) }
+
+    Column {
+        Text(
+            "Minimum song length",
+            color = Color.White,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.SemiBold
+        )
+        Text(
+            "Songs shorter than this are left out of your library.",
+            color = Color.White.copy(0.45f),
+            fontSize = 11.sp
+        )
+        Spacer(Modifier.height(10.dp))
+        Row(
+            modifier = Modifier.horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            com.beatraxus.app.model.SongVisibility.MIN_DURATION_CHOICES_SEC.forEach { sec ->
+                val selected = uiState.minSongDurationSec == sec
+                Surface(
+                    onClick = { viewModel.setMinSongDurationSec(sec) },
+                    shape = RoundedCornerShape(12.dp),
+                    color = if (selected) PremiumAccent.copy(0.18f) else Color.White.copy(0.05f),
+                    border = androidx.compose.foundation.BorderStroke(
+                        1.dp,
+                        if (selected) PremiumAccent.copy(0.5f) else Color.White.copy(0.08f)
+                    )
+                ) {
+                    Text(
+                        com.beatraxus.app.model.SongVisibility.label(sec),
+                        color = if (selected) PremiumAccent else Color.White.copy(0.7f),
+                        fontSize = 12.sp,
+                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
+                    )
+                }
+            }
+        }
+        if (uiState.minSongDurationSec > 0 && belowMin > 0) {
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "$belowMin song${if (belowMin != 1) "s are" else " is"} left out right now.",
+                color = Color.White.copy(0.45f),
+                fontSize = 11.sp
+            )
+        }
+
+        Spacer(Modifier.height(20.dp))
+        HorizontalDivider(color = Color.White.copy(0.06f))
+        Spacer(Modifier.height(16.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "Hidden songs",
+                    color = Color.White,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    if (hiddenSongs.isEmpty()) "None. Use Hide in a song's menu to hide one."
+                    else "${hiddenSongs.size} song${if (hiddenSongs.size != 1) "s" else ""} hidden",
+                    color = Color.White.copy(0.45f),
+                    fontSize = 11.sp
+                )
+            }
+            if (hiddenSongs.isNotEmpty()) {
+                Surface(
+                    onClick = { showHidden = true },
+                    shape = RoundedCornerShape(12.dp),
+                    color = PremiumAccent.copy(0.12f),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, PremiumAccent.copy(0.3f))
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(Icons.Rounded.Visibility, null, tint = PremiumAccent, modifier = Modifier.size(16.dp))
+                        Text("Manage", color = PremiumAccent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+    }
+
+    if (showHidden) {
+        AlertDialog(
+            onDismissRequest = { showHidden = false },
+            containerColor = Color(0xFF1A1A1A),
+            titleContentColor = Color.White,
+            textContentColor = Color.White.copy(0.7f),
+            title = { Text("Hidden songs") },
+            text = {
+                if (hiddenSongs.isEmpty()) {
+                    Text("No hidden songs.")
+                } else {
+                    LazyColumn(modifier = Modifier.heightIn(max = 360.dp)) {
+                        items(hiddenSongs, key = { it.id }) { song ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        song.title,
+                                        color = Color.White,
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        song.artist,
+                                        color = Color.White.copy(0.5f),
+                                        fontSize = 12.sp,
+                                        maxLines = 1,
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                    )
+                                }
+                                IconButton(onClick = { viewModel.unhideSongs(listOf(song.id)) }) {
+                                    Icon(
+                                        Icons.Rounded.Visibility,
+                                        contentDescription = "Show song",
+                                        tint = PremiumAccent
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showHidden = false }) { Text("Done", color = PremiumAccent) }
+            },
+            dismissButton = {
+                if (hiddenSongs.isNotEmpty()) {
+                    TextButton(onClick = { viewModel.unhideAllSongs(); showHidden = false }) {
+                        Text("Show all", color = Color.White.copy(0.7f))
+                    }
+                }
+            }
+        )
     }
 }

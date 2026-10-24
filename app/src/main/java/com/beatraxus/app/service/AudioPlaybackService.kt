@@ -843,6 +843,9 @@ class AudioPlaybackService : Service() {
         libraryScanJob = serviceScope.launch(Dispatchers.Default) {
             acquireScanWakeLock()
             try {
+                // A full scan first puts call recording folders into the excluded folders (so nothing from them is
+                // read or shown), unless the listener added that folder back on purpose.
+                val autoExcluded = if (fullScan) musicRepository.autoExcludeCallRecordingFolders() else emptyList()
                 val blocked = musicRepository.getBlockedFolders()
                 val folderDao = database.folderDao()
                 val activeFolders = folderDao.getActiveFoldersList()
@@ -1056,6 +1059,8 @@ class AudioPlaybackService : Service() {
                 }
 
                 val message = when {
+                    fullScan && autoExcluded.isNotEmpty() ->
+                        "Full scan complete. Call recordings excluded (${autoExcluded.size} folder${if (autoExcluded.size != 1) "s" else ""})"
                     fullScan -> "Full scan complete"
                     newSongs.isNotEmpty() && removedLocalIds.isNotEmpty() -> "Added ${newSongs.size} songs, removed ${removedLocalIds.size}"
                     newSongs.isNotEmpty() -> "Added ${newSongs.size} new songs"

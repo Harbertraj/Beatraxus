@@ -22,7 +22,7 @@ class ShaderAssetsTest {
         "flow_search.frag" to listOf("uRef", "uTgt", "uParent", "uSize", "uGrid", "uParentGrid", "uScale", "uMode", "uRange", "uSubpel", "uLambda"),
         "flow_consistency.frag" to listOf("uSelf", "uOther", "uGrid"),
         "cut_detect.frag" to listOf("uFlow", "uGrid", "uMeanThresh", "uPoorThresh"),
-        "flow_interp.frag" to listOf("uA", "uB", "uFw", "uBw", "uCut", "uT", "uWarp", "uWork", "uFlowUv", "uGrade", "uConsLo", "uConsHi")
+        "flow_interp.frag" to listOf("uA", "uB", "uFw", "uBw", "uCut", "uT", "uWarp", "uWork", "uFlowUv", "uGrade", "uColorDelta", "uConsLo", "uConsHi")
     )
 
     @Test fun everyShaderExistsAndIsEs3() {

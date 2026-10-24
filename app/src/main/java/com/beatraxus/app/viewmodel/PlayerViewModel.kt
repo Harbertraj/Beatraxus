@@ -37,6 +37,7 @@ import kotlinx.coroutines.asCoroutineDispatcher
 import com.google.api.client.googleapis.extensions.android.gms.auth.UserRecoverableAuthIOException
 import kotlin.math.roundToInt
 import com.beatraxus.app.BeatraxusApplication
+import com.beatraxus.app.model.LrcLine
 import com.beatraxus.app.model.OutputMode
 import com.beatraxus.app.model.PlaylistEntity
 import com.beatraxus.app.model.FavoriteEntity
@@ -267,6 +268,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             customEqPresets = loadCustomEqPresets()
         ),
         libraryMode = enumPref("library_mode", LibraryMode.LOCAL),
+        videoSortType = enumPref("video_sort_type", SortType.NAME),
+        videoSortAscending = prefs.getBoolean("video_sort_ascending", true),
+        hiddenSongIds = prefs.getStringSet("hidden_song_ids", emptySet())?.toSet() ?: emptySet(),
+        minSongDurationSec = com.beatraxus.app.model.SongVisibility.normalizeMinDurationSec(prefs.getInt("min_song_duration_sec", 0)),
         playbackMode = enumPref("playback_mode", com.beatraxus.app.model.PlaybackMode.AUDIO),
         metadataNetworkType = enumPref("metadata_network_type", NetworkType.ASK_MOBILE),
         dataSaverEnabled = prefs.getBoolean("data_saver_enabled", false),
@@ -322,8 +327,34 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         allSongsWithFavorites.map { list -> list.find { it.id == songId } }
 
     private val _songs = MutableStateFlow<List<Song>>(emptyList())
-    val allSongs: StateFlow<List<Song>> = _songs.asStateFlow()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    /**
+     * The library as the listener wants to see it (audio feature 13): without hidden songs and without songs shorter
+     * than the chosen minimum. Every list, the home screen and smart playlists build on this, so they all agree.
+     */
+    val allSongs: StateFlow<List<Song>> = combine(
+        _songs,
+        _uiState.map { it.hiddenSongIds }.distinctUntilChanged(),
+        _uiState.map { it.minSongDurationSec }.distinctUntilChanged()
+    ) { songs, hidden, minSec ->
+        com.beatraxus.app.model.SongVisibility.visible(songs, hidden, minSec, { it.id }, { it.durationMs })
+    }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    /** Songs the listener hid (A to Z), for the "Hidden songs" list in Settings where they can be shown again. */
+    val hiddenSongs: StateFlow<List<Song>> = combine(
+        _songs,
+        _uiState.map { it.hiddenSongIds }.distinctUntilChanged()
+    ) { songs, hidden ->
+        if (hidden.isEmpty()) emptyList() else songs.filter { it.id in hidden }.sortedBy { it.title.lowercase() }
+    }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    /** How many songs the minimum duration is leaving out right now (shown next to the setting). */
+    val songsBelowMinDuration: StateFlow<Int> = combine(
+        _songs,
+        _uiState.map { it.minSongDurationSec }.distinctUntilChanged()
+    ) { songs, minSec ->
+        songs.count { com.beatraxus.app.model.SongVisibility.isTooShort(it.durationMs, minSec) }
+    }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 
     // ---- In-app AI profiles (cleaned genres, sound styles, moods) -------------------------------
     // Derived from the song's tag + stored analysis whenever either changes; an unchanged song reuses
@@ -417,8 +448,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         _uiState.map { it.currentFolderPath }.distinctUntilChanged(),
         _uiState.map { it.searchQuery }.distinctUntilChanged(),
         _uiState.map { it.libraryMode }.distinctUntilChanged(),
-        _uiState.map { it.sortType }.distinctUntilChanged(),
-        _uiState.map { it.isAscending }.distinctUntilChanged(),
+        _uiState.map { it.videoSortType }.distinctUntilChanged(),
+        _uiState.map { it.videoSortAscending }.distinctUntilChanged(),
         _recentlyPlayedVideos,
         _uiState.map { it.selectedVideoSource }.distinctUntilChanged()
     ) { args ->
@@ -449,15 +480,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             else -> modeFiltered
         }
 
-        // Apply General Sort if not in a special view that defines its own order
+        // Apply the video sort (name / date / size / duration) unless the view defines its own order
         if (view !in listOf(LibraryView.VIDEO_RECENTLY_ADDED, LibraryView.VIDEO_RECENTLY_PLAYED)) {
-            filtered = when (sortType) {
-                SortType.NAME -> if (isAscending) filtered.sortedBy { it.title.lowercase() } else filtered.sortedByDescending { it.title.lowercase() }
-                SortType.DATE_ADDED -> if (isAscending) filtered.sortedBy { it.dateAdded } else filtered.sortedByDescending { it.dateAdded }
-                SortType.FILE_SIZE -> if (isAscending) filtered.sortedBy { it.sizeBytes } else filtered.sortedByDescending { it.sizeBytes }
-                SortType.DURATION -> if (isAscending) filtered.sortedBy { it.durationMs } else filtered.sortedByDescending { it.durationMs }
-                else -> filtered
-            }
+            filtered = com.beatraxus.app.model.VideoSort.sortVideos(filtered, sortType, isAscending)
         }
 
         if (query.isNotEmpty()) {
@@ -468,7 +493,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     val videos: StateFlow<List<com.beatraxus.app.model.Video>> = filteredVideos
 
-    val videoFolders: StateFlow<List<com.beatraxus.app.model.VideoFolder>> = combine(
+    /** Folders with their totals, in no particular order; [videoFolders] sorts them. */
+    private val unsortedVideoFolders: Flow<List<com.beatraxus.app.model.VideoFolder>> = combine(
         allVideos,
         videoFolderDao.getActiveFolders(),
         _uiState.map { it.blockedFolders }.distinctUntilChanged(),
@@ -491,9 +517,20 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 name = path.substringAfterLast("/"),
                 path = path,
                 videoCount = folderVideos.size,
-                previewThumbnails = folderVideos.take(4).mapNotNull { it.thumbnailUri ?: it.uri.takeUnless { _ -> it.isCloud } }
+                previewThumbnails = folderVideos.take(4).mapNotNull { it.thumbnailUri ?: it.uri.takeUnless { _ -> it.isCloud } },
+                totalSizeBytes = folderVideos.sumOf { it.sizeBytes },
+                totalDurationMs = folderVideos.sumOf { it.durationMs },
+                latestDateAdded = folderVideos.maxOfOrNull { it.dateAdded } ?: 0L
             )
-        }.filter { it.videoCount > 0 }.sortedBy { it.name.lowercase() }
+        }.filter { it.videoCount > 0 }
+    }
+
+    val videoFolders: StateFlow<List<com.beatraxus.app.model.VideoFolder>> = combine(
+        unsortedVideoFolders,
+        _uiState.map { it.videoSortType }.distinctUntilChanged(),
+        _uiState.map { it.videoSortAscending }.distinctUntilChanged()
+    ) { folders, sortType, ascending ->
+        com.beatraxus.app.model.VideoSort.sortFolders(folders, sortType, ascending)
     }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     private val allSongsWithFavorites: StateFlow<List<Song>> = combine(
@@ -3861,6 +3898,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             val resolved = musicRepository.resolveUriToPath(uri) ?: uri
             musicRepository.removeBlockedFolder(resolved)
             musicRepository.addMusicFolder(resolved)
+            // Picked on purpose: if this is a call recording folder, a full scan must not exclude it again.
+            musicRepository.allowCallRecordingFolder(resolved)
             val folders = musicRepository.getMusicFolders()
             _uiState.update { it.copy(
                 triggerFolderPicker = false, 
@@ -3940,6 +3979,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 videoFolderDao.insertFolder(com.beatraxus.app.model.VideoFolderEntity(path))
             } else {
                 musicRepository.addMusicFolder(path)
+                // The listener wants this folder (e.g. a call recording folder): a full scan must not exclude it again.
+                musicRepository.allowCallRecordingFolder(path)
             }
             val folders = musicRepository.getMusicFolders()
             _uiState.update { it.copy(
@@ -4867,6 +4908,18 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         _uiState.update { it.copy(sortType = sortType) }
     }
 
+    /** Video library feature 21: the video sort is separate from the music sort and remembered for the next launch. */
+    fun setVideoSortType(sortType: SortType) {
+        prefs.edit().putString("video_sort_type", sortType.name).apply()
+        _uiState.update { it.copy(videoSortType = sortType) }
+    }
+
+    fun toggleVideoSortOrder() {
+        val ascending = !_uiState.value.videoSortAscending
+        prefs.edit().putBoolean("video_sort_ascending", ascending).apply()
+        _uiState.update { it.copy(videoSortAscending = ascending) }
+    }
+
     /** Current AudioTrack session id for the Music Detail Inspector's live meters (Phase 6),
      *  or 0 if playback isn't active / the service isn't bound yet. */
     fun getCurrentAudioSessionId(): Int = service?.getAudioSessionId() ?: 0
@@ -4985,6 +5038,44 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     /** True while an Inspector-triggered analysis for [songId] is running. */
     fun isQualityAnalysisRunning(songId: String): Boolean = qualityInFlight.contains(songId)
 
+    // ---- Audio feature 13: hide songs, minimum duration ----
+
+    private fun updateHiddenSongIds(change: (Set<String>) -> Set<String>) {
+        var result: Set<String> = emptySet()
+        _uiState.update { state ->
+            result = change(state.hiddenSongIds)
+            state.copy(hiddenSongIds = result)
+        }
+        prefs.edit().putStringSet("hidden_song_ids", result.toSet()).apply()
+    }
+
+    /** Takes the songs out of every list until they are shown again from Settings. */
+    fun hideSongs(ids: Collection<String>) {
+        if (ids.isEmpty()) return
+        updateHiddenSongIds { it + ids }
+    }
+
+    fun unhideSongs(ids: Collection<String>) {
+        if (ids.isEmpty()) return
+        updateHiddenSongIds { it - ids.toSet() }
+    }
+
+    fun unhideAllSongs() = updateHiddenSongIds { emptySet() }
+
+    /** Hides the songs picked in multi-select. Ids that are not songs (an album or artist name) are ignored. */
+    fun hideSelectedSongs() {
+        val songIds = allSongs.value.mapTo(HashSet<String>()) { it.id }
+        hideSongs(_uiState.value.selectedIds.filter { it in songIds })
+        setMultiSelectMode(false)
+    }
+
+    /** Songs shorter than this many seconds are left out of the library. 0 turns the filter off. */
+    fun setMinSongDurationSec(sec: Int) {
+        val value = com.beatraxus.app.model.SongVisibility.normalizeMinDurationSec(sec)
+        prefs.edit().putInt("min_song_duration_sec", value).apply()
+        _uiState.update { it.copy(minSongDurationSec = value) }
+    }
+
     /** Phase 4: library filter by audio-quality tier. Pass null for "All". */
     fun setQualityTierFilter(tier: String?) {
         _uiState.update { it.copy(qualityTierFilter = tier) }
@@ -5080,6 +5171,81 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
         // Fresh songs first, recently played songs last
         return shuffledFresh + shuffledRecent
+    }
+
+    // ── Lyrics translation (original line on top, translation below) ───────────────────────────
+    private val lyricsTranslator by lazy {
+        com.beatraxus.app.repository.lyrics.LyricsTranslator(getApplication<android.app.Application>())
+    }
+    private var lyricsTranslationJob: Job? = null
+    /** songId|language the lines currently shown were translated for. */
+    private var translatedFor: String? = null
+    private val _lyricsTranslationStatus = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
+    val lyricsTranslationStatus: kotlinx.coroutines.flow.StateFlow<String?> = _lyricsTranslationStatus
+
+    init {
+        // One observer covers every way lyrics can change (auto load, online search, picking a
+        // source) and the on/off + language setting, so no call site has to remember to translate.
+        viewModelScope.launch {
+            _uiState
+                .map { Triple(it.lyrics, it.appearance.lyricsTranslateEnabled, it.appearance.lyricsTranslateLanguage) }
+                .distinctUntilChanged { a, b -> a.first === b.first && a.second == b.second && a.third == b.third }
+                .collect { (lyrics, enabled, language) -> onLyricsOrTranslationSettingChanged(lyrics, enabled, language) }
+        }
+    }
+
+    private fun onLyricsOrTranslationSettingChanged(lyrics: List<LrcLine>, enabled: Boolean, language: String) {
+        lyricsTranslationJob?.cancel()
+        if (lyrics.isEmpty()) {
+            translatedFor = null
+            _lyricsTranslationStatus.value = null
+            return
+        }
+        val hasTranslation = lyrics.any { it.translation != null }
+        if (!enabled) {
+            _lyricsTranslationStatus.value = null
+            translatedFor = null
+            if (hasTranslation) {
+                _uiState.update { st -> if (st.lyrics === lyrics) st.copy(lyrics = lyrics.map { it.copy(translation = null) }) else st }
+            }
+            return
+        }
+        val songId = _uiState.value.lyricsCurrentSongId ?: return
+        val marker = "$songId|$language"
+        if (hasTranslation && translatedFor == marker) return // these are already our translated lines
+
+        val base = if (hasTranslation) lyrics.map { it.copy(translation = null) } else lyrics
+        _lyricsTranslationStatus.value = "Translating…"
+        lyricsTranslationJob = viewModelScope.launch {
+            val result = try {
+                lyricsTranslator.translate(songId, base, language)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e("PlayerViewModel", "lyrics translation failed", e)
+                com.beatraxus.app.repository.lyrics.LyricsTranslator.Result.Unavailable
+            }
+            when (result) {
+                is com.beatraxus.app.repository.lyrics.LyricsTranslator.Result.Translated -> {
+                    _lyricsTranslationStatus.value = null
+                    _uiState.update { st ->
+                        // only if the song / lines did not change while we were translating
+                        if (st.lyricsCurrentSongId == songId && st.lyrics === lyrics) {
+                            translatedFor = marker
+                            st.copy(lyrics = result.lines)
+                        } else st
+                    }
+                }
+                is com.beatraxus.app.repository.lyrics.LyricsTranslator.Result.SameLanguage ->
+                    _lyricsTranslationStatus.value = "Lyrics are already in this language"
+                com.beatraxus.app.repository.lyrics.LyricsTranslator.Result.Unavailable ->
+                    _lyricsTranslationStatus.value = "Couldn't translate — check your connection"
+            }
+        }
+    }
+
+    fun setLyricsTranslation(enabled: Boolean, language: String) {
+        viewModelScope.launch { appearancePreferences.setLyricsTranslation(enabled, language) }
     }
 
     fun toggleLyrics() {

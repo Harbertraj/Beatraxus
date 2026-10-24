@@ -21,6 +21,7 @@ uniform int uWarp;           // 0: just show the nearest real frame (no previous
 uniform vec2 uWork;          // work resolution in pixels (flow vector unit)
 uniform vec2 uFlowUv;        // work size / (flow grid * 4): uv scale into the flow textures
 uniform vec3 uGrade;         // brightness, contrast, saturation (applied last, same as the legacy renderer)
+uniform mat3 uColorDelta;    // hue + colour temperature matrix minus identity, column-major (zeros = off)
 uniform float uConsLo;       // inconsistency (px) below which a warp is fully trusted
 uniform float uConsHi;       // ... and above which it is rejected
 in vec2 vUv;
@@ -79,14 +80,20 @@ void main() {
     vec3 ba = texture(uA, vUv + uT * b.xy * inv).rgb;
     vec3 bb = texture(uB, vUv - (1.0 - uT) * b.xy * inv).rgb;
 
-    float wf = (1.0 - smoothstep(uConsLo, uConsHi, f.a))
+    // Fast motion: vector estimates, the forward/backward check and the refined-vs-first vector are all
+    // off by roughly a fixed share of the speed (a 100 px/frame pan is never matched to within 1 px), so the
+    // tolerances grow with it. Fixed tolerances rejected most of a fast picture and showed the unmoved frame
+    // in patches. The two-frame colour check below still catches a genuinely wrong match.
+    float sf = 1.0 + 0.02 * length(f.xy);
+    float sb = 1.0 + 0.02 * length(b.xy);
+    float wf = (1.0 - smoothstep(uConsLo * sf, uConsHi * sf, f.a))
              * (1.0 - smoothstep(0.06, 0.22, length(fa - fb)))
              * (1.0 - smoothstep(0.35, 0.60, f.b))
-             * (1.0 - smoothstep(1.0, 4.0, length(f.xy - f0.xy)));
-    float wb = (1.0 - smoothstep(uConsLo, uConsHi, b.a))
+             * (1.0 - smoothstep(1.0 * sf, 4.0 * sf, length(f.xy - f0.xy)));
+    float wb = (1.0 - smoothstep(uConsLo * sb, uConsHi * sb, b.a))
              * (1.0 - smoothstep(0.06, 0.22, length(ba - bb)))
              * (1.0 - smoothstep(0.35, 0.60, b.b))
-             * (1.0 - smoothstep(1.0, 4.0, length(b.xy - b0.xy)));
+             * (1.0 - smoothstep(1.0 * sb, 4.0 * sb, length(b.xy - b0.xy)));
 
     vec3 wFw = mix(fa, fb, uT);
     vec3 wBw = mix(ba, bb, uT);
@@ -104,5 +111,6 @@ void main() {
   rgb = (rgb - 0.5) * uGrade.y + 0.5;
   float l = dot(rgb, vec3(0.299, 0.587, 0.114));
   rgb = mix(vec3(l), rgb, uGrade.z);
+  rgb += uColorDelta * rgb;
   o = vec4(clamp(rgb, 0.0, 1.0), 1.0);
 }

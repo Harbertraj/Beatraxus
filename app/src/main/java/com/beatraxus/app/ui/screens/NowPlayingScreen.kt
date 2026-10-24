@@ -161,6 +161,8 @@ fun NowPlayingScreen(
     onAdjustOffset: (Long) -> Unit = {},
     onSetLyricsOffset: (Long) -> Unit = {},
     onSearchLyricsOnline: () -> Unit = {},
+    lyricsTranslationStatus: String? = null,
+    onSetLyricsTranslation: ((Boolean, String) -> Unit)? = null,
     onLoadLyricsCandidates: () -> Unit = {},
     onApplyLyricsCandidate: (LyricsCandidate) -> Unit = {},
     showPipelineOverlay: Boolean = false,
@@ -864,6 +866,10 @@ fun NowPlayingScreen(
                                         }
                                     },
                                     alignBySinger = uiState.appearance.alignLyricsBySinger,
+                                    translateEnabled = uiState.appearance.lyricsTranslateEnabled,
+                                    translateLanguage = uiState.appearance.lyricsTranslateLanguage,
+                                    translationStatus = lyricsTranslationStatus,
+                                    onSetTranslation = onSetLyricsTranslation,
                                     onShowAllLyrics = if (uiState.appearance.lyricsShowAll) {
                                         {
                                             showLyricsSourcesSheet = true

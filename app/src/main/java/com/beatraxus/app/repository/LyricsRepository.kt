@@ -10,6 +10,7 @@ import com.beatraxus.app.repository.lyrics.LyricsGranularity
 import com.beatraxus.app.repository.lyrics.LyricsProvider
 import com.beatraxus.app.repository.lyrics.LyricsProviderRegistry
 import com.beatraxus.app.repository.lyrics.LyricsQuery
+import com.beatraxus.app.repository.lyrics.LyricsRacePolicy
 import com.beatraxus.app.repository.lyrics.LyricsTransientException
 import com.beatraxus.app.repository.lyrics.LyricsValidator
 import com.beatraxus.app.repository.lyrics.ValidationResult
@@ -270,9 +271,12 @@ class LyricsRepository(
     private suspend fun runProviders(
         song: Song,
         providers: List<LyricsProvider>,
-        overallTimeoutMs: Long = 15_000L
+        overallTimeoutMs: Long = 15_000L,
+        // true for the playing song: stop as soon as the best possible result is in (see LyricsRacePolicy).
+        // false when every provider's answer is needed (sources popup / preload candidates).
+        earlyExit: Boolean = false
     ): RunProvidersResult = coroutineScope {
-        var query = LyricsQuery(
+        val baseQuery = LyricsQuery(
             title = song.title,
             artist = song.artist,
             album = song.album,
@@ -280,22 +284,25 @@ class LyricsRepository(
             videoId = null
         )
 
-        if (providers.any { it.requiresVideoId }) {
-            val videoId = VideoIdResolver.resolve(query)
-            if (videoId != null) {
-                query = query.copy(videoId = videoId)
-            }
-        }
+        // The video-id lookup used to run BEFORE any provider started, delaying even providers that
+        // never need it. It now runs alongside them; only providers that need it wait for it.
+        val videoIdDeferred = if (providers.any { it.requiresVideoId }) {
+            async(Dispatchers.IO) { runCatching { VideoIdResolver.resolve(baseQuery) }.getOrNull() }
+        } else null
 
-        val finalQuery = query
-        val semaphore = Semaphore(4)
+        val semaphore = Semaphore(maxOf(4, providers.size))
         val config = providerConfig()
 
         val deferredList = providers.map { provider ->
             async(Dispatchers.IO) {
-                if (provider.requiresVideoId && finalQuery.videoId == null) {
-                    Log.d("LyricsProvider", "id=${provider.id} status=miss type=- ms=0")
-                    return@async ProviderFetchResult(provider, null, "miss", 0L)
+                var finalQuery = baseQuery
+                if (provider.requiresVideoId) {
+                    val videoId = videoIdDeferred?.await()
+                    if (videoId == null) {
+                        Log.d("LyricsProvider", "id=${provider.id} status=miss type=- ms=0")
+                        return@async ProviderFetchResult(provider, null, "miss", 0L)
+                    }
+                    finalQuery = baseQuery.copy(videoId = videoId)
                 }
 
                 semaphore.withPermit {
@@ -327,21 +334,46 @@ class LyricsRepository(
             }
         }
 
-        val fetchResults = withTimeoutOrNull(overallTimeoutMs) {
-            deferredList.map { it.await() }
-        } ?: deferredList.mapIndexed { idx, deferred ->
-            if (deferred.isCompleted) {
-                deferred.getCompleted()
-            } else {
-                deferred.cancel()
-                ProviderFetchResult(
-                    providers[idx],
-                    null,
-                    "error",
-                    overallTimeoutMs,
-                    LyricsTransientException("Timed out")
-                )
+        fun placeholder(idx: Int, reason: String) = ProviderFetchResult(
+            providers[idx], null, "error", overallTimeoutMs, LyricsTransientException(reason)
+        )
+
+        val fetchResults: List<ProviderFetchResult>
+        if (!earlyExit) {
+            fetchResults = withTimeoutOrNull(overallTimeoutMs) {
+                deferredList.map { it.await() }
+            } ?: deferredList.mapIndexed { idx, deferred ->
+                if (deferred.isCompleted) {
+                    deferred.getCompleted()
+                } else {
+                    deferred.cancel()
+                    placeholder(idx, "Timed out")
+                }
             }
+        } else {
+            // Race: look at answers in priority order, stop at the first decisive one.
+            val startedAt = System.currentTimeMillis()
+            val collected = arrayOfNulls<ProviderFetchResult>(providers.size)
+            var haveValidTimed = false
+            var decided = false
+            for (idx in providers.indices) {
+                val remaining = overallTimeoutMs - (System.currentTimeMillis() - startedAt)
+                val waitMs = LyricsRacePolicy.waitMs(haveValidTimed, remaining)
+                val fetched = withTimeoutOrNull(waitMs) { deferredList[idx].await() }
+                if (fetched == null) continue // still running (or out of time): decided by what has finished
+                collected[idx] = fetched
+                val res = fetched.result ?: continue
+                val valid = LyricsValidator.validate(res.content, song.durationMs, res.type).isValid
+                if (valid && LyricsRacePolicy.isTimed(res.type)) haveValidTimed = true
+                if (LyricsRacePolicy.isDecisive(res.type, valid)) { decided = true; break }
+            }
+            fetchResults = providers.indices.map { idx ->
+                collected[idx]
+                    ?: deferredList[idx].takeIf { it.isCompleted && !it.isCancelled }?.getCompleted()
+                    ?: placeholder(idx, "Skipped (a better result arrived first)").also { deferredList[idx].cancel() }
+            }
+            videoIdDeferred?.cancel()
+            if (decided) Log.d("LyricsProvider", "race decided early for ${song.title}")
         }
 
         val candidateEvals = mutableListOf<CandidateEval>()
@@ -407,7 +439,7 @@ class LyricsRepository(
             if (idx == -1) Int.MAX_VALUE else idx
         }
 
-        val runResult = runProviders(song, orderedProviders, overallTimeoutMs = 15_000L)
+        val runResult = runProviders(song, orderedProviders, overallTimeoutMs = 15_000L, earlyExit = true)
 
         if (runResult.bestResult == null) {
             if (!runResult.hasTransientError) {

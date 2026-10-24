@@ -150,4 +150,60 @@ class TtmlParserTest {
         assertTrue(lrc!!.contains("[Male]"))
         assertTrue(lrc.contains("[Female]"))
     }
+
+    @Test
+    fun testTtmlFemaleAgentIsNotTaggedMale() {
+        val ttml = """
+            <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata">
+                <body><div>
+                    <p begin="00:00:10.000" ttm:agent="male_v1">Boy line</p>
+                    <p begin="00:00:15.000" ttm:agent="female_v2">Girl line</p>
+                </div></body>
+            </tt>
+        """.trimIndent()
+        val lines = LrcParser.parse(TtmlParser.parseToEnhancedLrc(ttml))
+        assertEquals(LyricSpeaker.MALE, lines[0].speaker)
+        assertEquals(LyricSpeaker.FEMALE, lines[1].speaker)
+    }
+
+    @Test
+    fun testTtmlThreeVoicesAlternateAndGroupIsCentred() {
+        val ttml = """
+            <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata">
+                <head><metadata>
+                    <ttm:agent type="person" xml:id="v1"/>
+                    <ttm:agent type="person" xml:id="v2"/>
+                    <ttm:agent type="group" xml:id="v1000"/>
+                </metadata></head>
+                <body><div>
+                    <p begin="00:00:10.000" ttm:agent="v1">A</p>
+                    <p begin="00:00:12.000" ttm:agent="v2">B</p>
+                    <p begin="00:00:14.000" ttm:agent="v1000">C</p>
+                    <p begin="00:00:16.000" ttm:agent="v1">D</p>
+                </div></body>
+            </tt>
+        """.trimIndent()
+        val lines = LrcParser.parse(TtmlParser.parseToEnhancedLrc(ttml))
+        assertEquals(
+            listOf(LyricSpeaker.MALE, LyricSpeaker.FEMALE, LyricSpeaker.DUET_BOTH, LyricSpeaker.MALE),
+            lines.map { it.speaker }
+        )
+    }
+
+    @Test
+    fun testTtmlTranslationParagraphsDoNotDisturbSingers() {
+        val ttml = """
+            <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata">
+                <body><div>
+                    <p begin="00:00:10.000" ttm:agent="v1">One</p>
+                    <p begin="00:00:10.000" ttm:agent="v2" ttm:role="x-translation">Uno</p>
+                    <p begin="00:00:12.000" ttm:agent="v2">Two</p>
+                </div></body>
+            </tt>
+        """.trimIndent()
+        val lines = LrcParser.parse(TtmlParser.parseToEnhancedLrc(ttml))
+        assertEquals(2, lines.size)
+        assertEquals(LyricSpeaker.MALE, lines[0].speaker)
+        assertEquals(LyricSpeaker.FEMALE, lines[1].speaker)
+    }
 }

@@ -1,5 +1,6 @@
 package com.beatraxus.app.repository.lyrics
 
+import com.beatraxus.app.model.SingerAssignment
 import org.w3c.dom.Element
 import org.w3c.dom.Node
 import org.xml.sax.InputSource
@@ -25,50 +26,23 @@ object TtmlParser {
             val pElements = doc.getElementsByTagName("p")
             if (pElements.length == 0) return null
 
-            // Collect TTML agents
-            val agentsInUse = mutableListOf<String>()
+            // Singer per sung paragraph (translation / romanisation paragraphs are not sung lines
+            // and must not disturb whose turn it is), then one decision for the whole song.
+            val sungParagraphs = ArrayList<Element>(pElements.length)
             for (i in 0 until pElements.length) {
                 val p = pElements.item(i) as Element
-                val agent = getAgent(p)
-                if (agent.isNotEmpty() && !agentsInUse.contains(agent)) {
-                    agentsInUse.add(agent)
-                }
+                val role = getRole(p)
+                if (role.equals("x-translation", ignoreCase = true) || role.equals("x-roman", ignoreCase = true)) continue
+                sungParagraphs.add(p)
             }
-
-            // Sort agents by numeric id (v1, v2, v3, v1000 ...) instead of order of appearance
-            agentsInUse.sortBy { extractNumericId(it) }
-
-            val agentMarkerMap = mutableMapOf<String, String>()
-            if (agentsInUse.size >= 2) {
-                var neutralSingerIndex = 1
-                for (agent in agentsInUse) {
-                    val normalizedAgent = agent.lowercase()
-                    val isGroup = normalizedAgent.contains("group") ||
-                            normalizedAgent.contains("v1000") ||
-                            normalizedAgent.contains("both") ||
-                            normalizedAgent.contains("chorus")
-
-                    val hasMaleExplicit = normalizedAgent.contains("male") || normalizedAgent.contains("boy") || normalizedAgent.contains("he")
-                    val hasFemaleExplicit = normalizedAgent.contains("female") || normalizedAgent.contains("girl") || normalizedAgent.contains("she")
-
-                    if (isGroup) {
-                        agentMarkerMap[agent] = "[Both]"
-                    } else if (hasMaleExplicit) {
-                        agentMarkerMap[agent] = "[Male]"
-                    } else if (hasFemaleExplicit) {
-                        agentMarkerMap[agent] = "[Female]"
-                    } else {
-                        // Use neutral tags [Singer1], [Singer2], etc.
-                        agentMarkerMap[agent] = "[Singer$neutralSingerIndex]"
-                        neutralSingerIndex++
-                    }
-                }
-            } else if (agentsInUse.size == 1) {
-                val agent = agentsInUse[0]
-                val normalizedAgent = agent.lowercase()
-                if (normalizedAgent.contains("male")) agentMarkerMap[agent] = "[Male]"
-                else if (normalizedAgent.contains("female")) agentMarkerMap[agent] = "[Female]"
-            }
+            // turns alternate in singing order, which is time order (not always document order)
+            sungParagraphs.sortBy { parseTime(it.getAttribute("begin") ?: "") }
+            val assigned = SingerAssignment.assign(
+                sungParagraphs.map { getAgent(it).ifEmpty { null } },
+                agentTypes(doc)
+            )
+            val assignedByParagraph = HashMap<Element, SingerAssignment.Assigned>()
+            sungParagraphs.forEachIndexed { index, p -> assignedByParagraph[p] = assigned[index] }
 
             val sb = StringBuilder()
 
@@ -81,8 +55,7 @@ object TtmlParser {
 
                 val pBeginStr = p.getAttribute("begin") ?: ""
                 val pBeginMs = parseTime(pBeginStr)
-                val pAgent = getAgent(p)
-                val speakerPrefix = agentMarkerMap[pAgent] ?: ""
+                val speakerPrefix = assignedByParagraph[p]?.marker ?: ""
 
                 val mainSpans = mutableListOf<RawSpan>()
                 val bgSpans = mutableListOf<RawSpan>()
@@ -153,22 +126,41 @@ object TtmlParser {
         }
     }
 
-    private fun extractNumericId(agent: String): Int {
-        val digits = agent.filter { it.isDigit() }
-        return digits.toIntOrNull() ?: Int.MAX_VALUE
+    /** `<ttm:agent xml:id="v1" type="person">` declarations in the head: id -> type. */
+    private fun agentTypes(doc: org.w3c.dom.Document): Map<String, String> {
+        val agents = doc.getElementsByTagName("ttm:agent").takeIf { it.length > 0 }
+            ?: doc.getElementsByTagName("agent")
+        val types = HashMap<String, String>(agents.length)
+        for (i in 0 until agents.length) {
+            val agent = agents.item(i) as? Element ?: continue
+            val id = agent.qualified("xml:id")
+            val type = agent.getAttribute("type")
+            if (id.isNotEmpty() && type.isNotEmpty()) types[id] = type
+        }
+        return types
     }
 
-    private fun getAgent(element: Element): String {
-        val ttmAgent = element.getAttribute("ttm:agent")
-        if (!ttmAgent.isNullOrEmpty()) return ttmAgent
-        return element.getAttribute("agent") ?: ""
+    /**
+     * Attribute read by qualified name. The parser is not namespace-aware, and Android's Expat-based
+     * DOM files `ttm:agent` under its local name `agent` (the JVM keeps it whole), so a plain
+     * getAttribute("ttm:agent") returns "" on a phone and every line lost its singer.
+     */
+    private fun Element.qualified(name: String): String {
+        getAttribute(name).takeIf { it.isNotEmpty() }?.let { return it }
+        val local = name.substringAfter(':')
+        val found = attributes ?: return ""
+        for (i in 0 until found.length) {
+            val attr = found.item(i) ?: continue
+            if (attr.nodeName == name || attr.nodeName == local || attr.localName == local) {
+                return attr.nodeValue.orEmpty()
+            }
+        }
+        return ""
     }
 
-    private fun getRole(element: Element): String {
-        val ttmRole = element.getAttribute("ttm:role")
-        if (!ttmRole.isNullOrEmpty()) return ttmRole
-        return element.getAttribute("role") ?: ""
-    }
+    private fun getAgent(element: Element): String = element.qualified("ttm:agent")
+
+    private fun getRole(element: Element): String = element.qualified("ttm:role")
 
     private fun collectSpans(element: Element, defaultBeginMs: Long, targetList: MutableList<RawSpan>) {
         val childNodes = element.childNodes

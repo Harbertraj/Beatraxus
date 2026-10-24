@@ -581,13 +581,18 @@ fun DspScreen(
                                 append(uiState.dsp.activeOutputDeviceLabel)
                                 if (deviceMaxInput.isNotBlank()) append("  \u2022  Max $deviceMaxInput")
                             }
+                            // A long device name + "Max ..." used to be cut with "...", hiding details. It stays on
+                            // one line and can be swiped sideways when it is wider than the bar (centred when short).
+                            val subtitleScroll = androidx.compose.foundation.rememberScrollState()
+                            LaunchedEffect(subtitle) { subtitleScroll.scrollTo(0) }
                             Text(
                                 text = subtitle,
                                 color = Color.White.copy(alpha = 0.60f),
                                 fontSize = 11.sp,
                                 letterSpacing = 0.3.sp,
                                 maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
+                                softWrap = false,
+                                modifier = Modifier.horizontalScroll(subtitleScroll)
                             )
                         }
                     }

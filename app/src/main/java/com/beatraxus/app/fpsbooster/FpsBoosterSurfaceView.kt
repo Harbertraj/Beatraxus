@@ -47,6 +47,8 @@ class FpsBoosterSurfaceView(context: Context) : SurfaceView(context), SurfaceHol
     private var brightness = 0f
     private var contrast = 1f
     private var saturation = 1f
+    private var hue = 0f
+    private var temperature = 0f
     private var orientation = VideoOrientation.NONE
 
     private val playerListener = object : Player.Listener {
@@ -83,6 +85,14 @@ class FpsBoosterSurfaceView(context: Context) : SurfaceView(context), SurfaceHol
     fun setColorGrade(brightness: Float, contrast: Float, saturation: Float) {
         this.brightness = brightness; this.contrast = contrast; this.saturation = saturation
         renderer?.setColorGrade(brightness, contrast, saturation)
+    }
+
+    /** Hue (degrees) and colour temperature (-1..1). Compose calls this on every recomposition, so only a change is passed on. */
+    fun setColorTune(hueDegrees: Float, temperature: Float) {
+        if (hueDegrees == hue && temperature == this.temperature) return
+        hue = hueDegrees
+        this.temperature = temperature
+        renderer?.setColorTune(hueDegrees, temperature)
     }
 
     /** Rotate / flip / mirror of the picture; drawn by the renderer, since a SurfaceView cannot be transformed. */
@@ -125,6 +135,7 @@ class FpsBoosterSurfaceView(context: Context) : SurfaceView(context), SurfaceHol
         created.setTargetFps(p.targetFps)
         manager?.let { created.setLevel(it.initialLevel) }
         created.setColorGrade(brightness, contrast, saturation)
+        created.setColorTune(hue, temperature)
         created.setOrientation(orientation)
         player?.let { pl ->
             pl.addListener(playerListener)

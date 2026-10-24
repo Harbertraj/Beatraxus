@@ -659,12 +659,14 @@ fun VideoPlayerScreen(
                     is FpsBoosterSurfaceView -> boostView.apply {
                         configure(boostPlan, uiState.fpsBooster)
                         setColorGrade(uiState.colorBrightness, uiState.colorContrast, uiState.colorSaturation)
+                        setColorTune(uiState.colorHue, uiState.colorTemperature)
                         setOrientation(orientation)
                     }
                     is MotionBoostSurfaceView -> boostView.apply {
                         setTargetFps(boostPlan.targetFps)
                         setExtreme(boostPlan.quality == BoosterQuality.PERFORMANCE)
                         setColorGrade(uiState.colorBrightness, uiState.colorContrast, uiState.colorSaturation)
+                        setColorTune(uiState.colorHue, uiState.colorTemperature)
                         setOrientation(orientation)
                     }
                 }
@@ -858,7 +860,7 @@ fun VideoPlayerScreen(
                             onDismiss = { showChapterStrip = false },
                             modifier = Modifier
                                 .align(Alignment.BottomCenter)
-                                .padding(bottom = 190.dp)
+                                .padding(bottom = vpBottomStackClearance())
                         )
                     }
 
@@ -891,77 +893,26 @@ fun VideoPlayerScreen(
                         modifier = Modifier.align(Alignment.TopCenter)
                     )
 
-                    // Floating Controls
-                    FloatingControls(
+                    // Center transport controls: previous / frame step / play-pause / next
+                    PlayerCenterControls(
                         uiState = uiState,
-                        sheetType = sheetType,
-                        onPiPClick = { 
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                                activity?.enterPictureInPictureMode(android.app.PictureInPictureParams.Builder().build()) 
-                            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                                activity?.enterPictureInPictureMode()
-                            }
-                        },
-                        onSpeedClick = { sheetType = PlayerSheetType.SPEED },
-                        onMotionBoostClick = { sheetType = PlayerSheetType.MOTION_BOOST },
-                        onAudioDelayClick = { sheetType = PlayerSheetType.AUDIO_DELAY },
-                        onEqClick = { sheetType = PlayerSheetType.EQUALIZER },
-                        onToggleBoost = { viewModel.toggleVolumeBoost() },
-                        onHeadphonesClick = { viewModel.toggleBackgroundPlay() },
-                        onRotationClick = { activity?.let { viewModel.toggleOrientation(it) } },
-                        onOrientationClick = { sheetType = PlayerSheetType.ORIENTATION },
-                        onDeinterlaceClick = { sheetType = PlayerSheetType.DEINTERLACE },
-                        onUpscalerClick = { sheetType = PlayerSheetType.UPSCALER },
-                        onNightFilterClick = { sheetType = PlayerSheetType.NIGHT_FILTER },
-                        onInfoClick = { sheetType = PlayerSheetType.INFO },
-                        onSnapshotClick = {
-                            val pv = playerViewRef
-                            val video = uiState.currentVideo
-                            val position = viewModel.getPlayer()?.currentPosition ?: 0L
-                            val videoHeight = uiState.videoSize.height
-                            scope.launch {
-                                // On the TextureView path the picture is copied from the window: clear the controls first.
-                                val hideControls = com.beatraxus.app.util.VideoSnapshot.needsClearScreen(pv)
-                                if (hideControls) {
-                                    controlsVisible = false
-                                    delay(400)
-                                }
-                                val result = com.beatraxus.app.util.VideoSnapshot.captureAndSave(
-                                    context, pv, video?.title, position, videoHeight
-                                )
-                                if (hideControls) controlsVisible = true
-                                val text = when (result) {
-                                    is com.beatraxus.app.util.VideoSnapshot.Result.Saved ->
-                                        "Screenshot saved to Gallery (Pictures/${com.beatraxus.app.model.VideoSnapshotSpec.ALBUM})"
-                                    is com.beatraxus.app.util.VideoSnapshot.Result.Failed -> result.reason
-                                }
-                                android.widget.Toast.makeText(context, text, android.widget.Toast.LENGTH_SHORT).show()
-                            }
-                        },
-                        onColorClick = { sheetType = PlayerSheetType.COLOR },
-                        onAbRepeatClick = { viewModel.toggleAbRepeat() },
-                        onLoopClick = { viewModel.toggleLoop() },
-                        onSleepTimerClick = { sheetType = PlayerSheetType.SLEEP_TIMER },
-                        modifier = Modifier
-                            .align(Alignment.TopCenter)
-                            .padding(top = 70.dp)
-                    )
-
-                    // Bottom Bar
-                    PlayerBottomBar(
-                        uiState = uiState,
-                        positionFlow = viewModel.positionFlow,
                         onTogglePlayPause = { viewModel.togglePlayPause() },
                         onPlayNext = { viewModel.playNext() },
                         onPlayPrevious = { viewModel.playPrevious() },
-                        onSeek = { viewModel.seekTo(it) },
                         onStepFrame = { viewModel.stepFrame(it) },
+                        modifier = Modifier.align(Alignment.Center)
+                    )
+
+                    // Bottom Bar: seek bar, then lock | tool icons | aspect ratio
+                    PlayerBottomBar(
+                        uiState = uiState,
+                        positionFlow = viewModel.positionFlow,
+                        onSeek = { viewModel.seekTo(it) },
                         onLock = { viewModel.toggleLock() },
                         onTimeClick = { viewModel.toggleTimeDisplay() },
-                        onAspectRatioClick = { 
+                        onAspectRatioClick = {
                             viewModel.setAspectRatio(uiState.aspectRatio.next())
                         },
-
                         onScrubbing = {
                             viewModel.updateScrubbingPreview(it)
                             if (it != null) {
@@ -973,6 +924,60 @@ fun VideoPlayerScreen(
                             }
                         },
                         onLongPress = { showChapterStrip = true },
+                        toolsContent = { toolsModifier ->
+                            FloatingControls(
+                                uiState = uiState,
+                                sheetType = sheetType,
+                                onPiPClick = { 
+                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                        activity?.enterPictureInPictureMode(android.app.PictureInPictureParams.Builder().build()) 
+                                    } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                                        activity?.enterPictureInPictureMode()
+                                    }
+                                },
+                                onSpeedClick = { sheetType = PlayerSheetType.SPEED },
+                                onMotionBoostClick = { sheetType = PlayerSheetType.MOTION_BOOST },
+                                onAudioDelayClick = { sheetType = PlayerSheetType.AUDIO_DELAY },
+                                onEqClick = { sheetType = PlayerSheetType.EQUALIZER },
+                                onToggleBoost = { viewModel.toggleVolumeBoost() },
+                                onHeadphonesClick = { viewModel.toggleBackgroundPlay() },
+                                onRotationClick = { activity?.let { viewModel.toggleOrientation(it) } },
+                                onOrientationClick = { sheetType = PlayerSheetType.ORIENTATION },
+                                onDeinterlaceClick = { sheetType = PlayerSheetType.DEINTERLACE },
+                                onUpscalerClick = { sheetType = PlayerSheetType.UPSCALER },
+                                onNightFilterClick = { sheetType = PlayerSheetType.NIGHT_FILTER },
+                                onInfoClick = { sheetType = PlayerSheetType.INFO },
+                                onSnapshotClick = {
+                                    val pv = playerViewRef
+                                    val video = uiState.currentVideo
+                                    val position = viewModel.getPlayer()?.currentPosition ?: 0L
+                                    val videoHeight = uiState.videoSize.height
+                                    scope.launch {
+                                        // On the TextureView path the picture is copied from the window: clear the controls first.
+                                        val hideControls = com.beatraxus.app.util.VideoSnapshot.needsClearScreen(pv)
+                                        if (hideControls) {
+                                            controlsVisible = false
+                                            delay(400)
+                                        }
+                                        val result = com.beatraxus.app.util.VideoSnapshot.captureAndSave(
+                                            context, pv, video?.title, position, videoHeight
+                                        )
+                                        if (hideControls) controlsVisible = true
+                                        val text = when (result) {
+                                            is com.beatraxus.app.util.VideoSnapshot.Result.Saved ->
+                                                "Screenshot saved to Gallery (Pictures/${com.beatraxus.app.model.VideoSnapshotSpec.ALBUM})"
+                                            is com.beatraxus.app.util.VideoSnapshot.Result.Failed -> result.reason
+                                        }
+                                        android.widget.Toast.makeText(context, text, android.widget.Toast.LENGTH_SHORT).show()
+                                    }
+                                },
+                                onColorClick = { sheetType = PlayerSheetType.COLOR },
+                                onAbRepeatClick = { viewModel.toggleAbRepeat() },
+                                onLoopClick = { viewModel.toggleLoop() },
+                                onSleepTimerClick = { sheetType = PlayerSheetType.SLEEP_TIMER },
+                                modifier = toolsModifier
+                            )
+                        },
                         modifier = Modifier.align(Alignment.BottomCenter)
                     )
 
@@ -983,7 +988,7 @@ fun VideoPlayerScreen(
                         exit = fadeOut() + shrinkHorizontally(shrinkTowards = Alignment.End),
                         modifier = Modifier
                             .align(Alignment.BottomEnd)
-                            .padding(bottom = 190.dp, end = 24.dp)
+                            .padding(bottom = vpBottomStackClearance(), end = 24.dp)
                     ) {
                         Surface(
                             onClick = { viewModel.skipIntro() },
@@ -1194,7 +1199,7 @@ private fun VpGlassButton(
     )
 }
 
-/** Flat icon used inside the floating tool capsule. Active = amber disc behind an amber icon. */
+/** Flat icon used in the bottom tool row. Active = soft amber disc behind an amber icon. */
 @Composable
 @OptIn(ExperimentalFoundationApi::class)
 private fun VpToolButton(
@@ -1221,14 +1226,13 @@ private fun VpToolButton(
     )
     Box(
         modifier = Modifier
-            .size(42.dp)
+            .size(40.dp)
             .graphicsLayer {
                 scaleX = scale
                 scaleY = scale
             }
             .clip(CircleShape)
-            .background(VpAmber.copy(alpha = 0.20f * activeAmount))
-            .border(1.dp, VpAmberSoft.copy(alpha = 0.65f * activeAmount), CircleShape)
+            .background(VpAmber.copy(alpha = 0.18f * activeAmount))
             .combinedClickable(
                 interactionSource = interaction,
                 indication = null,
@@ -1291,20 +1295,10 @@ fun FloatingControls(
     modifier: Modifier = Modifier
 ) {
     val scrollState = rememberScrollState()
-    val capsule = RoundedCornerShape(30.dp)
 
+    // Flat, scrollable row of tool icons that sits in the bottom bar (no floating capsule any more).
     Box(
         modifier = modifier
-            .padding(horizontal = 24.dp)
-            .shadow(14.dp, capsule, ambientColor = Color.Black, spotColor = Color.Black)
-            .clip(capsule)
-            .background(Color.Black.copy(alpha = 0.40f))
-            .background(Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.14f), Color.White.copy(alpha = 0.03f))))
-            .border(
-                1.dp,
-                Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.30f), Color.White.copy(alpha = 0.05f))),
-                capsule
-            )
             .pointerInput(Unit) {
                 // Consume all touches/gestures to prevent them from triggering
                 // underlying player navigation gestures (seek, brightness, etc.)
@@ -1313,9 +1307,9 @@ fun FloatingControls(
             .horizontalScroll(scrollState)
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
+            horizontalArrangement = Arrangement.spacedBy(2.dp)
         ) {
             VpToolButton(Icons.Rounded.PictureInPicture, false, onPiPClick)
             VpToolButton(
@@ -1521,6 +1515,54 @@ fun DoubleTapRipple(offset: Offset, text: String) {
     }
 }
 
+/** Flat, background-less icon button (MX Player style). [active] tints the content and adds a soft amber disc. */
+@Composable
+private fun VpFlatButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    size: Dp = 44.dp,
+    active: Boolean = false,
+    content: @Composable BoxScope.() -> Unit
+) {
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (pressed) 0.86f else 1f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
+        label = "vpFlatScale"
+    )
+    val activeAmount by animateFloatAsState(
+        targetValue = if (active) 1f else 0f,
+        animationSpec = tween(200),
+        label = "vpFlatActive"
+    )
+    Box(
+        modifier = modifier
+            .size(size)
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
+            .clip(CircleShape)
+            .background(VpAmber.copy(alpha = 0.18f * activeAmount))
+            .clickable(
+                interactionSource = interaction,
+                indication = null,
+                role = Role.Button,
+                onClick = onClick
+            ),
+        contentAlignment = Alignment.Center,
+        content = content
+    )
+}
+
+/** Space the bottom control stack needs, so floating items (Skip Intro, chapter strip) sit above it. */
+@Composable
+private fun vpBottomStackClearance(): Dp =
+    if (androidx.compose.ui.platform.LocalConfiguration.current.orientation ==
+        android.content.res.Configuration.ORIENTATION_LANDSCAPE
+    ) 132.dp else 176.dp
+
 @Composable
 fun PlayerTopBar(
     title: String,
@@ -1550,20 +1592,21 @@ fun PlayerTopBar(
             .fillMaxWidth()
             .background(
                 Brush.verticalGradient(
-                    listOf(Color.Black.copy(0.80f), Color.Black.copy(0.38f), Color.Transparent)
+                    listOf(Color.Black.copy(0.78f), Color.Black.copy(0.34f), Color.Transparent)
                 )
             )
             .statusBarsPadding()
-            .padding(start = 12.dp, end = 12.dp, top = 6.dp, bottom = 16.dp)
+            .padding(start = 6.dp, end = 8.dp, top = 2.dp, bottom = 24.dp)
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.fillMaxWidth()
         ) {
-            VpGlassButton(onClick = onBack, size = 42.dp) {
-                Icon(Icons.AutoMirrored.Rounded.ArrowBack, null, tint = Color.White, modifier = Modifier.size(22.dp))
+            // Back + title on the left, like every popular player
+            VpFlatButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back", tint = Color.White, modifier = Modifier.size(24.dp))
             }
-            Spacer(Modifier.width(12.dp))
+            Spacer(Modifier.width(2.dp))
             Row(
                 modifier = Modifier.weight(1f),
                 verticalAlignment = Alignment.CenterVertically
@@ -1571,9 +1614,8 @@ fun PlayerTopBar(
                 Text(
                     text = title,
                     color = Color.White,
-                    fontSize = 17.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    letterSpacing = 0.2.sp,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f, fill = false)
@@ -1603,10 +1645,10 @@ fun PlayerTopBar(
             if (isHdr) {
                 Box(
                     modifier = Modifier
-                        .padding(horizontal = 10.dp)
-                        .clip(RoundedCornerShape(50))
+                        .padding(horizontal = 6.dp)
+                        .clip(RoundedCornerShape(5.dp))
                         .background(Brush.horizontalGradient(listOf(Color(0xFFFFE082), Color(0xFFFFB300))))
-                        .padding(horizontal = 10.dp, vertical = 3.dp)
+                        .padding(horizontal = 7.dp, vertical = 2.dp)
                 ) {
                     Text(
                         hdrLabel,
@@ -1618,7 +1660,21 @@ fun PlayerTopBar(
                 }
             }
             // Decoder: no sheet, each tap switches to the next mode (HW -> HW+ -> SW -> HW)
-            VpGlassButton(onClick = onDecoderClick, size = 42.dp) {
+            val decoderInteraction = remember { MutableInteractionSource() }
+            Box(
+                modifier = Modifier
+                    .padding(horizontal = 4.dp)
+                    .clip(RoundedCornerShape(7.dp))
+                    .border(1.dp, Color.White.copy(alpha = 0.55f), RoundedCornerShape(7.dp))
+                    .clickable(
+                        interactionSource = decoderInteraction,
+                        indication = null,
+                        role = Role.Button,
+                        onClick = onDecoderClick
+                    )
+                    .padding(horizontal = 9.dp, vertical = 5.dp),
+                contentAlignment = Alignment.Center
+            ) {
                 Text(
                     decoderLabel,
                     color = Color.White,
@@ -1627,27 +1683,22 @@ fun PlayerTopBar(
                     maxLines = 1
                 )
             }
-            Spacer(Modifier.width(8.dp))
-            VpGlassButton(onClick = onAudioClick, size = 42.dp) {
-                Icon(Icons.Rounded.AudioFile, null, tint = Color.White, modifier = Modifier.size(21.dp))
+            VpFlatButton(onClick = onAudioClick) {
+                Icon(Icons.Rounded.AudioFile, "Audio track", tint = Color.White, modifier = Modifier.size(23.dp))
             }
             // Surround simulator: always here (never appears / disappears); lit while its switch is ON.
-            Spacer(Modifier.width(8.dp))
             SurroundTopIcon(active = isSurroundActive, onClick = onSurroundClick)
-            Spacer(Modifier.width(8.dp))
-            VpGlassButton(onClick = onSubtitleClick, size = 42.dp) {
-                Icon(Icons.Rounded.Subtitles, null, tint = Color.White, modifier = Modifier.size(21.dp))
+            VpFlatButton(onClick = onSubtitleClick) {
+                Icon(Icons.Rounded.Subtitles, "Subtitles", tint = Color.White, modifier = Modifier.size(23.dp))
             }
             if (queueSize > 1) {
-                Spacer(Modifier.width(8.dp))
-                VpGlassButton(onClick = onQueueClick, size = 42.dp) {
-                    Icon(Icons.AutoMirrored.Rounded.PlaylistPlay, "Up next", tint = Color.White, modifier = Modifier.size(23.dp))
+                VpFlatButton(onClick = onQueueClick) {
+                    Icon(Icons.AutoMirrored.Rounded.PlaylistPlay, "Up next", tint = Color.White, modifier = Modifier.size(25.dp))
                 }
             }
             if (showCast) {
                 // The system Cast button opens the device picker (or the "stop casting" dialog when connected).
-                Spacer(Modifier.width(8.dp))
-                VpGlassButton(onClick = {}, size = 42.dp, active = castDeviceName != null) {
+                VpFlatButton(onClick = {}, active = castDeviceName != null) {
                     CastButton(modifier = Modifier.fillMaxSize(), tint = Color.White)
                 }
             }
@@ -1658,38 +1709,112 @@ fun PlayerTopBar(
 /** Opens the surround simulator sheet. */
 @Composable
 private fun SurroundTopIcon(active: Boolean, onClick: () -> Unit) {
-    VpGlassButton(onClick = onClick, size = 42.dp, active = active) {
+    VpFlatButton(onClick = onClick, active = active) {
         Icon(
             Icons.Rounded.SurroundSound,
             "Surround simulator",
-            tint = Color.White,
-            modifier = Modifier.size(22.dp)
+            tint = if (active) VpAmberSoft else Color.White,
+            modifier = Modifier.size(24.dp)
         )
     }
 }
 
+/**
+ * Transport controls in the middle of the picture (previous, frame step, play/pause, next),
+ * the way MX Player / YouTube / VLC lay them out. The frame-step buttons still appear only while paused.
+ */
+@Composable
+fun PlayerCenterControls(
+    uiState: VideoPlayerUiState,
+    onTogglePlayPause: () -> Unit,
+    onPlayNext: () -> Unit,
+    onPlayPrevious: () -> Unit,
+    onStepFrame: (Boolean) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        VpGlassButton(onClick = onPlayPrevious, size = 52.dp) {
+            Icon(Icons.Rounded.SkipPrevious, "Previous", tint = Color.White, modifier = Modifier.size(32.dp))
+        }
+
+        AnimatedVisibility(
+            visible = !uiState.isPlaying,
+            enter = fadeIn() + expandHorizontally(),
+            exit = fadeOut() + shrinkHorizontally()
+        ) {
+            VpGlassButton(onClick = { onStepFrame(false) }, size = 38.dp) {
+                Icon(Icons.Rounded.KeyboardArrowLeft, "Previous frame", tint = Color.White.copy(0.9f), modifier = Modifier.size(26.dp))
+            }
+        }
+
+        Box(
+            modifier = Modifier
+                .size(78.dp)
+                .shadow(18.dp, CircleShape, ambientColor = VpAmber, spotColor = VpAmber)
+                .clip(CircleShape)
+                .background(Color.Black.copy(alpha = 0.46f))
+                .border(2.dp, Brush.linearGradient(listOf(VpAmberSoft, VpAmber)), CircleShape)
+                .clickable(role = Role.Button, onClick = onTogglePlayPause),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                if (uiState.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                if (uiState.isPlaying) "Pause" else "Play",
+                tint = Color.White,
+                modifier = Modifier.size(46.dp)
+            )
+        }
+
+        AnimatedVisibility(
+            visible = !uiState.isPlaying,
+            enter = fadeIn() + expandHorizontally(),
+            exit = fadeOut() + shrinkHorizontally()
+        ) {
+            VpGlassButton(onClick = { onStepFrame(true) }, size = 38.dp) {
+                Icon(Icons.Rounded.KeyboardArrowRight, "Next frame", tint = Color.White.copy(0.9f), modifier = Modifier.size(26.dp))
+            }
+        }
+
+        VpGlassButton(onClick = onPlayNext, size = 52.dp) {
+            Icon(Icons.Rounded.SkipNext, "Next", tint = Color.White, modifier = Modifier.size(32.dp))
+        }
+    }
+}
+
+/**
+ * Bottom area: seek bar with both times, then one row of  lock | tool icons | aspect ratio.
+ * In portrait the tool icons get their own full-width row above lock / aspect.
+ * [toolsContent] receives the modifier it must use to fill the space it is given.
+ */
 @Composable
 fun PlayerBottomBar(
     uiState: VideoPlayerUiState,
     positionFlow: StateFlow<Long>,
-    onTogglePlayPause: () -> Unit,
-    onPlayNext: () -> Unit,
-    onPlayPrevious: () -> Unit,
     onSeek: (Long) -> Unit,
-    onStepFrame: (Boolean) -> Unit,
     onLock: () -> Unit,
     onTimeClick: () -> Unit,
     onAspectRatioClick: () -> Unit,
     onScrubbing: (Long?) -> Unit,
     onLongPress: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    toolsContent: @Composable (Modifier) -> Unit = {}
 ) {
-    val panelShape = RoundedCornerShape(30.dp)
+    val isLandscape = androidx.compose.ui.platform.LocalConfiguration.current.orientation ==
+        android.content.res.Configuration.ORIENTATION_LANDSCAPE
 
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .padding(bottom = 14.dp, top = 28.dp, start = 16.dp, end = 16.dp)
+            .background(
+                Brush.verticalGradient(
+                    listOf(Color.Transparent, Color.Black.copy(alpha = 0.50f), Color.Black.copy(alpha = 0.84f))
+                )
+            )
+            .padding(top = 40.dp, bottom = 8.dp, start = 14.dp, end = 14.dp)
     ) {
         Column {
             // Scrub Preview Overlay
@@ -1709,13 +1834,13 @@ fun PlayerBottomBar(
                             modifier = Modifier
                                 .offset(x = xOffset - 80.dp) // center the 160dp wide preview
                                 .width(160.dp)
-                                .shadow(16.dp, RoundedCornerShape(16.dp), ambientColor = Color.Black, spotColor = VpAmber)
-                                .clip(RoundedCornerShape(16.dp))
+                                .shadow(16.dp, RoundedCornerShape(12.dp), ambientColor = Color.Black, spotColor = VpAmber)
+                                .clip(RoundedCornerShape(12.dp))
                                 .background(Color(0xE60C0C10))
                                 .border(
                                     1.dp,
                                     Brush.verticalGradient(listOf(VpAmberSoft.copy(alpha = 0.7f), Color.White.copy(alpha = 0.08f))),
-                                    RoundedCornerShape(16.dp)
+                                    RoundedCornerShape(12.dp)
                                 ),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
@@ -1726,7 +1851,7 @@ fun PlayerBottomBar(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .aspectRatio(16f / 9f)
-                                        .clip(RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)),
+                                        .clip(RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)),
                                     contentScale = ContentScale.Crop
                                 )
                             } else {
@@ -1753,229 +1878,174 @@ fun PlayerBottomBar(
                 }
             }
 
-            // Glass control panel
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .shadow(16.dp, panelShape, ambientColor = Color.Black, spotColor = Color.Black)
-                    .clip(panelShape)
-                    .background(Color.Black.copy(alpha = 0.42f))
-                    .background(Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.12f), Color.White.copy(alpha = 0.03f))))
-                    .border(
-                        1.dp,
-                        Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.28f), Color.White.copy(alpha = 0.04f))),
-                        panelShape
-                    )
-                    .padding(horizontal = 14.dp, vertical = 8.dp)
-            ) {
-                // Seek bar
-                val currentPosition by positionFlow.collectAsState()
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = formatTime(currentPosition),
-                        color = VpAmberSoft,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(Color.White.copy(alpha = 0.10f))
-                            .padding(horizontal = 8.dp, vertical = 3.dp)
-                    )
-                    val mxOrange = VpAmber
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .padding(horizontal = 6.dp)
-                            .pointerInput(Unit) {
-                                detectTapGestures(
-                                    onLongPress = { onLongPress() }
-                                )
-                            },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Slider(
-                            value = (uiState.scrubbingTimeMs ?: currentPosition).toFloat(),
-                            onValueChange = {
-                                onScrubbing(it.toLong())
-                            },
-                            onValueChangeFinished = {
-                                uiState.scrubbingTimeMs?.let { onSeek(it) }
-                                onScrubbing(null)
-                            },
-                            valueRange = 0f..uiState.duration.toFloat().coerceAtLeast(1f),
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = SliderDefaults.colors(
-                                thumbColor = mxOrange,
-                                activeTrackColor = mxOrange,
-                                inactiveTrackColor = Color.White.copy(0.3f)
-                            ),
-                            thumb = {
-                                Box(
-                                    modifier = Modifier
-                                        .size(14.dp)
-                                        .shadow(8.dp, CircleShape, ambientColor = VpAmber, spotColor = VpAmber)
-                                        .background(Color.White, CircleShape)
-                                        .border(3.dp, mxOrange, CircleShape)
-                                )
-                            },
-                            track = { sliderState ->
-                                val range = sliderState.valueRange
-                                val span = (range.endInclusive - range.start).coerceAtLeast(1f)
-                                val fraction = ((sliderState.value - range.start) / span).coerceIn(0f, 1f)
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(5.dp)
-                                        .clip(CircleShape)
-                                        .background(Color.White.copy(alpha = 0.22f))
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth(fraction)
-                                            .fillMaxHeight()
-                                            .background(Brush.horizontalGradient(listOf(VpAmberSoft, mxOrange)))
-                                    )
-                                }
-                            }
-                        )
-
-                        // Chapter Ticks & AB Repeat markers (drawn on top of the track, touches pass through)
-                        if (uiState.duration > 0) {
-                            androidx.compose.foundation.Canvas(
+            // Seek bar:  current time  |  slider  |  total / remaining time
+            val currentPosition by positionFlow.collectAsState()
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = formatTime(currentPosition),
+                    color = Color.White,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(horizontal = 4.dp)
+                )
+                val mxOrange = VpAmber
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(horizontal = 4.dp)
+                        .pointerInput(Unit) {
+                            detectTapGestures(
+                                onLongPress = { onLongPress() }
+                            )
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Slider(
+                        value = (uiState.scrubbingTimeMs ?: currentPosition).toFloat(),
+                        onValueChange = {
+                            onScrubbing(it.toLong())
+                        },
+                        onValueChangeFinished = {
+                            uiState.scrubbingTimeMs?.let { onSeek(it) }
+                            onScrubbing(null)
+                        },
+                        valueRange = 0f..uiState.duration.toFloat().coerceAtLeast(1f),
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = SliderDefaults.colors(
+                            thumbColor = mxOrange,
+                            activeTrackColor = mxOrange,
+                            inactiveTrackColor = Color.White.copy(0.3f)
+                        ),
+                        thumb = {
+                            Box(
+                                modifier = Modifier
+                                    .size(15.dp)
+                                    .shadow(6.dp, CircleShape, ambientColor = VpAmber, spotColor = VpAmber)
+                                    .background(mxOrange, CircleShape)
+                                    .border(2.dp, Color.White, CircleShape)
+                            )
+                        },
+                        track = { sliderState ->
+                            val range = sliderState.valueRange
+                            val span = (range.endInclusive - range.start).coerceAtLeast(1f)
+                            val fraction = ((sliderState.value - range.start) / span).coerceIn(0f, 1f)
+                            Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(horizontal = 7.dp)
-                                    .height(5.dp)
+                                    .height(4.dp)
+                                    .clip(CircleShape)
+                                    .background(Color.White.copy(alpha = 0.26f))
                             ) {
-                                val trackWidth = size.width
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth(fraction)
+                                        .fillMaxHeight()
+                                        .background(mxOrange)
+                                )
+                            }
+                        }
+                    )
 
-                                // Draw Chapter Ticks
-                                uiState.chapters.forEach { chapter ->
-                                    val tickX = (chapter.timestampMs.toFloat() / uiState.duration.toFloat()) * trackWidth
-                                    drawRect(
-                                        color = Color.Black.copy(alpha = 0.55f),
-                                        topLeft = Offset(tickX - 0.75.dp.toPx(), 0f),
-                                        size = androidx.compose.ui.geometry.Size(1.5.dp.toPx(), size.height)
-                                    )
-                                }
+                    // Chapter Ticks & AB Repeat markers (drawn on top of the track, touches pass through)
+                    if (uiState.duration > 0) {
+                        androidx.compose.foundation.Canvas(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 7.dp)
+                                .height(4.dp)
+                        ) {
+                            val trackWidth = size.width
 
-                                val startX = (uiState.abRepeatPointA?.toFloat() ?: 0f) / uiState.duration.toFloat() * trackWidth
-                                val endX = (uiState.abRepeatPointB?.toFloat() ?: uiState.duration.toFloat()) / uiState.duration.toFloat() * trackWidth
+                            // Draw Chapter Ticks
+                            uiState.chapters.forEach { chapter ->
+                                val tickX = (chapter.timestampMs.toFloat() / uiState.duration.toFloat()) * trackWidth
+                                drawRect(
+                                    color = Color.Black.copy(alpha = 0.55f),
+                                    topLeft = Offset(tickX - 0.75.dp.toPx(), 0f),
+                                    size = androidx.compose.ui.geometry.Size(1.5.dp.toPx(), size.height)
+                                )
+                            }
 
-                                if (uiState.abRepeatPointA != null && uiState.abRepeatPointB != null) {
-                                    drawRect(
-                                        color = mxOrange.copy(alpha = 0.35f),
-                                        topLeft = Offset(startX, 0f),
-                                        size = androidx.compose.ui.geometry.Size(endX - startX, size.height)
-                                    )
-                                }
+                            val startX = (uiState.abRepeatPointA?.toFloat() ?: 0f) / uiState.duration.toFloat() * trackWidth
+                            val endX = (uiState.abRepeatPointB?.toFloat() ?: uiState.duration.toFloat()) / uiState.duration.toFloat() * trackWidth
 
-                                uiState.abRepeatPointA?.let {
-                                    drawRect(
-                                        color = Color.White,
-                                        topLeft = Offset(startX - 1.dp.toPx(), -3.dp.toPx()),
-                                        size = androidx.compose.ui.geometry.Size(2.dp.toPx(), size.height + 6.dp.toPx())
-                                    )
-                                }
+                            if (uiState.abRepeatPointA != null && uiState.abRepeatPointB != null) {
+                                drawRect(
+                                    color = mxOrange.copy(alpha = 0.35f),
+                                    topLeft = Offset(startX, 0f),
+                                    size = androidx.compose.ui.geometry.Size(endX - startX, size.height)
+                                )
+                            }
 
-                                uiState.abRepeatPointB?.let {
-                                    drawRect(
-                                        color = Color.White,
-                                        topLeft = Offset(endX - 1.dp.toPx(), -3.dp.toPx()),
-                                        size = androidx.compose.ui.geometry.Size(2.dp.toPx(), size.height + 6.dp.toPx())
-                                    )
-                                }
+                            uiState.abRepeatPointA?.let {
+                                drawRect(
+                                    color = Color.White,
+                                    topLeft = Offset(startX - 1.dp.toPx(), -3.dp.toPx()),
+                                    size = androidx.compose.ui.geometry.Size(2.dp.toPx(), size.height + 6.dp.toPx())
+                                )
+                            }
+
+                            uiState.abRepeatPointB?.let {
+                                drawRect(
+                                    color = Color.White,
+                                    topLeft = Offset(endX - 1.dp.toPx(), -3.dp.toPx()),
+                                    size = androidx.compose.ui.geometry.Size(2.dp.toPx(), size.height + 6.dp.toPx())
+                                )
                             }
                         }
                     }
-                    Text(
-                        text = if (uiState.showTotalTime) {
-                            "-${formatTime(uiState.duration - currentPosition)}"
-                        } else {
-                            formatTime(uiState.duration)
-                        },
-                        color = Color.White,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(Color.White.copy(alpha = 0.10f))
-                            .clickable { onTimeClick() }
-                            .padding(horizontal = 8.dp, vertical = 3.dp)
+                }
+                Text(
+                    text = if (uiState.showTotalTime) {
+                        "-${formatTime(uiState.duration - currentPosition)}"
+                    } else {
+                        formatTime(uiState.duration)
+                    },
+                    color = Color.White.copy(alpha = 0.85f),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { onTimeClick() }
+                        .padding(horizontal = 4.dp, vertical = 6.dp)
+                )
+            }
+
+            // Lock, aspect ratio and the tool icons
+            val lockButton: @Composable () -> Unit = {
+                VpFlatButton(onClick = onLock, active = uiState.isLocked) {
+                    Icon(
+                        if (uiState.isLocked) Icons.Rounded.Lock else Icons.Rounded.LockOpen,
+                        if (uiState.isLocked) "Unlock screen" else "Lock screen",
+                        tint = if (uiState.isLocked) VpAmberSoft else Color.White.copy(0.92f),
+                        modifier = Modifier.size(22.dp)
                     )
                 }
+            }
+            val aspectButton: @Composable () -> Unit = {
+                VpFlatButton(onClick = onAspectRatioClick) {
+                    Icon(Icons.Rounded.AspectRatio, "Aspect ratio", tint = Color.White.copy(0.92f), modifier = Modifier.size(22.dp))
+                }
+            }
 
-                Spacer(Modifier.height(4.dp))
-
-                // Controls
+            if (isLandscape) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    lockButton()
+                    toolsContent(Modifier.weight(1f))
+                    aspectButton()
+                }
+            } else {
+                toolsContent(Modifier.fillMaxWidth())
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    VpGlassButton(onClick = onLock, size = 44.dp, active = uiState.isLocked) {
-                        Icon(
-                            if (uiState.isLocked) Icons.Rounded.Lock else Icons.Rounded.LockOpen,
-                            null,
-                            tint = Color.White.copy(0.9f),
-                            modifier = Modifier.size(21.dp)
-                        )
-                    }
-
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        VpGlassButton(onClick = onPlayPrevious, size = 46.dp) {
-                            Icon(Icons.Rounded.SkipPrevious, null, tint = Color.White, modifier = Modifier.size(28.dp))
-                        }
-
-                        AnimatedVisibility(
-                            visible = !uiState.isPlaying,
-                            enter = fadeIn() + expandHorizontally(),
-                            exit = fadeOut() + shrinkHorizontally()
-                        ) {
-                            VpGlassButton(onClick = { onStepFrame(false) }, size = 32.dp) {
-                                Icon(Icons.Rounded.KeyboardArrowLeft, null, tint = Color.White.copy(0.85f), modifier = Modifier.size(22.dp))
-                            }
-                        }
-
-                        Box(
-                            modifier = Modifier
-                                .size(68.dp)
-                                .shadow(18.dp, CircleShape, ambientColor = VpAmber, spotColor = VpAmber)
-                                .clip(CircleShape)
-                                .background(Brush.linearGradient(listOf(VpAmberSoft, VpAmber)))
-                                .border(1.dp, Color.White.copy(alpha = 0.35f), CircleShape)
-                                .clickable(role = Role.Button, onClick = onTogglePlayPause),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                if (uiState.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                                null,
-                                tint = Color.Black,
-                                modifier = Modifier.size(40.dp)
-                            )
-                        }
-
-                        AnimatedVisibility(
-                            visible = !uiState.isPlaying,
-                            enter = fadeIn() + expandHorizontally(),
-                            exit = fadeOut() + shrinkHorizontally()
-                        ) {
-                            VpGlassButton(onClick = { onStepFrame(true) }, size = 32.dp) {
-                                Icon(Icons.Rounded.KeyboardArrowRight, null, tint = Color.White.copy(0.85f), modifier = Modifier.size(22.dp))
-                            }
-                        }
-
-                        VpGlassButton(onClick = onPlayNext, size = 46.dp) {
-                            Icon(Icons.Rounded.SkipNext, null, tint = Color.White, modifier = Modifier.size(28.dp))
-                        }
-                    }
-
-                    VpGlassButton(onClick = onAspectRatioClick, size = 44.dp) {
-                        Icon(Icons.Rounded.AspectRatio, null, tint = Color.White.copy(0.9f), modifier = Modifier.size(21.dp))
-                    }
+                    lockButton()
+                    aspectButton()
                 }
             }
         }
@@ -3203,34 +3273,17 @@ private fun buildColorGradeMatrix(
     return android.graphics.ColorMatrix(brightnessM).apply {
         postConcat(contrastM)
         postConcat(saturationM)
-        if (hueDegrees != 0f) postConcat(hueRotationMatrix(hueDegrees))
-        if (temperature != 0f) {
-            // Warm = more red, less blue; cool = the opposite. Green stays put so the tint stays neutral.
-            val warm = temperature * 0.25f
+        if (!com.beatraxus.app.colorgrade.ColorTune.isIdentity(hueDegrees, temperature)) {
+            // Same hue + temperature matrix the FPS Booster shaders use, so both paths give the same picture.
+            val m = com.beatraxus.app.colorgrade.ColorTune.matrix(hueDegrees, temperature)
             postConcat(android.graphics.ColorMatrix(floatArrayOf(
-                1f + warm, 0f, 0f, 0f, 0f,
-                0f, 1f, 0f, 0f, 0f,
-                0f, 0f, 1f - warm, 0f, 0f,
+                m[0], m[1], m[2], 0f, 0f,
+                m[3], m[4], m[5], 0f, 0f,
+                m[6], m[7], m[8], 0f, 0f,
                 0f, 0f, 0f, 1f, 0f
             )))
         }
     }
-}
-
-/** Rotates the hue by [degrees] while keeping the brightness (luma) of every colour. */
-private fun hueRotationMatrix(degrees: Float): android.graphics.ColorMatrix {
-    val rad = Math.toRadians(degrees.toDouble())
-    val cosV = Math.cos(rad).toFloat()
-    val sinV = Math.sin(rad).toFloat()
-    val lr = 0.213f
-    val lg = 0.715f
-    val lb = 0.072f
-    return android.graphics.ColorMatrix(floatArrayOf(
-        lr + cosV * (1f - lr) + sinV * (-lr), lg + cosV * (-lg) + sinV * (-lg), lb + cosV * (-lb) + sinV * (1f - lb), 0f, 0f,
-        lr + cosV * (-lr) + sinV * 0.143f, lg + cosV * (1f - lg) + sinV * 0.140f, lb + cosV * (-lb) + sinV * (-0.283f), 0f, 0f,
-        lr + cosV * (-lr) + sinV * (-(1f - lr)), lg + cosV * (-lg) + sinV * lg, lb + cosV * (1f - lb) + sinV * lb, 0f, 0f,
-        0f, 0f, 0f, 1f, 0f
-    ))
 }
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)

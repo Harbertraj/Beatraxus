@@ -17,6 +17,7 @@ import android.os.Process
 import android.util.Log
 import android.view.Choreographer
 import android.view.Surface
+import com.beatraxus.app.colorgrade.ColorTune
 import com.beatraxus.app.model.VideoOrientation
 import com.beatraxus.app.motionboost.MotionBoostTiming
 import java.util.concurrent.CountDownLatch
@@ -83,6 +84,8 @@ class OpticalFlowRenderer(
     @Volatile private var brightness = 0f
     @Volatile private var contrast = 1f
     @Volatile private var saturation = 1f
+    /** Hue + colour temperature as (matrix - identity), column-major; all zeros = no change. */
+    @Volatile private var colorDelta: FloatArray = ColorTune.NO_DELTA
     @Volatile private var dirty = true
     @Volatile private var orientationMatrix: FloatArray = VideoOrientation.NONE.videoFromScreen()
     private var appliedLevel: QualityLevel? = null
@@ -184,6 +187,12 @@ class OpticalFlowRenderer(
         this.brightness = brightness
         this.contrast = contrast
         this.saturation = saturation
+        dirty = true
+    }
+
+    /** Hue (degrees) and colour temperature (-1 cool .. 1 warm); the booster draws the video itself, so it does both. */
+    fun setColorTune(hueDegrees: Float, temperature: Float) {
+        colorDelta = ColorTune.deltaColumnMajor(hueDegrees, temperature)
         dirty = true
     }
 
@@ -597,6 +606,7 @@ class OpticalFlowRenderer(
         GLES30.glUniform2f(ip.loc("uWork"), levelW[0].toFloat(), levelH[0].toFloat())
         GLES30.glUniform2f(ip.loc("uFlowUv"), levelW[0].toFloat() / (gridW[0] * PITCH), levelH[0].toFloat() / (gridH[0] * PITCH))
         GLES30.glUniform3f(ip.loc("uGrade"), brightness, contrast, saturation)
+        GLES30.glUniformMatrix3fv(ip.loc("uColorDelta"), 1, false, colorDelta, 0)
         GLES30.glUniform1f(ip.loc("uConsLo"), CONS_LO)
         GLES30.glUniform1f(ip.loc("uConsHi"), CONS_HI)
         GLES30.glUniformMatrix2fv(ip.loc("uOrient"), 1, false, orientationMatrix, 0)
@@ -714,8 +724,8 @@ class OpticalFlowRenderer(
         private const val TAG = "FpsBoosterGL"
         private const val SLOT_COUNT = 4          // bounded frame queue: the shown pair plus up to two frames that arrived early
         private const val PITCH = 4               // flow block pitch (matches flow_search.frag)
-        private const val COARSEST_EDGE = 128     // stop building pyramid levels below this size
-        private const val MAX_LEVELS = 5
+        private const val COARSEST_EDGE = 64      // stop building pyramid levels below this size (was 128: fast pans beyond ~90 px/frame found no match)
+        private const val MAX_LEVELS = 6
         private const val LAMBDA = 0.003f         // flow smoothness penalty per px
         private const val CONS_LO = 1.0f          // forward/backward inconsistency (px): trusted below
         private const val CONS_HI = 3.0f          //                                        rejected above

@@ -201,13 +201,11 @@ fun LazyListScope.videoHomeItems(
                     Modifier.weight(1f)
                 ) { viewModel.setLibraryView(LibraryView.VIDEO_RECENTLY_PLAYED) }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                ShortcutTile(
-                    "Network Stream", Icons.Rounded.Link, Color(0xFF30D158),
-                    Modifier.weight(1f)
-                ) { showOpenStream = true }
-                Spacer(Modifier.weight(1f))
-            }
+            // Full width: the empty half next to it is used, so the whole name shows
+            ShortcutTile(
+                "Network Stream", Icons.Rounded.Link, Color(0xFF30D158),
+                Modifier.fillMaxWidth()
+            ) { showOpenStream = true }
         }
         Spacer(Modifier.height(8.dp))
     }
@@ -501,7 +499,7 @@ private fun ShortcutTile(
             .background(Brush.horizontalGradient(listOf(accent.copy(0.20f), Color.White.copy(0.04f))))
             .border(0.5.dp, accent.copy(0.30f), RoundedCornerShape(20.dp))
             .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 14.dp),
+            .padding(horizontal = 12.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
@@ -510,10 +508,16 @@ private fun ShortcutTile(
         ) {
             Icon(icon, null, tint = accent, modifier = Modifier.size(18.dp))
         }
-        Spacer(Modifier.width(10.dp))
-        Text(
-            label, color = Color.White, fontSize = 13.sp,
-            fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis
+        Spacer(Modifier.width(8.dp))
+        // Takes all the width that is left and shrinks a little if needed, so names such as
+        // "Recently Played" and "Network Stream" are shown in full instead of ending in "..."
+        com.beatraxus.app.ui.components.AutoFitText(
+            text = label,
+            baseFontSize = 13.sp,
+            minFontSize = 11.sp,
+            color = Color.White,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.weight(1f)
         )
     }
 }

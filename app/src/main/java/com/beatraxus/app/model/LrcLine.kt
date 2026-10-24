@@ -14,7 +14,9 @@ data class LrcLine(
     val wordTimings: List<WordTiming>? = null,
     val duration: Long = 0L,
     val speaker: LyricSpeaker = LyricSpeaker.NONE,
-    val isTimed: Boolean = true
+    val isTimed: Boolean = true,
+    /** Machine translation of [text], shown below the original line (null when off / not translated). */
+    val translation: String? = null
 ) {
     val time: Long get() = startTime
     val endTime: Long get() = startTime + duration

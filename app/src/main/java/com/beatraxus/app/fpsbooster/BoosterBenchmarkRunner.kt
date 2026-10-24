@@ -31,8 +31,8 @@ import kotlin.math.roundToInt
 object BoosterBenchmarkRunner {
     private const val TAG = "BoosterBenchmark"
     private const val PITCH = 4
-    private const val COARSEST_EDGE = 128
-    private const val MAX_LEVELS = 5
+    private const val COARSEST_EDGE = 64
+    private const val MAX_LEVELS = 6
     private const val LAMBDA = 0.003f
     private const val TIMED_RUNS = 7
     /** A single frame-pair that takes longer than this is hopeless; larger presets are not even tried. */

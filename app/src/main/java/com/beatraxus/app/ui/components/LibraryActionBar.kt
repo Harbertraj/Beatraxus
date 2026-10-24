@@ -28,6 +28,7 @@ import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.SelectAll
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Shuffle
+import androidx.compose.material.icons.rounded.VisibilityOff
 import com.beatraxus.app.ui.theme.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -421,13 +422,17 @@ fun MultiSelectActionBar(
     onPlayNext: () -> Unit,
     onAddToPlaylist: () -> Unit,
     onShare: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    // Audio feature 13: only offered where the selection is songs (not albums, artists, playlists or videos)
+    showHide: Boolean = false,
+    onHide: () -> Unit = {}
 ) {
     val actions = buildList {
         add(StripAction(Icons.Rounded.SelectAll, "Select all", AccentBlue, selected = true, label = "ALL") { onSelectAll() })
         if (showDelete) add(StripAction(Icons.Rounded.Delete, "Delete", Color(0xFFFF453A), label = "DELETE") { onDelete() })
         add(StripAction(Icons.AutoMirrored.Rounded.PlaylistPlay, "Play next", Color(0xFF30D158), label = "NEXT") { onPlayNext() })
         add(StripAction(Icons.AutoMirrored.Rounded.PlaylistAdd, "Add to playlist", Color(0xFFFFD60A), label = "ADD") { onAddToPlaylist() })
+        if (showHide) add(StripAction(Icons.Rounded.VisibilityOff, "Hide", Color(0xFFBF5AF2), label = "HIDE") { onHide() })
         add(StripAction(Icons.Rounded.Share, "Share", AccentBlue, label = "SHARE") { onShare() })
     }
     LibraryActionStrip(actions = actions, modifier = modifier.padding(vertical = 2.dp))

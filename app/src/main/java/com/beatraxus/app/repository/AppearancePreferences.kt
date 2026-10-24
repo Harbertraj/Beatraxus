@@ -147,6 +147,8 @@ class AppearancePreferences(context: Context) {
             
             lyricsShowAll = preferences[LYRICS_SHOW_ALL] ?: true,
             alignLyricsBySinger = preferences[ALIGN_LYRICS_BY_SINGER] ?: true,
+            lyricsTranslateEnabled = preferences[LYRICS_TRANSLATE_ENABLED] ?: false,
+            lyricsTranslateLanguage = preferences[LYRICS_TRANSLATE_LANGUAGE] ?: "en",
 
             dspPaletteId = preferences[DSP_PALETTE_ID] ?: "aurora_dusk",
             dspCustomPrimary = preferences[DSP_CUSTOM_PRIMARY] ?: 0xFFFFD60A.toInt(),
@@ -615,6 +617,13 @@ class AppearancePreferences(context: Context) {
         }
     }
 
+    suspend fun setLyricsTranslation(enabled: Boolean, language: String) {
+        dataStore.edit {
+            it[LYRICS_TRANSLATE_ENABLED] = enabled
+            it[LYRICS_TRANSLATE_LANGUAGE] = language
+        }
+    }
+
     suspend fun setAlignLyricsBySinger(align: Boolean) {
         dataStore.edit { it[ALIGN_LYRICS_BY_SINGER] = align }
     }
@@ -740,6 +749,8 @@ class AppearancePreferences(context: Context) {
         private val LYRICS_PROVIDERS_ENABLED = stringPreferencesKey("lyrics_providers_enabled")
         private val LYRICS_SHOW_ALL = booleanPreferencesKey("lyrics_show_all")
         private val ALIGN_LYRICS_BY_SINGER = booleanPreferencesKey("align_lyrics_by_singer")
+        private val LYRICS_TRANSLATE_ENABLED = booleanPreferencesKey("lyrics_translate_enabled")
+        private val LYRICS_TRANSLATE_LANGUAGE = stringPreferencesKey("lyrics_translate_language")
 
         // Studio DSP dual colour palette
         private val DSP_PALETTE_ID = stringPreferencesKey("dsp_palette_id")

@@ -1464,7 +1464,10 @@ fun MainScreen(
                                                     }
                                                 },
                                                 actions = listOfNotNull(
-                                                    StripAction(
+                                                    // Recently added / recently played keep their own fixed order, so there is nothing to sort
+                                                    if (uiState.currentView == LibraryView.VIDEO_RECENTLY_ADDED ||
+                                                        uiState.currentView == LibraryView.VIDEO_RECENTLY_PLAYED
+                                                    ) null else StripAction(
                                                         icon = if (isCloud || isSmart) Icons.Rounded.FilterList else Icons.AutoMirrored.Rounded.Sort,
                                                         contentDescription = if (isCloud || isSmart) "Filter" else "Sort",
                                                         accent = LibraryStripActive,
@@ -1554,7 +1557,14 @@ fun MainScreen(
                                                 playlistDialogSong = null
                                                 showPlaylistDialog = true
                                             },
-                                            onShare = { viewModel.shareSelected() }
+                                            onShare = { viewModel.shareSelected() },
+                                            showHide = uiState.currentView in listOf(
+                                                LibraryView.ALL_SONGS, LibraryView.ALBUM_DETAIL, LibraryView.ARTIST_DETAIL,
+                                                LibraryView.FOLDER_DETAIL, LibraryView.YEAR_DETAIL, LibraryView.GENRE_DETAIL,
+                                                LibraryView.PLAYLIST_DETAIL, LibraryView.FAVORITES, LibraryView.RECENTLY_ADDED,
+                                                LibraryView.RECENTLY_PLAYED, LibraryView.CLOUD
+                                            ),
+                                            onHide = { viewModel.hideSelectedSongs() }
                                         )
                                     } else {
                                         libraryActionStrip()
@@ -3745,6 +3755,10 @@ items(artistSongs, key = { it.id }) { song ->
                                     viewModel.toggleSongSelection(song.id)
                                     selectedSongForOptions = null
                                 },
+                                onHide = {
+                                    viewModel.hideSongs(listOf(song.id))
+                                    selectedSongForOptions = null
+                                },
                                 onOpenInspector = { s ->
                                     viewModel.setPendingInspectorReturn(s)
                                     onNavigateToInspector(s.id)
@@ -3811,7 +3825,10 @@ items(artistSongs, key = { it.id }) { song ->
                                 onSortChanged = { if (inSmart) smartSortActive = true },
                                 onResetOrder = if (inSmart) {
                                     { smartSortActive = false; activeMainSheet = null }
-                                } else null
+                                } else null,
+                                isVideo = uiState.currentView in listOf(
+                                    LibraryView.VIDEO_ALL, LibraryView.VIDEO_FOLDERS, LibraryView.VIDEO_FOLDER_DETAIL
+                                )
                             )
                         }
 
@@ -4171,6 +4188,8 @@ items(artistSongs, key = { it.id }) { song ->
                     onAdjustOffset = { viewModel.adjustLyricsOffset(it) },
                     onSetLyricsOffset = { viewModel.setLyricsOffset(it) },
                     onSearchLyricsOnline = { viewModel.forceSearchLyricsOnline() },
+                    lyricsTranslationStatus = viewModel.lyricsTranslationStatus.collectAsState().value,
+                    onSetLyricsTranslation = { enabled, language -> viewModel.setLyricsTranslation(enabled, language) },
                     onLoadLyricsCandidates = { viewModel.loadLyricsCandidates() },
                     onApplyLyricsCandidate = { viewModel.applyLyricsCandidate(it) },
                     showPipelineOverlay = showPipelineOverlay,
@@ -6728,8 +6747,12 @@ fun SortDropdownContent(
     // ... get told when the user changes the sort / order ...
     onSortChanged: () -> Unit = {},
     // ... and offer a way back to the playlist's natural order (null = no such row)
-    onResetOrder: (() -> Unit)? = null
+    onResetOrder: (() -> Unit)? = null,
+    // Video library feature 21: the video views have their own remembered sort, separate from the music one
+    isVideo: Boolean = false
 ) {
+    val currentSortType = if (isVideo) uiState.videoSortType else uiState.sortType
+    val currentAscending = if (isVideo) uiState.videoSortAscending else uiState.isAscending
     DropdownHeader(
         title = if (uiState.currentView == LibraryView.CLOUD) "SORT & FILTER" else "SORT BY",
         trailing = {
@@ -6738,7 +6761,10 @@ fun SortDropdownContent(
                 modifier = Modifier
                     .size(34.dp)
                     .clip(CircleShape)
-                    .clickable { viewModel.toggleSortOrder(); onSortChanged() },
+                    .clickable {
+                        if (isVideo) viewModel.toggleVideoSortOrder() else viewModel.toggleSortOrder()
+                        onSortChanged()
+                    },
                 contentAlignment = Alignment.Center
             ) {
                 Box(
@@ -6748,7 +6774,7 @@ fun SortDropdownContent(
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        if (uiState.isAscending) Icons.Rounded.ArrowUpward else Icons.Rounded.ArrowDownward,
+                        if (currentAscending) Icons.Rounded.ArrowUpward else Icons.Rounded.ArrowDownward,
                         contentDescription = "Toggle order",
                         tint = AccentBlue,
                         modifier = Modifier.size(12.dp)
@@ -6766,8 +6792,12 @@ fun SortDropdownContent(
         DropdownRow(
             icon = icon,
             label = label,
-            selected = sortActive && uiState.sortType == type,
-            onClick = { viewModel.setSortType(type); onSortChanged(); onDismiss() }
+            selected = sortActive && currentSortType == type,
+            onClick = {
+                if (isVideo) viewModel.setVideoSortType(type) else viewModel.setSortType(type)
+                onSortChanged()
+                onDismiss()
+            }
         )
     }
     if (onResetOrder != null) {

@@ -228,3 +228,18 @@ Researched from primary sources by a read-only agent; **nothing was downloaded a
 - **Recommendation: do not ship it in the base app. If pursued, deliver it as an optional downloadable model pack (hash-checked, MIT notice kept), behind an on-device benchmark gate (p95 < ~35 ms at the chosen resolution, sustained and thermal-tested).** First step would be a throwaway Android app that runs rife-v4.6 and a lite model with ncnn+Vulkan (MNN as the fallback runtime) at 540p/720p, fp16 on/off, for 5+ minutes, recording latency, memory and temperature. Only then design the Media3/SurfaceTexture integration. The engine setting already has an enum to extend (`BoosterEngine`), but no AI option is shown today.
 
 For the supported device range, AI interpolation is **not practical today** on mid-range SoCs; it could be an opt-in extra on flagship GPUs after the benchmark above.
+
+---
+
+## 10. Fast-motion fix (glitchy / patchy picture on fast pans)
+
+Symptom: on fast motion (roughly 90+ px/frame at 720p) the interpolated frames showed blocky patches of the unmoved
+frame. Measured with the harness (Performance preset, 1280x720): pan 90 px/frame 19.3 dB -> 22.9, pan 140 -> 11.0 (same as
+frame repeat) -> 17.7, pan 60,30 -> 17.8 -> 21.8; slow scenes unchanged.
+
+- Pyramid goes down to 64 px (was 128) with up to 6 levels, so the +-6 coarse search reaches about twice as far.
+  `COARSEST_EDGE` / `MAX_LEVELS` are mirrored in `OpticalFlowRenderer`, `BoosterBenchmarkRunner` and `new_engine.py`.
+  (Going to 32 px was tried and made mid-speed motion worse: aliasing at the tiniest level.)
+- `flow_interp.frag`: the forward/backward and refined-vector tolerances grow with the vector length. Fixed tolerances
+  rejected most of a fast picture and showed the unmoved frame in patches.
+- Hue / colour temperature (`uColorDelta`) are applied in the booster shaders too.

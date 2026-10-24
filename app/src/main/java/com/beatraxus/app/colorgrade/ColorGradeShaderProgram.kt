@@ -44,21 +44,10 @@ class ColorGradeShaderProgram(
             void main() {
                 vec4 color = texture2D(uTexSampler, vTexSamplingCoords);
                 vec3 rgb = color.rgb;
-                
-                // 1. Brightness
-                rgb += uBrightness;
-                
-                // 2. Contrast
-                rgb = (rgb - 0.5) * uContrast + 0.5;
-                
-                // 3. Saturation
-                float luma = dot(rgb, vec3(0.299, 0.587, 0.114));
-                rgb = mix(vec3(luma), rgb, uSaturation);
-                
-                // 4. Gamma (above 1 lifts the mid-tones, below 1 deepens them)
-                rgb = pow(clamp(rgb, 0.0, 1.0), vec3(1.0 / max(uGamma, 0.01)));
 
-                // 5. Sharpness: unsharp mask against the four neighbouring pixels
+                // 1. Sharpness first, on the untouched picture: unsharp mask against the four neighbouring pixels.
+                //    (Doing it after gamma compared a gamma-shifted centre with un-shifted neighbours, which
+                //    added a mid-tone shift of its own whenever both sliders were in use.)
                 if (uSharpness > 0.0) {
                     vec3 blur = (texture2D(uTexSampler, vTexSamplingCoords + vec2(uTexel.x, 0.0)).rgb
                                + texture2D(uTexSampler, vTexSamplingCoords - vec2(uTexel.x, 0.0)).rgb
@@ -66,6 +55,19 @@ class ColorGradeShaderProgram(
                                + texture2D(uTexSampler, vTexSamplingCoords - vec2(0.0, uTexel.y)).rgb) * 0.25;
                     rgb += (rgb - blur) * (uSharpness * 2.0);
                 }
+
+                // 2. Brightness
+                rgb += uBrightness;
+
+                // 3. Contrast
+                rgb = (rgb - 0.5) * uContrast + 0.5;
+
+                // 4. Saturation
+                float luma = dot(rgb, vec3(0.299, 0.587, 0.114));
+                rgb = mix(vec3(luma), rgb, uSaturation);
+
+                // 5. Gamma (above 1 lifts the mid-tones, below 1 deepens them)
+                rgb = pow(clamp(rgb, 0.0, 1.0), vec3(1.0 / max(uGamma, 0.01)));
 
                 gl_FragColor = vec4(clamp(rgb, 0.0, 1.0), color.a);
             }

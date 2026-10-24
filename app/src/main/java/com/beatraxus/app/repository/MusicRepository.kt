@@ -886,6 +886,60 @@ class MusicRepository(private val context: Context) {
         }
     }
 
+    // ---- Call recordings: kept out of the library by a full scan, unless the listener adds the folder back ----
+
+    /** Call recording folders the listener added back on purpose; the automatic exclusion leaves them alone. */
+    fun getCallRecordingAllowedFolders(): Set<String> {
+        val prefs = context.getSharedPreferences("beatraxus", Context.MODE_PRIVATE)
+        return prefs.getStringSet("call_recording_allowed_folders", emptySet())?.toSet() ?: emptySet()
+    }
+
+    /**
+     * Remembers that the listener wants this folder. Only call recording folders are stored (adding "Music" says
+     * nothing about the call folder inside it), so the list stays tiny.
+     */
+    fun allowCallRecordingFolder(path: String) {
+        val normalized = normalizePath(path).trimEnd('/')
+        if (!com.beatraxus.app.model.CallRecordingFolders.isCallRecordingFolder(normalized)) return
+        val updated = getCallRecordingAllowedFolders() + normalized
+        context.getSharedPreferences("beatraxus", Context.MODE_PRIVATE)
+            .edit().putStringSet("call_recording_allowed_folders", updated).apply()
+    }
+
+    /**
+     * Run at the start of a full scan. Looks at every folder that holds audio, and puts each call recording folder
+     * (that the listener has not added back) into the excluded folders and out of the music folders, so the scan that
+     * follows never reads it. Returns the folders that were excluded now.
+     */
+    suspend fun autoExcludeCallRecordingFolders(): List<String> = withContext(Dispatchers.IO) {
+        try {
+            val songFolders = HashSet<String>()
+            context.contentResolver.query(
+                MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+                arrayOf(MediaStore.Audio.Media.DATA),
+                null, null, null
+            )?.use { cursor ->
+                val dataColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DATA)
+                while (cursor.moveToNext()) {
+                    val data = cursor.getString(dataColumn) ?: continue
+                    val folder = data.substringBeforeLast('/', "")
+                    if (folder.isNotEmpty()) songFolders.add(folder)
+                }
+            }
+            val toExclude = com.beatraxus.app.model.CallRecordingFolders.foldersToExclude(
+                songFolders = songFolders,
+                userAllowed = getCallRecordingAllowedFolders(),
+                alreadyExcluded = getBlockedFolders()
+            )
+            toExclude.forEach { removeMusicFolder(it) } // drops it from the music folders and excludes it
+            toExclude
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            Log.e("MusicRepository", "Call recording folder check failed", e)
+            emptyList()
+        }
+    }
+
     fun addBlockedFolder(uri: String) {
         val normalized = normalizePath(uri)
         val current = getBlockedFolders().toMutableSet()

@@ -86,7 +86,9 @@ fun SongOptionsSheet(
     abLoopActive: Boolean = false,
     onAbLoop: (() -> Unit)? = null,
     // Now Playing passes false: its 3-dot menu never shows the DLNA / UPnP entry.
-    showDlnaOption: Boolean = true
+    showDlnaOption: Boolean = true,
+    // Audio feature 13: "Hide" takes the song out of the library lists. Null = no such entry (e.g. on Now Playing).
+    onHide: (() -> Unit)? = null
 ) {
     var showInfoOverlay by remember { mutableStateOf(initialShowInfoOverlay) }
     var showTagEditor by remember { mutableStateOf(false) }
@@ -196,7 +198,7 @@ fun SongOptionsSheet(
                 Spacer(Modifier.height(8.dp))
 
                 // Options Grid
-                val options = remember(showPlayNext, showMark, song.id, abLoopLabel, abLoopActive, showDlnaOption) {
+                val options = remember(showPlayNext, showMark, song.id, abLoopLabel, abLoopActive, showDlnaOption, onHide != null) {
                     buildList {
                         add(OptionItem(Icons.AutoMirrored.Rounded.PlaylistAdd, "Playlist", onAddToPlaylist))
                         if (showPlayNext) {
@@ -224,6 +226,9 @@ fun SongOptionsSheet(
                         add(OptionItem(Icons.Rounded.Album, "Album", onGoToAlbum))
                         add(OptionItem(Icons.Rounded.FolderOpen, "Folder", onGoToFolder))
                         add(OptionItem(Icons.Rounded.Headphones, "Genre", onGoToGenre))
+                        if (onHide != null) {
+                            add(OptionItem(Icons.Rounded.VisibilityOff, "Hide", onHide))
+                        }
                         add(OptionItem(Icons.Rounded.Delete, "Delete", onDelete, tint = Color.White))
                     }
                 }

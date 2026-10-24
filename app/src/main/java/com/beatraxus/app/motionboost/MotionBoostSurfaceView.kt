@@ -41,6 +41,8 @@ class MotionBoostSurfaceView(context: Context) : SurfaceView(context), SurfaceHo
     private var brightness = 0f
     private var contrast = 1f
     private var saturation = 1f
+    private var hue = 0f
+    private var temperature = 0f
     private var orientation = VideoOrientation.NONE
 
     private val playerListener = object : Player.Listener {
@@ -74,6 +76,14 @@ class MotionBoostSurfaceView(context: Context) : SurfaceView(context), SurfaceHo
         renderer?.setColorGrade(brightness, contrast, saturation)
     }
 
+    /** Hue (degrees) and colour temperature (-1..1). Compose calls this on every recomposition, so only a change is passed on. */
+    fun setColorTune(hueDegrees: Float, temperature: Float) {
+        if (hueDegrees == hue && temperature == this.temperature) return
+        hue = hueDegrees
+        this.temperature = temperature
+        renderer?.setColorTune(hueDegrees, temperature)
+    }
+
     /** Rotate / flip / mirror of the picture; drawn by the renderer, since a SurfaceView cannot be transformed. */
     fun setOrientation(orientation: VideoOrientation) {
         this.orientation = orientation
@@ -105,6 +115,7 @@ class MotionBoostSurfaceView(context: Context) : SurfaceView(context), SurfaceHo
         created.setTargetFps(targetFps)
         created.setExtreme(extreme)
         created.setColorGrade(brightness, contrast, saturation)
+        created.setColorTune(hue, temperature)
         created.setOrientation(orientation)
         player?.let { p ->
             p.addListener(playerListener)
