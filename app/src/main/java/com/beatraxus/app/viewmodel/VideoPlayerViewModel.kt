@@ -2413,7 +2413,7 @@ class VideoPlayerViewModel(
             val dm = getApplication<Application>().getSystemService(android.hardware.display.DisplayManager::class.java)
             @Suppress("DEPRECATION")
             val types = dm?.getDisplay(android.view.Display.DEFAULT_DISPLAY)?.hdrCapabilities?.supportedHdrTypes ?: IntArray(0)
-            val names = types.mapNotNull {
+            val names = types.asList().mapNotNull {
                 when (it) {
                     android.view.Display.HdrCapabilities.HDR_TYPE_DOLBY_VISION -> "Dolby Vision"
                     android.view.Display.HdrCapabilities.HDR_TYPE_HDR10 -> "HDR10"
