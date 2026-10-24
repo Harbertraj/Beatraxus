@@ -507,6 +507,7 @@ class VideoPlayerViewModel(
         loadIntroRange()
         probeDeviceForFpsBooster()
         observeSurroundSettings()
+        observeAudioExtraction()
         // Feature 26: a Cast session started from this screen takes the video to the TV.
         CastManager.videoHost = castHost
     }
@@ -1774,13 +1775,10 @@ class VideoPlayerViewModel(
         startExternalPlayback(existing.size)
     }
 
-    // Runs on its own scope so a started extraction still finishes if the player screen is closed.
-    private val extractScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-    private var extractJob: Job? = null
-
     /**
      * Saves the chosen audio track of the video file itself ([track], picked in the "which audio track?" dialog)
-     * into the folder [treeUri] the user picked. File name: "<video title> - <audio language>.<ext>".
+     * into the folder [treeUri] the user picked. File name: "[<audio language>] <video title>.<ext>".
+     * The work and its progress live in [VideoAudioExtractionManager], shared with the library's long-press menu.
      */
     fun extractAudioTrack(treeUri: Uri, track: VideoTrackInfo) {
         val state = _uiState.value
@@ -1796,44 +1794,21 @@ class VideoPlayerViewModel(
         val nativeIndex = tracks.count { !it.isExternal && it.audioOrdinal < track.audioOrdinal }
         val language = com.beatraxus.app.util.VideoAudioExtractor.languageDisplayName(track.language)
             ?: track.name.takeIf { it.isNotBlank() } ?: "Unknown"
-        val title = video.title.ifBlank { video.displayName.substringBeforeLast('.') }
-        val baseName = com.beatraxus.app.util.VideoAudioExtractor.buildBaseName(title, language)
-
-        _uiState.update { it.copy(audioExtractProgress = 0f, audioExtractLanguage = language) }
-        android.widget.Toast.makeText(app, "Extracting audio [$language]…", android.widget.Toast.LENGTH_SHORT).show()
-        extractJob = extractScope.launch {
-            var cancelled = false
-            val result = try {
-                com.beatraxus.app.util.VideoAudioExtractor.extract(
-                    context = app,
-                    source = video.uri,
-                    nativeAudioIndex = nativeIndex,
-                    treeUri = treeUri,
-                    baseName = baseName,
-                    onProgress = { p -> _uiState.update { s -> if (s.audioExtractProgress != null) s.copy(audioExtractProgress = p) else s } },
-                    fallbackDurationUs = video.durationMs * 1000L
-                )
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                cancelled = true
-                null
-            } finally {
-                _uiState.update { it.copy(audioExtractProgress = null, audioExtractLanguage = null) }
-            }
-            withContext(kotlinx.coroutines.NonCancellable + Dispatchers.Main) {
-                val text = when {
-                    cancelled || result == null -> "Extraction cancelled"
-                    result is com.beatraxus.app.util.VideoAudioExtractor.Result.Saved -> "Audio saved: ${result.fileName}"
-                    result is com.beatraxus.app.util.VideoAudioExtractor.Result.Failed -> result.reason
-                    else -> ""
-                }
-                if (text.isNotEmpty()) android.widget.Toast.makeText(app, text, android.widget.Toast.LENGTH_LONG).show()
-            }
-        }
+        com.beatraxus.app.util.VideoAudioExtractionManager.start(app, video, nativeIndex, language, treeUri)
     }
 
     /** Stops a running extraction; the half-written file is deleted by the extractor. */
     fun cancelAudioExtraction() {
-        extractJob?.cancel()
+        com.beatraxus.app.util.VideoAudioExtractionManager.cancel()
+    }
+
+    /** Mirrors the shared extraction progress into [VideoPlayerUiState] so the Audio Tracks sheet shows "[Tamil] 42%". */
+    private fun observeAudioExtraction() {
+        viewModelScope.launch {
+            com.beatraxus.app.util.VideoAudioExtractionManager.state.collect { st ->
+                _uiState.update { it.copy(audioExtractProgress = st?.progress, audioExtractLanguage = st?.language) }
+            }
+        }
     }
 
     /**

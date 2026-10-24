@@ -22,6 +22,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -3957,6 +3958,78 @@ items(artistSongs, key = { it.id }) { song ->
         var videoToRename by remember { mutableStateOf<com.beatraxus.app.model.Video?>(null) }
         var videoToDelete by remember { mutableStateOf<com.beatraxus.app.model.Video?>(null) }
 
+        // "Extract Audio" of the video long-press menu: list the file's audio tracks, let the user choose one, pick a
+        // destination folder, then the shared extraction manager saves "[Language] Title.ext" and reports progress.
+        val audioExtractState by com.beatraxus.app.util.VideoAudioExtractionManager.state.collectAsStateWithLifecycle()
+        val extractUiScope = rememberCoroutineScope()
+        var extractVideo by remember { mutableStateOf<com.beatraxus.app.model.Video?>(null) }
+        var extractTracks by remember { mutableStateOf<List<com.beatraxus.app.util.VideoAudioExtractor.AudioTrackSummary>>(emptyList()) }
+        var extractTrackChoice by remember { mutableIntStateOf(0) }
+        var showExtractTrackChooser by remember { mutableStateOf(false) }
+        val extractFolderPicker = androidx.activity.compose.rememberLauncherForActivityResult(
+            contract = androidx.activity.result.contract.ActivityResultContracts.OpenDocumentTree()
+        ) { tree: android.net.Uri? ->
+            val v = extractVideo
+            val t = extractTracks.firstOrNull { it.nativeIndex == extractTrackChoice }
+            if (tree != null && v != null && t != null) {
+                com.beatraxus.app.util.VideoAudioExtractionManager.start(context, v, t.nativeIndex, t.label, tree)
+            }
+        }
+        if (showExtractTrackChooser) {
+            AlertDialog(
+                onDismissRequest = { showExtractTrackChooser = false },
+                containerColor = Color(0xFF1E1E1E),
+                title = { Text("Extract which audio track?", color = Color.White, fontWeight = FontWeight.Bold) },
+                text = {
+                    Column(
+                        modifier = Modifier.verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(
+                            "Saved as: [Language] ${extractVideo?.title.orEmpty()}",
+                            color = Color.White.copy(0.55f), fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis
+                        )
+                        extractTracks.forEach { t ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .clickable { extractTrackChoice = t.nativeIndex }
+                                    .padding(vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(
+                                    selected = extractTrackChoice == t.nativeIndex,
+                                    onClick = { extractTrackChoice = t.nativeIndex },
+                                    colors = RadioButtonDefaults.colors(selectedColor = AccentBlue, unselectedColor = Color.White.copy(0.6f))
+                                )
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(t.bracketLabel, color = Color.White, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(
+                                        listOfNotNull(
+                                            t.mime.removePrefix("audio/").uppercase().takeIf { it.isNotBlank() },
+                                            t.channelCount.takeIf { it > 0 }?.let { "$it ch" },
+                                            t.sampleRate.takeIf { it > 0 }?.let { "${it / 1000f} kHz" }
+                                        ).joinToString(" · "),
+                                        color = Color.White.copy(0.6f), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        showExtractTrackChooser = false
+                        extractFolderPicker.launch(null)
+                    }) { Text("Choose folder", color = AccentBlue, fontWeight = FontWeight.Bold) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showExtractTrackChooser = false }) { Text("Cancel", color = Color.White.copy(0.8f)) }
+                }
+            )
+        }
+
         selectedVideoForOptions?.let { video ->
             ModalBottomSheet(
                 onDismissRequest = { selectedVideoForOptions = null },
@@ -3977,7 +4050,22 @@ items(artistSongs, key = { it.id }) { song ->
                         val intent = viewModel.getShareVideoIntent(video)
                         context.startActivity(android.content.Intent.createChooser(intent, "Share Video"))
                     },
-                    onProperties = { showVideoProperties = video; selectedVideoForOptions = null }
+                    onProperties = { showVideoProperties = video; selectedVideoForOptions = null },
+                    extractState = audioExtractState,
+                    onExtractAudio = {
+                        extractUiScope.launch {
+                            val tracks = com.beatraxus.app.util.VideoAudioExtractor.listAudioTracks(context, video.uri)
+                            if (tracks.isEmpty()) {
+                                android.widget.Toast.makeText(context, "No audio track found in this video", android.widget.Toast.LENGTH_SHORT).show()
+                            } else {
+                                extractVideo = video
+                                extractTracks = tracks
+                                extractTrackChoice = tracks.first().nativeIndex
+                                if (tracks.size == 1) extractFolderPicker.launch(null) else showExtractTrackChooser = true
+                            }
+                        }
+                    },
+                    onCancelExtract = { com.beatraxus.app.util.VideoAudioExtractionManager.cancel() }
                 )
             }
         }
@@ -7171,7 +7259,11 @@ fun VideoOptionsSheetContent(
     onEditName: () -> Unit,
     onMark: () -> Unit,
     onShare: () -> Unit,
-    onProperties: () -> Unit
+    onProperties: () -> Unit,
+    /** Progress of the running "extract audio track" job (any video), or null. */
+    extractState: com.beatraxus.app.util.VideoAudioExtractionManager.State? = null,
+    onExtractAudio: () -> Unit = {},
+    onCancelExtract: () -> Unit = {}
 ) {
     Column(modifier = Modifier.padding(16.dp).navigationBarsPadding()) {
         Text(
@@ -7190,10 +7282,60 @@ fun VideoOptionsSheetContent(
             if (video.isCloud) null else Triple("Edit Name", Icons.Rounded.Edit, onEditName),
             Triple("Mark", Icons.Rounded.CheckCircle, onMark),
             Triple("Share", Icons.Rounded.Share, onShare),
+            // Saves one audio track of the file (e.g. "[Tamil] Movie.m4a"); the percentage shows inside this row.
+            if (video.isCloud) null else Triple("Extract Audio", Icons.Rounded.Unarchive, onExtractAudio),
             Triple("Properties", Icons.Rounded.Info, onProperties)
         )
         
         options.forEach { (label, icon, action) ->
+            if (label == "Extract Audio") {
+                val running = extractState != null
+                val thisVideo = extractState?.videoId == video.id
+                val percent = ((extractState?.progress ?: 0f) * 100).toInt().coerceIn(0, 100)
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(enabled = !running || thisVideo) { if (thisVideo) onCancelExtract() else action() }
+                        .padding(vertical = 12.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            if (thisVideo) Icons.Rounded.Close else icon, null,
+                            tint = Color.White.copy(if (running && !thisVideo) 0.3f else 0.7f),
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Spacer(Modifier.width(16.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                if (thisVideo) "Extracting [${extractState?.language}]" else label,
+                                color = Color.White.copy(if (running && !thisVideo) 0.3f else 1f),
+                                fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis
+                            )
+                            if (thisVideo) {
+                                Text("Tap to cancel", color = Color.White.copy(0.5f), fontSize = 12.sp)
+                            } else if (running) {
+                                Text("Another extraction is running", color = Color.White.copy(0.3f), fontSize = 12.sp)
+                            }
+                        }
+                        if (thisVideo) {
+                            Text("$percent%", color = AccentBlue, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                    if (thisVideo) {
+                        LinearProgressIndicator(
+                            progress = { percent / 100f },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 8.dp, start = 40.dp)
+                                .height(4.dp)
+                                .clip(RoundedCornerShape(50)),
+                            color = AccentBlue,
+                            trackColor = Color.White.copy(alpha = 0.15f)
+                        )
+                    }
+                }
+                return@forEach
+            }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()

@@ -2186,6 +2186,11 @@ fun VideoSettingsSheetContent(
                         modifier = Modifier.verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
+                        Text(
+                            "Saved as: [Language] ${uiState.currentVideo?.title.orEmpty()}",
+                            color = Color.White.copy(0.55f), fontSize = 12.sp,
+                            maxLines = 2, overflow = TextOverflow.Ellipsis
+                        )
                         nativeTracks.forEach { t ->
                             Row(
                                 modifier = Modifier
@@ -2201,7 +2206,10 @@ fun VideoSettingsSheetContent(
                                     colors = RadioButtonDefaults.colors(selectedColor = mxOrange, unselectedColor = Color.White.copy(0.6f))
                                 )
                                 Column(modifier = Modifier.weight(1f)) {
-                                    Text(t.name, color = Color.White, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    // The saved file's title starts with this label, e.g. "[Tamil] Movie.m4a"
+                                    val extractLabel = com.beatraxus.app.util.VideoAudioExtractor.languageDisplayName(t.language)
+                                        ?: t.name.takeIf { it.isNotBlank() } ?: "Unknown"
+                                    Text("[$extractLabel]", color = Color.White, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     Text(
                                         formatAudioTrackSubtitleLine(t),
                                         color = Color.White.copy(0.6f), fontSize = 12.sp,

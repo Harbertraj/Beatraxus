@@ -119,12 +119,70 @@ object VideoAudioExtractor {
         else -> null
     }
 
-    /** "Title" + " - " + "Tamil", with characters that file systems refuse removed. */
+    /**
+     * "[Tamil] Title": the extracted audio's title begins with the track's language in square brackets, so the saved
+     * files group by language and read like the track label in the player. Characters that file systems refuse are removed.
+     */
     fun buildBaseName(videoTitle: String, languageName: String): String {
-        val clean = { s: String -> s.replace(Regex("[\\\\/:*?\"<>|\\u0000-\\u001F]"), " ").replace(Regex("\\s+"), " ").trim() }
+        val clean = { s: String -> s.replace(Regex("[\\\\/:*?\"<>|\\[\\]\\u0000-\\u001F]"), " ").replace(Regex("\\s+"), " ").trim() }
         val title = clean(videoTitle).ifBlank { "video" }.take(120)
         val language = clean(languageName).ifBlank { "Unknown" }
-        return "$title - $language"
+        return "[$language] $title"
+    }
+
+    /** One audio track inside a video file, as listed in the library's "Extract Audio" menu. */
+    data class AudioTrackSummary(
+        /** Position among the audio tracks of the file (what [extract] calls nativeAudioIndex). */
+        val nativeIndex: Int,
+        /** "Tamil", or "Track 2" when the file carries no language. */
+        val label: String,
+        val mime: String,
+        val channelCount: Int,
+        val sampleRate: Int
+    ) {
+        /** "[Tamil]", the way the extracted file's title starts. */
+        val bracketLabel: String get() = "[$label]"
+    }
+
+    /** Lists the audio tracks of [source] without reading any audio data. Empty when the file can't be opened. */
+    suspend fun listAudioTracks(context: Context, source: Uri): List<AudioTrackSummary> = withContext(Dispatchers.IO) {
+        val scheme = source.scheme?.lowercase(Locale.ROOT)
+        if (scheme != "content" && scheme != "file") return@withContext emptyList()
+        var opened: Demuxer? = null
+        var pfd: ParcelFileDescriptor? = null
+        try {
+            opened = openMedia3(context, source)
+            if (opened == null) {
+                val platform = MediaExtractor()
+                opened = PlatformDemuxer(platform)
+                pfd = runCatching { context.contentResolver.openFileDescriptor(source, "r") }.getOrNull()
+                val fd = pfd
+                if (fd != null) platform.setDataSource(fd.fileDescriptor) else platform.setDataSource(context, source, null)
+            }
+            val d: Demuxer = opened ?: return@withContext emptyList()
+            val audio = (0 until d.trackCount).filter {
+                d.trackFormat(it).getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true
+            }
+            audio.mapIndexed { n, trackIndex ->
+                val f = d.trackFormat(trackIndex)
+                val lang = if (f.containsKey(MediaFormat.KEY_LANGUAGE)) f.getString(MediaFormat.KEY_LANGUAGE) else null
+                AudioTrackSummary(
+                    nativeIndex = n,
+                    label = languageDisplayName(lang) ?: "Track ${n + 1}",
+                    mime = f.getString(MediaFormat.KEY_MIME) ?: "",
+                    channelCount = if (f.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) f.getInteger(MediaFormat.KEY_CHANNEL_COUNT) else -1,
+                    sampleRate = if (f.containsKey(MediaFormat.KEY_SAMPLE_RATE)) f.getInteger(MediaFormat.KEY_SAMPLE_RATE) else -1
+                )
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "Couldn't list audio tracks", e)
+            emptyList()
+        } finally {
+            runCatching { opened?.release() }
+            runCatching { pfd?.close() }
+        }
     }
 
     /** "ta" / "tam" -> "Tamil"; null when the code is missing or unknown. */
