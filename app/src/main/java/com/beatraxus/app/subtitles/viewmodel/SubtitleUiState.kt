@@ -41,6 +41,8 @@ data class SubtitleUiState(
     val delayMs: Long = 0L,
     val delaySupported: Boolean = false,
     val autoSearchMode: AutoSearchMode = AutoSearchMode.OFF,
+    // Video feature 19: also download and apply the best match the automatic search finds
+    val autoDownload: Boolean = false,
     // Dual subtitles (video feature 22)
     val dualEnabled: Boolean = false,
     val secondarySubtitleName: String? = null,

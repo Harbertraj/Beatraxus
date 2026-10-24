@@ -16,9 +16,11 @@ import com.beatraxus.app.subtitles.data.SubtitleCache
 import com.beatraxus.app.subtitles.data.SubtitleCredentialsStore
 import com.beatraxus.app.subtitles.data.SubtitleFileImporter
 import com.beatraxus.app.subtitles.data.SubtitleFontStore
+import com.beatraxus.app.subtitles.domain.AutoSubtitlePicker
 import com.beatraxus.app.subtitles.domain.EncodingNormalizer
 import com.beatraxus.app.subtitles.domain.FilenameParser
 import com.beatraxus.app.subtitles.domain.MediaKey
+import com.beatraxus.app.subtitles.domain.ScoredSubtitle
 import com.beatraxus.app.subtitles.domain.SecondarySubtitlePlacement
 import com.beatraxus.app.subtitles.domain.SecondarySubtitlePrefs
 import com.beatraxus.app.subtitles.domain.SecondarySubtitleStyle
@@ -89,6 +91,8 @@ class SubtitleViewModel(
     private var currentMediaKey: String = ""
     private var searchJob: Job? = null
     private val autoSearchedVideoIds = mutableSetOf<String>()
+    /** An automatic download that fails says why once, not on every video the viewer opens. */
+    private var autoDownloadFailureShown = false
 
     init {
         loadSettings()
@@ -117,6 +121,7 @@ class SubtitleViewModel(
                 secondaryStyle = SecondarySubtitlePrefs.readStyle(prefs),
                 selectedLanguages = prefLangs,
                 autoSearchMode = autoSearchMode,
+                autoDownload = autoSearchMode != AutoSearchMode.OFF && prefs.getBoolean(KEY_AUTO_DOWNLOAD, false),
                 isSignedIn = isSignedIn,
                 username = username,
                 downloadsRemaining = remaining,
@@ -203,7 +208,7 @@ class SubtitleViewModel(
             val autoMode = _uiState.value.autoSearchMode
             if (autoMode != AutoSearchMode.OFF && !autoSearchedVideoIds.contains(video.id)) {
                 autoSearchedVideoIds.add(video.id)
-                searchOnline()
+                searchOnline(autoDownload = _uiState.value.autoDownload)
             }
         }
     }
@@ -254,7 +259,8 @@ class SubtitleViewModel(
         return false
     }
 
-    fun searchOnline(manualQuery: String? = null) {
+    /** @param autoDownload true only for the search that starts by itself when a video opens (video feature 19). */
+    fun searchOnline(manualQuery: String? = null, autoDownload: Boolean = false) {
         val video = currentVideo ?: return
         searchJob?.cancel()
 
@@ -297,6 +303,7 @@ class SubtitleViewModel(
                             bestMatchId = bestId
                         )
                     }
+                    if (autoDownload) autoDownloadBestMatch(video, scoredList)
                 } else {
                     val ex = res.exceptionOrNull()
                     val error = (ex as? SubtitleException)?.error ?: SubtitleError.Unknown(ex)
@@ -315,7 +322,22 @@ class SubtitleViewModel(
         }
     }
 
-    fun downloadAndApply(result: SubtitleResult) {
+    /**
+     * Video feature 19: downloads the search result that is safe to take without asking, if there is one.
+     * Does nothing when subtitles are switched off, the viewer has already moved to another video, or no result
+     * passes [AutoSubtitlePicker]; the list stays in the sheet for a manual pick either way.
+     */
+    private fun autoDownloadBestMatch(video: Video, scored: List<ScoredSubtitle>) {
+        if (!_uiState.value.enabled || currentVideo?.id != video.id) return
+        val pick = AutoSubtitlePicker.pick(scored, _uiState.value.selectedLanguages) ?: return
+        downloadAndApply(pick.subtitle, auto = true)
+    }
+
+    /**
+     * @param auto true when the app picked this subtitle itself. Such a download never opens the sign-in dialog or
+     * shows an error banner; a failure is reported by one short toast per session (the viewer did not ask for it).
+     */
+    fun downloadAndApply(result: SubtitleResult, auto: Boolean = false) {
         val video = currentVideo ?: return
         val mediaKey = currentMediaKey.ifBlank { MediaKey.of(video) }
 
@@ -324,9 +346,26 @@ class SubtitleViewModel(
                 _uiState.update { it.copy(isDownloading = result.id) }
             }
 
+            // An automatic download reports its failure quietly and leaves the sheet's error state alone.
+            suspend fun failAuto(error: SubtitleError) {
+                withContext(Dispatchers.Main) {
+                    _uiState.update { it.copy(isDownloading = null) }
+                    if (!autoDownloadFailureShown) {
+                        autoDownloadFailureShown = true
+                        _events.emit(SubtitleUiEvent.ShowToast("Auto-download skipped: " + SubtitleErrorMapper.toUserMessage(error)))
+                    }
+                }
+            }
+
             // Check if already cached
             val cachedList = subtitleCache.getCachedSubtitles(mediaKey)
             val existing = cachedList.firstOrNull { it.subtitleId == result.id || it.subtitleId == result.fileId.toString() }
+
+            // The viewer loaded a subtitle by hand while the search ran: theirs stays.
+            if (auto && existing == null && cachedList.isNotEmpty()) {
+                withContext(Dispatchers.Main) { _uiState.update { it.copy(isDownloading = null) } }
+                return@launch
+            }
 
             if (existing != null) {
                 val file = File(existing.localPath)
@@ -359,6 +398,10 @@ class SubtitleViewModel(
                 val error = (ex as? SubtitleException)?.error ?: SubtitleError.Unknown(ex)
                 val msg = SubtitleErrorMapper.toUserMessage(error)
 
+                if (auto) {
+                    failAuto(error)
+                    return@launch
+                }
                 withContext(Dispatchers.Main) {
                     _uiState.update { it.copy(isDownloading = null, error = error, errorMessage = msg) }
                     when (error) {
@@ -376,6 +419,10 @@ class SubtitleViewModel(
 
             val dlFileRes = repository.downloadToFile(downloadInfo.link, tempFile)
             if (dlFileRes.isFailure) {
+                if (auto) {
+                    failAuto(SubtitleError.DownloadFailed("File write failed"))
+                    return@launch
+                }
                 withContext(Dispatchers.Main) {
                     val msg = SubtitleErrorMapper.toUserMessage(SubtitleError.DownloadFailed("File write failed"))
                     _uiState.update { it.copy(isDownloading = null, error = SubtitleError.DownloadFailed("File write failed"), errorMessage = msg) }
@@ -388,6 +435,10 @@ class SubtitleViewModel(
             val normalized = EncodingNormalizer.normalizeToUtf8(bytes, result.language)
             val validRes = SubtitleValidator.validate(normalized)
             if (validRes.isFailure) {
+                if (auto) {
+                    failAuto(SubtitleError.InvalidSubtitle)
+                    return@launch
+                }
                 withContext(Dispatchers.Main) {
                     val msg = SubtitleErrorMapper.toUserMessage(SubtitleError.InvalidSubtitle)
                     _uiState.update { it.copy(isDownloading = null, error = SubtitleError.InvalidSubtitle, errorMessage = msg) }
@@ -407,6 +458,13 @@ class SubtitleViewModel(
 
             val savedFile = subtitleCache.saveSubtitle(mediaKey, cachedSub, normalized)
             val updatedCachedList = subtitleCache.getCachedSubtitles(mediaKey)
+
+            // The viewer moved on while an automatic download ran. The file is cached for that video's next play,
+            // but it must not be attached to the one that is on screen now.
+            if (auto && currentVideo?.id != video.id) {
+                withContext(Dispatchers.Main) { _uiState.update { it.copy(isDownloading = null) } }
+                return@launch
+            }
 
             subtitleController.attachExternalSubtitle(
                 videoId = video.id,
@@ -741,8 +799,27 @@ class SubtitleViewModel(
     }
 
     fun setAutoSearchMode(mode: AutoSearchMode) {
-        prefs.edit().putString("video_subtitle_auto_search_mode", mode.name).apply()
-        _uiState.update { it.copy(autoSearchMode = mode) }
+        // Downloading what the automatic search finds makes no sense without the search.
+        val keepAutoDownload = mode != AutoSearchMode.OFF && _uiState.value.autoDownload
+        prefs.edit()
+            .putString("video_subtitle_auto_search_mode", mode.name)
+            .putBoolean(KEY_AUTO_DOWNLOAD, keepAutoDownload)
+            .apply()
+        _uiState.update { it.copy(autoSearchMode = mode, autoDownload = keepAutoDownload) }
+    }
+
+    /** Video feature 19. Turning it on also turns the automatic search on, since the download is that search's result. */
+    fun setAutoDownload(enabled: Boolean) {
+        val mode = if (enabled && _uiState.value.autoSearchMode == AutoSearchMode.OFF) {
+            AutoSearchMode.ON_PREFERRED_LANGUAGE
+        } else {
+            _uiState.value.autoSearchMode
+        }
+        prefs.edit()
+            .putString("video_subtitle_auto_search_mode", mode.name)
+            .putBoolean(KEY_AUTO_DOWNLOAD, enabled)
+            .apply()
+        _uiState.update { it.copy(autoSearchMode = mode, autoDownload = enabled) }
     }
 
     fun clearSubtitleCache() {
@@ -758,6 +835,8 @@ class SubtitleViewModel(
     private companion object {
         /** How many matching files next to a video are tried before giving up (an unreadable one moves on to the next). */
         const val MAX_SIBLING_ATTEMPTS = 3
+
+        const val KEY_AUTO_DOWNLOAD = "video_subtitle_auto_download"
     }
 }
 

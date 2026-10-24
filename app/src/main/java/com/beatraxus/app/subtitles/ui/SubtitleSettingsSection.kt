@@ -169,6 +169,35 @@ fun SubtitleSettingsSection(
             }
         }
 
+        // Auto-download (video feature 19)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(Color.White.copy(0.06f))
+                .padding(14.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Auto-Download Best Match", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                Text(
+                    "When a video opens with no subtitle, downloads and applies the best match in your preferred " +
+                        "language. Needs an OpenSubtitles sign-in and uses one download from your daily limit. " +
+                        "Turns on Auto-Search.",
+                    color = Color.White.copy(0.5f),
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(top = 2.dp)
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+            Switch(
+                checked = subUiState.autoDownload,
+                onCheckedChange = { subtitleViewModel.setAutoDownload(it) },
+                colors = SwitchDefaults.colors(checkedThumbColor = Color.Black, checkedTrackColor = mxOrange)
+            )
+        }
+
         // Preferred Languages
         Row(
             modifier = Modifier

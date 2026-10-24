@@ -192,6 +192,65 @@ class SubtitleViewModelTest {
         }
     }
 
+    private fun autoDownloadVideo(id: String) = Video(
+        id = id,
+        uri = Uri.parse("content://media/external/video/media/$id"),
+        title = "Auto Search Video",
+        displayName = "Auto.Search.Video.2023.mkv",
+        folderPath = "/storage/Movies",
+        durationMs = 60000L,
+        sizeBytes = 2000000L,
+        resolutionWidth = 1280,
+        resolutionHeight = 720,
+        mimeType = "video/mp4",
+        dateAdded = 4000L
+    )
+
+    private fun autoDownloadSub(language: String) = SubtitleResult(
+        id = "sub_auto", fileId = 7L, fileName = "Auto.Search.Video.2023.$language.srt",
+        releaseName = "Auto Search Video 2023", language = language, languageName = null,
+        downloadCount = 500, isHearingImpaired = false, isMachineTranslated = false, isAiTranslated = false,
+        rating = 8f, uploaderName = null, fps = null, featureTitle = "Auto Search Video", year = 2023,
+        imdbId = null, tmdbId = null
+    )
+
+    @Test
+    fun testAutoDownloadAppliesBestMatchInPreferredLanguage() {
+        runBlocking {
+            viewModel.setAutoDownload(true)
+            fakeRepository.searchResult = Result.success(listOf(autoDownloadSub("en")))
+
+            viewModel.onVideoChanged(autoDownloadVideo("vid_404"))
+
+            assertEquals(1, fakeRepository.downloadRequestCount)
+            assertEquals(1, fakeController.attachCount)
+        }
+    }
+
+    @Test
+    fun testAutoDownloadSkipsLanguageTheViewerDidNotAskFor() {
+        runBlocking {
+            viewModel.setAutoDownload(true)
+            fakeRepository.searchResult = Result.success(listOf(autoDownloadSub("fr")))
+
+            viewModel.onVideoChanged(autoDownloadVideo("vid_505"))
+
+            assertEquals(1, fakeRepository.searchCount)
+            assertEquals(0, fakeRepository.downloadRequestCount)
+            assertEquals(1, viewModel.uiState.value.results.size)
+        }
+    }
+
+    @Test
+    fun testAutoDownloadSwitchTurnsAutoSearchOnAndOffAgain() {
+        viewModel.setAutoDownload(true)
+        assertTrue(viewModel.uiState.value.autoDownload)
+        assertTrue(viewModel.uiState.value.autoSearchMode != AutoSearchMode.OFF)
+
+        viewModel.setAutoSearchMode(AutoSearchMode.OFF)
+        assertFalse(viewModel.uiState.value.autoDownload)
+    }
+
     @Test
     fun testRateLimitErrorHandledInState() {
         runBlocking {
