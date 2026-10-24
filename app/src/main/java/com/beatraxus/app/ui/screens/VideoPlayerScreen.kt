@@ -1633,7 +1633,7 @@ private fun VpFlatButton(
 }
 
 /** Space the bottom control stack needs, so floating items (Skip Intro, chapter strip) sit above it. */
-private fun vpBottomStackClearance(): Dp = 116.dp
+private fun vpBottomStackClearance(): Dp = 108.dp
 
 @Composable
 fun PlayerTopBar(
@@ -2091,7 +2091,7 @@ fun PlayerBottomBar(
                 modifier = Modifier
                     .fillMaxWidth()
                     .layout { measurable, constraints ->
-                        val pull = 12.dp.roundToPx()
+                        val pull = 20.dp.roundToPx()
                         val placeable = measurable.measure(constraints)
                         layout(placeable.width, placeable.height - pull) { placeable.placeRelative(0, -pull) }
                     },

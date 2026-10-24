@@ -327,6 +327,16 @@ class VideoPlayerViewModel(
     /** Which video effects the player currently has: bit 1 = deinterlace, bit 2 = gamma / sharpness, bit 4 = upscaler. */
     private var appliedEffectsKey = 0
 
+    /**
+     * media3 1.5: once setVideoEffects() has been called on a player (even with an empty list) its video renderer
+     * keeps drawing through the effect pipeline for good. That pipeline cannot render into the bare Surface the
+     * FPS Booster gives ExoPlayer (size unknown): the picture stays black while the sound plays. So a player the
+     * booster may use never gets video effects (the booster deinterlaces itself), and a player that already has
+     * effects never lets the booster start (see [withFpsPlan]).
+     */
+    private var effectsPipelineAllowed = true
+    private var effectsInstalled = false
+
     // Feature 25: external audio files loaded per video id. Read from ExoPlayer's loader thread, hence concurrent.
     private val externalAudioByVideoId = java.util.concurrent.ConcurrentHashMap<String, ExternalAudioTrack>()
     private var selectExternalAudioOnNextTracks = false
@@ -466,7 +476,6 @@ class VideoPlayerViewModel(
             val caps = runCatching { GlCapabilityProbe.query(getApplication()) }.getOrNull()
             deviceCaps = caps
             _uiState.update { withFpsPlan(it) }
-            withContext(Dispatchers.Main) { updateVideoEffects() }
 
         }
     }
@@ -531,6 +540,7 @@ class VideoPlayerViewModel(
         val plan = when {
             !s.fpsBooster.isOn -> BoosterPlan.inactive("Off")
             s.fpsBoosterSuspended != null -> BoosterPlan.inactive(s.fpsBoosterSuspended)
+            effectsInstalled -> BoosterPlan.inactive("Replay the video to use the FPS Booster with video effects (deinterlacing, upscaler, sharpness)")
             caps == null -> BoosterPlan.inactive("Checking device")
             else -> FpsBoosterPlanner.plan(s.fpsBooster, caps, SourceInfo(s.sourceFps, s.videoSize.width, s.videoSize.height, s.isHdr))
         }
@@ -597,6 +607,11 @@ class VideoPlayerViewModel(
         // A brand-new player has NO video effects yet. Without this reset a stale `true`
         // from a previous player made updateVideoEffects() skip setVideoEffects() forever.
         appliedEffectsKey = 0
+        effectsInstalled = false
+        // Will the FPS Booster very likely run for this video? Then this player must never get ExoPlayer video effects.
+        val boosterSetting = _uiState.value
+        effectsPipelineAllowed = !(boosterSetting.fpsBooster.isOn && boosterSetting.fpsBoosterSuspended == null &&
+            !video.isHdr && deviceCaps?.glEs3 != false)
 
         val audioAttributes = AudioAttributes.Builder()
             .setUsage(C.USAGE_MEDIA)
@@ -793,14 +808,12 @@ class VideoPlayerViewModel(
             override fun onVideoSizeChanged(videoSize: VideoSize) {
                 val fps = player.videoFormat?.frameRate?.takeIf { it > 0f } ?: 0f
                 _uiState.update { withFpsPlan(it.copy(videoSize = videoSize, sourceFps = if (fps > 0f) fps else it.sourceFps)) }
-                updateVideoEffects() // the booster may have just become active: the effects must leave before it takes the surface
             }
 
             override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
                 updateTracks()
                 player.videoFormat?.frameRate?.takeIf { it > 0f }?.let { fps ->
                     _uiState.update { withFpsPlan(it.copy(sourceFps = fps)) }
-                    updateVideoEffects()
                 }
                 player.videoFormat?.let { vf -> onVideoFormatKnown(vf) }
                 
@@ -857,7 +870,6 @@ class VideoPlayerViewModel(
             // A booster that stopped itself on the previous video gets a fresh chance on the next one.
             if (_uiState.value.fpsBoosterSuspended != null) {
                 _uiState.update { withFpsPlan(it.copy(fpsBoosterSuspended = null)) }
-                updateVideoEffects()
             }
             // Audio delay is tuned per file, so a new video starts back in sync.
             if (tuning.audioDelayMs != 0) setAudioDelayMs(0)
@@ -2554,10 +2566,9 @@ class VideoPlayerViewModel(
      * The media3 effect pipeline is only used while deinterlacing is on, and removed again as soon as it is off,
      * so normal playback never pays for it.
      *
-     * While the FPS Booster runs, NO effect is installed here: the booster hands ExoPlayer a bare Surface of unknown
-     * size, and the effect pipeline cannot draw into that (black picture, sound only - what happened when a video
-     * with deinterlacing on was replayed with the booster on). The booster deinterlaces in its own copy pass instead.
-     * This runs again whenever the booster plan changes, so the effects follow the booster on and off.
+     * Not while the FPS Booster may run: see [effectsPipelineAllowed]. The booster deinterlaces in its own copy pass
+     * (DeinterlaceGlsl), so deinterlacing still works there; the upscaler and gamma / sharpness need the player's
+     * effects and wait until the video is replayed with the booster off.
      */
     private fun updateVideoEffects() {
         val player = exoPlayer ?: return
@@ -2568,20 +2579,21 @@ class VideoPlayerViewModel(
         colorGradeEffect.sharpness = state.colorSharpness
         upscaleEffect.mode = state.upscaleMode
         upscaleEffect.strength = state.upscaleStrength
-        // The FPS Booster draws the video itself at the file's size: every ExoPlayer effect stays out of its way.
-        val boosting = state.fpsBoosterPlan.active
-        val wantDeinterlace = mode.isOn && !boosting
-        val wantGrade = needsGradeEffect() && !boosting
-        val wantUpscale = state.upscaleMode.isOn && !boosting
-        val key = (if (wantDeinterlace) 1 else 0) or (if (wantGrade) 2 else 0) or (if (wantUpscale) 4 else 0)
+        if (!effectsPipelineAllowed || state.fpsBoosterPlan.active) return
+        val wantGrade = needsGradeEffect()
+        // The FPS Booster draws the video itself at the file's size, so the upscaler stays out of its way.
+        val wantUpscale = state.upscaleMode.isOn && !state.fpsBoosterPlan.active
+        val key = (if (mode.isOn) 1 else 0) or (if (wantGrade) 2 else 0) or (if (wantUpscale) 4 else 0)
         // Only touch the player when the set of effects changes; slider moves just update the values above.
         if (key == appliedEffectsKey) return
+        effectsInstalled = true
         player.setVideoEffects(buildList {
-            if (wantDeinterlace) add(deinterlaceEffect)
+            if (mode.isOn) add(deinterlaceEffect)
             if (wantGrade) add(colorGradeEffect)
             if (wantUpscale) add(upscaleEffect) // last: it enlarges the frame
         })
         appliedEffectsKey = key
+        _uiState.update { withFpsPlan(it) } // a booster that was waiting for "no effects" now knows it cannot start
     }
 
 
