@@ -166,17 +166,6 @@ fun LazyListScope.videoHomeItems(
 
     // ── Library shortcuts ───────────────────────────────────────────────
     item(key = "VIDEO_SHORTCUTS") {
-        // Feature 27: open a pasted network or stream link.
-        var showOpenStream by remember { mutableStateOf(false) }
-        if (showOpenStream) {
-            com.beatraxus.app.ui.components.OpenNetworkStreamDialog(
-                onDismiss = { showOpenStream = false },
-                onPlay = { url ->
-                    showOpenStream = false
-                    viewModel.playNetworkStream(url)
-                }
-            )
-        }
         Column(
             Modifier.fillMaxWidth().padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -201,11 +190,6 @@ fun LazyListScope.videoHomeItems(
                     Modifier.weight(1f)
                 ) { viewModel.setLibraryView(LibraryView.VIDEO_RECENTLY_PLAYED) }
             }
-            // Full width: the empty half next to it is used, so the whole name shows
-            ShortcutTile(
-                "Network Stream", Icons.Rounded.Link, Color(0xFF30D158),
-                Modifier.fillMaxWidth()
-            ) { showOpenStream = true }
         }
         Spacer(Modifier.height(8.dp))
     }

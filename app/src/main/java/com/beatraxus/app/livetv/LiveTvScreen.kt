@@ -54,6 +54,7 @@ import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.History
+import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.SearchOff
@@ -113,6 +114,8 @@ fun LiveTvScreen(
     onPlay: (channels: List<LiveChannel>, index: Int) -> Unit,
     modifier: Modifier = Modifier,
     accent: Color = LiveRed,
+    /** Feature 27: plays a pasted network / stream link. When null the "Network Stream" chip is hidden. */
+    onPlayNetworkStream: ((String) -> Unit)? = null,
     viewModel: LiveTvViewModel = viewModel()
 ) {
     val state by viewModel.state.collectAsState()
@@ -120,6 +123,16 @@ fun LiveTvScreen(
     val favoriteIds = state.favoriteIds
     val focus = LocalFocusManager.current
     var playlistInput by remember { mutableStateOf("") }
+    var showOpenStream by remember { mutableStateOf(false) }
+    if (showOpenStream && onPlayNetworkStream != null) {
+        com.beatraxus.app.ui.components.OpenNetworkStreamDialog(
+            onDismiss = { showOpenStream = false },
+            onPlay = { url ->
+                showOpenStream = false
+                onPlayNetworkStream(url)
+            }
+        )
+    }
     val pickFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) viewModel.importPlaylistFile(uri)
     }
@@ -193,7 +206,8 @@ fun LiveTvScreen(
                             focus.clearFocus()
                         }
                     },
-                    onPickFile = { pickFile.launch(arrayOf("*/*")) }
+                    onPickFile = { pickFile.launch(arrayOf("*/*")) },
+                    onNetworkStream = if (onPlayNetworkStream != null) ({ showOpenStream = true }) else null
                 )
             }
 
@@ -506,7 +520,8 @@ private fun PlaylistField(
     accent: Color,
     onValueChange: (String) -> Unit,
     onAdd: () -> Unit,
-    onPickFile: () -> Unit
+    onPickFile: () -> Unit,
+    onNetworkStream: (() -> Unit)? = null
 ) {
     val shape = RoundedCornerShape(16.dp)
     Column {
@@ -551,17 +566,39 @@ private fun PlaylistField(
             }
         }
         Row(
-            modifier = Modifier
-                .padding(top = 8.dp)
-                .clip(RoundedCornerShape(50))
-                .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(50))
-                .clickable(onClick = onPickFile)
-                .padding(horizontal = 12.dp, vertical = 7.dp),
+            modifier = Modifier.padding(top = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(Icons.Rounded.FolderOpen, null, tint = Color.White.copy(alpha = 0.7f), modifier = Modifier.size(16.dp))
-            Spacer(Modifier.width(6.dp))
-            Text("Open an M3U file", color = Color.White.copy(alpha = 0.75f), fontSize = 12.sp, fontWeight = FontWeight.Medium)
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(50))
+                    .clickable(onClick = onPickFile)
+                    .padding(horizontal = 12.dp, vertical = 7.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(Icons.Rounded.FolderOpen, null, tint = Color.White.copy(alpha = 0.7f), modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Open an M3U file", color = Color.White.copy(alpha = 0.75f), fontSize = 12.sp, fontWeight = FontWeight.Medium)
+            }
+            // Network Stream chip (moved here from the video home screen)
+            if (onNetworkStream != null) {
+                val streamGreen = Color(0xFF30D158)
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .border(1.dp, streamGreen.copy(alpha = 0.45f), RoundedCornerShape(50))
+                        .background(streamGreen.copy(alpha = 0.10f))
+                        .clickable(onClick = onNetworkStream)
+                        .padding(horizontal = 12.dp, vertical = 7.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Rounded.Link, null, tint = streamGreen, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Network Stream", color = Color.White.copy(alpha = 0.85f), fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                }
+            }
         }
         if (error != null) {
             Text(

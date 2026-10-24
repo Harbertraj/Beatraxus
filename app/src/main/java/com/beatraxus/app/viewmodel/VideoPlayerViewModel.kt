@@ -115,6 +115,8 @@ data class VideoPlayerUiState(
     val availableSubtitleTracks: List<VideoTrackInfo> = emptyList(),
     /** Feature 25: name of the external audio file loaded for the current video, or null. */
     val externalAudioName: String? = null,
+    /** 0f..1f while an audio track is being extracted to a file ("Extract" icon of the Audio Tracks sheet), else null. */
+    val audioExtractProgress: Float? = null,
     /** Feature 26: name of the Cast device while this video plays on a TV (the phone only acts as the remote). */
     val castDeviceName: String? = null,
     val selectedAudioTrackIndex: Int = -1,
@@ -1474,6 +1476,55 @@ class VideoPlayerViewModel(
         selectExternalAudioOnNextTracks = true
         rebuildCurrentMediaItem()
         _uiState.update { it.copy(externalAudioName = track.label, error = null) }
+    }
+
+    // Runs on its own scope so a started extraction still finishes if the player screen is closed.
+    private val extractScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+    /**
+     * Saves the audio track that is playing (a track of the video file itself, not a loaded external one) into the
+     * folder [treeUri] the user picked. File name: "<video title> - <audio language>.<ext>".
+     */
+    fun extractAudioTrack(treeUri: Uri) {
+        val state = _uiState.value
+        val video = state.currentVideo ?: return
+        if (state.audioExtractProgress != null) return
+        val tracks = state.availableAudioTracks
+        val selected = tracks.firstOrNull { it.isSelected && !it.isExternal } ?: tracks.firstOrNull { !it.isExternal }
+        val app = getApplication<Application>()
+        if (selected == null) {
+            android.widget.Toast.makeText(app, "No audio track to extract", android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
+        // Position among the audio tracks of the file itself (loaded external audio is listed too, but is not in the file)
+        val nativeIndex = tracks.count { !it.isExternal && it.audioOrdinal < selected.audioOrdinal }
+        val language = com.beatraxus.app.util.VideoAudioExtractor.languageDisplayName(selected.language)
+            ?: selected.name.takeIf { it.isNotBlank() } ?: "Unknown"
+        val title = video.title.ifBlank { video.displayName.substringBeforeLast('.') }
+        val baseName = com.beatraxus.app.util.VideoAudioExtractor.buildBaseName(title, language)
+
+        _uiState.update { it.copy(audioExtractProgress = 0f) }
+        extractScope.launch {
+            val result = try {
+                com.beatraxus.app.util.VideoAudioExtractor.extract(
+                    context = app,
+                    source = video.uri,
+                    nativeAudioIndex = nativeIndex,
+                    treeUri = treeUri,
+                    baseName = baseName,
+                    onProgress = { p -> _uiState.update { s -> if (s.audioExtractProgress != null) s.copy(audioExtractProgress = p) else s } }
+                )
+            } finally {
+                _uiState.update { it.copy(audioExtractProgress = null) }
+            }
+            withContext(Dispatchers.Main) {
+                val text = when (result) {
+                    is com.beatraxus.app.util.VideoAudioExtractor.Result.Saved -> "Audio saved: ${result.fileName}"
+                    is com.beatraxus.app.util.VideoAudioExtractor.Result.Failed -> result.reason
+                }
+                android.widget.Toast.makeText(app, text, android.widget.Toast.LENGTH_LONG).show()
+            }
+        }
     }
 
     /** Unloads the external audio of the current video and goes back to its own audio track. */

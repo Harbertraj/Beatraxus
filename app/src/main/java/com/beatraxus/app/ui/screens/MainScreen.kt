@@ -3122,7 +3122,8 @@ items(artistSongs, key = { it.id }) { song ->
                                                 LibraryView.LIVE_TV -> {
                                                     com.beatraxus.app.livetv.LiveTvScreen(
                                                         accent = viewAccentColor,
-                                                        onPlay = { channels, index -> viewModel.playLiveChannels(channels, index) }
+                                                        onPlay = { channels, index -> viewModel.playLiveChannels(channels, index) },
+                                                        onPlayNetworkStream = { url -> viewModel.playNetworkStream(url) }
                                                     )
                                                 }
                                                 else -> {

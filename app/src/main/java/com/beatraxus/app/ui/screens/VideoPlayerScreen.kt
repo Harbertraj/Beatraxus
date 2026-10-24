@@ -86,6 +86,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.*
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLifecycleOwner
@@ -183,6 +184,10 @@ fun VideoPlayerScreen(
     var controlsVisible by remember { mutableStateOf(true) }
     // Which tool category (Playback / Audio / Picture) is open under the title; null = all collapsed.
     var openToolCategory by remember { mutableStateOf<VpToolCategory?>(null) }
+    // Measured heights of the top stack (title + tool rows) and the bottom bar (seek bar), in px.
+    // The centre transport buttons are centred in the gap between them, so they follow the second tool row.
+    var topBarHeightPx by remember { mutableStateOf(0) }
+    var bottomBarHeightPx by remember { mutableStateOf(0) }
 
     // Night filter (feature 17): the local hour is checked once a minute, only needed for the "Auto" mode.
     var localHour by remember { mutableStateOf(java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)) }
@@ -877,7 +882,7 @@ fun VideoPlayerScreen(
                         hdrLabel = uiState.hdrInfo.badge ?: "HDR",
                         sleepTimerRemainingMs = uiState.sleepTimerRemainingMs,
                         decoderLabel = uiState.videoDecoderMode.label,
-                        isSurroundActive = uiState.surroundSimulatorEnabled,
+                        onInfoClick = { sheetType = PlayerSheetType.INFO },
                         onBack = onBack,
                         onDecoderClick = {
                             val mode = viewModel.cycleVideoDecoderMode()
@@ -890,7 +895,6 @@ fun VideoPlayerScreen(
                         },
                         onAudioClick = { sheetType = PlayerSheetType.AUDIO },
                         onSubtitleClick = { sheetType = PlayerSheetType.SUBTITLE },
-                        onSurroundClick = { sheetType = PlayerSheetType.SURROUND },
                         queueSize = viewModel.queue.size,
                         onQueueClick = { sheetType = PlayerSheetType.QUEUE },
                         showCast = CastManager.isConnected || CastManager.availableDevices.isNotEmpty(),
@@ -918,6 +922,8 @@ fun VideoPlayerScreen(
                                 onUpscalerClick = { sheetType = PlayerSheetType.UPSCALER },
                                 onNightFilterClick = { sheetType = PlayerSheetType.NIGHT_FILTER },
                                 onInfoClick = { sheetType = PlayerSheetType.INFO },
+                                isSurroundActive = uiState.surroundSimulatorEnabled,
+                                onSurroundClick = { sheetType = PlayerSheetType.SURROUND },
                                 onSnapshotClick = {
                                     val pv = playerViewRef
                                     val video = uiState.currentVideo
@@ -950,18 +956,33 @@ fun VideoPlayerScreen(
                                 onCategoryClick = { openToolCategory = if (openToolCategory == it) null else it }
                             )
                         },
-                        modifier = Modifier.align(Alignment.TopCenter)
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .onSizeChanged { topBarHeightPx = it.height }
                     )
 
-                    // Center transport controls: previous / frame step / play-pause / next
-                    PlayerCenterControls(
-                        uiState = uiState,
-                        onTogglePlayPause = { viewModel.togglePlayPause() },
-                        onPlayNext = { viewModel.playNext() },
-                        onPlayPrevious = { viewModel.playPrevious() },
-                        onStepFrame = { viewModel.stepFrame(it) },
-                        modifier = Modifier.align(Alignment.Center)
-                    )
+                    // Center transport controls: previous / frame step / play-pause / next.
+                    // Centred between the last tool row (2nd row when a category is open) and the seek bar.
+                    val density = LocalDensity.current
+                    val topInset = with(density) { topBarHeightPx.toDp() } - VP_TOP_BAR_BOTTOM_PAD
+                    val bottomInset = with(density) { bottomBarHeightPx.toDp() } - VP_BOTTOM_BAR_TOP_PAD
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(
+                                top = topInset.coerceAtLeast(0.dp),
+                                bottom = bottomInset.coerceAtLeast(0.dp)
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        PlayerCenterControls(
+                            uiState = uiState,
+                            onTogglePlayPause = { viewModel.togglePlayPause() },
+                            onPlayNext = { viewModel.playNext() },
+                            onPlayPrevious = { viewModel.playPrevious() },
+                            onStepFrame = { viewModel.stepFrame(it) }
+                        )
+                    }
 
                     // Bottom Bar: seek bar, then lock | aspect ratio (tool icons are under the title)
                     PlayerBottomBar(
@@ -984,7 +1005,9 @@ fun VideoPlayerScreen(
                             }
                         },
                         onLongPress = { showChapterStrip = true },
-                        modifier = Modifier.align(Alignment.BottomCenter)
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .onSizeChanged { bottomBarHeightPx = it.height }
                     )
 
                     // Skip Intro Button
@@ -1100,16 +1123,6 @@ fun VideoPlayerScreen(
                                     Color(0xE61C1C22)
                                 )
                             )
-                        )
-                        .border(
-                            width = 1.dp,
-                            brush = Brush.linearGradient(
-                                colors = listOf(
-                                    Color.White.copy(alpha = 0.25f),
-                                    Color.White.copy(alpha = 0.05f)
-                                )
-                            ),
-                            shape = RoundedCornerShape(topStart = 28.dp, bottomStart = 28.dp)
                         )
                         .systemBarsPadding()
                         .clickable(enabled = false) {}
@@ -1305,6 +1318,9 @@ fun FloatingControls(
     onSnapshotClick: () -> Unit,
     onNightFilterClick: () -> Unit,
     onInfoClick: () -> Unit,
+    /** The surround simulator switch is ON (lights the icon). The icon itself is always shown. */
+    isSurroundActive: Boolean = false,
+    onSurroundClick: () -> Unit = {},
     onColorClick: () -> Unit,
     onAbRepeatClick: () -> Unit,
     onLoopClick: () -> Unit,
@@ -1369,11 +1385,12 @@ fun FloatingControls(
                 onSnapshotClick,
                 contentDescription = "Save a screenshot to the gallery"
             )
+            // Surround simulator: always here (never appears / disappears); lit while its switch is ON.
             VpToolButton(
-                Icons.Rounded.Info,
-                false,
-                onInfoClick,
-                contentDescription = "Video info: codec, bitrate and frame rate"
+                Icons.Rounded.SurroundSound,
+                isSurroundActive,
+                onSurroundClick,
+                contentDescription = "Surround simulator"
             )
         }
 
@@ -1635,6 +1652,10 @@ private fun VpFlatButton(
 /** Space the bottom control stack needs, so floating items (Skip Intro, chapter strip) sit above it. */
 private fun vpBottomStackClearance(): Dp = 108.dp
 
+// Empty gradient padding inside the top / bottom bars, so the centring uses the visible icons / seek bar edges.
+private val VP_TOP_BAR_BOTTOM_PAD = 24.dp
+private val VP_BOTTOM_BAR_TOP_PAD = 40.dp
+
 @Composable
 fun PlayerTopBar(
     title: String,
@@ -1643,13 +1664,12 @@ fun PlayerTopBar(
     hdrLabel: String = "HDR",
     sleepTimerRemainingMs: Long? = null,
     decoderLabel: String,
-    /** The surround simulator switch is ON (lights the icon). The icon itself is always shown. */
-    isSurroundActive: Boolean,
+    /** Video info sheet (codec, bitrate, frame rate): icon at the end of the title row, before the decoder button. */
+    onInfoClick: () -> Unit,
     onBack: () -> Unit,
     onDecoderClick: () -> Unit,
     onAudioClick: () -> Unit,
     onSubtitleClick: () -> Unit,
-    onSurroundClick: () -> Unit,
     /** Number of videos in the queue; the "Up next" button shows only for 2 or more. */
     queueSize: Int = 0,
     onQueueClick: () -> Unit = {},
@@ -1733,6 +1753,9 @@ fun PlayerTopBar(
                     )
                 }
             }
+            VpFlatButton(onClick = onInfoClick) {
+                Icon(Icons.Rounded.Info, "Video info", tint = Color.White, modifier = Modifier.size(23.dp))
+            }
             // Decoder: no sheet, each tap switches to the next mode (HW -> HW+ -> SW -> HW)
             val decoderInteraction = remember { MutableInteractionSource() }
             Box(
@@ -1760,8 +1783,6 @@ fun PlayerTopBar(
             VpFlatButton(onClick = onAudioClick) {
                 Icon(Icons.Rounded.AudioFile, "Audio track", tint = Color.White, modifier = Modifier.size(23.dp))
             }
-            // Surround simulator: always here (never appears / disappears); lit while its switch is ON.
-            SurroundTopIcon(active = isSurroundActive, onClick = onSurroundClick)
             VpFlatButton(onClick = onSubtitleClick) {
                 Icon(Icons.Rounded.Subtitles, "Subtitles", tint = Color.White, modifier = Modifier.size(23.dp))
             }
@@ -1786,19 +1807,6 @@ fun PlayerTopBar(
         ) {
             toolsContent()
         }
-    }
-}
-
-/** Opens the surround simulator sheet. */
-@Composable
-private fun SurroundTopIcon(active: Boolean, onClick: () -> Unit) {
-    VpFlatButton(onClick = onClick, active = active) {
-        Icon(
-            Icons.Rounded.SurroundSound,
-            "Surround simulator",
-            tint = if (active) VpAmberSoft else Color.White,
-            modifier = Modifier.size(24.dp)
-        )
     }
 }
 
@@ -2156,6 +2164,12 @@ fun VideoSettingsSheetContent(
                 viewModel.addExternalAudio(picked, fileName)
             }
         }
+        // "Extract": the user picks the destination folder in the system file manager, then the playing audio track is saved there.
+        val extractFolderPicker = rememberLauncherForActivityResult(
+            contract = ActivityResultContracts.OpenDocumentTree()
+        ) { tree: android.net.Uri? ->
+            if (tree != null) viewModel.extractAudioTrack(tree)
+        }
         // EQ is handled by DSP Studio while video audio is routed to the Audio Engine
         val eqLockedByEngine = uiState.routeAudioToEngine || uiState.isConnectingEngineRoute
         
@@ -2191,6 +2205,44 @@ fun VideoSettingsSheetContent(
             }
             
             Row(verticalAlignment = Alignment.CenterVertically) {
+                if (activeSheetType == PlayerSheetType.AUDIO) {
+                    // First icon: extract the playing audio track of this video to a folder the user picks.
+                    val extractProgress = uiState.audioExtractProgress
+                    val canExtract = extractProgress == null && uiState.currentVideo?.isCloud == false &&
+                        uiState.availableAudioTracks.any { !it.isExternal }
+                    IconButton(
+                        onClick = { extractFolderPicker.launch(null) },
+                        enabled = canExtract
+                    ) {
+                        if (extractProgress != null) {
+                            CircularProgressIndicator(
+                                progress = extractProgress,
+                                modifier = Modifier.size(22.dp),
+                                color = mxOrange,
+                                strokeWidth = 2.dp
+                            )
+                        } else {
+                            Icon(
+                                Icons.Rounded.SaveAlt,
+                                "Extract audio track",
+                                tint = Color.White.copy(alpha = if (canExtract) 1f else 0.35f)
+                            )
+                        }
+                    }
+                    // Second icon (top right corner): add an external audio track (was a row inside the sheet).
+                    IconButton(
+                        onClick = {
+                            audioFilePicker.launch(arrayOf("audio/*", "application/ogg", "application/octet-stream"))
+                        }
+                    ) {
+                        Icon(
+                            Icons.Rounded.AddCircleOutline,
+                            "Add audio track",
+                            tint = if (uiState.externalAudioName != null) mxOrange else Color.White
+                        )
+                    }
+                }
+
                 if (activeSheetType == PlayerSheetType.EQUALIZER) {
                     Switch(
                         checked = uiState.isEqEnabled && !eqLockedByEngine,
@@ -2516,38 +2568,26 @@ fun VideoSettingsSheetContent(
 
         // Audio Tracks
         if (activeSheetType == PlayerSheetType.AUDIO || activeSheetType == PlayerSheetType.ALL) {
-            // Feature 25: load an external audio file (e.g. a dub or commentary track) for this video.
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(Color.White.copy(alpha = 0.06f))
-                    .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(16.dp))
-                    .clickable {
-                        audioFilePicker.launch(arrayOf("audio/*", "application/ogg", "application/octet-stream"))
-                    }
-                    .heightIn(min = 56.dp)
-                    .padding(horizontal = 16.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(
-                    imageVector = Icons.Rounded.AddCircleOutline,
-                    contentDescription = null,
-                    tint = mxOrange,
-                    modifier = Modifier.size(22.dp)
-                )
-                Spacer(Modifier.width(12.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("Add audio track", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+            // Feature 25: the "Add audio track" button is the top-right icon of this sheet; once a file is loaded it is shown here.
+            if (uiState.externalAudioName != null) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(mxOrange.copy(alpha = 0.12f))
+                        .padding(start = 16.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Rounded.AddCircleOutline, null, tint = mxOrange, modifier = Modifier.size(20.dp))
+                    Spacer(Modifier.width(10.dp))
                     Text(
-                        text = uiState.externalAudioName?.let { "Loaded: $it" } ?: "Load an audio file from your device",
-                        color = Color.White.copy(0.6f),
-                        fontSize = 12.sp,
+                        text = "Loaded: ${uiState.externalAudioName}",
+                        color = Color.White.copy(0.85f),
+                        fontSize = 13.sp,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
                     )
-                }
-                if (uiState.externalAudioName != null) {
                     IconButton(onClick = { viewModel.removeExternalAudio() }) {
                         Icon(
                             imageVector = Icons.Rounded.Close,

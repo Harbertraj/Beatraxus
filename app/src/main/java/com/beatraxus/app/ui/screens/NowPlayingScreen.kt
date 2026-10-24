@@ -1,6 +1,7 @@
 package com.beatraxus.app.ui.screens
 
 import com.beatraxus.app.ui.components.LyricsSourcesPopup
+import com.beatraxus.app.ui.components.LyricsTranslateDialog
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.border
 import androidx.compose.ui.composed
@@ -192,6 +193,7 @@ fun NowPlayingScreen(
     var showSongOptions by remember { mutableStateOf(false) }
     var showSongInfo by remember { mutableStateOf(false) }
     var showLyricsSourcesSheet by remember { mutableStateOf(false) }
+    var showLyricsTranslateSheet by remember { mutableStateOf(false) }
 
     // Sink the one-shot ViewModel flag: MainActivity sets uiState.showSongInfo = true right
     // before popping back from the Inspector screen (when it was opened from here). Local
@@ -328,7 +330,7 @@ fun NowPlayingScreen(
     // Screen behind every popup is blurred + dimmed.
     //  - Sleep timer / lyric sources: deeper dim, softer blur (focus on the sheet).
     //  - Song info / signal path: only a LITTLE dim on top of the existing blur.
-    val strongOverlay = showSleepTimerSheet || showLyricsSourcesSheet
+    val strongOverlay = showSleepTimerSheet || showLyricsSourcesSheet || showLyricsTranslateSheet
     val lightOverlay = showPipelineOverlay || showSongInfo
     val overlayBlurActive = strongOverlay || lightOverlay
     val pipelineBlurRadius by animateDpAsState(
@@ -397,7 +399,7 @@ fun NowPlayingScreen(
         // --- NEW DYNAMIC BACKGROUND ---
         val appearance = uiState.appearance
         val fullCoverArt = appearance.nowPlayingFullCoverArt
-        val isFullCoverArtBlurred = showLyrics || showQueue || showSleepTimerSheet || showLyricsSourcesSheet || showSongInfo || showPipelineOverlay
+        val isFullCoverArtBlurred = showLyrics || showQueue || showSleepTimerSheet || showLyricsSourcesSheet || showLyricsTranslateSheet || showSongInfo || showPipelineOverlay
         // Full Cover Art: window-Y of the bottom of the audio-quality badge row. The cover is sized to end
         // there, so it touches the badge instead of leaving an empty band above it.
         var badgeBottomWindowPx by remember { mutableStateOf(0f) }
@@ -870,6 +872,10 @@ fun NowPlayingScreen(
                                     translateLanguage = uiState.appearance.lyricsTranslateLanguage,
                                     translationStatus = lyricsTranslationStatus,
                                     onSetTranslation = onSetLyricsTranslation,
+                                    // Popup is hosted here (like Sources) so the screen behind blurs/dims the same way.
+                                    onShowTranslate = if (onSetLyricsTranslation != null) {
+                                        { showLyricsTranslateSheet = true }
+                                    } else null,
                                     onShowAllLyrics = if (uiState.appearance.lyricsShowAll) {
                                         {
                                             showLyricsSourcesSheet = true
@@ -1329,6 +1335,18 @@ fun NowPlayingScreen(
                     showLyricsSourcesSheet = false
                 },
                 onDismiss = { showLyricsSourcesSheet = false }
+            )
+        }
+
+        if (showLyricsTranslateSheet && onSetLyricsTranslation != null) {
+            LyricsTranslateDialog(
+                enabled = uiState.appearance.lyricsTranslateEnabled,
+                language = uiState.appearance.lyricsTranslateLanguage,
+                status = lyricsTranslationStatus,
+                onChange = onSetLyricsTranslation,
+                onDismiss = { showLyricsTranslateSheet = false },
+                albumArtUri = song.albumArtUri,
+                useArtBackdrop = uiState.appearance.nowPlayingBackgroundMode == NowPlayingBackgroundMode.BLUR
             )
         }
 

@@ -6,6 +6,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -21,11 +22,16 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Remove
+import androidx.compose.material.icons.rounded.Translate
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.blur
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
@@ -127,6 +133,8 @@ fun KaraokeLyricsView(
     translateLanguage: String = "en",
     translationStatus: String? = null,
     onSetTranslation: ((Boolean, String) -> Unit)? = null,
+    /** When set, TRANSLATE asks the host screen to show the popup (so the screen behind blurs like Sources). */
+    onShowTranslate: (() -> Unit)? = null,
     onShowAllLyrics: (() -> Unit)? = null,
     accentColor: Color = Color.White
 ) {
@@ -308,134 +316,103 @@ fun KaraokeLyricsView(
                 exit = fadeOut() + slideOutVertically { -it },
                 modifier = Modifier
                     .align(Alignment.TopCenter)
-                    .padding(top = 24.dp)
+                    .padding(top = 16.dp)
             ) {
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                // Compact glass pills (36dp): offset stepper | SOURCES | TRANSLATE
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     Surface(
-                        color = Color.White.copy(alpha = 0.12f),
-                        shape = RoundedCornerShape(24.dp),
-                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.1f)),
-                        // weight(fill=false): the SOURCES pill is measured first and always
-                        // keeps its full width; the offset pill only shrinks if space runs out.
+                        color = Color.White.copy(alpha = 0.10f),
+                        shape = RoundedCornerShape(18.dp),
+                        border = BorderStroke(0.8.dp, Color.White.copy(alpha = 0.10f)),
+                        // weight(fill=false): the text pills are measured first and keep their
+                        // full width; the offset pill only shrinks if space runs out.
                         modifier = Modifier
                             .weight(1f, fill = false)
-                            .clip(RoundedCornerShape(24.dp))
+                            .clip(RoundedCornerShape(18.dp))
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)
+                            modifier = Modifier.height(36.dp).padding(horizontal = 2.dp)
                         ) {
-                            IconButton(
-                                enabled = !isPlainLyrics,
-                                onClick = {
-                                    onAdjustOffset(-100)
-                                    lastInteractionTime = System.currentTimeMillis()
-                                }
+                            Box(
+                                contentAlignment = Alignment.Center,
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .clip(androidx.compose.foundation.shape.CircleShape)
+                                    .clickable(enabled = !isPlainLyrics) {
+                                        onAdjustOffset(-100)
+                                        lastInteractionTime = System.currentTimeMillis()
+                                    }
                             ) {
                                 Icon(
                                     Icons.Rounded.Remove, "Earlier",
-                                    tint = Color.White.copy(alpha = if (isPlainLyrics) 0.3f else 1f)
+                                    tint = Color.White.copy(alpha = if (isPlainLyrics) 0.3f else 0.95f),
+                                    modifier = Modifier.size(17.dp)
                                 )
                             }
 
                             Column(
                                 horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center,
                                 modifier = Modifier
                                     // Fixed width: synced and plain lyrics render the SAME pill size.
-                                    .padding(horizontal = 6.dp)
-                                    .width(92.dp)
+                                    .width(74.dp)
                                     .clickable(enabled = !isPlainLyrics) {
                                         tempOffsetStr = lyricsOffsetMs.toString()
                                         isLongPressing = true
                                     }
                             ) {
                                 Text(
-                                    text = if (isPlainLyrics) "Unavailable"
+                                    text = if (isPlainLyrics) "Plain"
                                     else "${if (lyricsOffsetMs >= 0) "+" else ""}${lyricsOffsetMs}ms",
-                                    color = Color.White.copy(alpha = if (isPlainLyrics) 0.45f else 1f),
-                                    style = MaterialTheme.typography.labelLarge,
-                                    fontWeight = FontWeight.Black,
+                                    color = Color.White.copy(alpha = if (isPlainLyrics) 0.55f else 1f),
+                                    fontSize = 12.sp,
+                                    lineHeight = 13.sp,
+                                    fontWeight = FontWeight.Bold,
                                     maxLines = 1,
                                     softWrap = false
                                 )
                                 Text(
-                                    text = if (isPlainLyrics) "PLAIN · NO SYNC" else "SYNC OFFSET",
-                                    color = Color.White.copy(alpha = 0.5f),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontSize = 9.sp,
-                                    letterSpacing = 1.sp,
+                                    text = if (isPlainLyrics) "NO SYNC" else "SYNC OFFSET",
+                                    color = Color.White.copy(alpha = 0.45f),
+                                    fontSize = 8.sp,
+                                    lineHeight = 9.sp,
+                                    letterSpacing = 0.8.sp,
                                     maxLines = 1,
                                     softWrap = false
                                 )
                             }
 
-                            IconButton(
-                                enabled = !isPlainLyrics,
-                                onClick = {
-                                    onAdjustOffset(100)
-                                    lastInteractionTime = System.currentTimeMillis()
-                                }
+                            Box(
+                                contentAlignment = Alignment.Center,
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .clip(androidx.compose.foundation.shape.CircleShape)
+                                    .clickable(enabled = !isPlainLyrics) {
+                                        onAdjustOffset(100)
+                                        lastInteractionTime = System.currentTimeMillis()
+                                    }
                             ) {
                                 Icon(
                                     Icons.Rounded.Add, "Later",
-                                    tint = Color.White.copy(alpha = if (isPlainLyrics) 0.3f else 1f)
+                                    tint = Color.White.copy(alpha = if (isPlainLyrics) 0.3f else 0.95f),
+                                    modifier = Modifier.size(17.dp)
                                 )
                             }
                         }
                     }
 
                     if (onShowAllLyrics != null) {
-                        Surface(
-                            color = Color.White.copy(alpha = 0.12f),
-                            shape = RoundedCornerShape(24.dp),
-                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.1f)),
-                            modifier = Modifier
-                                .wrapContentWidth()
-                                .clip(RoundedCornerShape(24.dp))
-                                .clickable { onShowAllLyrics.invoke() }
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp).height(48.dp) // match icon button height
-                            ) {
-                                Text(
-                                    text = "SOURCES",
-                                    color = Color.White,
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    maxLines = 1,
-                                    softWrap = false
-                                )
-                            }
-                        }
+                        LyricsOptionPill(text = "SOURCES", highlighted = false) { onShowAllLyrics.invoke() }
                     }
 
                     if (onSetTranslation != null) {
-                        Surface(
-                            color = if (translateEnabled) Color.White.copy(alpha = 0.28f) else Color.White.copy(alpha = 0.12f),
-                            shape = RoundedCornerShape(24.dp),
-                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.1f)),
-                            modifier = Modifier
-                                .wrapContentWidth()
-                                .clip(RoundedCornerShape(24.dp))
-                                .clickable {
-                                    showTranslateDialog = true
-                                    lastInteractionTime = System.currentTimeMillis()
-                                }
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp).height(48.dp)
-                            ) {
-                                Text(
-                                    text = "TRANSLATE",
-                                    color = Color.White,
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    maxLines = 1,
-                                    softWrap = false
-                                )
-                            }
+                        LyricsOptionPill(text = "TRANSLATE", highlighted = translateEnabled) {
+                            if (onShowTranslate != null) onShowTranslate() else showTranslateDialog = true
+                            lastInteractionTime = System.currentTimeMillis()
                         }
                     }
                 }
@@ -568,59 +545,235 @@ private fun TranslationText(text: String, textAlign: TextAlign, modifier: Modifi
     )
 }
 
-/** On/off + target language picker for lyric translation. */
+/** Small glass pill used by the lyrics option row (SOURCES / TRANSLATE). */
+@Composable
+private fun LyricsOptionPill(text: String, highlighted: Boolean, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(18.dp)
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .height(36.dp)
+            .clip(shape)
+            .background(if (highlighted) Color.White.copy(alpha = 0.26f) else Color.White.copy(alpha = 0.10f))
+            .border(BorderStroke(0.8.dp, Color.White.copy(alpha = if (highlighted) 0.22f else 0.10f)), shape)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp)
+    ) {
+        Text(
+            text = text,
+            color = Color.White,
+            fontSize = 11.sp,
+            letterSpacing = 0.6.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            softWrap = false
+        )
+    }
+}
+
+/**
+ * On/off + target language picker for lyric translation.
+ * Same floating glass card as the lyrics Sources popup: header with icon + close, then rounded rows.
+ */
 @Composable
 fun LyricsTranslateDialog(
     enabled: Boolean,
     language: String,
     status: String?,
     onChange: (Boolean, String) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    albumArtUri: Any? = null,
+    useArtBackdrop: Boolean = false
 ) {
-    AlertDialog(
+    var shown by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { shown = true }
+
+    val maxHeight = (androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp * 0.74f).dp
+    val cardShape = RoundedCornerShape(32.dp)
+    val accent = Color(0xFF8E6BFF)
+
+    androidx.compose.ui.window.Dialog(
         onDismissRequest = onDismiss,
-        title = { Text("Translate lyrics") },
-        text = {
-            Column {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth()
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        com.beatraxus.app.ui.utils.DialogBlurBehind(radiusDp = 0)
+
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = onDismiss
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            AnimatedVisibility(
+                visible = shown,
+                enter = fadeIn(tween(200)) + scaleIn(
+                    initialScale = 0.9f,
+                    animationSpec = spring(dampingRatio = 0.78f, stiffness = Spring.StiffnessMedium)
+                )
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(0.92f)
+                        .heightIn(max = maxHeight)
+                        .clip(cardShape)
+                        .background(Color(0xFF0E0E14))
+                        .border(
+                            BorderStroke(
+                                1.dp,
+                                Brush.verticalGradient(listOf(Color.White.copy(0.22f), Color.White.copy(0.04f)))
+                            ),
+                            cardShape
+                        )
+                        // swallow taps so touching the card doesn't dismiss
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onClick = {}
+                        )
                 ) {
-                    Text(
-                        "Show translation below each line",
-                        modifier = Modifier.weight(1f),
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                    Switch(checked = enabled, onCheckedChange = { onChange(it, language) })
-                }
-                if (enabled && status != null) {
-                    Text(
-                        status,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.padding(top = 4.dp)
-                    )
-                }
-                Spacer(Modifier.height(12.dp))
-                Text("Translate into", style = MaterialTheme.typography.labelLarge)
-                LazyColumn(modifier = Modifier.heightIn(max = 320.dp)) {
-                    items(com.beatraxus.app.model.LyricsTranslationLogic.LANGUAGES, key = { it.tag }) { lang ->
+                    // Same blurred album-art backdrop as the Sources popup
+                    if (useArtBackdrop && albumArtUri != null) {
+                        coil.compose.AsyncImage(
+                            model = coil.request.ImageRequest.Builder(androidx.compose.ui.platform.LocalContext.current)
+                                .data(albumArtUri).size(200, 200).build(),
+                            contentDescription = null,
+                            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                            modifier = Modifier
+                                .matchParentSize()
+                                .graphicsLayer { scaleX = 1.4f; scaleY = 1.4f }
+                                .blur(60.dp)
+                                .alpha(0.28f)
+                        )
+                    }
+
+                    Column(modifier = Modifier.padding(horizontal = 18.dp, vertical = 18.dp)) {
+                        // ── header ──
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(42.dp)
+                                    .clip(androidx.compose.foundation.shape.CircleShape)
+                                    .background(Brush.linearGradient(listOf(Color(0xFF8E6BFF), Color(0xFFFF4D9D)))),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.Rounded.Translate, null, tint = Color.White, modifier = Modifier.size(22.dp))
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    "Translate Lyrics",
+                                    color = Color.White,
+                                    fontSize = 19.sp,
+                                    fontWeight = FontWeight.ExtraBold
+                                )
+                                Text(
+                                    text = when {
+                                        !enabled -> "Off · pick a language to start"
+                                        status != null -> status
+                                        else -> "On · shown below each line"
+                                    },
+                                    color = Color.White.copy(alpha = 0.5f),
+                                    fontSize = 12.sp
+                                )
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(androidx.compose.foundation.shape.CircleShape)
+                                    .background(Color.White.copy(alpha = 0.08f))
+                                    .clickable(onClick = onDismiss),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.Rounded.Close, "Close", tint = Color.White.copy(0.85f), modifier = Modifier.size(18.dp))
+                            }
+                        }
+
+                        Spacer(Modifier.height(14.dp))
+
+                        // ── on / off card ──
+                        val rowShape = RoundedCornerShape(22.dp)
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable { onChange(true, lang.tag) }
-                                .padding(vertical = 2.dp)
+                                .clip(rowShape)
+                                .background(if (enabled) accent.copy(alpha = 0.14f) else Color.White.copy(alpha = 0.05f))
+                                .border(
+                                    BorderStroke(
+                                        if (enabled) 1.4.dp else 1.dp,
+                                        if (enabled) accent.copy(alpha = 0.7f) else Color.White.copy(alpha = 0.07f)
+                                    ),
+                                    rowShape
+                                )
+                                .clickable { onChange(!enabled, language) }
+                                .padding(horizontal = 16.dp, vertical = 8.dp)
                         ) {
-                            RadioButton(selected = lang.tag == language, onClick = { onChange(true, lang.tag) })
-                            Text(lang.name, style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                "Show translation below each line",
+                                color = Color.White,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Switch(checked = enabled, onCheckedChange = { onChange(it, language) })
+                        }
+
+                        Spacer(Modifier.height(14.dp))
+                        Text(
+                            "TRANSLATE INTO",
+                            color = Color.White.copy(alpha = 0.45f),
+                            fontSize = 11.sp,
+                            letterSpacing = 1.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(Modifier.height(8.dp))
+
+                        // ── language cards ──
+                        LazyColumn(
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            contentPadding = PaddingValues(bottom = 4.dp)
+                        ) {
+                            items(com.beatraxus.app.model.LyricsTranslationLogic.LANGUAGES, key = { it.tag }) { lang ->
+                                val selected = enabled && lang.tag == language
+                                val shape = RoundedCornerShape(20.dp)
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(shape)
+                                        .background(if (selected) accent.copy(alpha = 0.14f) else Color.White.copy(alpha = 0.05f))
+                                        .border(
+                                            BorderStroke(
+                                                if (selected) 1.4.dp else 1.dp,
+                                                if (selected) accent.copy(alpha = 0.7f) else Color.White.copy(alpha = 0.07f)
+                                            ),
+                                            shape
+                                        )
+                                        .clickable { onChange(true, lang.tag) }
+                                        .padding(horizontal = 16.dp, vertical = 12.dp)
+                                ) {
+                                    Text(
+                                        lang.name,
+                                        color = Color.White,
+                                        fontSize = 15.sp,
+                                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    if (selected) {
+                                        Icon(Icons.Rounded.Check, null, tint = accent, modifier = Modifier.size(20.dp))
+                                    }
+                                }
+                            }
                         }
                     }
                 }
             }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } }
-    )
+        }
+    }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
