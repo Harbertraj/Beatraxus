@@ -34,4 +34,14 @@ class ExternalAudioTrackTest {
         assertFalse(ExternalAudioTrack.isExternalGroupId("1"))
         assertFalse(ExternalAudioTrack.isExternalGroupId(null))
     }
+
+    @Test
+    fun severalLoadedFilesGetTheirOwnIndex() {
+        assertEquals(0, ExternalAudioTrack.externalIndexOf("1:0"))
+        assertEquals(1, ExternalAudioTrack.externalIndexOf("2:0"))
+        assertEquals(-1, ExternalAudioTrack.externalIndexOf("0:3"))
+        assertEquals(-1, ExternalAudioTrack.externalIndexOf("0:1:0"))
+        assertEquals(-1, ExternalAudioTrack.externalIndexOf("abc:1"))
+        assertEquals(-1, ExternalAudioTrack.externalIndexOf(null))
+    }
 }

@@ -2152,6 +2152,7 @@ fun VideoSettingsSheetContent(
 
         // Feature 25: "Add audio track" opens the system file picker; the chosen file is merged into the video.
         val audioFileContext = LocalContext.current
+        val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
         val audioFilePicker = rememberLauncherForActivityResult(
             contract = ActivityResultContracts.OpenDocument()
         ) { picked: android.net.Uri? ->
@@ -2164,11 +2165,66 @@ fun VideoSettingsSheetContent(
                 viewModel.addExternalAudio(picked, fileName)
             }
         }
-        // "Extract": the user picks the destination folder in the system file manager, then the playing audio track is saved there.
+        // "Extract": first the user chooses WHICH audio track of the video to save, then picks the destination folder
+        // in the system file manager, then the track is saved there (cancellable, with a progress ring).
+        var showExtractTrackDialog by remember { mutableStateOf(false) }
+        var extractChoiceOrdinal by remember { mutableStateOf(-1) }
         val extractFolderPicker = rememberLauncherForActivityResult(
             contract = ActivityResultContracts.OpenDocumentTree()
         ) { tree: android.net.Uri? ->
-            if (tree != null) viewModel.extractAudioTrack(tree)
+            val chosen = uiState.availableAudioTracks.firstOrNull { !it.isExternal && it.audioOrdinal == extractChoiceOrdinal }
+            if (tree != null && chosen != null) viewModel.extractAudioTrack(tree, chosen)
+        }
+        if (showExtractTrackDialog) {
+            val nativeTracks = uiState.availableAudioTracks.filter { !it.isExternal }
+            AlertDialog(
+                onDismissRequest = { showExtractTrackDialog = false },
+                containerColor = Color(0xFF1E1E1E),
+                title = { Text("Extract which audio track?", color = Color.White, fontWeight = FontWeight.Bold) },
+                text = {
+                    Column(
+                        modifier = Modifier.verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        nativeTracks.forEach { t ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .clickable { extractChoiceOrdinal = t.audioOrdinal }
+                                    .padding(vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(
+                                    selected = extractChoiceOrdinal == t.audioOrdinal,
+                                    onClick = { extractChoiceOrdinal = t.audioOrdinal },
+                                    colors = RadioButtonDefaults.colors(selectedColor = mxOrange, unselectedColor = Color.White.copy(0.6f))
+                                )
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(t.name, color = Color.White, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(
+                                        formatAudioTrackSubtitleLine(t),
+                                        color = Color.White.copy(0.6f), fontSize = 12.sp,
+                                        maxLines = 1, overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(
+                        enabled = nativeTracks.any { it.audioOrdinal == extractChoiceOrdinal },
+                        onClick = {
+                            showExtractTrackDialog = false
+                            extractFolderPicker.launch(null)
+                        }
+                    ) { Text("Choose folder", color = mxOrange, fontWeight = FontWeight.Bold) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showExtractTrackDialog = false }) { Text("Cancel", color = Color.White.copy(0.8f)) }
+                }
+            )
         }
         // EQ is handled by DSP Studio while video audio is routed to the Audio Engine
         val eqLockedByEngine = uiState.routeAudioToEngine || uiState.isConnectingEngineRoute
@@ -2206,22 +2262,41 @@ fun VideoSettingsSheetContent(
             
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (activeSheetType == PlayerSheetType.AUDIO) {
-                    // First icon: extract the playing audio track of this video to a folder the user picks.
+                    // First icon: extract an audio track of this video (asks which one). While it runs the icon becomes
+                    // a cancel button inside a progress ring.
                     val extractProgress = uiState.audioExtractProgress
                     val canExtract = extractProgress == null && uiState.currentVideo?.isCloud == false &&
                         uiState.availableAudioTracks.any { !it.isExternal }
-                    IconButton(
-                        onClick = { extractFolderPicker.launch(null) },
-                        enabled = canExtract
-                    ) {
-                        if (extractProgress != null) {
-                            CircularProgressIndicator(
-                                progress = extractProgress,
-                                modifier = Modifier.size(22.dp),
-                                color = mxOrange,
-                                strokeWidth = 2.dp
-                            )
-                        } else {
+                    if (extractProgress != null) {
+                        Text(
+                            "Cancel ${(extractProgress * 100).toInt()}%",
+                            color = mxOrange, fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { viewModel.cancelAudioExtraction() }
+                                .padding(horizontal = 6.dp, vertical = 4.dp)
+                        )
+                        IconButton(onClick = { viewModel.cancelAudioExtraction() }) {
+                            Box(contentAlignment = Alignment.Center) {
+                                CircularProgressIndicator(
+                                    progress = extractProgress,
+                                    modifier = Modifier.size(28.dp),
+                                    color = mxOrange,
+                                    trackColor = Color.White.copy(alpha = 0.15f),
+                                    strokeWidth = 2.5.dp
+                                )
+                                Icon(Icons.Rounded.Close, "Cancel extraction", tint = Color.White, modifier = Modifier.size(15.dp))
+                            }
+                        }
+                    } else {
+                        IconButton(
+                            onClick = {
+                                val native = uiState.availableAudioTracks.filter { !it.isExternal }
+                                extractChoiceOrdinal = (native.firstOrNull { it.isSelected } ?: native.firstOrNull())?.audioOrdinal ?: -1
+                                showExtractTrackDialog = true
+                            },
+                            enabled = canExtract
+                        ) {
                             Icon(
                                 Icons.Rounded.SaveAlt,
                                 "Extract audio track",
@@ -2568,36 +2643,16 @@ fun VideoSettingsSheetContent(
 
         // Audio Tracks
         if (activeSheetType == PlayerSheetType.AUDIO || activeSheetType == PlayerSheetType.ALL) {
-            // Feature 25: the "Add audio track" button is the top-right icon of this sheet; once a file is loaded it is shown here.
-            if (uiState.externalAudioName != null) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(mxOrange.copy(alpha = 0.12f))
-                        .padding(start = 16.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(Icons.Rounded.AddCircleOutline, null, tint = mxOrange, modifier = Modifier.size(20.dp))
-                    Spacer(Modifier.width(10.dp))
-                    Text(
-                        text = "Loaded: ${uiState.externalAudioName}",
-                        color = Color.White.copy(0.85f),
-                        fontSize = 13.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f)
-                    )
-                    IconButton(onClick = { viewModel.removeExternalAudio() }) {
-                        Icon(
-                            imageVector = Icons.Rounded.Close,
-                            contentDescription = "Remove external audio",
-                            tint = Color.White.copy(alpha = 0.8f)
-                        )
-                    }
-                }
-            }
+            // Feature 25: the "Add audio track" button is the top-right icon of this sheet; loaded files are listed below
+            // like the video's own audio tracks (tap to switch, X to remove).
             Spacer(Modifier.height(12.dp))
+            if (uiState.availableAudioTracks.any { it.isExternal }) {
+                Text(
+                    "Long-press an ADDED track to remove it",
+                    color = Color.White.copy(0.45f), fontSize = 11.sp,
+                    modifier = Modifier.padding(bottom = 8.dp, start = 4.dp)
+                )
+            }
 
             if (uiState.availableAudioTracks.isEmpty()) {
                 Box(
@@ -2627,7 +2682,21 @@ fun VideoSettingsSheetContent(
                                     color = if (track.isSelected) mxOrange.copy(alpha = 0.8f) else Color.White.copy(alpha = 0.08f),
                                     shape = RoundedCornerShape(16.dp)
                                 )
-                                .clickable { onAudioTrackSelect(track) }
+                                // Tap = switch to this track; long-press on an added track = remove it.
+                                .pointerInput(track.audioOrdinal, track.isExternal, track.externalIndex) {
+                                    detectTapGestures(
+                                        onTap = { onAudioTrackSelect(track) },
+                                        onLongPress = {
+                                            if (track.isExternal) {
+                                                haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                                                viewModel.removeExternalAudio(track.externalIndex)
+                                                android.widget.Toast.makeText(
+                                                    audioFileContext, "Removed ${track.name}", android.widget.Toast.LENGTH_SHORT
+                                                ).show()
+                                            }
+                                        }
+                                    )
+                                }
                                 .heightIn(min = 64.dp)
                                 .padding(horizontal = 16.dp, vertical = 12.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -2682,6 +2751,18 @@ fun VideoSettingsSheetContent(
                                             fontSize = 10.sp,
                                             fontWeight = FontWeight.ExtraBold
                                         )
+                                    }
+                                }
+                                if (track.isExternal) {
+                                    Spacer(Modifier.width(8.dp))
+                                    Box(
+                                        modifier = Modifier
+                                            .align(Alignment.CenterVertically)
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(Color.White.copy(0.18f))
+                                            .padding(horizontal = 6.dp, vertical = 3.dp)
+                                    ) {
+                                        Text("ADDED", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.ExtraBold)
                                     }
                                 }
                                 if (track.isSelected && uiState.routeAudioToEngine) {

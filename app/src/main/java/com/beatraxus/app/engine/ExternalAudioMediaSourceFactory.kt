@@ -24,8 +24,19 @@ data class ExternalAudioTrack(val uri: Uri, val label: String) {
          */
         const val EXTERNAL_GROUP_ID_PREFIX = "1:"
 
-        fun isExternalGroupId(groupId: String?): Boolean =
-            groupId != null && groupId.startsWith(EXTERNAL_GROUP_ID_PREFIX)
+        fun isExternalGroupId(groupId: String?): Boolean = externalIndexOf(groupId) >= 0
+
+        /**
+         * Position (0-based) of the loaded audio file a merged track-group id belongs to: "1:..." -> 0, "2:..." -> 1.
+         * -1 for the video's own tracks ("0:..." / no prefix). Several audio files can be loaded for one video.
+         */
+        fun externalIndexOf(groupId: String?): Int {
+            if (groupId == null) return -1
+            val colon = groupId.indexOf(':')
+            if (colon <= 0) return -1
+            val source = groupId.substring(0, colon).toIntOrNull() ?: return -1
+            return if (source >= 1) source - 1 else -1
+        }
 
         /** "My Dub.2024.mka" -> "My Dub.2024"; blank / null -> "External audio". */
         fun labelFromFileName(fileName: String?): String {
@@ -52,15 +63,16 @@ data class ExternalAudioTrack(val uri: Uri, val label: String) {
 class ExternalAudioMediaSourceFactory(
     private val delegate: MediaSource.Factory,
     private val audioDataSourceFactory: DataSource.Factory,
-    private val externalAudioFor: (mediaId: String) -> ExternalAudioTrack?
+    private val externalAudioFor: (mediaId: String) -> List<ExternalAudioTrack>
 ) : MediaSource.Factory by delegate {
 
     override fun createMediaSource(mediaItem: MediaItem): MediaSource {
         val videoSource = delegate.createMediaSource(mediaItem)
-        val external = externalAudioFor(mediaItem.mediaId) ?: return videoSource
-        val audioSource = ProgressiveMediaSource.Factory(audioDataSourceFactory)
-            .createMediaSource(MediaItem.fromUri(external.uri))
-        // Order matters: index 0 = video (its own tracks keep the "0:" prefix), index 1 = the loaded audio.
-        return MergingMediaSource(videoSource, audioSource)
+        val externals = externalAudioFor(mediaItem.mediaId)
+        if (externals.isEmpty()) return videoSource
+        val audioFactory = ProgressiveMediaSource.Factory(audioDataSourceFactory)
+        val audioSources = externals.map { audioFactory.createMediaSource(MediaItem.fromUri(it.uri)) }
+        // Order matters: index 0 = video (its own tracks keep the "0:" prefix), index 1.. = the loaded audio files.
+        return MergingMediaSource(videoSource, *audioSources.toTypedArray())
     }
 }

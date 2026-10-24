@@ -7,10 +7,15 @@ import android.media.MediaFormat
 import android.media.MediaMuxer
 import android.net.Uri
 import android.os.Build
+import android.os.ParcelFileDescriptor
+import android.os.Process
+import android.os.SystemClock
 import android.provider.DocumentsContract
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import java.io.BufferedOutputStream
+import java.io.FileOutputStream
 import java.nio.ByteBuffer
 import java.util.Locale
 import kotlin.coroutines.coroutineContext
@@ -81,11 +86,24 @@ object VideoAudioExtractor {
         val extractor = MediaExtractor()
         var docUri: Uri? = null
         var finished = false
+        var sourcePfd: ParcelFileDescriptor? = null
+        // Speed: copying is I/O bound, so run at a higher priority than the other IO threads.
+        val oldPriority = Process.getThreadPriority(Process.myTid())
+        runCatching { Process.setThreadPriority(Process.THREAD_PRIORITY_FOREGROUND) }
         try {
             try {
-                extractor.setDataSource(context, source, null)
+                // A real file descriptor lets the extractor read straight from the file (kernel read-ahead);
+                // going through the content resolver is several times slower. Network streams use the Uri.
+                val local = source.scheme?.lowercase(Locale.ROOT).let { it == "content" || it == "file" }
+                sourcePfd = if (local) runCatching { resolver.openFileDescriptor(source, "r") }.getOrNull() else null
+                val pfd = sourcePfd
+                if (pfd != null) extractor.setDataSource(pfd.fileDescriptor) else extractor.setDataSource(context, source, null)
             } catch (e: Exception) {
-                return@withContext Result.Failed("Couldn't open the video file")
+                try {
+                    extractor.setDataSource(context, source, null)
+                } catch (e2: Exception) {
+                    return@withContext Result.Failed("Couldn't open the video file")
+                }
             }
             val audioTracks = (0 until extractor.trackCount).filter {
                 extractor.getTrackFormat(it).getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true
@@ -109,8 +127,19 @@ object VideoAudioExtractor {
             )
             val info = MediaCodec.BufferInfo()
 
+            // Speed: report progress at most ~10 times a second and only when the percentage moved. Updating the UI
+            // state for every audio frame (thousands per second of audio) was a big part of the slowness.
+            var lastReportMs = 0L
+            var lastPercent = -1
             fun progressOf(timeUs: Long) {
-                if (durationUs > 0) onProgress((timeUs.toFloat() / durationUs).coerceIn(0f, 1f))
+                if (durationUs <= 0) return
+                val percent = ((timeUs.toFloat() / durationUs) * 100f).toInt().coerceIn(0, 100)
+                if (percent == lastPercent) return
+                val now = SystemClock.elapsedRealtime()
+                if (now - lastReportMs < 100L && percent < 100) return
+                lastPercent = percent
+                lastReportMs = now
+                onProgress(percent / 100f)
             }
 
             when (target.kind) {
@@ -134,9 +163,10 @@ object VideoAudioExtractor {
                                 buffer.clear()
                                 val size = extractor.readSampleData(buffer, 0)
                                 if (size < 0) break
-                                info.set(0, size, extractor.sampleTime, MediaCodec.BUFFER_FLAG_KEY_FRAME)
+                                val sampleTime = extractor.sampleTime
+                                info.set(0, size, sampleTime, MediaCodec.BUFFER_FLAG_KEY_FRAME)
                                 muxer.writeSampleData(outTrack, buffer, info)
-                                progressOf(extractor.sampleTime)
+                                progressOf(sampleTime)
                                 extractor.advance()
                             }
                         } finally {
@@ -146,9 +176,12 @@ object VideoAudioExtractor {
                     }
                 }
                 Kind.RAW, Kind.RAW_FLAC -> {
-                    val out = resolver.openOutputStream(docUri, "w")
+                    // A file descriptor + a big buffer: far fewer write calls than the content resolver's stream.
+                    val outPfd = resolver.openFileDescriptor(docUri, "w")
                         ?: return@withContext Result.Failed("Couldn't write to that folder")
-                    out.buffered().use { stream ->
+                    // Only the ParcelFileDescriptor is closed (closing the stream too would close the same fd twice).
+                    outPfd.use {
+                        val stream = BufferedOutputStream(FileOutputStream(it.fileDescriptor), 512 * 1024)
                         if (target.kind == Kind.RAW_FLAC) {
                             // FLAC frames need the "fLaC" marker + STREAMINFO in front; the extractor keeps them in csd-0.
                             format.getByteBuffer("csd-0")?.let { csd ->
@@ -158,18 +191,18 @@ object VideoAudioExtractor {
                                 stream.write(bytes)
                             }
                         }
-                        val chunk = ByteArray(buffer.capacity())
+                        val bytes = buffer.array() // heap buffer: written straight out, no extra copy
                         while (true) {
                             coroutineContext.ensureActive()
                             buffer.clear()
                             val size = extractor.readSampleData(buffer, 0)
                             if (size < 0) break
-                            buffer.position(0)
-                            buffer.get(chunk, 0, size)
-                            stream.write(chunk, 0, size)
-                            progressOf(extractor.sampleTime)
+                            val sampleTime = extractor.sampleTime
+                            stream.write(bytes, buffer.arrayOffset(), size)
+                            progressOf(sampleTime)
                             extractor.advance()
                         }
+                        stream.flush()
                     }
                 }
             }
@@ -182,6 +215,8 @@ object VideoAudioExtractor {
             Result.Failed("Extraction failed: ${e.message ?: e.javaClass.simpleName}")
         } finally {
             runCatching { extractor.release() }
+            runCatching { sourcePfd?.close() }
+            runCatching { Process.setThreadPriority(oldPriority) }
             // Never leave a half-written file behind.
             if (!finished) docUri?.let { runCatching { DocumentsContract.deleteDocument(resolver, it) } }
         }
