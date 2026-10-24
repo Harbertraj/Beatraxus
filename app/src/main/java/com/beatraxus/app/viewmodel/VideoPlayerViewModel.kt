@@ -74,6 +74,10 @@ import com.beatraxus.app.model.withSurroundTrimsReset
 import com.beatraxus.app.model.VideoRecentlyPlayedEntity
 import com.beatraxus.app.colorgrade.ColorGradeEffect
 import com.beatraxus.app.deinterlace.DeinterlaceEffect
+import com.beatraxus.app.upscale.VideoUpscaleEffect
+import com.beatraxus.app.model.VideoUpscaleMode
+import com.beatraxus.app.model.HdrFormat
+import com.beatraxus.app.model.HdrInfo
 import com.beatraxus.app.model.DeinterlaceMode
 import com.beatraxus.app.model.AudioStreamInfo
 import com.beatraxus.app.model.NightFilterMath
@@ -121,10 +125,15 @@ data class VideoPlayerUiState(
     val videoOrientation: VideoOrientation = VideoOrientation.NONE,
     /** Feature 15: removes combing lines from interlaced video. Remembered between sessions. */
     val deinterlaceMode: DeinterlaceMode = DeinterlaceMode.OFF,
+    /** Video upscaler (mode + sharpening strength 0..1); both are remembered for the next video. */
+    val upscaleMode: VideoUpscaleMode = VideoUpscaleMode.OFF,
+    val upscaleStrength: Float = VideoUpscaleMode.DEFAULT_STRENGTH,
     /** Feature 17: warm night / blue-light veil over the player. Remembered between sessions. */
     val nightFilter: NightFilterSettings = NightFilterSettings(),
     /** Feature 20: codec / bitrate / frame rate facts for the info panel. Refreshed while the panel is open. */
     val videoInfo: VideoInfoData? = null,
+    /** The HDR format of the video that is playing (from the stream itself, not the library scan). */
+    val hdrInfo: HdrInfo = HdrInfo.NONE,
     val isVolumeBoost: Boolean = false,
     val subtitleOffset: Float = 0f,
     val showTotalTime: Boolean = false,
@@ -164,6 +173,11 @@ data class VideoPlayerUiState(
     val colorBrightness: Float = 0f,
     val colorContrast: Float = 1f,
     val colorSaturation: Float = 1f,
+    /** Gamma 0.5..2 (1 = off), hue -180..180 degrees, colour temperature -1 (cool) .. 1 (warm), sharpness 0..1. */
+    val colorGamma: Float = 1f,
+    val colorHue: Float = 0f,
+    val colorTemperature: Float = 0f,
+    val colorSharpness: Float = 0f,
     val forceSdrToneMapping: Boolean = false,
     val routeAudioToEngine: Boolean = false,
     val videoDecoderMode: VideoDecoderMode = VideoDecoderMode.DEFAULT,
@@ -310,7 +324,8 @@ class VideoPlayerViewModel(
     private var backgroundTasksTimerJob: Job? = null
     private val processedBackgroundVideos = mutableSetOf<String>()
     private val chapterDetectionStartedForVideoIds = mutableSetOf<String>()
-    private var isEffectActive = false
+    /** Which video effects the player currently has: bit 1 = deinterlace, bit 2 = gamma / sharpness, bit 4 = upscaler. */
+    private var appliedEffectsKey = 0
 
     // Feature 25: external audio files loaded per video id. Read from ExoPlayer's loader thread, hence concurrent.
     private val externalAudioByVideoId = java.util.concurrent.ConcurrentHashMap<String, ExternalAudioTrack>()
@@ -349,6 +364,8 @@ class VideoPlayerViewModel(
             )
         },
         deinterlaceMode = DeinterlaceMode.fromName(application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE).getString(DeinterlaceMode.PREF_KEY, null)),
+        upscaleMode = VideoUpscaleMode.fromName(application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE).getString(VideoUpscaleMode.PREF_KEY, null)),
+        upscaleStrength = application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE).getFloat(VideoUpscaleMode.STRENGTH_KEY, VideoUpscaleMode.DEFAULT_STRENGTH),
         playbackSpeed = playerOptions.defaultSpeed,
         fpsBooster = FpsBoosterStore.load(application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE)),
         // A result from an earlier run is shown again instead of testing every time. Read synchronously so the
@@ -398,6 +415,7 @@ class VideoPlayerViewModel(
     
     private val colorGradeEffect = ColorGradeEffect(0f, 1f, 1f)
     private val deinterlaceEffect = DeinterlaceEffect(DeinterlaceMode.OFF)
+    private val upscaleEffect = VideoUpscaleEffect(VideoUpscaleMode.OFF, VideoUpscaleMode.DEFAULT_STRENGTH)
 
     // Feature 20: decoder names the device picked, reported by the player.
     private var videoDecoderName: String? = null
@@ -577,7 +595,7 @@ class VideoPlayerViewModel(
 
         // A brand-new player has NO video effects yet. Without this reset a stale `true`
         // from a previous player made updateVideoEffects() skip setVideoEffects() forever.
-        isEffectActive = false
+        appliedEffectsKey = 0
 
         val audioAttributes = AudioAttributes.Builder()
             .setUsage(C.USAGE_MEDIA)
@@ -664,7 +682,7 @@ class VideoPlayerViewModel(
                         val isIdentity = abs(_uiState.value.colorBrightness) < 0.001f &&
                                          abs(_uiState.value.colorContrast - 1f) < 0.001f &&
                                          abs(_uiState.value.colorSaturation - 1f) < 0.001f
-                        if (!isIdentity || _uiState.value.deinterlaceMode.isOn) {
+                        if (!isIdentity || _uiState.value.deinterlaceMode.isOn || needsGradeEffect() || _uiState.value.upscaleMode.isOn) {
                             updateVideoEffects() // Apply initial effects before prepare
                         }
                         
@@ -781,6 +799,7 @@ class VideoPlayerViewModel(
                 player.videoFormat?.frameRate?.takeIf { it > 0f }?.let { fps ->
                     _uiState.update { withFpsPlan(it.copy(sourceFps = fps)) }
                 }
+                player.videoFormat?.let { vf -> onVideoFormatKnown(vf) }
                 
                 if (!isInitialTrackRestorationDone && (pendingAudioTrackIndex != -1 || pendingSubtitleTrackIndex != -1)) {
                     val player = exoPlayer ?: return
@@ -828,6 +847,7 @@ class VideoPlayerViewModel(
         
         _uiState.value.currentVideo?.let { recordVideoPlayed(it) }
         _uiState.update { withFpsPlan(it.copy(currentVideo = video, isHdr = video?.isHdr ?: false, externalAudioName = video?.let { v -> externalAudioByVideoId[v.id]?.label })) }
+        updateVideoEffects() // the FPS Booster plan may have changed with the video; the upscaler steps aside for it
         
         if (video?.id != lastHandledVideoId) {
             lastHandledVideoId = video?.id
@@ -2365,7 +2385,20 @@ class VideoPlayerViewModel(
     }
 
     fun resetColorGrading() {
+        _uiState.update { it.copy(colorGamma = 1f, colorHue = 0f, colorTemperature = 0f, colorSharpness = 0f) }
         setColorGrading(0f, 1f, 1f)
+    }
+
+    /** Gamma, hue, colour temperature and sharpness (the second group of sliders in Color Grading). */
+    fun setColorExtras(gamma: Float, hue: Float, temperature: Float, sharpness: Float) {
+        _uiState.update { it.copy(colorGamma = gamma, colorHue = hue, colorTemperature = temperature, colorSharpness = sharpness) }
+        updateVideoEffects()
+    }
+
+    /** Gamma and sharpness need the GPU effect; it is only added to the player while one of them is in use. */
+    private fun needsGradeEffect(): Boolean {
+        val st = _uiState.value
+        return abs(st.colorGamma - 1f) > 0.001f || st.colorSharpness > 0.001f
     }
 
     fun setForceSdrToneMapping(force: Boolean) {
@@ -2374,6 +2407,52 @@ class VideoPlayerViewModel(
     }
 
     /** Feature 20. Reads the facts of the current video from the player; the info sheet calls it every second. */
+    /** Display HDR types, read once. */
+    val displayHdrSupport: String by lazy {
+        try {
+            val dm = getApplication<Application>().getSystemService(android.hardware.display.DisplayManager::class.java)
+            @Suppress("DEPRECATION")
+            val types = dm?.getDisplay(android.view.Display.DEFAULT_DISPLAY)?.hdrCapabilities?.supportedHdrTypes ?: IntArray(0)
+            val names = types.mapNotNull {
+                when (it) {
+                    android.view.Display.HdrCapabilities.HDR_TYPE_DOLBY_VISION -> "Dolby Vision"
+                    android.view.Display.HdrCapabilities.HDR_TYPE_HDR10 -> "HDR10"
+                    android.view.Display.HdrCapabilities.HDR_TYPE_HLG -> "HLG"
+                    android.view.Display.HdrCapabilities.HDR_TYPE_HDR10_PLUS -> "HDR10+"
+                    else -> null
+                }
+            }
+            if (names.isEmpty()) "None (standard screen)" else names.joinToString(", ")
+        } catch (_: Exception) {
+            "Unknown"
+        }
+    }
+
+    /** Whether the device has a Dolby Vision decoder, read once. */
+    val hasDolbyVisionDecoder: Boolean by lazy {
+        try {
+            android.media.MediaCodecList(android.media.MediaCodecList.REGULAR_CODECS).codecInfos.any { info ->
+                !info.isEncoder && info.supportedTypes.any { it.equals("video/dolby-vision", ignoreCase = true) }
+            }
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private var dolbyVisionWarnedFor: String? = null
+
+    /** Works out the HDR format from the video stream, and warns once about Dolby Vision the device cannot decode. */
+    private fun onVideoFormatKnown(vf: androidx.media3.common.Format) {
+        val hdr = HdrFormat.detect(vf.sampleMimeType, vf.codecs, vf.colorInfo?.colorTransfer ?: -1, vf.colorInfo?.colorSpace ?: -1)
+        if (hdr != _uiState.value.hdrInfo) _uiState.update { it.copy(hdrInfo = hdr) }
+        val id = exoPlayer?.currentMediaItem?.mediaId
+        if (hdr.needsDolbyVisionDecoder && !hasDolbyVisionDecoder && dolbyVisionWarnedFor != id) {
+            dolbyVisionWarnedFor = id
+            _uiState.update { it.copy(aspectRatioMessage = "Dolby Vision profile 5 needs a Dolby Vision decoder. Colours may look wrong on this device") }
+            viewModelScope.launch { delay(4000); _uiState.update { it.copy(aspectRatioMessage = null) } }
+        }
+    }
+
     fun refreshVideoInfo() {
         val player = exoPlayer ?: return
         val video = _uiState.value.currentVideo
@@ -2415,7 +2494,9 @@ class VideoPlayerViewModel(
             videoDecoder = videoDecoderName,
             audioDecoder = audioDecoderName,
             droppedFrames = counters?.droppedBufferCount ?: 0,
-            renderedFrames = counters?.renderedOutputBufferCount ?: 0
+            renderedFrames = counters?.renderedOutputBufferCount ?: 0,
+            displayHdrTypes = displayHdrSupport,
+            dolbyVisionDecoder = hasDolbyVisionDecoder
         )
         _uiState.update { it.copy(videoInfo = info) }
     }
@@ -2443,6 +2524,22 @@ class VideoPlayerViewModel(
         viewModelScope.launch { delay(2000); _uiState.update { it.copy(aspectRatioMessage = null) } }
     }
 
+    /** Picks the video upscaler; remembered for the next video. */
+    fun setUpscaleMode(mode: VideoUpscaleMode) {
+        prefs.edit().putString(VideoUpscaleMode.PREF_KEY, mode.name).apply()
+        _uiState.update { it.copy(upscaleMode = mode, aspectRatioMessage = "Upscaler: ${mode.label}") }
+        updateVideoEffects()
+        viewModelScope.launch { delay(2000); _uiState.update { it.copy(aspectRatioMessage = null) } }
+    }
+
+    /** Sharpening strength of the upscaler, 0..1. Applies on the next frame. */
+    fun setUpscaleStrength(strength: Float) {
+        val v = strength.coerceIn(0f, 1f)
+        prefs.edit().putFloat(VideoUpscaleMode.STRENGTH_KEY, v).apply()
+        _uiState.update { it.copy(upscaleStrength = v) }
+        upscaleEffect.strength = v
+    }
+
     /**
      * Colour grading is drawn by the UI (ColorMatrix on the video TextureView, see VideoPlayerScreen), which
      * updates instantly - also while paused - and does not depend on the codec / media3 effect pipeline, so no
@@ -2453,17 +2550,25 @@ class VideoPlayerViewModel(
      */
     private fun updateVideoEffects() {
         val player = exoPlayer ?: return
-        val mode = _uiState.value.deinterlaceMode
+        val state = _uiState.value
+        val mode = state.deinterlaceMode
         deinterlaceEffect.mode = mode
-        if (mode.isOn) {
-            if (!isEffectActive) {
-                player.setVideoEffects(listOf(deinterlaceEffect))
-                isEffectActive = true
-            }
-        } else if (isEffectActive) {
-            player.setVideoEffects(emptyList())
-            isEffectActive = false
-        }
+        colorGradeEffect.gamma = state.colorGamma
+        colorGradeEffect.sharpness = state.colorSharpness
+        upscaleEffect.mode = state.upscaleMode
+        upscaleEffect.strength = state.upscaleStrength
+        val wantGrade = needsGradeEffect()
+        // The FPS Booster draws the video itself at the file's size, so the upscaler stays out of its way.
+        val wantUpscale = state.upscaleMode.isOn && !state.fpsBoosterPlan.active
+        val key = (if (mode.isOn) 1 else 0) or (if (wantGrade) 2 else 0) or (if (wantUpscale) 4 else 0)
+        // Only touch the player when the set of effects changes; slider moves just update the values above.
+        if (key == appliedEffectsKey) return
+        player.setVideoEffects(buildList {
+            if (mode.isOn) add(deinterlaceEffect)
+            if (wantGrade) add(colorGradeEffect)
+            if (wantUpscale) add(upscaleEffect) // last: it enlarges the frame
+        })
+        appliedEffectsKey = key
     }
 
 

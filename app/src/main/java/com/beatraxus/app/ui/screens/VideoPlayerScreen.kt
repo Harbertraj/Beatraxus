@@ -112,6 +112,7 @@ import com.beatraxus.app.model.DeinterlaceMode
 import com.beatraxus.app.model.SavedEqPreset
 import com.beatraxus.app.model.Video
 import com.beatraxus.app.model.VideoOrientation
+import com.beatraxus.app.model.VideoUpscaleMode
 import com.beatraxus.app.util.PlaybackGlobalState
 import com.beatraxus.app.util.VideoPlayerPrefs
 import com.beatraxus.app.viewmodel.VideoAspectRatio
@@ -131,7 +132,7 @@ enum class GestureType {
 }
 
 enum class PlayerSheetType {
-    NONE, AUDIO, SUBTITLE, SPEED, ALL, EQUALIZER, SLEEP_TIMER, COLOR, AUDIO_DELAY, MOTION_BOOST, SURROUND, ORIENTATION, DEINTERLACE, NIGHT_FILTER, INFO, QUEUE
+    NONE, AUDIO, SUBTITLE, SPEED, ALL, EQUALIZER, SLEEP_TIMER, COLOR, AUDIO_DELAY, MOTION_BOOST, SURROUND, ORIENTATION, DEINTERLACE, NIGHT_FILTER, INFO, QUEUE, UPSCALER
 }
 
 @UnstableApi
@@ -577,7 +578,9 @@ fun VideoPlayerScreen(
         // Color Grading sheet is open; otherwise the normal (best quality) SurfaceView is kept.
         val gradingActive = uiState.colorBrightness != 0f ||
             uiState.colorContrast != 1f ||
-            uiState.colorSaturation != 1f
+            uiState.colorSaturation != 1f ||
+            uiState.colorHue != 0f ||
+            uiState.colorTemperature != 0f
         // FPS Booster: the video is drawn by FpsBoosterSurfaceView (optical flow) or MotionBoostSurfaceView
         // (classic engine). Both do the colour grading themselves, so the TextureView path is not used.
         // HDR streams are excluded by the planner (no tone mapping in the interpolation pipeline).
@@ -673,7 +676,9 @@ fun VideoPlayerScreen(
                                 buildColorGradeMatrix(
                                     uiState.colorBrightness,
                                     uiState.colorContrast,
-                                    uiState.colorSaturation
+                                    uiState.colorSaturation,
+                                    uiState.colorHue,
+                                    uiState.colorTemperature
                                 )
                             )
                         }
@@ -728,6 +733,7 @@ fun VideoPlayerScreen(
                         sheetType != PlayerSheetType.COLOR &&
                         sheetType != PlayerSheetType.ORIENTATION &&
                         sheetType != PlayerSheetType.DEINTERLACE &&
+                        sheetType != PlayerSheetType.UPSCALER &&
                         sheetType != PlayerSheetType.NIGHT_FILTER &&
                         Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
                     ) {
@@ -860,7 +866,8 @@ fun VideoPlayerScreen(
                     PlayerTopBar(
                         title = (if (uiState.currentVideo?.source == com.beatraxus.app.model.VideoSource.LIVE_TV) "\u25CF LIVE  " else "") +
                             (uiState.currentVideo?.title ?: ""),
-                        isHdr = uiState.isHdr,
+                        isHdr = uiState.isHdr || uiState.hdrInfo.isHdr,
+                        hdrLabel = uiState.hdrInfo.badge ?: "HDR",
                         sleepTimerRemainingMs = uiState.sleepTimerRemainingMs,
                         decoderLabel = uiState.videoDecoderMode.label,
                         isSurroundActive = uiState.surroundSimulatorEnabled,
@@ -904,6 +911,7 @@ fun VideoPlayerScreen(
                         onRotationClick = { activity?.let { viewModel.toggleOrientation(it) } },
                         onOrientationClick = { sheetType = PlayerSheetType.ORIENTATION },
                         onDeinterlaceClick = { sheetType = PlayerSheetType.DEINTERLACE },
+                        onUpscalerClick = { sheetType = PlayerSheetType.UPSCALER },
                         onNightFilterClick = { sheetType = PlayerSheetType.NIGHT_FILTER },
                         onInfoClick = { sheetType = PlayerSheetType.INFO },
                         onSnapshotClick = {
@@ -1038,7 +1046,7 @@ fun VideoPlayerScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     // no dim for Color Grading / Rotate & Flip, so the true picture stays visible
-                    .background(Color.Black.copy(alpha = if (sheetType == PlayerSheetType.COLOR || sheetType == PlayerSheetType.ORIENTATION || sheetType == PlayerSheetType.DEINTERLACE || sheetType == PlayerSheetType.NIGHT_FILTER) 0f else 0.20f))
+                    .background(Color.Black.copy(alpha = if (sheetType == PlayerSheetType.COLOR || sheetType == PlayerSheetType.ORIENTATION || sheetType == PlayerSheetType.DEINTERLACE || sheetType == PlayerSheetType.UPSCALER || sheetType == PlayerSheetType.NIGHT_FILTER) 0f else 0.20f))
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null
@@ -1063,7 +1071,11 @@ fun VideoPlayerScreen(
                 Box(
                     modifier = Modifier
                         .fillMaxHeight()
-                        .widthIn(min = 260.dp, max = 320.dp)
+                        .widthIn(
+                            min = 260.dp,
+                            max = com.beatraxus.app.util.AdaptiveLayout
+                                .sheetMaxWidthDp(androidx.compose.ui.platform.LocalConfiguration.current.smallestScreenWidthDp).dp
+                        )
                         .clip(RoundedCornerShape(topStart = 28.dp, bottomStart = 28.dp))
                         .shadow(
                             elevation = 24.dp,
@@ -1268,6 +1280,7 @@ fun FloatingControls(
     onRotationClick: () -> Unit,
     onOrientationClick: () -> Unit,
     onDeinterlaceClick: () -> Unit,
+    onUpscalerClick: () -> Unit = {},
     onSnapshotClick: () -> Unit,
     onNightFilterClick: () -> Unit,
     onInfoClick: () -> Unit,
@@ -1361,6 +1374,12 @@ fun FloatingControls(
                 contentDescription = "Deinterlacing"
             )
             VpToolButton(
+                Icons.Rounded.AutoFixHigh,
+                uiState.upscaleMode.isOn,
+                onUpscalerClick,
+                contentDescription = "Video upscaler"
+            )
+            VpToolButton(
                 Icons.Rounded.PhotoCamera,
                 false,
                 onSnapshotClick,
@@ -1380,7 +1399,8 @@ fun FloatingControls(
             )
             VpToolButton(
                 Icons.Rounded.Tune,
-                uiState.colorBrightness != 0f || uiState.colorContrast != 1f || uiState.colorSaturation != 1f,
+                uiState.colorBrightness != 0f || uiState.colorContrast != 1f || uiState.colorSaturation != 1f ||
+                    uiState.colorGamma != 1f || uiState.colorHue != 0f || uiState.colorTemperature != 0f || uiState.colorSharpness != 0f,
                 onColorClick
             )
         }
@@ -1505,6 +1525,8 @@ fun DoubleTapRipple(offset: Offset, text: String) {
 fun PlayerTopBar(
     title: String,
     isHdr: Boolean,
+    /** Text of the HDR badge: "HDR10", "HLG", "DV" or plain "HDR" while the format is not known yet. */
+    hdrLabel: String = "HDR",
     sleepTimerRemainingMs: Long? = null,
     decoderLabel: String,
     /** The surround simulator switch is ON (lights the icon). The icon itself is always shown. */
@@ -1587,7 +1609,7 @@ fun PlayerTopBar(
                         .padding(horizontal = 10.dp, vertical = 3.dp)
                 ) {
                     Text(
-                        "HDR",
+                        hdrLabel,
                         color = Color.Black,
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Black,
@@ -2020,6 +2042,7 @@ fun VideoSettingsSheetContent(
             PlayerSheetType.NIGHT_FILTER -> "Night Filter"
             PlayerSheetType.INFO -> "Video Info"
             PlayerSheetType.QUEUE -> "Up next"
+            PlayerSheetType.UPSCALER -> "Video Upscaler"
             else -> "Settings"
         }
         
@@ -2319,26 +2342,41 @@ fun VideoSettingsSheetContent(
             )
         }
 
-        // HDR Tone Mapping Toggle
-        if (uiState.isHdr && (activeSheetType == PlayerSheetType.COLOR || activeSheetType == PlayerSheetType.ALL)) {
+        // HDR format card (replaces the old "Force SDR" switch, which was not connected to anything)
+        if ((uiState.isHdr || uiState.hdrInfo.isHdr) && (activeSheetType == PlayerSheetType.COLOR || activeSheetType == PlayerSheetType.ALL)) {
+            val hdr = uiState.hdrInfo
+            val missingDv = hdr.needsDolbyVisionDecoder && !viewModel.hasDolbyVisionDecoder
             Spacer(Modifier.height(16.dp))
-            Row(
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(12.dp))
                     .background(Color.White.copy(0.05f))
                     .padding(16.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("Force SDR Tone-mapping", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                    Text("Improve visibility on non-HDR displays", color = Color.White.copy(0.6f), fontSize = 12.sp)
+                Text(
+                    if (hdr.isHdr) "HDR video: ${hdr.label}" else "HDR video",
+                    color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold
+                )
+                hdr.profileNote?.let { Text(it, color = Color.White.copy(0.7f), fontSize = 12.sp) }
+                Text("Your screen: ${viewModel.displayHdrSupport}", color = Color.White.copy(0.7f), fontSize = 12.sp)
+                if (hdr.kind == com.beatraxus.app.model.HdrKind.DOLBY_VISION) {
+                    Text(
+                        "Dolby Vision decoder: " + if (viewModel.hasDolbyVisionDecoder) "available" else "not on this device",
+                        color = Color.White.copy(0.7f), fontSize = 12.sp
+                    )
                 }
-                Switch(
-                    checked = uiState.forceSdrToneMapping,
-                    onCheckedChange = { viewModel.setForceSdrToneMapping(it) },
-                    colors = SwitchDefaults.colors(checkedThumbColor = mxOrange, checkedTrackColor = mxOrange.copy(0.4f))
+                if (missingDv) {
+                    Text(
+                        "This video may show wrong colours (purple / green) on this device.",
+                        color = mxOrange, fontSize = 12.sp, fontWeight = FontWeight.Bold
+                    )
+                }
+                Text(
+                    "HDR10+ files show as HDR10 here, because Android does not report their extra scene data. " +
+                        "On a screen without HDR, Android converts HDR to SDR by itself.",
+                    color = Color.White.copy(0.5f), fontSize = 11.sp
                 )
             }
             Spacer(Modifier.height(16.dp))
@@ -2596,6 +2634,11 @@ fun VideoSettingsSheetContent(
             VideoNightFilterSection(uiState = uiState, viewModel = viewModel)
         }
 
+        // Upscaler Section
+        if (activeSheetType == PlayerSheetType.UPSCALER) {
+            VideoUpscalerSection(uiState = uiState, viewModel = viewModel)
+        }
+
         // Deinterlacing Section
         if (activeSheetType == PlayerSheetType.DEINTERLACE) {
             VideoDeinterlaceSection(uiState = uiState, viewModel = viewModel)
@@ -2813,6 +2856,56 @@ fun VideoDeinterlaceSection(uiState: VideoPlayerUiState, viewModel: VideoPlayerV
         Text(
             text = "Removes the comb-like lines that moving objects show in interlaced video (old TV, DVD, 1080i). " +
                 "Saved for all videos.",
+            color = Color.White.copy(0.55f),
+            fontSize = 12.sp
+        )
+    }
+}
+
+/** Upscaler choices. The picture changes as soon as a row is tapped. */
+@Composable
+fun VideoUpscalerSection(uiState: VideoPlayerUiState, viewModel: VideoPlayerViewModel) {
+    val mxOrange = Color(0xFFFF8F00)
+    Column(modifier = Modifier.fillMaxWidth()) {
+        SettingSectionHeader("Upscaler")
+        VideoUpscaleMode.entries.forEach { mode ->
+            val selected = uiState.upscaleMode == mode
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 8.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(if (selected) mxOrange.copy(0.16f) else Color.White.copy(0.05f))
+                    .clickable { viewModel.setUpscaleMode(mode) }
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                RadioButton(
+                    selected = selected,
+                    onClick = { viewModel.setUpscaleMode(mode) },
+                    colors = RadioButtonDefaults.colors(selectedColor = mxOrange, unselectedColor = Color.White.copy(0.6f))
+                )
+                Spacer(Modifier.width(8.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(mode.label, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                    Text(mode.description, color = Color.White.copy(0.6f), fontSize = 12.sp)
+                }
+            }
+        }
+        if (uiState.upscaleMode.isOn) {
+            Spacer(Modifier.height(4.dp))
+            ColorSliderRow(
+                label = "Sharpening",
+                value = uiState.upscaleStrength,
+                valueRange = 0f..1f,
+                onValueChange = { viewModel.setUpscaleStrength(it) },
+                mxOrange = mxOrange
+            )
+        }
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = "Redraws each frame larger on the GPU, up to 2x the file size and never beyond 4K. " +
+                "Uses more battery, and is not used while the FPS Booster is on. Saved for all videos.",
             color = Color.White.copy(0.55f),
             fontSize = 12.sp
         )
@@ -3084,7 +3177,13 @@ private fun formatTime(ms: Long): String {
  * Builds the 4x5 colour matrix for brightness (-1..1, additive), contrast (0..2, around mid-grey)
  * and saturation (0..2). Same order as the old shader: brightness -> contrast -> saturation.
  */
-private fun buildColorGradeMatrix(brightness: Float, contrast: Float, saturation: Float): android.graphics.ColorMatrix {
+private fun buildColorGradeMatrix(
+    brightness: Float,
+    contrast: Float,
+    saturation: Float,
+    hueDegrees: Float = 0f,
+    temperature: Float = 0f
+): android.graphics.ColorMatrix {
     val b = brightness * 255f
     val brightnessM = android.graphics.ColorMatrix(floatArrayOf(
         1f, 0f, 0f, 0f, b,
@@ -3104,7 +3203,34 @@ private fun buildColorGradeMatrix(brightness: Float, contrast: Float, saturation
     return android.graphics.ColorMatrix(brightnessM).apply {
         postConcat(contrastM)
         postConcat(saturationM)
+        if (hueDegrees != 0f) postConcat(hueRotationMatrix(hueDegrees))
+        if (temperature != 0f) {
+            // Warm = more red, less blue; cool = the opposite. Green stays put so the tint stays neutral.
+            val warm = temperature * 0.25f
+            postConcat(android.graphics.ColorMatrix(floatArrayOf(
+                1f + warm, 0f, 0f, 0f, 0f,
+                0f, 1f, 0f, 0f, 0f,
+                0f, 0f, 1f - warm, 0f, 0f,
+                0f, 0f, 0f, 1f, 0f
+            )))
+        }
     }
+}
+
+/** Rotates the hue by [degrees] while keeping the brightness (luma) of every colour. */
+private fun hueRotationMatrix(degrees: Float): android.graphics.ColorMatrix {
+    val rad = Math.toRadians(degrees.toDouble())
+    val cosV = Math.cos(rad).toFloat()
+    val sinV = Math.sin(rad).toFloat()
+    val lr = 0.213f
+    val lg = 0.715f
+    val lb = 0.072f
+    return android.graphics.ColorMatrix(floatArrayOf(
+        lr + cosV * (1f - lr) + sinV * (-lr), lg + cosV * (-lg) + sinV * (-lg), lb + cosV * (-lb) + sinV * (1f - lb), 0f, 0f,
+        lr + cosV * (-lr) + sinV * 0.143f, lg + cosV * (1f - lg) + sinV * 0.140f, lb + cosV * (-lb) + sinV * (-0.283f), 0f, 0f,
+        lr + cosV * (-lr) + sinV * (-(1f - lr)), lg + cosV * (-lg) + sinV * lg, lb + cosV * (1f - lb) + sinV * lb, 0f, 0f,
+        0f, 0f, 0f, 1f, 0f
+    ))
 }
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
@@ -3133,15 +3259,44 @@ fun ColorGradingSection(uiState: VideoPlayerUiState, viewModel: VideoPlayerViewM
             onValueChange = { viewModel.setColorGrading(uiState.colorBrightness, uiState.colorContrast, it) },
             mxOrange = mxOrange
         )
+        ColorSliderRow(
+            label = "Gamma",
+            value = uiState.colorGamma,
+            valueRange = 0.5f..2f,
+            onValueChange = { viewModel.setColorExtras(it, uiState.colorHue, uiState.colorTemperature, uiState.colorSharpness) },
+            mxOrange = mxOrange
+        )
+        ColorSliderRow(
+            label = "Hue",
+            value = uiState.colorHue,
+            valueRange = -180f..180f,
+            onValueChange = { viewModel.setColorExtras(uiState.colorGamma, it, uiState.colorTemperature, uiState.colorSharpness) },
+            mxOrange = mxOrange,
+            format = "%.0f\u00B0"
+        )
+        ColorSliderRow(
+            label = "Color temperature (cool \u2194 warm)",
+            value = uiState.colorTemperature,
+            valueRange = -1f..1f,
+            onValueChange = { viewModel.setColorExtras(uiState.colorGamma, uiState.colorHue, it, uiState.colorSharpness) },
+            mxOrange = mxOrange
+        )
+        ColorSliderRow(
+            label = "Sharpness",
+            value = uiState.colorSharpness,
+            valueRange = 0f..1f,
+            onValueChange = { viewModel.setColorExtras(uiState.colorGamma, uiState.colorHue, uiState.colorTemperature, it) },
+            mxOrange = mxOrange
+        )
     }
 }
 
 @Composable
-fun ColorSliderRow(label: String, value: Float, valueRange: ClosedFloatingPointRange<Float>, onValueChange: (Float) -> Unit, mxOrange: Color) {
+fun ColorSliderRow(label: String, value: Float, valueRange: ClosedFloatingPointRange<Float>, onValueChange: (Float) -> Unit, mxOrange: Color, format: String = "%.2f") {
     Column {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text(label, color = Color.White.copy(0.7f), fontSize = 14.sp)
-            Text(String.format("%.2f", value), color = mxOrange, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            Text(String.format(format, value), color = mxOrange, fontSize = 14.sp, fontWeight = FontWeight.Bold)
         }
         Slider(
             value = value,

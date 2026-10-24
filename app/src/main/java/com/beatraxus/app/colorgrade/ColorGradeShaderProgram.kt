@@ -16,6 +16,8 @@ class ColorGradeShaderProgram(
 ) : SingleFrameGlShaderProgram(useHdr) {
 
     private val glProgram: GlProgram
+    private var texelWidth = 0f
+    private var texelHeight = 0f
 
     init {
         val vertexShader = """
@@ -34,6 +36,9 @@ class ColorGradeShaderProgram(
             uniform float uBrightness;
             uniform float uContrast;
             uniform float uSaturation;
+            uniform float uGamma;
+            uniform float uSharpness;
+            uniform vec2 uTexel;
             varying vec2 vTexSamplingCoords;
             
             void main() {
@@ -50,13 +55,27 @@ class ColorGradeShaderProgram(
                 float luma = dot(rgb, vec3(0.299, 0.587, 0.114));
                 rgb = mix(vec3(luma), rgb, uSaturation);
                 
-                gl_FragColor = vec4(rgb, color.a);
+                // 4. Gamma (above 1 lifts the mid-tones, below 1 deepens them)
+                rgb = pow(clamp(rgb, 0.0, 1.0), vec3(1.0 / max(uGamma, 0.01)));
+
+                // 5. Sharpness: unsharp mask against the four neighbouring pixels
+                if (uSharpness > 0.0) {
+                    vec3 blur = (texture2D(uTexSampler, vTexSamplingCoords + vec2(uTexel.x, 0.0)).rgb
+                               + texture2D(uTexSampler, vTexSamplingCoords - vec2(uTexel.x, 0.0)).rgb
+                               + texture2D(uTexSampler, vTexSamplingCoords + vec2(0.0, uTexel.y)).rgb
+                               + texture2D(uTexSampler, vTexSamplingCoords - vec2(0.0, uTexel.y)).rgb) * 0.25;
+                    rgb += (rgb - blur) * (uSharpness * 2.0);
+                }
+
+                gl_FragColor = vec4(clamp(rgb, 0.0, 1.0), color.a);
             }
         """.trimIndent()
         glProgram = GlProgram(vertexShader, fragmentShader)
     }
 
     override fun configure(inputWidth: Int, inputHeight: Int): Size {
+        texelWidth = 1f / inputWidth.coerceAtLeast(1)
+        texelHeight = 1f / inputHeight.coerceAtLeast(1)
         return Size(inputWidth, inputHeight)
     }
 
@@ -66,6 +85,9 @@ class ColorGradeShaderProgram(
         glProgram.setFloatUniform("uBrightness", effect.brightness)
         glProgram.setFloatUniform("uContrast", effect.contrast)
         glProgram.setFloatUniform("uSaturation", effect.saturation)
+        glProgram.setFloatUniform("uGamma", effect.gamma)
+        glProgram.setFloatUniform("uSharpness", effect.sharpness)
+        glProgram.setFloatsUniform("uTexel", floatArrayOf(texelWidth, texelHeight))
         
         glProgram.setBufferAttribute(
             "aFramePosition",

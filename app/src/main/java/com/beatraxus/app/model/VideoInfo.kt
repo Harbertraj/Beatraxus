@@ -52,7 +52,11 @@ data class VideoInfoData(
     val videoDecoder: String?,
     val audioDecoder: String?,
     val droppedFrames: Int = 0,
-    val renderedFrames: Int = 0
+    val renderedFrames: Int = 0,
+    /** HDR formats the screen can show, e.g. "HDR10, HLG"; null when not checked. */
+    val displayHdrTypes: String? = null,
+    /** Whether the device has a Dolby Vision decoder; null when not checked. */
+    val dolbyVisionDecoder: Boolean? = null
 )
 
 data class InfoRow(val label: String, val value: String)
@@ -92,7 +96,15 @@ object VideoInfoReport {
             add(InfoRow("Frame rate", if (v.frameRate > 0f) formatFps(v.frameRate) else UNKNOWN))
             val audioBps = d.audio?.bitrate ?: -1
             add(InfoRow("Bitrate", videoBitrateText(v, overall, audioBps)))
-            add(InfoRow("Dynamic range", dynamicRange(v.mimeType, v.colorTransfer, v.colorSpace)))
+            add(InfoRow("Dynamic range", dynamicRange(v.mimeType, v.colorTransfer, v.colorSpace, v.codecs)))
+            val hdr = HdrFormat.detect(v.mimeType, v.codecs, v.colorTransfer, v.colorSpace)
+            if (hdr.isHdr) {
+                d.displayHdrTypes?.let { add(InfoRow("Screen HDR support", it)) }
+                if (hdr.kind == HdrKind.DOLBY_VISION) {
+                    d.dolbyVisionDecoder?.let { add(InfoRow("Dolby Vision decoder", if (it) "Available" else "Not on this device")) }
+                    hdr.profileNote?.let { add(InfoRow("Dolby Vision note", it)) }
+                }
+            }
             add(InfoRow("Decoder", d.videoDecoder?.let { "$it (${decoderKind(it)})" } ?: UNKNOWN))
             if (d.renderedFrames > 0 || d.droppedFrames > 0) {
                 add(InfoRow("Dropped frames", "${d.droppedFrames} of ${d.renderedFrames + d.droppedFrames}"))
@@ -325,8 +337,8 @@ object VideoInfoReport {
         return UNKNOWN
     }
 
-    fun dynamicRange(mime: String?, transfer: Int, space: Int): String = when {
-        mime.equals("video/dolby-vision", ignoreCase = true) -> "Dolby Vision"
+    fun dynamicRange(mime: String?, transfer: Int, space: Int, codecs: String? = null): String = when {
+        HdrFormat.detect(mime, codecs, transfer, space).kind == HdrKind.DOLBY_VISION -> HdrFormat.detect(mime, codecs, transfer, space).label
         transfer == TRANSFER_ST2084 -> "HDR10 / PQ" + if (space == SPACE_BT2020) ", BT.2020" else ""
         transfer == TRANSFER_HLG -> "HLG" + if (space == SPACE_BT2020) ", BT.2020" else ""
         transfer == TRANSFER_SDR || transfer == -1 -> "SDR" + when (space) {

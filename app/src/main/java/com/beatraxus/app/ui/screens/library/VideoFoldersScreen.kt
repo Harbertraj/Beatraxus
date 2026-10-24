@@ -59,7 +59,7 @@ fun VideoFoldersScreen(
             }
         } else {
             LazyVerticalGrid(
-                columns = GridCells.Fixed(2),
+                columns = GridCells.Fixed(com.beatraxus.app.util.rememberGridColumns(minCellDp = 170)),
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(16.dp, 8.dp, 16.dp, 140.dp),
                 horizontalArrangement = Arrangement.spacedBy(16.dp),

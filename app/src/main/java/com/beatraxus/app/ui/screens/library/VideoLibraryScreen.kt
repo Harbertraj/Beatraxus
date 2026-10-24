@@ -114,7 +114,12 @@ fun VideoLibraryScreen(
                 }
             } else {
                 LazyVerticalGrid(
-                    columns = GridCells.Fixed(columns),
+                    columns = GridCells.Fixed(
+                        com.beatraxus.app.util.AdaptiveLayout.scaledColumns(
+                            columns,
+                            androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp
+                        )
+                    ),
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(16.dp, 8.dp, 16.dp, 140.dp),
                     horizontalArrangement = Arrangement.spacedBy(16.dp),

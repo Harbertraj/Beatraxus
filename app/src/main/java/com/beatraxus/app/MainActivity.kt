@@ -262,6 +262,9 @@ class MainActivity : FragmentActivity() {
             splashProvider.remove()
         }
 
+        // Tablets and unfolded foldables are not locked to portrait (the manifest lock is for phones).
+        applyLargeScreenOrientationPolicy()
+
         // Enable edge-to-edge
         enableEdgeToEdge()
         WindowCompat.setDecorFitsSystemWindows(window, false)
@@ -495,6 +498,27 @@ class MainActivity : FragmentActivity() {
             viewModel.loadVideos()
         } else {
             requestPermissions()
+        }
+    }
+
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        // A foldable was opened or closed: the screen may have crossed the phone / tablet line.
+        applyLargeScreenOrientationPolicy()
+    }
+
+    /**
+     * The manifest locks the app to portrait, which is right for phones but leaves a narrow strip on a tablet or an
+     * unfolded foldable. On a large screen the lock is lifted; folding back to a phone-sized screen restores it.
+     * Only the two states this function itself sets are touched, so the video player's own orientation is left alone.
+     */
+    private fun applyLargeScreenOrientationPolicy() {
+        val large = com.beatraxus.app.util.AdaptiveLayout.isLargeScreen(resources.configuration.smallestScreenWidthDp)
+        val current = requestedOrientation
+        if (large && current == android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT) {
+            requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        } else if (!large && current == android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED) {
+            requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
         }
     }
 
