@@ -354,6 +354,8 @@ class VideoPlayerViewModel(
     private var activeExternalIndex = -1
     private var extVideoId: String? = null
     private var lastExtSeekAtMs = 0L
+    /** How many corrective seeks in a row did not bring the added audio back in step (imprecise seeking in raw streams). */
+    private var extMissCount = 0
     /** Codec / channel info of each loaded file (by uri), known once it has been opened; shown in the track row. */
     private val externalFormats = java.util.concurrent.ConcurrentHashMap<String, androidx.media3.common.Format>()
 
@@ -1496,8 +1498,19 @@ class VideoPlayerViewModel(
             .setUsage(C.USAGE_MEDIA)
             .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
             .build()
+        // Raw streams (.ac3 .eac3 .dts .mp3 .aac, as saved by "Extract") have no seek table and often no duration.
+        // Without these flags ExoPlayer can't seek in them: every seek restarts from the beginning and the added audio
+        // stalls at a random point while the video goes on. Constant-bitrate seeking gives a duration estimate and
+        // working seeks; index seeking makes variable-bitrate MP3 files seek accurately.
+        val extractorsFactory = androidx.media3.extractor.DefaultExtractorsFactory()
+            .setConstantBitrateSeekingEnabled(true)
+            .setMp3ExtractorFlags(androidx.media3.extractor.mp3.Mp3Extractor.FLAG_ENABLE_INDEX_SEEKING)
         // false: the video player owns audio focus; this one only follows it.
-        val ep = ExoPlayer.Builder(app, com.beatraxus.app.engine.ExternalAudioRenderersFactory(app, tuning))
+        val ep = ExoPlayer.Builder(
+            app,
+            com.beatraxus.app.engine.ExternalAudioRenderersFactory(app, tuning),
+            androidx.media3.exoplayer.source.DefaultMediaSourceFactory(app, extractorsFactory)
+        )
             .setAudioAttributes(attrs, false)
             .build()
         ep.addListener(object : Player.Listener {
@@ -1543,6 +1556,7 @@ class VideoPlayerViewModel(
         ep.playbackParameters = PlaybackParameters(main.playbackParameters.speed)
         ep.volume = 1f
         lastExtSeekAtMs = android.os.SystemClock.elapsedRealtime() // the start position above is already aligned
+        extMissCount = 0
         ep.prepare()
         ep.playWhenReady = main.isPlaying
         main.volume = 0f
@@ -1579,15 +1593,31 @@ class VideoPlayerViewModel(
         if (main.volume != 0f) main.volume = 0f
         val speed = main.playbackParameters.speed
         if (ep.playbackParameters.speed != speed) ep.playbackParameters = PlaybackParameters(speed)
-        if (main.playbackState == Player.STATE_READY && ep.playbackState != Player.STATE_IDLE) {
-            val ended = ep.playbackState == Player.STATE_ENDED && ep.duration > 0 && main.currentPosition >= ep.duration
+        val epState = ep.playbackState
+        if (main.playbackState == Player.STATE_READY && epState != Player.STATE_IDLE) {
             val now = android.os.SystemClock.elapsedRealtime()
+            val sinceSeek = now - lastExtSeekAtMs
+            // The file really ended (it is shorter than the video) when the video is already past the point where it
+            // stopped. Judged by position, not by ep.duration: for raw streams the duration is only an estimate.
+            val ended = epState == Player.STATE_ENDED && main.currentPosition >= ep.currentPosition - 500
+            // A seek in a raw stream can take seconds to load. Seeking again while it loads restarts the load from the
+            // beginning every time, so the audio never arrives ("stuck"): wait for it (up to 20 s) unless forced.
+            val loadingSeek = epState == Player.STATE_BUFFERING && !forceSeek && sinceSeek < 20_000L
             // Cool-down: after a seek the position needs a moment to settle; re-seeking at once flushes the audio
             // output over and over (which sounded like no audio at all).
-            val cooledDown = now - lastExtSeekAtMs > (if (forceSeek) 250L else 2000L)
-            if (!ended && cooledDown && (forceSeek || abs(ep.currentPosition - main.currentPosition) > 500)) {
-                lastExtSeekAtMs = now
-                ep.seekTo((main.currentPosition - tuning.audioDelayMs).coerceAtLeast(0L))
+            val cooledDown = sinceSeek > (if (forceSeek) 250L else 2000L)
+            if (!ended && !loadingSeek) {
+                val drift = abs(ep.currentPosition - main.currentPosition)
+                if (forceSeek) extMissCount = 0
+                if (drift <= 500L) extMissCount = 0
+                // Seeks in some files are never exact; after two corrections that did not help, accept a larger offset
+                // instead of seeking (and flushing the sound) forever.
+                val tolerance = if (extMissCount >= 2) 1500L else 500L
+                if (cooledDown && (forceSeek || drift > tolerance)) {
+                    lastExtSeekAtMs = now
+                    extMissCount++
+                    ep.seekTo((main.currentPosition - tuning.audioDelayMs).coerceAtLeast(0L))
+                }
             }
         }
         val playing = main.isPlaying

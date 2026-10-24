@@ -2298,7 +2298,7 @@ fun VideoSettingsSheetContent(
                             enabled = canExtract
                         ) {
                             Icon(
-                                Icons.Rounded.SaveAlt,
+                                Icons.Rounded.Unarchive,
                                 "Extract audio track",
                                 tint = Color.White.copy(alpha = if (canExtract) 1f else 0.35f)
                             )
