@@ -23,11 +23,15 @@ class FfmpegChunkProvider(
     private val workDir: File
 ) : AudioChunkProvider {
 
-    private val input: String by lazy { FFmpegKitConfig.getSafParameterForRead(context, source) }
+    /**
+     * A new handle for every FFmpeg or FFprobe run. FFmpegKit closes the file behind a `saf:` parameter when the session
+     * that used it ends, so a handle kept from the first chunk is dead for the second ("Bad file descriptor").
+     */
+    private fun openInput(): String = FFmpegKitConfig.getSafParameterForRead(context, source)
 
     /** Length of the video in milliseconds, or 0 when FFprobe cannot tell. */
     suspend fun durationMs(): Long = withContext(Dispatchers.IO) {
-        val session = FFprobeKit.executeWithArguments(FfmpegAudioArgs.probeDuration(input))
+        val session = FFprobeKit.executeWithArguments(FfmpegAudioArgs.probeDuration(openInput()))
         if (!ReturnCode.isSuccess(session.returnCode)) return@withContext 0L
         session.output.orEmpty().trim().toDoubleOrNull()?.let { (it * 1000).toLong() } ?: 0L
     }
@@ -36,7 +40,7 @@ class FfmpegChunkProvider(
         workDir.mkdirs()
         val out = File(workDir, "chunk_${startMs}_${System.nanoTime()}.wav")
         val session = FFmpegKit.executeWithArguments(
-            FfmpegAudioArgs.build(input, startMs, lengthMs, audioOrdinal, out.absolutePath)
+            FfmpegAudioArgs.build(openInput(), startMs, lengthMs, audioOrdinal, out.absolutePath)
         )
         val ok = ReturnCode.isSuccess(session.returnCode)
         if (!ok) Log.w(TAG, "FFmpeg failed for chunk at ${startMs}ms (audio track $audioOrdinal): rc=${session.returnCode} ${session.allLogsAsString.orEmpty().takeLast(600)}")
