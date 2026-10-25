@@ -2125,135 +2125,111 @@ fun PlayerBottomBar(
 @UnstableApi
 @OptIn(ExperimentalMaterial3Api::class)
 /**
- * "Extract which audio track?" popup of the Audio Tracks sheet. Same look as the player's option sheet: the dark
- * gradient panel with rounded corners, the sheet's title style and the audio-track rows (orange when selected).
+ * "Extract which audio track?" view, shown INSIDE the Audio Tracks option sheet (instead of a popup, which got cut
+ * off on landscape screens). Same look as the sheet: the audio-track rows (orange when selected) and sheet-style pills.
+ * It sits in the sheet's own scrolling column, so every track stays reachable on any screen size.
  */
 @Composable
-private fun ExtractAudioTrackPopup(
+private fun ExtractAudioTrackSheetBody(
     tracks: List<VideoTrackInfo>,
     videoTitle: String,
     selectedOrdinal: Int,
     accent: Color,
     onSelect: (Int) -> Unit,
-    onDismiss: () -> Unit,
+    onCancel: () -> Unit,
     onChooseFolder: () -> Unit
 ) {
-    androidx.compose.ui.window.Dialog(
-        onDismissRequest = onDismiss,
-        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .clickable(
-                    interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
-                    indication = null,
-                    onClick = onDismiss
-                ),
-            contentAlignment = Alignment.Center
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            val panelShape = RoundedCornerShape(28.dp)
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth(0.9f)
-                    .widthIn(max = 420.dp)
-                    .heightIn(max = (androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp * 0.8f).dp)
-                    .clip(panelShape)
-                    .background(Brush.horizontalGradient(listOf(Color(0xFF141419), Color(0xFF1C1C22))))
-                    .border(1.dp, Color.White.copy(alpha = 0.08f), panelShape)
-                    .clickable(
-                        interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
-                        indication = null,
-                        onClick = {}
-                    )
-                    .padding(horizontal = 14.dp, vertical = 16.dp)
-            ) {
-                Text("Extract Audio Track", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    "Saved as: [Language] $videoTitle",
-                    color = Color.White.copy(0.5f), fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis
-                )
-                Spacer(Modifier.height(14.dp))
-                Column(
-                    modifier = Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    tracks.forEach { t ->
-                        val selected = selectedOrdinal == t.audioOrdinal
-                        val label = com.beatraxus.app.util.VideoAudioExtractor.languageDisplayName(t.language)
-                            ?: t.name.takeIf { it.isNotBlank() } ?: "Unknown"
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(16.dp))
-                                .background(if (selected) accent.copy(alpha = 0.2f) else Color.White.copy(alpha = 0.06f))
-                                .border(
-                                    width = 1.dp,
-                                    color = if (selected) accent.copy(alpha = 0.8f) else Color.White.copy(alpha = 0.08f),
-                                    shape = RoundedCornerShape(16.dp)
-                                )
-                                .clickable { onSelect(t.audioOrdinal) }
-                                .heightIn(min = 64.dp)
-                                .padding(horizontal = 16.dp, vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.AudioFile,
-                                contentDescription = null,
-                                tint = if (selected) accent else Color.White.copy(0.7f),
-                                modifier = Modifier.size(22.dp)
-                            )
-                            Spacer(Modifier.width(12.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    "[$label]",
-                                    color = Color.White,
-                                    fontSize = 15.sp,
-                                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                                    maxLines = 1, overflow = TextOverflow.Ellipsis
-                                )
-                                Spacer(Modifier.height(2.dp))
-                                Text(
-                                    formatAudioTrackSubtitleLine(t),
-                                    color = Color.White.copy(0.6f), fontSize = 12.sp,
-                                    maxLines = 1, overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                        }
-                    }
-                }
-                Spacer(Modifier.height(16.dp))
+            Text(
+                "Extract Audio Track",
+                color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold,
+                maxLines = 1, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
+            IconButton(onClick = onCancel) {
+                Icon(Icons.Rounded.Close, "Back to audio tracks", tint = Color.White.copy(0.8f))
+            }
+        }
+        Text(
+            "Saved as: [Language] $videoTitle",
+            color = Color.White.copy(0.5f), fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis
+        )
+        Spacer(Modifier.height(14.dp))
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            tracks.forEach { t ->
+                val selected = selectedOrdinal == t.audioOrdinal
+                val label = com.beatraxus.app.util.VideoAudioExtractor.languageDisplayName(t.language)
+                    ?: t.name.takeIf { it.isNotBlank() } ?: "Unknown"
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(if (selected) accent.copy(alpha = 0.2f) else Color.White.copy(alpha = 0.06f))
+                        .border(
+                            width = 1.dp,
+                            color = if (selected) accent.copy(alpha = 0.8f) else Color.White.copy(alpha = 0.08f),
+                            shape = RoundedCornerShape(16.dp)
+                        )
+                        .clickable { onSelect(t.audioOrdinal) }
+                        .heightIn(min = 64.dp)
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .weight(1f).height(44.dp)
-                            .clip(RoundedCornerShape(50))
-                            .background(Color.White.copy(0.08f))
-                            .border(1.dp, Color.White.copy(0.14f), RoundedCornerShape(50))
-                            .clickable(onClick = onDismiss),
-                        contentAlignment = Alignment.Center
-                    ) { Text("Cancel", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold) }
-                    val canGo = tracks.any { it.audioOrdinal == selectedOrdinal }
-                    Box(
-                        modifier = Modifier
-                            .weight(1f).height(44.dp)
-                            .clip(RoundedCornerShape(50))
-                            .background(accent.copy(alpha = if (canGo) 0.22f else 0.08f))
-                            .border(1.dp, accent.copy(alpha = if (canGo) 0.7f else 0.2f), RoundedCornerShape(50))
-                            .clickable(enabled = canGo, onClick = onChooseFolder),
-                        contentAlignment = Alignment.Center
-                    ) {
+                    Icon(
+                        imageVector = Icons.Rounded.AudioFile,
+                        contentDescription = null,
+                        tint = if (selected) accent else Color.White.copy(0.7f),
+                        modifier = Modifier.size(22.dp)
+                    )
+                    Spacer(Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            "Choose folder",
-                            color = Color.White.copy(alpha = if (canGo) 1f else 0.35f),
-                            fontSize = 14.sp, fontWeight = FontWeight.SemiBold
+                            "[$label]",
+                            color = Color.White, fontSize = 15.sp,
+                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis
+                        )
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            formatAudioTrackSubtitleLine(t),
+                            color = Color.White.copy(0.6f), fontSize = 12.sp,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis
                         )
                     }
                 }
+            }
+        }
+        Spacer(Modifier.height(16.dp))
+        val canGo = tracks.any { it.audioOrdinal == selectedOrdinal }
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Box(
+                modifier = Modifier
+                    .weight(1f).height(44.dp)
+                    .clip(RoundedCornerShape(50))
+                    .background(Color.White.copy(0.08f))
+                    .border(1.dp, Color.White.copy(0.14f), RoundedCornerShape(50))
+                    .clickable(onClick = onCancel),
+                contentAlignment = Alignment.Center
+            ) { Text("Cancel", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold) }
+            Box(
+                modifier = Modifier
+                    .weight(1f).height(44.dp)
+                    .clip(RoundedCornerShape(50))
+                    .background(accent.copy(alpha = if (canGo) 0.22f else 0.08f))
+                    .border(1.dp, accent.copy(alpha = if (canGo) 0.7f else 0.2f), RoundedCornerShape(50))
+                    .clickable(enabled = canGo, onClick = onChooseFolder),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    "Choose folder",
+                    color = Color.White.copy(alpha = if (canGo) 1f else 0.35f),
+                    fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1
+                )
             }
         }
     }
@@ -2300,29 +2276,32 @@ fun VideoSettingsSheetContent(
                 viewModel.addExternalAudio(picked, fileName)
             }
         }
-        // "Extract": first the user chooses WHICH audio track of the video to save, then picks the destination folder
-        // in the system file manager, then the track is saved there (cancellable, with a progress ring).
+        // "Extract": tapping it swaps this sheet to a track chooser (no popup). After the track and the destination
+        // folder are chosen in the system file manager, the sheet goes back to the audio track list and the track is
+        // saved there (cancellable, with a progress ring).
         var showExtractTrackDialog by remember { mutableStateOf(false) }
         var extractChoiceOrdinal by remember { mutableStateOf(-1) }
         val extractFolderPicker = rememberLauncherForActivityResult(
             contract = ActivityResultContracts.OpenDocumentTree()
         ) { tree: android.net.Uri? ->
             val chosen = uiState.availableAudioTracks.firstOrNull { !it.isExternal && it.audioOrdinal == extractChoiceOrdinal }
-            if (tree != null && chosen != null) viewModel.extractAudioTrack(tree, chosen)
+            if (tree != null && chosen != null) {
+                viewModel.extractAudioTrack(tree, chosen)
+                showExtractTrackDialog = false // back to the Audio Tracks list, where the progress shows
+            }
+            // folder picker cancelled: stay on the chooser so the user can try again
         }
-        if (showExtractTrackDialog) {
-            ExtractAudioTrackPopup(
+        if (showExtractTrackDialog && activeSheetType == PlayerSheetType.AUDIO) {
+            ExtractAudioTrackSheetBody(
                 tracks = uiState.availableAudioTracks.filter { !it.isExternal },
                 videoTitle = uiState.currentVideo?.title.orEmpty(),
                 selectedOrdinal = extractChoiceOrdinal,
                 accent = mxOrange,
                 onSelect = { extractChoiceOrdinal = it },
-                onDismiss = { showExtractTrackDialog = false },
-                onChooseFolder = {
-                    showExtractTrackDialog = false
-                    extractFolderPicker.launch(null)
-                }
+                onCancel = { showExtractTrackDialog = false },
+                onChooseFolder = { extractFolderPicker.launch(null) }
             )
+            return@Column
         }
         // EQ is handled by DSP Studio while video audio is routed to the Audio Engine
         val eqLockedByEngine = uiState.routeAudioToEngine || uiState.isConnectingEngineRoute
