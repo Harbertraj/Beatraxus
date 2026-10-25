@@ -200,6 +200,13 @@ object VideoAudioExtractor {
         tracks
     }
 
+    /** "ta" / "tam" -> "Tamil"; null when the code is missing or unknown. */
+    fun languageDisplayName(code: String?): String? {
+        if (code.isNullOrBlank() || code.equals("und", true) || code.equals("zxx", true)) return null
+        val name = Locale.forLanguageTag(code).getDisplayLanguage(Locale.ENGLISH)
+        return name.takeIf { it.isNotBlank() && !it.equals(code, ignoreCase = true) }
+    }
+
     /**
      * @param nativeAudioIndex position of the wanted track among the audio tracks inside the video file.
      * @param treeUri folder picked with ACTION_OPEN_DOCUMENT_TREE.
