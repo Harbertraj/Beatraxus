@@ -3958,13 +3958,15 @@ items(artistSongs, key = { it.id }) { song ->
         var videoToRename by remember { mutableStateOf<com.beatraxus.app.model.Video?>(null) }
         var videoToDelete by remember { mutableStateOf<com.beatraxus.app.model.Video?>(null) }
 
-        // "Extract Audio" of the video long-press menu: list the file's audio tracks, let the user choose one, pick a
-        // destination folder, then the shared extraction manager saves "[Language] Title.ext" and reports progress.
+        // "Extract Audio" of the video long-press menu: a popup (same look as the Video Properties popup) lists the file's
+        // audio tracks, the user chooses one and a destination folder, then the shared extraction manager saves
+        // "[Language] Title.ext" and reports progress inside the menu row.
         val audioExtractState by com.beatraxus.app.util.VideoAudioExtractionManager.state.collectAsStateWithLifecycle()
         val extractUiScope = rememberCoroutineScope()
         var extractVideo by remember { mutableStateOf<com.beatraxus.app.model.Video?>(null) }
         var extractTracks by remember { mutableStateOf<List<com.beatraxus.app.util.VideoAudioExtractor.AudioTrackSummary>>(emptyList()) }
         var extractTrackChoice by remember { mutableIntStateOf(0) }
+        var extractLoading by remember { mutableStateOf(false) }
         var showExtractTrackChooser by remember { mutableStateOf(false) }
         val extractFolderPicker = androidx.activity.compose.rememberLauncherForActivityResult(
             contract = androidx.activity.result.contract.ActivityResultContracts.OpenDocumentTree()
@@ -3976,58 +3978,94 @@ items(artistSongs, key = { it.id }) { song ->
             }
         }
         if (showExtractTrackChooser) {
-            AlertDialog(
-                onDismissRequest = { showExtractTrackChooser = false },
-                containerColor = Color(0xFF1E1E1E),
-                title = { Text("Extract which audio track?", color = Color.White, fontWeight = FontWeight.Bold) },
-                text = {
-                    Column(
-                        modifier = Modifier.verticalScroll(rememberScrollState()),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        Text(
-                            "Saved as: [Language] ${extractVideo?.title.orEmpty()}",
-                            color = Color.White.copy(0.55f), fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis
-                        )
-                        extractTracks.forEach { t ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .clickable { extractTrackChoice = t.nativeIndex }
-                                    .padding(vertical = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                RadioButton(
-                                    selected = extractTrackChoice == t.nativeIndex,
-                                    onClick = { extractTrackChoice = t.nativeIndex },
-                                    colors = RadioButtonDefaults.colors(selectedColor = AccentBlue, unselectedColor = Color.White.copy(0.6f))
-                                )
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(t.bracketLabel, color = Color.White, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    Text(
-                                        listOfNotNull(
-                                            t.mime.removePrefix("audio/").uppercase().takeIf { it.isNotBlank() },
-                                            t.channelCount.takeIf { it > 0 }?.let { "$it ch" },
-                                            t.sampleRate.takeIf { it > 0 }?.let { "${it / 1000f} kHz" }
-                                        ).joinToString(" · "),
-                                        color = Color.White.copy(0.6f), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-                            }
-                        }
-                    }
-                },
-                confirmButton = {
-                    TextButton(onClick = {
-                        showExtractTrackChooser = false
-                        extractFolderPicker.launch(null)
-                    }) { Text("Choose folder", color = AccentBlue, fontWeight = FontWeight.Bold) }
-                },
-                dismissButton = {
-                    TextButton(onClick = { showExtractTrackChooser = false }) { Text("Cancel", color = Color.White.copy(0.8f)) }
+            val chosenTrack = extractTracks.firstOrNull { it.nativeIndex == extractTrackChoice }
+            com.beatraxus.app.ui.components.InfoStyleDialog(
+                title = "Extract Audio",
+                icon = Icons.Rounded.Unarchive,
+                onDismiss = { showExtractTrackChooser = false },
+                footer = {
+                    com.beatraxus.app.ui.components.InfoActionButton(
+                        "Cancel",
+                        onClick = { showExtractTrackChooser = false },
+                        modifier = Modifier.weight(1f)
+                    )
+                    com.beatraxus.app.ui.components.InfoActionButton(
+                        "Choose folder",
+                        onClick = {
+                            showExtractTrackChooser = false
+                            extractFolderPicker.launch(null)
+                        },
+                        primary = true,
+                        enabled = chosenTrack != null,
+                        modifier = Modifier.weight(1f)
+                    )
                 }
-            )
+            ) {
+                com.beatraxus.app.ui.components.InfoSectionLabel("VIDEO")
+                com.beatraxus.app.ui.components.InfoGlassBlock {
+                    com.beatraxus.app.ui.components.InfoMetaRow("Title", extractVideo?.title.orEmpty())
+                    com.beatraxus.app.ui.components.InfoMetaRow(
+                        "Saved as",
+                        "[${chosenTrack?.label ?: "Language"}] ${extractVideo?.title.orEmpty()}",
+                        stacked = true,
+                        showDivider = false
+                    )
+                }
+                com.beatraxus.app.ui.components.InfoSectionLabel("WHICH AUDIO TRACK?")
+                if (extractLoading) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), color = AccentBlue, strokeWidth = 2.dp)
+                        Spacer(Modifier.width(10.dp))
+                        Text("Reading audio tracks…", color = Color.White.copy(0.6f), fontSize = 13.sp)
+                    }
+                }
+                extractTracks.forEach { t ->
+                    val selected = extractTrackChoice == t.nativeIndex
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(if (selected) AccentBlue.copy(0.16f) else Color.White.copy(0.05f))
+                            .border(
+                                if (selected) 1.dp else 0.5.dp,
+                                if (selected) AccentBlue.copy(0.7f) else Color.White.copy(0.08f),
+                                RoundedCornerShape(16.dp)
+                            )
+                            .clickable { extractTrackChoice = t.nativeIndex }
+                            .padding(horizontal = 12.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier.size(34.dp).background(AccentBlue.copy(0.14f), CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) { Icon(Icons.Rounded.AudioFile, null, tint = AccentBlue, modifier = Modifier.size(18.dp)) }
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                t.bracketLabel, color = Color.White, fontSize = 14.sp,
+                                fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold,
+                                maxLines = 1, overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                listOfNotNull(
+                                    t.mime.removePrefix("audio/").uppercase().takeIf { it.isNotBlank() },
+                                    t.channelCount.takeIf { it > 0 }?.let { "$it ch" },
+                                    t.sampleRate.takeIf { it > 0 }?.let { "${it / 1000f} kHz" }
+                                ).joinToString(" · "),
+                                color = Color.White.copy(0.5f), fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        RadioButton(
+                            selected = selected,
+                            onClick = { extractTrackChoice = t.nativeIndex },
+                            colors = RadioButtonDefaults.colors(selectedColor = AccentBlue, unselectedColor = Color.White.copy(0.5f))
+                        )
+                    }
+                }
+            }
         }
 
         selectedVideoForOptions?.let { video ->
@@ -4053,15 +4091,21 @@ items(artistSongs, key = { it.id }) { song ->
                     onProperties = { showVideoProperties = video; selectedVideoForOptions = null },
                     extractState = audioExtractState,
                     onExtractAudio = {
+                        // The popup opens right away ("Reading audio tracks…") and always asks which track, even for one.
+                        extractVideo = video
+                        extractTracks = emptyList()
+                        extractTrackChoice = 0
+                        extractLoading = true
+                        showExtractTrackChooser = true
                         extractUiScope.launch {
                             val tracks = com.beatraxus.app.util.VideoAudioExtractor.listAudioTracks(context, video.uri)
+                            extractLoading = false
                             if (tracks.isEmpty()) {
+                                showExtractTrackChooser = false
                                 android.widget.Toast.makeText(context, "No audio track found in this video", android.widget.Toast.LENGTH_SHORT).show()
                             } else {
-                                extractVideo = video
                                 extractTracks = tracks
                                 extractTrackChoice = tracks.first().nativeIndex
-                                if (tracks.size == 1) extractFolderPicker.launch(null) else showExtractTrackChooser = true
                             }
                         }
                     },

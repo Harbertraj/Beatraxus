@@ -2124,6 +2124,141 @@ fun PlayerBottomBar(
 
 @UnstableApi
 @OptIn(ExperimentalMaterial3Api::class)
+/**
+ * "Extract which audio track?" popup of the Audio Tracks sheet. Same look as the player's option sheet: the dark
+ * gradient panel with rounded corners, the sheet's title style and the audio-track rows (orange when selected).
+ */
+@Composable
+private fun ExtractAudioTrackPopup(
+    tracks: List<VideoTrackInfo>,
+    videoTitle: String,
+    selectedOrdinal: Int,
+    accent: Color,
+    onSelect: (Int) -> Unit,
+    onDismiss: () -> Unit,
+    onChooseFolder: () -> Unit
+) {
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = onDismiss,
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .clickable(
+                    interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                    indication = null,
+                    onClick = onDismiss
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            val panelShape = RoundedCornerShape(28.dp)
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth(0.9f)
+                    .widthIn(max = 420.dp)
+                    .heightIn(max = (androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp * 0.8f).dp)
+                    .clip(panelShape)
+                    .background(Brush.horizontalGradient(listOf(Color(0xFF141419), Color(0xFF1C1C22))))
+                    .border(1.dp, Color.White.copy(alpha = 0.08f), panelShape)
+                    .clickable(
+                        interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                        indication = null,
+                        onClick = {}
+                    )
+                    .padding(horizontal = 14.dp, vertical = 16.dp)
+            ) {
+                Text("Extract Audio Track", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "Saved as: [Language] $videoTitle",
+                    color = Color.White.copy(0.5f), fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis
+                )
+                Spacer(Modifier.height(14.dp))
+                Column(
+                    modifier = Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    tracks.forEach { t ->
+                        val selected = selectedOrdinal == t.audioOrdinal
+                        val label = com.beatraxus.app.util.VideoAudioExtractor.languageDisplayName(t.language)
+                            ?: t.name.takeIf { it.isNotBlank() } ?: "Unknown"
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(if (selected) accent.copy(alpha = 0.2f) else Color.White.copy(alpha = 0.06f))
+                                .border(
+                                    width = 1.dp,
+                                    color = if (selected) accent.copy(alpha = 0.8f) else Color.White.copy(alpha = 0.08f),
+                                    shape = RoundedCornerShape(16.dp)
+                                )
+                                .clickable { onSelect(t.audioOrdinal) }
+                                .heightIn(min = 64.dp)
+                                .padding(horizontal = 16.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.AudioFile,
+                                contentDescription = null,
+                                tint = if (selected) accent else Color.White.copy(0.7f),
+                                modifier = Modifier.size(22.dp)
+                            )
+                            Spacer(Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    "[$label]",
+                                    color = Color.White,
+                                    fontSize = 15.sp,
+                                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis
+                                )
+                                Spacer(Modifier.height(2.dp))
+                                Text(
+                                    formatAudioTrackSubtitleLine(t),
+                                    color = Color.White.copy(0.6f), fontSize = 12.sp,
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(16.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f).height(44.dp)
+                            .clip(RoundedCornerShape(50))
+                            .background(Color.White.copy(0.08f))
+                            .border(1.dp, Color.White.copy(0.14f), RoundedCornerShape(50))
+                            .clickable(onClick = onDismiss),
+                        contentAlignment = Alignment.Center
+                    ) { Text("Cancel", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold) }
+                    val canGo = tracks.any { it.audioOrdinal == selectedOrdinal }
+                    Box(
+                        modifier = Modifier
+                            .weight(1f).height(44.dp)
+                            .clip(RoundedCornerShape(50))
+                            .background(accent.copy(alpha = if (canGo) 0.22f else 0.08f))
+                            .border(1.dp, accent.copy(alpha = if (canGo) 0.7f else 0.2f), RoundedCornerShape(50))
+                            .clickable(enabled = canGo, onClick = onChooseFolder),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            "Choose folder",
+                            color = Color.White.copy(alpha = if (canGo) 1f else 0.35f),
+                            fontSize = 14.sp, fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
 @Composable
 fun VideoSettingsSheetContent(
     uiState: VideoPlayerUiState,
@@ -2176,61 +2311,16 @@ fun VideoSettingsSheetContent(
             if (tree != null && chosen != null) viewModel.extractAudioTrack(tree, chosen)
         }
         if (showExtractTrackDialog) {
-            val nativeTracks = uiState.availableAudioTracks.filter { !it.isExternal }
-            AlertDialog(
-                onDismissRequest = { showExtractTrackDialog = false },
-                containerColor = Color(0xFF1E1E1E),
-                title = { Text("Extract which audio track?", color = Color.White, fontWeight = FontWeight.Bold) },
-                text = {
-                    Column(
-                        modifier = Modifier.verticalScroll(rememberScrollState()),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        Text(
-                            "Saved as: [Language] ${uiState.currentVideo?.title.orEmpty()}",
-                            color = Color.White.copy(0.55f), fontSize = 12.sp,
-                            maxLines = 2, overflow = TextOverflow.Ellipsis
-                        )
-                        nativeTracks.forEach { t ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .clickable { extractChoiceOrdinal = t.audioOrdinal }
-                                    .padding(vertical = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                RadioButton(
-                                    selected = extractChoiceOrdinal == t.audioOrdinal,
-                                    onClick = { extractChoiceOrdinal = t.audioOrdinal },
-                                    colors = RadioButtonDefaults.colors(selectedColor = mxOrange, unselectedColor = Color.White.copy(0.6f))
-                                )
-                                Column(modifier = Modifier.weight(1f)) {
-                                    // The saved file's title starts with this label, e.g. "[Tamil] Movie.m4a"
-                                    val extractLabel = com.beatraxus.app.util.VideoAudioExtractor.languageDisplayName(t.language)
-                                        ?: t.name.takeIf { it.isNotBlank() } ?: "Unknown"
-                                    Text("[$extractLabel]", color = Color.White, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    Text(
-                                        formatAudioTrackSubtitleLine(t),
-                                        color = Color.White.copy(0.6f), fontSize = 12.sp,
-                                        maxLines = 1, overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-                            }
-                        }
-                    }
-                },
-                confirmButton = {
-                    TextButton(
-                        enabled = nativeTracks.any { it.audioOrdinal == extractChoiceOrdinal },
-                        onClick = {
-                            showExtractTrackDialog = false
-                            extractFolderPicker.launch(null)
-                        }
-                    ) { Text("Choose folder", color = mxOrange, fontWeight = FontWeight.Bold) }
-                },
-                dismissButton = {
-                    TextButton(onClick = { showExtractTrackDialog = false }) { Text("Cancel", color = Color.White.copy(0.8f)) }
+            ExtractAudioTrackPopup(
+                tracks = uiState.availableAudioTracks.filter { !it.isExternal },
+                videoTitle = uiState.currentVideo?.title.orEmpty(),
+                selectedOrdinal = extractChoiceOrdinal,
+                accent = mxOrange,
+                onSelect = { extractChoiceOrdinal = it },
+                onDismiss = { showExtractTrackDialog = false },
+                onChooseFolder = {
+                    showExtractTrackDialog = false
+                    extractFolderPicker.launch(null)
                 }
             )
         }

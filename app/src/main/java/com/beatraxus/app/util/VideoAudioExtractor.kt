@@ -144,52 +144,60 @@ object VideoAudioExtractor {
         val bracketLabel: String get() = "[$label]"
     }
 
-    /** Lists the audio tracks of [source] without reading any audio data. Empty when the file can't be opened. */
+    private fun summariesOf(d: Demuxer): List<AudioTrackSummary> {
+        val audio = (0 until d.trackCount).filter {
+            runCatching { d.trackFormat(it).getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true }.getOrDefault(false)
+        }
+        return audio.mapIndexed { n, trackIndex ->
+            val f = d.trackFormat(trackIndex)
+            val lang = runCatching { if (f.containsKey(MediaFormat.KEY_LANGUAGE)) f.getString(MediaFormat.KEY_LANGUAGE) else null }.getOrNull()
+            AudioTrackSummary(
+                nativeIndex = n,
+                label = languageDisplayName(lang) ?: "Track ${n + 1}",
+                mime = f.getString(MediaFormat.KEY_MIME) ?: "",
+                channelCount = runCatching { if (f.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) f.getInteger(MediaFormat.KEY_CHANNEL_COUNT) else -1 }.getOrDefault(-1),
+                sampleRate = runCatching { if (f.containsKey(MediaFormat.KEY_SAMPLE_RATE)) f.getInteger(MediaFormat.KEY_SAMPLE_RATE) else -1 }.getOrDefault(-1)
+            )
+        }
+    }
+
+    /**
+     * Lists the audio tracks of [source] without reading any audio data (Media3 first, then the phone's own extractor,
+     * the same two readers [extract] uses). Empty when the file can't be opened or has no audio.
+     */
     suspend fun listAudioTracks(context: Context, source: Uri): List<AudioTrackSummary> = withContext(Dispatchers.IO) {
         val scheme = source.scheme?.lowercase(Locale.ROOT)
         if (scheme != "content" && scheme != "file") return@withContext emptyList()
-        var opened: Demuxer? = null
+        var tracks: List<AudioTrackSummary> = emptyList()
+        // 1) Media3 (the video player's own demuxers)
+        val media3 = openMedia3(context, source)
+        if (media3 != null) {
+            try {
+                tracks = summariesOf(media3)
+            } catch (e: Exception) {
+                Log.w(TAG, "Media3 couldn't list the audio tracks", e)
+            } finally {
+                runCatching { media3.release() }
+            }
+        }
+        if (tracks.isNotEmpty()) return@withContext tracks
+        // 2) The phone's MediaExtractor
+        val platform = MediaExtractor()
         var pfd: ParcelFileDescriptor? = null
         try {
-            opened = openMedia3(context, source)
-            if (opened == null) {
-                val platform = MediaExtractor()
-                opened = PlatformDemuxer(platform)
-                pfd = runCatching { context.contentResolver.openFileDescriptor(source, "r") }.getOrNull()
-                val fd = pfd
-                if (fd != null) platform.setDataSource(fd.fileDescriptor) else platform.setDataSource(context, source, null)
-            }
-            val d: Demuxer = opened ?: return@withContext emptyList()
-            val audio = (0 until d.trackCount).filter {
-                d.trackFormat(it).getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true
-            }
-            audio.mapIndexed { n, trackIndex ->
-                val f = d.trackFormat(trackIndex)
-                val lang = if (f.containsKey(MediaFormat.KEY_LANGUAGE)) f.getString(MediaFormat.KEY_LANGUAGE) else null
-                AudioTrackSummary(
-                    nativeIndex = n,
-                    label = languageDisplayName(lang) ?: "Track ${n + 1}",
-                    mime = f.getString(MediaFormat.KEY_MIME) ?: "",
-                    channelCount = if (f.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) f.getInteger(MediaFormat.KEY_CHANNEL_COUNT) else -1,
-                    sampleRate = if (f.containsKey(MediaFormat.KEY_SAMPLE_RATE)) f.getInteger(MediaFormat.KEY_SAMPLE_RATE) else -1
-                )
-            }
+            pfd = runCatching { context.contentResolver.openFileDescriptor(source, "r") }.getOrNull()
+            val fd = pfd
+            if (fd != null) platform.setDataSource(fd.fileDescriptor) else platform.setDataSource(context, source, null)
+            tracks = summariesOf(PlatformDemuxer(platform))
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
             Log.w(TAG, "Couldn't list audio tracks", e)
-            emptyList()
         } finally {
-            runCatching { opened?.release() }
+            runCatching { platform.release() }
             runCatching { pfd?.close() }
         }
-    }
-
-    /** "ta" / "tam" -> "Tamil"; null when the code is missing or unknown. */
-    fun languageDisplayName(code: String?): String? {
-        if (code.isNullOrBlank() || code.equals("und", true) || code.equals("zxx", true)) return null
-        val name = Locale.forLanguageTag(code).getDisplayLanguage(Locale.ENGLISH)
-        return name.takeIf { it.isNotBlank() && !it.equals(code, ignoreCase = true) }
+        tracks
     }
 
     /**
