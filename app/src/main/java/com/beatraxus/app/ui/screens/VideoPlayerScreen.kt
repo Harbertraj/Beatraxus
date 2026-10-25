@@ -225,6 +225,12 @@ fun VideoPlayerScreen(
         }
     }
 
+    // Auto-generated subtitles are made from the video's own audio track the viewer has selected.
+    LaunchedEffect(uiState.availableAudioTracks) {
+        val ordinal = uiState.availableAudioTracks.firstOrNull { it.isSelected && !it.isExternal }?.audioOrdinal ?: 0
+        subtitleViewModel.setGenerationAudioTrack(ordinal)
+    }
+
     var showAuthDialogInPlayer by remember { mutableStateOf(false) }
     var authDialogNote by remember { mutableStateOf<String?>(null) }
 

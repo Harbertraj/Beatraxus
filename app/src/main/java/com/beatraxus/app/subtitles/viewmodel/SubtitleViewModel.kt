@@ -8,6 +8,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.beatraxus.app.BuildConfig
 import com.beatraxus.app.model.Video
 import com.beatraxus.app.subtitles.data.CachedSubtitle
 import com.beatraxus.app.subtitles.data.SiblingSubtitleFinder
@@ -16,6 +17,13 @@ import com.beatraxus.app.subtitles.data.SubtitleCache
 import com.beatraxus.app.subtitles.data.SubtitleCredentialsStore
 import com.beatraxus.app.subtitles.data.SubtitleFileImporter
 import com.beatraxus.app.subtitles.data.SubtitleFontStore
+import com.beatraxus.app.subtitles.data.SubtitleSource
+import com.beatraxus.app.subtitles.generate.ChatCompletionsTranslator
+import com.beatraxus.app.subtitles.generate.FfmpegChunkProvider
+import com.beatraxus.app.subtitles.generate.GenerationException
+import com.beatraxus.app.subtitles.generate.GenerationService
+import com.beatraxus.app.subtitles.generate.OpenAiSpeechTranscriber
+import com.beatraxus.app.subtitles.generate.WhisperLanguages
 import com.beatraxus.app.subtitles.domain.AutoSubtitlePicker
 import com.beatraxus.app.subtitles.domain.EncodingNormalizer
 import com.beatraxus.app.subtitles.domain.FilenameParser
@@ -123,6 +131,8 @@ class SubtitleViewModel(
             it.copy(
                 enabled = enabled,
                 dualEnabled = SecondarySubtitlePrefs.isEnabled(prefs),
+                generateEnabled = prefs.getBoolean(KEY_GENERATE, false),
+                generateTranslateTo = prefs.getString(KEY_GENERATE_TRANSLATE_TO, null)?.takeIf { it.isNotBlank() },
                 encodingId = SubtitleEncodingPrefs.read(prefs),
                 secondaryStyle = SecondarySubtitlePrefs.readStyle(prefs),
                 selectedLanguages = prefLangs,
@@ -208,6 +218,12 @@ class SubtitleViewModel(
             // A subtitle file next to the video (video feature 21) comes before any online search.
             if (_uiState.value.enabled && SiblingSubtitleFinder.isAutoLoadEnabled(prefs)) {
                 if (autoLoadSiblingSubtitle(video, mediaKey)) return@launch
+            }
+
+            // Auto-generated subtitles (from the speech in the audio) come before the online search, when switched on.
+            if (_uiState.value.enabled && _uiState.value.generateEnabled && isSpeechConfigured()) {
+                generateSubtitles()
+                return@launch
             }
 
             // Auto-search logic
@@ -970,11 +986,155 @@ class SubtitleViewModel(
         }
     }
 
+    // ---- Auto-generated subtitles from the audio track ----
+
+    /** Position of the video's own audio track the subtitles are made from (the one the viewer is listening to). */
+    private var generationAudioOrdinal = 0
+
+    fun setGenerationAudioTrack(audioOrdinal: Int) {
+        generationAudioOrdinal = audioOrdinal.coerceAtLeast(0)
+    }
+
+    fun setGenerateEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_GENERATE, enabled).apply()
+        _uiState.update { it.copy(generateEnabled = enabled) }
+    }
+
+    /** The language to translate the generated subtitles into, or null to keep the spoken language. */
+    fun setGenerateTranslateTo(languageCode: String?) {
+        prefs.edit().putString(KEY_GENERATE_TRANSLATE_TO, languageCode).apply()
+        _uiState.update { it.copy(generateTranslateTo = languageCode) }
+    }
+
+    /** False when this build has no speech key; the sheet says so instead of failing on each video. */
+    fun isSpeechConfigured(): Boolean = BuildConfig.SPEECH_API_KEY.isNotBlank()
+
+    /**
+     * Makes subtitles from the speech in the video's audio track, translated when a language was chosen. The result is
+     * saved in the subtitle cache like a downloaded file, so a later play of this video (same track, same language)
+     * shows it at once without recognising the speech again.
+     */
+    fun generateSubtitles() {
+        val video = currentVideo ?: return
+        if (_uiState.value.isGenerating) return
+        if (!isSpeechConfigured()) {
+            viewModelScope.launch { _events.emit(SubtitleUiEvent.Error("Auto subtitles need SPEECH_API_KEY in this build.")) }
+            return
+        }
+
+        val target = _uiState.value.generateTranslateTo
+        val ordinal = generationAudioOrdinal
+        val mediaKey = currentMediaKey.ifBlank { MediaKey.of(video) }
+        val subtitleId = "gen_${ordinal}_${target ?: "orig"}"
+        val label = if (target == null) "Auto subtitles" else "Auto subtitles (${WhisperLanguages.displayName(target)})"
+
+        viewModelScope.launch(Dispatchers.IO) {
+            val saved = subtitleCache.getCachedSubtitles(mediaKey).firstOrNull { it.subtitleId == subtitleId }
+            if (saved != null && File(saved.localPath).exists()) {
+                showGenerated(video, mediaKey, saved, label)
+                return@launch
+            }
+
+            val workDir = File(getApplication<Application>().cacheDir, "subtitle_gen")
+            _uiState.update { it.copy(isGenerating = true, generationStatus = "Reading the audio…") }
+            try {
+                val audio = FfmpegChunkProvider(getApplication(), video.uri, ordinal, workDir)
+                val duration = video.durationMs.takeIf { it > 0L } ?: audio.durationMs()
+                val generated = buildGenerationService().generate(audio, duration, target) { done, total ->
+                    _uiState.update { it.copy(generationStatus = progressText(done, total)) }
+                }
+
+                subtitleCache.saveSubtitle(
+                    mediaKey,
+                    CachedSubtitle(
+                        subtitleId = subtitleId,
+                        language = generated.languageCode,
+                        format = "SRT",
+                        releaseName = label,
+                        localPath = "",
+                        source = SubtitleSource.LOCAL
+                    ),
+                    generated.srt
+                )
+                val entry = subtitleCache.getCachedSubtitles(mediaKey).first { it.subtitleId == subtitleId }
+
+                val note = when {
+                    generated.untranslatedLines > 0 -> "Done. ${generated.untranslatedLines} lines could not be translated and stay in the spoken language."
+                    generated.translated -> "Done. Translated to ${WhisperLanguages.displayName(target)}."
+                    else -> "Done. ${generated.cueCount} lines."
+                }
+                _uiState.update { it.copy(isGenerating = false, generationStatus = note) }
+                showGenerated(video, mediaKey, entry, label)
+            } catch (e: CancellationException) {
+                _uiState.update { it.copy(isGenerating = false, generationStatus = null) }
+                throw e
+            } catch (e: Exception) {
+                val message = generationMessage(e)
+                _uiState.update { it.copy(isGenerating = false, generationStatus = message) }
+                _events.emit(SubtitleUiEvent.Error(message))
+            } finally {
+                workDir.deleteRecursively()
+            }
+        }
+    }
+
+    private fun buildGenerationService(): GenerationService {
+        val transcriber = OpenAiSpeechTranscriber(BuildConfig.SPEECH_ENDPOINT, BuildConfig.SPEECH_API_KEY, BuildConfig.SPEECH_MODEL)
+        val translator = BuildConfig.LLM_API_KEY.takeIf { it.isNotBlank() }
+            ?.let { ChatCompletionsTranslator(BuildConfig.LLM_ENDPOINT, it, BuildConfig.LLM_MODEL) }
+        return GenerationService(transcriber, translator)
+    }
+
+    private fun progressText(done: Int, total: Int?): String {
+        val part = done + 1
+        return if (total != null && total > 0) "Recognising speech: part ${minOf(part, total)} of $total" else "Recognising speech: part $part"
+    }
+
+    private fun generationMessage(e: Throwable): String {
+        val kind = (e as? GenerationException)?.kind
+        return when (kind) {
+            GenerationException.Kind.NOT_CONFIGURED -> "Translation needs LLM_API_KEY in this build."
+            GenerationException.Kind.AUTH -> "The speech service rejected the API key."
+            GenerationException.Kind.RATE_LIMITED -> "The speech service is busy. Try again in a minute."
+            GenerationException.Kind.NETWORK -> "No internet connection, so subtitles could not be generated."
+            GenerationException.Kind.NO_AUDIO -> "This video has no audio track to read."
+            GenerationException.Kind.NO_SPEECH -> "No speech was found in this audio track."
+            GenerationException.Kind.UNSUPPORTED_SOURCE -> "Could not read the audio of this video."
+            else -> "Generating subtitles failed. Try again."
+        }
+    }
+
+    /** Attaches a generated subtitle to the player and lists it with the others for this video. */
+    private suspend fun showGenerated(video: Video, mediaKey: String, entry: CachedSubtitle, label: String) {
+        if (currentVideo?.id != video.id) return
+        subtitleController.attachExternalSubtitle(
+            videoId = video.id,
+            file = File(entry.localPath),
+            language = entry.language,
+            label = label,
+            subtitleId = entry.subtitleId
+        )
+        val list = subtitleCache.getCachedSubtitles(mediaKey)
+        withContext(Dispatchers.Main) {
+            _uiState.update {
+                it.copy(
+                    cachedSubtitles = list,
+                    selectedSubtitleId = entry.subtitleId,
+                    selectedSubtitleType = SelectedSubtitleType.EXTERNAL,
+                    selectedSubtitleName = label
+                )
+            }
+            _events.emit(SubtitleUiEvent.DownloadSuccess(label))
+        }
+    }
+
     private companion object {
         /** How many matching files next to a video are tried before giving up (an unreadable one moves on to the next). */
         const val MAX_SIBLING_ATTEMPTS = 3
 
         const val KEY_AUTO_DOWNLOAD = "video_subtitle_auto_download"
+        const val KEY_GENERATE = "video_subtitle_generate"
+        const val KEY_GENERATE_TRANSLATE_TO = "video_subtitle_generate_translate_to"
     }
 }
 

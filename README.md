@@ -173,6 +173,12 @@ LLM_API_KEY=
 LLM_ENDPOINT=https://api.openai.com/v1/chat/completions
 LLM_PROVIDER=openai
 LLM_MODEL=gemini-2.0-flash
+# Auto-generated video subtitles (speech recognition). Needs an OpenAI-style
+# /audio/transcriptions endpoint that returns verbose_json (OpenAI whisper-1, Groq, self-hosted Whisper).
+# Translating the generated subtitles uses the LLM_* keys above (a chat-completions endpoint).
+SPEECH_API_KEY=
+SPEECH_ENDPOINT=https://api.openai.com/v1/audio/transcriptions
+SPEECH_MODEL=whisper-1
 ```
 
 ### 2. Add `google-services.json`

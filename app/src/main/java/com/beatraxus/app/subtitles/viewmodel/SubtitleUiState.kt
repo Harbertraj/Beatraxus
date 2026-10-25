@@ -56,5 +56,12 @@ data class SubtitleUiState(
     val secondaryStyle: SecondarySubtitleStyle = SecondarySubtitleStyle(),
     // Custom font and text encoding (video feature 23)
     val encodingId: String = SubtitleEncodings.AUTO,
-    val customFontName: String? = null
+    val customFontName: String? = null,
+    // Auto-generated subtitles from the audio track
+    val generateEnabled: Boolean = false,
+    /** Language code to translate the generated subtitles into, or null to keep the spoken language. */
+    val generateTranslateTo: String? = null,
+    val isGenerating: Boolean = false,
+    /** What the generator is doing right now ("Recognising speech 2/5"), or the last thing it said. */
+    val generationStatus: String? = null
 )

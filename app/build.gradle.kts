@@ -98,6 +98,16 @@ configure<ApplicationExtension> {
         buildConfigField("String", "LLM_PROVIDER", "\"$llmProvider\"")
         buildConfigField("String", "LLM_MODEL", "\"$llmModel\"")
 
+        // Auto-generated subtitles (video player): speech recognition with an OpenAI-style
+        // /audio/transcriptions endpoint that answers verbose_json (OpenAI, Groq, self-hosted Whisper).
+        // Translation of the generated text uses the LLM_* values above.
+        val speechApiKey = localProperties.getProperty("SPEECH_API_KEY", "").trim()
+        val speechEndpoint = localProperties.getProperty("SPEECH_ENDPOINT", "https://api.openai.com/v1/audio/transcriptions").trim()
+        val speechModel = localProperties.getProperty("SPEECH_MODEL", "whisper-1").trim()
+        buildConfigField("String", "SPEECH_API_KEY", "\"$speechApiKey\"")
+        buildConfigField("String", "SPEECH_ENDPOINT", "\"$speechEndpoint\"")
+        buildConfigField("String", "SPEECH_MODEL", "\"$speechModel\"")
+
         manifestPlaceholders["redirectSchemeName"] = "beatraxus"
         manifestPlaceholders["redirectHostName"] = "auth"
     }
