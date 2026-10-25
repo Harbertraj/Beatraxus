@@ -127,4 +127,42 @@ class GenerationServiceTest {
         assertEquals(2, translator.seen.size)
         assertEquals(2, result.cueCount)
     }
+
+    @Test
+    fun recognitionStartsAtTheViewersPartThenWrapsToTheBeginning() = kotlinx.coroutines.runBlocking {
+        val chunks = FakeChunks(3)
+        val result = GenerationService(FakeHindiTranscriber(chunk), null, chunkLengthMs = chunk)
+            .generate(chunks, 30_000, null, startFromMs = 15_000)
+
+        // The viewer is in the second part: it first, then the one after it, then the one before it.
+        assertEquals(listOf(10_000L, 20_000L, 0L), chunks.requested)
+        // Whatever the order, every cue lands at its own place on the video timeline.
+        assertEquals(listOf(2_000L, 11_000L, 22_000L), SubtitleCueParser.parse(result.srt).map { it.startMs })
+    }
+
+    @Test
+    fun partsRecognisedByEarlierRunAreNotRecognisedAgain() = kotlinx.coroutines.runBlocking {
+        val chunks = FakeChunks(2)
+        val transcriber = FakeHindiTranscriber(chunk)
+        val finished = mutableListOf<Int>()
+        val earlier = GenerationCheckpoint(setOf(0), listOf(SubtitleCue(1_000, 3_000, "पहला")), "hi")
+
+        val result = GenerationService(transcriber, null, chunkLengthMs = chunk)
+            .generate(chunks, 20_000, null, resume = earlier, onChunkDone = { finished += it.index })
+
+        assertEquals(listOf(10_000L), chunks.requested)
+        assertEquals(1, transcriber.calls)
+        assertEquals(listOf(1), finished)
+        assertEquals(listOf("पहला", "नमस्ते दोस्तों"), SubtitleCueParser.parse(result.srt).map { it.text })
+    }
+
+    @Test
+    fun everyPartialSaysWhichPartsItHolds() = kotlinx.coroutines.runBlocking {
+        val partials = mutableListOf<PartialSubtitle>()
+        GenerationService(FakeHindiTranscriber(chunk), null, chunkLengthMs = chunk)
+            .generate(FakeChunks(3), 30_000, null, startFromMs = 25_000, onPartial = { partials += it })
+
+        assertEquals(listOf(setOf(2), setOf(2, 0), setOf(2, 0, 1)), partials.map { it.doneChunks })
+        assertTrue(partials.all { it.chunkLengthMs == chunk })
+    }
 }

@@ -19,11 +19,15 @@ import com.beatraxus.app.subtitles.data.SubtitleCredentialsStore
 import com.beatraxus.app.subtitles.data.SubtitleFileImporter
 import com.beatraxus.app.subtitles.data.SubtitleFontStore
 import com.beatraxus.app.subtitles.data.SubtitleSource
+import com.beatraxus.app.subtitles.generate.AutoSubtitleGenerator
 import com.beatraxus.app.subtitles.generate.ChatCompletionsTranslator
 import com.beatraxus.app.subtitles.generate.FfmpegChunkProvider
 import com.beatraxus.app.subtitles.generate.GenerationException
+import com.beatraxus.app.subtitles.generate.GenerationCheckpointStore
 import com.beatraxus.app.subtitles.generate.GenerationService
 import com.beatraxus.app.subtitles.generate.OpenAiSpeechTranscriber
+import com.beatraxus.app.subtitles.generate.PartialSubtitle
+import com.beatraxus.app.subtitles.generate.PartialSubtitleScheduler
 import com.beatraxus.app.subtitles.generate.WhisperLanguages
 import com.beatraxus.app.subtitles.domain.AutoSubtitlePicker
 import com.beatraxus.app.subtitles.domain.EncodingNormalizer
@@ -47,6 +51,7 @@ import com.beatraxus.app.subtitles.domain.SubtitleQueryBuilder
 import com.beatraxus.app.subtitles.domain.SubtitleRepository
 import com.beatraxus.app.subtitles.domain.SubtitleResult
 import com.beatraxus.app.subtitles.domain.SubtitleSearchQuery
+import com.beatraxus.app.subtitles.domain.SubtitleSourcePrefs
 import com.beatraxus.app.subtitles.domain.SubtitleValidator
 import com.beatraxus.app.subtitles.domain.VideoHashCalculator
 import com.beatraxus.app.subtitles.player.SubtitlePlayerController
@@ -54,6 +59,10 @@ import com.beatraxus.app.subtitles.util.SubtitleErrorMapper
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -194,7 +203,7 @@ class SubtitleViewModel(
                 _uiState.update { it.copy(cachedSubtitles = cachedList, results = emptyList(), bestMatchId = null, error = null, errorMessage = null) }
             }
 
-            val activeCached = cachedList.firstOrNull()
+            val activeCached = SubtitleSourcePrefs.usable(cachedList, _uiState.value.generateEnabled).firstOrNull()
             if (activeCached != null && _uiState.value.enabled) {
                 val file = File(activeCached.localPath)
                 if (file.exists()) {
@@ -1010,10 +1019,26 @@ class SubtitleViewModel(
     /** False when this build has no speech key; the sheet says so instead of failing on each video. */
     fun isSpeechConfigured(): Boolean = BuildConfig.SPEECH_API_KEY.isNotBlank()
 
+    private var generationJob: Job? = null
+
+    private fun generatedLabel(target: String?): String =
+        if (target == null) "Auto subtitles" else "Auto subtitles (${WhisperLanguages.displayName(target)})"
+
+    /** Stops a running generation. What was recognised so far stays on screen and is kept, so the next run continues from there. */
+    fun stopGeneration() {
+        generationJob?.cancel()
+    }
+
     /**
      * Makes subtitles from the speech in the video's audio track, translated when a language was chosen. The result is
      * saved in the subtitle cache like a downloaded file, so a later play of this video (same track, same language)
      * shows it at once without recognising the speech again.
+     *
+     * The audio is recognised in 3-minute parts, starting with the part the viewer is watching and carrying on from
+     * there, so the subtitles for what is on screen are ready first. Every part that is ready is put on screen as soon
+     * as the viewer's position needs it (see [PartialSubtitleScheduler]); the viewer never waits for the whole video.
+     * Every recognised part is also saved, so a run that stops (a speech-service limit, no connection) is continued
+     * rather than started over.
      */
     fun generateSubtitles() {
         val video = currentVideo ?: return
@@ -1022,14 +1047,16 @@ class SubtitleViewModel(
             viewModelScope.launch { _events.emit(SubtitleUiEvent.Error("Auto subtitles need SPEECH_API_KEY in this build.")) }
             return
         }
+        // Asking for generated subtitles means the viewer wants to see them.
+        if (!_uiState.value.enabled) enableSubtitles()
 
         val target = _uiState.value.generateTranslateTo
         val ordinal = generationAudioOrdinal
         val mediaKey = currentMediaKey.ifBlank { MediaKey.of(video) }
-        val subtitleId = "gen_${ordinal}_${target ?: "orig"}"
-        val label = if (target == null) "Auto subtitles" else "Auto subtitles (${WhisperLanguages.displayName(target)})"
+        val subtitleId = SubtitleSourcePrefs.generatedId(ordinal, target)
+        val label = generatedLabel(target)
 
-        viewModelScope.launch(Dispatchers.IO) {
+        generationJob = viewModelScope.launch(Dispatchers.IO) {
             val saved = subtitleCache.getCachedSubtitles(mediaKey).firstOrNull { it.subtitleId == subtitleId }
             if (saved != null && File(saved.localPath).exists()) {
                 showGenerated(video, mediaKey, saved, label)
@@ -1040,55 +1067,97 @@ class SubtitleViewModel(
             val workDir = File(app.cacheDir, "subtitle_gen")
             // Unfinished subtitles live outside the subtitle cache, so a stopped run is never mistaken for a finished one.
             val partialDir = File(app.cacheDir, "subtitle_gen_partial").apply { mkdirs() }
+            // What was heard (before translation) is kept per video and audio track, to continue a stopped run.
+            val checkpointFile = File(
+                File(app.cacheDir, "subtitle_gen_checkpoint"),
+                "${mediaKey}_a${ordinal}_c${AutoSubtitleGenerator.DEFAULT_CHUNK_MS}.ckpt"
+            )
+            val resume = GenerationCheckpointStore.load(checkpointFile)
+
             var shownPartials = 0
+            var shownChunks: Set<Int> = emptySet()
             var lastPartial: File? = null
+            var latest: PartialSubtitle? = null
+            val showLock = Mutex()
+
+            /** Puts the newest subtitles in front of the player when the viewer's position needs them. */
+            suspend fun showLatestIfNeeded() {
+                val p = latest ?: return
+                if (currentVideo?.id != video.id) return
+                showLock.withLock {
+                    val position = subtitleController.currentPositionMs()
+                    if (PartialSubtitleScheduler.shouldShow(p.doneChunks, shownChunks, position, p.chunkLengthMs)) {
+                        try {
+                            val file = File(partialDir, "${mediaKey}_${subtitleId}_${p.chunksDone}.srt")
+                            file.writeText(p.srt, Charsets.UTF_8)
+                            subtitleController.attachExternalSubtitle(
+                                videoId = video.id,
+                                file = file,
+                                language = p.languageCode,
+                                label = "$label (in progress)",
+                                subtitleId = subtitleId
+                            )
+                            lastPartial?.delete()
+                            lastPartial = file
+                            shownChunks = p.doneChunks
+                            shownPartials++
+                            Log.d(TAG, "Showing ${p.doneChunks.size} ready parts at ${position}ms")
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Could not show the partial subtitles", e)
+                        }
+                    }
+                }
+            }
+
+            // The viewer may seek while the next part is still being recognised: look again every few seconds.
+            val ticker = launch {
+                while (isActive) {
+                    delay(4_000)
+                    showLatestIfNeeded()
+                }
+            }
 
             _uiState.update { it.copy(isGenerating = true, generationStatus = "Reading the audio…") }
-            Log.i(TAG, "Generating subtitles: audioTrack=$ordinal target=$target video=${video.id}")
+            Log.i(TAG, "Generating subtitles: audioTrack=$ordinal target=$target video=${video.id} resumedParts=${resume?.doneChunks?.size ?: 0}")
             try {
                 val audio = FfmpegChunkProvider(app, video.uri, ordinal, workDir)
                 val duration = video.durationMs.takeIf { it > 0L } ?: audio.durationMs()
-                Log.i(TAG, "Audio ready, duration=${duration}ms, endpoint=${BuildConfig.SPEECH_ENDPOINT}, model=${BuildConfig.SPEECH_MODEL}")
+                val startAt = subtitleController.currentPositionMs()
+                Log.i(TAG, "Audio ready, duration=${duration}ms, startAt=${startAt}ms, endpoint=${BuildConfig.SPEECH_ENDPOINT}, model=${BuildConfig.SPEECH_MODEL}")
 
                 val generated = buildGenerationService().generate(
                     audio = audio,
                     mediaDurationMs = duration,
                     targetLanguageCode = target,
+                    startFromMs = startAt,
+                    resume = resume,
                     onProgress = { done, total ->
                         Log.d(TAG, "Recognising part ${done + 1} of ${total ?: "?"}")
                         _uiState.update { it.copy(generationStatus = progressText(done, total)) }
                     },
+                    onChunkStats = { index, extractMs, recogniseMs ->
+                        // Tells a slow FFmpeg cut (grows with the position in the file) from a slow or limited speech service.
+                        Log.d(TAG, "Part ${index + 1}: cut audio ${extractMs}ms, recognised ${recogniseMs}ms")
+                    },
+                    onChunkDone = { chunk ->
+                        try {
+                            GenerationCheckpointStore.append(checkpointFile, chunk)
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Could not save the progress", e)
+                        }
+                    },
                     onPartial = { p ->
                         Log.d(TAG, "Part ${p.chunksDone} done, subtitles cover ${p.coveredUntilMs}ms")
+                        latest = p
                         _uiState.update {
-                            it.copy(generationStatus = "Recognised ${p.chunksDone} of ${p.chunksTotal ?: "?"} parts · subtitles ready up to ${clock(p.coveredUntilMs)}")
+                            it.copy(generationStatus = "Recognised ${p.chunksDone} of ${p.chunksTotal ?: "?"} parts")
                         }
-                        // Show the first subtitles at once, then again each time the covered part of the video doubles
-                        // (1, 2, 4, 8 … parts): recognition runs faster than playback, and each update restarts the
-                        // subtitle track, so doing it for every part would keep interrupting the picture.
-                        val isShowPoint = (p.chunksDone and (p.chunksDone - 1)) == 0
-                        if (isShowPoint && currentVideo?.id == video.id) {
-                            try {
-                                val file = File(partialDir, "${mediaKey}_${subtitleId}_${p.chunksDone}.srt")
-                                file.writeText(p.srt, Charsets.UTF_8)
-                                subtitleController.attachExternalSubtitle(
-                                    videoId = video.id,
-                                    file = file,
-                                    language = p.languageCode,
-                                    label = "$label (in progress)",
-                                    subtitleId = subtitleId
-                                )
-                                lastPartial?.delete()
-                                lastPartial = file
-                                shownPartials++
-                            } catch (e: CancellationException) {
-                                throw e
-                            } catch (e: Exception) {
-                                Log.w(TAG, "Could not show the partial subtitles", e)
-                            }
-                        }
+                        showLatestIfNeeded()
                     }
                 )
+                ticker.cancel()
                 Log.i(TAG, "Done: ${generated.cueCount} cues, language=${generated.languageCode}, untranslated=${generated.untranslatedLines}")
 
                 subtitleCache.saveSubtitle(
@@ -1115,7 +1184,12 @@ class SubtitleViewModel(
                 partialDir.deleteRecursively()
             } catch (e: CancellationException) {
                 Log.i(TAG, "Generation cancelled")
-                _uiState.update { it.copy(isGenerating = false, generationStatus = null) }
+                _uiState.update {
+                    it.copy(
+                        isGenerating = false,
+                        generationStatus = if (shownPartials > 0) "Stopped. Subtitles made so far stay on screen; Generate continues from there." else null
+                    )
+                }
                 throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Generating subtitles failed", e)
@@ -1124,13 +1198,60 @@ class SubtitleViewModel(
                 _uiState.update { it.copy(isGenerating = false, generationStatus = message) }
                 _events.emit(SubtitleUiEvent.Error(message))
             } finally {
+                ticker.cancel()
                 workDir.deleteRecursively()
             }
         }
     }
 
+    /**
+     * Switches to the subtitles stored in the video file. The generated subtitle is taken off the player (it stays saved),
+     * a running generation stops, and [embeddedTrackGroupIndex] (the first embedded track, normally) is selected.
+     * Null means the video has none, so no subtitle is shown.
+     */
+    fun useVideoSubtitles(embeddedTrackGroupIndex: Int?) {
+        stopGeneration()
+        setGenerateEnabled(false)
+        enableSubtitles()
+        val video = currentVideo
+        viewModelScope.launch {
+            if (video != null) subtitleController.removeExternalSubtitle(video.id)
+            if (embeddedTrackGroupIndex != null) {
+                selectEmbeddedTrack(embeddedTrackGroupIndex)
+            } else {
+                _uiState.update { it.copy(selectedSubtitleId = null, selectedSubtitleType = SelectedSubtitleType.NONE, selectedSubtitleName = null) }
+            }
+        }
+    }
+
+    /** Switches to auto-generated subtitles; a subtitle already generated for this video and language is shown again at once. */
+    fun useAutoGenerate() {
+        setGenerateEnabled(true)
+        enableSubtitles()
+        val video = currentVideo ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            val mediaKey = currentMediaKey.ifBlank { MediaKey.of(video) }
+            val target = _uiState.value.generateTranslateTo
+            val id = SubtitleSourcePrefs.generatedId(generationAudioOrdinal, target)
+            val saved = subtitleCache.getCachedSubtitles(mediaKey).firstOrNull { it.subtitleId == id }
+            if (saved != null && File(saved.localPath).exists()) showGenerated(video, mediaKey, saved, generatedLabel(target))
+        }
+    }
+
     private fun buildGenerationService(): GenerationService {
-        val transcriber = OpenAiSpeechTranscriber(BuildConfig.SPEECH_ENDPOINT, BuildConfig.SPEECH_API_KEY, BuildConfig.SPEECH_MODEL)
+        val transcriber = OpenAiSpeechTranscriber(
+            BuildConfig.SPEECH_ENDPOINT, BuildConfig.SPEECH_API_KEY, BuildConfig.SPEECH_MODEL,
+            onRateLimited = { leftMs, totalMs ->
+                // Free speech plans cap the audio seconds per hour: past that the service asks to wait, sometimes minutes.
+                if (leftMs == totalMs) Log.w(TAG, "Speech service limit reached, waiting ${totalMs / 1000}s before the next part")
+                _uiState.update {
+                    it.copy(
+                        generationStatus = if (leftMs > 0L) "Speech service limit reached. Continuing in ${clock(leftMs)}. Subtitles made so far stay on screen."
+                        else "Recognising speech…"
+                    )
+                }
+            }
+        )
         val translator = BuildConfig.LLM_API_KEY.takeIf { it.isNotBlank() }
             ?.let { ChatCompletionsTranslator(BuildConfig.LLM_ENDPOINT, it, BuildConfig.LLM_MODEL) }
         return GenerationService(transcriber, translator)
@@ -1146,7 +1267,8 @@ class SubtitleViewModel(
         return when (kind) {
             GenerationException.Kind.NOT_CONFIGURED -> "Translation needs LLM_API_KEY in this build."
             GenerationException.Kind.AUTH -> "The speech service rejected the API key."
-            GenerationException.Kind.RATE_LIMITED -> "The speech service is busy. Try again in a minute."
+            GenerationException.Kind.RATE_LIMITED -> "The speech service's limit was reached" +
+                (e.message?.takeIf { it.isNotBlank() }?.let { " ($it)" } ?: "") + ". What was recognised is saved: tap Generate later to continue."
             GenerationException.Kind.NETWORK -> "No internet connection, so subtitles could not be generated."
             GenerationException.Kind.NO_AUDIO -> "This video has no audio track to read."
             GenerationException.Kind.NO_SPEECH -> "No speech was found in this audio track."
@@ -1196,7 +1318,7 @@ class SubtitleViewModel(
 
         const val TAG = "SubtitleGen"
         const val KEY_AUTO_DOWNLOAD = "video_subtitle_auto_download"
-        const val KEY_GENERATE = "video_subtitle_generate"
+        const val KEY_GENERATE = SubtitleSourcePrefs.KEY_GENERATE
         const val KEY_GENERATE_TRANSLATE_TO = "video_subtitle_generate_translate_to"
     }
 }

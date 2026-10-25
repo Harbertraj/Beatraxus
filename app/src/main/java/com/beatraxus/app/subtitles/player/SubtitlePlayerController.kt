@@ -20,6 +20,10 @@ interface SubtitlePlayerController {
     )
 
     suspend fun removeExternalSubtitle(videoId: String)
+
+    /** Where the player is in the current video, in milliseconds (0 when there is no player). */
+    suspend fun currentPositionMs(): Long = 0L
+
     fun selectEmbeddedTrack(groupIndex: Int)
     fun disableSubtitles()
     fun setSubtitleDelay(videoId: String, delayMs: Long, originalFileProvider: () -> File?)

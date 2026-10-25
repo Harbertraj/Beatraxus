@@ -21,7 +21,10 @@ data class PartialSubtitle(
     /** End of the last cue: the video is covered up to here. */
     val coveredUntilMs: Long,
     val chunksDone: Int,
-    val chunksTotal: Int?
+    val chunksTotal: Int?,
+    /** Which chunks (0 = first [chunkLengthMs] of the video) these subtitles include. They may not be in playing order. */
+    val doneChunks: Set<Int> = emptySet(),
+    val chunkLengthMs: Long = 0L
 )
 
 private data class CueKey(val startMs: Long, val text: String)
@@ -38,6 +41,10 @@ class GenerationService(
 
     /**
      * @param targetLanguageCode the language to write the subtitles in, or null to keep the spoken language.
+     * @param startFromMs the part of the video containing this position is recognised first (the viewer's position).
+     * @param resume what an earlier, interrupted run already recognised; those parts are not sent to the service again.
+     * @param onChunkDone every recognised chunk, as soon as it is ready, so it can be saved for a later resume.
+     * @param onChunkStats seconds of work per chunk, for the log.
      * @param onPartial called after each recognised chunk with the subtitles of everything recognised so far. When a
      *   translation is wanted, only cues not translated yet are sent to the translator, so each line is translated once.
      */
@@ -45,7 +52,11 @@ class GenerationService(
         audio: AudioChunkProvider,
         mediaDurationMs: Long,
         targetLanguageCode: String?,
+        startFromMs: Long = 0L,
+        resume: GenerationCheckpoint? = null,
         onProgress: (Int, Int?) -> Unit = { _, _ -> },
+        onChunkStats: (index: Int, extractMs: Long, recogniseMs: Long) -> Unit = { _, _, _ -> },
+        onChunkDone: suspend (ChunkResult) -> Unit = {},
         onPartial: suspend (PartialSubtitle) -> Unit = {}
     ): GeneratedSubtitle {
         val translations = HashMap<CueKey, String>()
@@ -76,8 +87,12 @@ class GenerationService(
             transcriber = transcriber,
             mediaDurationMs = mediaDurationMs,
             languageHint = null,
-            onProgress = onProgress
-        ) { cues, spokenSoFar, done, total ->
+            startFromMs = startFromMs,
+            resume = resume,
+            onProgress = onProgress,
+            onChunkStats = onChunkStats,
+            onChunkDone = onChunkDone
+        ) { cues, spokenSoFar, done, total, doneChunks ->
             val (shown, translated) = render(cues, spokenSoFar)
             onPartial(
                 PartialSubtitle(
@@ -85,7 +100,9 @@ class GenerationService(
                     languageCode = if (translated) targetLanguageCode!! else spokenSoFar ?: "und",
                     coveredUntilMs = shown.last().endMs,
                     chunksDone = done,
-                    chunksTotal = total
+                    chunksTotal = total,
+                    doneChunks = doneChunks,
+                    chunkLengthMs = chunkLengthMs
                 )
             )
         }

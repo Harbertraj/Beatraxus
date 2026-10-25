@@ -33,61 +33,112 @@ data class GeneratedTrack(
     val cues: List<SubtitleCue>
 )
 
+/** One finished chunk: what was heard in it, on the video timeline (before the clean-up across chunks). */
+data class ChunkResult(val index: Int, val cues: List<SubtitleCue>, val languageCode: String?)
+
+/** What an earlier, interrupted run already recognised, so a new run only has to do the rest. */
+data class GenerationCheckpoint(
+    val doneChunks: Set<Int>,
+    val cues: List<SubtitleCue>,
+    val languageCode: String?
+)
+
 /**
  * Generates subtitles from audio: cuts it into chunks, recognises each, and merges the results on the video timeline.
  *
  * Chunks are cut at exact multiples of [chunkLengthMs], so a cue found at `t` seconds inside chunk `n` is at
- * `n * chunkLengthMs + t` in the video. That single rule is what keeps the subtitles in step with the audio.
+ * `n * chunkLengthMs + t` in the video. That single rule is what keeps the subtitles in step with the audio, and it
+ * is also why the chunks may be recognised in any order: they start where the viewer is watching and wrap round to
+ * the beginning, so the part being watched is ready first.
  */
 class AutoSubtitleGenerator(private val chunkLengthMs: Long = DEFAULT_CHUNK_MS) {
 
     /**
-     * @param mediaDurationMs length of the video, or 0 when unknown (then chunks are read until the audio runs out).
+     * @param mediaDurationMs length of the video, or 0 when unknown (then chunks are read from the start until the audio runs out).
+     * @param startFromMs the part containing this position is recognised first, then the parts after it, then the ones before it.
+     * @param resume work an earlier run finished; those chunks are not recognised again.
      * @param onProgress called with (chunks finished, chunks in total or null when unknown).
+     * @param onChunkStats time spent cutting and recognising one chunk, to find out where a slow run spends its time.
+     * @param onChunkDone called with every chunk as soon as it is recognised, so it can be saved for a later resume.
      * @param onPartial called after every chunk that produced speech, with the cleaned-up cues of everything recognised
-     *   so far (video timeline), the spoken language, the chunks finished and the chunks in total (null when unknown).
-     *   This is what lets the player show the first minutes of subtitles long before the whole video is done.
+     *   so far (video timeline), the spoken language, the chunks finished, the chunks in total (null when unknown) and
+     *   which chunks those are. This is what lets the player show subtitles long before the whole video is done.
      */
     suspend fun transcribe(
         provider: AudioChunkProvider,
         transcriber: SpeechTranscriber,
         mediaDurationMs: Long,
         languageHint: String? = null,
+        startFromMs: Long = 0L,
+        resume: GenerationCheckpoint? = null,
         onProgress: (done: Int, total: Int?) -> Unit = { _, _ -> },
-        onPartial: suspend (cues: List<SubtitleCue>, languageCode: String?, done: Int, total: Int?) -> Unit = { _, _, _, _ -> }
+        onChunkStats: (index: Int, extractMs: Long, recogniseMs: Long) -> Unit = { _, _, _ -> },
+        onChunkDone: suspend (ChunkResult) -> Unit = {},
+        onPartial: suspend (cues: List<SubtitleCue>, languageCode: String?, done: Int, total: Int?, doneChunks: Set<Int>) -> Unit =
+            { _, _, _, _, _ -> }
     ): GeneratedTrack {
         val total = if (mediaDurationMs > 0) ((mediaDurationMs + chunkLengthMs - 1) / chunkLengthMs).toInt() else null
-        val raw = ArrayList<SubtitleCue>()
-        var language: String? = languageHint
-        var detected: String? = null
-        var chunks = 0
-        var start = 0L
+        val raw = ArrayList<SubtitleCue>(resume?.cues.orEmpty())
+        val done = LinkedHashSet<Int>(resume?.doneChunks.orEmpty())
+        var detected: String? = resume?.languageCode
+        var language: String? = languageHint ?: detected
+        var sawAudio = done.isNotEmpty()
+
+        // With a known length the order is: the viewer's part, everything after it, then everything before it.
+        val first = if (total != null) (startFromMs.coerceAtLeast(0L) / chunkLengthMs).toInt().coerceIn(0, total - 1) else 0
+        var step = 0
 
         while (true) {
             currentCoroutineContext().ensureActive()
-            if (mediaDurationMs > 0 && start >= mediaDurationMs) break
-            val file = provider.extract(start, chunkLengthMs) ?: break
-            try {
-                onProgress(chunks, total)
+            val index = if (total != null) {
+                if (step >= total) break
+                (first + step) % total
+            } else {
+                step
+            }
+            step++
+            if (index in done) continue
+
+            val start = index * chunkLengthMs
+            onProgress(done.size, total)
+
+            val extractStarted = System.nanoTime()
+            val file = provider.extract(start, chunkLengthMs)
+            val extractMs = (System.nanoTime() - extractStarted) / 1_000_000L
+            if (file == null) {
+                // Past the end of the audio. With an unknown length that is the end of the video; with a known one
+                // this part simply has nothing to hear and the others still need doing.
+                if (total == null) break
+                done += index
+                continue
+            }
+
+            val recogniseStarted = System.nanoTime()
+            val chunkCues = try {
                 val transcript = transcriber.transcribe(file, language)
                 if (detected == null && transcript.segments.isNotEmpty()) {
                     detected = WhisperLanguages.codeFor(transcript.languageName)
                     // Later chunks are told the language so one noisy chunk cannot flip it.
                     if (language == null) language = detected
                 }
-                raw += GeneratedCueBuilder.build(transcript, start, language ?: detected)
+                GeneratedCueBuilder.build(transcript, start, language ?: detected)
             } finally {
                 file.delete()
             }
-            chunks++
-            start += chunkLengthMs
+            val recogniseMs = (System.nanoTime() - recogniseStarted) / 1_000_000L
+
+            sawAudio = true
+            raw += chunkCues
+            done += index
+            onChunkStats(index, extractMs, recogniseMs)
+            onChunkDone(ChunkResult(index, chunkCues, language ?: detected))
 
             val soFar = GeneratedCueBuilder.polish(raw, language ?: detected)
-            if (soFar.isNotEmpty()) onPartial(soFar, language ?: detected, chunks, total)
+            if (soFar.isNotEmpty()) onPartial(soFar, language ?: detected, done.size, total, done.toSet())
         }
-        onProgress(chunks, total ?: chunks)
+        onProgress(done.size, total ?: done.size)
 
-        if (chunks == 0) throw GenerationException(GenerationException.Kind.NO_AUDIO, "No audio found in the selected track")
+        if (!sawAudio) throw GenerationException(GenerationException.Kind.NO_AUDIO, "No audio found in the selected track")
         val finalLanguage = detected ?: languageHint
         val cues = GeneratedCueBuilder.polish(raw, finalLanguage)
         if (cues.isEmpty()) throw GenerationException(GenerationException.Kind.NO_SPEECH, "No speech was found in the audio")
@@ -103,6 +154,7 @@ class AutoSubtitleGenerator(private val chunkLengthMs: Long = DEFAULT_CHUNK_MS) 
         const val DEFAULT_CHUNK_MS = 180_000L
     }
 }
+
 
 data class TranslationResult(
     val cues: List<SubtitleCue>,

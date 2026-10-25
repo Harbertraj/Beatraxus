@@ -925,7 +925,12 @@ class VideoPlayerViewModel(
             video?.let { v ->
                 viewModelScope.launch {
                     val mediaKey = MediaKey.of(v)
-                    val cachedSubs = subtitleCache.getCachedSubtitles(mediaKey)
+                    // A generated subtitle left in the cache is only put back while "Auto-generate" is the chosen source;
+                    // with "Video's own" the video's embedded subtitle tracks are what the viewer asked for.
+                    val cachedSubs = com.beatraxus.app.subtitles.domain.SubtitleSourcePrefs.usable(
+                        subtitleCache.getCachedSubtitles(mediaKey),
+                        prefs.getBoolean(com.beatraxus.app.subtitles.domain.SubtitleSourcePrefs.KEY_GENERATE, false)
+                    )
                     val activeCached = cachedSubs.firstOrNull()
                     if (activeCached != null) {
                         val file = File(activeCached.localPath)

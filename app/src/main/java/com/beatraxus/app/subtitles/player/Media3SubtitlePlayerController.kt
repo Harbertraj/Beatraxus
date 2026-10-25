@@ -6,6 +6,8 @@ import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackParameters
+import androidx.media3.common.Player
+import androidx.media3.common.Tracks
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
@@ -44,6 +46,13 @@ class Media3SubtitlePlayerController(
     override val currentDelayMs: StateFlow<Long> = _currentDelayMs.asStateFlow()
 
     private var delayJob: Job? = null
+
+    /** Waits for the tracks of a just-replaced media item, then selects the new subtitle track (see [selectSideloadedTrackWhenLoaded]). */
+    private var pendingSelection: Player.Listener? = null
+
+    override suspend fun currentPositionMs(): Long = withContext(Dispatchers.Main) {
+        playerProvider()?.currentPosition ?: 0L
+    }
 
     override suspend fun attachExternalSubtitle(
         videoId: String,
@@ -116,7 +125,7 @@ class Media3SubtitlePlayerController(
                 _activeExternalSubtitleName.value = label
                 _isDelaySupported.value = true
 
-                enableAndSelectSideloadedTrack(player, trackId)
+                selectSideloadedTrackWhenLoaded(player, trackId)
 
                 if (selectedAudioMime != null || selectedAudioLang != null) {
                     restoreAudioTrack(player, selectedAudioMime, selectedAudioLang)
@@ -226,9 +235,11 @@ class Media3SubtitlePlayerController(
         _currentDelayMs.value = 0L
     }
 
-    private fun enableAndSelectSideloadedTrack(player: ExoPlayer, targetTrackId: String) {
+    /** Turns subtitles on and selects the sideloaded track [targetTrackId] when the player already lists it; true when it did. */
+    private fun enableAndSelectSideloadedTrack(player: ExoPlayer, targetTrackId: String): Boolean {
         var params = player.trackSelectionParameters.buildUpon()
             .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+        var found = false
 
         player.currentTracks.groups.forEach { group ->
             if (group.type == C.TRACK_TYPE_TEXT) {
@@ -236,6 +247,7 @@ class Media3SubtitlePlayerController(
                     val format = group.getTrackFormat(i)
                     if (format.id == targetTrackId) {
                         params = params.setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, i))
+                        found = true
                         break
                     }
                 }
@@ -243,6 +255,38 @@ class Media3SubtitlePlayerController(
         }
 
         player.trackSelectionParameters = params.build()
+        return found
+    }
+
+    /**
+     * Right after the media item is replaced the player still lists the tracks of the OLD item, so selecting then can
+     * miss the new subtitle track entirely (a generated subtitle was "done" yet never appeared, especially when subtitles
+     * had been switched off before). Subtitles are switched on at once and the track is selected again as soon as the
+     * new item's tracks arrive.
+     */
+    private fun selectSideloadedTrackWhenLoaded(player: ExoPlayer, trackId: String) {
+        pendingSelection?.let { player.removeListener(it) }
+        pendingSelection = null
+
+        enableAndSelectSideloadedTrack(player, trackId)
+
+        val listener = object : Player.Listener {
+            override fun onTracksChanged(tracks: Tracks) {
+                if (enableAndSelectSideloadedTrack(player, trackId)) {
+                    player.removeListener(this)
+                    if (pendingSelection === this) pendingSelection = null
+                }
+            }
+        }
+        pendingSelection = listener
+        player.addListener(listener)
+        scope.launch {
+            delay(15_000)
+            if (pendingSelection === listener) {
+                player.removeListener(listener)
+                pendingSelection = null
+            }
+        }
     }
 
     private fun restoreAudioTrack(player: ExoPlayer, mimeType: String?, lang: String?) {

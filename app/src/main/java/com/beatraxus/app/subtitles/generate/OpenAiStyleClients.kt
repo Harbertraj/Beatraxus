@@ -44,10 +44,42 @@ internal object OpenAiStyle {
     fun ioFailure(e: IOException): GenerationException =
         GenerationException(GenerationException.Kind.NETWORK, "No connection to the speech service", e)
 
-    /** How long a rate-limited answer asks us to wait: its Retry-After seconds, kept between 2 and 30 seconds. */
-    fun retryAfterMs(response: Response): Long {
-        val seconds = response.header("Retry-After")?.trim()?.toDoubleOrNull() ?: 5.0
-        return (seconds * 1000).toLong().coerceIn(2_000L, 30_000L)
+    /** The longest single wait honoured after a rate-limited answer (an hourly audio quota can ask for many minutes). */
+    const val MAX_SINGLE_WAIT_MS = 20L * 60_000L
+
+    /**
+     * How long a rate-limited answer asks us to wait: its Retry-After, else the "try again in 7m12s" of its message, else a
+     * back-off. Null when waiting is pointless: the paid quota is used up, or the limit lifts only hours from now.
+     */
+    fun rateLimitWaitMs(response: Response, body: String, attempt: Int): Long? {
+        if (body.contains("insufficient_quota", ignoreCase = true) || body.contains("exceeded your current quota", ignoreCase = true)) return null
+        val fromHeader = response.header("Retry-After")?.trim()?.toDoubleOrNull()?.let { (it * 1000).toLong() }
+        val backoff = 5_000L shl attempt.coerceIn(0, 4)
+        val wanted = fromHeader ?: parseTryAgainMs(body) ?: backoff
+        if (wanted > MAX_SINGLE_WAIT_MS) return null
+        // A little extra, so the request does not arrive a moment before the limit is lifted.
+        return wanted.coerceAtLeast(2_000L) + 1_000L
+    }
+
+    private val TRY_AGAIN = Regex("try again in\\s+([0-9hms.]+)", RegexOption.IGNORE_CASE)
+    private val DURATION_PART = Regex("([0-9]+(?:\\.[0-9]+)?)(ms|h|m|s)")
+
+    /** Reads the wait out of a message such as "Please try again in 7m12.5s", "in 1h2m3s" or "in 350ms"; null when there is none. */
+    fun parseTryAgainMs(body: String): Long? {
+        val spec = TRY_AGAIN.find(body)?.groupValues?.get(1) ?: return null
+        var total = 0.0
+        var found = false
+        for (part in DURATION_PART.findAll(spec)) {
+            val value = part.groupValues[1].toDoubleOrNull() ?: continue
+            total += when (part.groupValues[2]) {
+                "h" -> value * 3_600_000.0
+                "m" -> value * 60_000.0
+                "s" -> value * 1_000.0
+                else -> value
+            }
+            found = true
+        }
+        return if (found) total.toLong() else null
     }
 }
 
@@ -58,7 +90,9 @@ internal object OpenAiStyle {
 class OpenAiSpeechTranscriber(
     private val endpoint: String,
     private val apiKey: String,
-    private val model: String
+    private val model: String,
+    /** Called every second while a rate limit is being waited out: (time left, the whole wait). 0 left = the wait is over. */
+    private val onRateLimited: (leftMs: Long, totalMs: Long) -> Unit = { _, _ -> }
 ) : SpeechTranscriber {
 
     override suspend fun transcribe(audio: File, languageCode: String?): WhisperTranscript = withContext(Dispatchers.IO) {
@@ -78,8 +112,10 @@ class OpenAiSpeechTranscriber(
             .post(body)
             .build()
 
-        // Short chunks mean many requests, which can hit a requests-per-minute limit: wait and ask again a few times.
+        // Free plans cap the audio seconds per hour (and requests per minute). Going over is not a failure: the answer says
+        // how long to wait, so wait that long (showing it) and ask again instead of giving up after a few seconds.
         var attempt = 0
+        var waitedMs = 0L
         var result: WhisperTranscript? = null
         while (result == null) {
             var waitMs = 0L
@@ -88,8 +124,10 @@ class OpenAiSpeechTranscriber(
                     val text = response.body?.string().orEmpty()
                     when {
                         response.isSuccessful -> WhisperResponseParser.parse(text)
-                        response.code == 429 && attempt < MAX_RATE_LIMIT_RETRIES -> {
-                            waitMs = OpenAiStyle.retryAfterMs(response)
+                        response.code == 429 -> {
+                            waitMs = OpenAiStyle.rateLimitWaitMs(response, text, attempt)
+                                ?: throw OpenAiStyle.failure(429, text)
+                            if (waitedMs + waitMs > MAX_TOTAL_WAIT_MS) throw OpenAiStyle.failure(429, text)
                             null
                         }
                         else -> throw OpenAiStyle.failure(response.code, text)
@@ -100,14 +138,23 @@ class OpenAiSpeechTranscriber(
             }
             if (result == null) {
                 attempt++
-                delay(waitMs)
+                waitedMs += waitMs
+                var left = waitMs
+                while (left > 0) {
+                    onRateLimited(left, waitMs)
+                    val step = minOf(1_000L, left)
+                    delay(step)
+                    left -= step
+                }
+                onRateLimited(0L, waitMs)
             }
         }
         result
     }
 
     private companion object {
-        const val MAX_RATE_LIMIT_RETRIES = 3
+        /** Total time one chunk may spend waiting for a rate limit before the run stops (it can be resumed later). */
+        const val MAX_TOTAL_WAIT_MS = 90L * 60_000L
     }
 }
 
