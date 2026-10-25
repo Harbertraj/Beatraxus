@@ -2,6 +2,7 @@ package com.beatraxus.app.subtitles.generate
 
 import android.content.Context
 import android.net.Uri
+import android.util.Log
 import com.arthenica.ffmpegkit.FFmpegKit
 import com.arthenica.ffmpegkit.FFmpegKitConfig
 import com.arthenica.ffmpegkit.FFprobeKit
@@ -38,6 +39,7 @@ class FfmpegChunkProvider(
             FfmpegAudioArgs.build(input, startMs, lengthMs, audioOrdinal, out.absolutePath)
         )
         val ok = ReturnCode.isSuccess(session.returnCode)
+        if (!ok) Log.w(TAG, "FFmpeg failed for chunk at ${startMs}ms (audio track $audioOrdinal): rc=${session.returnCode} ${session.allLogsAsString.orEmpty().takeLast(600)}")
         // FFmpeg writes a header-only file when the start is past the end of the audio: that is the end of the video.
         if (!ok || !out.exists() || FfmpegAudioArgs.wavSeconds(out.length()) <= 0.0) {
             out.delete()
@@ -47,6 +49,10 @@ class FfmpegChunkProvider(
             return@withContext null
         }
         out
+    }
+
+    private companion object {
+        const val TAG = "SubtitleGen"
     }
 
     private fun isEndOfAudio(log: String): Boolean =

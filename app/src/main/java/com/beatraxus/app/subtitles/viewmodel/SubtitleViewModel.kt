@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Context
 import android.graphics.Typeface
 import android.net.Uri
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -1035,14 +1036,60 @@ class SubtitleViewModel(
                 return@launch
             }
 
-            val workDir = File(getApplication<Application>().cacheDir, "subtitle_gen")
+            val app = getApplication<Application>()
+            val workDir = File(app.cacheDir, "subtitle_gen")
+            // Unfinished subtitles live outside the subtitle cache, so a stopped run is never mistaken for a finished one.
+            val partialDir = File(app.cacheDir, "subtitle_gen_partial").apply { mkdirs() }
+            var shownPartials = 0
+            var lastPartial: File? = null
+
             _uiState.update { it.copy(isGenerating = true, generationStatus = "Reading the audio…") }
+            Log.i(TAG, "Generating subtitles: audioTrack=$ordinal target=$target video=${video.id}")
             try {
-                val audio = FfmpegChunkProvider(getApplication(), video.uri, ordinal, workDir)
+                val audio = FfmpegChunkProvider(app, video.uri, ordinal, workDir)
                 val duration = video.durationMs.takeIf { it > 0L } ?: audio.durationMs()
-                val generated = buildGenerationService().generate(audio, duration, target) { done, total ->
-                    _uiState.update { it.copy(generationStatus = progressText(done, total)) }
-                }
+                Log.i(TAG, "Audio ready, duration=${duration}ms, endpoint=${BuildConfig.SPEECH_ENDPOINT}, model=${BuildConfig.SPEECH_MODEL}")
+
+                val generated = buildGenerationService().generate(
+                    audio = audio,
+                    mediaDurationMs = duration,
+                    targetLanguageCode = target,
+                    onProgress = { done, total ->
+                        Log.d(TAG, "Recognising part ${done + 1} of ${total ?: "?"}")
+                        _uiState.update { it.copy(generationStatus = progressText(done, total)) }
+                    },
+                    onPartial = { p ->
+                        Log.d(TAG, "Part ${p.chunksDone} done, subtitles cover ${p.coveredUntilMs}ms")
+                        _uiState.update {
+                            it.copy(generationStatus = "Recognised ${p.chunksDone} of ${p.chunksTotal ?: "?"} parts · subtitles ready up to ${clock(p.coveredUntilMs)}")
+                        }
+                        // Show the first subtitles at once, then again each time the covered part of the video doubles
+                        // (1, 2, 4, 8 … parts): recognition runs faster than playback, and each update restarts the
+                        // subtitle track, so doing it for every part would keep interrupting the picture.
+                        val isShowPoint = (p.chunksDone and (p.chunksDone - 1)) == 0
+                        if (isShowPoint && currentVideo?.id == video.id) {
+                            try {
+                                val file = File(partialDir, "${mediaKey}_${subtitleId}_${p.chunksDone}.srt")
+                                file.writeText(p.srt, Charsets.UTF_8)
+                                subtitleController.attachExternalSubtitle(
+                                    videoId = video.id,
+                                    file = file,
+                                    language = p.languageCode,
+                                    label = "$label (in progress)",
+                                    subtitleId = subtitleId
+                                )
+                                lastPartial?.delete()
+                                lastPartial = file
+                                shownPartials++
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                Log.w(TAG, "Could not show the partial subtitles", e)
+                            }
+                        }
+                    }
+                )
+                Log.i(TAG, "Done: ${generated.cueCount} cues, language=${generated.languageCode}, untranslated=${generated.untranslatedLines}")
 
                 subtitleCache.saveSubtitle(
                     mediaKey,
@@ -1065,11 +1112,15 @@ class SubtitleViewModel(
                 }
                 _uiState.update { it.copy(isGenerating = false, generationStatus = note) }
                 showGenerated(video, mediaKey, entry, label)
+                partialDir.deleteRecursively()
             } catch (e: CancellationException) {
+                Log.i(TAG, "Generation cancelled")
                 _uiState.update { it.copy(isGenerating = false, generationStatus = null) }
                 throw e
             } catch (e: Exception) {
-                val message = generationMessage(e)
+                Log.e(TAG, "Generating subtitles failed", e)
+                val message = generationMessage(e) +
+                    if (shownPartials > 0) " The subtitles made so far stay on screen." else ""
                 _uiState.update { it.copy(isGenerating = false, generationStatus = message) }
                 _events.emit(SubtitleUiEvent.Error(message))
             } finally {
@@ -1100,8 +1151,19 @@ class SubtitleViewModel(
             GenerationException.Kind.NO_AUDIO -> "This video has no audio track to read."
             GenerationException.Kind.NO_SPEECH -> "No speech was found in this audio track."
             GenerationException.Kind.UNSUPPORTED_SOURCE -> "Could not read the audio of this video."
-            else -> "Generating subtitles failed. Try again."
+            // The service's own words ("model not found", "HTTP 400" …) are what tells the viewer what to fix.
+            else -> "Generating subtitles failed: ${e.message?.take(160) ?: "try again"}"
         }
+    }
+
+    /** 75 000 ms -> "1:15", 4 000 000 ms -> "1:06:40". */
+    private fun clock(ms: Long): String {
+        val total = (ms / 1000).coerceAtLeast(0)
+        val h = total / 3600
+        val m = (total / 60) % 60
+        val sec = total % 60
+        return if (h > 0) String.format(java.util.Locale.ROOT, "%d:%02d:%02d", h, m, sec)
+        else String.format(java.util.Locale.ROOT, "%d:%02d", m, sec)
     }
 
     /** Attaches a generated subtitle to the player and lists it with the others for this video. */
@@ -1132,6 +1194,7 @@ class SubtitleViewModel(
         /** How many matching files next to a video are tried before giving up (an unreadable one moves on to the next). */
         const val MAX_SIBLING_ATTEMPTS = 3
 
+        const val TAG = "SubtitleGen"
         const val KEY_AUTO_DOWNLOAD = "video_subtitle_auto_download"
         const val KEY_GENERATE = "video_subtitle_generate"
         const val KEY_GENERATE_TRANSLATE_TO = "video_subtitle_generate_translate_to"

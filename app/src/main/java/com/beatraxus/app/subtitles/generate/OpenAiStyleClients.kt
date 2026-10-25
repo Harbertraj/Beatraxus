@@ -4,10 +4,12 @@ import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
+import okhttp3.Response
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.asRequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -41,6 +43,12 @@ internal object OpenAiStyle {
 
     fun ioFailure(e: IOException): GenerationException =
         GenerationException(GenerationException.Kind.NETWORK, "No connection to the speech service", e)
+
+    /** How long a rate-limited answer asks us to wait: its Retry-After seconds, kept between 2 and 30 seconds. */
+    fun retryAfterMs(response: Response): Long {
+        val seconds = response.header("Retry-After")?.trim()?.toDoubleOrNull() ?: 5.0
+        return (seconds * 1000).toLong().coerceIn(2_000L, 30_000L)
+    }
 }
 
 /**
@@ -70,15 +78,36 @@ class OpenAiSpeechTranscriber(
             .post(body)
             .build()
 
-        try {
-            OpenAiStyle.client.newCall(request).execute().use { response ->
-                val text = response.body?.string().orEmpty()
-                if (!response.isSuccessful) throw OpenAiStyle.failure(response.code, text)
-                WhisperResponseParser.parse(text)
+        // Short chunks mean many requests, which can hit a requests-per-minute limit: wait and ask again a few times.
+        var attempt = 0
+        var result: WhisperTranscript? = null
+        while (result == null) {
+            var waitMs = 0L
+            result = try {
+                OpenAiStyle.client.newCall(request).execute().use { response ->
+                    val text = response.body?.string().orEmpty()
+                    when {
+                        response.isSuccessful -> WhisperResponseParser.parse(text)
+                        response.code == 429 && attempt < MAX_RATE_LIMIT_RETRIES -> {
+                            waitMs = OpenAiStyle.retryAfterMs(response)
+                            null
+                        }
+                        else -> throw OpenAiStyle.failure(response.code, text)
+                    }
+                }
+            } catch (e: IOException) {
+                throw OpenAiStyle.ioFailure(e)
             }
-        } catch (e: IOException) {
-            throw OpenAiStyle.ioFailure(e)
+            if (result == null) {
+                attempt++
+                delay(waitMs)
+            }
         }
+        result
+    }
+
+    private companion object {
+        const val MAX_RATE_LIMIT_RETRIES = 3
     }
 }
 

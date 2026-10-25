@@ -44,13 +44,17 @@ class AutoSubtitleGenerator(private val chunkLengthMs: Long = DEFAULT_CHUNK_MS) 
     /**
      * @param mediaDurationMs length of the video, or 0 when unknown (then chunks are read until the audio runs out).
      * @param onProgress called with (chunks finished, chunks in total or null when unknown).
+     * @param onPartial called after every chunk that produced speech, with the cleaned-up cues of everything recognised
+     *   so far (video timeline), the spoken language, the chunks finished and the chunks in total (null when unknown).
+     *   This is what lets the player show the first minutes of subtitles long before the whole video is done.
      */
     suspend fun transcribe(
         provider: AudioChunkProvider,
         transcriber: SpeechTranscriber,
         mediaDurationMs: Long,
         languageHint: String? = null,
-        onProgress: (done: Int, total: Int?) -> Unit = { _, _ -> }
+        onProgress: (done: Int, total: Int?) -> Unit = { _, _ -> },
+        onPartial: suspend (cues: List<SubtitleCue>, languageCode: String?, done: Int, total: Int?) -> Unit = { _, _, _, _ -> }
     ): GeneratedTrack {
         val total = if (mediaDurationMs > 0) ((mediaDurationMs + chunkLengthMs - 1) / chunkLengthMs).toInt() else null
         val raw = ArrayList<SubtitleCue>()
@@ -77,6 +81,9 @@ class AutoSubtitleGenerator(private val chunkLengthMs: Long = DEFAULT_CHUNK_MS) 
             }
             chunks++
             start += chunkLengthMs
+
+            val soFar = GeneratedCueBuilder.polish(raw, language ?: detected)
+            if (soFar.isNotEmpty()) onPartial(soFar, language ?: detected, chunks, total)
         }
         onProgress(chunks, total ?: chunks)
 
@@ -89,10 +96,11 @@ class AutoSubtitleGenerator(private val chunkLengthMs: Long = DEFAULT_CHUNK_MS) 
 
     companion object {
         /**
-         * 10 minutes of 16 kHz mono 16-bit audio is about 19 MB, which stays under the 25 MB upload limit of
-         * the OpenAI-style transcription endpoints.
+         * 3 minutes of 16 kHz mono 16-bit audio is about 5.8 MB: far under the 25 MB upload limit of the OpenAI-style
+         * transcription endpoints, quick to upload on a phone connection, and recognised in seconds, so the first subtitles
+         * appear almost at once instead of after a 10-minute chunk (about 19 MB) has been sent and recognised.
          */
-        const val DEFAULT_CHUNK_MS = 600_000L
+        const val DEFAULT_CHUNK_MS = 180_000L
     }
 }
 

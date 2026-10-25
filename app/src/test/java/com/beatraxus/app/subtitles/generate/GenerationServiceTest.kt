@@ -110,4 +110,21 @@ class GenerationServiceTest {
             .generate(chunks, 25_000, null)
         assertEquals(listOf(0L, 10_000L, 20_000L), chunks.requested)
     }
+
+    @Test
+    fun partialSubtitlesArriveAfterEveryChunkAndEachLineIsTranslatedOnce() = kotlinx.coroutines.runBlocking {
+        val translator = FakeTranslator()
+        val partials = mutableListOf<PartialSubtitle>()
+        val result = GenerationService(FakeHindiTranscriber(chunk), translator, chunkLengthMs = chunk)
+            .generate(FakeChunks(2), 20_000, targetLanguageCode = "en", onPartial = { partials += it })
+
+        assertEquals(listOf(1, 2), partials.map { it.chunksDone })
+        assertEquals(listOf(1, 2), partials.map { SubtitleCueParser.parse(it.srt).size })
+        assertTrue(partials.all { it.languageCode == "en" })
+        // The first partial already covers chunk 0 (ends at 3 s), the second reaches into chunk 1 (14.5 s).
+        assertEquals(listOf(3_000L, 14_500L), partials.map { it.coveredUntilMs })
+        // Two lines in total, each sent to the translator once even though three subtitles were built.
+        assertEquals(2, translator.seen.size)
+        assertEquals(2, result.cueCount)
+    }
 }

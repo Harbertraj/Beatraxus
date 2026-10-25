@@ -62,8 +62,12 @@ class Media3SubtitlePlayerController(
                 if (currentItem.mediaId != videoId) return@withContext
 
                 val trackId = "bx_ext_$subtitleId"
-                val expectedUri = Uri.fromFile(file)
-                
+                // The version query is ignored when the file is read, but it makes a rewritten file (the same path with
+                // more subtitles in it) a different source, so the player loads it again instead of keeping the old one.
+                val expectedUri = Uri.fromFile(file).buildUpon()
+                    .appendQueryParameter("v", "${file.lastModified()}-${file.length()}")
+                    .build()
+
                 val existingConfig = currentItem.localConfiguration?.subtitleConfigurations?.find { it.id == trackId }
                 if (existingConfig != null && existingConfig.uri == expectedUri) {
                     _activeExternalTrackId.value = trackId
@@ -73,7 +77,7 @@ class Media3SubtitlePlayerController(
                     return@withContext
                 }
 
-                val subConfig = MediaItem.SubtitleConfiguration.Builder(Uri.fromFile(file))
+                val subConfig = MediaItem.SubtitleConfiguration.Builder(expectedUri)
                     .setMimeType(mimeType)
                     .setLanguage(language)
                     .setLabel(label)
