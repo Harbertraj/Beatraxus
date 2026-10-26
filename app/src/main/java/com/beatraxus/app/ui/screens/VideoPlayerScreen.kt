@@ -3273,15 +3273,6 @@ fun VideoUpscalerSection(uiState: VideoPlayerUiState, viewModel: VideoPlayerView
                 }
             }
         }
-        if (uiState.upscaleMode.isOn && uiState.fpsBooster.isOn && uiState.fpsBoosterSuspended == null) {
-            Text(
-                text = "Warning: the FPS Booster is on, so the upscaler is not applied. Turn the FPS Booster off to use it.",
-                color = Color(0xFFFFB74D),
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(bottom = 8.dp)
-            )
-        }
         if (uiState.upscaleMode.isOn) {
             Spacer(Modifier.height(4.dp))
             ColorSliderRow(
@@ -3661,16 +3652,6 @@ fun ColorGradingSection(uiState: VideoPlayerUiState, viewModel: VideoPlayerViewM
             onValueChange = { viewModel.setColorExtras(uiState.colorGamma, uiState.colorHue, uiState.colorTemperature, it) },
             mxOrange = mxOrange
         )
-        if (uiState.fpsBooster.isOn && uiState.fpsBoosterSuspended == null &&
-            (uiState.colorGamma != 1f || uiState.colorSharpness != 0f)
-        ) {
-            Text(
-                text = "Warning: Gamma and Sharpness are not applied while the FPS Booster is on.",
-                color = Color(0xFFFFB74D),
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold
-            )
-        }
     }
 }
 

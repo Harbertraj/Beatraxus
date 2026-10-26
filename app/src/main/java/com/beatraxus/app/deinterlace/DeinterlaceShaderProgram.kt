@@ -38,13 +38,7 @@ class DeinterlaceShaderProgram(
         """.trimIndent()
 
         val fragmentShader = """
-            // highp matters here: one video line is ~0.001 in uv units, finer than half-float (mediump) can hold near
-            // 1.0, so with mediump the "line above / below" samples land on the wrong lines on many GPUs.
-            #ifdef GL_FRAGMENT_PRECISION_HIGH
-            precision highp float;
-            #else
             precision mediump float;
-            #endif
             uniform sampler2D uTexSampler;
             uniform float uTexelHeight;
             uniform int uMode; // 0 off, 1 auto, 2 always

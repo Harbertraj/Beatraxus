@@ -1376,8 +1376,6 @@ class VideoPlayerViewModel(
         FpsBoosterStore.save(prefs, settings)
         _uiState.update { withFpsPlan(it.copy(fpsBooster = settings, fpsBoosterSuspended = null)) }
         updateVideoEffects()
-        // The "Upscaler / Gamma / Sharpness not used while FPS Booster is on" warning is shown only inside
-        // the option sheet (see VideoPlayerScreen), never as a pill over the video.
     }
 
     fun updateFpsBoosterStats(stats: BoosterStats) {
@@ -2722,15 +2720,8 @@ class VideoPlayerViewModel(
 
     /** Gamma, hue, colour temperature and sharpness (the second group of sliders in Color Grading). */
     fun setColorExtras(gamma: Float, hue: Float, temperature: Float, sharpness: Float) {
-        val before = _uiState.value
         _uiState.update { it.copy(colorGamma = gamma, colorHue = hue, colorTemperature = temperature, colorSharpness = sharpness) }
         updateVideoEffects()
-        val gradeChanged = gamma != before.colorGamma || sharpness != before.colorSharpness
-        if (gradeChanged && !boosterMayRun()) {
-            // Sharpness / gamma are drawn by the player's effect: while paused, redraw once the slider settles.
-            redrawJob?.cancel()
-            redrawJob = viewModelScope.launch { delay(200); redrawFrameIfPaused() }
-        }
     }
 
     /** Gamma and sharpness need the GPU effect; it is only added to the player while one of them is in use. */
@@ -2859,7 +2850,6 @@ class VideoPlayerViewModel(
         prefs.edit().putString(DeinterlaceMode.PREF_KEY, mode.name).apply()
         _uiState.update { it.copy(deinterlaceMode = mode, aspectRatioMessage = "Deinterlacing: ${mode.label}") }
         updateVideoEffects()
-        redrawFrameIfPaused()
         viewModelScope.launch { delay(2000); _uiState.update { it.copy(aspectRatioMessage = null) } }
     }
 
@@ -2868,7 +2858,6 @@ class VideoPlayerViewModel(
         prefs.edit().putString(VideoUpscaleMode.PREF_KEY, mode.name).apply()
         _uiState.update { it.copy(upscaleMode = mode, aspectRatioMessage = "Upscaler: ${mode.label}") }
         updateVideoEffects()
-        redrawFrameIfPaused()
         viewModelScope.launch { delay(2000); _uiState.update { it.copy(aspectRatioMessage = null) } }
     }
 
@@ -2878,28 +2867,6 @@ class VideoPlayerViewModel(
         prefs.edit().putFloat(VideoUpscaleMode.STRENGTH_KEY, v).apply()
         _uiState.update { it.copy(upscaleStrength = v) }
         upscaleEffect.strength = v
-        // While the slider is dragged, redraw once it settles (not on every step).
-        redrawJob?.cancel()
-        redrawJob = viewModelScope.launch { delay(200); redrawFrameIfPaused() }
-    }
-
-    private var redrawJob: Job? = null
-
-    /** True while the FPS Booster is switched on and has not stopped itself: it draws the video itself, so the player's effects are skipped. */
-    private fun boosterMayRun(): Boolean {
-        val s = _uiState.value
-        return s.fpsBooster.isOn && s.fpsBoosterSuspended == null
-    }
-
-    /**
-     * Effect settings are read when a frame is drawn, so while the video is paused a change (deinterlace mode,
-     * upscaler mode or sharpness) would not show until play was pressed. Seeking to the same position makes the
-     * player draw the current frame again through the effects.
-     */
-    private fun redrawFrameIfPaused() {
-        val player = exoPlayer ?: return
-        if (player.isPlaying || player.playbackState != Player.STATE_READY) return
-        player.seekTo(player.currentPosition)
     }
 
     /**
