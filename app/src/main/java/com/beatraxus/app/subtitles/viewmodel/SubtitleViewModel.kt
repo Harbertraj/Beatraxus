@@ -38,6 +38,7 @@ import com.beatraxus.app.subtitles.domain.EncodingNormalizer
 import com.beatraxus.app.subtitles.domain.FilenameParser
 import com.beatraxus.app.subtitles.domain.MediaKey
 import com.beatraxus.app.subtitles.domain.ScoredSubtitle
+import com.beatraxus.app.subtitles.domain.SubtitleChoicePrefs
 import com.beatraxus.app.subtitles.domain.SecondarySubtitlePlacement
 import com.beatraxus.app.subtitles.domain.SecondarySubtitlePrefs
 import com.beatraxus.app.subtitles.domain.SecondarySubtitleStyle
@@ -209,27 +210,36 @@ class SubtitleViewModel(
                 _uiState.update { it.copy(cachedSubtitles = cachedList, results = emptyList(), bestMatchId = null, error = null, errorMessage = null) }
             }
 
-            val activeCached = SubtitleSourcePrefs.usable(cachedList, false).firstOrNull()
+            // The subtitle the viewer picked last for this video comes back (a generated or translated one too);
+            // before that, the first downloaded/imported one. Choosing the video's own subtitle is remembered as well.
+            val choice = SubtitleChoicePrefs.recall(prefs, mediaKey)
+            val activeCached = SubtitleChoicePrefs.pickToRestore(cachedList, choice)
             if (activeCached != null && _uiState.value.enabled) {
                 val file = File(activeCached.localPath)
                 if (file.exists()) {
+                    val label = savedLabel(activeCached)
                     subtitleController.attachExternalSubtitle(
                         videoId = video.id,
                         file = file,
                         language = activeCached.language,
-                        label = activeCached.releaseName ?: "External Subtitle",
+                        label = label,
                         subtitleId = activeCached.subtitleId
                     )
                     _uiState.update {
                         it.copy(
                             selectedSubtitleId = activeCached.subtitleId,
                             selectedSubtitleType = SelectedSubtitleType.EXTERNAL,
-                            selectedSubtitleName = activeCached.releaseName ?: "External Subtitle"
+                            selectedSubtitleName = label
                         )
                     }
                     return@launch
                 }
             }
+
+            // Nothing to put back: a subtitle left attached to this video's queue entry (from an earlier visit) must not
+            // show on its own, because it would win over the video's own subtitle.
+            subtitleController.removeExternalSubtitle(video.id)
+            if (choice == SubtitleChoicePrefs.EMBEDDED) return@launch
 
             // A subtitle file next to the video (video feature 21) comes before any online search.
             if (_uiState.value.enabled && SiblingSubtitleFinder.isAutoLoadEnabled(prefs)) {
@@ -246,6 +256,17 @@ class SubtitleViewModel(
                 searchOnline(autoDownload = _uiState.value.autoDownload)
             }
         }
+    }
+
+    /** The label a saved subtitle carries in the player; the subtitle sheet lists it under the same name. */
+    private fun savedLabel(entry: CachedSubtitle): String =
+        entry.releaseName?.takeIf { it.isNotBlank() }
+            ?: if (SubtitleSourcePrefs.isMadeHere(entry.subtitleId)) "Auto subtitles" else "External Subtitle"
+
+    /** Remembers what the viewer picked for the current video, so it is put back the next time the video opens. */
+    private fun rememberChoice(choice: String) {
+        val video = currentVideo ?: return
+        SubtitleChoicePrefs.remember(prefs, currentMediaKey.ifBlank { MediaKey.of(video) }, choice)
     }
 
     /**
@@ -412,6 +433,7 @@ class SubtitleViewModel(
                         label = result.fileName,
                         subtitleId = existing.subtitleId
                     )
+                    if (!auto) rememberChoice(existing.subtitleId)
                     withContext(Dispatchers.Main) {
                         _uiState.update {
                             it.copy(
@@ -508,6 +530,7 @@ class SubtitleViewModel(
                 label = result.fileName,
                 subtitleId = subId
             )
+            if (!auto) rememberChoice(subId)
 
             withContext(Dispatchers.Main) {
                 _uiState.update {
@@ -543,6 +566,7 @@ class SubtitleViewModel(
                     label = cached.releaseName ?: "Local Subtitle",
                     subtitleId = cached.subtitleId
                 )
+                rememberChoice(cached.subtitleId)
                 val updatedList = subtitleCache.getCachedSubtitles(mediaKey)
                 _uiState.update {
                     it.copy(
@@ -565,6 +589,7 @@ class SubtitleViewModel(
 
     fun selectEmbeddedTrack(groupIndex: Int) {
         subtitleController.selectEmbeddedTrack(groupIndex)
+        rememberChoice(SubtitleChoicePrefs.EMBEDDED)
         _uiState.update {
             it.copy(
                 selectedSubtitleId = "embedded_$groupIndex",
@@ -662,6 +687,7 @@ class SubtitleViewModel(
                 label = label,
                 subtitleId = cached.subtitleId
             )
+            rememberChoice(cached.subtitleId)
             // Only now is the previous copy (decoded with the old encoding) out of use.
             subtitleCache.deleteSubtitle(mediaKey, oldId)
             sourceUris.remove(oldId)
@@ -873,6 +899,7 @@ class SubtitleViewModel(
                     label = label,
                     subtitleId = promoted.subtitleId
                 )
+                rememberChoice(promoted.subtitleId)
                 val updatedList = subtitleCache.getCachedSubtitles(mediaKey)
                 _uiState.update {
                     it.copy(
@@ -1065,14 +1092,15 @@ class SubtitleViewModel(
     }
 
     /**
-     * Deletes an auto-generated or translated subtitle of this video (long press in the track list). When it is the one
-     * on screen it is taken off the player first.
+     * Deletes a saved subtitle of this video (long press in the track list): downloaded, picked from a file,
+     * auto-generated or translated. When it is the one on screen it is taken off the player first.
      */
-    fun deleteMadeSubtitle(subtitleId: String) {
+    fun deleteSavedSubtitle(subtitleId: String) {
         val video = currentVideo ?: return
         viewModelScope.launch(Dispatchers.IO) {
             val mediaKey = currentMediaKey.ifBlank { MediaKey.of(video) }
             removeMadeSubtitle(video, mediaKey, subtitleId)
+            sourceUris.remove(subtitleId)
             if (SubtitleSourcePrefs.isTranslated(subtitleId)) TranslationCheckpointStore.clear(translationCheckpointFile(mediaKey, subtitleId))
             _uiState.update {
                 it.copy(
@@ -1322,15 +1350,23 @@ class SubtitleViewModel(
         setGenerateEnabled(true)
     }
 
-    /** Puts a finished generated subtitle (listed with the embedded tracks) on the player. */
-    fun selectGeneratedSubtitle(subtitleId: String) {
+    /**
+     * Puts a saved subtitle of this video on the player. Every saved subtitle is listed with the embedded tracks (downloaded
+     * from the internet, picked from a file, auto-generated or translated), and this is what tapping one does.
+     */
+    fun selectCachedSubtitle(subtitleId: String) {
         val video = currentVideo ?: return
         enableSubtitles()
         viewModelScope.launch(Dispatchers.IO) {
             val mediaKey = currentMediaKey.ifBlank { MediaKey.of(video) }
-            val saved = subtitleCache.getCachedSubtitles(mediaKey).firstOrNull { it.subtitleId == subtitleId } ?: return@launch
-            if (!File(saved.localPath).exists()) return@launch
-            showGenerated(video, mediaKey, saved, saved.releaseName ?: "Auto subtitles")
+            val saved = subtitleCache.getCachedSubtitles(mediaKey).firstOrNull { it.subtitleId == subtitleId }
+            if (saved == null || !File(saved.localPath).exists()) {
+                // The file is gone (cache cleaned): drop the stale entry from the list instead of leaving a dead button.
+                refreshCachedList(mediaKey)
+                _events.emit(SubtitleUiEvent.Error("That subtitle is no longer saved."))
+                return@launch
+            }
+            showGenerated(video, mediaKey, saved, savedLabel(saved))
         }
     }
 
@@ -1524,6 +1560,7 @@ class SubtitleViewModel(
             label = label,
             subtitleId = entry.subtitleId
         )
+        rememberChoice(entry.subtitleId)
         val list = subtitleCache.getCachedSubtitles(mediaKey)
         withContext(Dispatchers.Main) {
             _uiState.update {

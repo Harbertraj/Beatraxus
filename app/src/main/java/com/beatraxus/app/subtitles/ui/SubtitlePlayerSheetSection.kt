@@ -132,14 +132,15 @@ fun SubtitlePlayerSheetSection(
             shape = RoundedCornerShape(16.dp),
             title = { Text("Delete subtitle?", color = Color.White, fontWeight = FontWeight.Bold) },
             text = {
+                val again = if (SubtitleSourcePrefs.isMadeHere(entry.subtitleId)) "generate it again" else "download or add it again"
                 Text(
-                    "\"${entry.releaseName ?: "Auto subtitles"}\" will be removed from this video. You can generate it again later.",
+                    "\"${savedSubtitleLabel(entry)}\" will be removed from this video. You can $again later.",
                     color = Color.White.copy(0.7f)
                 )
             },
             confirmButton = {
                 TextButton(onClick = {
-                    subtitleViewModel.deleteMadeSubtitle(entry.subtitleId)
+                    subtitleViewModel.deleteSavedSubtitle(entry.subtitleId)
                     deleteCandidate = null
                 }) { Text("Delete", color = Color(0xFFFF5252)) }
             },
@@ -480,26 +481,29 @@ fun SubtitlePlayerSheetSection(
                 label = { Text("None", color = if (isNoneSelected) Color.Black else Color.White) }
             )
 
-            // Finished auto-generated and translated subtitles are listed like the embedded tracks; nothing is shown until one is picked.
-            val generated = subUiState.cachedSubtitles.filter { SubtitleSourcePrefs.isMadeHere(it.subtitleId) }
-            generated.forEach { g ->
-                val label = g.releaseName ?: "Auto subtitles"
+            // Every subtitle saved for this video is listed like the embedded tracks: the ones downloaded from the internet,
+            // picked from a file, auto-generated or translated. Only one of them is loaded in the player at a time, so the
+            // list comes from the saved ones, not from the player's tracks; nothing is shown until one is picked.
+            val saved = subUiState.cachedSubtitles
+            saved.forEach { g ->
+                val label = savedSubtitleLabel(g)
                 val picked = subUiState.enabled && subUiState.selectedSubtitleId == g.subtitleId &&
                     videoUiState.availableSubtitleTracks.any { it.isSelected && it.name == label }
                 MadeSubtitleChip(
                     label = label,
                     picked = picked,
                     accent = mxOrange,
-                    onClick = { subtitleViewModel.selectGeneratedSubtitle(g.subtitleId) },
+                    onClick = { subtitleViewModel.selectCachedSubtitle(g.subtitleId) },
                     onLongClick = { deleteCandidate = g }
                 )
             }
-            if (generated.isNotEmpty()) {
-                Text("Long press an auto subtitle to delete it.", color = Color.White.copy(0.4f), fontSize = 11.sp)
+            if (saved.isNotEmpty()) {
+                Text("Long press a saved subtitle to delete it.", color = Color.White.copy(0.4f), fontSize = 11.sp)
             }
 
-            val generatedLabels = generated.map { it.releaseName ?: "Auto subtitles" }.toSet()
-            videoUiState.availableSubtitleTracks.filter { it.name !in generatedLabels }.forEach { track ->
+            // The loaded saved subtitle also shows up as a player track with the same name: list it once.
+            val savedLabels = saved.map { savedSubtitleLabel(it) }.toSet()
+            videoUiState.availableSubtitleTracks.filter { it.name !in savedLabels }.forEach { track ->
                 FilterChip(
                     selected = track.isSelected && subUiState.enabled,
                     onClick = {
@@ -968,8 +972,16 @@ private fun SubtitleToolRow(
 }
 
 /**
- * A track-list chip for a generated or translated subtitle. Tap picks it; long press asks to delete it (a Material
- * FilterChip has no long-press, so it is drawn here with the same shape and colours).
+ * The name a saved subtitle is listed under, and the label it carries once loaded in the player (the two must match, so the
+ * player's own entry for it is not listed a second time). Falls back to what kind of subtitle it is when it has no name.
+ */
+private fun savedSubtitleLabel(entry: CachedSubtitle): String =
+    entry.releaseName?.takeIf { it.isNotBlank() }
+        ?: if (SubtitleSourcePrefs.isMadeHere(entry.subtitleId)) "Auto subtitles" else "External Subtitle"
+
+/**
+ * A track-list chip for a saved subtitle (downloaded, picked from a file, generated or translated). Tap picks it; long
+ * press asks to delete it (a Material FilterChip has no long-press, so it is drawn here with the same shape and colours).
  */
 @Composable
 private fun MadeSubtitleChip(

@@ -1,6 +1,7 @@
 package com.beatraxus.app.subtitles.player
 
 import android.net.Uri
+import android.os.SystemClock
 import androidx.annotation.OptIn
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -142,6 +143,7 @@ class Media3SubtitlePlayerController(
                 val currentItem = player.getMediaItemAt(index)
 
                 if (currentItem.mediaId != videoId) return@withContext
+                cancelPendingSelection()
 
                 if (currentItem.localConfiguration?.subtitleConfigurations.isNullOrEmpty()) {
                     _activeExternalTrackId.value = null
@@ -174,6 +176,7 @@ class Media3SubtitlePlayerController(
 
     override fun selectEmbeddedTrack(groupIndex: Int) {
         val player = playerProvider() ?: return
+        cancelPendingSelection()
         var builder = player.trackSelectionParameters.buildUpon()
             .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
 
@@ -193,6 +196,7 @@ class Media3SubtitlePlayerController(
 
     override fun disableSubtitles() {
         val player = playerProvider() ?: return
+        cancelPendingSelection()
         player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
             .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
             .build()
@@ -229,6 +233,7 @@ class Media3SubtitlePlayerController(
 
     override fun detachPlayer() {
         delayJob?.cancel()
+        cancelPendingSelection()
         _activeExternalTrackId.value = null
         _activeExternalSubtitleName.value = null
         _isDelaySupported.value = false
@@ -260,35 +265,73 @@ class Media3SubtitlePlayerController(
         return found
     }
 
+    /** True when the sideloaded track [targetTrackId] is the text track the player is showing right now. */
+    private fun isSideloadedTrackSelected(player: ExoPlayer, targetTrackId: String): Boolean {
+        if (player.trackSelectionParameters.disabledTrackTypes.contains(C.TRACK_TYPE_TEXT)) return false
+        player.currentTracks.groups.forEach { group ->
+            if (group.type != C.TRACK_TYPE_TEXT) return@forEach
+            for (i in 0 until group.length) {
+                val id = group.getTrackFormat(i).id
+                if (id != null && (id == targetTrackId || id.endsWith(targetTrackId)) && group.isTrackSelected(i)) return true
+            }
+        }
+        return false
+    }
+
+    /** Stops [selectSideloadedTrackWhenLoaded] from selecting anything more (the viewer chose another subtitle). */
+    private fun cancelPendingSelection() {
+        val listener = pendingSelection ?: return
+        playerProvider()?.removeListener(listener)
+        pendingSelection = null
+    }
+
     /**
      * Right after the media item is replaced the player still lists the tracks of the OLD item, so selecting then can
      * miss the new subtitle track entirely (a generated subtitle was "done" yet never appeared, especially when subtitles
      * had been switched off before). Subtitles are switched on at once and the track is selected again as soon as the
      * new item's tracks arrive.
+     *
+     * The player may also pick its own text track again while the new item loads (the video's own subtitle, or an older
+     * selection that is still stored), which showed up as the chosen subtitle switching back to the video's own. So the
+     * new track stays guarded for [GUARD_MS] after it was first selected: whenever it is not the one on screen, it is
+     * selected again. The guard ends early when the viewer picks another subtitle ([cancelPendingSelection]).
      */
     private fun selectSideloadedTrackWhenLoaded(player: ExoPlayer, trackId: String) {
-        pendingSelection?.let { player.removeListener(it) }
-        pendingSelection = null
+        cancelPendingSelection()
 
-        enableAndSelectSideloadedTrack(player, trackId)
+        var guardUntil = 0L
 
         val listener = object : Player.Listener {
-            private fun trySelect() {
-                if (enableAndSelectSideloadedTrack(player, trackId)) {
-                    player.removeListener(this)
-                    if (pendingSelection === this) pendingSelection = null
+            private fun finish() {
+                player.removeListener(this)
+                if (pendingSelection === this) pendingSelection = null
+            }
+
+            private fun check() {
+                val now = SystemClock.elapsedRealtime()
+                if (guardUntil != 0L && now > guardUntil) {
+                    finish()
+                    return
+                }
+                if (isSideloadedTrackSelected(player, trackId)) {
+                    if (guardUntil == 0L) guardUntil = now + GUARD_MS
+                } else if (enableAndSelectSideloadedTrack(player, trackId) && guardUntil == 0L) {
+                    guardUntil = now + GUARD_MS
                 }
             }
 
-            override fun onTracksChanged(tracks: Tracks) = trySelect()
+            override fun onTracksChanged(tracks: Tracks) = check()
 
             // The new item is prepared a moment after it is swapped in; try again once it is ready to play.
             override fun onPlaybackStateChanged(playbackState: Int) {
-                if (playbackState == Player.STATE_READY) trySelect()
+                if (playbackState == Player.STATE_READY) check()
             }
         }
         pendingSelection = listener
         player.addListener(listener)
+
+        enableAndSelectSideloadedTrack(player, trackId)
+
         scope.launch {
             delay(15_000)
             if (pendingSelection === listener) {
@@ -313,5 +356,10 @@ class Media3SubtitlePlayerController(
                 }
             }
         }
+    }
+
+    private companion object {
+        /** How long a newly attached subtitle track is kept selected against the player picking another one. */
+        const val GUARD_MS = 6_000L
     }
 }

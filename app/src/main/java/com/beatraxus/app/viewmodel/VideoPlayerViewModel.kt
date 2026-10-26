@@ -19,7 +19,6 @@ import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.Effect
 import androidx.media3.common.MediaItem
-import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
@@ -83,8 +82,6 @@ import com.beatraxus.app.model.AudioStreamInfo
 import com.beatraxus.app.model.NightFilterMath
 import com.beatraxus.app.model.NightFilterMode
 import com.beatraxus.app.model.NightFilterSettings
-import com.beatraxus.app.subtitles.data.SubtitleCache
-import com.beatraxus.app.subtitles.domain.MediaKey
 import com.beatraxus.app.subtitles.domain.SubtitlePositionPreset
 import com.beatraxus.app.subtitles.player.Media3SubtitlePlayerController
 import com.beatraxus.app.subtitles.player.SubtitlePlayerController
@@ -457,7 +454,6 @@ class VideoPlayerViewModel(
     val uiState: StateFlow<VideoPlayerUiState> = _uiState.asStateFlow()
 
     val subtitleController: SubtitlePlayerController = Media3SubtitlePlayerController { exoPlayer }
-    private val subtitleCache = SubtitleCache(application)
     
     val positionFlow = MutableStateFlow(0L)
 
@@ -879,7 +875,8 @@ class VideoPlayerViewModel(
                         }
                     }
                     
-                    if (pendingSubtitleTrackIndex != -1) {
+                    // A subtitle file the viewer's saved choice put on the video wins over the last track index remembered.
+                    if (pendingSubtitleTrackIndex != -1 && subtitleController.activeExternalTrackId.value == null) {
                         if (pendingSubtitleTrackIndex == -2) {
                             params = params.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
                             changed = true
@@ -923,32 +920,9 @@ class VideoPlayerViewModel(
             // Audio delay is tuned per file, so a new video starts back in sync.
             if (tuning.audioDelayMs != 0) setAudioDelayMs(0)
             video?.let { v ->
-                viewModelScope.launch {
-                    val mediaKey = MediaKey.of(v)
-                    // A generated subtitle left in the cache is never put back by itself: the viewer picks it from the track list.
-                    val cachedSubs = com.beatraxus.app.subtitles.domain.SubtitleSourcePrefs.usable(
-                        subtitleCache.getCachedSubtitles(mediaKey),
-                        false
-                    )
-                    val activeCached = cachedSubs.firstOrNull()
-                    if (activeCached != null) {
-                        val file = File(activeCached.localPath)
-                        if (file.exists()) {
-                            subtitleController.attachExternalSubtitle(
-                                videoId = v.id,
-                                file = file,
-                                language = activeCached.language,
-                                label = activeCached.releaseName ?: "External Subtitle",
-                                mimeType = MimeTypes.APPLICATION_SUBRIP,
-                                subtitleId = activeCached.subtitleId
-                            )
-                            pendingSubtitleTrackIndex = -1
-                        }
-                    } else {
-                        subtitleController.removeExternalSubtitle(v.id)
-                    }
-                }
-                
+                // Putting the viewer's saved subtitle back on a video (and clearing a stale one) is done in one place only,
+                // SubtitleViewModel.onVideoChanged. It looks the subtitles up under the video's content-hash key; this class
+                // used a different key, found nothing and removed the subtitle that had just been loaded.
                 backgroundTasksTimerJob?.cancel()
                 spriteLoadingJob?.cancel()
                 chapterDetectionJob?.cancel()
