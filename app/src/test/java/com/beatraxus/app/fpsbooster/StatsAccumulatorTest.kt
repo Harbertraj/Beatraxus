@@ -34,4 +34,14 @@ class StatsAccumulatorTest {
         val w = a.poll(3 * sec)!!
         assertEquals(0, w.presented)
     }
+
+    @Test fun skippedEstimatesAreCountedPerWindow() {
+        val a = StatsAccumulator()
+        a.poll(1_000_000_000L)
+        a.onSourceFrame(); a.onEstimateSkipped(); a.onEstimateSkipped()
+        val w = a.poll(2_000_000_000L)!!
+        assertEquals(2, w.skippedEstimates)
+        a.onSourceFrame()
+        assertEquals(0, a.poll(3_000_000_000L)!!.skippedEstimates)
+    }
 }

@@ -46,7 +46,13 @@ import kotlin.math.min
  *    frame), so the pair being shown is never overwritten while the next one is estimated.
  *  - Motion is estimated when a frame ARRIVES (between vsyncs), not on the vsync that needs it, so the
  *    estimate never delays a presented frame. The pair to show is chosen by content time ([FrameSelection]),
- *    so frames that arrive early just wait in the queue ([HoldController] keeps the delay stable).
+ *    so frames that arrive early just wait in the queue ([HoldController] keeps the delay stable and adds the
+ *    measured estimate latency).
+ *  - A new estimate is only started when the previous one has finished on the GPU (fence). A pair that arrives
+ *    while the GPU is still busy gets no flow and is shown as the nearest real frame (chosen by alpha); this
+ *    bounds the GPU backlog, which is what made heavy presets glitch and lag on fast motion: a backlog delays
+ *    every later estimate AND every presented frame queued behind it. Skipped estimates are counted and reach
+ *    [AdaptiveQualityController] as overload. The vsync tick never starts an estimate while the GPU is busy.
  *  - All textures are allocated once per (source size, quality level) and reused for every frame.
  *  - A seek, pause, long gap or new clip breaks the pair ([MotionBoostTiming.isContinuous]); nothing is
  *    interpolated across it and the stale flow is discarded.
@@ -70,10 +76,12 @@ class OpticalFlowRenderer(
         fun onError(reason: FallbackReason, message: String)
     }
 
-    private class Slot(val full: Int, val luma: IntArray, val fw: Int, val bw: Int, val cut: Int) {
+    private class Slot(val full: Int, val luma: IntArray, val fw: Int, val bw: Int, val cut: Int, val glob: Int) {
         var tsNs: Long = 0L
-        /** fw / bw / cut hold the flow from the previous queued frame to this one. */
+        /** fw / bw / cut / glob hold the flow from the previous queued frame to this one. */
         var hasFlow: Boolean = false
+        /** The estimate for this frame was not started because the GPU was busy: show real frames, do not retry. */
+        var flowSkipped: Boolean = false
     }
 
     private val thread = HandlerThread("FpsBooster-GL", Process.THREAD_PRIORITY_DISPLAY).also { it.start() }
@@ -108,18 +116,21 @@ class OpticalFlowRenderer(
     private var searchProg: Prog? = null
     private var consProg: Prog? = null
     private var cutProg: Prog? = null
+    private var globalProg: Prog? = null
     private var interpProg: Prog? = null
 
     private var slots: Array<Slot> = emptyArray()
     private val queue = ArrayList<Slot>(SLOT_COUNT)        // decoded frames, ascending timestamp
     private val freeSlots = ArrayList<Slot>(SLOT_COUNT)
     private var flowTex: Array<Array<IntArray>> = emptyArray()   // [direction 0=fw 1=bw][level] -> ping/pong
+    private var globalCoarse = IntArray(0)                       // [direction] 1x1: dominant motion of the coarsest field
 
     // ---- sizes ----
     private var srcW = 0
     private var srcH = 0
     private var frameW = 0
     private var frameH = 0
+    private var levels: FlowPyramid.Levels = FlowPyramid.levels(32, 32)
     private var levelW = IntArray(0)
     private var levelH = IntArray(0)
     private var gridW = IntArray(0)
@@ -140,25 +151,40 @@ class OpticalFlowRenderer(
     private var lastDrawnAlpha = -1f
     private var lastDrawnWarp = false
     private var lastHoldNs = 0L
+    private var lastRawTsNs = 0L
+    private val tsRegularizer = TimestampRegularizer()
 
-    // Non-blocking GPU cost sampling of the motion estimate (a glFinish here stalls the vsync callback).
+    // Fence of the motion estimate in flight (at most one): measures every pair's latency without a glFinish
+    // (which would stall the vsync callback) and tells the intake whether the GPU is still busy.
     private var fence = 0L
     private var fenceStartNs = 0L
+    private val estimateLatency = EstimateLatency()
 
     // ---- stats ----
     private val acc = StatsAccumulator()
-    private var estimateCount = 0
     private val fencePoll = object : Runnable {
         override fun run() {
             if (released || fence == 0L) return
-            when (GLES30.glClientWaitSync(fence, 0, 0L)) {
-                GLES30.GL_ALREADY_SIGNALED, GLES30.GL_CONDITION_SATISFIED -> {
-                    acc.onEstimateMs((System.nanoTime() - fenceStartNs) / 1e6f)
-                    GLES30.glDeleteSync(fence); fence = 0L
-                }
-                GLES30.GL_WAIT_FAILED -> { GLES30.glDeleteSync(fence); fence = 0L }
-                else -> handler.postDelayed(this, 1L)
+            if (gpuBusy()) handler.postDelayed(this, 1L)
+        }
+    }
+
+    /**
+     * True while the previous motion estimate has not finished on the GPU. When the fence has signalled, its
+     * latency (frame arrival -> flow ready) is recorded here, for the stats and for the hold.
+     */
+    private fun gpuBusy(): Boolean {
+        if (fence == 0L) return false
+        return when (GLES30.glClientWaitSync(fence, 0, 0L)) {
+            GLES30.GL_ALREADY_SIGNALED, GLES30.GL_CONDITION_SATISFIED -> {
+                val ns = System.nanoTime() - fenceStartNs
+                acc.onEstimateMs(ns / 1e6f)
+                estimateLatency.onSample(ns)
+                GLES30.glDeleteSync(fence); fence = 0L
+                false
             }
+            GLES30.GL_WAIT_FAILED -> { GLES30.glDeleteSync(fence); fence = 0L; false }
+            else -> true
         }
     }
 
@@ -278,6 +304,7 @@ class OpticalFlowRenderer(
         searchProg = Prog(VERTEX, asset("flow_search.frag"))
         consProg = Prog(VERTEX, asset("flow_consistency.frag"))
         cutProg = Prog(VERTEX, asset("cut_detect.frag"))
+        globalProg = Prog(VERTEX, asset("global_motion.frag"))
         interpProg = Prog(PRESENT_VERTEX, asset("flow_interp.frag"))
 
         val ids = IntArray(1)
@@ -322,17 +349,12 @@ class OpticalFlowRenderer(
         val wW = max(32, (width * ws).toInt() and 1.inv())
         val wH = max(32, (height * ws).toInt() and 1.inv())
 
-        val lw = ArrayList<Int>().apply { add(wW) }
-        val lh = ArrayList<Int>().apply { add(wH) }
-        while (max(lw.last(), lh.last()) > COARSEST_EDGE && lw.size < MAX_LEVELS) {
-            lw.add(max(8, (lw.last() + 1) / 2))
-            lh.add(max(8, (lh.last() + 1) / 2))
-        }
-        levelW = lw.toIntArray()
-        levelH = lh.toIntArray()
-        gridW = IntArray(levelW.size) { (levelW[it] + PITCH - 1) / PITCH }
-        gridH = IntArray(levelH.size) { (levelH[it] + PITCH - 1) / PITCH }
-        val n = levelW.size
+        levels = FlowPyramid.levels(wW, wH)
+        levelW = levels.width
+        levelH = levels.height
+        gridW = levels.gridW
+        gridH = levels.gridH
+        val n = levels.count
 
         slots = Array(SLOT_COUNT) {
             Slot(
@@ -340,12 +362,16 @@ class OpticalFlowRenderer(
                 luma = IntArray(n) { l -> newTexture(levelW[l], levelH[l], GLES30.GL_R8) },
                 fw = newTexture(gridW[0], gridH[0], GLES30.GL_RGBA16F),
                 bw = newTexture(gridW[0], gridH[0], GLES30.GL_RGBA16F),
-                cut = newTexture(1, 1, GLES30.GL_RGBA16F)
+                cut = newTexture(1, 1, GLES30.GL_RGBA16F),
+                glob = newTexture(1, 1, GLES30.GL_RGBA16F)
             )
         }
         flowTex = Array(2) { Array(n) { l -> IntArray(2) { newTexture(gridW[l], gridH[l], GLES30.GL_RGBA16F) } } }
+        globalCoarse = IntArray(2) { newTexture(1, 1, GLES30.GL_RGBA16F) }
         queue.clear(); freeSlots.clear(); freeSlots.addAll(slots)
         holdCtl.reset()
+        estimateLatency.reset()
+        tsRegularizer.reset()
 
         // Some GPUs advertise the extension but still reject RGBA16F attachments: verify once, loudly.
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, fbo)
@@ -383,29 +409,43 @@ class OpticalFlowRenderer(
 
         val slot = acquireSlot()
         uploadFrame(slot)
-        slot.tsNs = ts
         slot.hasFlow = false
+        slot.flowSkipped = false
         acc.onSourceFrame()
 
         val last = queue.lastOrNull()
-        val gap = if (last != null) ts - last.tsNs else 0L
-        val continuous = last != null && MotionBoostTiming.isContinuous(last.tsNs, ts) &&
+        val prevRawTs = lastRawTsNs
+        val gap = if (last != null) ts - prevRawTs else 0L
+        lastRawTsNs = ts
+        val continuous = last != null && MotionBoostTiming.isContinuous(prevRawTs, ts) &&
             !FramePacing.isGap(gap, frameIntervalNs)
         if (continuous) {
             if (gap in MIN_FRAME_NS..MAX_FRAME_NS) {
                 frameIntervalNs = if (frameIntervalNs == 0L) gap else (frameIntervalNs * 7 + gap) / 8
             }
-            holdCtl.onFrame(ts - now)
         } else {
             // seek / pause / new clip: never interpolate across it
             while (queue.isNotEmpty()) freeSlots.add(queue.removeAt(0))
             holdCtl.reset()
+            tsRegularizer.reset()
         }
+        // The decoder releases frames on vsync, so the stamp is quantised to the panel grid (24 fps on 60 Hz
+        // arrives as 33 / 50 ms steps). Evenly spaced source frames get evenly spaced stamps back.
+        ts = tsRegularizer.next(ts, vsyncPeriodNs)
+        slot.tsNs = ts
+        if (continuous) holdCtl.onFrame(ts - now)
         queue.add(slot)
 
         if (continuous && wantsInterpolation()) {
-            estimateMotion(last!!, slot)
-            GLES30.glFlush()          // let the GPU start now instead of at the next swap
+            if (gpuBusy()) {
+                // The previous estimate is still running: queueing another one only grows the backlog that delays
+                // every later estimate and every presented frame. This pair is shown as real frames.
+                slot.flowSkipped = true
+                acc.onEstimateSkipped()
+            } else {
+                estimateMotion(last!!, slot, now)
+                GLES30.glFlush()          // let the GPU start now instead of at the next swap
+            }
         }
     }
 
@@ -454,11 +494,14 @@ class OpticalFlowRenderer(
     // Motion estimation
     // =====================================================================
 
-    private fun search(ref: Int, tgt: Int, parent: Int, dst: Int, lvl: Int, mode: Int, range: Int, subpel: Boolean, parentLvl: Int) {
+    private fun search(
+        ref: Int, tgt: Int, parent: Int, dst: Int, lvl: Int, mode: Int, range: Int, subpel: Boolean, parentLvl: Int,
+        global: Int, globalScale: Float, fullCost: Boolean
+    ) {
         val p = searchProg!!
         bindTarget(dst, gridW[lvl], gridH[lvl])
         p.use()
-        tex(0, p, "uRef", ref); tex(1, p, "uTgt", tgt); tex(2, p, "uParent", parent)
+        tex(0, p, "uRef", ref); tex(1, p, "uTgt", tgt); tex(2, p, "uParent", parent); tex(3, p, "uGlobal", global)
         val pw = if (parentLvl >= 0) levelW[parentLvl] else levelW[lvl]
         val ph = if (parentLvl >= 0) levelH[parentLvl] else levelH[lvl]
         val pgw = if (parentLvl >= 0) gridW[parentLvl] else gridW[lvl]
@@ -467,38 +510,62 @@ class OpticalFlowRenderer(
         GLES30.glUniform2i(p.loc("uGrid"), gridW[lvl], gridH[lvl])
         GLES30.glUniform2i(p.loc("uParentGrid"), pgw, pgh)
         GLES30.glUniform2f(p.loc("uScale"), levelW[lvl].toFloat() / pw, levelH[lvl].toFloat() / ph)
+        GLES30.glUniform1f(p.loc("uGlobalScale"), globalScale)
         GLES30.glUniform1i(p.loc("uMode"), mode)
         GLES30.glUniform1i(p.loc("uRange"), range)
         GLES30.glUniform1i(p.loc("uSubpel"), if (subpel) 1 else 0)
+        GLES30.glUniform1i(p.loc("uFullCost"), if (fullCost) 1 else 0)
         GLES30.glUniform1f(p.loc("uLambda"), LAMBDA)
         GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
     }
 
-    /** Hierarchical search from the coarsest level down; returns the texture holding the level-0 result. */
+    /** Dominant motion of the [lvl]-level field [flow] into the 1x1 texture [dst] (no read-back). */
+    private fun globalMotion(flow: Int, lvl: Int, dst: Int) {
+        val p = globalProg!!
+        bindTarget(dst, 1, 1)
+        p.use()
+        tex(0, p, "uFlow", flow)
+        val (sx, sy) = FlowPyramid.globalSamples(gridW[lvl], gridH[lvl])
+        GLES30.glUniform2i(p.loc("uGrid"), gridW[lvl], gridH[lvl])
+        GLES30.glUniform2i(p.loc("uSamples"), sx, sy)
+        GLES30.glUniform1f(p.loc("uMaxCost"), FlowPyramid.GLOBAL_MAX_COST)
+        GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
+    }
+
+    /**
+     * Hierarchical search from the coarsest level down; returns the texture holding the level-0 result.
+     * The dominant motion of the coarsest field is found once (one 1x1 pass) and offered as an extra candidate
+     * to every finer level. Only the finest and the coarsest level report the exact match cost.
+     */
     private fun flowDirection(dir: Int, ref: Slot, tgt: Slot): Int {
         val n = levelW.size
+        val g = globalCoarse[dir]
         var result = 0
         for (lvl in n - 1 downTo 0) {
             val a = flowTex[dir][lvl][0]
             val b = flowTex[dir][lvl][1]
             val sub = lvl == 0 && level.subpixel
+            val exact = levels.needsExactCost(lvl)
+            val gScale = if (lvl < n - 1) levels.globalScale(lvl) else 0f
             if (lvl == n - 1) {
                 // mode 2 ignores the parent; bind the other texture so it is never sampler and target at once
-                search(ref.luma[lvl], tgt.luma[lvl], b, a, lvl, 2, level.searchRange, false, -1)
+                search(ref.luma[lvl], tgt.luma[lvl], b, a, lvl, 2, level.searchRange, false, -1, g, 0f, false)
             } else {
-                search(ref.luma[lvl], tgt.luma[lvl], result, a, lvl, 0, 0, false, lvl + 1)
+                search(ref.luma[lvl], tgt.luma[lvl], result, a, lvl, 0, 0, false, lvl + 1, g, gScale, false)
             }
-            search(ref.luma[lvl], tgt.luma[lvl], a, b, lvl, 1, 0, sub, -1)   // propagation, ping-pong a -> b
+            search(ref.luma[lvl], tgt.luma[lvl], a, b, lvl, 1, 0, sub, -1, g, gScale, exact)   // propagation, ping-pong a -> b
             result = b
+            if (lvl == n - 1 && n > 1) globalMotion(b, lvl, g)
         }
         return result
     }
 
-    /** Estimates the motion between consecutive frames [a] -> [b]; the result lives in [b]'s flow textures. */
-    private fun estimateMotion(a: Slot, b: Slot) {
-        // Sample the GPU latency of every 4th estimate without stalling this thread (see fencePoll).
-        val sample = fence == 0L && (estimateCount++ and 3) == 0
-        val t0 = System.nanoTime()
+    /**
+     * Estimates the motion between consecutive frames [a] -> [b]; the result lives in [b]'s flow textures.
+     * [startNs] is when [b] arrived: the fence measures arrival -> flow ready. The caller has checked
+     * [gpuBusy] (at most one estimate is in flight).
+     */
+    private fun estimateMotion(a: Slot, b: Slot, startNs: Long) {
         val fw = flowDirection(0, a, b)
         val bw = flowDirection(1, b, a)
         val cons = consProg!!
@@ -509,6 +576,8 @@ class OpticalFlowRenderer(
             GLES30.glUniform2i(cons.loc("uGrid"), gridW[0], gridH[0])
             GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
         }
+        // dominant motion of the final forward field: fill-in warp of the interpolation shader
+        globalMotion(b.fw, 0, b.glob)
         val n = levelW.size
         val cut = cutProg!!
         bindTarget(b.cut, 1, 1)
@@ -519,12 +588,11 @@ class OpticalFlowRenderer(
         GLES30.glUniform1f(cut.loc("uPoorThresh"), CUT_POOR)
         GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
         b.hasFlow = true
-        if (sample) {
-            fence = GLES30.glFenceSync(GLES30.GL_SYNC_GPU_COMMANDS_COMPLETE, 0)
-            fenceStartNs = t0
-            GLES30.glFlush()
-            handler.postDelayed(fencePoll, 1L)
-        }
+        b.flowSkipped = false
+        fence = GLES30.glFenceSync(GLES30.GL_SYNC_GPU_COMMANDS_COMPLETE, 0)
+        fenceStartNs = startNs
+        GLES30.glFlush()
+        handler.postDelayed(fencePoll, 1L)
     }
 
     // =====================================================================
@@ -551,15 +619,23 @@ class OpticalFlowRenderer(
         var warp = false
         var hold = 0L
         if (queue.size >= 2 && wantsInterpolation()) {
-            hold = holdCtl.update(frameIntervalNs, vsyncPeriodNs)
+            hold = holdCtl.update(frameIntervalNs, vsyncPeriodNs, estimateLatency.smoothedNs)
             val content = FramePacing.contentTimeNs(vsyncNs, vsyncPeriodNs, hold)
             val pick = FrameSelection.pick(queue.size, { queue[it].tsNs }, content)
             a = queue[pick.a]; b = queue[pick.b]; alpha = pick.alpha
             // frames older than the pair are no longer needed
             for (i in 0 until pick.a) freeSlots.add(queue.removeAt(0))
             if (a !== b) {
-                if (!b.hasFlow) estimateMotion(a, b)         // rare: interpolation switched on after b arrived
-                warp = true
+                // Rare: interpolation was switched on after b arrived. Only when the GPU is idle - a late estimate
+                // queued behind a running one would delay this very frame - and never for a pair that was skipped.
+                if (!b.hasFlow && !b.flowSkipped && !gpuBusy()) estimateMotion(a, b, System.nanoTime())
+                warp = b.hasFlow
+                if (!warp) {
+                    // No flow for this pair (estimate skipped or still running): the nearest REAL frame by phase,
+                    // not always b - which would jump ahead by up to one source frame for the first half.
+                    val nearest = if (alpha < 0.5f) a else b
+                    a = nearest; b = nearest; alpha = 1f
+                }
             }
         } else {
             // Not interpolating (source already at target rate, or only one frame): newest frame, lowest latency.
@@ -611,7 +687,7 @@ class OpticalFlowRenderer(
         val ip = interpProg!!
         ip.use()
         tex(0, ip, "uA", a.full); tex(1, ip, "uB", b.full)
-        tex(2, ip, "uFw", b.fw); tex(3, ip, "uBw", b.bw); tex(4, ip, "uCut", b.cut)
+        tex(2, ip, "uFw", b.fw); tex(3, ip, "uBw", b.bw); tex(4, ip, "uCut", b.cut); tex(5, ip, "uGlobal", b.glob)
         GLES30.glUniform1f(ip.loc("uT"), if (warp) alpha else 1f)
         GLES30.glUniform1i(ip.loc("uWarp"), if (warp) 1 else 0)
         GLES30.glUniform2f(ip.loc("uWork"), levelW[0].toFloat(), levelH[0].toFloat())
@@ -654,11 +730,12 @@ class OpticalFlowRenderer(
 
     private fun freeResources() {
         val ids = ArrayList<Int>()
-        slots.forEach { sl -> ids.add(sl.full); sl.luma.forEach { ids.add(it) }; ids.add(sl.fw); ids.add(sl.bw); ids.add(sl.cut) }
+        slots.forEach { sl -> ids.add(sl.full); sl.luma.forEach { ids.add(it) }; ids.add(sl.fw); ids.add(sl.bw); ids.add(sl.cut); ids.add(sl.glob) }
         flowTex.forEach { dir -> dir.forEach { pair -> pair.forEach { ids.add(it) } } }
+        globalCoarse.forEach { ids.add(it) }
         if (ids.isNotEmpty()) GLES30.glDeleteTextures(ids.size, ids.toIntArray(), 0)
         if (fence != 0L) { GLES30.glDeleteSync(fence); fence = 0L }
-        slots = emptyArray(); flowTex = emptyArray()
+        slots = emptyArray(); flowTex = emptyArray(); globalCoarse = IntArray(0)
         queue.clear(); freeSlots.clear()
     }
 
@@ -670,7 +747,7 @@ class OpticalFlowRenderer(
             freeResources()
             if (oesTexture != 0) GLES30.glDeleteTextures(1, intArrayOf(oesTexture), 0)
             if (fbo != 0) GLES30.glDeleteFramebuffers(1, intArrayOf(fbo), 0)
-            listOf(copyProg, lumaProg, downProg, searchProg, consProg, cutProg, interpProg).forEach { it?.delete() }
+            listOf(copyProg, lumaProg, downProg, searchProg, consProg, cutProg, globalProg, interpProg).forEach { it?.delete() }
         }
         surfaceTexture = null
         inputSurface = null
@@ -734,9 +811,7 @@ class OpticalFlowRenderer(
     companion object {
         private const val TAG = "FpsBoosterGL"
         private const val SLOT_COUNT = 4          // bounded frame queue: the shown pair plus up to two frames that arrived early
-        private const val PITCH = 4               // flow block pitch (matches flow_search.frag)
-        private const val COARSEST_EDGE = 64      // stop building pyramid levels below this size (was 128: fast pans beyond ~90 px/frame found no match)
-        private const val MAX_LEVELS = 6
+        private const val PITCH = FlowPyramid.PITCH   // flow block pitch (matches flow_search.frag)
         private const val LAMBDA = 0.003f         // flow smoothness penalty per px
         private const val CONS_LO = 1.0f          // forward/backward inconsistency (px): trusted below
         private const val CONS_HI = 3.0f          //                                        rejected above

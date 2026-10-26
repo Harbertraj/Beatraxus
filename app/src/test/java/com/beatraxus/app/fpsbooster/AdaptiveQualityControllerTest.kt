@@ -125,4 +125,23 @@ class AdaptiveQualityControllerTest {
         assertEquals(ThermalLevel.SEVERE, ThermalLevel.fromAndroidStatus(3))
         assertEquals(ThermalLevel.SEVERE, ThermalLevel.fromAndroidStatus(6))
     }
+
+    @Test fun skippedEstimatesCountAsOverload() {
+        val c = AdaptiveQualityController(BoosterQuality.QUALITY, true, false)
+        // estimates are fast but 3 of 24 source frames (12 %) could not get one: the GPU is saturated
+        val w = WindowStats(sec, 24, 60, 36, 0, 5f, 5f, 2f, skippedEstimates = 3)
+        val d = c.feed(w)
+        assertTrue("steps down", d.changed)
+        assertEquals(1, c.index)
+    }
+
+    @Test fun fewSkipsDoNotChangeQualityButBlockUpgrade() {
+        val c = AdaptiveQualityController(BoosterQuality.QUALITY, true, false)
+        c.feed(overload); c.feed(calm); c.feed(calm)   // now at Balanced
+        val at = c.index
+        repeat(AdaptiveQualityController.UPGRADE_AFTER + 2) {
+            c.feed(WindowStats(sec, 24, 60, 36, 0, 5f, 5f, 2f, skippedEstimates = 1))
+        }
+        assertEquals("a skip is not calm", at, c.index)
+    }
 }

@@ -43,9 +43,9 @@ enum class BoosterQuality(
     val searchRange: Int,
     val subpixel: Boolean
 ) {
-    PERFORMANCE("Performance", 640, FRAME_EDGE_ORIGINAL, 6, false),
-    BALANCED("Balanced", 960, FRAME_EDGE_ORIGINAL, 6, true),
-    QUALITY("Quality", 1280, FRAME_EDGE_ORIGINAL, 8, true);
+    PERFORMANCE("Performance", 640, FRAME_EDGE_ORIGINAL, FlowPyramid.COARSEST_RANGE, false),
+    BALANCED("Balanced", 960, FRAME_EDGE_ORIGINAL, FlowPyramid.COARSEST_RANGE, true),
+    QUALITY("Quality", 1280, FRAME_EDGE_ORIGINAL, FlowPyramid.COARSEST_RANGE, true);
 
     companion object {
         fun fromName(name: String?): BoosterQuality = entries.firstOrNull { it.name == name } ?: DEFAULT

@@ -22,9 +22,11 @@ object MotionBoostTiming {
      *
      * ExoPlayer hands the renderer a frame [leadNs] before it should be on screen, so the hold is the
      * source frame interval minus that lead, plus one vsync of pipeline latency and a small margin.
+     * [estimateNs] is extra time the pair's motion estimate needs after the second frame arrived (0 for engines
+     * that have none, e.g. the Classic one).
      */
-    fun holdNs(frameIntervalNs: Long, leadNs: Long, vsyncPeriodNs: Long): Long =
-        (frameIntervalNs - leadNs + vsyncPeriodNs + HOLD_MARGIN_NS).coerceIn(0L, MAX_HOLD_NS)
+    fun holdNs(frameIntervalNs: Long, leadNs: Long, vsyncPeriodNs: Long, estimateNs: Long = 0L): Long =
+        (frameIntervalNs - leadNs + vsyncPeriodNs + HOLD_MARGIN_NS + estimateNs).coerceIn(0L, MAX_HOLD_NS)
 
     /** Position (0..1) of [targetNs] between the previous and current source frame. */
     fun alpha(targetNs: Long, prevTsNs: Long, curTsNs: Long): Float {

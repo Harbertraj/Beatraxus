@@ -8,6 +8,7 @@ Fails if image quality drops below thresholds set slightly under the measured va
 import sys
 
 import engines as E
+import eval_interior as EI
 import metrics as M
 import new_engine as N
 import run_eval as R
@@ -33,6 +34,17 @@ def main() -> int:
         good = r["psnr"] >= floor and r["psnr"] > b["psnr"] + 3.0
         ok &= good
         print(f"{'PASS' if good else 'FAIL'}  {name:30s} new {r['psnr']:5.1f} dB  (floor {floor}, blend {b['psnr']:.1f})")
+    # fast motion, interior only (see eval_interior.py); floors sit a few dB under the measured values
+    interior_floor = {"pan 28,0px/f": 38.0, "pan 56,0px/f": 38.0, "pan 90,0px/f": 50.0, "pan 140,0px/f": 55.0,
+                      "pan 200,0px/f": 50.0, "pan 60,30px/f": 42.0}
+    for sc, bx, by in EI.scenes(W, H):
+        floor = interior_floor.get(sc.name)
+        if floor is None:
+            continue
+        p = EI.eval_scene_interior(eng, sc, bx, by)
+        good = p >= floor
+        ok &= good
+        print(f"{'PASS' if good else 'FAIL'}  interior {sc.name:22s} new {p:5.1f} dB  (floor {floor})")
     cut = R.eval_scene(eng, S.scene_cut(W, H), False, "x")
     good = cut["psnr"] >= 90.0
     ok &= good

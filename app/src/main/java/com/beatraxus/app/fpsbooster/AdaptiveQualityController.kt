@@ -43,7 +43,10 @@ data class QualityDecision(val level: QualityLevel, val changed: Boolean, val fa
  *  - The ladder is QUALITY > BALANCED > PERFORMANCE > MINIMAL. It starts at the user's preset and never goes
  *    above it. Battery saver starts (and stays capped) at PERFORMANCE.
  *  - A window is *overloaded* when the motion estimate takes longer than the budget (a share of the source
- *    frame interval), or the presenter dropped more than 5 % of its output frames.
+ *    frame interval), the presenter dropped more than 5 % of its output frames, or more than 5 % of the source
+ *    frames could not get a motion estimate because the GPU was still busy with the previous one (those pairs
+ *    are shown as real frames; with the estimate measured on every pair this is the clearest sign that a preset
+ *    is too heavy for the device).
  *  - Overload steps down one rung (at most once per [COOLDOWN] windows) when adaptive resolution is on. The
  *    booster is NEVER switched off because of load: at the lowest rung (or with adaptive resolution off) it
  *    keeps running and the presenter simply drops what it cannot produce. Only a severe thermal state stops it.
@@ -62,12 +65,14 @@ class AdaptiveQualityController(
         const val UPGRADE_BLOCK = 30
         const val BUDGET_SHARE = 0.7f
         const val DROP_RATIO = 0.05f
+        /** Share of source frames whose motion estimate was skipped (GPU still busy) above which a window is overloaded. */
+        const val SKIP_RATIO = 0.05f
 
         val LADDER: List<QualityLevel> = listOf(
-            QualityLevel("Quality", 1280, FRAME_EDGE_ORIGINAL, 8, true),
-            QualityLevel("Balanced", 960, FRAME_EDGE_ORIGINAL, 6, true),
-            QualityLevel("Performance", 640, FRAME_EDGE_ORIGINAL, 6, false),
-            QualityLevel("Minimal", 480, 1280, 6, false) // only reachable with adaptive resolution on
+            QualityLevel("Quality", 1280, FRAME_EDGE_ORIGINAL, FlowPyramid.COARSEST_RANGE, true),
+            QualityLevel("Balanced", 960, FRAME_EDGE_ORIGINAL, FlowPyramid.COARSEST_RANGE, true),
+            QualityLevel("Performance", 640, FRAME_EDGE_ORIGINAL, FlowPyramid.COARSEST_RANGE, false),
+            QualityLevel("Minimal", 480, 1280, FlowPyramid.COARSEST_RANGE, false) // only reachable with adaptive resolution on
         )
 
         fun indexFor(q: BoosterQuality) = when (q) {
@@ -106,8 +111,10 @@ class AdaptiveQualityController(
         val dropRatio = if (total > 0) w.dropped.toFloat() / total else 0f
         val missed = FramePacing.missedOutputs(expectedPresentFps, w.durationNs, w.presented)
         val missRatio = if (expectedPresentFps > 0f) missed / (expectedPresentFps * w.durationNs / 1e9f) else 0f
-        val overloaded = w.avgEstimateMs > budgetMs || dropRatio > DROP_RATIO || missRatio > 0.15f
-        val calm = !overloaded && w.avgEstimateMs < budgetMs * 0.45f && dropRatio == 0f && missRatio < 0.03f
+        val skipRatio = if (w.sourceFrames > 0) w.skippedEstimates.toFloat() / w.sourceFrames else 0f
+        val overloaded = w.avgEstimateMs > budgetMs || dropRatio > DROP_RATIO || missRatio > 0.15f || skipRatio > SKIP_RATIO
+        val calm = !overloaded && w.avgEstimateMs < budgetMs * 0.45f && dropRatio == 0f && missRatio < 0.03f &&
+            w.skippedEstimates == 0
 
         calmStreak = if (calm) calmStreak + 1 else 0
 

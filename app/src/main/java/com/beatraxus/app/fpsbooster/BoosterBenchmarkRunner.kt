@@ -31,8 +31,6 @@ import kotlin.math.roundToInt
 object BoosterBenchmarkRunner {
     private const val TAG = "BoosterBenchmark"
     private const val PITCH = 4
-    private const val COARSEST_EDGE = 64
-    private const val MAX_LEVELS = 6
     private const val LAMBDA = 0.003f
     private const val TIMED_RUNS = 7
     /** A single frame-pair that takes longer than this is hopeless; larger presets are not even tried. */
@@ -198,6 +196,8 @@ void main() {
         val fbo = IntArray(1).also { GLES30.glGenFramebuffers(1, it, 0) }[0]
         val searchSrc = context.assets.open("fpsbooster/flow_search.frag").bufferedReader().use { it.readText() }
         val search = Program(VERTEX, searchSrc)
+        val globalSrc = context.assets.open("fpsbooster/global_motion.frag").bufferedReader().use { it.readText() }
+        val globalProg = Program(VERTEX, globalSrc)
 
         val pairMs = LinkedHashMap<BoosterQuality, Float>()
         var basis: Pair<BoosterQuality, Float>? = null
@@ -209,7 +209,7 @@ void main() {
             val pyramid = Pyramid(q)
             try {
                 if (!pyramid.framebuffersComplete(fbo)) { floatOk = false; break }
-                val ms = timePairs(pyramid, search, fbo)
+                val ms = timePairs(pyramid, search, globalProg, fbo)
                 pairMs[q] = ms
                 basis = q to ms
                 if (ms > GIVE_UP_PAIR_MS) break   // heavier presets would only be slower
@@ -225,6 +225,7 @@ void main() {
             warp = timeWarp(fbo)
         }
         search.delete()
+        globalProg.delete()
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
         GLES30.glDeleteFramebuffers(1, intArrayOf(fbo), 0)
         GLES30.glDeleteVertexArrays(1, vao, 0)
@@ -232,20 +233,23 @@ void main() {
         return GpuOutcome(pairMs, warp, floatOk && pairMs.isNotEmpty(), basis.takeIf { floatOk })
     }
 
-    /** The renderer's per-pair work: fw + bw hierarchical search with the preset's range and sub-pixel setting. */
-    private fun timePairs(p: Pyramid, search: Program, fbo: Int): Float {
+    /** The renderer's per-pair work: fw + bw hierarchical search (with the dominant-motion pass) at the preset's settings. */
+    private fun timePairs(p: Pyramid, search: Program, globalProg: Program, fbo: Int): Float {
         fun runPair() {
             for (dir in 0..1) {
                 var result = 0
+                val g = p.globalTex[dir]
                 for (lvl in p.n - 1 downTo 0) {
                     val a = p.flow[dir][lvl][0]
                     val b = p.flow[dir][lvl][1]
                     val ref = if (dir == 0) p.lumaA[lvl] else p.lumaB[lvl]
                     val tgt = if (dir == 0) p.lumaB[lvl] else p.lumaA[lvl]
-                    if (lvl == p.n - 1) p.searchPass(search, fbo, ref, tgt, b, a, lvl, 2, p.q.searchRange, false, -1)
-                    else p.searchPass(search, fbo, ref, tgt, result, a, lvl, 0, 0, false, lvl + 1)
-                    p.searchPass(search, fbo, ref, tgt, a, b, lvl, 1, 0, lvl == 0 && p.q.subpixel, -1)
+                    val gScale = if (lvl < p.n - 1) p.levels.globalScale(lvl) else 0f
+                    if (lvl == p.n - 1) p.searchPass(search, fbo, ref, tgt, b, a, lvl, 2, p.q.searchRange, false, -1, g, 0f, false)
+                    else p.searchPass(search, fbo, ref, tgt, result, a, lvl, 0, 0, false, lvl + 1, g, gScale, false)
+                    p.searchPass(search, fbo, ref, tgt, a, b, lvl, 1, 0, lvl == 0 && p.q.subpixel, -1, g, gScale, p.levels.needsExactCost(lvl))
                     result = b
+                    if (lvl == p.n - 1 && p.n > 1) p.globalPass(globalProg, fbo, b, lvl, g)
                 }
             }
         }
@@ -321,18 +325,16 @@ void main() {
         val lumaA: IntArray
         val lumaB: IntArray
         val flow: Array<Array<IntArray>>
+        val globalTex: IntArray
+        val levels: FlowPyramid.Levels
 
         init {
             val (w, h) = workSize(q)
-            val lw = ArrayList<Int>().apply { add(w) }
-            val lh = ArrayList<Int>().apply { add(h) }
-            while (max(lw.last(), lh.last()) > COARSEST_EDGE && lw.size < MAX_LEVELS) {
-                lw.add(max(8, (lw.last() + 1) / 2)); lh.add(max(8, (lh.last() + 1) / 2))
-            }
-            levelW = lw.toIntArray(); levelH = lh.toIntArray()
-            gridW = IntArray(levelW.size) { (levelW[it] + PITCH - 1) / PITCH }
-            gridH = IntArray(levelH.size) { (levelH[it] + PITCH - 1) / PITCH }
-            n = levelW.size
+            val lv = FlowPyramid.levels(w, h)
+            levelW = lv.width; levelH = lv.height
+            gridW = lv.gridW; gridH = lv.gridH
+            n = lv.count
+            levels = lv
             val rnd = Random(7)
             GLES30.glPixelStorei(GLES30.GL_UNPACK_ALIGNMENT, 1)
             fun noisy(l: Int): Int {
@@ -346,6 +348,22 @@ void main() {
             lumaA = IntArray(n) { noisy(it) }
             lumaB = IntArray(n) { noisy(it) }
             flow = Array(2) { Array(n) { l -> IntArray(2) { newTexture(gridW[l], gridH[l], GLES30.GL_RGBA16F, linear = false) } } }
+            globalTex = IntArray(2) { newTexture(1, 1, GLES30.GL_RGBA16F, linear = false) }
+        }
+
+        fun globalPass(p: Program, fbo: Int, flowTex: Int, lvl: Int, dst: Int) {
+            GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, fbo)
+            GLES30.glFramebufferTexture2D(GLES30.GL_FRAMEBUFFER, GLES30.GL_COLOR_ATTACHMENT0, GLES30.GL_TEXTURE_2D, dst, 0)
+            GLES30.glViewport(0, 0, 1, 1)
+            p.use()
+            GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
+            GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, flowTex)
+            GLES30.glUniform1i(p.loc("uFlow"), 0)
+            val (sx, sy) = FlowPyramid.globalSamples(gridW[lvl], gridH[lvl])
+            GLES30.glUniform2i(p.loc("uGrid"), gridW[lvl], gridH[lvl])
+            GLES30.glUniform2i(p.loc("uSamples"), sx, sy)
+            GLES30.glUniform1f(p.loc("uMaxCost"), FlowPyramid.GLOBAL_MAX_COST)
+            GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
         }
 
         /** Some GPUs advertise float render targets but reject RGBA16F attachments. */
@@ -357,13 +375,14 @@ void main() {
 
         fun searchPass(
             p: Program, fbo: Int, ref: Int, tgt: Int, parent: Int, dst: Int, lvl: Int,
-            mode: Int, range: Int, subpel: Boolean, parentLvl: Int
+            mode: Int, range: Int, subpel: Boolean, parentLvl: Int,
+            global: Int, globalScale: Float, fullCost: Boolean
         ) {
             GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, fbo)
             GLES30.glFramebufferTexture2D(GLES30.GL_FRAMEBUFFER, GLES30.GL_COLOR_ATTACHMENT0, GLES30.GL_TEXTURE_2D, dst, 0)
             GLES30.glViewport(0, 0, gridW[lvl], gridH[lvl])
             p.use()
-            for ((unit, pair) in listOf("uRef" to ref, "uTgt" to tgt, "uParent" to parent).withIndex()) {
+            for ((unit, pair) in listOf("uRef" to ref, "uTgt" to tgt, "uParent" to parent, "uGlobal" to global).withIndex()) {
                 GLES30.glActiveTexture(GLES30.GL_TEXTURE0 + unit)
                 GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, pair.second)
                 GLES30.glUniform1i(p.loc(pair.first), unit)
@@ -376,6 +395,8 @@ void main() {
             GLES30.glUniform2i(p.loc("uGrid"), gridW[lvl], gridH[lvl])
             GLES30.glUniform2i(p.loc("uParentGrid"), pgw, pgh)
             GLES30.glUniform2f(p.loc("uScale"), levelW[lvl].toFloat() / pw, levelH[lvl].toFloat() / ph)
+            GLES30.glUniform1f(p.loc("uGlobalScale"), globalScale)
+            GLES30.glUniform1i(p.loc("uFullCost"), if (fullCost) 1 else 0)
             GLES30.glUniform1i(p.loc("uMode"), mode)
             GLES30.glUniform1i(p.loc("uRange"), range)
             GLES30.glUniform1i(p.loc("uSubpel"), if (subpel) 1 else 0)
@@ -387,6 +408,7 @@ void main() {
             val ids = ArrayList<Int>()
             lumaA.forEach { ids.add(it) }; lumaB.forEach { ids.add(it) }
             flow.forEach { d -> d.forEach { l -> l.forEach { ids.add(it) } } }
+            globalTex.forEach { ids.add(it) }
             GLES30.glDeleteTextures(ids.size, ids.toIntArray(), 0)
         }
     }

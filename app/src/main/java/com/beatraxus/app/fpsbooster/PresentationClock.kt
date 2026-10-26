@@ -49,9 +49,16 @@ class HoldController(private val window: Int = WINDOW) {
      * Hold (ns) to use on this vsync. Moves towards the target by at most 1/[SLEW_UP_DIV] (growing) or
      * 1/[SLEW_DOWN_DIV] (shrinking) of a vsync per call, i.e. content time speeds up / slows down by a few
      * percent at most while it settles, never a visible jump.
+     *
+     * [estimateNs] is the measured time the motion estimate of a pair takes from the arrival of its second frame
+     * until the GPU has finished it (see OpticalFlowRenderer: fence latency, smoothed). A pair can only be shown
+     * once its flow exists, so the hold has to cover that time on top of the decoder lead; without it a slow
+     * estimate (Quality preset) makes every pair "not ready yet" exactly when it is due. Capped at [MAX_ESTIMATE_NS].
      */
-    fun update(frameIntervalNs: Long, vsyncPeriodNs: Long): Long {
-        val target = MotionBoostTiming.holdNs(frameIntervalNs, minLeadNs(), vsyncPeriodNs)
+    fun update(frameIntervalNs: Long, vsyncPeriodNs: Long, estimateNs: Long = 0L): Long {
+        val target = MotionBoostTiming.holdNs(
+            frameIntervalNs, minLeadNs(), vsyncPeriodNs, estimateNs.coerceIn(0L, MAX_ESTIMATE_NS)
+        )
         if (!initialised) {
             holdNs = target; initialised = true
             return holdNs
@@ -67,6 +74,7 @@ class HoldController(private val window: Int = WINDOW) {
         const val SLEW_UP_DIV = 16L
         const val SLEW_DOWN_DIV = 32L
         const val DEFAULT_LEAD_NS = 20_000_000L
+        const val MAX_ESTIMATE_NS = 100_000_000L
         private const val MIN_LEAD_NS = -50_000_000L
         private const val MAX_LEAD_NS = 200_000_000L
     }

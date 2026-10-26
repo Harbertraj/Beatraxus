@@ -231,7 +231,7 @@ For the supported device range, AI interpolation is **not practical today** on m
 
 ---
 
-## 10. Fast-motion fix (glitchy / patchy picture on fast pans)
+## 10. Fast-motion fix, round 1 (superseded by §11) (glitchy / patchy picture on fast pans)
 
 Symptom: on fast motion (roughly 90+ px/frame at 720p) the interpolated frames showed blocky patches of the unmoved
 frame. Measured with the harness (Performance preset, 1280x720): pan 90 px/frame 19.3 dB -> 22.9, pan 140 -> 11.0 (same as
@@ -243,3 +243,117 @@ frame repeat) -> 17.7, pan 60,30 -> 17.8 -> 21.8; slow scenes unchanged.
 - `flow_interp.frag`: the forward/backward and refined-vector tolerances grow with the vector length. Fixed tolerances
   rejected most of a fast picture and showed the unmoved frame in patches.
 - Hue / colour temperature (`uColorDelta`) are applied in the booster shaders too.
+
+---
+
+## 11. Fast-motion fix, round 2: "Quality is 10x worse" (glitch + lag)
+
+Two separate causes, fixed separately. All numbers: desktop harness (llvmpipe), image quality and fetch counts only;
+**nothing here was run on a phone.**
+
+### 11.1 Picture (shaders + pyramid)
+- `flow_search.frag` (see the commit message of the WIP patch): unrolled 16/64-tap SAD, static-block early-out,
+  `uFullCost`, dominant-motion candidate (`uGlobal`, `uGlobalScale`). On top of that:
+  - the coarsest full search now uses the exact 64-tap cost (`totalExact`). With a range of 10 the 16-tap cost found
+    false matches in the aliased coarsest image; the grid is tiny, so the exact cost is cheap there;
+  - sub-pixel stays a half- then quarter-pixel ring but on the 16-tap cost, with one exact 64-tap evaluation of the
+    result. A parabola / V fit through the integer costs was tried and rejected (-4 dB on slow pans: SAD is V-shaped
+    around its minimum, so the fit recovers only part of the offset).
+- `global_motion.frag` runs on the coarsest field of each direction (12x8 lattice, `uMaxCost` 0.08) and its 1x1
+  result is bound as `uGlobal` for every finer level with `uGlobalScale = levelW[l] / levelW[coarsest]`.
+  `uFullCost = 1` only on level 0 and the coarsest level (the only costs read later: consistency, cut, dominant motion).
+  It is run once more on the final forward field into a per-slot 1x1 texture (`Slot.glob`) for the interpolator.
+- `flow_interp.frag`: (1) static early-out: a pixel whose A and B are identical and whose flow is ~0 skips all six warp
+  fetches; (2) where neither per-pixel warp is trusted, the dominant motion is a third warp that is blended in only
+  where the two frames agree under it (`length(ga - gb)`), weighted by how much of the picture supports it and by
+  `1 - conf`. Moving objects fail the colour check and keep the nearest-frame fallback.
+- Pyramid depth: `FlowPyramid` (Kotlin, unit tested; mirrored in `new_engine.level_sizes`). Halve while the longest edge
+  is above `40 * sqrt(2)`, i.e. the coarsest level is the one closest to 40 px: Performance 640 -> 40, Balanced
+  960 -> **30** (was 60), Quality 1280 -> 40. Coarsest search range 6/8 -> **10** for all presets.
+  Measured trap: range 10 on the *old* 60 px Balanced pyramid is worse than range 6 (more false matches); the
+  deeper pyramid is what makes the wide range pay off.
+- `BoosterBenchmarkRunner` uses the same pyramid / passes, so its timings match the renderer.
+
+Interior-only PSNR (dB), Balanced, 1280x720; border of |v|+16 px excluded (`eval_interior.py`). Columns: pans of
+10 / 28 / 56 / 90 / 140 / 200 px, diagonal pan 60,30, fast layers (disc -80 px/f over a +16 px/f background), zoom+rotation.
+
+| | 10 | 28 | 56 | 90 | 140 | 200 | 60,30 | layers | zoom |
+|---|---|---|---|---|---|---|---|---|---|
+| baseline Balanced | 51.2 | 44.5 | 33.2 | 37.7 | 16.6 | 11.4 | 14.1 | 25.4 | 42.3 |
+| **new Performance** | 52.6 | 44.5 | 44.8 | 52.4 | 49.1 | 40.2 | 36.8 | 26.0 | 40.6 |
+| **new Balanced** | 59.2 | 44.5 | 44.7 | 60.2 | 64.9 | 61.5 | 50.9 | 26.0 | 42.3 |
+| **new Quality** | 74.8 | 44.6 | 44.8 | 73.4 | 62.4 | 65.7 | 49.7 | 26.2 | 42.1 |
+
+Whole-frame regression gate (`check_regression.py`) still passes (the interior floors for fast pans were added to it);
+real footage (vtest) 29.28 dB / SSIM 0.979 (unchanged), scene cut stays clean (99 dB). Honest caveats: synthetic,
+pure-translation pans are the best case for a dominant-motion candidate; the layers scene (independent object motion)
+improves only 0.6-0.8 dB, which is what to expect when the picture has no single dominant motion.
+
+### 11.2 Texture fetches per pair (search passes, both directions; exact, from an instrumented shader)
+`count_fetches.py`, pan 56 px/f at 1280x720. Early-outs make the number scene dependent: a fully static scene is shown too.
+
+| preset | old pipeline | new, pan 56 | new, static scene |
+|---|---|---|---|
+| Performance | 41.9 M | 39.0 M | 6.4 M |
+| Balanced | 160.6 M | 99.1 M | 14.5 M |
+| Quality | 284.4 M | 175.3 M | 25.7 M |
+
+(The old pipeline has no early-out, so its count does not depend on the scene.) Fetches are not milliseconds; the
+real cost on a Mali-G68 is unmeasured. Not included: `global_motion` (~9 k fetches per call, 3 per pair),
+`flow_consistency` (2 per block), the interpolation pass (per output frame).
+
+### 11.3 Scheduling (the main cause of "Quality is 10x worse")
+Symptom analysis: with a heavy preset the estimate of a pair takes longer than the source interval. The old renderer
+queued a new estimate for **every** arriving frame, so the GPU backlog grew; every later estimate *and every
+presented frame* waited behind it (glitch = frames shown with no / stale flow; lag = latency growing without bound).
+The vsync tick could also start an estimate itself (`!b.hasFlow`) on top of that. The "10x" is consistent with this
+(a backlog is unbounded; a slower search is merely proportional), but it is an inference from the code, not a
+device measurement.
+- At most one estimate in flight: a new one starts only when the previous fence has signalled (`gpuBusy()`),
+  otherwise the pair is marked `flowSkipped` and shown as real frames. The tick's fall-back estimate also requires an
+  idle GPU and a pair that was not skipped.
+- A pair without flow shows the **nearest real frame by alpha** (`alpha < 0.5 ? a : b`), not always `b`.
+- `HoldController.update(..., estimateNs)` adds the smoothed measured latency (`EstimateLatency`: rises fast,
+  decays slowly; capped at 100 ms) to the hold, via `MotionBoostTiming.holdNs(..., estimateNs)`.
+  Cost: Quality adds its latency to "Video delay" (the stat shows it; use Audio delay to compensate if needed).
+- Latency is now timed on **every** pair (the fence is polled with `glClientWaitSync(.., 0)`, no `glFinish`), measured
+  from the arrival of the second frame to "flow ready".
+- `WindowStats.skippedEstimates` counts skipped pairs; `AdaptiveQualityController` treats > 5 % skipped as overload
+  and does not count a window with any skip as calm.
+
+### 11.4 Timestamp regularisation (`TimestampRegularizer`)
+ExoPlayer releases frames on a vsync, so `SurfaceTexture` stamps are snapped to the panel grid (24 fps on 60 Hz is
+33/50/33/50 ms). The interpolation phase comes from those stamps, so the quantisation shows up as periodic judder in
+the generated frames. The class fits the interval by least squares over 24 stamps and pulls each stamp towards the
+prediction (1/8 per frame), so the clock still follows the raw one (unit-tested: raw 24 / 25 / 23.976 fps jitter
+>= 15 ms -> < 4 ms, never more than one vsync from the raw stamp, strictly increasing, a seek / pause / lost frame
+resets it). Used in `OpticalFlowRenderer.onFrameAvailable` after the gap / seek tests, which still use raw stamps.
+**Not verified on a device** (the premise, that ExoPlayer's stamps are vsync-snapped, is from the platform behaviour
+described in the task, not measured here). If it misbehaves, it is one line to bypass (`ts = tsRegularizer.next(...)`).
+
+### 11.5 Tests / verification run
+- Kotlin 2.4.10 compiler + Android API 34 `android.jar` (from GitHub release assets / Sable/android-platforms): the
+  `fpsbooster` package, its dependencies and `MotionBoostTiming` compile with no errors (`FpsBoosterSurfaceView`
+  excluded: needs Media3).
+- 100 JUnit tests pass (JUnit 4.13.2, run with `JUnitCore` outside Gradle): all `fpsbooster` tests, `MotionBoostTimingTest`,
+  new `FlowPyramidTest`, `TimestampRegularizerTest`, `HoldEstimateLatencyTest`, controller / stats tests, and the updated
+  `ShaderAssetsTest` (new `global_motion.frag`, `uGlobal`, `uGlobalScale`, `uFullCost`).
+- **Not done:** Gradle build, any on-device run, GPU timing, thermal / battery. The GL orchestration in
+  `OpticalFlowRenderer.kt` (fence gating, skipped pairs, per-slot textures) type-checks and mirrors the harness, but its
+  runtime behaviour is untested.
+
+## 12. AI interpolation: plan only (nothing implemented, no UI)
+Do **not** add an "AI" option to the UI until all of the following exist. Plan, as an optional downloadable model pack:
+1. **Spike (throwaway app):** RIFE v4.x via ncnn + Vulkan (MNN as fallback runtime) on target devices at 540p / 720p,
+   fp16 on/off, 5+ min runs; record latency (p50/p95), memory, temperature, and whether `grid_sample` / deconvolution
+   run on the GPU or fall back to CPU. Gate: p95 < ~35 ms at the chosen size, sustained.
+2. **Model pack:** weights hosted by us (not Google Drive), MIT notices kept, SHA-256 verified, versioned, downloaded
+   on demand (Play Asset Delivery or in-app download), removable. Provenance of weights / training data to be reviewed
+   before shipping.
+3. **On-device benchmark gate:** reuse `BoosterBenchmarkRunner` style: run the model on a synthetic pair after download;
+   enable the option only if the gate passes, store the result, re-test after OS / driver updates.
+4. **Integration:** a second `BoosterEngine` behind the same `SurfaceTexture` / presenter path; the frame comes back
+   as a texture (no CPU read-back if the runtime allows Vulkan-GL interop, otherwise it is probably too slow).
+   Reuse `HoldController` (the model latency is just a bigger `estimateNs`) and the skip-if-busy rule above.
+5. **UI:** the engine chip appears only when the pack is installed and the gate passed; copy says what it costs
+   (battery, delay). Until then `BoosterEngine` has no AI value and the settings sheet shows none.

@@ -98,3 +98,33 @@ class PresentationClockTest {
         assertFalse(FramePacing.isGap(60 * ms, 10 * ms))      // below the absolute minimum
     }
 }
+
+class HoldEstimateLatencyTest {
+    private val ms = 1_000_000L
+    private val vsync = 8_333_333L
+
+    @Test fun holdCoversMeasuredEstimateLatency() {
+        val base = HoldController().also { repeat(16) { i -> it.onFrame(20 * ms) } }.update(41_666_667L, vsync)
+        val with = HoldController().also { repeat(16) { i -> it.onFrame(20 * ms) } }.update(41_666_667L, vsync, 30 * ms)
+        assertEquals(30 * ms, with - base)
+    }
+
+    @Test fun estimateContributionIsCapped() {
+        val a = HoldController().update(41_666_667L, vsync, HoldController.MAX_ESTIMATE_NS)
+        val b = HoldController().update(41_666_667L, vsync, 10_000 * ms)
+        assertEquals(a, b)
+    }
+
+    @Test fun estimateLatencyRisesFastDecaysSlowly() {
+        val e = EstimateLatency()
+        e.onSample(10 * ms)
+        assertEquals(10 * ms, e.smoothedNs)
+        e.onSample(50 * ms)
+        assertEquals(30 * ms, e.smoothedNs)
+        val high = e.smoothedNs
+        e.onSample(10 * ms)
+        assertTrue(e.smoothedNs < high && e.smoothedNs > high - 5 * ms)
+        e.reset()
+        assertEquals(0L, e.smoothedNs)
+    }
+}

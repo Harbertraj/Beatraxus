@@ -19,10 +19,14 @@ class ShaderAssetsTest {
     private val expected = mapOf(
         "luma_work.frag" to listOf("uSrc", "uTexel"),
         "pyramid_down.frag" to listOf("uSrc", "uSrcSize"),
-        "flow_search.frag" to listOf("uRef", "uTgt", "uParent", "uSize", "uGrid", "uParentGrid", "uScale", "uMode", "uRange", "uSubpel", "uLambda"),
+        "flow_search.frag" to listOf(
+            "uRef", "uTgt", "uParent", "uGlobal", "uSize", "uGrid", "uParentGrid", "uScale", "uGlobalScale",
+            "uMode", "uRange", "uSubpel", "uFullCost", "uLambda"
+        ),
+        "global_motion.frag" to listOf("uFlow", "uGrid", "uSamples", "uMaxCost"),
         "flow_consistency.frag" to listOf("uSelf", "uOther", "uGrid"),
         "cut_detect.frag" to listOf("uFlow", "uGrid", "uMeanThresh", "uPoorThresh"),
-        "flow_interp.frag" to listOf("uA", "uB", "uFw", "uBw", "uCut", "uT", "uWarp", "uWork", "uFlowUv", "uGrade", "uColorDelta", "uConsLo", "uConsHi")
+        "flow_interp.frag" to listOf("uA", "uB", "uFw", "uBw", "uCut", "uGlobal", "uT", "uWarp", "uWork", "uFlowUv", "uGrade", "uColorDelta", "uConsLo", "uConsHi")
     )
 
     @Test fun everyShaderExistsAndIsEs3() {

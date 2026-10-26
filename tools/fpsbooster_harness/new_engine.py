@@ -2,10 +2,13 @@
 Harness port of the new FPS Booster optical-flow engine (app/src/main/assets/fpsbooster/*.frag).
 
 The shader files are loaded straight from the app's assets, so this exercises the exact GLSL that ships.
-The orchestration here is mirrored 1:1 by fpsbooster/OpticalFlowEngine.kt. Keep them in sync.
+The orchestration here is mirrored 1:1 by fpsbooster/OpticalFlowRenderer.kt (and the pyramid rule by
+fpsbooster/FlowPyramid.kt). Keep them in sync.
 """
 from __future__ import annotations
 
+import math
+import os
 from pathlib import Path
 
 import numpy as np
@@ -13,16 +16,32 @@ import numpy as np
 import glrunner as G
 from engines import Engine
 
-ASSETS = Path(__file__).resolve().parents[2] / "app/src/main/assets/fpsbooster"
+ASSETS = Path(os.environ.get("FPSB_ASSETS") or Path(__file__).resolve().parents[2] / "app/src/main/assets/fpsbooster")
 PITCH = 4
-COARSEST_EDGE = 64   # keep in sync with OpticalFlowRenderer.COARSEST_EDGE
-MAX_LEVELS = 6       # ... and MAX_LEVELS
+COARSEST_EDGE = 40   # keep in sync with FlowPyramid.COARSEST_EDGE: the coarsest level is the one closest to this
+MAX_LEVELS = 6       # ... and FlowPyramid.MAX_LEVELS
+GLOBAL_SAMPLES = (12, 8)   # keep in sync with OpticalFlowRenderer.GLOBAL_SAMPLES_X / _Y
+GLOBAL_MAX_COST = 0.08     # ... GLOBAL_MAX_COST
 
-PRESETS = {  # work_edge, coarsest_range, subpel, refine_passes handled in shader
-    "performance": dict(work_edge=640, range=6, subpel=0),
-    "balanced": dict(work_edge=960, range=6, subpel=1),
-    "quality": dict(work_edge=1280, range=8, subpel=1),
+PRESETS = {  # work_edge, coarsest search range, sub-pixel refinement on the finest level
+    "performance": dict(work_edge=640, range=10, subpel=0),
+    "balanced": dict(work_edge=960, range=10, subpel=1),
+    "quality": dict(work_edge=1280, range=10, subpel=1),
 }
+
+
+def level_sizes(w: int, h: int, coarsest: float = COARSEST_EDGE, max_levels: int = MAX_LEVELS) -> list[tuple[int, int]]:
+    """Pyramid sizes: halve while that brings the longest edge closer to `coarsest` (in the log sense)."""
+    stop = coarsest * math.sqrt(2.0)
+    sizes = [(w, h)]
+    while max(sizes[-1]) > stop and len(sizes) < max_levels:
+        pw, ph = sizes[-1]
+        sizes.append((max(8, (pw + 1) // 2), max(8, (ph + 1) // 2)))
+    return sizes
+
+
+def global_samples(gw: int, gh: int) -> tuple[int, int]:
+    return max(1, min(GLOBAL_SAMPLES[0], gw)), max(1, min(GLOBAL_SAMPLES[1], gh))
 
 
 def _src(name: str) -> str:
@@ -30,9 +49,12 @@ def _src(name: str) -> str:
 
 
 class NewEngine(Engine):
-    def __init__(self, preset: str = "balanced", lam: float = 0.003, cons=(1.0, 3.0)) -> None:
+    """`over` overrides preset / pipeline settings (used to reproduce the pre-fix behaviour as a baseline):
+    stop (pyramid stop edge), range, subpel, work_edge, use_global (dominant-motion candidate)."""
+
+    def __init__(self, preset: str = "balanced", lam: float = 0.003, cons=(1.0, 3.0), **over) -> None:
         self.name = f"new optical-flow [{preset}]"
-        self.cfg = PRESETS[preset]
+        self.cfg = {**PRESETS[preset], "stop": COARSEST_EDGE * math.sqrt(2.0), "use_global": True, **over}
         self.lam = lam
         self.cons = cons
         self.gl = G.get_gl()
@@ -43,6 +65,8 @@ class NewEngine(Engine):
         self.p_cons = gl.program(_src("flow_consistency.frag"))
         self.p_cut = gl.program(_src("cut_detect.frag"))
         self.p_interp = gl.program(_src("flow_interp.frag"))
+        gm = ASSETS / "global_motion.frag"
+        self.p_glob = gl.program(gm.read_text()) if gm.exists() else None
         self.size = None
         self.slots: list[dict] = []
         self.reset()
@@ -50,7 +74,7 @@ class NewEngine(Engine):
     # ---- allocation ----
     def _level_sizes(self, w: int, h: int) -> list[tuple[int, int]]:
         sizes = [(w, h)]
-        while max(sizes[-1]) > COARSEST_EDGE and len(sizes) < MAX_LEVELS:
+        while max(sizes[-1]) > self.cfg["stop"] and len(sizes) < MAX_LEVELS:
             pw, ph = sizes[-1]
             sizes.append((max(8, (pw + 1) // 2), max(8, (ph + 1) // 2)))
         return sizes
@@ -76,6 +100,8 @@ class NewEngine(Engine):
         g0 = self.grids[0]
         self.final = {d: gl.texture(g0[0], g0[1], G.GL_RGBA16F, G.GL_LINEAR) for d in ("fw", "bw")}
         self.cut = gl.texture(1, 1, G.GL_RGBA16F, G.GL_NEAREST)
+        self.gcoarse = {d: gl.texture(1, 1, G.GL_RGBA16F, G.GL_NEAREST) for d in ("fw", "bw")}   # dominant motion, coarsest field
+        self.gfinal = gl.texture(1, 1, G.GL_RGBA16F, G.GL_NEAREST)                                # dominant motion, final fw field
         self.out = gl.texture(self.frameW, self.frameH, G.GL_RGBA8)
         self.size = (w, h)
 
@@ -91,7 +117,7 @@ class NewEngine(Engine):
             for pair in d:
                 for t in pair:
                     gl.delete_texture(t)
-        for t in (*self.final.values(), self.cut, self.out):
+        for t in (*self.final.values(), *self.gcoarse.values(), self.cut, self.gfinal, self.out):
             gl.delete_texture(t)
         self.slots = []
         self.size = None
@@ -125,7 +151,8 @@ class NewEngine(Engine):
         self.cur = slot
 
     # ---- flow ----
-    def _search(self, ref, tgt, parent, dst, lvl, mode, rng=0, subpel=0, parent_lvl=None) -> None:
+    def _search(self, ref, tgt, parent, dst, lvl, mode, rng=0, subpel=0, parent_lvl=None,
+                gtex=None, gscale=0.0, full_cost=0) -> None:
         gl = self.gl
         sw, sh = self.sizes[lvl]
         gw, gh = self.grids[lvl]
@@ -133,9 +160,20 @@ class NewEngine(Engine):
         ps = self.sizes[parent_lvl] if parent_lvl is not None else (sw, sh)
         gl.bind_target(dst, gw, gh)
         p = self.p_search.use().tex(0, "uRef", ref).tex(1, "uTgt", tgt).tex(2, "uParent", parent)
+        p.tex(3, "uGlobal", gtex if gtex is not None else self.gfinal)
         p.i2("uSize", sw, sh).i2("uGrid", gw, gh).i2("uParentGrid", pg[0], pg[1])
         p.f2("uScale", sw / ps[0], sh / ps[1]).i1("uMode", mode).i1("uRange", rng).i1("uSubpel", subpel)
+        p.f1("uGlobalScale", gscale).i1("uFullCost", full_cost)
         p.f1("uLambda", self.lam)
+        gl.draw()
+        self.gpu_passes += 1
+
+    def _global_motion(self, flow_tex: int, grid: tuple[int, int], dst: int) -> None:
+        gl = self.gl
+        sx, sy = global_samples(*grid)
+        gl.bind_target(dst, 1, 1)
+        self.p_glob.use().tex(0, "uFlow", flow_tex).i2("uGrid", grid[0], grid[1]).i2("uSamples", sx, sy)
+        self.p_glob.f1("uMaxCost", GLOBAL_MAX_COST)
         gl.draw()
         self.gpu_passes += 1
 
@@ -144,18 +182,25 @@ class NewEngine(Engine):
         n = len(self.sizes)
         tex = self.flow[d]
         result = None
+        gtex = None
+        use_global = self.cfg["use_global"] and self.p_glob is not None and n > 1
         for lvl in range(n - 1, -1, -1):
             ref, tgt = ref_slot["luma"][lvl], tgt_slot["luma"][lvl]
             a, b = tex[lvl]
             sub = self.cfg["subpel"] if lvl == 0 else 0
+            exact = 1 if (lvl == 0 or lvl == n - 1) else 0      # only these levels' costs are read later
+            gscale = (self.sizes[lvl][0] / self.sizes[n - 1][0]) if (use_global and lvl < n - 1) else 0.0
             if lvl == n - 1:
                 # parent is unused in mode 2; bind the *other* texture so it is never sampler + target at once
                 self._search(ref, tgt, b, a, lvl, 2, rng=self.cfg["range"])
             else:
-                self._search(ref, tgt, result, a, lvl, 0, subpel=0, parent_lvl=lvl + 1)
+                self._search(ref, tgt, result, a, lvl, 0, subpel=0, parent_lvl=lvl + 1, gtex=gtex, gscale=gscale)
             # one propagation pass, ping-pong a -> b
-            self._search(ref, tgt, a, b, lvl, 1, subpel=sub)
+            self._search(ref, tgt, a, b, lvl, 1, subpel=sub, gtex=gtex, gscale=gscale, full_cost=exact)
             result = b
+            if lvl == n - 1 and use_global:
+                gtex = self.gcoarse[d]
+                self._global_motion(b, self.grids[lvl], gtex)
         return result
 
     def _estimate(self, A: dict, B: dict) -> None:
@@ -169,6 +214,9 @@ class NewEngine(Engine):
             self.p_cons.use().tex(0, "uSelf", self_t).tex(1, "uOther", other_t).i2("uGrid", gw, gh)
             gl.draw()
             gl.set_filter(other_t, G.GL_NEAREST)
+        # dominant motion of the final forward field (fill-in warp of the interpolation shader)
+        if self.p_glob is not None:
+            self._global_motion(self.final["fw"], (gw, gh), self.gfinal)
         # cut detector reads the coarsest-level forward field
         n = len(self.sizes)
         cw, ch = self.grids[n - 1]
@@ -187,7 +235,7 @@ class NewEngine(Engine):
         gw, gh = self.grids[0]
         gl.bind_target(self.out, self.frameW, self.frameH)
         p = self.p_interp.use().tex(0, "uA", A["full"]).tex(1, "uB", B["full"]).tex(2, "uFw", self.final["fw"]) \
-            .tex(3, "uBw", self.final["bw"]).tex(4, "uCut", self.cut)
+            .tex(3, "uBw", self.final["bw"]).tex(4, "uCut", self.cut).tex(5, "uGlobal", self.gfinal)
         if self.prev is None:  # nothing to interpolate with: show the only frame
             p.f1("uT", 1.0).i1("uWarp", 0)
         else:

@@ -9,7 +9,9 @@ data class WindowStats(
     val dropped: Int,
     val avgEstimateMs: Float,
     val maxEstimateMs: Float,
-    val avgDrawMs: Float
+    val avgDrawMs: Float,
+    /** Source frames whose motion estimate was not started because the GPU was still busy with the previous one. */
+    val skippedEstimates: Int = 0
 ) {
     private val seconds get() = durationNs / 1e9f
     val sourceFps: Float get() = if (seconds > 0f) sourceFrames / seconds else 0f
@@ -48,12 +50,15 @@ class StatsAccumulator(private val windowNs: Long = 1_000_000_000L) {
     private var estN = 0
     private var drawSum = 0f
     private var drawN = 0
+    private var skipped = 0
 
     fun onSourceFrame() { source++ }
     fun onPresented(generatedFrame: Boolean) { presented++; if (generatedFrame) generated++ }
     fun onDropped(n: Int = 1) { dropped += n }
     fun onEstimateMs(ms: Float) { estSum += ms; estN++; if (ms > estMax) estMax = ms }
     fun onDrawMs(ms: Float) { drawSum += ms; drawN++ }
+    /** A pair arrived while the GPU was still busy with the previous estimate: the pair is shown as a real frame. */
+    fun onEstimateSkipped() { skipped++ }
 
     /** Returns the finished window (and starts a new one) once [windowNs] has passed since the last one. */
     fun poll(nowNs: Long): WindowStats? {
@@ -68,7 +73,8 @@ class StatsAccumulator(private val windowNs: Long = 1_000_000_000L) {
             dropped = dropped,
             avgEstimateMs = if (estN > 0) estSum / estN else 0f,
             maxEstimateMs = estMax,
-            avgDrawMs = if (drawN > 0) drawSum / drawN else 0f
+            avgDrawMs = if (drawN > 0) drawSum / drawN else 0f,
+            skippedEstimates = skipped
         )
         reset(nowNs)
         return w
@@ -76,6 +82,30 @@ class StatsAccumulator(private val windowNs: Long = 1_000_000_000L) {
 
     fun reset(nowNs: Long = 0L) {
         start = nowNs; source = 0; presented = 0; generated = 0; dropped = 0
-        estSum = 0f; estMax = 0f; estN = 0; drawSum = 0f; drawN = 0
+        estSum = 0f; estMax = 0f; estN = 0; drawSum = 0f; drawN = 0; skipped = 0
+    }
+}
+
+/**
+ * Smoothed latency (ns) of the motion estimate: submit -> GPU finished, one sample per estimated pair. Rises
+ * quickly (a slow estimate must be covered by the hold at once) and decays slowly (one fast pair is no reason to
+ * shrink the hold). Pure; the renderer feeds it from the fence poll and reads it for [HoldController.update].
+ */
+class EstimateLatency {
+    var smoothedNs: Long = 0L
+        private set
+    private var seeded = false
+
+    fun reset() { smoothedNs = 0L; seeded = false }
+
+    fun onSample(ns: Long) {
+        val v = ns.coerceAtLeast(0L)
+        if (!seeded) { smoothedNs = v; seeded = true; return }
+        smoothedNs += if (v > smoothedNs) (v - smoothedNs) / RISE_DIV else (v - smoothedNs) / FALL_DIV
+    }
+
+    companion object {
+        const val RISE_DIV = 2L
+        const val FALL_DIV = 8L
     }
 }

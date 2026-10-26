@@ -29,3 +29,8 @@ compile_out.txt
 # Firebase config (copied into assets at build time)
 app/google-services.json
 app/src/main/assets/google-services.json
+
+# FPS Booster harness: downloaded media and comparison images
+/tools/fpsbooster_harness/data/
+/tools/fpsbooster_harness/out/
+__pycache__/
