@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -31,6 +32,9 @@ import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.SwapVert
 import androidx.compose.material.icons.rounded.Sync
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
+import androidx.compose.material.icons.rounded.Translate
+import androidx.compose.material.icons.rounded.Subtitles
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -64,6 +68,7 @@ import com.beatraxus.app.BuildConfig
 import com.beatraxus.app.subtitles.data.SubtitleRepositoryImpl
 import com.beatraxus.app.subtitles.domain.SecondarySubtitlePlacement
 import com.beatraxus.app.subtitles.domain.SecondarySubtitleStyle
+import com.beatraxus.app.subtitles.domain.SubtitleSourcePrefs
 import com.beatraxus.app.subtitles.domain.SubtitlePositionPreset
 import com.beatraxus.app.subtitles.viewmodel.SelectedSubtitleType
 import com.beatraxus.app.subtitles.viewmodel.SubtitleUiState
@@ -79,7 +84,9 @@ fun SubtitlePlayerSheetSection(
     videoUiState: VideoPlayerUiState,
     videoViewModel: VideoPlayerViewModel,
     subtitleViewModel: SubtitleViewModel,
-    onOpenAuthDialog: () -> Unit
+    onOpenAuthDialog: () -> Unit,
+    onOpenGenerate: () -> Unit = {},
+    onOpenTranslate: () -> Unit = {}
 ) {
     val mxOrange = Color(0xFFFF8F00)
     val subUiState by subtitleViewModel.uiState.collectAsState()
@@ -389,12 +396,13 @@ fun SubtitlePlayerSheetSection(
             }
         }
 
-        // 2b. Where the subtitles come from: generated from the speech, or the video's own tracks
-        SubtitleSourceSection(
+        // 2b. Auto-generate / translate: each opens its own view inside this sheet (like Extract Audio Track)
+        SubtitleToolsSection(
             subUiState = subUiState,
-            videoUiState = videoUiState,
             subtitleViewModel = subtitleViewModel,
-            accent = mxOrange
+            accent = mxOrange,
+            onOpenGenerate = onOpenGenerate,
+            onOpenTranslate = onOpenTranslate
         )
 
         // 3. Preferred Languages filter row
@@ -442,7 +450,22 @@ fun SubtitlePlayerSheetSection(
                 label = { Text("None", color = if (isNoneSelected) Color.Black else Color.White) }
             )
 
-            videoUiState.availableSubtitleTracks.forEach { track ->
+            // Finished auto-generated and translated subtitles are listed like the embedded tracks; nothing is shown until one is picked.
+            val generated = subUiState.cachedSubtitles.filter { SubtitleSourcePrefs.isMadeHere(it.subtitleId) }
+            generated.forEach { g ->
+                val label = g.releaseName ?: "Auto subtitles"
+                val picked = subUiState.enabled && subUiState.selectedSubtitleId == g.subtitleId &&
+                    videoUiState.availableSubtitleTracks.any { it.isSelected && it.name == label }
+                FilterChip(
+                    selected = picked,
+                    onClick = { subtitleViewModel.selectGeneratedSubtitle(g.subtitleId) },
+                    colors = FilterChipDefaults.filterChipColors(selectedContainerColor = mxOrange, selectedLabelColor = Color.Black),
+                    label = { Text(label, color = if (picked) Color.Black else Color.White) }
+                )
+            }
+
+            val generatedLabels = generated.map { it.releaseName ?: "Auto subtitles" }.toSet()
+            videoUiState.availableSubtitleTracks.filter { it.name !in generatedLabels }.forEach { track ->
                 FilterChip(
                     selected = track.isSelected && subUiState.enabled,
                     onClick = {
@@ -828,118 +851,79 @@ fun SubtitlePlayerSheetSection(
 }
 
 /**
- * Where the subtitles come from. "Auto-generate" makes them from the speech in the audio track, starting where the viewer
- * is watching and showing each part as soon as it is ready; "Video's own" uses the subtitle tracks stored in the video file.
- * Kept out of [SubtitlePlayerSheetSection], which is already too large for the runtime to compile.
+ * Two rows under the subtitle actions: "Auto-generate subtitles" and "Translate subtitles". Each opens its own view
+ * inside this sheet (see SubtitleSubSheets.kt), laid out like the Extract Audio Track view of the Audio Tracks sheet.
+ * While one is running the row shows its progress and a Stop button.
  */
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun SubtitleSourceSection(
+private fun SubtitleToolsSection(
     subUiState: SubtitleUiState,
-    videoUiState: VideoPlayerUiState,
     subtitleViewModel: SubtitleViewModel,
-    accent: Color
+    accent: Color,
+    onOpenGenerate: () -> Unit,
+    onOpenTranslate: () -> Unit
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Subtitle source", color = Color.White.copy(0.9f), fontSize = 15.sp, fontWeight = FontWeight.Bold)
-        FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            MxFilterChip(
-                selected = subUiState.generateEnabled,
-                onClick = { subtitleViewModel.useAutoGenerate() },
-                label = "Auto-generate"
-            )
-            MxFilterChip(
-                selected = !subUiState.generateEnabled,
-                onClick = { subtitleViewModel.useVideoSubtitles(videoUiState.availableSubtitleTracks.firstOrNull()?.index) },
-                label = "Video's own"
-            )
-        }
-
-        if (!subUiState.generateEnabled) {
-            Text(
-                if (videoUiState.availableSubtitleTracks.isEmpty()) "This video has no subtitle tracks of its own."
-                else "Uses the subtitle tracks stored in the video file (pick one under Embedded Tracks).",
-                color = Color.White.copy(0.5f),
-                fontSize = 11.sp
-            )
-            return@Column
-        }
-
-        Text(
-            "Made from the speech in this audio track. It starts where you are watching and shows each part as soon as it is ready.",
-            color = Color.White.copy(0.5f),
-            fontSize = 11.sp
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        SubtitleToolRow(
+            icon = Icons.Rounded.Subtitles,
+            title = "Auto-generate subtitles",
+            line = if (subUiState.isGenerating) subUiState.generationStatus ?: "Generating\u2026"
+            else subUiState.generationStatus ?: "Make subtitles from the speech in the audio",
+            running = subUiState.isGenerating,
+            accent = accent,
+            onClick = onOpenGenerate,
+            onStop = { subtitleViewModel.stopGeneration() }
         )
+        SubtitleToolRow(
+            icon = Icons.Rounded.Translate,
+            title = "Translate subtitles",
+            line = if (subUiState.isTranslating) subUiState.translationStatus ?: "Translating\u2026"
+            else subUiState.translationStatus ?: "Translate a saved subtitle into another language",
+            running = subUiState.isTranslating,
+            accent = accent,
+            onClick = onOpenTranslate,
+            onStop = { subtitleViewModel.stopTranslation() }
+        )
+    }
+}
 
-        Text("Subtitle language", color = Color.White.copy(0.7f), fontSize = 12.sp)
-        FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            MxFilterChip(
-                selected = subUiState.generateTranslateTo == null,
-                onClick = { subtitleViewModel.setGenerateTranslateTo(null) },
-                label = "Spoken language"
-            )
-            SubtitleRepositoryImpl.BUILT_IN_LANGUAGES.forEach { lang ->
-                MxFilterChip(
-                    selected = subUiState.generateTranslateTo == lang.code,
-                    onClick = { subtitleViewModel.setGenerateTranslateTo(lang.code) },
-                    label = lang.name
-                )
-            }
+@Composable
+private fun SubtitleToolRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    line: String,
+    running: Boolean,
+    accent: Color,
+    onClick: () -> Unit,
+    onStop: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(Color.White.copy(alpha = 0.06f))
+            .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(16.dp))
+            .clickable(onClick = onClick)
+            .heightIn(min = 64.dp)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(icon, null, tint = accent, modifier = Modifier.size(22.dp))
+        Spacer(Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+            Spacer(Modifier.height(2.dp))
+            Text(line, color = Color.White.copy(0.6f), fontSize = 12.sp, maxLines = 2)
         }
-
-        if (!subtitleViewModel.isSpeechConfigured()) {
+        if (running) {
+            CircularProgressIndicator(color = accent, modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+            Spacer(Modifier.width(10.dp))
             Text(
-                "Auto subtitles are not configured in this build (SPEECH_API_KEY).",
-                color = Color.White.copy(0.5f),
-                fontSize = 11.sp
+                "Stop", color = accent, fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(onClick = onStop).padding(horizontal = 6.dp, vertical = 4.dp)
             )
-        }
-
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            Button(
-                onClick = { subtitleViewModel.generateSubtitles() },
-                enabled = !subUiState.isGenerating && subtitleViewModel.isSpeechConfigured(),
-                modifier = Modifier.weight(1f),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = accent,
-                    contentColor = Color.Black,
-                    disabledContainerColor = accent.copy(alpha = 0.5f),
-                    disabledContentColor = Color.Black
-                )
-            ) {
-                if (subUiState.isGenerating) {
-                    CircularProgressIndicator(color = Color.Black, modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                    Spacer(Modifier.width(8.dp))
-                } else {
-                    Icon(Icons.Rounded.Sync, null, tint = Color.Black, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(6.dp))
-                }
-                Text(
-                    if (subUiState.isGenerating) "Generating…" else "Generate subtitles",
-                    color = Color.Black,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 13.sp
-                )
-            }
-            if (subUiState.isGenerating) {
-                OutlinedButton(
-                    onClick = { subtitleViewModel.stopGeneration() },
-                    border = BorderStroke(1.dp, Color.White.copy(0.3f)),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
-                ) {
-                    Text("Stop", fontSize = 13.sp)
-                }
-            }
-        }
-
-        subUiState.generationStatus?.let { status ->
-            Text(status, color = Color.White.copy(0.6f), fontSize = 12.sp)
+        } else {
+            Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, null, tint = Color.White.copy(0.5f), modifier = Modifier.size(22.dp))
         }
     }
 }

@@ -925,11 +925,10 @@ class VideoPlayerViewModel(
             video?.let { v ->
                 viewModelScope.launch {
                     val mediaKey = MediaKey.of(v)
-                    // A generated subtitle left in the cache is only put back while "Auto-generate" is the chosen source;
-                    // with "Video's own" the video's embedded subtitle tracks are what the viewer asked for.
+                    // A generated subtitle left in the cache is never put back by itself: the viewer picks it from the track list.
                     val cachedSubs = com.beatraxus.app.subtitles.domain.SubtitleSourcePrefs.usable(
                         subtitleCache.getCachedSubtitles(mediaKey),
-                        prefs.getBoolean(com.beatraxus.app.subtitles.domain.SubtitleSourcePrefs.KEY_GENERATE, false)
+                        false
                     )
                     val activeCached = cachedSubs.firstOrNull()
                     if (activeCached != null) {
@@ -1377,6 +1376,14 @@ class VideoPlayerViewModel(
         FpsBoosterStore.save(prefs, settings)
         _uiState.update { withFpsPlan(it.copy(fpsBooster = settings, fpsBoosterSuspended = null)) }
         updateVideoEffects()
+        val st = _uiState.value
+        if (settings.isOn) {
+            val lost = buildList {
+                if (st.upscaleMode.isOn) add("Upscaler")
+                if (needsGradeEffect()) add("Gamma / Sharpness")
+            }
+            if (lost.isNotEmpty()) flashWarning("${lost.joinToString(" and ")} not used while FPS Booster is on")
+        }
     }
 
     fun updateFpsBoosterStats(stats: BoosterStats) {
@@ -2721,8 +2728,17 @@ class VideoPlayerViewModel(
 
     /** Gamma, hue, colour temperature and sharpness (the second group of sliders in Color Grading). */
     fun setColorExtras(gamma: Float, hue: Float, temperature: Float, sharpness: Float) {
+        val before = _uiState.value
         _uiState.update { it.copy(colorGamma = gamma, colorHue = hue, colorTemperature = temperature, colorSharpness = sharpness) }
         updateVideoEffects()
+        val gradeChanged = gamma != before.colorGamma || sharpness != before.colorSharpness
+        if (gradeChanged && boosterMayRun()) {
+            if (_uiState.value.aspectRatioMessage == null) flashWarning("Gamma and Sharpness are not used while FPS Booster is on")
+        } else if (gradeChanged) {
+            // Sharpness / gamma are drawn by the player's effect: while paused, redraw once the slider settles.
+            redrawJob?.cancel()
+            redrawJob = viewModelScope.launch { delay(200); redrawFrameIfPaused() }
+        }
     }
 
     /** Gamma and sharpness need the GPU effect; it is only added to the player while one of them is in use. */
@@ -2851,6 +2867,7 @@ class VideoPlayerViewModel(
         prefs.edit().putString(DeinterlaceMode.PREF_KEY, mode.name).apply()
         _uiState.update { it.copy(deinterlaceMode = mode, aspectRatioMessage = "Deinterlacing: ${mode.label}") }
         updateVideoEffects()
+        redrawFrameIfPaused()
         viewModelScope.launch { delay(2000); _uiState.update { it.copy(aspectRatioMessage = null) } }
     }
 
@@ -2859,7 +2876,9 @@ class VideoPlayerViewModel(
         prefs.edit().putString(VideoUpscaleMode.PREF_KEY, mode.name).apply()
         _uiState.update { it.copy(upscaleMode = mode, aspectRatioMessage = "Upscaler: ${mode.label}") }
         updateVideoEffects()
-        viewModelScope.launch { delay(2000); _uiState.update { it.copy(aspectRatioMessage = null) } }
+        redrawFrameIfPaused()
+        if (mode.isOn && boosterMayRun()) flashWarning("Upscaler is not used while FPS Booster is on")
+        else viewModelScope.launch { delay(2000); _uiState.update { it.copy(aspectRatioMessage = null) } }
     }
 
     /** Sharpening strength of the upscaler, 0..1. Applies on the next frame. */
@@ -2868,6 +2887,36 @@ class VideoPlayerViewModel(
         prefs.edit().putFloat(VideoUpscaleMode.STRENGTH_KEY, v).apply()
         _uiState.update { it.copy(upscaleStrength = v) }
         upscaleEffect.strength = v
+        // While the slider is dragged, redraw once it settles (not on every step).
+        redrawJob?.cancel()
+        redrawJob = viewModelScope.launch { delay(200); redrawFrameIfPaused() }
+    }
+
+    private var redrawJob: Job? = null
+    private var warningJob: Job? = null
+
+    /** True while the FPS Booster is switched on and has not stopped itself: it draws the video itself, so the player's effects are skipped. */
+    private fun boosterMayRun(): Boolean {
+        val s = _uiState.value
+        return s.fpsBooster.isOn && s.fpsBoosterSuspended == null
+    }
+
+    /** A warning pill on the video; stays a little longer than the normal 2 s messages. */
+    private fun flashWarning(text: String) {
+        warningJob?.cancel()
+        _uiState.update { it.copy(aspectRatioMessage = text) }
+        warningJob = viewModelScope.launch { delay(3500); _uiState.update { it.copy(aspectRatioMessage = null) } }
+    }
+
+    /**
+     * Effect settings are read when a frame is drawn, so while the video is paused a change (deinterlace mode,
+     * upscaler mode or sharpness) would not show until play was pressed. Seeking to the same position makes the
+     * player draw the current frame again through the effects.
+     */
+    private fun redrawFrameIfPaused() {
+        val player = exoPlayer ?: return
+        if (player.isPlaying || player.playbackState != Player.STATE_READY) return
+        player.seekTo(player.currentPosition)
     }
 
     /**

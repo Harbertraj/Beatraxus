@@ -31,7 +31,13 @@ class ColorGradeShaderProgram(
         """.trimIndent()
         
         val fragmentShader = """
+            // highp: the sharpness taps are one video pixel apart (~0.001 in uv units), finer than half-float (mediump)
+            // can hold near 1.0, so with mediump the neighbours resolved to the centre pixel and sharpness did nothing.
+            #ifdef GL_FRAGMENT_PRECISION_HIGH
+            precision highp float;
+            #else
             precision mediump float;
+            #endif
             uniform sampler2D uTexSampler;
             uniform float uBrightness;
             uniform float uContrast;
@@ -53,7 +59,8 @@ class ColorGradeShaderProgram(
                                + texture2D(uTexSampler, vTexSamplingCoords - vec2(uTexel.x, 0.0)).rgb
                                + texture2D(uTexSampler, vTexSamplingCoords + vec2(0.0, uTexel.y)).rgb
                                + texture2D(uTexSampler, vTexSamplingCoords - vec2(0.0, uTexel.y)).rgb) * 0.25;
-                    rgb += (rgb - blur) * (uSharpness * 2.0);
+                    // The boost is limited so strong settings sharpen edges without bright / dark halos.
+                    rgb += clamp((rgb - blur) * (uSharpness * 2.0), -0.15, 0.15);
                 }
 
                 // 2. Brightness

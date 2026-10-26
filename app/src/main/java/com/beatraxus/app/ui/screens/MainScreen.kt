@@ -5158,7 +5158,8 @@ fun HomeScreen(
                     }
                 }
                 "RECENTLY_ADDED" -> {
-                    val recentlyAddedSongs = allSongs.sortedByDescending { it.dateAdded }.take(15)
+                    // Audio home: audio files only, a video file in the library never shows here.
+                    val recentlyAddedSongs = allSongs.filter { !it.isVideoFile }.sortedByDescending { it.dateAdded }.take(15)
                     if (recentlyAddedSongs.isNotEmpty() && uiState.appearance.showRecentlyAddedHome) {
                         item(key = "RECENTLY_ADDED") { HomeSectionHeader("Recently Added") }
                         item(key = "RECENTLY_ADDED_CONTENT") {

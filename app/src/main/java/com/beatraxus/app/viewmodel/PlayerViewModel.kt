@@ -75,6 +75,7 @@ import com.beatraxus.app.engine.smart.basicProfile
 import com.beatraxus.app.engine.smart.toProfileInput
 import com.beatraxus.app.model.PlayerUiState
 import com.beatraxus.app.model.Song
+import com.beatraxus.app.model.isVideoFile
 import com.beatraxus.app.model.toEntity
 import com.beatraxus.app.model.SortType
 import com.beatraxus.app.model.ViewMode
@@ -767,7 +768,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             LibraryView.YEARS -> emptyList()
             LibraryView.GENRES -> emptyList()
             LibraryView.FAVORITES -> all.filter { it.isFavorite }
-            LibraryView.RECENTLY_ADDED -> all.sortedByDescending { it.dateAdded }
+            LibraryView.RECENTLY_ADDED -> all.filter { !it.isVideoFile }.sortedByDescending { it.dateAdded }
             LibraryView.RADIO -> emptyList()
             LibraryView.RECENTLY_PLAYED -> {
                 recentIds.filter { it != state.currentSong?.id }
@@ -5109,7 +5110,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         val songsToShuffle = when (state.currentView) {
             LibraryView.HOME, LibraryView.ALL_SONGS -> modeSongs
             LibraryView.FAVORITES -> modeSongs.filter { it.isFavorite }
-            LibraryView.RECENTLY_ADDED -> modeSongs.sortedByDescending { it.dateAdded }
+            LibraryView.RECENTLY_ADDED -> modeSongs.filter { !it.isVideoFile }.sortedByDescending { it.dateAdded }
             LibraryView.RECENTLY_PLAYED -> {
                 _recentlyPlayed.value.mapNotNull { id -> modeSongs.find { it.id == id } }
             }

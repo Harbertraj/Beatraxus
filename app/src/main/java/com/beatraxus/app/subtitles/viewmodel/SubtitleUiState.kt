@@ -63,5 +63,8 @@ data class SubtitleUiState(
     val generateTranslateTo: String? = null,
     val isGenerating: Boolean = false,
     /** What the generator is doing right now ("Recognising speech 2/5"), or the last thing it said. */
-    val generationStatus: String? = null
+    val generationStatus: String? = null,
+    /** True while a saved subtitle is being translated into another language. */
+    val isTranslating: Boolean = false,
+    val translationStatus: String? = null
 )

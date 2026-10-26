@@ -2309,6 +2309,23 @@ fun VideoSettingsSheetContent(
             )
             return@Column
         }
+        // Subtitles: "Auto-generate" and "Translate" each swap this sheet to their own option view (no popup), the same
+        // way "Extract" does in the Audio Tracks sheet. Starting the job goes back to the Subtitles list.
+        var subtitleSubView by remember { mutableStateOf(com.beatraxus.app.subtitles.ui.SubtitleSubView.NONE) }
+        if (activeSheetType == PlayerSheetType.SUBTITLE && subtitleSubView != com.beatraxus.app.subtitles.ui.SubtitleSubView.NONE) {
+            val subState = subtitleViewModel.uiState.collectAsState().value
+            when (subtitleSubView) {
+                com.beatraxus.app.subtitles.ui.SubtitleSubView.GENERATE -> com.beatraxus.app.subtitles.ui.AutoSubtitleSheetBody(
+                    subUiState = subState, subtitleViewModel = subtitleViewModel, accent = mxOrange,
+                    onClose = { subtitleSubView = com.beatraxus.app.subtitles.ui.SubtitleSubView.NONE }
+                )
+                else -> com.beatraxus.app.subtitles.ui.TranslateSubtitleSheetBody(
+                    subUiState = subState, subtitleViewModel = subtitleViewModel, accent = mxOrange,
+                    onClose = { subtitleSubView = com.beatraxus.app.subtitles.ui.SubtitleSubView.NONE }
+                )
+            }
+            return@Column
+        }
         // EQ is handled by DSP Studio while video audio is routed to the Audio Engine
         val eqLockedByEngine = uiState.routeAudioToEngine || uiState.isConnectingEngineRoute
         
@@ -2919,7 +2936,9 @@ fun VideoSettingsSheetContent(
                 videoUiState = uiState,
                 videoViewModel = viewModel,
                 subtitleViewModel = subtitleViewModel,
-                onOpenAuthDialog = { }
+                onOpenAuthDialog = { },
+                onOpenGenerate = { subtitleSubView = com.beatraxus.app.subtitles.ui.SubtitleSubView.GENERATE },
+                onOpenTranslate = { subtitleSubView = com.beatraxus.app.subtitles.ui.SubtitleSubView.TRANSLATE }
             )
         }
 
@@ -3253,6 +3272,15 @@ fun VideoUpscalerSection(uiState: VideoPlayerUiState, viewModel: VideoPlayerView
                     Text(mode.description, color = Color.White.copy(0.6f), fontSize = 12.sp)
                 }
             }
+        }
+        if (uiState.upscaleMode.isOn && uiState.fpsBooster.isOn && uiState.fpsBoosterSuspended == null) {
+            Text(
+                text = "Warning: the FPS Booster is on, so the upscaler is not applied. Turn the FPS Booster off to use it.",
+                color = Color(0xFFFFB74D),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
         }
         if (uiState.upscaleMode.isOn) {
             Spacer(Modifier.height(4.dp))
@@ -3633,6 +3661,14 @@ fun ColorGradingSection(uiState: VideoPlayerUiState, viewModel: VideoPlayerViewM
             onValueChange = { viewModel.setColorExtras(uiState.colorGamma, uiState.colorHue, uiState.colorTemperature, it) },
             mxOrange = mxOrange
         )
+        if (uiState.fpsBooster.isOn && uiState.fpsBoosterSuspended == null) {
+            Text(
+                text = "Warning: Gamma and Sharpness are not applied while the FPS Booster is on.",
+                color = Color(0xFFFFB74D),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
     }
 }
 

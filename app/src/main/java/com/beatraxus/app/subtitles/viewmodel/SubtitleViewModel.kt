@@ -19,6 +19,7 @@ import com.beatraxus.app.subtitles.data.SubtitleCredentialsStore
 import com.beatraxus.app.subtitles.data.SubtitleFileImporter
 import com.beatraxus.app.subtitles.data.SubtitleFontStore
 import com.beatraxus.app.subtitles.data.SubtitleSource
+import com.beatraxus.app.util.NetworkUtils
 import com.beatraxus.app.subtitles.generate.AutoSubtitleGenerator
 import com.beatraxus.app.subtitles.generate.ChatCompletionsTranslator
 import com.beatraxus.app.subtitles.generate.FfmpegChunkProvider
@@ -26,8 +27,8 @@ import com.beatraxus.app.subtitles.generate.GenerationException
 import com.beatraxus.app.subtitles.generate.GenerationCheckpointStore
 import com.beatraxus.app.subtitles.generate.GenerationService
 import com.beatraxus.app.subtitles.generate.OpenAiSpeechTranscriber
-import com.beatraxus.app.subtitles.generate.PartialSubtitle
-import com.beatraxus.app.subtitles.generate.PartialSubtitleScheduler
+import com.beatraxus.app.subtitles.generate.SrtWriter
+import com.beatraxus.app.subtitles.generate.SubtitleTranslator
 import com.beatraxus.app.subtitles.generate.WhisperLanguages
 import com.beatraxus.app.subtitles.domain.AutoSubtitlePicker
 import com.beatraxus.app.subtitles.domain.EncodingNormalizer
@@ -59,10 +60,6 @@ import com.beatraxus.app.subtitles.util.SubtitleErrorMapper
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -126,6 +123,7 @@ class SubtitleViewModel(
     }
 
     private fun loadSettings() {
+        prefs.edit().putBoolean(KEY_GENERATE, false).apply()
         val enabled = prefs.getBoolean("video_subtitle_enabled", true)
         val prefLangsString = prefs.getString("video_subtitle_preferred_languages", "en") ?: "en"
         val prefLangs = prefLangsString.split(",").map { it.trim() }.filter { it.isNotBlank() }
@@ -141,7 +139,8 @@ class SubtitleViewModel(
             it.copy(
                 enabled = enabled,
                 dualEnabled = SecondarySubtitlePrefs.isEnabled(prefs),
-                generateEnabled = prefs.getBoolean(KEY_GENERATE, false),
+                // Auto-generate is always off when the player opens; the viewer switches it on in the subtitle sheet.
+                generateEnabled = false,
                 generateTranslateTo = prefs.getString(KEY_GENERATE_TRANSLATE_TO, null)?.takeIf { it.isNotBlank() },
                 encodingId = SubtitleEncodingPrefs.read(prefs),
                 secondaryStyle = SecondarySubtitlePrefs.readStyle(prefs),
@@ -203,7 +202,7 @@ class SubtitleViewModel(
                 _uiState.update { it.copy(cachedSubtitles = cachedList, results = emptyList(), bestMatchId = null, error = null, errorMessage = null) }
             }
 
-            val activeCached = SubtitleSourcePrefs.usable(cachedList, _uiState.value.generateEnabled).firstOrNull()
+            val activeCached = SubtitleSourcePrefs.usable(cachedList, false).firstOrNull()
             if (activeCached != null && _uiState.value.enabled) {
                 val file = File(activeCached.localPath)
                 if (file.exists()) {
@@ -230,11 +229,8 @@ class SubtitleViewModel(
                 if (autoLoadSiblingSubtitle(video, mediaKey)) return@launch
             }
 
-            // Auto-generated subtitles (from the speech in the audio) come before the online search, when switched on.
-            if (_uiState.value.enabled && _uiState.value.generateEnabled && isSpeechConfigured()) {
-                generateSubtitles()
-                return@launch
-            }
+            // Auto-generated subtitles never start by themselves: the viewer taps "Generate subtitles" (so opening a video
+            // offline, or without a speech service, shows no message).
 
             // Auto-search logic
             val autoMode = _uiState.value.autoSearchMode
@@ -1059,65 +1055,26 @@ class SubtitleViewModel(
         generationJob = viewModelScope.launch(Dispatchers.IO) {
             val saved = subtitleCache.getCachedSubtitles(mediaKey).firstOrNull { it.subtitleId == subtitleId }
             if (saved != null && File(saved.localPath).exists()) {
-                showGenerated(video, mediaKey, saved, label)
+                // Already made: it is in the track list, nothing to generate again.
+                refreshCachedList(mediaKey)
+                _uiState.update { it.copy(generationStatus = "Already generated. Select \"$label\" under Embedded Tracks.") }
+                return@launch
+            }
+            if (!NetworkUtils.isOnline(getApplication<Application>())) {
+                val message = "No internet connection, so subtitles could not be generated."
+                _uiState.update { it.copy(generationStatus = message) }
+                _events.emit(SubtitleUiEvent.Error(message))
                 return@launch
             }
 
             val app = getApplication<Application>()
             val workDir = File(app.cacheDir, "subtitle_gen")
-            // Unfinished subtitles live outside the subtitle cache, so a stopped run is never mistaken for a finished one.
-            val partialDir = File(app.cacheDir, "subtitle_gen_partial").apply { mkdirs() }
             // What was heard (before translation) is kept per video and audio track, to continue a stopped run.
             val checkpointFile = File(
                 File(app.cacheDir, "subtitle_gen_checkpoint"),
                 "${mediaKey}_a${ordinal}_c${AutoSubtitleGenerator.DEFAULT_CHUNK_MS}.ckpt"
             )
             val resume = GenerationCheckpointStore.load(checkpointFile)
-
-            var shownPartials = 0
-            var shownChunks: Set<Int> = emptySet()
-            var lastPartial: File? = null
-            var latest: PartialSubtitle? = null
-            val showLock = Mutex()
-
-            /** Puts the newest subtitles in front of the player when the viewer's position needs them. */
-            suspend fun showLatestIfNeeded() {
-                val p = latest ?: return
-                if (currentVideo?.id != video.id) return
-                showLock.withLock {
-                    val position = subtitleController.currentPositionMs()
-                    if (PartialSubtitleScheduler.shouldShow(p.doneChunks, shownChunks, position, p.chunkLengthMs)) {
-                        try {
-                            val file = File(partialDir, "${mediaKey}_${subtitleId}_${p.chunksDone}.srt")
-                            file.writeText(p.srt, Charsets.UTF_8)
-                            subtitleController.attachExternalSubtitle(
-                                videoId = video.id,
-                                file = file,
-                                language = p.languageCode,
-                                label = "$label (in progress)",
-                                subtitleId = subtitleId
-                            )
-                            lastPartial?.delete()
-                            lastPartial = file
-                            shownChunks = p.doneChunks
-                            shownPartials++
-                            Log.d(TAG, "Showing ${p.doneChunks.size} ready parts at ${position}ms")
-                        } catch (e: CancellationException) {
-                            throw e
-                        } catch (e: Exception) {
-                            Log.w(TAG, "Could not show the partial subtitles", e)
-                        }
-                    }
-                }
-            }
-
-            // The viewer may seek while the next part is still being recognised: look again every few seconds.
-            val ticker = launch {
-                while (isActive) {
-                    delay(4_000)
-                    showLatestIfNeeded()
-                }
-            }
 
             _uiState.update { it.copy(isGenerating = true, generationStatus = "Reading the audio…") }
             Log.i(TAG, "Generating subtitles: audioTrack=$ordinal target=$target video=${video.id} resumedParts=${resume?.doneChunks?.size ?: 0}")
@@ -1149,15 +1106,13 @@ class SubtitleViewModel(
                         }
                     },
                     onPartial = { p ->
+                        // Nothing is shown on screen while generating; the finished subtitle appears in the track list.
                         Log.d(TAG, "Part ${p.chunksDone} done, subtitles cover ${p.coveredUntilMs}ms")
-                        latest = p
                         _uiState.update {
                             it.copy(generationStatus = "Recognised ${p.chunksDone} of ${p.chunksTotal ?: "?"} parts")
                         }
-                        showLatestIfNeeded()
                     }
                 )
-                ticker.cancel()
                 Log.i(TAG, "Done: ${generated.cueCount} cues, language=${generated.languageCode}, untranslated=${generated.untranslatedLines}")
 
                 subtitleCache.saveSubtitle(
@@ -1172,33 +1127,25 @@ class SubtitleViewModel(
                     ),
                     generated.srt
                 )
-                val entry = subtitleCache.getCachedSubtitles(mediaKey).first { it.subtitleId == subtitleId }
 
                 val note = when {
                     generated.untranslatedLines > 0 -> "Done. ${generated.untranslatedLines} lines could not be translated and stay in the spoken language."
                     generated.translated -> "Done. Translated to ${WhisperLanguages.displayName(target)}."
                     else -> "Done. ${generated.cueCount} lines."
                 }
-                _uiState.update { it.copy(isGenerating = false, generationStatus = note) }
-                showGenerated(video, mediaKey, entry, label)
-                partialDir.deleteRecursively()
+                _uiState.update { it.copy(isGenerating = false, generationStatus = "$note Select \"$label\" under Embedded Tracks.") }
+                refreshCachedList(mediaKey)
+                _events.emit(SubtitleUiEvent.ShowToast("Auto subtitles ready. Select them under Embedded Tracks."))
             } catch (e: CancellationException) {
                 Log.i(TAG, "Generation cancelled")
-                _uiState.update {
-                    it.copy(
-                        isGenerating = false,
-                        generationStatus = if (shownPartials > 0) "Stopped. Subtitles made so far stay on screen; Generate continues from there." else null
-                    )
-                }
+                _uiState.update { it.copy(isGenerating = false, generationStatus = "Stopped. Generate continues from where it left off.") }
                 throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Generating subtitles failed", e)
-                val message = generationMessage(e) +
-                    if (shownPartials > 0) " The subtitles made so far stay on screen." else ""
+                val message = generationMessage(e)
                 _uiState.update { it.copy(isGenerating = false, generationStatus = message) }
                 _events.emit(SubtitleUiEvent.Error(message))
             } finally {
-                ticker.cancel()
                 workDir.deleteRecursively()
             }
         }
@@ -1224,17 +1171,108 @@ class SubtitleViewModel(
         }
     }
 
-    /** Switches to auto-generated subtitles; a subtitle already generated for this video and language is shown again at once. */
+    /** Opens the auto-generate options. Nothing is put on screen: a generated subtitle is picked from the track list. */
     fun useAutoGenerate() {
         setGenerateEnabled(true)
-        enableSubtitles()
+    }
+
+    /** Puts a finished generated subtitle (listed with the embedded tracks) on the player. */
+    fun selectGeneratedSubtitle(subtitleId: String) {
         val video = currentVideo ?: return
+        enableSubtitles()
         viewModelScope.launch(Dispatchers.IO) {
             val mediaKey = currentMediaKey.ifBlank { MediaKey.of(video) }
-            val target = _uiState.value.generateTranslateTo
-            val id = SubtitleSourcePrefs.generatedId(generationAudioOrdinal, target)
-            val saved = subtitleCache.getCachedSubtitles(mediaKey).firstOrNull { it.subtitleId == id }
-            if (saved != null && File(saved.localPath).exists()) showGenerated(video, mediaKey, saved, generatedLabel(target))
+            val saved = subtitleCache.getCachedSubtitles(mediaKey).firstOrNull { it.subtitleId == subtitleId } ?: return@launch
+            if (!File(saved.localPath).exists()) return@launch
+            showGenerated(video, mediaKey, saved, saved.releaseName ?: "Auto subtitles")
+        }
+    }
+
+    private suspend fun refreshCachedList(mediaKey: String) {
+        val list = subtitleCache.getCachedSubtitles(mediaKey)
+        withContext(Dispatchers.Main) { _uiState.update { it.copy(cachedSubtitles = list) } }
+    }
+
+    private var translationJob: Job? = null
+
+    /** True when this build has a translation key; the translate sheet says so instead of failing. */
+    fun isTranslationConfigured(): Boolean = BuildConfig.LLM_API_KEY.isNotBlank()
+
+    fun stopTranslation() {
+        translationJob?.cancel()
+    }
+
+    /**
+     * Translates a saved subtitle of this video (downloaded, imported, generated or an earlier translation) into
+     * [targetLanguageCode]. Every line keeps its start and end time, so the translation stays in step. The result is
+     * saved like any other subtitle and listed with the embedded tracks; nothing is shown until the viewer picks it.
+     */
+    fun translateSubtitle(sourceSubtitleId: String, targetLanguageCode: String) {
+        val video = currentVideo ?: return
+        if (_uiState.value.isTranslating) return
+
+        fun fail(message: String) {
+            _uiState.update { it.copy(isTranslating = false, translationStatus = message) }
+            viewModelScope.launch { _events.emit(SubtitleUiEvent.Error(message)) }
+        }
+        if (!isTranslationConfigured()) { fail("Translation needs LLM_API_KEY in this build."); return }
+
+        translationJob = viewModelScope.launch(Dispatchers.IO) {
+            val mediaKey = currentMediaKey.ifBlank { MediaKey.of(video) }
+            val source = subtitleCache.getCachedSubtitles(mediaKey).firstOrNull { it.subtitleId == sourceSubtitleId }
+            if (source == null || !File(source.localPath).exists()) { fail("That subtitle is no longer saved."); return@launch }
+
+            val targetName = WhisperLanguages.displayName(targetLanguageCode)
+            val newId = SubtitleSourcePrefs.translatedId(sourceSubtitleId, targetLanguageCode)
+            val label = "${(source.releaseName ?: "Subtitle").substringBefore(" \u2192 ")} \u2192 $targetName"
+            if (subtitleCache.getCachedSubtitles(mediaKey).any { it.subtitleId == newId && File(it.localPath).exists() }) {
+                refreshCachedList(mediaKey)
+                _uiState.update { it.copy(translationStatus = "Already translated. Select \"$label\" under Embedded Tracks.") }
+                return@launch
+            }
+            if (!NetworkUtils.isOnline(getApplication<Application>())) {
+                fail("No internet connection, so the subtitles could not be translated.")
+                return@launch
+            }
+
+            _uiState.update { it.copy(isTranslating = true, translationStatus = "Reading the subtitle\u2026") }
+            try {
+                val cues = SubtitleCueParser.parse(File(source.localPath).readText(Charsets.UTF_8))
+                if (cues.isEmpty()) { fail("This subtitle has no lines that can be translated."); return@launch }
+                val translator = ChatCompletionsTranslator(BuildConfig.LLM_ENDPOINT, BuildConfig.LLM_API_KEY, BuildConfig.LLM_MODEL)
+                val sourceLanguage = source.language.takeIf { it.isNotBlank() && !it.equals("und", true) }
+                val result = SubtitleTranslator(translator).translate(
+                    cues = cues,
+                    fromLanguageName = sourceLanguage?.let { WhisperLanguages.displayName(it) },
+                    toLanguageName = targetName,
+                    toLanguageCode = targetLanguageCode,
+                    onProgress = { done, total ->
+                        _uiState.update { it.copy(translationStatus = "Translating to $targetName: part ${minOf(done + 1, total)} of $total") }
+                    }
+                )
+                subtitleCache.saveSubtitle(
+                    mediaKey,
+                    CachedSubtitle(
+                        subtitleId = newId,
+                        language = targetLanguageCode,
+                        format = "SRT",
+                        releaseName = label,
+                        localPath = "",
+                        source = SubtitleSource.LOCAL
+                    ),
+                    SrtWriter.toSrt(result.cues)
+                )
+                val note = if (result.untranslated > 0) "Done. ${result.untranslated} lines could not be translated and stay as they were." else "Done."
+                _uiState.update { it.copy(isTranslating = false, translationStatus = "$note Select \"$label\" under Embedded Tracks.") }
+                refreshCachedList(mediaKey)
+                _events.emit(SubtitleUiEvent.ShowToast("Translated subtitles ready. Select them under Embedded Tracks."))
+            } catch (e: CancellationException) {
+                _uiState.update { it.copy(isTranslating = false, translationStatus = "Stopped.") }
+                throw e
+            } catch (e: Exception) {
+                Log.e(TAG, "Translating subtitles failed", e)
+                fail(generationMessage(e))
+            }
         }
     }
 
@@ -1246,7 +1284,7 @@ class SubtitleViewModel(
                 if (leftMs == totalMs) Log.w(TAG, "Speech service limit reached, waiting ${totalMs / 1000}s before the next part")
                 _uiState.update {
                     it.copy(
-                        generationStatus = if (leftMs > 0L) "Speech service limit reached. Continuing in ${clock(leftMs)}. Subtitles made so far stay on screen."
+                        generationStatus = if (leftMs > 0L) "Speech service limit reached. Continuing in ${clock(leftMs)}."
                         else "Recognising speech…"
                     )
                 }
