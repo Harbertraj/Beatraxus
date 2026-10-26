@@ -245,7 +245,9 @@ class Media3SubtitlePlayerController(
             if (group.type == C.TRACK_TYPE_TEXT) {
                 for (i in 0 until group.length) {
                     val format = group.getTrackFormat(i)
-                    if (format.id == targetTrackId) {
+                    // Media3 can prefix the id of a sideloaded track, so an exact match is not required.
+                    val id = format.id
+                    if (id != null && (id == targetTrackId || id.endsWith(targetTrackId))) {
                         params = params.setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, i))
                         found = true
                         break
@@ -271,11 +273,18 @@ class Media3SubtitlePlayerController(
         enableAndSelectSideloadedTrack(player, trackId)
 
         val listener = object : Player.Listener {
-            override fun onTracksChanged(tracks: Tracks) {
+            private fun trySelect() {
                 if (enableAndSelectSideloadedTrack(player, trackId)) {
                     player.removeListener(this)
                     if (pendingSelection === this) pendingSelection = null
                 }
+            }
+
+            override fun onTracksChanged(tracks: Tracks) = trySelect()
+
+            // The new item is prepared a moment after it is swapped in; try again once it is ready to play.
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                if (playbackState == Player.STATE_READY) trySelect()
             }
         }
         pendingSelection = listener

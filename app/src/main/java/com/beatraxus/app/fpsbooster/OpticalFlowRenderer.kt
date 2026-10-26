@@ -696,6 +696,7 @@ class OpticalFlowRenderer(
         GLES30.glUniformMatrix3fv(ip.loc("uColorDelta"), 1, false, colorDelta, 0)
         GLES30.glUniform1f(ip.loc("uConsLo"), CONS_LO)
         GLES30.glUniform1f(ip.loc("uConsHi"), CONS_HI)
+        GLES30.glUniform1i(ip.loc("uSharp"), if (PRESERVE_SHARPNESS) 1 else 0)
         GLES30.glUniformMatrix2fv(ip.loc("uOrient"), 1, false, orientationMatrix, 0)
         GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
     }
@@ -815,6 +816,8 @@ class OpticalFlowRenderer(
         private const val LAMBDA = 0.003f         // flow smoothness penalty per px
         private const val CONS_LO = 1.0f          // forward/backward inconsistency (px): trusted below
         private const val CONS_HI = 3.0f          //                                        rejected above
+        /** Generated frames are resampled bicubically from the nearest real frame, so they are as sharp as the original. */
+        private const val PRESERVE_SHARPNESS = true
         private const val CUT_MEAN = 0.12f
         private const val CUT_POOR = 0.10f
         private const val MIN_FRAME_NS = 4_000_000L

@@ -30,6 +30,7 @@ uniform vec3 uGrade;         // brightness, contrast, saturation (applied last, 
 uniform mat3 uColorDelta;    // hue + colour temperature matrix minus identity, column-major (zeros = off)
 uniform float uConsLo;       // inconsistency (px) below which a warp is fully trusted
 uniform float uConsHi;       // ... and above which it is rejected
+uniform int uSharp;          // 1: keep generated frames as sharp as real ones (bicubic resample of one source frame)
 in vec2 vUv;
 out vec4 o;
 
@@ -65,6 +66,31 @@ vec4 flowAt(sampler2D s, vec2 uv) {
   vec2 v = (t00.xy * k00 + t10.xy * k10 + t01.xy * k01 + t11.xy * k11) / (k00 + k10 + k01 + k11);
   vec4 plain = t00 * w00 + t10 * w10 + t01 * w01 + t11 * w11;
   return vec4(v, plain.z, plain.w);
+}
+
+// Catmull-Rom (bicubic) fetch in 5 bilinear taps. A plain bilinear fetch at a fractional (motion-compensated)
+// position low-passes the picture, so every generated frame came out softer than the real ones around it.
+// Catmull-Rom keeps edges and fine detail at a sub-pixel shift.
+vec3 sampleSharp(sampler2D s, vec2 uv) {
+  vec2 sz = vec2(textureSize(s, 0));
+  vec2 pos = uv * sz;
+  vec2 c = floor(pos - 0.5) + 0.5;
+  vec2 f = pos - c;
+  vec2 w0 = f * (-0.5 + f * (1.0 - 0.5 * f));
+  vec2 w1 = 1.0 + f * f * (-2.5 + 1.5 * f);
+  vec2 w2 = f * (0.5 + f * (2.0 - 1.5 * f));
+  vec2 w3 = f * f * (-0.5 + 0.5 * f);
+  vec2 w12 = w1 + w2;
+  vec2 t0 = (c - 1.0) / sz;
+  vec2 t3 = (c + 2.0) / sz;
+  vec2 t12 = (c + w2 / w12) / sz;
+  vec3 r = texture(s, vec2(t12.x, t0.y)).rgb * (w12.x * w0.y)
+         + texture(s, vec2(t0.x, t12.y)).rgb * (w0.x * w12.y)
+         + texture(s, vec2(t12.x, t12.y)).rgb * (w12.x * w12.y)
+         + texture(s, vec2(t3.x, t12.y)).rgb * (w3.x * w12.y)
+         + texture(s, vec2(t12.x, t3.y)).rgb * (w12.x * w3.y);
+  float wsum = w12.x * w0.y + w0.x * w12.y + w12.x * w12.y + w3.x * w12.y + w12.x * w3.y;
+  return clamp(r / wsum, 0.0, 1.0);
 }
 
 vec4 fw(vec2 uv) { return flowAt(uFw, uv); }
@@ -111,8 +137,22 @@ void main() {
                * (1.0 - smoothstep(0.35, 0.60, b.b))
                * (1.0 - smoothstep(1.0 * sb, 4.0 * sb, length(b.xy - b0.xy)));
 
+      // Averaging two resampled frames (A and B) blurs anything the flow did not match to the pixel. With uSharp
+      // the colour comes from ONE frame, the one nearer in time, resampled bicubically; fa/fb/ba/bb above are only
+      // used for the trust checks.
       vec3 wFw = mix(fa, fb, uT);
       vec3 wBw = mix(ba, bb, uT);
+      if (uSharp == 1) {
+        bool nearA = uT < 0.5;
+        if (wf > 0.001) {
+          wFw = nearA ? sampleSharp(uA, vUv - uT * f.xy * inv)
+                      : sampleSharp(uB, vUv + (1.0 - uT) * f.xy * inv);
+        }
+        if (wb > 0.001) {
+          wBw = nearA ? sampleSharp(uA, vUv + uT * b.xy * inv)
+                      : sampleSharp(uB, vUv - (1.0 - uT) * b.xy * inv);
+        }
+      }
       float wsum = wf + wb;
       vec3 warped = (wf * wFw + wb * wBw) / max(wsum, 1e-4);
       // both warps agreeing is stronger evidence than one
@@ -132,7 +172,12 @@ void main() {
           vec3 gb = texture(uB, vUv + (1.0 - uT) * g4.xy * inv).rgb;
           // stricter than the per-pixel check: here the colour agreement is the only evidence
           float wg = gTrust * (1.0 - smoothstep(0.04, 0.12, length(ga - gb))) * (1.0 - conf);
-          rgb = mix(rgb, mix(ga, gb, uT), wg);
+          vec3 gSrc = mix(ga, gb, uT);
+          if (uSharp == 1 && wg > 0.001) {
+            gSrc = (uT < 0.5) ? sampleSharp(uA, vUv - uT * g4.xy * inv)
+                              : sampleSharp(uB, vUv + (1.0 - uT) * g4.xy * inv);
+          }
+          rgb = mix(rgb, gSrc, wg);
         }
       }
     }

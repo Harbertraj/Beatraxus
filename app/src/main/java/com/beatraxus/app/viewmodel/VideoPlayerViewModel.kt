@@ -1376,14 +1376,8 @@ class VideoPlayerViewModel(
         FpsBoosterStore.save(prefs, settings)
         _uiState.update { withFpsPlan(it.copy(fpsBooster = settings, fpsBoosterSuspended = null)) }
         updateVideoEffects()
-        val st = _uiState.value
-        if (settings.isOn) {
-            val lost = buildList {
-                if (st.upscaleMode.isOn) add("Upscaler")
-                if (needsGradeEffect()) add("Gamma / Sharpness")
-            }
-            if (lost.isNotEmpty()) flashWarning("${lost.joinToString(" and ")} not used while FPS Booster is on")
-        }
+        // The "Upscaler / Gamma / Sharpness not used while FPS Booster is on" warning is shown only inside
+        // the option sheet (see VideoPlayerScreen), never as a pill over the video.
     }
 
     fun updateFpsBoosterStats(stats: BoosterStats) {
@@ -2732,9 +2726,7 @@ class VideoPlayerViewModel(
         _uiState.update { it.copy(colorGamma = gamma, colorHue = hue, colorTemperature = temperature, colorSharpness = sharpness) }
         updateVideoEffects()
         val gradeChanged = gamma != before.colorGamma || sharpness != before.colorSharpness
-        if (gradeChanged && boosterMayRun()) {
-            if (_uiState.value.aspectRatioMessage == null) flashWarning("Gamma and Sharpness are not used while FPS Booster is on")
-        } else if (gradeChanged) {
+        if (gradeChanged && !boosterMayRun()) {
             // Sharpness / gamma are drawn by the player's effect: while paused, redraw once the slider settles.
             redrawJob?.cancel()
             redrawJob = viewModelScope.launch { delay(200); redrawFrameIfPaused() }
@@ -2877,8 +2869,7 @@ class VideoPlayerViewModel(
         _uiState.update { it.copy(upscaleMode = mode, aspectRatioMessage = "Upscaler: ${mode.label}") }
         updateVideoEffects()
         redrawFrameIfPaused()
-        if (mode.isOn && boosterMayRun()) flashWarning("Upscaler is not used while FPS Booster is on")
-        else viewModelScope.launch { delay(2000); _uiState.update { it.copy(aspectRatioMessage = null) } }
+        viewModelScope.launch { delay(2000); _uiState.update { it.copy(aspectRatioMessage = null) } }
     }
 
     /** Sharpening strength of the upscaler, 0..1. Applies on the next frame. */
@@ -2893,19 +2884,11 @@ class VideoPlayerViewModel(
     }
 
     private var redrawJob: Job? = null
-    private var warningJob: Job? = null
 
     /** True while the FPS Booster is switched on and has not stopped itself: it draws the video itself, so the player's effects are skipped. */
     private fun boosterMayRun(): Boolean {
         val s = _uiState.value
         return s.fpsBooster.isOn && s.fpsBoosterSuspended == null
-    }
-
-    /** A warning pill on the video; stays a little longer than the normal 2 s messages. */
-    private fun flashWarning(text: String) {
-        warningJob?.cancel()
-        _uiState.update { it.copy(aspectRatioMessage = text) }
-        warningJob = viewModelScope.launch { delay(3500); _uiState.update { it.copy(aspectRatioMessage = null) } }
     }
 
     /**

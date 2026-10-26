@@ -3661,7 +3661,9 @@ fun ColorGradingSection(uiState: VideoPlayerUiState, viewModel: VideoPlayerViewM
             onValueChange = { viewModel.setColorExtras(uiState.colorGamma, uiState.colorHue, uiState.colorTemperature, it) },
             mxOrange = mxOrange
         )
-        if (uiState.fpsBooster.isOn && uiState.fpsBoosterSuspended == null) {
+        if (uiState.fpsBooster.isOn && uiState.fpsBoosterSuspended == null &&
+            (uiState.colorGamma != 1f || uiState.colorSharpness != 0f)
+        ) {
             Text(
                 text = "Warning: Gamma and Sharpness are not applied while the FPS Booster is on.",
                 color = Color(0xFFFFB74D),

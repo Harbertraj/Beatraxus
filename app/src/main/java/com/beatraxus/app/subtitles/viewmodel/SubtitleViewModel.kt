@@ -27,6 +27,8 @@ import com.beatraxus.app.subtitles.generate.GenerationException
 import com.beatraxus.app.subtitles.generate.GenerationCheckpointStore
 import com.beatraxus.app.subtitles.generate.GenerationService
 import com.beatraxus.app.subtitles.generate.OpenAiSpeechTranscriber
+import com.beatraxus.app.subtitles.generate.PartialSubtitle
+import com.beatraxus.app.subtitles.generate.PartialSubtitleScheduler
 import com.beatraxus.app.subtitles.generate.SrtWriter
 import com.beatraxus.app.subtitles.generate.SubtitleTranslator
 import com.beatraxus.app.subtitles.generate.WhisperLanguages
@@ -60,6 +62,10 @@ import com.beatraxus.app.subtitles.util.SubtitleErrorMapper
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -1076,6 +1082,60 @@ class SubtitleViewModel(
             )
             val resume = GenerationCheckpointStore.load(checkpointFile)
 
+            // Unfinished subtitles live outside the subtitle cache, so a stopped run is never mistaken for a finished one.
+            val partialDir = File(app.cacheDir, "subtitle_gen_partial").apply { mkdirs() }
+            val liveTrackId = "bx_ext_$subtitleId"
+            var shownPartials = 0
+            var shownChunks: Set<Int> = emptySet()
+            var lastPartial: File? = null
+            var latest: PartialSubtitle? = null
+            val showLock = Mutex()
+
+            /**
+             * Puts the subtitles recognised so far in front of the player while the rest is still being made.
+             * The first time it always shows (the viewer asked for generated subtitles); after that it only
+             * refreshes while the live subtitle is still the one on screen, so a track the viewer picked meanwhile
+             * is never taken away.
+             */
+            suspend fun showLatestIfNeeded() {
+                val p = latest ?: return
+                if (currentVideo?.id != video.id) return
+                showLock.withLock {
+                    if (shownPartials > 0 && subtitleController.activeExternalTrackId.value != liveTrackId) return
+                    val position = subtitleController.currentPositionMs()
+                    if (PartialSubtitleScheduler.shouldShow(p.doneChunks, shownChunks, position, p.chunkLengthMs)) {
+                        try {
+                            val file = File(partialDir, "${mediaKey}_${subtitleId}_${p.chunksDone}.srt")
+                            file.writeText(p.srt, Charsets.UTF_8)
+                            subtitleController.attachExternalSubtitle(
+                                videoId = video.id,
+                                file = file,
+                                language = p.languageCode,
+                                label = "$label (in progress)",
+                                subtitleId = subtitleId
+                            )
+                            lastPartial?.delete()
+                            lastPartial = file
+                            shownChunks = p.doneChunks
+                            shownPartials++
+                            Log.d(TAG, "Showing ${p.doneChunks.size} ready parts at ${position}ms")
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Could not show the partial subtitles", e)
+                        }
+                    }
+                }
+            }
+
+            // The viewer may seek while the next part is still being recognised: look again every few seconds.
+            val ticker = launch {
+                while (isActive) {
+                    delay(4_000)
+                    showLatestIfNeeded()
+                }
+            }
+
             _uiState.update { it.copy(isGenerating = true, generationStatus = "Reading the audio…") }
             Log.i(TAG, "Generating subtitles: audioTrack=$ordinal target=$target video=${video.id} resumedParts=${resume?.doneChunks?.size ?: 0}")
             try {
@@ -1106,13 +1166,16 @@ class SubtitleViewModel(
                         }
                     },
                     onPartial = { p ->
-                        // Nothing is shown on screen while generating; the finished subtitle appears in the track list.
                         Log.d(TAG, "Part ${p.chunksDone} done, subtitles cover ${p.coveredUntilMs}ms")
+                        latest = p
                         _uiState.update {
                             it.copy(generationStatus = "Recognised ${p.chunksDone} of ${p.chunksTotal ?: "?"} parts")
                         }
+                        // Subtitles appear on the video as soon as the first part is ready, not after the whole run.
+                        showLatestIfNeeded()
                     }
                 )
+                ticker.cancel()
                 Log.i(TAG, "Done: ${generated.cueCount} cues, language=${generated.languageCode}, untranslated=${generated.untranslatedLines}")
 
                 subtitleCache.saveSubtitle(
@@ -1133,12 +1196,28 @@ class SubtitleViewModel(
                     generated.translated -> "Done. Translated to ${WhisperLanguages.displayName(target)}."
                     else -> "Done. ${generated.cueCount} lines."
                 }
-                _uiState.update { it.copy(isGenerating = false, generationStatus = "$note Select \"$label\" under Embedded Tracks.") }
-                refreshCachedList(mediaKey)
-                _events.emit(SubtitleUiEvent.ShowToast("Auto subtitles ready. Select them under Embedded Tracks."))
+                val liveStillShown = shownPartials > 0 &&
+                    subtitleController.activeExternalTrackId.value == liveTrackId && currentVideo?.id == video.id
+                if (liveStillShown) {
+                    // The live (in progress) subtitle is on screen: swap in the finished one so every part is covered.
+                    val entry = subtitleCache.getCachedSubtitles(mediaKey).first { it.subtitleId == subtitleId }
+                    _uiState.update { it.copy(isGenerating = false, generationStatus = note) }
+                    showGenerated(video, mediaKey, entry, label)
+                } else {
+                    _uiState.update { it.copy(isGenerating = false, generationStatus = "$note Select \"$label\" under Embedded Tracks.") }
+                    refreshCachedList(mediaKey)
+                    _events.emit(SubtitleUiEvent.ShowToast("Auto subtitles ready. Select them under Embedded Tracks."))
+                }
+                partialDir.deleteRecursively()
             } catch (e: CancellationException) {
                 Log.i(TAG, "Generation cancelled")
-                _uiState.update { it.copy(isGenerating = false, generationStatus = "Stopped. Generate continues from where it left off.") }
+                _uiState.update {
+                    it.copy(
+                        isGenerating = false,
+                        generationStatus = if (shownPartials > 0) "Stopped. Subtitles made so far stay on screen; Generate continues from there."
+                        else "Stopped. Generate continues from where it left off."
+                    )
+                }
                 throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Generating subtitles failed", e)
@@ -1146,6 +1225,7 @@ class SubtitleViewModel(
                 _uiState.update { it.copy(isGenerating = false, generationStatus = message) }
                 _events.emit(SubtitleUiEvent.Error(message))
             } finally {
+                ticker.cancel()
                 workDir.deleteRecursively()
             }
         }
