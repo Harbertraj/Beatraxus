@@ -8,6 +8,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -35,6 +36,7 @@ import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.Translate
 import androidx.compose.material.icons.rounded.Subtitles
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -50,6 +52,7 @@ import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -60,11 +63,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.media3.common.util.UnstableApi
 import com.beatraxus.app.BuildConfig
+import com.beatraxus.app.subtitles.data.CachedSubtitle
 import com.beatraxus.app.subtitles.data.SubtitleRepositoryImpl
 import com.beatraxus.app.subtitles.domain.SecondarySubtitlePlacement
 import com.beatraxus.app.subtitles.domain.SecondarySubtitleStyle
@@ -95,6 +101,8 @@ fun SubtitlePlayerSheetSection(
     var showLanguagePicker by remember { mutableStateOf(false) }
     var manualSearchText by remember { mutableStateOf("") }
     var tapSyncTarget by remember { mutableStateOf<SyncTarget?>(null) }
+    // A generated / translated subtitle the viewer long-pressed, waiting for the delete to be confirmed.
+    var deleteCandidate by remember { mutableStateOf<CachedSubtitle?>(null) }
 
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
@@ -114,6 +122,28 @@ fun SubtitlePlayerSheetSection(
             selectedCodes = subUiState.selectedLanguages,
             onDismiss = { showLanguagePicker = false },
             onLanguagesSelected = { subtitleViewModel.setPreferredLanguages(it) }
+        )
+    }
+
+    deleteCandidate?.let { entry ->
+        AlertDialog(
+            onDismissRequest = { deleteCandidate = null },
+            containerColor = Color(0xFF1E1E1E),
+            shape = RoundedCornerShape(16.dp),
+            title = { Text("Delete subtitle?", color = Color.White, fontWeight = FontWeight.Bold) },
+            text = {
+                Text(
+                    "\"${entry.releaseName ?: "Auto subtitles"}\" will be removed from this video. You can generate it again later.",
+                    color = Color.White.copy(0.7f)
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    subtitleViewModel.deleteMadeSubtitle(entry.subtitleId)
+                    deleteCandidate = null
+                }) { Text("Delete", color = Color(0xFFFF5252)) }
+            },
+            dismissButton = { TextButton(onClick = { deleteCandidate = null }) { Text("Cancel", color = Color.White) } }
         )
     }
 
@@ -456,12 +486,16 @@ fun SubtitlePlayerSheetSection(
                 val label = g.releaseName ?: "Auto subtitles"
                 val picked = subUiState.enabled && subUiState.selectedSubtitleId == g.subtitleId &&
                     videoUiState.availableSubtitleTracks.any { it.isSelected && it.name == label }
-                FilterChip(
-                    selected = picked,
+                MadeSubtitleChip(
+                    label = label,
+                    picked = picked,
+                    accent = mxOrange,
                     onClick = { subtitleViewModel.selectGeneratedSubtitle(g.subtitleId) },
-                    colors = FilterChipDefaults.filterChipColors(selectedContainerColor = mxOrange, selectedLabelColor = Color.Black),
-                    label = { Text(label, color = if (picked) Color.Black else Color.White) }
+                    onLongClick = { deleteCandidate = g }
                 )
+            }
+            if (generated.isNotEmpty()) {
+                Text("Long press an auto subtitle to delete it.", color = Color.White.copy(0.4f), fontSize = 11.sp)
             }
 
             val generatedLabels = generated.map { it.releaseName ?: "Auto subtitles" }.toSet()
@@ -866,9 +900,14 @@ private fun SubtitleToolsSection(
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         SubtitleToolRow(
             icon = Icons.Rounded.Subtitles,
-            title = "Auto-generate subtitles",
+            title = if (!subUiState.isGenerating &&
+                subtitleViewModel.hasGenerated(subUiState.cachedSubtitles, subUiState.generateTranslateTo)
+            ) "Regenerate auto subtitles" else "Auto-generate subtitles",
             line = if (subUiState.isGenerating) subUiState.generationStatus ?: "Generating\u2026"
-            else subUiState.generationStatus ?: "Make subtitles from the speech in the audio",
+            else subUiState.generationStatus
+                ?: if (subtitleViewModel.hasGenerated(subUiState.cachedSubtitles, subUiState.generateTranslateTo))
+                    "Already generated. Tap to regenerate."
+                else "Make subtitles from the speech in the audio",
             running = subUiState.isGenerating,
             accent = accent,
             onClick = onOpenGenerate,
@@ -925,5 +964,38 @@ private fun SubtitleToolRow(
         } else {
             Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, null, tint = Color.White.copy(0.5f), modifier = Modifier.size(22.dp))
         }
+    }
+}
+
+/**
+ * A track-list chip for a generated or translated subtitle. Tap picks it; long press asks to delete it (a Material
+ * FilterChip has no long-press, so it is drawn here with the same shape and colours).
+ */
+@Composable
+private fun MadeSubtitleChip(
+    label: String,
+    picked: Boolean,
+    accent: Color,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit
+) {
+    val haptic = LocalHapticFeedback.current
+    Box(
+        modifier = Modifier
+            .heightIn(min = 32.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(if (picked) accent else Color.Transparent)
+            .border(1.dp, if (picked) accent else Color.White.copy(0.3f), RoundedCornerShape(8.dp))
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onLongClick()
+                }
+            )
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        contentAlignment = Alignment.CenterStart
+    ) {
+        Text(label, color = if (picked) Color.Black else Color.White, fontSize = 14.sp, maxLines = 1)
     }
 }

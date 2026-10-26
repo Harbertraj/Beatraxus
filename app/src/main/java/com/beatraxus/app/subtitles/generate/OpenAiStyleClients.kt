@@ -28,7 +28,7 @@ internal object OpenAiStyle {
         .build()
 
     /** Maps an HTTP failure to the kind the viewer needs to act on it. */
-    fun failure(code: Int, body: String): GenerationException {
+    fun failure(code: Int, body: String, service: String = "Speech service"): GenerationException {
         val detail = runCatching { JsonParser.parseString(body).asJsonObject["error"]?.asJsonObject?.get("message")?.asString }
             .getOrNull()
         val kind = when (code) {
@@ -38,11 +38,11 @@ internal object OpenAiStyle {
             in 500..599 -> GenerationException.Kind.SERVICE
             else -> GenerationException.Kind.SERVICE
         }
-        return GenerationException(kind, detail ?: "Speech service answered HTTP $code")
+        return GenerationException(kind, detail ?: "$service answered HTTP $code")
     }
 
-    fun ioFailure(e: IOException): GenerationException =
-        GenerationException(GenerationException.Kind.NETWORK, "No connection to the speech service", e)
+    fun ioFailure(e: IOException, service: String = "Speech service"): GenerationException =
+        GenerationException(GenerationException.Kind.NETWORK, "No connection to the ${service.lowercase()}", e)
 
     /** The longest single wait honoured after a rate-limited answer (an hourly audio quota can ask for many minutes). */
     const val MAX_SINGLE_WAIT_MS = 20L * 60_000L
@@ -165,7 +165,9 @@ class OpenAiSpeechTranscriber(
 class ChatCompletionsTranslator(
     private val endpoint: String,
     private val apiKey: String,
-    private val model: String
+    private val model: String,
+    /** Called every second while a rate limit is being waited out: (time left, the whole wait). 0 left = the wait is over. */
+    private val onRateLimited: (leftMs: Long, totalMs: Long) -> Unit = { _, _ -> }
 ) : TextTranslator {
 
     override suspend fun translate(
@@ -195,21 +197,56 @@ class ChatCompletionsTranslator(
             .post(payload.toString().toRequestBody("application/json; charset=utf-8".toMediaType()))
             .build()
 
-        val content = try {
-            OpenAiStyle.client.newCall(request).execute().use { response ->
-                val text = response.body?.string().orEmpty()
-                if (!response.isSuccessful) throw OpenAiStyle.failure(response.code, text)
-                JsonParser.parseString(text).asJsonObject
-                    .getAsJsonArray("choices")[0].asJsonObject
-                    .getAsJsonObject("message")["content"].asString
+        // Free translation plans cap tokens/requests per minute. Going over is not a failure: the answer says how long
+        // to wait, so wait that long (showing it) and ask again instead of stopping the whole subtitle at part 1.
+        var attempt = 0
+        var waitedMs = 0L
+        var content: String? = null
+        while (content == null) {
+            var waitMs = 0L
+            content = try {
+                OpenAiStyle.client.newCall(request).execute().use { response ->
+                    val text = response.body?.string().orEmpty()
+                    when {
+                        response.isSuccessful -> JsonParser.parseString(text).asJsonObject
+                            .getAsJsonArray("choices")[0].asJsonObject
+                            .getAsJsonObject("message")["content"].asString
+                        response.code == 429 -> {
+                            waitMs = OpenAiStyle.rateLimitWaitMs(response, text, attempt)
+                                ?: throw OpenAiStyle.failure(429, text, SERVICE_NAME)
+                            if (waitedMs + waitMs > MAX_TOTAL_WAIT_MS) throw OpenAiStyle.failure(429, text, SERVICE_NAME)
+                            null
+                        }
+                        else -> throw OpenAiStyle.failure(response.code, text, SERVICE_NAME)
+                    }
+                }
+            } catch (e: IOException) {
+                throw OpenAiStyle.ioFailure(e, SERVICE_NAME)
+            } catch (e: GenerationException) {
+                throw e
+            } catch (e: Exception) {
+                throw GenerationException(GenerationException.Kind.BAD_RESPONSE, "Translation answer was not understood", e)
             }
-        } catch (e: IOException) {
-            throw OpenAiStyle.ioFailure(e)
-        } catch (e: GenerationException) {
-            throw e
-        } catch (e: Exception) {
-            throw GenerationException(GenerationException.Kind.BAD_RESPONSE, "Translation answer was not understood", e)
+            if (content == null) {
+                attempt++
+                waitedMs += waitMs
+                var left = waitMs
+                while (left > 0) {
+                    onRateLimited(left, waitMs)
+                    val step = minOf(1_000L, left)
+                    delay(step)
+                    left -= step
+                }
+                onRateLimited(0L, waitMs)
+            }
         }
         TranslationJson.parseAnswer(content, lines)
+    }
+
+    private companion object {
+        const val SERVICE_NAME = "Translation service"
+
+        /** Total time one batch may spend waiting for a rate limit before the run stops (it continues from there later). */
+        const val MAX_TOTAL_WAIT_MS = 30L * 60_000L
     }
 }

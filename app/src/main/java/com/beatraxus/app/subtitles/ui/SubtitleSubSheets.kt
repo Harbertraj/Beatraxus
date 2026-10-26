@@ -90,14 +90,28 @@ fun AutoSubtitleSheetBody(
             Spacer(Modifier.height(10.dp))
             Text(it, color = Color.White.copy(0.6f), fontSize = 12.sp)
         }
+        // Once the subtitle for this audio track and language exists, the action becomes "Regenerate": it throws the old
+        // one away and recognises the speech again.
+        val alreadyMade = subtitleViewModel.hasGenerated(subUiState.cachedSubtitles, subUiState.generateTranslateTo)
+        if (alreadyMade && !subUiState.isGenerating) {
+            Spacer(Modifier.height(10.dp))
+            Text(
+                "Already generated for this audio track and language. Regenerate replaces it with a new one.",
+                color = Color.White.copy(0.6f), fontSize = 12.sp
+            )
+        }
         Spacer(Modifier.height(16.dp))
         SubSheetPills(
-            actionLabel = if (subUiState.isGenerating) "Generating…" else "Generate",
+            actionLabel = when {
+                subUiState.isGenerating -> "Generating…"
+                alreadyMade -> "Regenerate"
+                else -> "Generate"
+            },
             actionEnabled = configured && !subUiState.isGenerating,
             accent = accent,
             onCancel = onClose,
             onAction = {
-                subtitleViewModel.generateSubtitles()
+                if (alreadyMade) subtitleViewModel.regenerateSubtitles() else subtitleViewModel.generateSubtitles()
                 onClose() // back to the Subtitles list, where the progress shows
             }
         )

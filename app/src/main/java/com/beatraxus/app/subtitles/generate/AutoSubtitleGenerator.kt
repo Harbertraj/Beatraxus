@@ -3,6 +3,7 @@ package com.beatraxus.app.subtitles.generate
 import com.beatraxus.app.subtitles.domain.SubtitleCue
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import java.io.File
 
@@ -171,22 +172,35 @@ class SubtitleTranslator(
     private val batchSize: Int = DEFAULT_BATCH
 ) {
 
+    /**
+     * @param resume lines (by position in [cues]) an earlier, interrupted run already translated; they are not asked again.
+     * @param onBatchDone called with the lines of every finished batch, so they can be saved and a stopped run continues
+     *   from where it stopped instead of starting at part 1 again.
+     */
     suspend fun translate(
         cues: List<SubtitleCue>,
         fromLanguageName: String?,
         toLanguageName: String,
         toLanguageCode: String?,
+        resume: Map<Int, String> = emptyMap(),
+        onBatchDone: suspend (Map<Int, String>) -> Unit = {},
         onProgress: (done: Int, total: Int) -> Unit = { _, _ -> }
     ): TranslationResult {
         // A line is translated as one sentence even when it was wrapped over two lines.
         val lines = cues.mapIndexed { i, c -> IndexedLine(i, c.text.replace('\n', ' ').trim()) }
         val translated = HashMap<Int, String>()
+        resume.forEach { (i, text) -> if (i in lines.indices && text.isNotBlank()) translated[i] = text }
         val batches = lines.chunked(batchSize.coerceAtLeast(1))
 
         batches.forEachIndexed { b, batch ->
             currentCoroutineContext().ensureActive()
+            val todo = batch.filter { it.index !in translated }
+            // Parts an earlier run finished are skipped, so progress starts at the part it continues from.
+            if (todo.isEmpty()) return@forEachIndexed
             onProgress(b, batches.size)
-            translateBatch(batch, translated, fromLanguageName, toLanguageName)
+            translateBatch(todo, translated, fromLanguageName, toLanguageName)
+            val finished = todo.filter { it.index in translated }.associate { it.index to translated.getValue(it.index) }
+            if (finished.isNotEmpty()) onBatchDone(finished)
         }
         onProgress(batches.size, batches.size)
 
@@ -216,15 +230,7 @@ class SubtitleTranslator(
         to: String
     ) {
         if (batch.isEmpty()) return
-        val answer: Map<Int, String> = try {
-            translator.translate(batch, from, to)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: GenerationException) {
-            // A wrong key, no network or a rate limit will not get better with smaller batches.
-            if (e.kind != GenerationException.Kind.SERVICE && e.kind != GenerationException.Kind.BAD_RESPONSE) throw e
-            emptyMap()
-        }
+        val answer: Map<Int, String> = askWithRetry(batch, from, to)
 
         for (line in batch) {
             answer[line.index]?.trim()?.takeIf { it.isNotEmpty() }?.let { out[line.index] = it }
@@ -243,7 +249,35 @@ class SubtitleTranslator(
         }
     }
 
+    /**
+     * One request. A wrong key, no network or an exhausted rate limit will not get better with smaller batches, and a
+     * service error that keeps coming back would only turn into hundreds of single-line requests, so those stop the run
+     * (what is done is saved and continues later). Only an answer that could not be read is retried with smaller batches.
+     */
+    private suspend fun askWithRetry(batch: List<IndexedLine>, from: String?, to: String): Map<Int, String> {
+        var failure: GenerationException? = null
+        repeat(SERVICE_ATTEMPTS) { attempt ->
+            try {
+                return translator.translate(batch, from, to)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: GenerationException) {
+                when (e.kind) {
+                    GenerationException.Kind.BAD_RESPONSE -> return emptyMap()
+                    GenerationException.Kind.SERVICE -> {
+                        failure = e
+                        if (attempt < SERVICE_ATTEMPTS - 1) delay(SERVICE_RETRY_DELAY_MS * (attempt + 1))
+                    }
+                    else -> throw e
+                }
+            }
+        }
+        throw failure ?: GenerationException(GenerationException.Kind.SERVICE, "The translation service did not answer")
+    }
+
     companion object {
         const val DEFAULT_BATCH = 40
+        private const val SERVICE_ATTEMPTS = 3
+        private const val SERVICE_RETRY_DELAY_MS = 2_000L
     }
 }

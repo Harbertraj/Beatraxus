@@ -31,6 +31,7 @@ import com.beatraxus.app.subtitles.generate.PartialSubtitle
 import com.beatraxus.app.subtitles.generate.PartialSubtitleScheduler
 import com.beatraxus.app.subtitles.generate.SrtWriter
 import com.beatraxus.app.subtitles.generate.SubtitleTranslator
+import com.beatraxus.app.subtitles.generate.TranslationCheckpointStore
 import com.beatraxus.app.subtitles.generate.WhisperLanguages
 import com.beatraxus.app.subtitles.domain.AutoSubtitlePicker
 import com.beatraxus.app.subtitles.domain.EncodingNormalizer
@@ -1026,6 +1027,74 @@ class SubtitleViewModel(
     private fun generatedLabel(target: String?): String =
         if (target == null) "Auto subtitles" else "Auto subtitles (${WhisperLanguages.displayName(target)})"
 
+    private fun generationCheckpointFile(mediaKey: String, ordinal: Int): File =
+        File(
+            File(getApplication<Application>().cacheDir, "subtitle_gen_checkpoint"),
+            "${mediaKey}_a${ordinal}_c${AutoSubtitleGenerator.DEFAULT_CHUNK_MS}.ckpt"
+        )
+
+    private fun translationCheckpointFile(mediaKey: String, translatedId: String): File =
+        File(
+            File(getApplication<Application>().cacheDir, "subtitle_translate_checkpoint"),
+            "${mediaKey}_${translatedId}".replace(Regex("[^A-Za-z0-9_.-]"), "_") + ".ckpt"
+        )
+
+    /** True when the subtitle that "Generate" would make (this audio track, this language) is already saved. */
+    fun hasGenerated(cached: List<CachedSubtitle>, target: String?): Boolean {
+        val id = SubtitleSourcePrefs.generatedId(generationAudioOrdinal, target)
+        return cached.any { it.subtitleId == id }
+    }
+
+    /**
+     * Makes the auto subtitles again from scratch: the saved result and what was recognised before are thrown away, so
+     * the speech is recognised (and translated) anew. Used by the "Regenerate" button once a subtitle was already made.
+     */
+    fun regenerateSubtitles() {
+        val video = currentVideo ?: return
+        if (_uiState.value.isGenerating) return
+        val target = _uiState.value.generateTranslateTo
+        val ordinal = generationAudioOrdinal
+        val subtitleId = SubtitleSourcePrefs.generatedId(ordinal, target)
+        viewModelScope.launch(Dispatchers.IO) {
+            val mediaKey = currentMediaKey.ifBlank { MediaKey.of(video) }
+            removeMadeSubtitle(video, mediaKey, subtitleId)
+            generationCheckpointFile(mediaKey, ordinal).delete()
+            _uiState.update { it.copy(generationStatus = null) }
+            withContext(Dispatchers.Main) { generateSubtitles() }
+        }
+    }
+
+    /**
+     * Deletes an auto-generated or translated subtitle of this video (long press in the track list). When it is the one
+     * on screen it is taken off the player first.
+     */
+    fun deleteMadeSubtitle(subtitleId: String) {
+        val video = currentVideo ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            val mediaKey = currentMediaKey.ifBlank { MediaKey.of(video) }
+            removeMadeSubtitle(video, mediaKey, subtitleId)
+            if (SubtitleSourcePrefs.isTranslated(subtitleId)) TranslationCheckpointStore.clear(translationCheckpointFile(mediaKey, subtitleId))
+            _uiState.update {
+                it.copy(
+                    generationStatus = if (SubtitleSourcePrefs.isGenerated(subtitleId)) null else it.generationStatus,
+                    translationStatus = if (SubtitleSourcePrefs.isTranslated(subtitleId)) null else it.translationStatus
+                )
+            }
+            _events.emit(SubtitleUiEvent.ShowToast("Subtitle deleted"))
+        }
+    }
+
+    private suspend fun removeMadeSubtitle(video: Video, mediaKey: String, subtitleId: String) {
+        if (_uiState.value.selectedSubtitleId == subtitleId) {
+            subtitleController.removeExternalSubtitle(video.id)
+            withContext(Dispatchers.Main) {
+                _uiState.update { it.copy(selectedSubtitleId = null, selectedSubtitleType = SelectedSubtitleType.NONE, selectedSubtitleName = null) }
+            }
+        }
+        subtitleCache.deleteSubtitle(mediaKey, subtitleId)
+        refreshCachedList(mediaKey)
+    }
+
     /** Stops a running generation. What was recognised so far stays on screen and is kept, so the next run continues from there. */
     fun stopGeneration() {
         generationJob?.cancel()
@@ -1076,10 +1145,7 @@ class SubtitleViewModel(
             val app = getApplication<Application>()
             val workDir = File(app.cacheDir, "subtitle_gen")
             // What was heard (before translation) is kept per video and audio track, to continue a stopped run.
-            val checkpointFile = File(
-                File(app.cacheDir, "subtitle_gen_checkpoint"),
-                "${mediaKey}_a${ordinal}_c${AutoSubtitleGenerator.DEFAULT_CHUNK_MS}.ckpt"
-            )
+            val checkpointFile = generationCheckpointFile(mediaKey, ordinal)
             val resume = GenerationCheckpointStore.load(checkpointFile)
 
             // Unfinished subtitles live outside the subtitle cache, so a stopped run is never mistaken for a finished one.
@@ -1316,16 +1382,42 @@ class SubtitleViewModel(
             }
 
             _uiState.update { it.copy(isTranslating = true, translationStatus = "Reading the subtitle\u2026") }
+            val checkpointFile = translationCheckpointFile(mediaKey, newId)
             try {
                 val cues = SubtitleCueParser.parse(File(source.localPath).readText(Charsets.UTF_8))
                 if (cues.isEmpty()) { fail("This subtitle has no lines that can be translated."); return@launch }
-                val translator = ChatCompletionsTranslator(BuildConfig.LLM_ENDPOINT, BuildConfig.LLM_API_KEY, BuildConfig.LLM_MODEL)
+                val translator = ChatCompletionsTranslator(
+                    BuildConfig.LLM_ENDPOINT, BuildConfig.LLM_API_KEY, BuildConfig.LLM_MODEL,
+                    onRateLimited = { leftMs, _ ->
+                        // Free plans cap tokens per minute: past that the service asks to wait. Show it and carry on after.
+                        _uiState.update {
+                            it.copy(
+                                translationStatus = if (leftMs > 0L) "Translation service limit reached. Continuing in ${clock(leftMs)}."
+                                else "Translating to $targetName\u2026"
+                            )
+                        }
+                    }
+                )
                 val sourceLanguage = source.language.takeIf { it.isNotBlank() && !it.equals("und", true) }
+                val signature = TranslationCheckpointStore.signature(cues)
+                val resume = TranslationCheckpointStore.load(checkpointFile, signature)
+                if (resume.isNotEmpty()) {
+                    Log.i(TAG, "Translating: continuing, ${resume.size} of ${cues.size} lines were already done")
+                    _uiState.update { it.copy(translationStatus = "Continuing where it stopped: ${resume.size} of ${cues.size} lines are done.") }
+                }
                 val result = SubtitleTranslator(translator).translate(
                     cues = cues,
                     fromLanguageName = sourceLanguage?.let { WhisperLanguages.displayName(it) },
                     toLanguageName = targetName,
                     toLanguageCode = targetLanguageCode,
+                    resume = resume,
+                    onBatchDone = { lines ->
+                        try {
+                            TranslationCheckpointStore.append(checkpointFile, signature, lines)
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Could not save the translation progress", e)
+                        }
+                    },
                     onProgress = { done, total ->
                         _uiState.update { it.copy(translationStatus = "Translating to $targetName: part ${minOf(done + 1, total)} of $total") }
                     }
@@ -1342,16 +1434,18 @@ class SubtitleViewModel(
                     ),
                     SrtWriter.toSrt(result.cues)
                 )
+                // Finished: nothing is left to continue.
+                TranslationCheckpointStore.clear(checkpointFile)
                 val note = if (result.untranslated > 0) "Done. ${result.untranslated} lines could not be translated and stay as they were." else "Done."
                 _uiState.update { it.copy(isTranslating = false, translationStatus = "$note Select \"$label\" under Embedded Tracks.") }
                 refreshCachedList(mediaKey)
                 _events.emit(SubtitleUiEvent.ShowToast("Translated subtitles ready. Select them under Embedded Tracks."))
             } catch (e: CancellationException) {
-                _uiState.update { it.copy(isTranslating = false, translationStatus = "Stopped.") }
+                _uiState.update { it.copy(isTranslating = false, translationStatus = "Stopped. Translate continues from where it left off.") }
                 throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Translating subtitles failed", e)
-                fail(generationMessage(e))
+                fail(translationMessage(e))
             }
         }
     }
@@ -1378,6 +1472,20 @@ class SubtitleViewModel(
     private fun progressText(done: Int, total: Int?): String {
         val part = done + 1
         return if (total != null && total > 0) "Recognising speech: part ${minOf(part, total)} of $total" else "Recognising speech: part $part"
+    }
+
+    /** The same kinds of failure as [generationMessage], worded for translating a saved subtitle. */
+    private fun translationMessage(e: Throwable): String {
+        val kind = (e as? GenerationException)?.kind
+        val detail = e.message?.takeIf { it.isNotBlank() }?.let { " ($it)" } ?: ""
+        return when (kind) {
+            GenerationException.Kind.RATE_LIMITED ->
+                "The translation service's limit was reached$detail. What was translated is saved: tap Translate again to continue from where it stopped."
+            GenerationException.Kind.AUTH -> "The translation service rejected the API key."
+            GenerationException.Kind.NETWORK -> "No internet connection. What was translated is saved: tap Translate again to continue from where it stopped."
+            GenerationException.Kind.NOT_CONFIGURED -> "Translation needs LLM_API_KEY in this build."
+            else -> "Translating failed: ${e.message?.take(160) ?: "try again"}. What was translated is saved: tap Translate again to continue."
+        }
     }
 
     private fun generationMessage(e: Throwable): String {

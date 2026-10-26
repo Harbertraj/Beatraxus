@@ -74,10 +74,10 @@ object GenerationCheckpointStore {
         return if (done.isEmpty()) null else GenerationCheckpoint(done, cues, language)
     }
 
-    private fun escape(text: String): String =
+    internal fun escape(text: String): String =
         text.replace("\\", "\\\\").replace("\n", "\\n").replace("\r", "").replace("\t", "\\t")
 
-    private fun unescape(text: String): String {
+    internal fun unescape(text: String): String {
         if (!text.contains('\\')) return text
         val sb = StringBuilder(text.length)
         var i = 0

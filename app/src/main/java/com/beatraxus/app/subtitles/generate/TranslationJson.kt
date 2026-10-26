@@ -14,7 +14,9 @@ object TranslationJson {
             Rules:
             - Keep the meaning, tone and register. Write natural, concise $toLanguageName that reads well on screen.
             - Never merge, split, add or drop lines. Every input id must appear once in the output.
+            - Write $toLanguageName in its own native script. Never answer in Latin letters (no transliteration) unless $toLanguageName is normally written that way.
             - Keep names of people and places. Keep sound cues such as [music] but translate them.
+            - The lines are consecutive dialogue of one video: use the neighbouring lines for context, pronouns and speaker tone.
             - Output only the translation of each line, with no notes.
             The input is a JSON array of {"i": id, "t": text}. Reply with ONLY a JSON array of {"i": id, "t": translation}, using the same ids. No markdown, no commentary.
         """.trimIndent()
