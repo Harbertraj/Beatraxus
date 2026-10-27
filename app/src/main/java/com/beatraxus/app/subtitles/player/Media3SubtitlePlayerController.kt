@@ -261,6 +261,10 @@ class Media3SubtitlePlayerController(
             }
         }
 
+        // Not listed yet (the player still shows the old item's tracks): drop any text override left from the video's
+        // own subtitle, otherwise it keeps that track selected next to the new one until the guard catches up.
+        if (!found) params = params.clearOverridesOfType(C.TRACK_TYPE_TEXT)
+
         player.trackSelectionParameters = params.build()
         return found
     }

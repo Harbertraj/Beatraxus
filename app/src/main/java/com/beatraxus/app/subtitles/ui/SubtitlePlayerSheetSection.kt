@@ -473,7 +473,11 @@ fun SubtitlePlayerSheetSection(
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Embedded Tracks", color = Color.White.copy(0.7f), fontSize = 13.sp, fontWeight = FontWeight.Medium)
 
-            val isNoneSelected = !subUiState.enabled || videoUiState.availableSubtitleTracks.none { it.isSelected }
+            // One subtitle at a time: when a saved/auto/downloaded subtitle is the chosen one, the view model says so and
+            // the video's own tracks must not also light up (the player can still report its own text track as selected
+            // for a moment while the new subtitle loads).
+            val externalActive = subUiState.enabled && subUiState.selectedSubtitleType == SelectedSubtitleType.EXTERNAL
+            val isNoneSelected = !subUiState.enabled || (!externalActive && videoUiState.availableSubtitleTracks.none { it.isSelected })
             FilterChip(
                 selected = isNoneSelected,
                 onClick = { subtitleViewModel.disableSubtitles() },
@@ -489,7 +493,7 @@ fun SubtitlePlayerSheetSection(
                 val label = savedSubtitleLabel(g)
                 // The player's track list lags behind a freshly downloaded subtitle, so the name the view model
                 // reports for the loaded subtitle counts too; otherwise the chip misses its orange selected look.
-                val picked = subUiState.enabled && subUiState.selectedSubtitleId == g.subtitleId &&
+                val picked = externalActive && subUiState.selectedSubtitleId == g.subtitleId &&
                     (subUiState.selectedSubtitleName == label ||
                         videoUiState.availableSubtitleTracks.any { it.isSelected && it.name == label })
                 MadeSubtitleChip(
@@ -507,14 +511,15 @@ fun SubtitlePlayerSheetSection(
             // The loaded saved subtitle also shows up as a player track with the same name: list it once.
             val savedLabels = saved.map { savedSubtitleLabel(it) }.toSet()
             videoUiState.availableSubtitleTracks.filter { it.name !in savedLabels }.forEach { track ->
+                val trackSelected = track.isSelected && subUiState.enabled && !externalActive
                 FilterChip(
-                    selected = track.isSelected && subUiState.enabled,
+                    selected = trackSelected,
                     onClick = {
                         subtitleViewModel.enableSubtitles()
                         subtitleViewModel.selectEmbeddedTrack(track.index)
                     },
                     colors = FilterChipDefaults.filterChipColors(selectedContainerColor = mxOrange, selectedLabelColor = Color.Black),
-                    label = { Text(track.name + (track.language?.let { " ($it)" } ?: ""), color = if (track.isSelected && subUiState.enabled) Color.Black else Color.White) }
+                    label = { Text(track.name + (track.language?.let { " ($it)" } ?: ""), color = if (trackSelected) Color.Black else Color.White) }
                 )
             }
         }
